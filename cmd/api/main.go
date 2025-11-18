@@ -1,30 +1,32 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
-	"os"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"welloresto/internal/config"
+	"welloresto/internal/database"
+	"welloresto/internal/logger"
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("Missing DATABASE_URL")
-	}
+	// Load .env variables
+	cfg := config.Load()
 
-	pool, err := pgxpool.New(context.Background(), dbURL)
+	// Structured logger
+	zlog := logger.New()
+
+	// --- MySQL Connection (ONLY MySQL for now) ---
+	mysqlDB, err := database.NewMySQL(cfg.MySQLURL)
 	if err != nil {
-		log.Fatal(err)
+		zlog.Fatal("Failed to connect to MySQL", "error", err)
 	}
-	defer pool.Close()
+	defer mysqlDB.Close()
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
-	})
+	// --- Setup Routes ---
+	r := SetupRoutes(zlog, mysqlDB, cfg)
 
-	log.Println("Server running on port " + os.Getenv("PORT"))
-	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
+	// --- Start API ---
+	zlog.Info("Server running", "port", cfg.Port)
+	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))
 }
