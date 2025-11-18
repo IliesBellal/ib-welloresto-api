@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL")
+	dbURL := os.Getenv("postgresql://wello_resto_testing_user:WXxtMQG7aibJDzOAJEJ13ADI3kKLNKwv@dpg-d4e5fqumcj7s73cfpe8g-a.frankfurt-postgres.render.com/wello_resto_testing")
 	if dbURL == "" {
 		log.Fatal("Missing DATABASE_URL")
 	}
