@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"welloresto/internal/services"
+	"welloresto-api/internal/services"
 )
 
 type AuthHandler struct {
