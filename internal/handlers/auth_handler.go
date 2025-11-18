@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/services"
 )
 
@@ -20,23 +21,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	device := r.URL.Query().Get("device_id")
 	user := r.URL.Query().Get("user")
 	pwd := r.URL.Query().Get("pwd")
-	tok := r.URL.Query().Get("token")
+	token := middleware.GetToken(r)
 
-	resp, err := h.svc.Login(r.Context(), app, device, user, pwd, tok)
+	resp, err := h.svc.Login(r.Context(), app, device, user, pwd, token)
 	if err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": 99,
 			"data": map[string]interface{}{
 				"status": "error",
-				"error": err.Error(),
+				"error":  err.Error(),
 			},
 		})
 		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id": 99,
+		"id":   99,
 		"data": resp,
 	})
 }
