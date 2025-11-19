@@ -14,7 +14,7 @@ func NewMySQL(dsn string) (*sql.DB, error) {
 	}
 
 	// Safe limits for Hostinger
-	db.SetMaxOpenConns(5)
+	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
