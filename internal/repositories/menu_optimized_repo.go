@@ -393,7 +393,7 @@ ORDER BY pca.product_id, pca.num_order ASC
 	defer compCatRows.Close()
 
 	type compCatTmp struct {
-		ID    int64
+		ID    *int64
 		Name  string
 		Order int
 	}
@@ -420,7 +420,7 @@ ORDER BY pca.product_id, pca.num_order ASC
 	type compBasicTmp struct {
 		ID     int64
 		Name   string
-		CatID  int64
+		CatID  *int64
 		Status int
 		Price  int
 	}

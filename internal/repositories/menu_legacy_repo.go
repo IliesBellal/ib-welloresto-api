@@ -394,7 +394,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 
 	// --- STEP 8: component categories + all components ---
 	type compCatTmp struct {
-		ID    int64
+		ID    *int64
 		Name  string
 		Order int
 	}
@@ -423,7 +423,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	type compBasicTmp struct {
 		ID     int64
 		Name   string
-		CatID  int64
+		CatID  *int64
 		Status int
 		Price  int
 	}
