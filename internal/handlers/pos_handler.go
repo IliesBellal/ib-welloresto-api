@@ -35,7 +35,7 @@ func (h *POSHandler) GetPOSStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *POSHandler) UpdatePOSStatus(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
+	token := middleware.GetToken(r)
 
 	var body struct {
 		Status bool `json:"status"`

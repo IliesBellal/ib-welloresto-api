@@ -367,7 +367,7 @@ LIMIT 1;
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, err
 	}
 	return data, err
 }
