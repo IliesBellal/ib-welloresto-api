@@ -13,13 +13,14 @@ func NewMySQL(dsn string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Safe limits for Hostinger
+	// ❗ Hostinger: 1 connexion MAX
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(5 * time.Minute)
 
-	err = db.Ping()
-	if err != nil {
+	// Limite basse pour éviter les connexions zombie
+	db.SetConnMaxLifetime(2 * time.Minute)
+
+	if err := db.Ping(); err != nil {
 		return nil, err
 	}
 
