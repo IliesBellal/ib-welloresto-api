@@ -94,7 +94,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	var productOrder []string
 	for prodRows.Next() {
 		var p models.ProductEntry
-		var tvaIn, tvaDel, tvaTake sql.NullInt64
+		var tvaIn, tvaDel, tvaTake sql.NullFloat64
 		var bg sql.NullString
 		var hasImage bool
 		var desc sql.NullString
@@ -109,13 +109,13 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 			return nil, err
 		}
 		if tvaIn.Valid {
-			p.TVAIn = tvaIn.Int64
+			p.TVAIn = tvaIn.Float64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = tvaDel.Int64
+			p.TVADelivery = tvaDel.Float64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = tvaTake.Int64
+			p.TVATakeAway = tvaTake.Float64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String
@@ -163,7 +163,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	for subRows.Next() {
 		var p models.ProductEntry
 		var by sql.NullString
-		var tvaIn, tvaDel, tvaTake sql.NullInt64
+		var tvaIn, tvaDel, tvaTake sql.NullFloat64
 		var bg sql.NullString
 		var desc sql.NullString
 		if err := subRows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
@@ -174,13 +174,13 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 			p.ByProductOf = &by.String
 		}
 		if tvaIn.Valid {
-			p.TVAIn = tvaIn.Int64
+			p.TVAIn = tvaIn.Float64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = tvaDel.Int64
+			p.TVADelivery = tvaDel.Float64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = tvaTake.Int64
+			p.TVATakeAway = tvaTake.Float64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String

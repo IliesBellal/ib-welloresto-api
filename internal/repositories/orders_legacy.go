@@ -369,7 +369,7 @@ AND ds.merchant_id = ?`
 		var discountID sql.NullInt64
 		var discountName sql.NullString
 		var readyForDistribution, distributedQuantity sql.NullInt64
-		var tvaIn, tvaDelivery, tvaTakeAway sql.NullInt64
+		var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
 		var delayID sql.NullString
 		var commentContent sql.NullString
 		var commentUserID sql.NullString
@@ -462,9 +462,9 @@ AND ds.merchant_id = ?`
 			DiscountID:                   nullInt64ToPtr(discountID),
 			DiscountName:                 nullStringToPtr(discountName),
 			DiscountedPrice:              nilIfNullInt64Discount(discountID, price.Int64),
-			TVAIn:                        tvaIn.Int64,
-			TVADelivery:                  tvaDelivery.Int64,
-			TVATakeAway:                  tvaTakeAway.Int64,
+			TVAIn:                        tvaIn.Float64,
+			TVADelivery:                  tvaDelivery.Float64,
+			TVATakeAway:                  tvaTakeAway.Float64,
 			AvailableIn:                  availableIn.Bool,
 			AvailableTakeAway:            availableTakeAway.Bool,
 			AvailableDelivery:            availableDelivery.Bool,
