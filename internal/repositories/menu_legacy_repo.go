@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 	"welloresto-api/internal/models"
 )
@@ -18,7 +19,7 @@ func NewLegacyMenuRepository(db *sql.DB) *LegacyMenuRepository {
 func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu BeginTx failed: %w", err)
 	}
 	defer func() {
 		// caller will get commit/rollback inside; ensure rollback on panic
@@ -29,7 +30,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	err = tx.QueryRowContext(ctx, "SELECT last_menu_update FROM merchant_parameters WHERE merchant_id = ? LIMIT 1", merchantID).Scan(&dbLastMenu)
 	if err != nil && err != sql.ErrNoRows {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu QueryRowContext failed: %w", err)
 	}
 
 	// if lastMenu provided and equals DB => no_update_required
@@ -50,7 +51,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu catRows failed: %w", err)
 	}
 	defer catRows.Close()
 
@@ -85,7 +86,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu prodRows failed: %w", err)
 	}
 	defer prodRows.Close()
 
@@ -155,7 +156,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu subRows failed: %w", err)
 	}
 	defer subRows.Close()
 
@@ -202,7 +203,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu compRows failed: %w", err)
 	}
 	defer compRows.Close()
 
@@ -217,7 +218,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		var uom sql.NullString
 		if err := compRows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, fmt.Errorf("QueryContext menu compRows Scan failed: %w", err)
 		}
 		if uom.Valid {
 			c.UnitOfMeasure = uom.String
@@ -236,7 +237,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu attrRows failed: %w", err)
 	}
 	defer attrRows.Close()
 
@@ -251,7 +252,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu optRows Scan failed: %w", err)
 	}
 	defer optRows.Close()
 
@@ -261,7 +262,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		var o models.ConfigurableOption
 		if err := optRows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, fmt.Errorf("QueryContext menu optRows.Scan Scan failed: %w", err)
 		}
 		optMap[cfgID] = append(optMap[cfgID], o)
 	}
@@ -282,7 +283,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	delayRows, err := tx.QueryContext(ctx, `SELECT id, short_description, duration FROM delays WHERE enabled = true ORDER BY duration ASC`)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu delayRows failed: %w", err)
 	}
 	defer delayRows.Close()
 	var delays []models.DelayEntry
@@ -290,7 +291,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		var d models.DelayEntry
 		if err := delayRows.Scan(&d.DelayID, &d.ShortDescription, &d.Duration); err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, fmt.Errorf("QueryContext menu delayRows.Scan failed: %w", err)
 		}
 		delays = append(delays, d)
 	}
@@ -299,7 +300,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	compCatRows, err := tx.QueryContext(ctx, `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? AND available = 1 ORDER BY categ_order ASC`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu compCatRows failed: %w", err)
 	}
 	defer compCatRows.Close()
 
@@ -313,7 +314,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		var c compCatTmp
 		if err := compCatRows.Scan(&c.ID, &c.Name, &c.Order); err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, fmt.Errorf("QueryContext menu compCatRows Scan failed: %w", err)
 		}
 		compCats = append(compCats, c)
 	}
@@ -321,7 +322,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	allCompRows, err := tx.QueryContext(ctx, `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ?`, merchantID)
 	if err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("QueryContext menu allCompRows failed: %w", err)
 	}
 	defer allCompRows.Close()
 
@@ -337,7 +338,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		var cb compBasicTmp
 		if err := allCompRows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price); err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, fmt.Errorf("QueryContext menu allCompRows.Scan failed: %w", err)
 		}
 		allComponents = append(allComponents, cb)
 	}

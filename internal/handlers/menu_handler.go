@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -46,7 +48,8 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMenu(ctx, token, lastMenu)
 	if err != nil {
-		http.Error(w, `{"status":"-2","error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		log.Printf("[GetMenu] ERROR token=%s last_menu_update=%v -> %+v", token, lastMenu, err)
+		http.Error(w, fmt.Sprintf(`{"status":"-2","error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
