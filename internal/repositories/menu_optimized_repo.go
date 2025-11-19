@@ -129,7 +129,7 @@ ORDER BY p.by_product_of IS NOT NULL, p.category, p.name ASC
 		var by sql.NullString
 		var desc sql.NullString
 		var bg sql.NullString
-		var tvaIn, tvaDel, tvaTake sql.NullInt64
+		var tvaIn, tvaDel, tvaTake sql.NullFloat64
 		var imgURL sql.NullString
 		var availIn, availTA, availDel sql.NullBool
 		var isPopular sql.NullBool
@@ -171,13 +171,13 @@ ORDER BY p.by_product_of IS NOT NULL, p.category, p.name ASC
 			p.Description = &desc.String
 		}
 		if tvaIn.Valid {
-			p.TVAIn = tvaIn.Int64
+			p.TVAIn = tvaIn.Float64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = tvaDel.Int64
+			p.TVADelivery = tvaDel.Float64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = tvaTake.Int64
+			p.TVATakeAway = tvaTake.Float64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String
