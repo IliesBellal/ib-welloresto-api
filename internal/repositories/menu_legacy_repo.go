@@ -24,13 +24,15 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	startTotal := time.Now()
 	r.log.Info("GetMenu START", zap.String("merchant_id", merchantID), zap.Time("start_at", startTotal))
 
-	// begin transaction (read-only)
+	// Begin transaction (read-only)
+	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		r.log.Error("BeginTx failed", zap.Error(err))
 		return nil, fmt.Errorf("BeginTx failed: %w", err)
 	}
-	// ensure rollback if anything goes wrong
+
+	// Ensure rollback if anything goes wrong
 	committed := false
 	defer func() {
 		if !committed {
@@ -38,16 +40,17 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		}
 	}()
 
-	// helper to run a query with per-query timeout and logging
+	// --- HELPER FUNCTIONS CORRIGÉES ---
+	// On a supprimé les context.WithTimeout internes qui causaient le "context canceled" prématuré.
+
+	// Helper to run a query with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
-		// per-query timeout short (diagnostic). Adjust if necessary.
-		// qctx, cancel := context.WithTimeout(ctx, 12*time.Second)
-		qctx := ctx
-		cancel := func() {}
-		defer cancel()
 		r.log.Info("Query START", zap.String("step", step))
 		t0 := time.Now()
-		rows, err := tx.QueryContext(qctx, query, args...)
+
+		// Utilisation directe du ctx parent. Le timeout est géré par le client/serveur HTTP global.
+		rows, err := tx.QueryContext(ctx, query, args...)
+
 		elapsed := time.Since(t0)
 		if err != nil {
 			r.log.Error("Query ERROR", zap.String("step", step), zap.Duration("elapsed", elapsed), zap.Error(err))
@@ -57,15 +60,14 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		return rows, nil
 	}
 
-	// helper to run QueryRow with timeout
+	// Helper to run QueryRow with logging
 	runQueryRow := func(step string, query string, args ...interface{}) *sql.Row {
-		qctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		// caller must not call cancel; we cancel after returning (use closure)
-		// but since sql.Row doesn't accept ctx cancellation directly, we use tx.QueryRowContext
-		defer cancel()
 		r.log.Info("QueryRow START", zap.String("step", step))
 		t0 := time.Now()
-		row := tx.QueryRowContext(qctx, query, args...)
+
+		// Utilisation directe du ctx parent
+		row := tx.QueryRowContext(ctx, query, args...)
+
 		r.log.Info("QueryRow queued", zap.String("step", step), zap.Duration("elapsed_since_start", time.Since(t0)))
 		return row
 	}
@@ -75,12 +77,15 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	{
 		step := "last_menu_update"
 		q := "SELECT last_menu_update FROM merchant_parameters WHERE merchant_id = ? LIMIT 1"
+
+		// Ici, le Scan va fonctionner car le contexte n'est plus annulé par le helper
 		row := runQueryRow(step, q, merchantID)
 		if err := row.Scan(&dbLastMenu); err != nil && err != sql.ErrNoRows {
 			r.log.Error("Scan last_menu_update failed", zap.Error(err))
 			return nil, fmt.Errorf("scan last_menu_update failed: %w", err)
 		}
 		r.log.Info("last_menu_update fetched", zap.String("merchant_id", merchantID), zap.Bool("valid", dbLastMenu.Valid))
+
 		// quick equality check
 		if lastMenu != nil && dbLastMenu.Valid {
 			if dbLastMenu.Time.Format("2006-01-02 15:04:05") == lastMenu.Format("2006-01-02 15:04:05") {
