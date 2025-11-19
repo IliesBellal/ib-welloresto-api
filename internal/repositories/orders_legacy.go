@@ -230,17 +230,17 @@ AND ds.merchant_id = ?`
 
 	// configurable attr options map[(order_item_id, attr_id)] -> []options
 	type optKey struct {
-		OrderItemID int64
-		AttrID      int64
+		OrderItemID string
+		AttrID      string
 	}
-	configurableOptionsMap := map[optKey][]models.ProductConfigurationOption{}
+	configurableOptionsMap := map[optKey][]models.ConfigurableOption{}
 
 	for rowsConfigAttrOptions.Next() {
-		var attrID sql.NullInt64
-		var orderItemID sql.NullInt64
-		var id sql.NullInt64
+		var attrID sql.NullString
+		var orderItemID sql.NullString
+		var id sql.NullString
 		var title sql.NullString
-		var extraPrice sql.NullFloat64
+		var extraPrice int
 		var selected sql.NullInt64
 		var quantity sql.NullInt64
 		var maxQuantity sql.NullInt64
@@ -249,13 +249,13 @@ AND ds.merchant_id = ?`
 			return nil, err
 		}
 
-		key := optKey{OrderItemID: orderItemID.Int64, AttrID: attrID.Int64}
-		configurableOptionsMap[key] = append(configurableOptionsMap[key], models.ProductConfigurationOption{
-			ID:                id.Int64,
-			ConfigAttributeID: attrID.Int64,
-			OrderItemID:       orderItemID.Int64,
+		key := optKey{OrderItemID: orderItemID.String, AttrID: attrID.String}
+		configurableOptionsMap[key] = append(configurableOptionsMap[key], models.ConfigurableOption{
+			ID:                id.String,
+			ConfigAttributeID: attrID.String,
+			OrderItemID:       orderItemID.String,
 			Title:             title.String,
-			ExtraPrice:        extraPrice.Float64,
+			ExtraPrice:        extraPrice,
 			Quantity:          int(quantity.Int64),
 			MaxQuantity:       int(maxQuantity.Int64),
 			Selected:          int(selected.Int64),
@@ -263,10 +263,10 @@ AND ds.merchant_id = ?`
 	}
 
 	// configurable attributes per order_item
-	configurableAttributesMap := map[int64][]models.ProductConfigurationAttribute{}
+	configurableAttributesMap := map[string][]models.ConfigurableAttribute{}
 	for rowsConfigAttr.Next() {
-		var id sql.NullInt64
-		var orderItemID sql.NullInt64
+		var id sql.NullString
+		var orderItemID sql.NullString
 		var title sql.NullString
 		var maxOptions sql.NullInt64
 		var attrType sql.NullString
@@ -275,14 +275,14 @@ AND ds.merchant_id = ?`
 			return nil, err
 		}
 		// fetch options from map
-		key := optKey{OrderItemID: orderItemID.Int64, AttrID: id.Int64}
-		opts := []models.ProductConfigurationOption{}
+		key := optKey{OrderItemID: orderItemID.String, AttrID: id.String}
+		opts := []models.ConfigurableOption{}
 		for _, o := range configurableOptionsMap[key] {
 			opts = append(opts, o)
 		}
-		configurableAttributesMap[orderItemID.Int64] = append(configurableAttributesMap[orderItemID.Int64], models.ProductConfigurationAttribute{
-			ID:            id.Int64,
-			OrderItemID:   orderItemID.Int64,
+		configurableAttributesMap[orderItemID.String] = append(configurableAttributesMap[orderItemID.String], models.ConfigurableAttribute{
+			ID:            id.String,
+			OrderItemID:   orderItemID.String,
 			AttributeType: attrType.String,
 			Title:         title.String,
 			MaxOptions:    int(maxOptions.Int64),
@@ -291,12 +291,12 @@ AND ds.merchant_id = ?`
 	}
 
 	// product components global list
-	productComponents := []models.ProductComponent{}
+	productComponents := []models.ComponentUsage{}
 	for rowsProdComp.Next() {
-		var productID sql.NullInt64
+		var productID sql.NullString
 		var compID sql.NullInt64
 		var name sql.NullString
-		var price sql.NullFloat64
+		var price sql.NullInt64
 		var status sql.NullInt64
 		var qty sql.NullFloat64
 		var uom sql.NullString
@@ -304,11 +304,11 @@ AND ds.merchant_id = ?`
 		if err := rowsProdComp.Scan(&productID, &compID, &name, &price, &status, &qty, &uom); err != nil {
 			return nil, err
 		}
-		productComponents = append(productComponents, models.ProductComponent{
+		productComponents = append(productComponents, models.ComponentUsage{
 			ComponentID:   compID.Int64,
 			Name:          name.String,
-			ProductID:     productID.Int64,
-			Price:         price.Float64,
+			ProductID:     productID.String,
+			Price:         price.Int64,
 			Quantity:      qty.Float64,
 			UnitOfMeasure: uom.String,
 			Status:        int(status.Int64),
@@ -318,19 +318,19 @@ AND ds.merchant_id = ?`
 	// extras
 	extras := []models.OrderProductExtra{}
 	for rowsExtras.Next() {
-		var orderItemID, id, orderID, productID, compID sql.NullInt64
+		var orderItemID, id, orderID, productID, compID sql.NullString
 		var name sql.NullString
 		var price sql.NullFloat64
 		if err := rowsExtras.Scan(&orderItemID, &id, &orderID, &productID, &name, &compID, &price); err != nil {
 			return nil, err
 		}
 		extras = append(extras, models.OrderProductExtra{
-			ID:          id.Int64,
-			OrderItemID: orderItemID.Int64,
-			OrderID:     orderID.Int64,
-			ProductID:   productID.Int64,
+			ID:          id.String,
+			OrderItemID: orderItemID.String,
+			OrderID:     orderID.String,
+			ProductID:   productID.String,
 			Name:        name.String,
-			ComponentID: compID.Int64,
+			ComponentID: compID.String,
 			Price:       price.Float64,
 		})
 	}
@@ -338,48 +338,48 @@ AND ds.merchant_id = ?`
 	// withouts
 	withouts := []models.OrderProductWithout{}
 	for rowsWithouts.Next() {
-		var orderItemID, id, orderID, productID, compID sql.NullInt64
+		var orderItemID, id, orderID, productID, compID sql.NullString
 		var name sql.NullString
 		if err := rowsWithouts.Scan(&orderItemID, &id, &orderID, &productID, &name, &compID); err != nil {
 			return nil, err
 		}
 		withouts = append(withouts, models.OrderProductWithout{
-			ID:          id.Int64,
-			OrderItemID: orderItemID.Int64,
-			OrderID:     orderID.Int64,
-			ProductID:   productID.Int64,
+			ID:          id.String,
+			OrderItemID: orderItemID.String,
+			OrderID:     orderID.String,
+			ProductID:   productID.String,
 			Name:        name.String,
-			ComponentID: compID.Int64,
-			Price:       "0",
+			ComponentID: compID.String,
+			Price:       0,
 		})
 	}
 
 	// products map (order_item_id -> product)
-	productsMap := map[int64]models.OrderProduct{}
+	productsMap := map[string]models.ProductEntry{}
 	for rowsProducts.Next() {
 		var orderID sql.NullInt64
 		var quantity, paidQuantity sql.NullInt64
-		var price sql.NullFloat64
-		var productID sql.NullInt64
+		var price sql.NullInt64
+		var productID sql.NullString
 		var name, productDesc, categName sql.NullString
-		var orderItemID sql.NullInt64
+		var orderItemID sql.NullString
 		var isPaid, isDistributed sql.NullInt64
 		var orderedOn sql.NullTime
-		var basePrice sql.NullFloat64
+		var basePrice sql.NullInt64
 		var discountID sql.NullInt64
 		var discountName sql.NullString
 		var readyForDistribution, distributedQuantity sql.NullInt64
-		var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
-		var delayID sql.NullInt64
+		var tvaIn, tvaDelivery, tvaTakeAway sql.NullInt64
+		var delayID sql.NullString
 		var commentContent sql.NullString
-		var commentUserID sql.NullInt64
+		var commentUserID sql.NullString
 		var commentCreation sql.NullTime
-		var priceTakeAway, priceDelivery sql.NullFloat64
+		var priceTakeAway, priceDelivery sql.NullInt64
 		var imageURL sql.NullString
 		var productionStatus sql.NullString
 		var productionDoneQty sql.NullInt64
 		var productionColor sql.NullString
-		var availableIn, availableTakeAway, availableDelivery sql.NullInt64
+		var availableIn, availableTakeAway, availableDelivery sql.NullBool
 
 		if err := rowsProducts.Scan(&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc, &categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice, &discountID, &discountName, &readyForDistribution, &distributedQuantity, &tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID, &commentCreation,
 			&priceTakeAway, &priceDelivery, &imageURL, &productionStatus, &productionDoneQty, &productionColor, &availableIn, &availableTakeAway, &availableDelivery); err != nil {
@@ -387,34 +387,34 @@ AND ds.merchant_id = ?`
 		}
 
 		// collect components for this product
-		currentComponents := []models.ProductComponent{}
+		currentComponents := []models.ComponentUsage{}
 		for _, c := range productComponents {
-			if c.ProductID == productID.Int64 {
+			if c.ProductID == productID.String {
 				currentComponents = append(currentComponents, c)
 			}
 		}
 		// extras and withouts for this order_item
 		currentExtras := []models.OrderProductExtra{}
 		for _, e := range extras {
-			if e.OrderItemID == orderItemID.Int64 {
+			if e.OrderItemID == orderItemID.String {
 				currentExtras = append(currentExtras, e)
 			}
 		}
 		currentWithouts := []models.OrderProductWithout{}
 		for _, w := range withouts {
-			if w.OrderItemID == orderItemID.Int64 {
+			if w.OrderItemID == orderItemID.String {
 				currentWithouts = append(currentWithouts, w)
 			}
 		}
 
 		// configuration attributes for this order_item
-		currentConfigAttrs := []models.ProductConfigurationAttribute{}
-		if arr, ok := configurableAttributesMap[orderItemID.Int64]; ok {
+		currentConfigAttrs := []models.ConfigurableAttribute{}
+		if arr, ok := configurableAttributesMap[orderItemID.String]; ok {
 			// we must attach options for each attr
 			for _, attr := range arr {
 				// fetch options
-				key := optKey{OrderItemID: orderItemID.Int64, AttrID: attr.ID}
-				options := []models.ProductConfigurationOption{}
+				key := optKey{OrderItemID: orderItemID.String, AttrID: attr.ID}
+				options := []models.ConfigurableOption{}
 				for _, o := range configurableOptionsMap[key] {
 					options = append(options, o)
 				}
@@ -427,7 +427,7 @@ AND ds.merchant_id = ?`
 		var comment interface{}
 		if commentContent.Valid {
 			comment = map[string]interface{}{
-				"user_id":       commentUserID.Int64,
+				"user_id":       commentUserID.String,
 				"content":       commentContent.String,
 				"creation_date": nilIfZeroTime(commentCreation),
 			}
@@ -439,11 +439,11 @@ AND ds.merchant_id = ?`
 			}
 		}
 
-		op := models.OrderProduct{
+		op := models.ProductEntry{
 			OrderID:                      orderID.Int64,
-			OrderItemID:                  orderItemID.Int64,
+			OrderItemID:                  orderItemID.String,
 			OrderedOn:                    nullTimePtr(orderedOn),
-			ProductID:                    productID.Int64,
+			ProductID:                    productID.String,
 			ProductionStatus:             productionStatus.String,
 			ProductionStatusDoneQuantity: int(productionDoneQty.Int64),
 			Name:                         name.String,
@@ -456,18 +456,18 @@ AND ds.merchant_id = ?`
 			ReadyForDistributionQuantity: int(readyForDistribution.Int64),
 			IsPaid:                       int(isPaid.Int64),
 			IsDistributed:                int(isDistributed.Int64),
-			Price:                        price.Float64,
-			PriceTakeAway:                priceTakeAway.Float64,
-			PriceDelivery:                priceDelivery.Float64,
+			Price:                        price.Int64,
+			PriceTakeAway:                priceTakeAway.Int64,
+			PriceDelivery:                priceDelivery.Int64,
 			DiscountID:                   nullInt64ToPtr(discountID),
 			DiscountName:                 nullStringToPtr(discountName),
-			DiscountedPrice:              nilIfNullFloat64(discountID, price.Float64),
-			TVARateIn:                    tvaIn.Float64,
-			TVARateDelivery:              tvaDelivery.Float64,
-			TVARateTakeAway:              tvaTakeAway.Float64,
-			AvailableIn:                  int(availableIn.Int64),
-			AvailableTakeAway:            int(availableTakeAway.Int64),
-			AvailableDelivery:            int(availableDelivery.Int64),
+			DiscountedPrice:              nilIfNullInt64Discount(discountID, price.Int64),
+			TVAIn:                        tvaIn.Int64,
+			TVADelivery:                  tvaDelivery.Int64,
+			TVATakeAway:                  tvaTakeAway.Int64,
+			AvailableIn:                  availableIn.Bool,
+			AvailableTakeAway:            availableTakeAway.Bool,
+			AvailableDelivery:            availableDelivery.Bool,
 			ProductionColor:              nullStringToPtr(productionColor),
 			Extra:                        currentExtras,
 			Without:                      currentWithouts,
@@ -477,7 +477,7 @@ AND ds.merchant_id = ?`
 		}
 		op.Configuration.Attributes = currentConfigAttrs
 
-		productsMap[orderItemID.Int64] = op
+		productsMap[orderItemID.String] = op
 	}
 
 	// payments
@@ -505,13 +505,12 @@ AND ds.merchant_id = ?`
 	type SNOClient struct {
 		UserCode    string
 		UserName    string
-		OrderItemID int64
+		OrderItemID string
 		Quantity    int
 	}
 	snoClients := []SNOClient{}
 	for rowsClients.Next() {
-		var userCode, userName sql.NullString
-		var orderItemID sql.NullInt64
+		var userCode, userName, orderItemID sql.NullString
 		var quantity sql.NullInt64
 		if err := rowsClients.Scan(&userCode, &userName, &orderItemID, &quantity); err != nil {
 			return nil, err
@@ -519,7 +518,7 @@ AND ds.merchant_id = ?`
 		snoClients = append(snoClients, SNOClient{
 			UserCode:    userCode.String,
 			UserName:    userName.String,
-			OrderItemID: orderItemID.Int64,
+			OrderItemID: orderItemID.String,
 			Quantity:    int(quantity.Int64),
 		})
 	}
@@ -750,7 +749,7 @@ AND ds.merchant_id = ?`
 		}
 
 		// products attached to this order
-		actualProducts := []models.OrderProduct{}
+		actualProducts := []models.ProductEntry{}
 		for _, p := range productsMap {
 			if p.OrderID == ord.OrderID {
 				// customers (SNO) attach
@@ -906,6 +905,13 @@ func nullFloat64Ptr(f sql.NullFloat64) *float64 {
 	return nil
 }
 func nilIfNullFloat64(discountID sql.NullInt64, price float64) *float64 {
+	if !discountID.Valid {
+		return nil
+	}
+	v := price
+	return &v
+}
+func nilIfNullInt64Discount(discountID sql.NullInt64, price int64) *int64 {
 	if !discountID.Valid {
 		return nil
 	}

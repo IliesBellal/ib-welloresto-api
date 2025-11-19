@@ -55,7 +55,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	defer catRows.Close()
 
 	type catTmp struct {
-		ID    int64
+		ID    *string
 		Name  string
 		Order int
 		Bg    sql.NullString
@@ -90,16 +90,16 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	defer prodRows.Close()
 
 	// map productID -> ProductEntry
-	products := make(map[int64]*models.ProductEntry)
-	var productOrder []int64
+	products := make(map[string]*models.ProductEntry)
+	var productOrder []string
 	for prodRows.Next() {
 		var p models.ProductEntry
-		var tvaIn, tvaDel, tvaTake sql.NullFloat64
+		var tvaIn, tvaDel, tvaTake sql.NullInt64
 		var bg sql.NullString
 		var hasImage bool
 		var desc sql.NullString
 		var imageURL sql.NullString
-		var availIn, availTake, availDel sql.NullString
+		var availIn, availTake, availDel sql.NullBool
 		var isPopular sql.NullBool
 
 		if err := prodRows.Scan(&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
@@ -109,13 +109,13 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 			return nil, err
 		}
 		if tvaIn.Valid {
-			p.TVAIn = &tvaIn.Float64
+			p.TVAIn = tvaIn.Int64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = &tvaDel.Float64
+			p.TVADelivery = tvaDel.Int64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = &tvaTake.Float64
+			p.TVATakeAway = tvaTake.Int64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String
@@ -130,13 +130,13 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 			p.IsPopular = isPopular.Bool
 		}
 		if availIn.Valid {
-			p.AvailableIn = &availIn.String
+			p.AvailableIn = availIn.Bool
 		}
 		if availTake.Valid {
-			p.AvailableTakeAway = &availTake.String
+			p.AvailableTakeAway = availTake.Bool
 		}
 		if availDel.Valid {
-			p.AvailableDelivery = &availDel.String
+			p.AvailableDelivery = availDel.Bool
 		}
 
 		products[p.ProductID] = &p
@@ -159,11 +159,11 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	}
 	defer subRows.Close()
 
-	subProducts := make(map[int64]*models.ProductEntry)
+	subProducts := make(map[string]*models.ProductEntry)
 	for subRows.Next() {
 		var p models.ProductEntry
-		var by sql.NullInt64
-		var tvaIn, tvaDel, tvaTake sql.NullFloat64
+		var by sql.NullString
+		var tvaIn, tvaDel, tvaTake sql.NullInt64
 		var bg sql.NullString
 		var desc sql.NullString
 		if err := subRows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
@@ -171,17 +171,16 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 			return nil, err
 		}
 		if by.Valid {
-			v := int64(by.Int64)
-			p.ByProductOf = &v
+			p.ByProductOf = &by.String
 		}
 		if tvaIn.Valid {
-			p.TVAIn = &tvaIn.Float64
+			p.TVAIn = tvaIn.Int64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = &tvaDel.Float64
+			p.TVADelivery = tvaDel.Int64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = &tvaTake.Float64
+			p.TVATakeAway = tvaTake.Int64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String
@@ -211,9 +210,9 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		ProductID int64
 		Comp      models.ComponentUsage
 	}
-	compMap := make(map[int64][]models.ComponentUsage)
+	compMap := make(map[string][]models.ComponentUsage)
 	for compRows.Next() {
-		var productID int64
+		var productID string
 		var c models.ComponentUsage
 		var uom sql.NullString
 		if err := compRows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
@@ -256,9 +255,9 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	}
 	defer optRows.Close()
 
-	optMap := make(map[int64][]models.ConfigurableOption)
+	optMap := make(map[string][]models.ConfigurableOption)
 	for optRows.Next() {
-		var cfgID int64
+		var cfgID string
 		var o models.ConfigurableOption
 		if err := optRows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
 			tx.Rollback()
@@ -267,7 +266,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 		optMap[cfgID] = append(optMap[cfgID], o)
 	}
 
-	attrMap := make(map[int64][]models.ConfigurableAttribute)
+	attrMap := make(map[string][]models.ConfigurableAttribute)
 	for attrRows.Next() {
 		var a models.ConfigurableAttribute
 		if err := attrRows.Scan(&a.ID, &a.ProductID, &a.Title, &a.MaxOptions, &a.AttributeType, &a.MinOptions); err != nil {

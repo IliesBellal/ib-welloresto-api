@@ -8,29 +8,29 @@ import "time"
 //
 
 type OrderProductExtra struct {
-	ID          int64   `json:"id"`
-	OrderItemID int64   `json:"order_item_id"`
-	OrderID     int64   `json:"order_id"`
-	ProductID   int64   `json:"product_id"`
+	ID          string  `json:"id"`
+	OrderItemID string  `json:"order_item_id"`
+	OrderID     string  `json:"order_id"`
+	ProductID   string  `json:"product_id"`
 	Name        string  `json:"name"`
-	ComponentID int64   `json:"component_id"`
+	ComponentID string  `json:"component_id"`
 	Price       float64 `json:"price"`
 }
 
 type OrderProductWithout struct {
-	ID          int64  `json:"id"`
-	OrderItemID int64  `json:"order_item_id"`
-	OrderID     int64  `json:"order_id"`
-	ProductID   int64  `json:"product_id"`
+	ID          string `json:"id"`
+	OrderItemID string `json:"order_item_id"`
+	OrderID     string `json:"order_id"`
+	ProductID   string `json:"product_id"`
 	Name        string `json:"name"`
-	ComponentID int64  `json:"component_id"`
-	Price       string `json:"price"`
+	ComponentID string `json:"component_id"`
+	Price       int64  `json:"price"`
 }
 
 type ProductComponent struct {
 	ComponentID   int64   `json:"component_id"`
 	Name          string  `json:"name"`
-	ProductID     int64   `json:"product_id"`
+	ProductID     string  `json:"product_id"`
 	Price         float64 `json:"price"`
 	Quantity      float64 `json:"quantity"`
 	UnitOfMeasure string  `json:"unit_of_measure"`
@@ -39,8 +39,8 @@ type ProductComponent struct {
 
 type ProductConfigurationOption struct {
 	ID                int64   `json:"id"`
-	ConfigAttributeID int64   `json:"configurable_attribute_id"`
-	OrderItemID       int64   `json:"order_item_id"`
+	ConfigAttributeID string  `json:"configurable_attribute_id"`
+	OrderItemID       string  `json:"order_item_id"`
 	Title             string  `json:"title"`
 	ExtraPrice        float64 `json:"extra_price"`
 	Quantity          int     `json:"quantity"`
@@ -57,6 +57,7 @@ type ProductConfigurationAttribute struct {
 	Options       []ProductConfigurationOption `json:"options"`
 }
 
+/*
 type OrderProduct struct {
 	OrderID                      int64                 `json:"order_id"`
 	OrderItemID                  int64                 `json:"order_item_id"`
@@ -96,6 +97,8 @@ type OrderProduct struct {
 		Attributes []ProductConfigurationAttribute `json:"attributes"`
 	} `json:"configuration"`
 }
+
+*/
 
 type Payment struct {
 	OrderID     int64      `json:"order_id"`
@@ -174,7 +177,7 @@ type Order struct {
 	Payments         []Payment      `json:"payments"`
 	Responsible      *Responsible   `json:"responsible"`
 	Location         []Location     `json:"location"`
-	Products         []OrderProduct `json:"products"`
+	Products         []ProductEntry `json:"products"`
 	Priority         *int64         `json:"priority"`
 	CreationDate     *time.Time     `json:"creation_date"`
 	FulfillmentType  *string        `json:"fulfillment_type"`

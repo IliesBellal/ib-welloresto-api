@@ -14,7 +14,7 @@ type MenuResponse struct {
 // product category (type)
 type ProductCategory struct {
 	Category   string         `json:"category"`
-	CategoryID int64          `json:"category_id"`
+	CategoryID *string        `json:"category_id"`
 	Order      int            `json:"order"`
 	BgColor    *string        `json:"bg_color,omitempty"`
 	Products   []ProductEntry `json:"products"`
@@ -22,37 +22,58 @@ type ProductCategory struct {
 
 // product
 type ProductEntry struct {
-	ProductID         int64                `json:"product_id"`
-	ByProductOf       *int64               `json:"by_product_of,omitempty"`
-	HasImage          bool                 `json:"has_image"`
-	ImageURL          *string              `json:"image_url,omitempty"`
-	IsPopular         bool                 `json:"is_popular"`
-	IsAvailableOnSNO  bool                 `json:"is_available_on_sno"`
-	Name              string               `json:"name"`
-	Components        []ComponentUsage     `json:"components"`
-	Description       *string              `json:"description,omitempty"`
-	Price             int                  `json:"price"`
-	PriceTakeAway     int                  `json:"price_take_away"`
-	PriceDelivery     int                  `json:"price_delivery"`
-	TVAIn             *float64             `json:"tva_rate_in,omitempty"`
-	TVADelivery       *float64             `json:"tva_rate_delivery,omitempty"`
-	TVATakeAway       *float64             `json:"tva_rate_take_away,omitempty"`
-	AvailableIn       *string              `json:"available_in,omitempty"`
-	AvailableTakeAway *string              `json:"available_take_away,omitempty"`
-	AvailableDelivery *string              `json:"available_delivery,omitempty"`
-	Category          int64                `json:"category"`
-	IsProductGroup    bool                 `json:"is_product_group"`
-	BgColor           *string              `json:"bg_color,omitempty"`
-	Status            int                  `json:"status"`
-	SubProducts       []ProductEntry       `json:"sub_products"`
-	Configuration     ConfigurableResponse `json:"configuration"`
+	OrderID                      int64                `json:"order_id,omitempty"`
+	OrderItemID                  string               `json:"order_item_id"`
+	ProductID                    string               `json:"product_id"`
+	OrderedOn                    *time.Time           `json:"ordered_on,omitempty"`
+	ProductionStatus             string               `json:"production_status,omitempty"`
+	ProductionStatusDoneQuantity int                  `json:"production_status_done_quantity,omitempty"`
+	Name                         string               `json:"name"`
+	HasImage                     bool                 `json:"has_image,omitempty"`
+	ByProductOf                  *string              `json:"by_product_of,omitempty"`
+	ImageURL                     *string              `json:"image_url,omitempty"`
+	IsPopular                    bool                 `json:"is_popular,omitempty"`
+	IsAvailableOnSNO             bool                 `json:"is_available_on_sno,omitempty"`
+	Components                   []ComponentUsage     `json:"components,omitempty"`
+	Description                  *string              `json:"description,omitempty"`
+	Price                        int64                `json:"price"`
+	PriceTakeAway                int64                `json:"price_take_away"`
+	PriceDelivery                int64                `json:"price_delivery"`
+	TVAIn                        int64                `json:"tva_rate_in,omitempty"`
+	TVADelivery                  int64                `json:"tva_rate_delivery,omitempty"`
+	TVATakeAway                  int64                `json:"tva_rate_take_away,omitempty"`
+	AvailableIn                  bool                 `json:"available_in,omitempty"`
+	AvailableTakeAway            bool                 `json:"available_take_away,omitempty"`
+	AvailableDelivery            bool                 `json:"available_delivery,omitempty"`
+	Category                     *string              `json:"category"`
+	IsProductGroup               bool                 `json:"is_product_group"`
+	BgColor                      *string              `json:"bg_color,omitempty"`
+	Status                       int                  `json:"status"`
+	SubProducts                  []ProductEntry       `json:"sub_products"`
+	Configuration                ConfigurableResponse `json:"configuration"`
+	Quantity                     int                  `json:"quantity"`
+	PaidQuantity                 int                  `json:"paid_quantity"`
+	DistributedQuantity          int                  `json:"distributed_quantity"`
+	ReadyForDistributionQuantity int                  `json:"ready_for_distribution_quantity"`
+
+	IsPaid          int                   `json:"isPaid"`
+	IsDistributed   int                   `json:"isDistributed"`
+	DiscountID      *int64                `json:"discount_id"`
+	DiscountName    *string               `json:"discount_name"`
+	DiscountedPrice *int64                `json:"discounted_price"`
+	ProductionColor *string               `json:"production_color"`
+	Extra           []OrderProductExtra   `json:"extra"`
+	Without         []OrderProductWithout `json:"without"`
+	Customers       []interface{}         `json:"customers"` // keep generic as original
+	Comment         interface{}           `json:"comment"`
 }
 
 // components required
 type ComponentUsage struct {
 	ComponentID   int64   `json:"component_id"`
+	ProductID     string  `json:"product_id,omitempty"`
 	Name          string  `json:"name"`
-	Price         int     `json:"price"`
+	Price         int64   `json:"price"`
 	Status        int     `json:"status"`
 	Quantity      float64 `json:"quantity"`
 	UnitOfMeasure string  `json:"unit_of_measure"`
@@ -79,8 +100,9 @@ type ConfigurableResponse struct {
 }
 
 type ConfigurableAttribute struct {
-	ID            int64                `json:"id"`
-	ProductID     int64                `json:"product_id"`
+	ID            string               `json:"id"`
+	ProductID     string               `json:"product_id"`
+	OrderItemID   string               `json:"order_item_id"`
 	Title         string               `json:"title"`
 	MaxOptions    int                  `json:"max_options"`
 	MinOptions    int                  `json:"min_options"`
@@ -89,10 +111,14 @@ type ConfigurableAttribute struct {
 }
 
 type ConfigurableOption struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	ExtraPrice  int    `json:"extra_price"`
-	MaxQuantity int    `json:"max_quantity"`
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	ExtraPrice        int    `json:"extra_price"`
+	MaxQuantity       int    `json:"max_quantity"`
+	ConfigAttributeID string `json:"configurable_attribute_id"`
+	OrderItemID       string `json:"order_item_id"`
+	Quantity          int    `json:"quantity"`
+	Selected          int    `json:"selected"`
 }
 
 // delays

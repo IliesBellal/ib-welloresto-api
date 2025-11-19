@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/models"
 )
 
 type UserRepository struct {
@@ -13,90 +14,7 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
-type UserLoginRow struct {
-	// user
-	UserID               string
-	Name                 string
-	FirstName            string
-	LastName             string
-	Email                string
-	Tel                  string
-	Enabled              bool
-	PinCode              sql.NullString
-	ProfilePicture       sql.NullString
-	ReceptionDeviceToken sql.NullString
-	WaiterDeviceToken    sql.NullString
-	DeliveryDeviceToken  sql.NullString
-
-	// rights
-	RightsToken             string
-	AccessReception         bool
-	AccessDelivery          bool
-	AccessWaiter            bool
-	PrintMerchantCashReport bool
-	OpenCashDrawer          bool
-	MerchantID              string
-
-	// merchant
-	MerchantName    string
-	MerchantTel     string
-	MerchantLat     float64
-	MerchantLng     float64
-	TimeZone        string
-	MerchantAddress string
-	MerchantLogo    sql.NullString
-	WebSite         sql.NullString
-
-	// merchant parameters
-	DeliveryFees               int
-	DeliveryFeesLimit          int
-	DeliveryDistanceLimit      int
-	ManageOnSite               bool
-	ManageTakeAway             bool
-	ManageDelivery             bool
-	KitchenShowOnlyPaid        bool
-	ServiceRequiredForOrdering bool
-	WarningNewOrderNotPaid     bool
-	DisableSafetyStock         bool
-	Currency                   string
-	IsOpen                     bool
-
-	// subscription / package
-	AllowWaiterAccount   bool
-	AllowDeliveryAccount bool
-	ScanNOrderReady      bool
-	StockManagement      int
-	HrManagement         bool
-
-	// SNO
-	SNOActivated bool
-
-	// integrations: Uber Eats
-	UEStoreID       sql.NullString
-	UEPrepTime      sql.NullString
-	UEDelayUntil    sql.NullTime
-	UEDelayDuration sql.NullInt64
-	UEClosedUntil   sql.NullTime
-
-	// Uber Direct
-	UDCustomerID sql.NullString
-
-	// Deliveroo
-	DrooLocationID sql.NullString
-}
-
-type MerchantRow struct {
-	ID       int64
-	FullName string
-	Lat      float64
-	Lng      float64
-	Address  string
-	City     string
-	Country  string
-	ZipCode  string
-}
-
-func (r *UserRepository) Login(ctx context.Context, username, encryptedPwd, plainPwd, token string) (*UserLoginRow, error) {
+func (r *UserRepository) Login(ctx context.Context, username, encryptedPwd, plainPwd, token string) (*models.UserLoginRow, error) {
 	query := `
 SELECT
     u.user_id,
@@ -184,7 +102,7 @@ LIMIT 1;
 		token,
 	)
 
-	data := &UserLoginRow{}
+	data := &models.UserLoginRow{}
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
@@ -220,7 +138,7 @@ LIMIT 1;
 	return data, err
 }
 
-func (r *UserRepository) GetMerchants(ctx context.Context, userID string) ([]MerchantRow, error) {
+func (r *UserRepository) GetMerchants(ctx context.Context, userID string) ([]models.MerchantRow, error) {
 	query := `
 SELECT 
     m.id,
@@ -242,16 +160,16 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 
 	defer rows.Close()
 
-	var list []MerchantRow
+	var list []models.MerchantRow
 	for rows.Next() {
-		var m MerchantRow
+		var m models.MerchantRow
 		rows.Scan(&m.ID, &m.FullName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode)
 		list = append(list, m)
 	}
 	return list, nil
 }
 
-func (r *UserRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
+func (r *UserRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -336,7 +254,7 @@ LIMIT 1;
 
 	row := r.db.QueryRowContext(ctx, query, token, token)
 
-	data := &UserLoginRow{}
+	data := &models.UserLoginRow{}
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,

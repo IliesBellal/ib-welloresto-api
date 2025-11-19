@@ -66,7 +66,7 @@ func (r *OptimizedMenuRepository) GetMenu(ctx context.Context, merchantID string
 	defer catRows.Close()
 
 	type catTmp struct {
-		ID    int64
+		ID    *string
 		Name  string
 		Order int
 		Bg    sql.NullString
@@ -120,18 +120,18 @@ ORDER BY p.by_product_of IS NOT NULL, p.category, p.name ASC
 	}
 	defer prodRows.Close()
 
-	products := make(map[int64]*models.ProductEntry)
+	products := make(map[string]*models.ProductEntry)
 	subProducts := make([]*models.ProductEntry, 0)
 
 	for prodRows.Next() {
 		var p models.ProductEntry
 
-		var by sql.NullInt64
+		var by sql.NullString
 		var desc sql.NullString
 		var bg sql.NullString
-		var tvaIn, tvaDel, tvaTake sql.NullFloat64
+		var tvaIn, tvaDel, tvaTake sql.NullInt64
 		var imgURL sql.NullString
-		var availIn, availTA, availDel sql.NullString
+		var availIn, availTA, availDel sql.NullBool
 		var isPopular sql.NullBool
 		var hasImage bool
 
@@ -164,20 +164,20 @@ ORDER BY p.by_product_of IS NOT NULL, p.category, p.name ASC
 		}
 
 		if by.Valid {
-			v := by.Int64
+			v := by.String
 			p.ByProductOf = &v
 		}
 		if desc.Valid {
 			p.Description = &desc.String
 		}
 		if tvaIn.Valid {
-			p.TVAIn = &tvaIn.Float64
+			p.TVAIn = tvaIn.Int64
 		}
 		if tvaDel.Valid {
-			p.TVADelivery = &tvaDel.Float64
+			p.TVADelivery = tvaDel.Int64
 		}
 		if tvaTake.Valid {
-			p.TVATakeAway = &tvaTake.Float64
+			p.TVATakeAway = tvaTake.Int64
 		}
 		if bg.Valid {
 			p.BgColor = &bg.String
@@ -186,13 +186,13 @@ ORDER BY p.by_product_of IS NOT NULL, p.category, p.name ASC
 			p.ImageURL = &imgURL.String
 		}
 		if availIn.Valid {
-			p.AvailableIn = &availIn.String
+			p.AvailableIn = availIn.Bool
 		}
 		if availTA.Valid {
-			p.AvailableTakeAway = &availTA.String
+			p.AvailableTakeAway = availTA.Bool
 		}
 		if availDel.Valid {
-			p.AvailableDelivery = &availDel.String
+			p.AvailableDelivery = availDel.Bool
 		}
 		if isPopular.Valid {
 			p.IsPopular = isPopular.Bool
@@ -233,9 +233,9 @@ WHERE c.merchant_id = ? AND c.available = 1
 	}
 	defer reqRows.Close()
 
-	compMap := make(map[int64][]models.ComponentUsage)
+	compMap := make(map[string][]models.ComponentUsage)
 	for reqRows.Next() {
-		var pid int64
+		var pid string
 		var cu models.ComponentUsage
 		var uom sql.NullString
 
@@ -295,17 +295,17 @@ ORDER BY pca.product_id, pca.num_order ASC
 	type tempAttr struct {
 		Attr models.ConfigurableAttribute
 	}
-	tmp := make(map[int64]map[int64]*models.ConfigurableAttribute)
+	tmp := make(map[string]map[string]*models.ConfigurableAttribute)
 
 	for attrRows.Next() {
 		var (
-			attrID    int64
-			productID int64
+			attrID    string
+			productID string
 			title     string
 			maxOps    int
 			minOps    int
 			attrType  string
-			optID     sql.NullInt64
+			optID     sql.NullString
 			optTitle  sql.NullString
 			optPrice  sql.NullInt64
 			optMaxQty sql.NullInt64
@@ -321,7 +321,7 @@ ORDER BY pca.product_id, pca.num_order ASC
 		}
 
 		if tmp[productID] == nil {
-			tmp[productID] = make(map[int64]*models.ConfigurableAttribute)
+			tmp[productID] = make(map[string]*models.ConfigurableAttribute)
 		}
 		if _, exists := tmp[productID][attrID]; !exists {
 			tmp[productID][attrID] = &models.ConfigurableAttribute{
@@ -337,7 +337,7 @@ ORDER BY pca.product_id, pca.num_order ASC
 
 		if optID.Valid {
 			tmp[productID][attrID].Options = append(tmp[productID][attrID].Options, models.ConfigurableOption{
-				ID:          optID.Int64,
+				ID:          optID.String,
 				Title:       optTitle.String,
 				ExtraPrice:  int(optPrice.Int64),
 				MaxQuantity: int(optMaxQty.Int64),
