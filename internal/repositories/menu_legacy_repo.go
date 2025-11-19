@@ -41,7 +41,9 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	// helper to run a query with per-query timeout and logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
 		// per-query timeout short (diagnostic). Adjust if necessary.
-		qctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		// qctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		qctx := ctx
+		cancel := func() {}
 		defer cancel()
 		r.log.Info("Query START", zap.String("step", step))
 		t0 := time.Now()

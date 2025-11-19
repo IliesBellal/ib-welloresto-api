@@ -15,7 +15,7 @@ func NewMySQL(dsn string) (*sql.DB, error) {
 
 	// ❗ Hostinger: 1 connexion MAX
 	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxIdleConns(0)
 
 	// Limite basse pour éviter les connexions zombie
 	db.SetConnMaxLifetime(2 * time.Minute)
