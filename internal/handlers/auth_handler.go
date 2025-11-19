@@ -15,6 +15,7 @@ func NewAuthHandler(s *services.AuthService) *AuthHandler {
 	return &AuthHandler{svc: s}
 }
 
+// Can be used with user and pwd, with token in get, or token in authorization
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	app := r.URL.Query().Get("app")

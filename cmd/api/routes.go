@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"welloresto-api/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -10,7 +9,7 @@ import (
 	"welloresto-api/internal/config"
 
 	"welloresto-api/internal/handlers"
-	// "welloresto-api/internal/middleware"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/repositories"
 	"welloresto-api/internal/services"
 )
@@ -25,26 +24,39 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	// --- Repositories ---
 	userRepo := repositories.NewUserRepository(mysqlDB)
 	posRepo := repositories.NewPOSRepository(mysqlDB)
+	deviceRepo := repositories.NewDeviceRepository(mysqlDB)
+	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
 	posService := services.NewPOSService(userRepo, posRepo)
+	deviceService := services.NewDeviceService(userRepo, deviceRepo)
+	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
 	posHandler := handlers.NewPOSHandler(posService)
+	deviceHandler := handlers.NewDeviceHandler(deviceService)
+	appVersionHandler := handlers.NewAppVersionHandler(appVersionService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
 
 	r.Route("/auth", func(r chi.Router) {
 		r.Get("/login", authHandler.Login)
-		r.Get("/logintoken", authHandler.Login) // compatibilité API existante
 	})
 
 	r.Route("/pos", func(r chi.Router) {
 		r.Get("/status", posHandler.GetPOSStatus)
 		r.Patch("/status", posHandler.UpdatePOSStatus)
+	})
+
+	r.Route("/device", func(r chi.Router) {
+		r.Post("/token", deviceHandler.SaveDeviceToken)
+	})
+
+	r.Route("/app", func(r chi.Router) {
+		r.Post("/version/check", appVersionHandler.CheckAppVersion)
 	})
 
 	return r
