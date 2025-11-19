@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -20,6 +22,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	// r.Use(middleware.RequestLogger(log))
 	// r.Use(middleware.Recoverer)
 	r.Use(middleware.ExtractToken)
+
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			next.ServeHTTP(w, r)
+			log.Info("request completed",
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
+				zap.Duration("duration", time.Since(start)),
+			)
+		})
+	})
 
 	// --- Repositories ---
 	userRepo := repositories.NewUserRepository(mysqlDB)
