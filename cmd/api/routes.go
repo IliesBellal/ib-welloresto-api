@@ -27,17 +27,26 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deviceRepo := repositories.NewDeviceRepository(mysqlDB)
 	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
 
+	menuRepoOpti := repositories.NewOptimizedMenuRepository(mysqlDB)
+	menuRepoLegacy := repositories.NewLegacyMenuRepository(mysqlDB)
+
+	ordersRepo := repositories.NewLegacyOrdersRepository(mysqlDB)
+
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
 	posService := services.NewPOSService(userRepo, posRepo)
 	deviceService := services.NewDeviceService(userRepo, deviceRepo)
 	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
+	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpti, false)
+	ordersService := services.NewOrdersService(ordersRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
 	posHandler := handlers.NewPOSHandler(posService)
 	deviceHandler := handlers.NewDeviceHandler(deviceService)
 	appVersionHandler := handlers.NewAppVersionHandler(appVersionService)
+	menuHandler := handlers.NewMenuHandler(menuService)
+	ordersHandler := handlers.NewOrdersHandler(ordersService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -57,6 +66,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r.Route("/app", func(r chi.Router) {
 		r.Post("/version/check", appVersionHandler.CheckAppVersion)
+	})
+
+	r.Route("/menu", func(r chi.Router) {
+		r.Get("/", menuHandler.GetMenu)
+	})
+
+	r.Route("/orders", func(r chi.Router) {
+		r.Get("/pending", ordersHandler.GetPendingOrders) // GET /orders/pending
+	})
+
+	r.Route("/delivery_session", func(r chi.Router) {
+		r.Get("/pending", ordersHandler.GetDeliverySessions) // GET /delivery/sessions
 	})
 
 	return r

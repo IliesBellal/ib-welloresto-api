@@ -3,15 +3,15 @@ package config
 import "os"
 
 type Config struct {
-    Port     string
-    MySQLURL string
+	Port     string
+	MySQLURL string
 }
 
 func Load() Config {
-    return Config{
-        Port:     getEnv("PORT", "8080"),
-        MySQLURL: os.Getenv("MYSQL_URL"),
-    }
+	return Config{
+		Port:     getEnv("PORT", "8080"),
+		MySQLURL: os.Getenv("MYSQL_URL"),
+	}
 }
 
 func getEnv(key, fallback string) string {
