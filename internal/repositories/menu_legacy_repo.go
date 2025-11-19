@@ -235,7 +235,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	       c.status, rq.quantity, uomd.uom_desc
 	FROM components c
 	INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled = TRUE
-	INNER JOIN recipes rON r.recipe_id = rq.recipe_id
+	INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
 	INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
 	WHERE c.merchant_id = ? AND c.available = 1
 	`, merchantID)
