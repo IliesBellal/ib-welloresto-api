@@ -42,7 +42,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
 
 	menuRepoOpti := repositories.NewOptimizedMenuRepository(mysqlDB)
-	menuRepoLegacy := repositories.NewLegacyMenuRepository(mysqlDB)
+	menuRepoLegacy := repositories.NewLegacyMenuRepository(mysqlDB, log)
 
 	ordersRepo := repositories.NewLegacyOrdersRepository(mysqlDB)
 
