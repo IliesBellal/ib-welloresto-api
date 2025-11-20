@@ -10,7 +10,6 @@ import (
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 type OrdersRepository struct {
@@ -28,97 +27,701 @@ func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
 
 // GetPendingOrders : Récupère toutes les commandes en cours (Optimisé)
 func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
+	startTotal := time.Now()
 	r.log.Info("GetPendingOrders START", zap.String("merchant_id", merchantID))
 
-	// On a besoin du repo session pour récupérer les sessions à la fin
-	deliverySessionRepo := NewDeliverySessionsRepository(r.db, r.log)
+	// BEGIN READ-ONLY TX
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		r.log.Error("BeginTx failed", zap.Error(err))
+		return nil, fmt.Errorf("BeginTx failed: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
-	// ========================================================================
-	// ÉTAPE 1 : OPTIMISATION - Récupérer les IDs d'abord
-	// ========================================================================
+	// Helper: runQuery (using tx and parent ctx)
+	runQuery := func(step string, q string, args ...interface{}) (*sql.Rows, error) {
+		r.log.Info("Query START", zap.String("step", step))
+		t0 := time.Now()
+		rows, err := tx.QueryContext(ctx, q, args...)
+		elapsed := time.Since(t0)
+		if err != nil {
+			r.log.Error("Query ERROR", zap.String("step", step), zap.Duration("elapsed", elapsed), zap.Error(err))
+			return nil, fmt.Errorf("%s query error: %w", step, err)
+		}
+		r.log.Info("Query DONE", zap.String("step", step), zap.Duration("elapsed", elapsed))
+		return rows, nil
+	}
 
-	// 1.a. On construit la clause WHERE complexe ici
+	// ============== Step 0 : build main filter & fetch order ids (like your optimized path) ==============
 	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL) "
-
-	// Ajout filtre APP
 	if app == "1" || app == "WR_DELIVERY" {
 		criteria += " AND o.order_type = 'DELIVERY' AND o.fulfillment_type = 'DELIVERY_BY_RESTAURANT' "
 	} else if app == "2" || app == "WR_WAITER" {
 		criteria += " AND o.order_type NOT IN ('DELIVERY','TAKE_AWAY') "
 	}
 
-	// 1.b. Requête légère pour récupérer UNIQUEMENT les IDs
-	// On doit inclure les JOINs ici pour que le filtre fonctionne (alias 'o' et 'ds')
 	qIDs := `SELECT DISTINCT o.order_id
              FROM orders o
              LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
              LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
              WHERE o.merchant_id = ? ` + criteria
 
-	rows, err := r.db.QueryContext(ctx, qIDs, merchantID)
+	rowsIDs, err := runQuery("ids", qIDs, merchantID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
+	defer rowsIDs.Close()
 
 	var orderIDs []string
-	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
+	for rowsIDs.Next() {
+		var oid sql.NullString
+		if err := rowsIDs.Scan(&oid); err != nil {
+			r.log.Error("scan id failed", zap.Error(err))
 			return nil, err
 		}
-		orderIDs = append(orderIDs, oid)
+		if oid.Valid {
+			orderIDs = append(orderIDs, oid.String)
+		}
 	}
 
-	// ========================================================================
-	// CAS VIDE : Si aucune commande ne correspond, on sort tout de suite
-	// ========================================================================
 	if len(orderIDs) == 0 {
-		// On retourne vide, mais on récupère quand même les sessions vides si nécessaire,
-		// ou on retourne tout vide. Selon ton besoin métier.
-		// Ici je retourne tout vide pour être rapide.
+		// commit read-only tx and return empty result
+		if err := tx.Commit(); err != nil {
+			r.log.Error("tx.Commit failed", zap.Error(err))
+			return nil, err
+		}
+		committed = true
+		r.log.Info("GetPendingOrders END - no orders", zap.Duration("total_elapsed", time.Since(startTotal)))
 		return &models.PendingOrdersResponse{
 			Orders:           []models.Order{},
 			DeliverySessions: []models.DeliverySession{},
 		}, nil
 	}
 
-	// ========================================================================
-	// ÉTAPE 2 : Appeler le constructeur avec le filtre OPTIMISÉ (IN)
-	// ========================================================================
-
-	// Construction de la chaîne "IN ('id1', 'id2')"
+	// Build IN list
 	idsStr := ""
-	for i, oid := range orderIDs {
+	for i, id := range orderIDs {
 		if i > 0 {
 			idsStr += ","
 		}
-		idsStr += fmt.Sprintf("'%s'", oid)
+		idsStr += fmt.Sprintf("'%s'", id)
 	}
+	additionalFilter := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
 
-	// Le filtre magique qui va rendre les 11 requêtes suivantes instantanées
-	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
+	// ==================== Now run the queries sequentially (same order as PHP) ====================
 
-	orders, err := r.fetchAndBuildOrders(ctx, merchantID, filterOptimized)
+	// 1) Header
+	qHeader := `
+		SELECT o.order_id, o.order_num, o.order_type, o.state, o.scheduled, o.brand, o.brand_status, o.brand_order_id, o.brand_order_num, o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT, o.monnaie, o.cutlery_notes,
+		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery, o.merchant_approval, o.delivery_fees, o.last_update, o.fulfillment_type, o.use_customer_temporary_address, o.creation_date, o.places_settings, o.pager_number,
+		c.customer_id, c.customer_name, c.customer_tel, c.customer_lat, c.customer_lng, c.customer_temporary_phone, c.customer_temporary_phone_code, c.customer_nb_orders, c.customer_zone_code,
+		c.customer_address, c.customer_floor_number, c.customer_door_number, c.customer_additional_address, c.customer_business_name, c.customer_birthdate, c.customer_additional_info,
+		c.customer_temporary_address, c.customer_temporary_lat, c.customer_temporary_lng, c.customer_temporary_floor_number, c.customer_temporary_door_number, c.customer_temporary_additional_address,
+		u.user_id, u.lat, u.lng, u.tel as deliveryTel, u.userName,
+		ds.id as delivery_session_id, dso.priority
+		FROM orders o
+		LEFT JOIN customer c ON o.customer_id = c.customer_id
+		LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+		WHERE o.merchant_id = ? ` + additionalFilter
+
+	rowsHeader, err := runQuery("1_Headers", qHeader, merchantID)
 	if err != nil {
 		return nil, err
 	}
+	defer rowsHeader.Close()
 
-	// ========================================================================
-	// ÉTAPE 3 : Récupérer les sessions et finaliser
-	// ========================================================================
+	// 2) Products
+	qProducts := `
+		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id, oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity, oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
+		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
+		p.available_in, p.available_take_away, p.available_delivery
+		FROM orders o
+		INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
+		INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
+		LEFT JOIN productcateg pc ON pc.merchant_id = oi.merchant_id AND p.category = pc.merchant_categ_id
+		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
+		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
+		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
+		LEFT JOIN discounts d ON d.discount_id = oi.discount_id
+		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE oi.quantity > 0 AND o.merchant_id = ? ` + additionalFilter
 
-	// Récupérer les sessions (spécifique à cet endpoint)
-	// Note : comme on est dans le même package 'repositories', on a accès aux méthodes privées (minuscule)
-	sessions, err := deliverySessionRepo.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")
+	rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
 	if err != nil {
 		return nil, err
 	}
+	defer rowsProducts.Close()
 
-	// Assemblage final
+	// 3) Components (requires)
+	qComponents := `
+		SELECT r.product_id, c.component_id, c.name, c.component_price as price, c.status, rq.quantity, uomd.uom_desc
+		FROM components c
+		INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled IS TRUE
+		INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
+		WHERE c.merchant_id = ? AND c.available = '1' AND rq.enabled IS TRUE
+	`
+	rowsComponents, err := runQuery("3_Components", qComponents, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsComponents.Close()
+
+	// 4) Extras
+	qExtras := `
+		SELECT e.order_item_id, e.id, e.order_id, e.product_id, ce.name, e.component_id, e.price
+		FROM orders o
+		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
+		INNER JOIN extra e on e.order_item_id = oi.order_item_id
+		INNER JOIN components ce on e.component_id = ce.component_id and ce.merchant_id = o.merchant_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsExtras, err := runQuery("4_Extras", qExtras, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsExtras.Close()
+
+	// 5) Withouts
+	qWithouts := `
+		SELECT w.order_item_id, w.id, w.order_id, w.product_id, cw.name, w.component_id
+		FROM orders o
+		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
+		INNER JOIN without w on w.order_item_id = oi.order_item_id
+		INNER JOIN components cw on w.component_id = cw.component_id and cw.merchant_id = o.merchant_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsWithouts, err := runQuery("5_Withouts", qWithouts, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsWithouts.Close()
+
+	// 6) Payments
+	qPayments := `
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled
+		from payments p
+		INNER JOIN orders o on o.order_id = p.order_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsPayments, err := runQuery("6_Payments", qPayments, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsPayments.Close()
+
+	// 7) Clients SNO
+	qClients := `
+		SELECT DISTINCT ss.user_code, ss.user_name, oi.order_item_id, so.quantity
+		FROM orderitems oi
+		INNER JOIN session_orderitem so on so.order_item_id = oi.order_item_id
+		INNER JOIN scannorder_session ss on so.user_code = ss.user_code
+		INNER JOIN orders o ON o.order_id = oi.order_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE oi.merchant_id = ? ` + additionalFilter
+	rowsClients, err := runQuery("7_ClientsSNO", qClients, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsClients.Close()
+
+	// 8) Order Comments (top-level)
+	qOrderComments := `
+		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
+		from order_comments oc
+		inner join orders o on o.order_id = oc.order_id
+		left join users u on u.user_id = oc.user_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
+	rowsOrderComments, err := runQuery("8_OrderComments", qOrderComments, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsOrderComments.Close()
+
+	// 9) Locations
+	qLocations := `
+		SELECT ol.order_id, ol.location_id, l.location_name, l.location_desc
+		FROM orders o
+		INNER JOIN order_location ol on ol.order_id = o.order_id
+		INNER JOIN locations l on l.merchant_id = o.merchant_id and l.location_id = ol.location_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsLocations, err := runQuery("9_Locations", qLocations, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsLocations.Close()
+
+	// 10) Config Attributes
+	qConfigAttr := `
+		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
+		FROM orders o
+		INNER JOIN orderitems oi on oi.order_id = o.order_id
+		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsConfigAttr, err := runQuery("10_ConfigAttrs", qConfigAttr, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsConfigAttr.Close()
+
+	// 11) Config Options
+	qConfigAttrOptions := `
+		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price,
+		case when oic.id is null then 0 else 1 end as selected,
+		case when oic.quantity is null then 0 else oic.quantity end as quantity, cao.max_quantity
+		FROM orders o
+		INNER JOIN orderitems oi on oi.order_id = o.order_id
+		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+		INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
+		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + additionalFilter
+	rowsConfigAttrOptions, err := runQuery("11_ConfigOpts", qConfigAttrOptions, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsConfigAttrOptions.Close()
+
+	// ================ Mapping each result set into maps/slices ================
+	// Config options map keyed by (orderItemId, attrId)
+	type optKey struct {
+		OrderItemID string
+		AttrID      string
+	}
+	configurableOptionsMap := map[optKey][]models.ConfigurableOption{}
+	for rowsConfigAttrOptions.Next() {
+		var attrID, orderItemID, id, title sql.NullString
+		var extraPrice sql.NullInt64
+		var selected, quantity, maxQuantity sql.NullInt64
+		if err := rowsConfigAttrOptions.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity); err != nil {
+			r.log.Error("scan config options failed", zap.Error(err))
+			return nil, err
+		}
+		opt := models.ConfigurableOption{
+			ID:                id.String,
+			Title:             title.String,
+			ExtraPrice:        int(extraPrice.Int64),
+			MaxQuantity:       int(maxQuantity.Int64),
+			ConfigAttributeID: attrID.String,
+			OrderItemID:       orderItemID.String,
+			Quantity:          int(quantity.Int64),
+			Selected:          int(selected.Int64),
+		}
+		key := optKey{OrderItemID: orderItemID.String, AttrID: attrID.String}
+		configurableOptionsMap[key] = append(configurableOptionsMap[key], opt)
+	}
+
+	// Configurable attributes
+	configurableAttributesMap := map[string][]models.ConfigurableAttribute{}
+	for rowsConfigAttr.Next() {
+		var orderItemID, id, title, attrType sql.NullString
+		var maxOptions sql.NullInt64
+		if err := rowsConfigAttr.Scan(&orderItemID, &id, &title, &maxOptions, &attrType); err != nil {
+			r.log.Error("scan config attrs failed", zap.Error(err))
+			return nil, err
+		}
+		key := optKey{OrderItemID: orderItemID.String, AttrID: id.String}
+		opts := configurableOptionsMap[key]
+		ca := models.ConfigurableAttribute{
+			ID:            id.String,
+			OrderItemID:   orderItemID.String,
+			AttributeType: attrType.String,
+			Title:         title.String,
+			MaxOptions:    int(maxOptions.Int64),
+			Options:       opts,
+		}
+		configurableAttributesMap[orderItemID.String] = append(configurableAttributesMap[orderItemID.String], ca)
+	}
+
+	// Components (per product)
+	componentsMap := map[string][]models.ComponentUsage{}
+	for rowsComponents.Next() {
+		var productID sql.NullString
+		var compID, price, status sql.NullInt64
+		var name, uom sql.NullString
+		var qty sql.NullFloat64
+		if err := rowsComponents.Scan(&productID, &compID, &name, &price, &status, &qty, &uom); err != nil {
+			r.log.Error("scan components failed", zap.Error(err))
+			return nil, err
+		}
+		cu := models.ComponentUsage{
+			ComponentID:   compID.Int64,
+			ProductID:     productID.String,
+			Name:          name.String,
+			Price:         price.Int64,
+			Status:        int(status.Int64),
+			Quantity:      qty.Float64,
+			UnitOfMeasure: uom.String,
+		}
+		componentsMap[productID.String] = append(componentsMap[productID.String], cu)
+	}
+
+	// Extras
+	extrasMap := map[string][]models.OrderProductExtra{}
+	for rowsExtras.Next() {
+		var orderItemID, id, orderID, productID, name, compID sql.NullString
+		var price sql.NullFloat64
+		if err := rowsExtras.Scan(&orderItemID, &id, &orderID, &productID, &name, &compID, &price); err != nil {
+			r.log.Error("scan extras failed", zap.Error(err))
+			return nil, err
+		}
+		extrasMap[orderItemID.String] = append(extrasMap[orderItemID.String], models.OrderProductExtra{
+			ID:          id.String,
+			OrderItemID: orderItemID.String,
+			OrderID:     orderID.String,
+			ProductID:   productID.String,
+			Name:        name.String,
+			ComponentID: compID.String,
+			Price:       price.Float64,
+		})
+	}
+
+	// Withouts
+	withoutsMap := map[string][]models.OrderProductWithout{}
+	for rowsWithouts.Next() {
+		var orderItemID, id, orderID, productID, name, compID sql.NullString
+		if err := rowsWithouts.Scan(&orderItemID, &id, &orderID, &productID, &name, &compID); err != nil {
+			r.log.Error("scan withouts failed", zap.Error(err))
+			return nil, err
+		}
+		withoutsMap[orderItemID.String] = append(withoutsMap[orderItemID.String], models.OrderProductWithout{
+			ID:          id.String,
+			OrderItemID: orderItemID.String,
+			OrderID:     orderID.String,
+			ProductID:   productID.String,
+			Name:        name.String,
+			ComponentID: compID.String,
+			Price:       0,
+		})
+	}
+
+	// Clients SNO
+	snoClientsMap := map[string][]interface{}{}
+	for rowsClients.Next() {
+		var userCode, userName, orderItemID sql.NullString
+		var quantity sql.NullInt64
+		if err := rowsClients.Scan(&userCode, &userName, &orderItemID, &quantity); err != nil {
+			r.log.Error("scan clients sno failed", zap.Error(err))
+			return nil, err
+		}
+		clientObj := map[string]interface{}{"user_code": userCode.String, "user_name": userName.String, "quantity": quantity.Int64}
+		snoClientsMap[orderItemID.String] = append(snoClientsMap[orderItemID.String], clientObj)
+	}
+
+	// Products mapping
+	productsByOrderID := map[string][]models.ProductEntry{}
+	for rowsProducts.Next() {
+		var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty sql.NullInt64
+		var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
+		var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
+		var orderedOn, commentCreation sql.NullTime
+		var availableIn, availableTakeAway, availableDelivery sql.NullBool
+
+		if err := rowsProducts.Scan(
+			&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
+			&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
+			&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+			&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
+			&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
+			&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
+			&availableDelivery,
+		); err != nil {
+			// Diagnostic info on scan failure
+			cols, _ := rowsProducts.Columns()
+			r.log.Error("products scan failed", zap.Error(err), zap.Int("cols_count", len(cols)))
+			for i, c := range cols {
+				r.log.Error("col", zap.Int("index", i), zap.String("name", c))
+			}
+			// dump expected types
+			debugTargets := []interface{}{
+				&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
+				&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
+				&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
+				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
+				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
+				&availableDelivery,
+			}
+			for i, v := range debugTargets {
+				r.log.Error("expected target", zap.Int("idx", i), zap.String("type", reflect.TypeOf(v).String()))
+			}
+			return nil, fmt.Errorf("products.Scan failed: %w", err)
+		}
+
+		var comment interface{}
+		if commentContent.Valid {
+			comment = map[string]interface{}{"user_id": commentUserID.String, "content": commentContent.String, "creation_date": nilIfZeroTime(commentCreation)}
+		} else {
+			comment = map[string]interface{}{"user_id": nil, "content": nil, "creation_date": nil}
+		}
+
+		op := models.ProductEntry{
+			OrderID:                      orderID.String,
+			OrderItemID:                  orderItemID.String,
+			OrderedOn:                    nullTimePtr(orderedOn),
+			ProductID:                    productID.String,
+			ProductionStatus:             productionStatus.String,
+			ProductionStatusDoneQuantity: int(productionDoneQty.Int64),
+			Name:                         name.String,
+			ImageURL:                     nullStringToPtr(imageURL),
+			Category:                     nullStringToPtr(categName),
+			Description:                  nullStringToPtr(productDesc),
+			Quantity:                     int(quantity.Int64),
+			PaidQuantity:                 int(paidQuantity.Int64),
+			DistributedQuantity:          int(distributedQuantity.Int64),
+			ReadyForDistributionQuantity: int(readyForDistribution.Int64),
+			IsPaid:                       int(isPaid.Int64),
+			IsDistributed:                int(isDistributed.Int64),
+			Price:                        price.Int64,
+			PriceTakeAway:                priceTakeAway.Int64,
+			PriceDelivery:                priceDelivery.Int64,
+			DiscountID:                   nullInt64ToPtr(discountID),
+			DiscountName:                 nullStringToPtr(discountName),
+			DiscountedPrice:              nilIfNullInt64Discount(discountID, price.Int64),
+			TVAIn:                        tvaIn.Float64,
+			TVADelivery:                  tvaDelivery.Float64,
+			TVATakeAway:                  tvaTakeAway.Float64,
+			AvailableIn:                  availableIn.Bool,
+			AvailableTakeAway:            availableTakeAway.Bool,
+			AvailableDelivery:            availableDelivery.Bool,
+			ProductionColor:              nullStringToPtr(productionColor),
+			Extra:                        extrasMap[orderItemID.String],
+			Without:                      withoutsMap[orderItemID.String],
+			Components:                   componentsMap[productID.String],
+			Customers:                    snoClientsMap[orderItemID.String],
+			Comment:                      comment,
+		}
+
+		if op.Customers == nil {
+			op.Customers = []interface{}{}
+		}
+		if op.Extra == nil {
+			op.Extra = []models.OrderProductExtra{}
+		}
+		if op.Without == nil {
+			op.Without = []models.OrderProductWithout{}
+		}
+		if op.Components == nil {
+			op.Components = []models.ComponentUsage{}
+		}
+		if attrs, ok := configurableAttributesMap[orderItemID.String]; ok {
+			op.Configuration.Attributes = attrs
+		} else {
+			op.Configuration.Attributes = []models.ConfigurableAttribute{}
+		}
+
+		productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
+	}
+
+	// Payments
+	paymentsByOrderID := map[string][]models.Payment{}
+	for rowsPayments.Next() {
+		var paymentID, enabled sql.NullInt64
+		var mop, orderID sql.NullString
+		var amount sql.NullFloat64
+		var paymentDate sql.NullTime
+		if err := rowsPayments.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
+			r.log.Error("scan payments failed", zap.Error(err))
+			return nil, err
+		}
+		paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
+			OrderID:     orderID.String,
+			PaymentID:   paymentID.Int64,
+			MOP:         mop.String,
+			Amount:      amount.Float64,
+			PaymentDate: nullTimePtr(paymentDate),
+			Enabled:     int(enabled.Int64),
+		})
+	}
+
+	// Order comments (top-level)
+	commentsByOrderID := map[string][]models.OrderComment{}
+	for rowsOrderComments.Next() {
+		var id, userID sql.NullInt64
+		var content, userName, orderID sql.NullString
+		var creationDate sql.NullTime
+		if err := rowsOrderComments.Scan(&id, &userID, &content, &creationDate, &orderID, &userName); err != nil {
+			r.log.Error("scan order comments failed", zap.Error(err))
+			return nil, err
+		}
+		commentsByOrderID[orderID.String] = append(commentsByOrderID[orderID.String], models.OrderComment{
+			OrderID:      orderID.String,
+			UserName:     nullStringToPtr(userName),
+			Content:      content.String,
+			CreationDate: nullTimePtr(creationDate),
+		})
+	}
+
+	// Locations
+	locationsByOrderID := map[string][]models.Location{}
+	for rowsLocations.Next() {
+		var locationID sql.NullInt64
+		var locationName, locationDesc, orderID sql.NullString
+		if err := rowsLocations.Scan(&orderID, &locationID, &locationName, &locationDesc); err != nil {
+			r.log.Error("scan locations failed", zap.Error(err))
+			return nil, err
+		}
+		locationsByOrderID[orderID.String] = append(locationsByOrderID[orderID.String], models.Location{
+			OrderID:      orderID.String,
+			LocationID:   locationID.Int64,
+			LocationName: locationName.String,
+			LocationDesc: nullStringToPtr(locationDesc),
+		})
+	}
+
+	// Final assembly: iterate headers and attach children
+	var orders []models.Order
+	for rowsHeader.Next() {
+		var ord models.Order
+		// many null-able vars -- match SELECT order
+		var customerID, customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
+		var orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, estimatedReady, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
+		var customerLat, customerLng, customerTemporaryLat, customerTemporaryLng, userLat, userLng sql.NullFloat64
+		var lastUpdate, creationDate sql.NullTime
+		var scheduled, isPaid, isDistributed sql.NullBool
+		var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode, cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth, cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
+		var delTel, delUserName sql.NullString
+
+		if err := rowsHeader.Scan(&orderID, &orderNum, &orderType, &state, &scheduled, &brand, &brandStatus, &brandOrderID, &brandOrderNum, &estimatedReady, &meansOfPayment, &price, &TVA, &HT, &monnaie, &cutleryNotes,
+			&isPaid, &isDistributed, &dateCall, &isDelivery, &merchantApproval, &deliveryFees, &lastUpdate, &fulfillmentType, &useCustomerTemporaryAddress, &creationDate, &placesSettings, &pagerNumber,
+			&customerID, &cName, &cTel, &customerLat, &customerLng, &cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
+			&cAddr, &cFloor, &cDoor, &cAddAddr, &cBusName, &cBirth, &cInfo,
+			&cTempAddr, &customerTemporaryLat, &customerTemporaryLng, &cTempFloor, &cTempDoor, &cTempAddAddr,
+			&userID, &userLat, &userLng, &delTel, &delUserName,
+			&deliverySessionID, &priority); err != nil {
+			r.log.Error("scan header failed", zap.Error(err))
+			return nil, err
+		}
+
+		// mapping
+		ord.OrderID = orderID.String
+		ord.OrderNum = nullStringToPtr(orderNum)
+		ord.Brand = nullStringToPtr(brand)
+		ord.BrandOrderID = nullStringToPtr(brandOrderID)
+		ord.BrandOrderNum = nullStringToPtr(brandOrderNum)
+		ord.BrandStatus = nullStringToPtr(brandStatus)
+		ord.DeliverySessionID = nullStringToPtr(deliverySessionID)
+		ord.OrderType = nullStringToPtr(orderType)
+		ord.CutleryNotes = nullStringToPtr(cutleryNotes)
+		ord.State = nullStringToPtr(state)
+		ord.Scheduled = scheduled.Bool
+		ord.TTC = price.Int64
+		ord.TVA = nullInt64ToPtr(TVA)
+		ord.HT = nullInt64ToPtr(HT)
+		ord.PlacesSettings = nullInt64ToPtr(placesSettings)
+		ord.PagerNumber = nullStringToPtr(pagerNumber)
+		ord.IsPaid = isPaid.Bool
+		ord.IsDistributed = isDistributed.Bool
+		ord.IsSNO = userID.String == "-1"
+		ord.CallHour = nullStringToPtr(dateCall)
+		ord.EstimatedReady = nullStringToPtr(estimatedReady)
+		ord.IsDelivery = int(isDelivery.Int64)
+		ord.MerchantApproval = merchantApproval.String
+		ord.DeliveryFees = nullInt64ToPtr(deliveryFees)
+		ord.CreationDate = nullTimePtr(creationDate)
+		ord.FulfillmentType = nullStringToPtr(fulfillmentType)
+		ord.LastUpdate = nullTimePtr(lastUpdate)
+
+		// Customer
+		if customerID.Valid {
+			var cust models.Customer
+			cid := customerID.Int64
+			cust.CustomerID = &cid
+			cust.CustomerName = nullStringToPtr(cName)
+			cust.CustomerTel = nullStringToPtr(cTel)
+			cust.CustomerTemporaryPhone = nullStringToPtr(cTempPhone)
+			cust.CustomerTemporaryPhoneCode = nullStringToPtr(cTempPhoneCode)
+			nb := int(customerNbOrders.Int64)
+			cust.CustomerNbOrders = &nb
+			cust.CustomerAdditionalInfo = nullStringToPtr(cInfo)
+			cust.CustomerZoneCode = nullStringToPtr(cZoneCode)
+
+			if useCustomerTemporaryAddress.Int64 == 1 {
+				cust.CustomerAddress = nullStringToPtr(cTempAddr)
+				cust.CustomerLat = nullFloat64Ptr(customerTemporaryLat)
+				cust.CustomerLng = nullFloat64Ptr(customerTemporaryLng)
+				cust.CustomerFloorNumber = nullStringToPtr(cTempFloor)
+				cust.CustomerDoorNumber = nullStringToPtr(cTempDoor)
+				cust.CustomerAdditionalAddress = nullStringToPtr(cTempAddAddr)
+			} else {
+				cust.CustomerAddress = nullStringToPtr(cAddr)
+				cust.CustomerLat = nullFloat64Ptr(customerLat)
+				cust.CustomerLng = nullFloat64Ptr(customerLng)
+				cust.CustomerFloorNumber = nullStringToPtr(cFloor)
+				cust.CustomerDoorNumber = nullStringToPtr(cDoor)
+				cust.CustomerAdditionalAddress = nullStringToPtr(cAddAddr)
+			}
+			ord.Customer = &cust
+		}
+
+		// Responsible
+		if userID.Valid && userID.String != "0" {
+			ord.Responsible = &models.OrderUser{
+				UserID:    userID.String,
+				Lat:       nullFloat64Ptr(userLat),
+				Lng:       nullFloat64Ptr(userLng),
+				FirstName: nullStringToPtr(delUserName),
+			}
+		}
+
+		// attach children from maps
+		if prods, ok := productsByOrderID[orderID.String]; ok {
+			ord.Products = prods
+		} else {
+			ord.Products = []models.ProductEntry{}
+		}
+		if pay, ok := paymentsByOrderID[orderID.String]; ok {
+			ord.Payments = pay
+		} else {
+			ord.Payments = []models.Payment{}
+		}
+		if comm, ok := commentsByOrderID[orderID.String]; ok {
+			ord.Comments = comm
+		} else {
+			ord.Comments = []models.OrderComment{}
+		}
+		if loc, ok := locationsByOrderID[orderID.String]; ok {
+			ord.Location = loc
+		} else {
+			ord.Location = []models.Location{}
+		}
+
+		orders = append(orders, ord)
+	}
+
+	// commit tx
+	if err := tx.Commit(); err != nil {
+		r.log.Error("tx.Commit failed", zap.Error(err))
+		return nil, err
+	}
+	committed = true
+
+	r.log.Info("fetchAndBuildOrders END", zap.Int("orders_count", len(orders)), zap.Duration("total_duration", time.Since(startTotal)))
 	return &models.PendingOrdersResponse{
 		Orders:           orders,
-		DeliverySessions: sessions,
+		DeliverySessions: []models.DeliverySession{}, // you can call a repo method to fetch real sessions if needed (kept empty to match PHP where it's optional)
 	}, nil
 }
 
@@ -148,37 +751,27 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 // C'est ici qu'on optimise et qu'on log.
 func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
 	startTotal := time.Now()
+
 	r.log.Info("fetchAndBuildOrders START", zap.String("merchant_id", merchantID))
 
-	type queryResult struct {
-		rows *sql.Rows
-		err  error
-	}
+	// Helper pour logger et exécuter
+	runQuery := func(stepName string, query string, args ...interface{}) (*sql.Rows, error) {
+		t0 := time.Now()
+		rows, err := r.db.QueryContext(ctx, query, args...)
+		elapsed := time.Since(t0)
 
-	g, ctx := errgroup.WithContext(ctx)
+		if err != nil {
+			r.log.Error("Query FAILED", zap.String("step", stepName), zap.Error(err))
+			return nil, err
+		}
 
-	// 11 slots pour stocker les résultats
-	results := make([]*queryResult, 11)
-
-	// Helper : lance une requête en parallèle
-	run := func(idx int, step string, query string, args ...interface{}) {
-		g.Go(func() error {
-			r.log.Info("qProducts running this...",
-				zap.String("merchant_id", merchantID),
-				zap.String("sql", FormatQueryForLog(query, args)))
-
-			start := time.Now()
-			rows, err := r.db.QueryContext(ctx, query, args...)
-			if err != nil {
-				r.log.Error("Query FAILED", zap.String("step", step), zap.Error(err))
-				results[idx] = &queryResult{rows: nil, err: err}
-				return err
-			}
-
-			r.log.Info("Query OK", zap.String("step", step), zap.Duration("duration", time.Since(start)))
-			results[idx] = &queryResult{rows: rows, err: nil}
-			return nil
-		})
+		// LOG CRITIQUE : Si une étape prend > 1s, on le voit tout de suite
+		if elapsed.Seconds() > 1.0 {
+			r.log.Warn("Slow Query Detected", zap.String("step", stepName), zap.Duration("duration", elapsed))
+		} else {
+			r.log.Debug("Query OK", zap.String("step", stepName), zap.Duration("duration", elapsed))
+		}
+		return rows, nil
 	}
 
 	// --- 1. HEADER ---
@@ -198,9 +791,15 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	rowsHeader, err := r.db.QueryContext(ctx, qHeader, merchantID)
+	r.log.Info("qHeader running", zap.String("merchant_id", merchantID))
+
+	r.log.Info("qHeader running this...",
+		zap.String("merchant_id", merchantID),
+		zap.String("sql", FormatQueryForLog(qHeader, merchantID)))
+
+	rowsHeader, err := runQuery("1_Headers", qHeader, merchantID)
 	if err != nil {
-		return nil, fmt.Errorf("header query failed: %w", err)
+		return nil, err
 	}
 	defer rowsHeader.Close()
 
@@ -225,7 +824,17 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	r.log.Info("qProducts running", zap.String("merchant_id", merchantID))
 
-	run(1, "2_Products", qProducts, merchantID)
+	r.log.Info("qProducts running this...",
+		zap.String("merchant_id", merchantID),
+		zap.String("sql", FormatQueryForLog(qProducts, merchantID)))
+
+	rowsProducts, err := debugQuery(ctx, r.db, r.log, "2_Products", qProducts, merchantID)
+
+	// rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsProducts.Close()
 
 	// --- 3. COMPONENTS (Optimisation possible: filtrer par orderID si liste courte, sinon global) ---
 	// Ici on garde global car c'est souvent du statique, MAIS si c'est lent, il faut filtrer sur les produits des orders concernés.
@@ -239,7 +848,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
 		WHERE c.merchant_id = ? AND c.available = '1' AND rq.enabled IS TRUE`
 
-	run(2, "3_Components", qProductComponents, merchantID)
+	r.log.Info("qProductComponents running", zap.String("merchant_id", merchantID))
+	rowsProdComp, err := runQuery("3_Components", qProductComponents, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsProdComp.Close()
 
 	// --- 4. EXTRAS ---
 	qExtras := `
@@ -252,7 +866,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(3, "4_Extras", qExtras, merchantID)
+	r.log.Info("qExtras running", zap.String("merchant_id", merchantID))
+	rowsExtras, err := runQuery("4_Extras", qExtras, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsExtras.Close()
 
 	// --- 5. WITHOUTS ---
 	qWithouts := `
@@ -265,7 +884,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(4, "5_Withouts", qWithouts, merchantID)
+	r.log.Info("qWithouts running", zap.String("merchant_id", merchantID))
+	rowsWithouts, err := runQuery("5_Withouts", qWithouts, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsWithouts.Close()
 
 	// --- 6. PAYMENTS ---
 	qPayments := `
@@ -276,7 +900,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(5, "6_Payments", qPayments, merchantID)
+	r.log.Info("qPayments running", zap.String("merchant_id", merchantID))
+	rowsPayments, err := runQuery("6_Payments", qPayments, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsPayments.Close()
 
 	// --- 7. CLIENTS SNO ---
 	qClients := `
@@ -289,7 +918,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE oi.merchant_id = ? ` + additionalFilter
 
-	run(6, "7_ClientsSNO", qClients, merchantID)
+	r.log.Info("qClients running", zap.String("merchant_id", merchantID))
+	rowsClients, err := runQuery("7_ClientsSNO", qClients, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsClients.Close()
 
 	// --- 8. ORDER COMMENTS ---
 	qOrderComments := `
@@ -301,7 +935,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
 
-	run(7, "8_OrderComments", qOrderComments, merchantID)
+	r.log.Info("qOrderComments running", zap.String("merchant_id", merchantID))
+	rowsOrderComments, err := runQuery("8_OrderComments", qOrderComments, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsOrderComments.Close()
 
 	// --- 9. LOCATIONS ---
 	qLocations := `
@@ -313,7 +952,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(8, "9_Locations", qLocations, merchantID)
+	r.log.Info("qLocations running", zap.String("merchant_id", merchantID))
+	rowsLocations, err := runQuery("9_Locations", qLocations, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsLocations.Close()
 
 	// --- 10. CONFIG ATTRIBUTES ---
 	qConfigAttr := `
@@ -326,7 +970,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(9, "10_ConfigAttrs", qConfigAttr, merchantID)
+	r.log.Info("qConfigAttr running", zap.String("merchant_id", merchantID))
+	rowsConfigAttr, err := runQuery("10_ConfigAttrs", qConfigAttr, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsConfigAttr.Close()
 
 	// --- 11. CONFIG OPTIONS ---
 	qConfigAttrOptions := `
@@ -343,21 +992,15 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	run(10, "11_ConfigOpts", qConfigAttrOptions, merchantID)
+	r.log.Info("qConfigAttrOptions running", zap.String("merchant_id", merchantID))
+	rowsConfigAttrOptions, err := runQuery("11_ConfigOpts", qConfigAttrOptions, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rowsConfigAttrOptions.Close()
 
 	r.log.Info("Queries DONE, starting mapping", zap.Duration("sql_duration", time.Since(startTotal)))
 	mapStart := time.Now()
-
-	rowsProducts := results[1].rows
-	rowsProdComp := results[2].rows
-	rowsExtras := results[3].rows
-	rowsWithouts := results[4].rows
-	rowsPayments := results[5].rows
-	rowsClients := results[6].rows
-	rowsOrderComments := results[7].rows
-	rowsLocations := results[8].rows
-	rowsConfigAttr := results[9].rows
-	rowsConfigAttrOptions := results[10].rows
 
 	// =================================================================
 	// MAPPING LOGIC (COPIED & ADAPTED FROM YOUR CODE)
