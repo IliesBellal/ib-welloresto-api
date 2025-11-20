@@ -188,6 +188,10 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	r.log.Info("qHeader running", zap.String("merchant_id", merchantID))
 
+	r.log.Info("qHeader running this...",
+		zap.String("merchant_id", merchantID),
+		zap.String("sql", FormatQueryForLog(qHeader, merchantID)))
+
 	rowsHeader, err := runQuery("1_Headers", qHeader, merchantID)
 	if err != nil {
 		return nil, err
