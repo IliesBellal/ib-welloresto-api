@@ -224,7 +224,9 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		zap.String("merchant_id", merchantID),
 		zap.String("sql", FormatQueryForLog(qProducts, merchantID)))
 
-	rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
+	rowsProducts, err := debugQuery(ctx, r.db, r.log, "2_Products", qProducts, merchantID)
+
+	// rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
 	if err != nil {
 		return nil, err
 	}

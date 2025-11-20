@@ -1,9 +1,12 @@
 package repositories
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // --- Helper Functions ---
@@ -74,4 +77,40 @@ func FormatQueryForLog(query string, args ...interface{}) string {
 		}
 	}
 	return out
+}
+
+func debugQuery(ctx context.Context, db *sql.DB, log *zap.Logger, step, query string, args ...interface{}) (*sql.Rows, error) {
+	log.Info("SQL START",
+		zap.String("step", step),
+		zap.String("query", query),
+		zap.Any("args", args),
+	)
+
+	t0 := time.Now()
+	rows, err := db.QueryContext(ctx, query, args...)
+	elapsed := time.Since(t0)
+
+	if err != nil {
+		log.Error("SQL ERROR",
+			zap.String("step", step),
+			zap.Error(err),
+			zap.Duration("elapsed", elapsed),
+			zap.Bool("ctx_done", ctx.Err() != nil),
+			zap.String("ctx_error", fmt.Sprint(ctx.Err())),
+		)
+
+		// La clé ultime :
+		if ctx.Err() != nil {
+			log.Error("CTX CANCEL SOURCE", zap.Stack("stack"))
+		}
+
+		return nil, err
+	}
+
+	log.Info("SQL OK",
+		zap.String("step", step),
+		zap.Duration("elapsed", elapsed),
+	)
+
+	return rows, nil
 }
