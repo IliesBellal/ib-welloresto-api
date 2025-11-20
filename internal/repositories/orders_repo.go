@@ -215,6 +215,10 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	r.log.Info("qProducts running", zap.String("merchant_id", merchantID))
 
+	r.log.Info("qConfigAttr running",
+		zap.String("merchant_id", merchantID),
+		zap.String("sql", FormatQueryForLog(qProducts, merchantID)))
+
 	rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
 	if err != nil {
 		return nil, err

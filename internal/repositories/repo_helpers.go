@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -54,4 +55,23 @@ func nilIfNullInt64Discount(discountID sql.NullInt64, price int64) *int64 {
 		return &price
 	}
 	return nil
+}
+
+func FormatQueryForLog(query string, args ...interface{}) string {
+	out := query
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case string:
+			out = fmt.Sprintf("%s [%q]", out, v)
+		case *string:
+			if v == nil {
+				out = fmt.Sprintf("%s [NULL]", out)
+			} else {
+				out = fmt.Sprintf("%s [%q]", out, *v)
+			}
+		default:
+			out = fmt.Sprintf("%s [%v]", out, v)
+		}
+	}
+	return out
 }
