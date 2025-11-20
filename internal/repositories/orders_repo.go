@@ -215,7 +215,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	r.log.Info("qProducts running", zap.String("merchant_id", merchantID))
 
-	r.log.Info("qConfigAttr running",
+	r.log.Info("qProducts running this...",
 		zap.String("merchant_id", merchantID),
 		zap.String("sql", FormatQueryForLog(qProducts, merchantID)))
 
