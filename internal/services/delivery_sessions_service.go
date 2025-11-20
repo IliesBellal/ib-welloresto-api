@@ -8,7 +8,6 @@ import (
 )
 
 type DeliverySessionsService struct {
-	ordersRepo           *repositories.LegacyOrdersRepository
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
 	userRepo             *repositories.UserRepository // used to resolve token -> merchant id
 }
@@ -22,8 +21,8 @@ func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessi
 
 // /delivery_sessions/pending
 
-// GetDeliverySessions returns delivery sessions (no orders)
-func (s *DeliverySessionsService) GetDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
+// GetPendingDeliverySessions returns delivery sessions (no orders)
+func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -31,5 +30,5 @@ func (s *DeliverySessionsService) GetDeliverySessions(ctx context.Context, token
 	if user == nil {
 		return nil, errors.New("invalid token")
 	}
-	return s.deliverySessionsRepo.GetDeliverySessions(ctx, user.MerchantID)
+	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }

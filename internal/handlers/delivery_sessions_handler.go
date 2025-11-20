@@ -17,9 +17,8 @@ func NewDeliverySessionsHandler(deliverySessionsService *services.DeliverySessio
 	}
 }
 
-// GET /delivery/sessions
-
-func (h *DeliverySessionsHandler) GetDeliverySessions(w http.ResponseWriter, r *http.Request) {
+// GET /delivery_sessions/pending
+func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := extractToken(r)
 	if token == "" {
@@ -27,7 +26,7 @@ func (h *DeliverySessionsHandler) GetDeliverySessions(w http.ResponseWriter, r *
 		return
 	}
 
-	sessions, err := h.deliverySessionsService.GetDeliverySessions(ctx, token)
+	sessions, err := h.deliverySessionsService.GetPendingDeliverySessions(ctx, token)
 	if err != nil {
 		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -8,12 +8,12 @@ import (
 )
 
 type OrdersService struct {
-	ordersRepo           *repositories.LegacyOrdersRepository
+	ordersRepo           *repositories.OrdersRepository
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
 	userRepo             *repositories.UserRepository // used to resolve token -> merchant id
 }
 
-func NewOrdersService(ordersRepo *repositories.LegacyOrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UserRepository) *OrdersService {
+func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UserRepository) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
