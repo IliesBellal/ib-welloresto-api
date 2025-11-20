@@ -18,18 +18,13 @@ func NewLegacyOrdersRepository(db *sql.DB) *LegacyOrdersRepository {
 // GetPendingOrders returns orders + delivery sessions
 func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
 
-	// 1. TRANSACTION : On ouvre la transaction avec le contexte parent
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	// Sécurité : Si ça plante, on rollback.
-	defer func() { _ = tx.Rollback() }()
+	// CORRECTION : On supprime la transaction pour éviter le "driver: bad connection"
+	// sur les longues opérations de lecture réseau. Le driver Go gérera le pool de connexions automatiquement.
 
-	// --- Helper Query (pour éviter de répéter le code d'erreur) ---
+	// --- Helper Query ---
 	runQuery := func(query string, args ...interface{}) (*sql.Rows, error) {
-		// Utilisation stricte de 'ctx' et 'tx' pour éviter le bug "context canceled"
-		return tx.QueryContext(ctx, query, args...)
+		// On utilise directement r.db (le pool) au lieu de tx
+		return r.db.QueryContext(ctx, query, args...)
 	}
 
 	// build query_filter per app param
@@ -41,25 +36,25 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 	}
 
 	// =================================================================
-	// EXÉCUTION DES REQUÊTES (Mode PHP : On charge tout d'abord)
+	// EXÉCUTION DES REQUÊTES
 	// =================================================================
 
 	// 1) orders header
 	qHeader := `
-		SELECT o.order_id, o.order_num, o.order_type, o.state, o.scheduled, o.brand, o.brand_status, o.brand_order_id, o.brand_order_num, o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT, o.monnaie, o.cutlery_notes,
-		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery, o.merchant_approval, o.delivery_fees, o.last_update, o.fulfillment_type, o.use_customer_temporary_address, o.creation_date, o.places_settings, o.pager_number,
-		c.customer_id, c.customer_name, c.customer_tel, c.customer_lat, c.customer_lng, c.customer_temporary_phone, c.customer_temporary_phone_code, c.customer_nb_orders, c.customer_zone_code,
-		c.customer_address, c.customer_floor_number, c.customer_door_number, c.customer_additional_address, c.customer_business_name, c.customer_birthdate, c.customer_additional_info,
-		c.customer_temporary_address, c.customer_temporary_lat, c.customer_temporary_lng, c.customer_temporary_floor_number, c.customer_temporary_door_number, c.customer_temporary_additional_address,
-		u.user_id, u.lat, u.lng, u.tel as deliveryTel, u.userName,
-		ds.id as delivery_session_id, dso.priority
-		FROM orders o
-		LEFT JOIN customer c ON o.customer_id = c.customer_id
-		LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
-		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
-		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
-		WHERE ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL)
-		AND o.merchant_id = ? ` + queryFilter
+       SELECT o.order_id, o.order_num, o.order_type, o.state, o.scheduled, o.brand, o.brand_status, o.brand_order_id, o.brand_order_num, o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT, o.monnaie, o.cutlery_notes,
+       o.isPaid, o.isDistributed, o.dateCall, o.isDelivery, o.merchant_approval, o.delivery_fees, o.last_update, o.fulfillment_type, o.use_customer_temporary_address, o.creation_date, o.places_settings, o.pager_number,
+       c.customer_id, c.customer_name, c.customer_tel, c.customer_lat, c.customer_lng, c.customer_temporary_phone, c.customer_temporary_phone_code, c.customer_nb_orders, c.customer_zone_code,
+       c.customer_address, c.customer_floor_number, c.customer_door_number, c.customer_additional_address, c.customer_business_name, c.customer_birthdate, c.customer_additional_info,
+       c.customer_temporary_address, c.customer_temporary_lat, c.customer_temporary_lng, c.customer_temporary_floor_number, c.customer_temporary_door_number, c.customer_temporary_additional_address,
+       u.user_id, u.lat, u.lng, u.tel as deliveryTel, u.userName,
+       ds.id as delivery_session_id, dso.priority
+       FROM orders o
+       LEFT JOIN customer c ON o.customer_id = c.customer_id
+       LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
+       LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+       LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+       WHERE ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL)
+       AND o.merchant_id = ? ` + queryFilter
 
 	rowsHeader, err := runQuery(qHeader, merchantID)
 	if err != nil {
@@ -69,21 +64,21 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 2) order products
 	qProducts := `
-		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id, oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity, oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
-		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
-		p.available_in, p.available_take_away, p.available_delivery
-		FROM orders o
-		INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
-		INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
-		LEFT JOIN productcateg pc ON pc.merchant_id = oi.merchant_id AND p.category = pc.merchant_categ_id
-		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
-		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
-		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
-		LEFT JOIN discounts d ON d.discount_id = oi.discount_id
-		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
-		WHERE (o.state = 'OPEN')
-		AND oi.quantity > 0
-		AND o.merchant_id = ?`
+       SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id, oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity, oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
+       p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
+       p.available_in, p.available_take_away, p.available_delivery
+       FROM orders o
+       INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
+       INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
+       LEFT JOIN productcateg pc ON pc.merchant_id = oi.merchant_id AND p.category = pc.merchant_categ_id
+       INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
+       INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
+       INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
+       LEFT JOIN discounts d ON d.discount_id = oi.discount_id
+       LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
+       WHERE (o.state = 'OPEN')
+       AND oi.quantity > 0
+       AND o.merchant_id = ?`
 
 	rowsProducts, err := runQuery(qProducts, merchantID)
 	if err != nil {
@@ -93,15 +88,15 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 3) components for products (global list)
 	qProductComponents := `
-		SELECT r.product_id, c.component_id, c.name, c.component_price as price, c.status,
-		rq.quantity, uomd.uom_desc
-		FROM components c
-		INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled IS TRUE
-		INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
-		WHERE c.merchant_id = ?
-		AND available = '1'
-		AND rq.enabled IS TRUE`
+       SELECT r.product_id, c.component_id, c.name, c.component_price as price, c.status,
+       rq.quantity, uomd.uom_desc
+       FROM components c
+       INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled IS TRUE
+       INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+       INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
+       WHERE c.merchant_id = ?
+       AND available = '1'
+       AND rq.enabled IS TRUE`
 	rowsProdComp, err := runQuery(qProductComponents, merchantID)
 	if err != nil {
 		return nil, err
@@ -110,12 +105,12 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 4) extras
 	qExtras := `
-		SELECT e.order_item_id, e.id, e.order_id, e.product_id, ce.name, e.component_id, e.price
-		FROM orders o
-		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
-		INNER JOIN extra e on e.order_item_id = oi.order_item_id
-		INNER JOIN components ce on e.component_id = ce.component_id and ce.merchant_id = o.merchant_id
-		WHERE o.state = 'OPEN' and o.merchant_id = ?`
+       SELECT e.order_item_id, e.id, e.order_id, e.product_id, ce.name, e.component_id, e.price
+       FROM orders o
+       INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
+       INNER JOIN extra e on e.order_item_id = oi.order_item_id
+       INNER JOIN components ce on e.component_id = ce.component_id and ce.merchant_id = o.merchant_id
+       WHERE o.state = 'OPEN' and o.merchant_id = ?`
 	rowsExtras, err := runQuery(qExtras, merchantID)
 	if err != nil {
 		return nil, err
@@ -124,12 +119,12 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 5) withouts
 	qWithouts := `
-		SELECT w.order_item_id, w.id, w.order_id, w.product_id, cw.name, w.component_id
-		FROM orders o
-		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
-		INNER JOIN without w on w.order_item_id = oi.order_item_id
-		INNER JOIN components cw on w.component_id = cw.component_id and cw.merchant_id = o.merchant_id
-		WHERE o.state = 'OPEN' and o.merchant_id = ?`
+       SELECT w.order_item_id, w.id, w.order_id, w.product_id, cw.name, w.component_id
+       FROM orders o
+       INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
+       INNER JOIN without w on w.order_item_id = oi.order_item_id
+       INNER JOIN components cw on w.component_id = cw.component_id and cw.merchant_id = o.merchant_id
+       WHERE o.state = 'OPEN' and o.merchant_id = ?`
 	rowsWithouts, err := runQuery(qWithouts, merchantID)
 	if err != nil {
 		return nil, err
@@ -138,11 +133,11 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 6) payments
 	qPayments := `
-		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled
-		from payments p
-		INNER JOIN orders o on o.order_id = p.order_id
-		WHERE o.state = 'OPEN'
-		and o.merchant_id = ?`
+       SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled
+       from payments p
+       INNER JOIN orders o on o.order_id = p.order_id
+       WHERE o.state = 'OPEN'
+       and o.merchant_id = ?`
 	rowsPayments, err := runQuery(qPayments, merchantID)
 	if err != nil {
 		return nil, err
@@ -151,11 +146,11 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 7) clients for SNO
 	qClients := `
-		SELECT DISTINCT ss.user_code, ss.user_name, oi.order_item_id, so.quantity
-		FROM orderitems oi
-		INNER JOIN session_orderitem so on so.order_item_id = oi.order_item_id
-		INNER JOIN scannorder_session ss on so.user_code = ss.user_code
-		WHERE oi.merchant_id = ?`
+       SELECT DISTINCT ss.user_code, ss.user_name, oi.order_item_id, so.quantity
+       FROM orderitems oi
+       INNER JOIN session_orderitem so on so.order_item_id = oi.order_item_id
+       INNER JOIN scannorder_session ss on so.user_code = ss.user_code
+       WHERE oi.merchant_id = ?`
 	rowsClients, err := runQuery(qClients, merchantID)
 	if err != nil {
 		return nil, err
@@ -164,13 +159,13 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 8) comments (order level)
 	qOrderComments := `
-		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
-		from order_comments oc
-		inner join orders o on o.order_id = oc.order_id
-		left join users u on u.user_id = oc.user_id
-		WHERE o.state = 'OPEN'
-		and o.merchant_id = ?
-		and oc.order_item_id is null`
+       SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
+       from order_comments oc
+       inner join orders o on o.order_id = oc.order_id
+       left join users u on u.user_id = oc.user_id
+       WHERE o.state = 'OPEN'
+       and o.merchant_id = ?
+       and oc.order_item_id is null`
 	rowsOrderComments, err := runQuery(qOrderComments, merchantID)
 	if err != nil {
 		return nil, err
@@ -179,11 +174,11 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 9) locations
 	qLocations := `
-		SELECT ol.order_id, ol.location_id, l.location_name, l.location_desc
-		FROM orders o
-		INNER JOIN order_location ol on ol.order_id = o.order_id
-		INNER JOIN locations l on l.merchant_id = o.merchant_id and l.location_id = ol.location_id
-		WHERE o.state = 'OPEN' and o.merchant_id = ?`
+       SELECT ol.order_id, ol.location_id, l.location_name, l.location_desc
+       FROM orders o
+       INNER JOIN order_location ol on ol.order_id = o.order_id
+       INNER JOIN locations l on l.merchant_id = o.merchant_id and l.location_id = ol.location_id
+       WHERE o.state = 'OPEN' and o.merchant_id = ?`
 	rowsLocations, err := runQuery(qLocations, merchantID)
 	if err != nil {
 		return nil, err
@@ -192,12 +187,12 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 10) configurable attributes + options
 	qConfigAttr := `
-		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
-		FROM orders o
-		INNER JOIN orderitems oi on oi.order_id = o.order_id
-		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
-		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-		WHERE o.state = 'OPEN' and o.merchant_id = ?`
+       SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
+       FROM orders o
+       INNER JOIN orderitems oi on oi.order_id = o.order_id
+       INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+       INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+       WHERE o.state = 'OPEN' and o.merchant_id = ?`
 	rowsConfigAttr, err := runQuery(qConfigAttr, merchantID)
 	if err != nil {
 		return nil, err
@@ -205,16 +200,16 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 	defer rowsConfigAttr.Close()
 
 	qConfigAttrOptions := `
-		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price, 
-		case when oic.id is null then 0 else 1 end as selected,
-		case when oic.quantity is null then 0 else oic.quantity end as quantity, cao.max_quantity
-		FROM orders o
-		INNER JOIN orderitems oi on oi.order_id = o.order_id
-		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
-		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-		INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
-		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
-		WHERE o.state = 'OPEN' and o.merchant_id = ?`
+       SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price, 
+       case when oic.id is null then 0 else 1 end as selected,
+       case when oic.quantity is null then 0 else oic.quantity end as quantity, cao.max_quantity
+       FROM orders o
+       INNER JOIN orderitems oi on oi.order_id = o.order_id
+       INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+       INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+       INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
+       LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
+       WHERE o.state = 'OPEN' and o.merchant_id = ?`
 	rowsConfigAttrOptions, err := runQuery(qConfigAttrOptions, merchantID)
 	if err != nil {
 		return nil, err
@@ -223,11 +218,11 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 
 	// 11) delivery sessions
 	qDeliverySessions := `
-		SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
-		FROM delivery_session ds
-		INNER JOIN users u on u.user_id = ds.user_id
-		WHERE status IN ('1','PENDING')
-		AND ds.merchant_id = ?`
+       SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
+       FROM delivery_session ds
+       INNER JOIN users u on u.user_id = ds.user_id
+       WHERE status IN ('1','PENDING')
+       AND ds.merchant_id = ?`
 	rowsDeliverySessions, err := runQuery(qDeliverySessions, merchantID)
 	if err != nil {
 		return nil, err
@@ -677,11 +672,6 @@ func (r *LegacyOrdersRepository) GetPendingOrders(ctx context.Context, merchantI
 				session.Orders = append(session.Orders, ord)
 			}
 		}
-	}
-
-	// 3. COMMIT (Lecture seule mais bonne pratique)
-	if err := tx.Commit(); err != nil {
-		return nil, err
 	}
 
 	return &models.PendingOrdersResponse{

@@ -34,16 +34,3 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
 }
-/*
-// GetDeliverySessions returns delivery sessions (no orders)
-func (s *OrdersService) GetDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, errors.New("invalid token")
-	}
-	return s.deliverySessionsRepo.GetDeliverySessions(ctx, user.MerchantID)
-}
-*/
