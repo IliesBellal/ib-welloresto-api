@@ -24,41 +24,96 @@ func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
 // PUBLIC METHODS
 // ==================================================================================
 
-// GetPendingOrders : Récupère toutes les commandes en cours (Legacy Logic)
+// GetPendingOrders : Récupère toutes les commandes en cours (Optimisé)
 func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
 	r.log.Info("GetPendingOrders START", zap.String("merchant_id", merchantID))
-	deliverySessionRepo := DeliverySessionsRepository{db: r.db, log: r.log}
 
-	// 1. Construire le filtre spécifique pour "Pending"
-	filter := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL) "
+	// On a besoin du repo session pour récupérer les sessions à la fin
+	deliverySessionRepo := NewDeliverySessionsRepository(r.db, r.log)
+
+	// ========================================================================
+	// ÉTAPE 1 : OPTIMISATION - Récupérer les IDs d'abord
+	// ========================================================================
+
+	// 1.a. On construit la clause WHERE complexe ici
+	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL) "
 
 	// Ajout filtre APP
 	if app == "1" || app == "WR_DELIVERY" {
-		filter += " AND o.order_type = 'DELIVERY' AND o.fulfillment_type = 'DELIVERY_BY_RESTAURANT' "
+		criteria += " AND o.order_type = 'DELIVERY' AND o.fulfillment_type = 'DELIVERY_BY_RESTAURANT' "
 	} else if app == "2" || app == "WR_WAITER" {
-		filter += " AND o.order_type NOT IN ('DELIVERY','TAKE_AWAY') "
+		criteria += " AND o.order_type NOT IN ('DELIVERY','TAKE_AWAY') "
 	}
 
-	// 2. Appeler la méthode partagée
-	orders, err := r.fetchAndBuildOrders(ctx, merchantID, filter)
+	// 1.b. Requête légère pour récupérer UNIQUEMENT les IDs
+	// On doit inclure les JOINs ici pour que le filtre fonctionne (alias 'o' et 'ds')
+	qIDs := `SELECT DISTINCT o.order_id
+             FROM orders o
+             LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+             LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+             WHERE o.merchant_id = ? ` + criteria
+
+	rows, err := r.db.QueryContext(ctx, qIDs, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
+	}
+	defer rows.Close()
+
+	var orderIDs []string
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		orderIDs = append(orderIDs, oid)
+	}
+
+	// ========================================================================
+	// CAS VIDE : Si aucune commande ne correspond, on sort tout de suite
+	// ========================================================================
+	if len(orderIDs) == 0 {
+		// On retourne vide, mais on récupère quand même les sessions vides si nécessaire,
+		// ou on retourne tout vide. Selon ton besoin métier.
+		// Ici je retourne tout vide pour être rapide.
+		return &models.PendingOrdersResponse{
+			Orders:           []models.Order{},
+			DeliverySessions: []models.DeliverySession{},
+		}, nil
+	}
+
+	// ========================================================================
+	// ÉTAPE 2 : Appeler le constructeur avec le filtre OPTIMISÉ (IN)
+	// ========================================================================
+
+	// Construction de la chaîne "IN ('id1', 'id2')"
+	idsStr := ""
+	for i, oid := range orderIDs {
+		if i > 0 {
+			idsStr += ","
+		}
+		idsStr += fmt.Sprintf("'%s'", oid)
+	}
+
+	// Le filtre magique qui va rendre les 11 requêtes suivantes instantanées
+	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
+
+	orders, err := r.fetchAndBuildOrders(ctx, merchantID, filterOptimized)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Récupérer les sessions (spécifique à cet endpoint)
-	// Note: On pourrait aussi factoriser ça si besoin, mais c'est assez rapide.
+	// ========================================================================
+	// ÉTAPE 3 : Récupérer les sessions et finaliser
+	// ========================================================================
+
+	// Récupérer les sessions (spécifique à cet endpoint)
+	// Note : comme on est dans le même package 'repositories', on a accès aux méthodes privées (minuscule)
 	sessions, err := deliverySessionRepo.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Lier les commandes aux sessions pour l'objet de réponse
-	// (Optimisation: Map pour éviter double boucle)
-	ordersMap := make(map[string]models.Order)
-	for _, o := range orders {
-		ordersMap[o.OrderID] = o
-	}
-
+	// Assemblage final
 	return &models.PendingOrdersResponse{
 		Orders:           orders,
 		DeliverySessions: sessions,

@@ -19,8 +19,9 @@ func NewDeliverySessionsRepository(db *sql.DB, log *zap.Logger) *DeliverySession
 	return &DeliverySessionsRepository{db: db, log: log}
 }
 
-// GetPendingDeliverySessions : Récupère les sessions + leurs commandes
+// GetPendingDeliverySessions : Optimisé pour éviter les timeouts
 func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]models.DeliverySession, error) {
+	// On instancie le repo orders (nécessaire pour le constructeur partagé)
 	ordersRepo := NewOrdersRepository(r.db, r.log)
 
 	// 1. Récupérer les sessions actives
@@ -29,65 +30,96 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		return nil, err
 	}
 
+	// S'il n'y a pas de session, on s'arrête là
 	if len(sessions) == 0 {
 		return []models.DeliverySession{}, nil
 	}
 
-	// 2. Récupérer SEULEMENT les commandes liées à ces sessions
+	// 2. OPTIMISATION CRITIQUE : Récupérer les Order IDs AVANT d'appeler le gros constructeur
+	// Cela évite de refaire les jointures sessions <-> orders dans les 11 requêtes suivantes.
+
+	// A. Construire la liste des ID de sessions
 	sessionIDs := ""
 	for i, s := range sessions {
 		if i > 0 {
 			sessionIDs += ","
 		}
-		// Attention : si s.DeliverySessionID est un string dans ton struct, retire le fmt.Sprintf("%d")
-		sessionIDs += fmt.Sprintf("%v", s.DeliverySessionID)
+		sessionIDs += fmt.Sprintf("'%s'", s.DeliverySessionID) // Ajout des quotes au cas où c'est du string/uuid
 	}
 
-	// Filtre : Commandes liées aux sessions trouvées
-	filter := fmt.Sprintf(" AND ds.id IN (%s) ", sessionIDs)
+	// B. Requête légère pour avoir juste les IDs des commandes
+	// On utilise r.db.QueryContext directement car c'est une requête interne simple
+	qOrderIDs := fmt.Sprintf(`
+		SELECT DISTINCT order_id 
+		FROM delivery_session_order 
+		WHERE delivery_session_id IN (%s)
+	`, sessionIDs)
 
-	// On appelle le constructeur partagé
+	rows, err := r.db.QueryContext(ctx, qOrderIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch session order ids: %w", err)
+	}
+	defer rows.Close()
+
+	var orderIDList []string
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		orderIDList = append(orderIDList, oid)
+	}
+
+	// Si ces sessions n'ont aucune commande, on retourne les sessions vides
+	if len(orderIDList) == 0 {
+		return sessions, nil
+	}
+
+	// 3. Construire le filtre PAR ORDER ID (MySQL adore ça, c'est instantané)
+	ordersFilter := ""
+	for i, oid := range orderIDList {
+		if i > 0 {
+			ordersFilter += ","
+		}
+		ordersFilter += fmt.Sprintf("'%s'", oid)
+	}
+
+	// Le filtre magique : on tape directement sur la Primary Key ou l'index principal
+	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", ordersFilter)
+
+	// 4. On appelle le monstre partagé avec ce filtre optimisé
 	orders, err := ordersRepo.fetchAndBuildOrders(ctx, merchantID, filter)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Assemblage : Mettre les commandes dans les bonnes sessions
+	// 5. Assemblage : Mettre les commandes dans les bonnes sessions
 
-	// A. On regroupe les commandes par SessionID dans une map
+	// Map pour regrouper les commandes par Session ID
+	// (On utilise string comme clé car dans tes logs précédents c'était souvent traité comme string)
 	ordersBySession := make(map[string][]models.Order)
 
 	for _, o := range orders {
-		// Adapte cette vérification selon si DeliverySessionID est un *int64 (pointeur) ou int64
-		var sessID string
-
-		// CAS 1 : Si c'est un pointeur (*int64)
 		if o.DeliverySessionID != nil {
-			sessID = *o.DeliverySessionID
-			ordersBySession[sessID] = append(ordersBySession[sessID], o)
-		}
+			// Conversion de *int64 vers string pour la clé de la map (si nécessaire)
+			// Si DeliverySessionID est int64 dans ton struct Order :
+			// key := fmt.Sprintf("%d", *o.DeliverySessionID)
 
-		// CAS 2 : Si c'est direct (int64) et que 0 veut dire "pas de session"
-		// if o.DeliverySessionID != 0 {
-		//    ordersBySession[o.DeliverySessionID] = append(ordersBySession[o.DeliverySessionID], o)
-		// }
+			// Si DeliverySessionID est string dans ton struct Order :
+			key := *o.DeliverySessionID
+
+			ordersBySession[key] = append(ordersBySession[key], o)
+		}
 	}
 
-	// B. On assigne les groupes de commandes aux sessions correspondantes
-	// IMPORTANT : On utilise l'index 'i' pour modifier l'élément original du slice 'sessions'
+	// On remplit les sessions
 	for i := range sessions {
-		// On caste l'ID de session selon ton modèle (ici je suppose int64 ou string converti)
-		// Supposons que sessions[i].DeliverySessionID est int64 (ou string qu'on a utilisé en clé de map)
-
-		// Récupération de l'ID de la session (adapte le type si besoin)
+		// On récupère l'ID de la session (c'est un string dans ton struct DeliverySession ci-dessous)
 		sID := sessions[i].DeliverySessionID
-		// Si c'est un string dans session et int64 dans order, fais la conversion ici.
-		// Si c'est int64 partout, c'est direct :
 
 		if sessionOrders, found := ordersBySession[sID]; found {
 			sessions[i].Orders = sessionOrders
 		} else {
-			// Initialiser à vide pour éviter "null" dans le JSON
 			sessions[i].Orders = []models.Order{}
 		}
 	}
