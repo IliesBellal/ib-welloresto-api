@@ -45,6 +45,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	menuRepoLegacy := repositories.NewLegacyMenuRepository(mysqlDB, log)
 
 	ordersRepo := repositories.NewLegacyOrdersRepository(mysqlDB)
+	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -52,7 +53,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deviceService := services.NewDeviceService(userRepo, deviceRepo)
 	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
 	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpti, false)
-	ordersService := services.NewOrdersService(ordersRepo, userRepo)
+	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo)
+	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -60,7 +62,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deviceHandler := handlers.NewDeviceHandler(deviceService)
 	appVersionHandler := handlers.NewAppVersionHandler(appVersionService)
 	menuHandler := handlers.NewMenuHandler(menuService)
-	ordersHandler := handlers.NewOrdersHandler(ordersService)
+	ordersHandler := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
+	deliverySessionsHandler := handlers.NewDeliverySessionsHandler(deliverySessionsService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -91,7 +94,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	})
 
 	r.Route("/delivery_session", func(r chi.Router) {
-		r.Get("/pending", ordersHandler.GetDeliverySessions) // GET /delivery/sessions
+		r.Get("/pending", deliverySessionsHandler.GetDeliverySessions) // GET /delivery/sessions
 	})
 
 	return r

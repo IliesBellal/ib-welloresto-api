@@ -22,7 +22,7 @@ type ProductCategory struct {
 
 // product
 type ProductEntry struct {
-	OrderID                      int64                `json:"order_id,omitempty"`
+	OrderID                      string               `json:"order_id,omitempty"`
 	OrderItemID                  string               `json:"order_item_id"`
 	ProductID                    string               `json:"product_id"`
 	OrderedOn                    *time.Time           `json:"ordered_on,omitempty"`
@@ -66,6 +66,26 @@ type ProductEntry struct {
 	Without         []OrderProductWithout `json:"without"`
 	Customers       []interface{}         `json:"customers"` // keep generic as original
 	Comment         interface{}           `json:"comment"`
+}
+
+type OrderProductExtra struct {
+	ID          string  `json:"id"`
+	OrderItemID string  `json:"order_item_id"`
+	OrderID     string  `json:"order_id"`
+	ProductID   string  `json:"product_id"`
+	Name        string  `json:"name"`
+	ComponentID string  `json:"component_id"`
+	Price       float64 `json:"price"`
+}
+
+type OrderProductWithout struct {
+	ID          string `json:"id"`
+	OrderItemID string `json:"order_item_id"`
+	OrderID     string `json:"order_id"`
+	ProductID   string `json:"product_id"`
+	Name        string `json:"name"`
+	ComponentID string `json:"component_id"`
+	Price       int64  `json:"price"`
 }
 
 // components required

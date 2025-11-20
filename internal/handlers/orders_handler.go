@@ -10,11 +10,15 @@ import (
 
 // OrdersHandler handles orders endpoints
 type OrdersHandler struct {
-	ordersService *services.OrdersService
+	ordersService           *services.OrdersService
+	deliverySessionsService *services.DeliverySessionsService
 }
 
-func NewOrdersHandler(ordersService *services.OrdersService) *OrdersHandler {
-	return &OrdersHandler{ordersService: ordersService}
+func NewOrdersHandler(ordersService *services.OrdersService, deliverySessionsService *services.DeliverySessionsService) *OrdersHandler {
+	return &OrdersHandler{
+		ordersService:           ordersService,
+		deliverySessionsService: deliverySessionsService,
+	}
 }
 
 // helper to extract token either from Authorization header (Bearer ...) or token query param
@@ -57,28 +61,6 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// GET /delivery/sessions
-func (h *OrdersHandler) GetDeliverySessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
-		return
-	}
-
-	sessions, err := h.ordersService.GetDeliverySessions(ctx, token)
-	if err != nil {
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	resp := map[string]interface{}{
-		"delivery_sessions": sessions,
-	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

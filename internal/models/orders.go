@@ -2,106 +2,8 @@ package models
 
 import "time"
 
-//
-// Models mirroring current JSON (legacy)
-// Keep field names exactly as used by the mobile apps.
-//
-
-type OrderProductExtra struct {
-	ID          string  `json:"id"`
-	OrderItemID string  `json:"order_item_id"`
-	OrderID     string  `json:"order_id"`
-	ProductID   string  `json:"product_id"`
-	Name        string  `json:"name"`
-	ComponentID string  `json:"component_id"`
-	Price       float64 `json:"price"`
-}
-
-type OrderProductWithout struct {
-	ID          string `json:"id"`
-	OrderItemID string `json:"order_item_id"`
-	OrderID     string `json:"order_id"`
-	ProductID   string `json:"product_id"`
-	Name        string `json:"name"`
-	ComponentID string `json:"component_id"`
-	Price       int64  `json:"price"`
-}
-
-type ProductComponent struct {
-	ComponentID   int64   `json:"component_id"`
-	Name          string  `json:"name"`
-	ProductID     string  `json:"product_id"`
-	Price         float64 `json:"price"`
-	Quantity      float64 `json:"quantity"`
-	UnitOfMeasure string  `json:"unit_of_measure"`
-	Status        int     `json:"status"`
-}
-
-type ProductConfigurationOption struct {
-	ID                int64   `json:"id"`
-	ConfigAttributeID string  `json:"configurable_attribute_id"`
-	OrderItemID       string  `json:"order_item_id"`
-	Title             string  `json:"title"`
-	ExtraPrice        float64 `json:"extra_price"`
-	Quantity          int     `json:"quantity"`
-	MaxQuantity       int     `json:"max_quantity"`
-	Selected          int     `json:"selected"`
-}
-
-type ProductConfigurationAttribute struct {
-	ID            int64                        `json:"id"`
-	OrderItemID   int64                        `json:"order_item_id"`
-	AttributeType string                       `json:"attribute_type"`
-	Title         string                       `json:"title"`
-	MaxOptions    int                          `json:"max_options"`
-	Options       []ProductConfigurationOption `json:"options"`
-}
-
-/*
-type OrderProduct struct {
-	OrderID                      int64                 `json:"order_id"`
-	OrderItemID                  int64                 `json:"order_item_id"`
-	OrderedOn                    *time.Time            `json:"ordered_on"`
-	ProductID                    int64                 `json:"product_id"`
-	ProductionStatus             string                `json:"production_status"`
-	ProductionStatusDoneQuantity int                   `json:"production_status_done_quantity"`
-	Name                         string                `json:"name"`
-	ImageURL                     *string               `json:"image_url"`
-	Category                     *string               `json:"category"`
-	Description                  *string               `json:"description"`
-	Quantity                     int                   `json:"quantity"`
-	PaidQuantity                 int                   `json:"paid_quantity"`
-	DistributedQuantity          int                   `json:"distributed_quantity"`
-	ReadyForDistributionQuantity int                   `json:"ready_for_distribution_quantity"`
-	IsPaid                       int                   `json:"isPaid"`
-	IsDistributed                int                   `json:"isDistributed"`
-	Price                        float64               `json:"price"`
-	PriceTakeAway                float64               `json:"price_take_away"`
-	PriceDelivery                float64               `json:"price_delivery"`
-	DiscountID                   *int64                `json:"discount_id"`
-	DiscountName                 *string               `json:"discount_name"`
-	DiscountedPrice              *float64              `json:"discounted_price"`
-	TVARateIn                    float64               `json:"tva_rate_in"`
-	TVARateDelivery              float64               `json:"tva_rate_delivery"`
-	TVARateTakeAway              float64               `json:"tva_rate_take_away"`
-	AvailableIn                  int                   `json:"available_in"`
-	AvailableTakeAway            int                   `json:"available_take_away"`
-	AvailableDelivery            int                   `json:"available_delivery"`
-	ProductionColor              *string               `json:"production_color"`
-	Extra                        []OrderProductExtra   `json:"extra"`
-	Without                      []OrderProductWithout `json:"without"`
-	Components                   []ProductComponent    `json:"components"`
-	Customers                    []interface{}         `json:"customers"` // keep generic as original
-	Comment                      interface{}           `json:"comment"`
-	Configuration                struct {
-		Attributes []ProductConfigurationAttribute `json:"attributes"`
-	} `json:"configuration"`
-}
-
-*/
-
 type Payment struct {
-	OrderID     int64      `json:"order_id"`
+	OrderID     string     `json:"order_id"`
 	PaymentID   int64      `json:"payment_id"`
 	MOP         string     `json:"mop"`
 	Amount      float64    `json:"amount"`
@@ -110,25 +12,17 @@ type Payment struct {
 }
 
 type OrderComment struct {
-	OrderID      int64      `json:"order_id"`
+	OrderID      string     `json:"order_id"`
 	UserName     *string    `json:"user_name"`
 	Content      string     `json:"content"`
 	CreationDate *time.Time `json:"creation_date"`
 }
 
 type Location struct {
-	OrderID      int64   `json:"order_id"`
+	OrderID      string  `json:"order_id"`
 	LocationID   int64   `json:"location_id"`
 	LocationName string  `json:"location_name"`
 	LocationDesc *string `json:"location_desc"`
-}
-
-type Responsible struct {
-	ID   *int64   `json:"id"`
-	Lat  *float64 `json:"lat"`
-	Lng  *float64 `json:"lng"`
-	Tel  *string  `json:"tel"`
-	Name *string  `json:"name"`
 }
 
 type Customer struct {
@@ -149,7 +43,7 @@ type Customer struct {
 }
 
 type Order struct {
-	OrderID          int64          `json:"order_id"`
+	OrderID          string         `json:"order_id"`
 	OrderNum         *string        `json:"order_num"`
 	Brand            *string        `json:"brand"`
 	BrandOrderID     *string        `json:"brand_order_id"`
@@ -158,24 +52,24 @@ type Order struct {
 	OrderType        *string        `json:"order_type"`
 	CutleryNotes     *string        `json:"cutlery_notes"`
 	State            *string        `json:"state"`
-	Scheduled        *string        `json:"scheduled"`
-	TTC              float64        `json:"TTC"`
-	TVA              *float64       `json:"TVA"`
-	HT               *float64       `json:"HT"`
-	PlacesSettings   *string        `json:"places_settings"`
+	Scheduled        bool           `json:"scheduled"`
+	TTC              int64          `json:"TTC"`
+	TVA              *int64         `json:"TVA"`
+	HT               *int64         `json:"HT"`
+	PlacesSettings   *int64         `json:"places_settings"`
 	PagerNumber      *string        `json:"pager_number"`
-	IsPaid           int            `json:"isPaid"`
-	IsDistributed    int            `json:"isDistributed"`
+	IsPaid           bool           `json:"isPaid"`
+	IsDistributed    bool           `json:"isDistributed"`
 	IsSNO            bool           `json:"isSNO"`
 	CallHour         *string        `json:"callHour"`
 	EstimatedReady   *string        `json:"estimated_ready"`
 	IsDelivery       int            `json:"isDelivery"`
-	MerchantApproval int            `json:"merchant_approval"`
-	DeliveryFees     *float64       `json:"delivery_fees"`
+	MerchantApproval string         `json:"merchant_approval"`
+	DeliveryFees     *int64         `json:"delivery_fees"`
 	Customer         *Customer      `json:"customer"`
 	Comments         []OrderComment `json:"comments"`
 	Payments         []Payment      `json:"payments"`
-	Responsible      *Responsible   `json:"responsible"`
+	Responsible      *OrderUser     `json:"responsible"`
 	Location         []Location     `json:"location"`
 	Products         []ProductEntry `json:"products"`
 	Priority         *int64         `json:"priority"`
@@ -184,10 +78,11 @@ type Order struct {
 	LastUpdate       *time.Time     `json:"last_update"`
 }
 
-type DeliveryManInfo struct {
-	UserID         int64    `json:"user_id"`
-	FirstName      string   `json:"first_name"`
-	LastName       string   `json:"last_name"`
+// Can be use as Responsible, OrderedBy, DeliveryMan, etc...
+type OrderUser struct {
+	UserID         string   `json:"user_id"`
+	FirstName      *string  `json:"first_name"`
+	LastName       *string  `json:"last_name"`
 	ProfilePicture *string  `json:"profile_picture"`
 	Lat            *float64 `json:"lat"`
 	Lng            *float64 `json:"lng"`
@@ -195,10 +90,10 @@ type DeliveryManInfo struct {
 }
 
 type DeliverySession struct {
-	DeliverySessionID int64           `json:"delivery_session_id"`
-	Status            string          `json:"status"`
-	Orders            []Order         `json:"orders"`
-	DeliveryMan       DeliveryManInfo `json:"delivery_man"`
+	DeliverySessionID string    `json:"delivery_session_id"`
+	Status            string    `json:"status"`
+	Orders            []Order   `json:"orders"`
+	DeliveryMan       OrderUser `json:"delivery_man"`
 }
 
 type PendingOrdersResponse struct {

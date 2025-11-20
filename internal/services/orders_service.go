@@ -8,14 +8,16 @@ import (
 )
 
 type OrdersService struct {
-	ordersRepo *repositories.LegacyOrdersRepository
-	userRepo   *repositories.UserRepository // used to resolve token -> merchant id
+	ordersRepo           *repositories.LegacyOrdersRepository
+	deliverySessionsRepo *repositories.DeliverySessionsRepository
+	userRepo             *repositories.UserRepository // used to resolve token -> merchant id
 }
 
-func NewOrdersService(ordersRepo *repositories.LegacyOrdersRepository, userRepo *repositories.UserRepository) *OrdersService {
+func NewOrdersService(ordersRepo *repositories.LegacyOrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UserRepository) *OrdersService {
 	return &OrdersService{
-		ordersRepo: ordersRepo,
-		userRepo:   userRepo,
+		ordersRepo:           ordersRepo,
+		deliverySessionsRepo: deliverySessionsRepo,
+		userRepo:             userRepo,
 	}
 }
 
@@ -32,7 +34,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
 }
-
+/*
 // GetDeliverySessions returns delivery sessions (no orders)
 func (s *OrdersService) GetDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -42,5 +44,6 @@ func (s *OrdersService) GetDeliverySessions(ctx context.Context, token string) (
 	if user == nil {
 		return nil, errors.New("invalid token")
 	}
-	return s.ordersRepo.GetDeliverySessions(ctx, user.MerchantID)
+	return s.deliverySessionsRepo.GetDeliverySessions(ctx, user.MerchantID)
 }
+*/
