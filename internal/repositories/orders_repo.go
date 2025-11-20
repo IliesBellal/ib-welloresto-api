@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type OrdersRepository struct {
@@ -147,27 +148,37 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 // C'est ici qu'on optimise et qu'on log.
 func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
 	startTotal := time.Now()
-
 	r.log.Info("fetchAndBuildOrders START", zap.String("merchant_id", merchantID))
 
-	// Helper pour logger et exécuter
-	runQuery := func(stepName string, query string, args ...interface{}) (*sql.Rows, error) {
-		t0 := time.Now()
-		rows, err := r.db.QueryContext(ctx, query, args...)
-		elapsed := time.Since(t0)
+	type queryResult struct {
+		rows *sql.Rows
+		err  error
+	}
 
-		if err != nil {
-			r.log.Error("Query FAILED", zap.String("step", stepName), zap.Error(err))
-			return nil, err
-		}
+	g, ctx := errgroup.WithContext(ctx)
 
-		// LOG CRITIQUE : Si une étape prend > 1s, on le voit tout de suite
-		if elapsed.Seconds() > 1.0 {
-			r.log.Warn("Slow Query Detected", zap.String("step", stepName), zap.Duration("duration", elapsed))
-		} else {
-			r.log.Debug("Query OK", zap.String("step", stepName), zap.Duration("duration", elapsed))
-		}
-		return rows, nil
+	// 11 slots pour stocker les résultats
+	results := make([]*queryResult, 11)
+
+	// Helper : lance une requête en parallèle
+	run := func(idx int, step string, query string, args ...interface{}) {
+		g.Go(func() error {
+			r.log.Info("qProducts running this...",
+				zap.String("merchant_id", merchantID),
+				zap.String("sql", FormatQueryForLog(query, args)))
+
+			start := time.Now()
+			rows, err := r.db.QueryContext(ctx, query, args...)
+			if err != nil {
+				r.log.Error("Query FAILED", zap.String("step", step), zap.Error(err))
+				results[idx] = &queryResult{rows: nil, err: err}
+				return err
+			}
+
+			r.log.Info("Query OK", zap.String("step", step), zap.Duration("duration", time.Since(start)))
+			results[idx] = &queryResult{rows: rows, err: nil}
+			return nil
+		})
 	}
 
 	// --- 1. HEADER ---
@@ -187,15 +198,9 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qHeader running", zap.String("merchant_id", merchantID))
-
-	r.log.Info("qHeader running this...",
-		zap.String("merchant_id", merchantID),
-		zap.String("sql", FormatQueryForLog(qHeader, merchantID)))
-
-	rowsHeader, err := runQuery("1_Headers", qHeader, merchantID)
+	rowsHeader, err := r.db.QueryContext(ctx, qHeader, merchantID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("header query failed: %w", err)
 	}
 	defer rowsHeader.Close()
 
@@ -220,17 +225,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	r.log.Info("qProducts running", zap.String("merchant_id", merchantID))
 
-	r.log.Info("qProducts running this...",
-		zap.String("merchant_id", merchantID),
-		zap.String("sql", FormatQueryForLog(qProducts, merchantID)))
-
-	rowsProducts, err := debugQuery(ctx, r.db, r.log, "2_Products", qProducts, merchantID)
-
-	// rowsProducts, err := runQuery("2_Products", qProducts, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsProducts.Close()
+	run(1, "2_Products", qProducts, merchantID)
 
 	// --- 3. COMPONENTS (Optimisation possible: filtrer par orderID si liste courte, sinon global) ---
 	// Ici on garde global car c'est souvent du statique, MAIS si c'est lent, il faut filtrer sur les produits des orders concernés.
@@ -244,12 +239,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
 		WHERE c.merchant_id = ? AND c.available = '1' AND rq.enabled IS TRUE`
 
-	r.log.Info("qProductComponents running", zap.String("merchant_id", merchantID))
-	rowsProdComp, err := runQuery("3_Components", qProductComponents, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsProdComp.Close()
+	run(2, "3_Components", qProductComponents, merchantID)
 
 	// --- 4. EXTRAS ---
 	qExtras := `
@@ -262,12 +252,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qExtras running", zap.String("merchant_id", merchantID))
-	rowsExtras, err := runQuery("4_Extras", qExtras, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsExtras.Close()
+	run(3, "4_Extras", qExtras, merchantID)
 
 	// --- 5. WITHOUTS ---
 	qWithouts := `
@@ -280,12 +265,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qWithouts running", zap.String("merchant_id", merchantID))
-	rowsWithouts, err := runQuery("5_Withouts", qWithouts, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsWithouts.Close()
+	run(4, "5_Withouts", qWithouts, merchantID)
 
 	// --- 6. PAYMENTS ---
 	qPayments := `
@@ -296,12 +276,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qPayments running", zap.String("merchant_id", merchantID))
-	rowsPayments, err := runQuery("6_Payments", qPayments, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsPayments.Close()
+	run(5, "6_Payments", qPayments, merchantID)
 
 	// --- 7. CLIENTS SNO ---
 	qClients := `
@@ -314,12 +289,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE oi.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qClients running", zap.String("merchant_id", merchantID))
-	rowsClients, err := runQuery("7_ClientsSNO", qClients, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsClients.Close()
+	run(6, "7_ClientsSNO", qClients, merchantID)
 
 	// --- 8. ORDER COMMENTS ---
 	qOrderComments := `
@@ -331,12 +301,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
 
-	r.log.Info("qOrderComments running", zap.String("merchant_id", merchantID))
-	rowsOrderComments, err := runQuery("8_OrderComments", qOrderComments, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsOrderComments.Close()
+	run(7, "8_OrderComments", qOrderComments, merchantID)
 
 	// --- 9. LOCATIONS ---
 	qLocations := `
@@ -348,12 +313,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qLocations running", zap.String("merchant_id", merchantID))
-	rowsLocations, err := runQuery("9_Locations", qLocations, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsLocations.Close()
+	run(8, "9_Locations", qLocations, merchantID)
 
 	// --- 10. CONFIG ATTRIBUTES ---
 	qConfigAttr := `
@@ -366,12 +326,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qConfigAttr running", zap.String("merchant_id", merchantID))
-	rowsConfigAttr, err := runQuery("10_ConfigAttrs", qConfigAttr, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsConfigAttr.Close()
+	run(9, "10_ConfigAttrs", qConfigAttr, merchantID)
 
 	// --- 11. CONFIG OPTIONS ---
 	qConfigAttrOptions := `
@@ -388,15 +343,21 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
 		WHERE o.merchant_id = ? ` + additionalFilter
 
-	r.log.Info("qConfigAttrOptions running", zap.String("merchant_id", merchantID))
-	rowsConfigAttrOptions, err := runQuery("11_ConfigOpts", qConfigAttrOptions, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rowsConfigAttrOptions.Close()
+	run(10, "11_ConfigOpts", qConfigAttrOptions, merchantID)
 
 	r.log.Info("Queries DONE, starting mapping", zap.Duration("sql_duration", time.Since(startTotal)))
 	mapStart := time.Now()
+
+	rowsProducts := results[1].rows
+	rowsProdComp := results[2].rows
+	rowsExtras := results[3].rows
+	rowsWithouts := results[4].rows
+	rowsPayments := results[5].rows
+	rowsClients := results[6].rows
+	rowsOrderComments := results[7].rows
+	rowsLocations := results[8].rows
+	rowsConfigAttr := results[9].rows
+	rowsConfigAttrOptions := results[10].rows
 
 	// =================================================================
 	// MAPPING LOGIC (COPIED & ADAPTED FROM YOUR CODE)
