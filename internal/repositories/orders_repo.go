@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"time"
 
 	"welloresto-api/internal/models"
@@ -530,9 +531,44 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		var orderedOn, commentCreation sql.NullTime
 		var availableIn, availableTakeAway, availableDelivery sql.NullBool
 
-		if err := rowsProducts.Scan(&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc, &categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice, &discountID, &discountName, &readyForDistribution, &distributedQuantity, &tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID, &commentCreation,
-			&priceTakeAway, &priceDelivery, &imageURL, &productionStatus, &productionDoneQty, &productionColor, &availableIn, &availableTakeAway, &availableDelivery); err != nil {
-			return nil, err
+		scanErr := rowsProducts.Scan(
+			&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
+			&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
+			&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+			&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
+			&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
+			&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
+			&availableDelivery,
+		)
+
+		if scanErr != nil {
+			cols, _ := rowsProducts.Columns()
+
+			fmt.Println("❌ SCAN FAILED")
+			fmt.Println("➡️ Error:", scanErr)
+			fmt.Println("➡️ Number of columns:", len(cols))
+			fmt.Println("➡️ Columns returned by SQL:")
+			for i, c := range cols {
+				fmt.Printf("   [%02d] %s\n", i, c)
+			}
+
+			// Compare expected types vs actual
+			debugTargets := []interface{}{
+				&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
+				&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
+				&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
+				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
+				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
+				&availableDelivery,
+			}
+
+			fmt.Println("➡️ Types attendus par Go pour chaque champ :")
+			for i, v := range debugTargets {
+				fmt.Printf("   [%02d] %T (pointer to %T)\n", i, v, reflect.Indirect(reflect.ValueOf(v)).Interface())
+			}
+
+			return nil, fmt.Errorf("Scan failed: %w", scanErr)
 		}
 
 		var comment interface{}
