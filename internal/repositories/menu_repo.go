@@ -11,16 +11,16 @@ import (
 	"go.uber.org/zap"
 )
 
-type LegacyMenuRepository struct {
+type MenuRepository struct {
 	db  *sql.DB
 	log *zap.Logger
 }
 
-func NewLegacyMenuRepository(db *sql.DB, log *zap.Logger) *LegacyMenuRepository {
-	return &LegacyMenuRepository{db: db, log: log}
+func NewMenuRepository(db *sql.DB, log *zap.Logger) *MenuRepository {
+	return &MenuRepository{db: db, log: log}
 }
 
-func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
+func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	startTotal := time.Now()
 	r.log.Info("GetMenu START", zap.String("merchant_id", merchantID), zap.Time("start_at", startTotal))
 
@@ -477,7 +477,7 @@ func (r *LegacyMenuRepository) GetMenu(ctx context.Context, merchantID string, l
 	for _, c := range cats {
 		actual := []models.ProductEntry{}
 		for _, pid := range productOrder {
-			if p, ok := products[pid]; ok && p != nil && p.Category == c.ID {
+			if p, ok := products[pid]; ok && p != nil && *p.Category == *c.ID {
 				actual = append(actual, *p)
 			}
 		}

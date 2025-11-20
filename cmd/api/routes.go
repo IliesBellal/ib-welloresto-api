@@ -42,7 +42,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
 
 	menuRepoOpti := repositories.NewOptimizedMenuRepository(mysqlDB)
-	menuRepoLegacy := repositories.NewLegacyMenuRepository(mysqlDB, log)
+	menuRepoLegacy := repositories.NewMenuRepository(mysqlDB, log)
 
 	ordersRepo := repositories.NewLegacyOrdersRepository(mysqlDB)
 	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB)
@@ -93,7 +93,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/pending", ordersHandler.GetPendingOrders) // GET /orders/pending
 	})
 
-	r.Route("/delivery_session", func(r chi.Router) {
+	r.Route("/delivery_sessions", func(r chi.Router) {
 		r.Get("/pending", deliverySessionsHandler.GetDeliverySessions) // GET /delivery/sessions
 	})
 

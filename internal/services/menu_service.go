@@ -11,13 +11,13 @@ import (
 
 type MenuService struct {
 	userRepo *repositories.UserRepository // uses your existing interface
-	legacy   *repositories.LegacyMenuRepository
+	legacy   *repositories.MenuRepository
 	opt      *repositories.OptimizedMenuRepository
 	// choose repo via config; for now use both
 	useOptimized bool
 }
 
-func NewMenuService(userRepo *repositories.UserRepository, legacy *repositories.LegacyMenuRepository, opt *repositories.OptimizedMenuRepository, useOptimized bool) *MenuService {
+func NewMenuService(userRepo *repositories.UserRepository, legacy *repositories.MenuRepository, opt *repositories.OptimizedMenuRepository, useOptimized bool) *MenuService {
 	return &MenuService{
 		userRepo:     userRepo,
 		legacy:       legacy,
