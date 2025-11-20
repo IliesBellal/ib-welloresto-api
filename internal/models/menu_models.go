@@ -87,11 +87,11 @@ type ComponentCategory struct {
 }
 
 type ComponentBasic struct {
-	ComponentID int64  `json:"component_id"`
-	Name        string `json:"name"`
-	Category    *int64 `json:"category"`
-	Price       int    `json:"price"`
-	Status      int    `json:"status"`
+	ComponentID int64   `json:"component_id"`
+	Name        string  `json:"name"`
+	Category    *string `json:"category"`
+	Price       int     `json:"price"`
+	Status      int     `json:"status"`
 }
 
 // configurable attributes
