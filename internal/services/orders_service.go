@@ -34,3 +34,16 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
 }
+
+func (s *OrdersService) GetOrder(ctx context.Context, token, merchantID, orderID string) (*models.Order, error) {
+	// Resolve user by token to get merchant id
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.ordersRepo.GetOrder(ctx, user.MerchantID, orderID)
+}

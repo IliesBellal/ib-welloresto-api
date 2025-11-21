@@ -1,11 +1,12 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
-	"strings"
-
 	"welloresto-api/internal/services"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // OrdersHandler handles orders endpoints
@@ -19,24 +20,6 @@ func NewOrdersHandler(ordersService *services.OrdersService, deliverySessionsSer
 		ordersService:           ordersService,
 		deliverySessionsService: deliverySessionsService,
 	}
-}
-
-// helper to extract token either from Authorization header (Bearer ...) or token query param
-func extractToken(r *http.Request) string {
-	// Authorization header
-	auth := r.Header.Get("Authorization")
-	if auth != "" {
-		// allow "Bearer <token>" or raw token
-		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-			return strings.TrimSpace(auth[7:])
-		}
-		return strings.TrimSpace(auth)
-	}
-	// fallback to query param token (legacy)
-	if t := r.URL.Query().Get("token"); t != "" {
-		return t
-	}
-	return ""
 }
 
 // GET /orders/pending
@@ -63,4 +46,30 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	token := extractToken(r)
+
+	orderID := chi.URLParam(r, "orderID")
+	if orderID == "" {
+		http.Error(w, "missing orderID", http.StatusBadRequest)
+		return
+	}
+
+	merchantID := r.Context().Value("merchant_id").(string)
+
+	order, err := h.ordersService.GetOrder(ctx, token, merchantID, orderID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "order not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(order)
 }
