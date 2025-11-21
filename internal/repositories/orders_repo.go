@@ -524,7 +524,19 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			var mop, orderID sql.NullString
 			var amount sql.NullFloat64
 			var paymentDate sql.NullTime
+
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
+				// LOG BRUT : row complet, colonnes, valeurs reçues
+				cols, _ := rows.Columns()
+				raw := dumpRawRow(rows)
+
+				r.log.Error("SCAN ERROR",
+					zap.String("step", step),
+					zap.Strings("columns", cols),
+					zap.Any("raw_row", raw),
+					zap.Error(err),
+				)
+
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
