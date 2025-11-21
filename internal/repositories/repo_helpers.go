@@ -114,3 +114,17 @@ func debugQuery(ctx context.Context, db *sql.DB, log *zap.Logger, step, query st
 
 	return rows, nil
 }
+
+func dumpRawRow(rows *sql.Rows) []interface{} {
+	cols, _ := rows.Columns()
+	raw := make([]interface{}, len(cols))
+	rawPtrs := make([]interface{}, len(cols))
+
+	for i := range raw {
+		rawPtrs[i] = &raw[i]
+	}
+
+	// Lire en brut, sans types
+	rows.Scan(rawPtrs...)
+	return raw
+}

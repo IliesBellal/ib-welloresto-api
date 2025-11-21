@@ -481,6 +481,17 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			var content, userName, orderID, userID sql.NullString
 			var creationDate sql.NullTime
 			if err := rows.Scan(&id, &userID, &content, &creationDate, &orderID, &userName); err != nil {
+				// LOG BRUT : row complet, colonnes, valeurs reçues
+				cols, _ := rows.Columns()
+				raw := dumpRawRow(rows)
+
+				r.log.Error("SCAN ERROR",
+					zap.String("step", step),
+					zap.Strings("columns", cols),
+					zap.Any("raw_row", raw),
+					zap.Error(err),
+				)
+
 				return nil, err
 			}
 			commentsByOrderID[orderID.String] = append(commentsByOrderID[orderID.String], models.OrderComment{
