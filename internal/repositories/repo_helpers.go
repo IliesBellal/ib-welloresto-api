@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
