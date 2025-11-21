@@ -166,21 +166,26 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	}()
 
 	// --- HELPER FUNCTIONS CORRIGÉES ---
-	// On a supprimé les context.WithTimeout internes qui causaient le "context canceled" prématuré.
-
 	// Helper to run a query with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
 		r.log.Info("Query START", zap.String("step", step))
+
 		t0 := time.Now()
-
-		// Utilisation directe du ctx parent. Le timeout est géré par le client/serveur HTTP global.
 		rows, err := tx.QueryContext(ctx, query, args...)
-
 		elapsed := time.Since(t0)
+
 		if err != nil {
-			r.log.Error("Query ERROR", zap.String("step", step), zap.Duration("elapsed", elapsed), zap.Error(err))
+			r.log.Error(
+				"Query ERROR",
+				zap.String("step", step),
+				zap.Duration("elapsed", elapsed),
+				zap.String("sql", query),
+				zap.Any("args", args),
+				zap.Error(err),
+			)
 			return nil, fmt.Errorf("%s query error: %w", step, err)
 		}
+
 		r.log.Info("Query DONE", zap.String("step", step), zap.Duration("elapsed", elapsed))
 		return rows, nil
 	}
@@ -471,7 +476,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		left join users u on u.user_id = oc.user_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? and o.merchant_id = '0' and oc.order_item_id is null ` + additionalFilter
+		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
