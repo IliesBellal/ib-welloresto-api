@@ -207,7 +207,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var locationName, locationDesc, orderID, locationID sql.NullString
 			if err := rows.Scan(&orderID, &locationID, &locationName, &locationDesc); err != nil {
@@ -217,7 +216,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				OrderID: orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: nullStringToPtr(locationDesc),
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("locations loaded")
 	}
 
 	// --- 3. COMPONENTS (Optimisation possible: filtrer par orderID si liste courte, sinon global) ---
@@ -238,7 +237,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var productID, name, uom sql.NullString
 			var compID, price, status sql.NullInt64
@@ -256,7 +254,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				Status:        int(status.Int64),
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("components loaded")
 	}
 
 	// --- 4. EXTRAS ---
@@ -278,7 +276,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var orderItemID, id, orderID, productID, compID, name sql.NullString
 			var price sql.NullFloat64
@@ -295,7 +292,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				Price:       price.Float64,
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("extras loaded")
 	}
 
 	// --- 5. WITHOUTS ---
@@ -317,7 +314,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var orderItemID, id, orderID, productID, compID, name sql.NullString
 			if err := rows.Scan(&orderItemID, &id, &orderID, &productID, &name, &compID); err != nil {
@@ -333,7 +329,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				Price:       0,
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("withouts loaded")
 	}
 
 	// --- 7. CLIENTS SNO ---
@@ -355,7 +351,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var userCode, userName, orderItemID sql.NullString
 			var quantity sql.NullInt64
@@ -365,7 +360,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			clientObj := map[string]interface{}{"user_code": userCode.String, "user_name": userName.String, "quantity": quantity.Int64}
 			snoClientsMap[orderItemID.String] = append(snoClientsMap[orderItemID.String], clientObj)
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("clientSNO loaded")
 	}
 
 	// --- 11. CONFIG OPTIONS ---
@@ -396,7 +391,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var attrID, orderItemID, id, title sql.NullString
 			var extraPrice int
@@ -417,7 +411,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				Selected:          int(selected.Int64),
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("configuration_attributes_options loaded")
 	}
 
 	// --- 10. CONFIG ATTRIBUTES ---
@@ -439,7 +433,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var id, orderItemID, title, attrType sql.NullString
 			var maxOptions sql.NullInt64
@@ -462,7 +455,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				Options:       opts,
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("configuration_attribute loaded")
 	}
 
 	// --- 8. ORDER COMMENTS ---
@@ -483,7 +476,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var id sql.NullInt64
 			var content, userName, orderID, userID sql.NullString
@@ -495,7 +487,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				OrderID: orderID.String, UserName: nullStringToPtr(userName), Content: content.String, CreationDate: nullTimePtr(creationDate),
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("order_comment loaded")
 	}
 
 	// --- 6. PAYMENTS ---
@@ -516,7 +508,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var paymentID, enabled sql.NullInt64
 			var mop, orderID sql.NullString
@@ -529,7 +520,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: nullTimePtr(paymentDate), Enabled: int(enabled.Int64),
 			})
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("payments loaded")
 	}
 
 	// --- 2. PRODUCTS ---
@@ -561,7 +552,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
@@ -675,7 +665,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 			productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("products loaded")
 	}
 
 	// --- 1. HEADER ---
@@ -703,7 +693,6 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			return nil, err
 		}
 		defer rows.Close()
-		count := 0
 		for rows.Next() {
 			var ord models.Order
 			var customerID, customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
@@ -819,7 +808,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 			orders = append(orders, ord)
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
+		r.log.Info("header loaded")
 	}
 
 	r.log.Info(
