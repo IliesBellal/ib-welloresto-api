@@ -603,11 +603,13 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 				return nil, fmt.Errorf("Scan failed: %w", scanErr)
 			}
 
-			var comment interface{}
+			var comment models.OrderComment
 			if commentContent.Valid {
-				comment = map[string]interface{}{"user_id": commentUserID.String, "content": commentContent.String, "creation_date": nilIfZeroTime(commentCreation)}
+				comment = models.OrderComment{
+					OrderID: orderID.String, UserName: &commentUserID.String, Content: commentContent.String, CreationDate: nullTimePtr(commentCreation),
+				}
 			} else {
-				comment = map[string]interface{}{"user_id": nil, "content": nil, "creation_date": nil}
+				comment = models.OrderComment{}
 			}
 
 			op := models.ProductEntry{
