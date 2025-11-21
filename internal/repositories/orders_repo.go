@@ -462,15 +462,15 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	// --- 8. ORDER COMMENTS ---
 	commentsByOrderID := map[string][]models.OrderComment{}
-	{
+	/*{
 		step := "order_comment"
 		q := `
 		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
 		from order_comments oc
 		inner join orders o on o.order_id = oc.order_id
 		left join users u on u.user_id = oc.user_id
-		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
+		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
 		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
 
 		rows, err := runQuery(step, q, merchantID)
@@ -491,7 +491,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			})
 		}
 		r.log.Info("categories loaded", zap.Int("rows", count))
-	}
+	}*/
 
 	// --- 6. PAYMENTS ---
 	paymentsByOrderID := map[string][]models.Payment{}
