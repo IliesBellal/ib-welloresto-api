@@ -462,7 +462,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 
 	// --- 8. ORDER COMMENTS ---
 	commentsByOrderID := map[string][]models.OrderComment{}
-	/*{
+	{
 		step := "order_comment"
 		q := `
 		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
@@ -471,7 +471,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		left join users u on u.user_id = oc.user_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
+		WHERE o.merchant_id = ? and o.merchant_id = '0' and oc.order_item_id is null ` + additionalFilter
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -491,7 +491,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			})
 		}
 		r.log.Info("categories loaded", zap.Int("rows", count))
-	}*/
+	}
 
 	// --- 6. PAYMENTS ---
 	paymentsByOrderID := map[string][]models.Payment{}
@@ -533,7 +533,9 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	{
 		step := "products"
 		q := `
-		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id, oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity, oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
+		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id,
+		       oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
+		       oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery
 		FROM orders o
