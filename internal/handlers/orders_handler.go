@@ -53,15 +53,13 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	token := extractToken(r)
 
-	orderID := chi.URLParam(r, "orderID")
+	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, "missing orderID", http.StatusBadRequest)
+		http.Error(w, "missing order_id", http.StatusBadRequest)
 		return
 	}
 
-	merchantID := r.Context().Value("merchant_id").(string)
-
-	order, err := h.ordersService.GetOrder(ctx, token, merchantID, orderID)
+	order, err := h.ordersService.GetOrder(ctx, token, orderID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "order not found", http.StatusNotFound)
