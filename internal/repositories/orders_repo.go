@@ -297,7 +297,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	// --- 5. WITHOUTS ---
 	withoutsMap := map[string][]models.OrderProductWithout{}
 	{
-		step := "extras"
+		step := "withouts"
 		q := `
 		SELECT w.order_item_id, w.id, w.order_id, w.product_id, cw.name, w.component_id
 		FROM orders o
@@ -372,7 +372,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	}
 	configurableOptionsMap := map[optKey][]models.ConfigurableOption{}
 	{
-		step := "configuration_options"
+		step := "configuration_attributes_options"
 		q := `
 		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price, 
 		case when oic.id is null then 0 else 1 end as selected,
@@ -419,7 +419,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	// --- 10. CONFIG ATTRIBUTES ---
 	configurableAttributesMap := map[string][]models.ConfigurableAttribute{}
 	{
-		step := "configuration_attribute_options"
+		step := "configuration_attribute"
 		q := `
 		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
 		FROM orders o
@@ -464,7 +464,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	// --- 8. ORDER COMMENTS ---
 	commentsByOrderID := map[string][]models.OrderComment{}
 	{
-		step := "configuration_attribute_options"
+		step := "order_comment"
 		q := `
 		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
 		from order_comments oc
@@ -497,7 +497,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	// --- 6. PAYMENTS ---
 	paymentsByOrderID := map[string][]models.Payment{}
 	{
-		step := "configuration_attribute_options"
+		step := "payments"
 		q := `
 		SELECT oc.id, oc.user_id, oc.content, oc.creation_date, oc.order_id, u.userName
 		from order_comments oc
@@ -532,7 +532,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 	// On utilise le même filtre sur 'o' (orders) car on join dessus
 	productsByOrderID := map[string][]models.ProductEntry{}
 	{
-		step := "configuration_attribute_options"
+		step := "products"
 		q := `
 		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id, oi.isPaid, oi.isDistributed, oi.ordered_on, p.price as base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity, oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
@@ -777,7 +777,7 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 			}
 
 			// --- Responsible (Delivery Man info on Order) ---
-			if userID.Valid && userID.String != "0" {
+			if userID.Valid && userID.String != "0" && false {
 				ord.Responsible = &models.OrderUser{
 					UserID:    userID.String,
 					Lat:       nullFloat64Ptr(userLat),
