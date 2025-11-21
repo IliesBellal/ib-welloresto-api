@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
 	"github.com/go-chi/chi/v5"
@@ -70,4 +71,35 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(order)
+}
+
+func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	// read app param from query (default WR_RECEPTION)
+	app := r.URL.Query().Get("app")
+	if app == "" {
+		// default to WR_RECEPTION as in legacy
+		app = "WR_RECEPTION"
+	}
+
+	var req models.OrderHistoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	resp, err := h.ordersService.GetHistory(ctx, token, req)
+
+	if err != nil {
+		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

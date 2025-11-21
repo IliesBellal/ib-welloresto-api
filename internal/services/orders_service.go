@@ -47,3 +47,16 @@ func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*m
 
 	return s.ordersRepo.GetOrder(ctx, user.MerchantID, orderID)
 }
+
+func (s *OrdersService) GetHistory(ctx context.Context, token string, req models.OrderHistoryRequest) ([]models.Order, error) {
+	// Resolve user by token to get merchant id
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
+}
