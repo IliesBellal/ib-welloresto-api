@@ -204,13 +204,12 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		defer rows.Close()
 		count := 0
 		for rows.Next() {
-			var locationID sql.NullInt64
-			var locationName, locationDesc, orderID sql.NullString
+			var locationName, locationDesc, orderID, locationID sql.NullString
 			if err := rows.Scan(&orderID, &locationID, &locationName, &locationDesc); err != nil {
 				return nil, err
 			}
 			locationsByOrderID[orderID.String] = append(locationsByOrderID[orderID.String], models.Location{
-				OrderID: orderID.String, LocationID: locationID.Int64, LocationName: locationName.String, LocationDesc: nullStringToPtr(locationDesc),
+				OrderID: orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: nullStringToPtr(locationDesc),
 			})
 		}
 		r.log.Info("categories loaded", zap.Int("rows", count))
@@ -481,8 +480,8 @@ func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID s
 		defer rows.Close()
 		count := 0
 		for rows.Next() {
-			var id, userID sql.NullInt64
-			var content, userName, orderID sql.NullString
+			var id sql.NullInt64
+			var content, userName, orderID, userID sql.NullString
 			var creationDate sql.NullTime
 			if err := rows.Scan(&id, &userID, &content, &creationDate, &orderID, &userName); err != nil {
 				return nil, err
