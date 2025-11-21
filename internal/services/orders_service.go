@@ -60,3 +60,28 @@ func (s *OrdersService) GetHistory(ctx context.Context, token string, req models
 
 	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
 }
+
+func (s *OrdersService) GetPayments(ctx context.Context, token string, orderID string) ([]models.Payment, error) {
+	// Resolve user by token to get merchant id
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+	return s.ordersRepo.GetPaymentsForOrder(ctx, orderID)
+}
+
+func (s *OrdersService) DisablePayment(ctx context.Context, token string, paymentID string) error {
+	// Resolve user by token to get merchant id
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	return s.ordersRepo.DisablePayment(ctx, paymentID)
+}

@@ -147,3 +147,73 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	return r.fetchAndBuildOrders(ctx, merchantID, filter)
 }
+
+func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
+	r.log.Info("GetPaymentsForOrder START", zap.String("order_id", orderID))
+
+	q := `
+		SELECT order_id, payment_id, mop, amount, payment_date, enabled
+		FROM payments
+		WHERE order_id = ?
+		ORDER BY payment_date ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, q, orderID)
+	if err != nil {
+		r.log.Error("GetPaymentsForOrder ERROR", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	payments := []models.Payment{}
+
+	for rows.Next() {
+		var p models.Payment
+		var paymentDate sql.NullTime
+
+		err := rows.Scan(&p.OrderID, &p.PaymentID, &p.MOP, &p.Amount, &paymentDate, &p.Enabled)
+		if err != nil {
+			return nil, err
+		}
+
+		if paymentDate.Valid {
+			p.PaymentDate = &paymentDate.Time
+		}
+
+		payments = append(payments, p)
+	}
+
+	return payments, nil
+}
+
+func (r *OrdersRepository) DisablePayment(ctx context.Context, paymentID string) error {
+	r.log.Info("DisablePayment START", zap.String("payment_id", paymentID))
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// Disable payment
+	_, err = tx.ExecContext(ctx, `
+		UPDATE payments SET enabled = 0 WHERE payment_id = ?
+	`, paymentID)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Refresh order as unpaid
+	_, err = tx.ExecContext(ctx, `
+		UPDATE orders o 
+		JOIN payments p ON o.order_id = p.order_id
+		SET o.isPaid = false, o.last_update = UTC_TIMESTAMP()
+		WHERE p.payment_id = ?
+	`, paymentID)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}

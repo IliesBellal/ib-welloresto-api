@@ -46,6 +46,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	ordersRepo := repositories.NewOrdersRepository(mysqlDB, log)
 	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB, log)
+	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
+	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -55,6 +57,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpti, false)
 	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo)
 	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
+	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
+	locationsService := services.NewLocationsService(locationsRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -64,6 +68,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	menuHandler := handlers.NewMenuHandler(menuService)
 	ordersHandler := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
 	deliverySessionsHandler := handlers.NewDeliverySessionsHandler(deliverySessionsService)
+	cashDrawerHandler := handlers.NewCashDrawerHandler(cashDrawerService)
+	locationsHandler := handlers.NewLocationsHandler(locationsService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -89,14 +95,26 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/", menuHandler.GetMenu)
 	})
 
+	r.Route("/locations", func(r chi.Router) {
+		r.Get("/", locationsHandler.GetLocations)
+	})
+
 	r.Route("/orders", func(r chi.Router) {
-		r.Get("/pending", ordersHandler.GetPendingOrders) // GET /orders/pending
-		r.Get("/{order_id}", ordersHandler.GetOrder)
+		r.Get("/pending", ordersHandler.GetPendingOrders)
 		r.Post("/orders/history", ordersHandler.GetHistory)
+
+		r.Get("/{order_id}", ordersHandler.GetOrder)
+
+		r.Get("/{order_id}/payments", ordersHandler.GetPayments)
+		r.Delete("/{order_id}/payments/{payment_id}", ordersHandler.DeletePayment)
 	})
 
 	r.Route("/delivery_sessions", func(r chi.Router) {
-		r.Get("/pending", deliverySessionsHandler.GetPendingDeliverySessions) // GET /delivery/sessions
+		r.Get("/pending", deliverySessionsHandler.GetPendingDeliverySessions)
+	})
+
+	r.Route("/cash_drawer", func(r chi.Router) {
+		r.Get("/open", cashDrawerHandler.OpenCashDrawer)
 	})
 
 	return r
