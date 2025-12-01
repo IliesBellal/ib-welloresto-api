@@ -59,7 +59,7 @@ type PaymentRequest struct {
 	DeviceID        string         `json:"device_id"`
 	OrderID         string         `json:"order_id"`
 	MOP             string         `json:"mop"`
-	Amount          string         `json:"amount"`
+	Amount          int            `json:"amount"`
 	Items           map[string]int `json:"items"`
 	DiscountComment string         `json:"discount_comment"`
 	StatusCheck     string         `json:"status_check"`
