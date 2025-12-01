@@ -36,7 +36,9 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		r.log.Error("CTX ALREADY CANCELED", zap.Error(ctx.Err()))
 	}
 
+	r.log.Info("Beginning tx")
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	r.log.Info("tx open")
 	if err != nil {
 		r.log.Error("BeginTx failed", zap.Error(err))
 		return nil, fmt.Errorf("BeginTx failed: %w", err)
@@ -49,6 +51,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 			_ = tx.Rollback()
 		}
 	}()
+	r.log.Info("first query")
 
 	// --- HELPER FUNCTIONS CORRIGÉES ---
 	// Helper to run a query with logging
