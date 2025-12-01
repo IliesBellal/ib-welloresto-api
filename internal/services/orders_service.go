@@ -48,7 +48,6 @@ func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID st
 	return s.ordersRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
 }
 
-// GetPendingOrders resolves token -> merchant, then fetch pending orders (legacy)
 func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app string) (*models.PendingOrdersResponse, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -111,4 +110,22 @@ func (s *OrdersService) DisablePayment(ctx context.Context, token string, paymen
 	}
 
 	return s.ordersRepo.DisablePayment(ctx, paymentID)
+}
+
+func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return map[string]interface{}{"status": "-1", "error": "Invalid token"}, nil
+	}
+
+	err = s.ordersRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
+	if err != nil {
+		return map[string]interface{}{
+			"status": "-2",
+			"error":  err.Error(),
+		}, nil
+	}
+
+	return map[string]interface{}{"status": "1"}, nil
 }

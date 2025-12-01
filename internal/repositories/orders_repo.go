@@ -4,18 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
 )
 
 type OrdersRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	db            *sql.DB
+	log           *zap.Logger
+	ordersFetcher *OrdersFetcher
 }
 
 func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
-	return &OrdersRepository{db: db, log: log}
+	temp := NewOrdersFetcher(db, log)
+	return &OrdersRepository{
+		db:            db,
+		ordersFetcher: temp,
+		log:           log}
 }
 
 // ==================================================================================
@@ -95,7 +101,7 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 	// Le filtre magique qui va rendre les 11 requêtes suivantes instantanées
 	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
 
-	orders, err := r.fetchAndBuildOrders(ctx, merchantID, filterOptimized)
+	orders, err := r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filterOptimized)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +130,7 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 	// Filtre strict sur l'ID
 	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
 
-	orders, err := r.fetchAndBuildOrders(ctx, merchantID, filter)
+	orders, err := r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +223,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		req.DateFrom, req.DateTo,
 	)
 
-	return r.fetchAndBuildOrders(ctx, merchantID, filter)
+	return r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filter)
 }
 
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
@@ -424,4 +430,126 @@ func (r *OrdersRepository) DisablePayment(ctx context.Context, paymentID string)
 	}
 
 	return tx.Commit()
+}
+
+func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	orderID := req.OrderID
+
+	for _, p := range req.Products {
+
+		// ----- BEFORE value -----
+		var beforeIsDistributed sql.NullInt64
+		err = tx.QueryRowContext(ctx, `
+			SELECT isDistributed
+			FROM orderitems
+			WHERE order_id = ? AND order_item_id = ?
+		`, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
+
+		if err != nil {
+			return err
+		}
+
+		// ----- UPDATE ORDER ITEM -----
+		_, err = tx.ExecContext(ctx, `
+			UPDATE orderitems
+			SET 
+				isDistributed = 1,
+				distributed_quantity = quantity,
+				ready_for_distribution_quantity = quantity,
+				distributed_on = UTC_TIMESTAMP
+			WHERE order_id = ? AND order_item_id = ?
+		`, orderID, p.OrderItemID)
+		if err != nil {
+			return err
+		}
+
+		// ----- Check if all items distributed -----
+		var existsNotDistributed int
+		err = tx.QueryRowContext(ctx, `
+			SELECT 1
+			FROM orders
+			INNER JOIN orderitems ON orderitems.order_id = orders.order_id
+			WHERE orders.order_id = ?
+			AND orders.merchant_id = ?
+			AND orderitems.isDistributed = 0
+			LIMIT 1
+		`, orderID, merchantID).Scan(&existsNotDistributed)
+
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+
+		orderFullyDistributed := "1"
+		if existsNotDistributed == 1 {
+			orderFullyDistributed = "0"
+		}
+
+		// ----- UPDATE ORDER -----
+		_, err = tx.ExecContext(ctx, `
+			UPDATE orders
+			SET 
+				isDistributed = ?,
+				delivered_on = CASE 
+					WHEN ? = '0' OR order_type = 'DELIVERY' THEN delivered_on
+					ELSE UTC_TIMESTAMP
+				END,
+				brand_status = CASE
+					WHEN order_type = 'DELIVERY' AND ? = '1' THEN 'READY_FOR_HANDOFF'
+					WHEN order_type = 'TAKE_AWAY' AND ? = '1' THEN 'READY_FOR_TAKE_AWAY'
+					WHEN ? = '0' THEN 'PENDING'
+					ELSE 'DONE'
+				END,
+				last_update = UTC_TIMESTAMP
+			WHERE order_id = ? AND merchant_id = ?
+		`, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderID, merchantID)
+
+		if err != nil {
+			return err
+		}
+
+		// ----- Log order change (replicates PHP) -----
+		r.log.Info("Order change logged",
+			zap.String("order_id", orderID),
+			zap.String("changed_by_user_id", userID),
+			zap.String("field", "isDistributed"),
+			zap.String("old_value", strconv.Itoa(int(beforeIsDistributed.Int64))),
+			zap.String("new_value", "1"),
+		)
+	}
+
+	// ------ Get brand ------
+	var brand sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT brand
+		FROM orders
+		WHERE order_id = ?
+	`, orderID).Scan(&brand)
+
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	// ------ Notifications / Integrations ------
+	if brand.String == "UBER_EATS" {
+		r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
+	} else if brand.String == "DELIVEROO" {
+		r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
+	} else {
+		r.log.Info("Sending update order notification", zap.String("order_id", orderID))
+		// r.sendOrderUpdateNotification(merchantID, orderID)
+	}
+
+	return nil
 }

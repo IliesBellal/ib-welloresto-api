@@ -32,3 +32,54 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 	}
 	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }
+
+func (s *DeliverySessionsService) StartDeliverySession(
+	ctx context.Context,
+	token string,
+	req *models.DeliverySessionRequest,
+) (interface{}, error) {
+
+	// 1. Check token → get user + merchant
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return map[string]string{"status": "invalid_token"}, nil
+	}
+
+	// 2. Delegate to repo
+	session, err := s.deliverySessionsRepo.StartDeliverySession(ctx, req)
+	if err != nil {
+		return map[string]interface{}{
+			"status": "-1",
+			"error":  err.Error(),
+		}, nil
+	}
+
+	return session, nil
+}
+
+func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, sessionID string) (interface{}, error) {
+
+	session, err := s.deliverySessionsRepo.CloseDeliverySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// s.notifications.SendDeliverySessionUpdate(session.MerchantID, sessionID)
+
+	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
+}
+
+func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, sessionID string) (interface{}, error) {
+
+	// repo returns DeliverySession struct
+	session, err := s.deliverySessionsRepo.CancelDeliverySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Notifications
+	// s.notifications.SendCanceledDeliverySession(session.MerchantID, sessionID)
+
+	// Return full delivery session object
+	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
+}

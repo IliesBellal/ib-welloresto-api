@@ -128,3 +128,10 @@ func dumpRawRow(rows *sql.Rows) []interface{} {
 	rows.Scan(rawPtrs...)
 	return raw
 }
+
+func safeString(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
+}

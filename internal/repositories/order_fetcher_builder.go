@@ -15,9 +15,18 @@ import (
 // PRIVATE SHARED BUILDER (THE CORE)
 // ==================================================================================
 
+type OrdersFetcher struct {
+	db  *sql.DB
+	log *zap.Logger
+}
+
+func NewOrdersFetcher(db *sql.DB, log *zap.Logger) *OrdersFetcher {
+	return &OrdersFetcher{db: db, log: log}
+}
+
 // fetchAndBuildOrders exécute les 11 requêtes avec un filtre additionnel (WHERE clause)
 // C'est ici qu'on optimise et qu'on log.
-func (r *OrdersRepository) fetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
+func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
 	startTotal := time.Now()
 	r.log.Info("fetchAndBuildOrders START", zap.String("merchant_id", merchantID))
 

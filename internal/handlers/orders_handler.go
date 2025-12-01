@@ -186,3 +186,23 @@ func (h *OrdersHandler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "1"})
 }
+
+func (h *OrdersHandler) SetDistributedProducts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	orderID := chi.URLParam(r, "order_id")
+
+	var req models.SetDistributedProductsRequest
+	json.NewDecoder(r.Body).Decode(&req)
+
+	// force orderID from URL
+	req.OrderID = orderID
+
+	resp, err := h.ordersService.SetDistributedProducts(ctx, token, &req)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}

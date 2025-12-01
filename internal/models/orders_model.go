@@ -55,17 +55,6 @@ type Area struct {
 type Floor struct {
 }
 
-type PaymentRequest struct {
-	DeviceID        string        `json:"device_id"`
-	OrderID         string        `json:"order_id"`
-	MOP             string        `json:"mop"`
-	Amount          int           `json:"amount"`
-	Items           []PaymentItem `json:"items"`
-	DiscountComment string        `json:"discount_comment"`
-	StatusCheck     string        `json:"status_check"`
-	Code            string        `json:"tr_code"`
-}
-
 type PaymentItem struct {
 	OrderItemID string `json:"order_item_id"`
 	Quantity    int    `json:"quantity"`
@@ -119,7 +108,7 @@ type Order struct {
 	Responsible       *OrderUser     `json:"responsible"`
 	Location          []Location     `json:"location"`
 	Products          []ProductEntry `json:"products"`
-	Priority          *int64         `json:"priority"`
+	Priority          *int           `json:"priority"`
 	CreationDate      *time.Time     `json:"creation_date"`
 	FulfillmentType   *string        `json:"fulfillment_type"`
 	LastUpdate        *time.Time     `json:"last_update"`
@@ -134,13 +123,7 @@ type OrderUser struct {
 	Lat            *float64 `json:"lat"`
 	Lng            *float64 `json:"lng"`
 	PlanningColor  *string  `json:"planning_color"`
-}
-
-type DeliverySession struct {
-	DeliverySessionID string    `json:"delivery_session_id"`
-	Status            string    `json:"status"`
-	Orders            []Order   `json:"orders"`
-	DeliveryMan       OrderUser `json:"delivery_man"`
+	Status         *string  `json:"status"`
 }
 
 type PendingOrdersResponse struct {
@@ -151,4 +134,14 @@ type PendingOrdersResponse struct {
 
 type DeliverySessionsResponse struct {
 	DeliverySessions []DeliverySession `json:"delivery_sessions"`
+}
+
+type DistributedProduct struct {
+	OrderItemID string `json:"order_item_id"`
+	Quantity    int    `json:"quantity"`
+}
+
+type SetDistributedProductsRequest struct {
+	OrderID  string               `json:"order_id"`
+	Products []DistributedProduct `json:"products"`
 }

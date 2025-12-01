@@ -48,6 +48,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB, log)
 	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
 	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
+	cashRegisterRepo := repositories.NewCashRegisterRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -59,6 +60,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
 	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
 	locationsService := services.NewLocationsService(locationsRepo, userRepo)
+	cashRegisterService := services.NewCashRegisterService(cashRegisterRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -70,6 +72,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deliverySessionsHandler := handlers.NewDeliverySessionsHandler(deliverySessionsService)
 	cashDrawerHandler := handlers.NewCashDrawerHandler(cashDrawerService)
 	locationsHandler := handlers.NewLocationsHandler(locationsService)
+	cashRegisterHandler := handlers.NewCashRegisterHandler(cashRegisterService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -102,9 +105,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/orders", func(r chi.Router) {
 		r.Get("/pending", ordersHandler.GetPendingOrders)
 		r.Post("/history", ordersHandler.GetHistory)
-		r.Post("/{order_id}/reopen", ordersHandler.ReopenClosedOrder)
 
+		r.Post("/{order_id}/reopen", ordersHandler.ReopenClosedOrder)
 		r.Get("/{order_id}", ordersHandler.GetOrder)
+		r.Post("/orders/{order_id}/distributed_products", ordersHandler.SetDistributedProducts)
 
 		r.Post("/{order_id}/payments", ordersHandler.AddPayment)
 		r.Get("/{order_id}/payments", ordersHandler.GetPayments)
@@ -113,10 +117,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r.Route("/delivery_sessions", func(r chi.Router) {
 		r.Get("/pending", deliverySessionsHandler.GetPendingDeliverySessions)
+
+		r.Post("/start", locationsHandler.GetLocations)
 	})
 
 	r.Route("/cash_drawer", func(r chi.Router) {
 		r.Get("/open", cashDrawerHandler.OpenCashDrawer)
+	})
+
+	r.Route("/cash_register", func(r chi.Router) {
+		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
+		r.Post("/open", cashRegisterHandler.OpenCashRegister)
+
+		r.Post("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
+
+		r.Post("/{cash_register_id}/custom_items", cashRegisterHandler.AddCustomItem)
+		r.Delete("/{cash_register_id}/custom_items/{item_id}", cashRegisterHandler.DeleteCustomItem)
+		r.Post("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
 	})
 
 	return r
