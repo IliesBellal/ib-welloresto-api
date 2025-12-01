@@ -520,7 +520,7 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 
 	for _, oid := range orderIDs {
 		filter := fmt.Sprintf(" AND orders.order_id = '%s' ", oid)
-		orders, err := r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filter)
+		orders, err := r.ordersFetcher.fetchAndBuildOrders(context.Background(), merchantID, filter)
 		if err != nil {
 			return nil, err
 		}
