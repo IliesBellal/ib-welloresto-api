@@ -32,6 +32,10 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
+	if ctx.Err() != nil {
+		r.log.Error("CTX ALREADY CANCELED", zap.Error(ctx.Err()))
+	}
+
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		r.log.Error("BeginTx failed", zap.Error(err))
