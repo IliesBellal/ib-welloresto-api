@@ -518,6 +518,11 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 	// 4️⃣ Fetch full order objects using your existing function
 	var allOrders []models.Order
 
+	// 5️⃣ Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	for _, oid := range orderIDs {
 		filter := fmt.Sprintf(" AND o.order_id = '%s' ", oid)
 		orders, err := r.ordersFetcher.fetchAndBuildOrders(context.Background(), merchantID, filter)
@@ -531,11 +536,6 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 	}
 
 	session.Orders = allOrders
-
-	// 5️⃣ Commit the transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 
 	return &session, nil
 }
