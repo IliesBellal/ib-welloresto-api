@@ -199,27 +199,38 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 
 	// 3. Si MOP != CURRENCY/PERCENTAGE ⇒ gérer les orderitems
 	if req.MOP != "CURRENCY" && req.MOP != "PERCENTAGE" {
+
 		if len(req.Items) == 0 {
 			// Paiement total
-			_, err = tx.ExecContext(ctx, `
-				UPDATE orderitems
-				SET isPaid = 1, paid_quantity = quantity
-				WHERE order_id = ? AND merchant_id = ?
-			`, req.OrderID, merchantID)
+			_, err := tx.ExecContext(ctx, `
+            UPDATE orderitems
+            SET isPaid = 1, paid_quantity = quantity
+            WHERE order_id = ? AND merchant_id = ?
+        `, req.OrderID, merchantID)
 			if err != nil {
-				return rollback(err)
+				return fmt.Errorf("update full payment error: %w", err)
 			}
+
 		} else {
 			// Paiement partiel
-			for itemID, qty := range req.Items {
-				_, err = tx.ExecContext(ctx, `
-					UPDATE orderitems
-					SET paid_quantity = paid_quantity + ?,
-						isPaid = (quantity <= paid_quantity + ?)
-					WHERE order_id = ? AND order_item_id = ? AND merchant_id = ?
-				`, qty, qty, req.OrderID, itemID, merchantID)
+			for _, itm := range req.Items {
+
+				itemID := itm.OrderItemID
+				qty := itm.Quantity
+
+				_, err := tx.ExecContext(ctx, `
+                UPDATE orderitems
+                SET 
+                    paid_quantity = paid_quantity + ?,
+                    isPaid = (quantity <= paid_quantity + ?)
+                WHERE 
+                    order_id = ?
+                    AND order_item_id = ?
+                    AND merchant_id = ?
+            `, qty, qty, req.OrderID, itemID, merchantID)
+
 				if err != nil {
-					return rollback(err)
+					return fmt.Errorf("update partial payment error (item %s): %w", itemID, err)
 				}
 			}
 		}

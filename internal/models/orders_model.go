@@ -56,14 +56,19 @@ type Floor struct {
 }
 
 type PaymentRequest struct {
-	DeviceID        string         `json:"device_id"`
-	OrderID         string         `json:"order_id"`
-	MOP             string         `json:"mop"`
-	Amount          int            `json:"amount"`
-	Items           map[string]int `json:"items"`
-	DiscountComment string         `json:"discount_comment"`
-	StatusCheck     string         `json:"status_check"`
-	Code            string         `json:"tr_code"`
+	DeviceID        string        `json:"device_id"`
+	OrderID         string        `json:"order_id"`
+	MOP             string        `json:"mop"`
+	Amount          int           `json:"amount"`
+	Items           []PaymentItem `json:"items"`
+	DiscountComment string        `json:"discount_comment"`
+	StatusCheck     string        `json:"status_check"`
+	Code            string        `json:"tr_code"`
+}
+
+type PaymentItem struct {
+	OrderItemID string `json:"order_item_id"`
+	Quantity    int    `json:"quantity"`
 }
 
 type Customer struct {
