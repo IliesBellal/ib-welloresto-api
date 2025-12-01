@@ -104,6 +104,35 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *OrdersHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, "missing order_id", http.StatusBadRequest)
+		return
+	}
+
+	var req models.PaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersService.AddPayment(ctx, token, orderID, &req)
+	if err != nil {
+		http.Error(w, "error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "1"})
+}
+
 func (h *OrdersHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
 	orderID := chi.URLParam(r, "order_id")
 

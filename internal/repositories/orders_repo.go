@@ -148,6 +148,131 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	return r.fetchAndBuildOrders(ctx, merchantID, filter)
 }
 
+func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
+	r.log.Info("AddPayment START", zap.String("order_id", req.OrderID))
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx failed: %w", err)
+	}
+
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		return err
+	}
+
+	// ---------------------------------------------------
+	// 🎯 SECTION FUTURE : tes vérifications métier ici !
+	//
+	// Exemple à venir :
+	// - vérifier si la commande est déjà totalement payée
+	// - vérifier si le MOP est autorisé
+	// - vérifier si le caissier a le droit
+	//
+	// ---------------------------------------------------
+
+	// 1. Trouver cash_register_id
+	var cashRegisterID sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT cr.cash_register_id
+		FROM cash_registers cr
+		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
+		WHERE (cr.device_id = ? OR scr.device_id = ?)
+		AND cr.end_date IS NULL
+	`, req.DeviceID, req.DeviceID).Scan(&cashRegisterID)
+	if err == sql.ErrNoRows {
+		cashRegisterID.String = req.DeviceID
+		cashRegisterID.Valid = true
+	} else if err != nil {
+		return rollback(err)
+	}
+
+	// 2. Paiement total déjà effectué ?
+	var totalPrice, alreadyPaid float64
+	_ = tx.QueryRowContext(ctx, `
+		SELECT o.price, COALESCE(SUM(p.amount),0)
+		FROM orders o
+		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
+		WHERE o.order_id = ?
+		GROUP BY o.order_id
+	`, req.OrderID).Scan(&totalPrice, &alreadyPaid)
+
+	// 3. Si MOP != CURRENCY/PERCENTAGE ⇒ gérer les orderitems
+	if req.MOP != "CURRENCY" && req.MOP != "PERCENTAGE" {
+		if len(req.Items) == 0 {
+			// Paiement total
+			_, err = tx.ExecContext(ctx, `
+				UPDATE orderitems
+				SET isPaid = 1, paid_quantity = quantity
+				WHERE order_id = ? AND merchant_id = ?
+			`, req.OrderID, merchantID)
+			if err != nil {
+				return rollback(err)
+			}
+		} else {
+			// Paiement partiel
+			for itemID, qty := range req.Items {
+				_, err = tx.ExecContext(ctx, `
+					UPDATE orderitems
+					SET paid_quantity = paid_quantity + ?,
+						isPaid = (quantity <= paid_quantity + ?)
+					WHERE order_id = ? AND order_item_id = ? AND merchant_id = ?
+				`, qty, qty, req.OrderID, itemID, merchantID)
+				if err != nil {
+					return rollback(err)
+				}
+			}
+		}
+	}
+
+	// 4. Insérer le paiement
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO payments
+		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check)
+		VALUES (?, ?, ?, ROUND(?,2), ?, ?, UTC_TIMESTAMP, ?, ?)
+	`, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, userID, req.StatusCheck)
+	if err != nil {
+		return rollback(err)
+	}
+
+	paymentID, _ := res.LastInsertId()
+
+	// 5. Ticket restaurant (TR)
+	if req.MOP == "TR" && req.Code != "" {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
+			VALUES (?, ?, ?)
+		`, merchantID, paymentID, req.Code)
+		if err != nil {
+			return rollback(err)
+		}
+	}
+
+	// 6. Mettre à jour orders.isPaid
+	_, err = tx.ExecContext(ctx, `
+		UPDATE orders o
+		INNER JOIN (
+			SELECT order_id, SUM(amount) AS paid
+			FROM payments
+			WHERE enabled = 1 AND order_id = ?
+			GROUP BY order_id
+		) p ON p.order_id = o.order_id
+		SET o.isPaid = (o.price <= p.paid)
+		WHERE o.order_id = ?
+	`, req.OrderID, req.OrderID)
+	if err != nil {
+		return rollback(err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return rollback(err)
+	}
+
+	r.log.Info("AddPayment DONE", zap.String("order_id", req.OrderID))
+	return nil
+}
+
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
 	r.log.Info("GetPaymentsForOrder START", zap.String("order_id", orderID))
 

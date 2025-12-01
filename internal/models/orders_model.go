@@ -55,6 +55,17 @@ type Area struct {
 type Floor struct {
 }
 
+type PaymentRequest struct {
+	DeviceID        string         `json:"device_id"`
+	OrderID         string         `json:"order_id"`
+	MOP             string         `json:"mop"`
+	Amount          string         `json:"amount"`
+	Items           map[string]int `json:"items"`
+	DiscountComment string         `json:"discount_comment"`
+	StatusCheck     string         `json:"status_check"`
+	Code            string         `json:"tr_code"`
+}
+
 type Customer struct {
 	CustomerID                 *int64   `json:"customer_id"`
 	CustomerName               *string  `json:"customer_name"`

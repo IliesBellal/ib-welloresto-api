@@ -105,6 +105,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Get("/{order_id}", ordersHandler.GetOrder)
 
+		r.Post("/{order_id}/payments", ordersHandler.AddPayment)
 		r.Get("/{order_id}/payments", ordersHandler.GetPayments)
 		r.Delete("/{order_id}/payments/{payment_id}", ordersHandler.DeletePayment)
 	})

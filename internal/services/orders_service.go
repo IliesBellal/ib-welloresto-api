@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/repositories"
 )
@@ -19,6 +20,18 @@ func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySession
 		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
 	}
+}
+
+func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return fmt.Errorf("invalid token")
+	}
+
+	// sécurité : orderID dans l’URL > orderID dans req
+	req.OrderID = orderID
+
+	return s.ordersRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
 }
 
 // GetPendingOrders resolves token -> merchant, then fetch pending orders (legacy)
