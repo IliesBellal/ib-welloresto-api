@@ -81,3 +81,17 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 
 	h.json(w, resp, http.StatusOK)
 }
+
+func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	id := chi.URLParam(r, "delivery_session_id")
+
+	resp, err := h.deliverySessionsService.GetDeliverySession(ctx, token, id)
+	if err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	h.json(w, resp, http.StatusOK)
+}

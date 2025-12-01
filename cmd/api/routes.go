@@ -117,8 +117,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r.Route("/delivery_sessions", func(r chi.Router) {
 		r.Get("/pending", deliverySessionsHandler.GetPendingDeliverySessions)
+		r.Get("/{delivery_session_id}", deliverySessionsHandler.GetDeliverySession)
+		r.Delete("/{delivery_session_id}", deliverySessionsHandler.CancelDeliverySession)
+		r.Post("/{delivery_session_id}/close", deliverySessionsHandler.CloseDeliverySession)
 
-		r.Post("/start", locationsHandler.GetLocations)
+		r.Post("/start", deliverySessionsHandler.StartDeliverySession)
 	})
 
 	r.Route("/cash_drawer", func(r chi.Router) {

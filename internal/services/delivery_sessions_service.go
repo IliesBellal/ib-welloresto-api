@@ -69,6 +69,17 @@ func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, sess
 	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
 }
 
+func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token, delivery_session_id string) (*models.DeliverySession, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+	return s.deliverySessionsRepo.GetDeliverySession(ctx, user.MerchantID, delivery_session_id)
+}
+
 func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, sessionID string) (interface{}, error) {
 
 	// repo returns DeliverySession struct

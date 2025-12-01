@@ -21,7 +21,7 @@ func NewCashRegisterRepository(db *sql.DB, log *zap.Logger) *CashRegisterReposit
 	return &CashRegisterRepository{db: db, log: log}
 }
 
-func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string, ) (map[string]interface{}, error) {
+func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (map[string]interface{}, error) {
 
 	r.log.Info("OpenCashRegister START",
 		zap.String("merchant_id", merchantID),
