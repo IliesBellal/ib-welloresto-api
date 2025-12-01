@@ -22,6 +22,20 @@ func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySession
 	}
 }
 
+func (s *OrdersService) ReopenClosedOrder(ctx context.Context, token, orderID string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
+
+	return s.ordersRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
+}
+
 func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {

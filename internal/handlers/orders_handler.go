@@ -49,6 +49,29 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *OrdersHandler) ReopenClosedOrder(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, "missing order_id", http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersService.ReopenClosedOrder(ctx, token, orderID)
+	if err != nil {
+		http.Error(w, "error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"status": "1"})
+}
+
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -118,7 +118,6 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 	}, nil
 }
 
-// GetOrder : Récupère une seule commande par son ID (Réutilise toute la logique !)
 func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.Order, error) {
 	r.log.Info("GetOrder START", zap.String("order_id", orderID))
 
@@ -134,6 +133,79 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 	}
 
 	return &orders[0], nil
+}
+
+func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
+	r.log.Info("ReopenClosedOrder START", zap.String("order_id", orderID))
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// -------------------------
+	//  FUTURE VALIDATIONS HERE
+	// -------------------------
+	// Exemple :
+	// - vérifier que la commande existe
+	// - vérifier qu’elle est bien "CLOSED"
+	// - vérifier que userID a le droit
+	// - vérifier registre de caisse
+	// --------------------------------------
+
+	// ---- 1. Avant
+	var beforeState string
+	err = tx.QueryRowContext(ctx, `
+		SELECT state FROM orders WHERE order_id = ?
+	`, orderID).Scan(&beforeState)
+	if err != nil {
+		return fmt.Errorf("cannot load before state: %w", err)
+	}
+
+	// ---- 2. Update
+	_, err = tx.ExecContext(ctx, `
+		UPDATE orders 
+		SET state = 'OPEN'
+		WHERE order_id = ? AND merchant_id = ?
+	`, orderID, merchantID)
+	if err != nil {
+		return fmt.Errorf("reopen update failed: %w", err)
+	}
+
+	// ---- 3. Après
+	var afterState string
+	err = tx.QueryRowContext(ctx, `
+		SELECT state FROM orders WHERE order_id = ?
+	`, orderID).Scan(&afterState)
+	if err != nil {
+		return fmt.Errorf("cannot load after state: %w", err)
+	}
+
+	// ---- 4. Log si changement
+	if beforeState != afterState {
+		r.log.Info("Order state changed",
+			zap.String("order_id", orderID),
+			zap.String("old", beforeState),
+			zap.String("new", afterState),
+			zap.String("user_id", userID),
+		)
+
+		// TODO : appeler équivalent Go de logOrderChange(...)
+	}
+
+	// commit
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// TODO: Send update notification (équivalent sendUpdateOrderNotification)
+	return nil
 }
 
 func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
