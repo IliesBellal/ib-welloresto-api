@@ -1,24 +1,22 @@
 package models
 
 type Booking struct {
-	BookingID       string  `json:"booking_id"`
-	BookingNumber   string  `json:"booking_number"`
-	AccessLink      string  `json:"access_link"`
-	Status          string  `json:"status"`
-	SequenceNumber  int     `json:"sequence_number"`
-	BookingDateFrom string  `json:"booking_date_from"`
-	BookingDateTo   string  `json:"booking_date_to"`
-	PartySize       int     `json:"party_size"`
-	CreationDate    string  `json:"creation_date"`
-	CreatedBy       string  `json:"created_by"`
-	Comment         *string `json:"comment"`
-
-	StartDate string `json:"start_date"`
-	EndDate   string `json:"end_date"`
-
-	Locations []BookingLocation `json:"locations"`
-	Merchant  BookingMerchant   `json:"merchant"`
-	Customer  BookingCustomer   `json:"customer"`
+	BookingID       string            `json:"booking_id"`
+	BookingNumber   string            `json:"booking_number"`
+	AccessLink      string            `json:"access_link"`
+	Status          string            `json:"status"`
+	SequenceNumber  int               `json:"sequence_number"`
+	BookingDateFrom string            `json:"booking_date_from"`
+	BookingDateTo   string            `json:"booking_date_to"`
+	PartySize       int               `json:"party_size"`
+	CreationDate    string            `json:"creation_date"`
+	CreatedBy       string            `json:"created_by"`
+	Comment         *string           `json:"comment"`
+	StartDate       string            `json:"start_date"`
+	EndDate         string            `json:"end_date"`
+	Locations       []BookingLocation `json:"locations"`
+	Merchant        BookingMerchant   `json:"merchant"`
+	Customer        Customer          `json:"customer"`
 }
 
 type BookingLocation struct {

@@ -605,8 +605,8 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var ord models.Order
-			var customerID, customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
-			var orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, estimatedReady, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
+			var customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
+			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, estimatedReady, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
 			var customerLat, customerLng, customerTemporaryLat, customerTemporaryLng, userLat, userLng sql.NullFloat64
 			var lastUpdate, creationDate sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
@@ -655,7 +655,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 			// --- Customer ---
 			if customerID.Valid {
 				var cust models.Customer
-				cust.CustomerID = &customerID.Int64
+				cust.CustomerID = &customerID.String
 				cust.CustomerName = nullStringToPtr(cName)
 				cust.CustomerTel = nullStringToPtr(cTel)
 				cust.CustomerTemporaryPhone = nullStringToPtr(cTempPhone)

@@ -58,13 +58,14 @@ type PaymentItem struct {
 }
 
 type Customer struct {
-	CustomerID                 *int64   `json:"customer_id"`
+	CustomerID                 *string  `json:"customer_id"`
 	CustomerName               *string  `json:"customer_name"`
 	CustomerTel                *string  `json:"customer_tel"`
 	CustomerEmail              *string  `json:"customer_email"`
 	CustomerTemporaryPhone     *string  `json:"customer_temporary_phone"`
 	CustomerTemporaryPhoneCode *string  `json:"customer_temporary_phone_code"`
 	CustomerNbOrders           *int     `json:"customer_nb_orders"`
+	CustomerNbBookings         *int     `json:"customer_nb_bookings"`
 	CustomerAdditionalInfo     *string  `json:"customer_additional_info"`
 	CustomerZoneCode           *string  `json:"customer_zone_code"`
 	CustomerAddress            *string  `json:"customer_address"`
