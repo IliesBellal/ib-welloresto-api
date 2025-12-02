@@ -79,7 +79,7 @@ func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, id string, i
 	err := s.cashRegisterRepo.DeleteCustomItem(ctx, id, itemID)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
-			return map[string]interface{}{"status": "-1", "error": "Cash register closed."}, nil
+			return map[string]interface{}{"status": "-1", "error": "Cash register " + id + " closed."}, nil
 		}
 		return nil, err
 	}

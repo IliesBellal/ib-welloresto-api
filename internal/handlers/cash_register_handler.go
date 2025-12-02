@@ -94,7 +94,7 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 }
 
 func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := chi.URLParam(r, "cash_register_id")
 
 	var req models.AddCustomItemRequest
 	json.NewDecoder(r.Body).Decode(&req)
@@ -110,8 +110,8 @@ func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	itemID := chi.URLParam(r, "itemID")
+	id := chi.URLParam(r, "cash_register_id")
+	itemID := chi.URLParam(r, "item_id")
 
 	resp, err := h.cashRegisterService.DeleteCustomItem(r.Context(), id, itemID)
 
@@ -124,7 +124,7 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := chi.URLParam(r, "cash_register_id")
 
 	var req models.EncloseCashRegisterRequest
 	json.NewDecoder(r.Body).Decode(&req)
