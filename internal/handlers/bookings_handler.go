@@ -80,7 +80,6 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 	}, 200)
 }
 
-// POST /bookings/{booking_id}/accept
 func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := extractToken(r)
@@ -97,7 +96,6 @@ func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(result)
 }
 
-// POST /bookings/{booking_id}/deny
 func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := extractToken(r)
@@ -114,7 +112,23 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// helper JSON
+func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	date := chi.URLParam(r, "date")
+
+	avail, err := h.svc.GetBookingAvailability(ctx, token, date)
+	if err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	h.json(w, map[string]interface{}{
+		"status": "1",
+		"data":   avail,
+	}, http.StatusOK)
+}
+
 func (h *BookingsHandler) json(w http.ResponseWriter, data interface{}, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

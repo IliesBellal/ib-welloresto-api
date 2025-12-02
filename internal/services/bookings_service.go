@@ -142,3 +142,15 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 		"booking": booking,
 	}, nil
 }
+
+func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, date string) (*models.BookingAvailabilityResponse, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.repo.GetBookingAvailability(ctx, user.MerchantID, date)
+}

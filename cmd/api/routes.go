@@ -145,6 +145,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/bookings", func(r chi.Router) {
 		r.Post("/", bookingsHandler.SearchBookings)
 
+		r.Get("/bookings/availability/{date}", bookingsHandler.GetBookingAvailability)
+
 		r.Post("/create", bookingsHandler.CreateBooking)
 		r.Get("/{booking_id}", bookingsHandler.GetBooking)
 
