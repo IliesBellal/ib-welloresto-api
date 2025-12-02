@@ -63,136 +63,125 @@ func (r *CustomerRepository) UpdateOrCreateCustomer(ctx context.Context, c *mode
 	}
 	defer tx.Rollback()
 
-	var stmt *sql.Stmt
+	values := make([]interface{}, 0)
 
+	//------------------------------------------
 	// UPDATE
+	//------------------------------------------
 	if c.CustomerID != nil && *c.CustomerID != "" {
 
-		setParts := make([]string, len(fields))
-		for i, field := range fields {
-			setParts[i] = fmt.Sprintf("%s = COALESCE(:%s, %s)", field, field, field)
+		setParts := []string{}
+		for _, f := range fields {
+			setParts = append(setParts, fmt.Sprintf("%s = COALESCE(?, %s)", f, f))
 		}
 
 		sqlQuery := `
-			UPDATE customer SET ` + strings.Join(setParts, ", ") + `
-			WHERE customer_id = :customer_id
-			  AND merchant_id = :merchant_id
+			UPDATE customer
+			SET ` + strings.Join(setParts, ", ") + `
+			WHERE customer_id = ? AND merchant_id = ?
 		`
 
-		stmt, err = tx.Prepare(sqlQuery)
+		// params
+		for _, f := range fields {
+			values = append(values, extractFieldValue(c, f))
+		}
+		values = append(values, *c.CustomerID)
+		values = append(values, c.MerchantID)
+
+		_, err := tx.ExecContext(ctx, sqlQuery, values...)
 		if err != nil {
 			return "", err
 		}
 
-	} else {
-		// INSERT
-		cols := strings.Join(fields, ", ")
-		placeholders := ":" + strings.Join(fields, ", :")
-
-		sqlQuery := `
-			INSERT INTO customer (` + cols + `, merchant_id)
-			VALUES (` + placeholders + `, :merchant_id)
-		`
-
-		stmt, err = tx.Prepare(sqlQuery)
-		if err != nil {
+		if err := tx.Commit(); err != nil {
 			return "", err
 		}
+
+		return *c.CustomerID, nil
 	}
 
-	defer stmt.Close()
+	//------------------------------------------
+	// INSERT
+	//------------------------------------------
+	cols := strings.Join(fields, ", ")
+	placeholders := strings.TrimRight(strings.Repeat("?, ", len(fields)), ", ")
 
-	params := map[string]interface{}{
-		"merchant_id": c.MerchantID,
-	}
+	sqlQuery := `
+		INSERT INTO customer (` + cols + `, merchant_id)
+		VALUES (` + placeholders + `, ?)
+	`
 
-	// Bind dynamic parameters
 	for _, f := range fields {
-
-		switch f {
-
-		case "customer_name":
-			if c.CustomerName != nil && *c.CustomerName != "" {
-				val := ucfirst(*c.CustomerName)
-				params[f] = val
-			} else {
-				params[f] = nil
-			}
-
-		case "customer_tel":
-			if c.CustomerTel != nil && *c.CustomerTel != "" {
-				val := normalizePhoneNumber(*c.CustomerTel)
-				params[f] = val
-			} else {
-				params[f] = nil
-			}
-
-		// FLOATS
-		case "customer_lat":
-			if c.CustomerLat != nil {
-				params[f] = *c.CustomerLat
-			} else {
-				params[f] = nil
-			}
-
-		case "customer_lng":
-			if c.CustomerLng != nil {
-				params[f] = *c.CustomerLng
-			} else {
-				params[f] = nil
-			}
-
-		case "customer_temporary_lat":
-			if c.CustomerTemporaryLat != nil {
-				params[f] = *c.CustomerTemporaryLat
-			} else {
-				params[f] = nil
-			}
-
-		case "customer_temporary_lng":
-			if c.CustomerTemporaryLng != nil {
-				params[f] = *c.CustomerTemporaryLng
-			} else {
-				params[f] = nil
-			}
-
-		// STRINGS
-		default:
-			// generic string pointer
-			valPtr := getStringField(c, f)
-			if valPtr != nil && *valPtr != "" {
-				params[f] = *valPtr
-			} else {
-				params[f] = nil
-			}
-		}
+		values = append(values, extractFieldValue(c, f))
 	}
+	values = append(values, c.MerchantID)
 
-	if c.CustomerID != nil {
-		params["customer_id"] = *c.CustomerID
-	}
-
-	_, err = stmt.Exec(params)
+	res, err := tx.ExecContext(ctx, sqlQuery, values...)
 	if err != nil {
 		return "", err
 	}
 
-	var newID string
-
-	if c.CustomerID != nil && *c.CustomerID != "" {
-		newID = *c.CustomerID
-	} else {
-		err = tx.QueryRow("SELECT LAST_INSERT_ID()").Scan(&newID)
-		if err != nil {
-			return "", err
-		}
+	newID, err := res.LastInsertId()
+	if err != nil {
+		return "", err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 
-	return newID, nil
+	return fmt.Sprintf("%d", newID), nil
+}
+
+func extractFieldValue(c *models.Customer, field string) interface{} {
+
+	switch field {
+
+	case "customer_name":
+		if c.CustomerName != nil && *c.CustomerName != "" {
+			return ucfirst(*c.CustomerName)
+		}
+		return nil
+
+	case "customer_tel":
+		if c.CustomerTel != nil && *c.CustomerTel != "" {
+			return normalizePhoneNumber(*c.CustomerTel)
+		}
+		return nil
+
+	// FLOATS
+	case "customer_lat":
+		if c.CustomerLat != nil {
+			return *c.CustomerLat
+		}
+		return nil
+
+	case "customer_lng":
+		if c.CustomerLng != nil {
+			return *c.CustomerLng
+		}
+		return nil
+
+	case "customer_temporary_lat":
+		if c.CustomerTemporaryLat != nil {
+			return *c.CustomerTemporaryLat
+		}
+		return nil
+
+	case "customer_temporary_lng":
+		if c.CustomerTemporaryLng != nil {
+			return *c.CustomerTemporaryLng
+		}
+		return nil
+
+	// STRINGS génériques
+	default:
+		ptr := getStringField(c, field)
+		if ptr != nil && *ptr != "" {
+			return *ptr
+		}
+		return nil
+	}
 }
 
 // --------------------------------------------------
