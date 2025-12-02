@@ -135,3 +135,12 @@ func safeString(ptr *string) string {
 	}
 	return *ptr
 }
+
+func logSQLError(log *zap.Logger, err error, query string, args ...interface{}) {
+	if err != nil {
+		log.Error("SQL ERROR",
+			zap.String("query", query),
+			zap.Any("args", args),
+			zap.String("error", err.Error()))
+	}
+}

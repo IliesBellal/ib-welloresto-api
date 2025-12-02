@@ -237,6 +237,10 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 		TTC_CR += rr.TTC
 		TVA_CR += rr.TVA
 	}
+	// obligatoire :
+	for rows.NextResultSet() {
+		// just drain
+	}
 
 	// --------------------------------------------------------------
 	// 3) CALL GET_CASH_REGISTER_REPORT_MOP
@@ -262,6 +266,9 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 
 		mopList = append(mopList, line)
 		TTC_MOP += line.Amount
+	}
+	for mopRows.NextResultSet() {
+		// just drain
 	}
 
 	// --------------------------------------------------------------
@@ -442,7 +449,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	}
 
 	for _, mopLine := range report.MOP {
-		_, err := tx2.ExecContext(ctx, `
+		_, err := tx2.ExecContext(context.Background(), `
 			INSERT INTO cash_registers_items (cash_register_id, mop, amount)
 			VALUES (?, ?, ?)
 		`, cashRegisterID, mopLine.MOP, mopLine.Amount)
