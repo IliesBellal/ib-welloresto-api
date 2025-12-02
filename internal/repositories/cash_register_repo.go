@@ -677,7 +677,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	err = tx.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM cash_registers
-		WHERE cash_register_id = ? AND closed = 0
+		WHERE cash_register_id = ? AND closed = false
 	`, cashRegisterID).Scan(&exists)
 
 	if err != nil {
