@@ -46,6 +46,10 @@ func (r *BookingsRepository) GetBookingByID(ctx context.Context, merchantID, boo
 
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.BookingObjectRequest, customerID string) (string, error) {
 
+	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
+		return "", fmt.Errorf("start_date or end_date is empty")
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
