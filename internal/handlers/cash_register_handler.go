@@ -124,12 +124,14 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
 	id := chi.URLParam(r, "cash_register_id")
 
 	var req models.EncloseCashRegisterRequest
 	json.NewDecoder(r.Body).Decode(&req)
 
-	resp, err := h.cashRegisterService.EncloseCashRegister(r.Context(), id, req.UserID, req.Comment)
+	resp, err := h.cashRegisterService.EncloseCashRegister(ctx, id, token, req.Comment)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

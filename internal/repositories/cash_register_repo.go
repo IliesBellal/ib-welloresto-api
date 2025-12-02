@@ -741,7 +741,7 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 	return nil
 }
 
-func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID string, cashRegisterID string, comment string) error {
+func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID, cashRegisterID, comment string) error {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -767,7 +767,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	// Update
 	_, err = tx.ExecContext(ctx, `
 		UPDATE cash_registers
-		SET closed = 1,
+		SET closed = true,
 		    closed_by = ?,
 		    closure_comment = ?
 		WHERE cash_register_id = ?

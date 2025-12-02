@@ -86,8 +86,13 @@ func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, id string, i
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, userID, comment string) (map[string]interface{}, error) {
-	err := s.cashRegisterRepo.EncloseCashRegister(ctx, userID, id, comment)
+func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token, comment string) (map[string]interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	err = s.cashRegisterRepo.EncloseCashRegister(ctx, user.UserID, id, comment)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
 			return map[string]interface{}{"status": "-1", "error": "Cash register closed."}, nil
