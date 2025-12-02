@@ -140,3 +140,19 @@ type EncloseCashRegisterRequest struct {
 	UserID  string `json:"user_id"`
 	Comment string `json:"comment"`
 }
+
+type BookingObjectRequest struct {
+	MerchantID      string   `json:"merchant_id"`
+	BookingID       *string  `json:"booking_id"`
+	BookingNumber   *string  `json:"booking_number"`
+	BookingDateFrom *string  `json:"booking_date_from"`
+	BookingDateTo   *string  `json:"booking_date_to"`
+	CreatedBy       string   `json:"created_by"`
+	Customer        Customer `json:"customer"`
+	Booking         Booking  `json:"booking"`
+}
+
+type OrderHistoryRequest struct {
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
+}

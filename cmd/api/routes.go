@@ -49,6 +49,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
 	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
 	cashRegisterRepo := repositories.NewCashRegisterRepository(mysqlDB, log)
+	bookingsRepo := repositories.NewBookingsRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -61,6 +62,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
 	locationsService := services.NewLocationsService(locationsRepo, userRepo)
 	cashRegisterService := services.NewCashRegisterService(cashRegisterRepo, userRepo)
+	bookingsService := services.NewBookingsService(bookingsRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -73,6 +75,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	cashDrawerHandler := handlers.NewCashDrawerHandler(cashDrawerService)
 	locationsHandler := handlers.NewLocationsHandler(locationsService)
 	cashRegisterHandler := handlers.NewCashRegisterHandler(cashRegisterService)
+	bookingsHandler := handlers.NewBookingsHandler(bookingsService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -137,6 +140,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Post("/{cash_register_id}/custom_items", cashRegisterHandler.AddCustomItem)
 		r.Delete("/{cash_register_id}/custom_items/{item_id}", cashRegisterHandler.DeleteCustomItem)
+	})
+
+	r.Route("/bookings", func(r chi.Router) {
+		r.Post("/", bookingsHandler.SearchBookings)
+
+		r.Post("/create", bookingsHandler.CreateBooking)
+		r.Get("/{booking_id}", bookingsHandler.GetBooking)
+
+		r.Post("/{booking_id}/accept", bookingsHandler.AcceptBooking)
+		r.Post("/{booking_id}/deny", bookingsHandler.DenyBooking)
 	})
 
 	return r

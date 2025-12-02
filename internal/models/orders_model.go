@@ -46,9 +46,6 @@ type SeatingPlan struct {
 	Bookings  []Booking  `json:"bookings"`
 }
 
-type Booking struct {
-}
-
 type Area struct {
 }
 
@@ -64,6 +61,7 @@ type Customer struct {
 	CustomerID                 *int64   `json:"customer_id"`
 	CustomerName               *string  `json:"customer_name"`
 	CustomerTel                *string  `json:"customer_tel"`
+	CustomerEmail              *string  `json:"customer_email"`
 	CustomerTemporaryPhone     *string  `json:"customer_temporary_phone"`
 	CustomerTemporaryPhoneCode *string  `json:"customer_temporary_phone_code"`
 	CustomerNbOrders           *int     `json:"customer_nb_orders"`
