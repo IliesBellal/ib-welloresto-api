@@ -58,22 +58,31 @@ type PaymentItem struct {
 }
 
 type Customer struct {
-	CustomerID                 *string  `json:"customer_id"`
-	CustomerName               *string  `json:"customer_name"`
-	CustomerTel                *string  `json:"customer_tel"`
-	CustomerEmail              *string  `json:"customer_email"`
-	CustomerTemporaryPhone     *string  `json:"customer_temporary_phone"`
-	CustomerTemporaryPhoneCode *string  `json:"customer_temporary_phone_code"`
-	CustomerNbOrders           *int     `json:"customer_nb_orders"`
-	CustomerNbBookings         *int     `json:"customer_nb_bookings"`
-	CustomerAdditionalInfo     *string  `json:"customer_additional_info"`
-	CustomerZoneCode           *string  `json:"customer_zone_code"`
-	CustomerAddress            *string  `json:"customer_address"`
-	CustomerLat                *float64 `json:"customer_lat"`
-	CustomerLng                *float64 `json:"customer_lng"`
-	CustomerFloorNumber        *string  `json:"customer_floor_number"`
-	CustomerDoorNumber         *string  `json:"customer_door_number"`
-	CustomerAdditionalAddress  *string  `json:"customer_additional_address"`
+	CustomerID                         *string  `json:"customer_id"`
+	CustomerName                       *string  `json:"customer_name"`
+	CustomerTel                        *string  `json:"customer_tel"`
+	CustomerEmail                      *string  `json:"customer_email"`
+	CustomerTemporaryPhone             *string  `json:"customer_temporary_phone"`
+	CustomerTemporaryPhoneCode         *string  `json:"customer_temporary_phone_code"`
+	CustomerNbOrders                   *int     `json:"customer_nb_orders"`
+	CustomerNbBookings                 *int     `json:"customer_nb_bookings"`
+	CustomerAdditionalInfo             *string  `json:"customer_additional_info"`
+	CustomerZoneCode                   *string  `json:"customer_zone_code"`
+	CustomerAddress                    *string  `json:"customer_address"`
+	CustomerLat                        *float64 `json:"customer_lat"`
+	CustomerLng                        *float64 `json:"customer_lng"`
+	CustomerFloorNumber                *string  `json:"customer_floor_number"`
+	CustomerDoorNumber                 *string  `json:"customer_door_number"`
+	CustomerAdditionalAddress          *string  `json:"customer_additional_address"`
+	MerchantID                         string   `json:"merchant_id"`
+	CustomerBusinessName               *string  `json:"customer_business_name"`
+	CustomerBirthdate                  *string  `json:"customer_birthdate"`
+	CustomerTemporaryAddress           *string  `json:"customer_temporary_address"`
+	CustomerTemporaryLat               *string  `json:"customer_temporary_lat"`
+	CustomerTemporaryLng               *string  `json:"customer_temporary_lng"`
+	CustomerTemporaryDoorNumber        *string  `json:"customer_temporary_door_number"`
+	CustomerTemporaryFloorNumber       *string  `json:"customer_temporary_floor_number"`
+	CustomerTemporaryAdditionalAddress *string  `json:"customer_temporary_additional_address"`
 }
 
 type Order struct {
