@@ -684,7 +684,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 		return "", err
 	}
 	if exists == 0 {
-		return "", errors.New("cash_register_closed")
+		return "", errors.New("cash_register_closed (cash_register_id : " + cashRegisterID + ")")
 	}
 
 	valueInt := int(value)
