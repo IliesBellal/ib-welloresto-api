@@ -1,11 +1,18 @@
 package services
 
-import "context"
+import (
+	"context"
+	"welloresto-api/internal/repositories"
+)
 
-type CustomersService struct{}
+type CustomersService struct {
+	customerRepo *repositories.CustomerRepository
+}
 
-func NewCustomersService() *CustomersService {
-	return &CustomersService{}
+func NewCustomersService(_customerRepo *repositories.CustomerRepository) *CustomersService {
+	return &CustomersService{
+		customerRepo: _customerRepo,
+	}
 }
 
 func (s *CustomersService) UpdateOrCreateCustomer(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {

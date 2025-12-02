@@ -12,16 +12,18 @@ import (
 )
 
 type BookingsRepository struct {
-	db      *sql.DB
-	log     *zap.Logger
-	builder *BookingFetcher
+	db              *sql.DB
+	log             *zap.Logger
+	builder         *BookingFetcher
+	customerUpdater *CustomerRepository
 }
 
 func NewBookingsRepository(db *sql.DB, log *zap.Logger) *BookingsRepository {
 	return &BookingsRepository{
-		db:      db,
-		log:     log,
-		builder: NewBookingFetcher(db, log),
+		db:              db,
+		log:             log,
+		builder:         NewBookingFetcher(db, log),
+		customerUpdater: NewCustomerRepository(db),
 	}
 }
 
@@ -44,8 +46,28 @@ func (r *BookingsRepository) GetBookingByID(ctx context.Context, merchantID, boo
 	return &list[0], nil
 }
 
-func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.BookingObjectRequest, customerID string) (string, error) {
+func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.BookingObjectRequest) (string, error) {
 
+	// 1️⃣ Construire un modèle Customer
+	customer := &models.Customer{
+		CustomerID:    req.Customer.CustomerID,
+		MerchantID:    req.MerchantID,
+		CustomerName:  req.Customer.CustomerName,
+		CustomerTel:   req.Customer.CustomerTel,
+		CustomerEmail: req.Customer.CustomerEmail,
+		// Tous les autres champs sont optionnels → nil
+	}
+
+	// 2️⃣ Update or Create
+	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
+	if err != nil {
+		return "", fmt.Errorf("failed to update/create customer: %w", err)
+	}
+
+	// injecter l’ID dans la requête
+	req.Customer.CustomerID = &customerID
+
+	// 3️⃣ Check dates
 	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
 		return "", fmt.Errorf("start_date or end_date is empty")
 	}

@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/repositories"
 )
@@ -51,30 +50,8 @@ func (s *BookingsService) CreateBooking(ctx context.Context, token string, req *
 	}
 	req.MerchantID = user.MerchantID
 
-	// 1️⃣ Update or create customer
-	params := map[string]interface{}{
-		"merchant_id":    req.MerchantID,
-		"customer_id":    req.Customer.CustomerID,
-		"customer_name":  req.Customer.CustomerName,
-		"customer_tel":   req.Customer.CustomerTel,
-		"customer_email": req.Customer.CustomerEmail,
-	}
-
-	cs := NewCustomersService()
-
-	customerRes, err := cs.UpdateOrCreateCustomer(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	if customerRes["status"] != "1" {
-		return nil, fmt.Errorf("customer creation error")
-	}
-
-	customerID := fmt.Sprintf("%v", customerRes["customer_id"])
-
 	// 2️⃣ Create booking
-	bookingID, err := s.repo.CreateBooking(ctx, req, customerID)
+	bookingID, err := s.repo.CreateBooking(ctx, req)
 	if err != nil {
 		return nil, err
 	}
