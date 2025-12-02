@@ -64,7 +64,7 @@ func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req 
 	itemID, err := s.cashRegisterRepo.AddCustomItem(ctx, id, req.Label, req.Value)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
-			return map[string]interface{}{"status": "-1", "error": "Cash register closed."}, nil
+			return map[string]interface{}{"status": "-1", "error": "Cash register " + id + " closed."}, nil
 		}
 		return nil, err
 	}
