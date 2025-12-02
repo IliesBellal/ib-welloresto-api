@@ -432,7 +432,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	}
 
 	// 6. Deuxième transaction pour insérer détails MOP
-	tx2, err := r.db.BeginTx(ctx, nil)
+	tx2, err := r.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}
