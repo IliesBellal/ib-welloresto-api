@@ -129,14 +129,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	})
 
 	r.Route("/cash_register", func(r chi.Router) {
-		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
 		r.Post("/open", cashRegisterHandler.OpenCashRegister)
 
+		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
 		r.Post("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
+		r.Post("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
 
 		r.Post("/{cash_register_id}/custom_items", cashRegisterHandler.AddCustomItem)
 		r.Delete("/{cash_register_id}/custom_items/{item_id}", cashRegisterHandler.DeleteCustomItem)
-		r.Post("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
 	})
 
 	return r
