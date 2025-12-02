@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"welloresto-api/internal/models"
 
@@ -202,20 +201,20 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	defer rows.Close()
 
 	type ReportRow struct {
-		DeliveryType int
+		DeliveryType string
 		Label        string
 		TVATitle     string
-		HT           float64
-		TTC          float64
-		TVA          float64
+		HT           int
+		TTC          int
+		TVA          int
 	}
 
 	var reportRows []ReportRow
 
 	var (
-		HT_CR  float64
-		TTC_CR float64
-		TVA_CR float64
+		HT_CR  int
+		TTC_CR int
+		TVA_CR int
 	)
 
 	for rows.Next() {
@@ -268,10 +267,12 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	// --------------------------------------------------------------
 	// 4) Arrondis comme en PHP
 	// --------------------------------------------------------------
-	TTC_MOP = math.Round(TTC_MOP*100) / 100
-	HT_CR = math.Round(HT_CR*100) / 100
-	TTC_CR = math.Round(TTC_CR*100) / 100
-	TVA_CR = math.Round(TVA_CR*100) / 100
+	/*
+		TTC_MOP = math.Round(TTC_MOP*100) / 100
+		HT_CR = math.Round(HT_CR*100) / 100
+		TTC_CR = math.Round(TTC_CR*100) / 100
+		TVA_CR = math.Round(TVA_CR*100) / 100
+	*/
 
 	// --------------------------------------------------------------
 	// 5) Construction du cash_report (groupé par delivery_type)

@@ -104,25 +104,25 @@ type CashRegisterReport struct {
 	PeriodFrom     string                    `json:"period_from"`
 	PeriodTo       string                    `json:"period_to"`
 	CashFund       float64                   `json:"cash_fund"`
-	HT             float64                   `json:"HT"`
-	TTC            float64                   `json:"TTC"`
-	TVA            float64                   `json:"TVA"`
+	HT             int                       `json:"HT"`
+	TTC            int                       `json:"TTC"`
+	TVA            int                       `json:"TVA"`
 	CashReport     []CashReportDeliveryGroup `json:"cash_report"`
 	MOP            []MOPLine                 `json:"mop"`
 	CashReportType string                    `json:"cash_report_type"`
 }
 
 type CashReportDeliveryGroup struct {
-	DeliveryTypeID    int               `json:"delivery_type_id"`
+	DeliveryTypeID    string            `json:"delivery_type_id"`
 	DeliveryTypeLabel string            `json:"delivery_type_label"`
 	TVACategories     []TVACategoryLine `json:"tva_categories"`
 }
 
 type TVACategoryLine struct {
-	TVATitle string  `json:"tva_title"`
-	HT       float64 `json:"HT"`
-	TTC      float64 `json:"TTC"`
-	TVA      float64 `json:"TVA"`
+	TVATitle string `json:"tva_title"`
+	HT       int    `json:"HT"`
+	TTC      int    `json:"TTC"`
+	TVA      int    `json:"TVA"`
 }
 
 type MOPLine struct {
