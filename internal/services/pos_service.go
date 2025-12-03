@@ -9,11 +9,11 @@ import (
 )
 
 type POSService struct {
-	userRepo *repositories.UserRepository
+	userRepo *repositories.UsersRepository
 	posRepo  *repositories.POSRepository
 }
 
-func NewPOSService(u *repositories.UserRepository, p *repositories.POSRepository) *POSService {
+func NewPOSService(u *repositories.UsersRepository, p *repositories.POSRepository) *POSService {
 	return &POSService{userRepo: u, posRepo: p}
 }
 

@@ -6,15 +6,15 @@ import (
 	"welloresto-api/internal/models"
 )
 
-type UserRepository struct {
+type UsersRepository struct {
 	db *sql.DB
 }
 
-func NewUserRepository(db *sql.DB) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(db *sql.DB) *UsersRepository {
+	return &UsersRepository{db: db}
 }
 
-func (r *UserRepository) Login(ctx context.Context, username, encryptedPwd, plainPwd, token string) (*models.UserLoginRow, error) {
+func (r *UsersRepository) Login(ctx context.Context, username, encryptedPwd, plainPwd, token string) (*models.UserLoginRow, error) {
 	query := `
 SELECT
     u.user_id,
@@ -138,7 +138,7 @@ LIMIT 1;
 	return data, err
 }
 
-func (r *UserRepository) GetMerchants(ctx context.Context, userID string) ([]models.MerchantRow, error) {
+func (r *UsersRepository) GetMerchants(ctx context.Context, userID string) ([]models.MerchantRow, error) {
 	query := `
 SELECT 
     m.id,
@@ -169,7 +169,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 	return list, nil
 }
 
-func (r *UserRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {
+func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -288,4 +288,43 @@ LIMIT 1;
 		return nil, err
 	}
 	return data, err
+}
+
+func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userID string) (*models.OrderUser, error) {
+
+	query := `
+        SELECT 
+            user_id,
+            first_name,
+            last_name,
+            lat,
+            lng,
+            status,
+            planning_color
+        FROM user_status_view
+        WHERE user_id = ?
+        AND merchant_id = ?
+        LIMIT 1;
+    `
+
+	row := r.db.QueryRowContext(ctx, query, userID, merchantID)
+
+	var res models.OrderUser
+	err := row.Scan(
+		&res.UserID,
+		&res.FirstName,
+		&res.LastName,
+		&res.Lat,
+		&res.Lng,
+		&res.Status,
+		&res.PlanningColor,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &res, nil
 }

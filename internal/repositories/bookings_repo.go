@@ -15,7 +15,7 @@ type BookingsRepository struct {
 	db              *sql.DB
 	log             *zap.Logger
 	builder         *BookingFetcher
-	customerUpdater *CustomerRepository
+	customerUpdater *CustomersRepository
 }
 
 func NewBookingsRepository(db *sql.DB, log *zap.Logger) *BookingsRepository {
@@ -23,7 +23,7 @@ func NewBookingsRepository(db *sql.DB, log *zap.Logger) *BookingsRepository {
 		db:              db,
 		log:             log,
 		builder:         NewBookingFetcher(db, log),
-		customerUpdater: NewCustomerRepository(db),
+		customerUpdater: NewCustomerRepository(db, log),
 	}
 }
 

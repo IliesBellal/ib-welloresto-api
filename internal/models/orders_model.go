@@ -59,6 +59,7 @@ type PaymentItem struct {
 
 type Customer struct {
 	CustomerID                         *string  `json:"customer_id"`
+	CustomerCode                       *string  `json:"customer_code"`
 	CustomerName                       *string  `json:"customer_name"`
 	CustomerTel                        *string  `json:"customer_tel"`
 	CustomerEmail                      *string  `json:"customer_email"`
@@ -66,6 +67,8 @@ type Customer struct {
 	CustomerTemporaryPhoneCode         *string  `json:"customer_temporary_phone_code"`
 	CustomerNbOrders                   *int     `json:"customer_nb_orders"`
 	CustomerNbBookings                 *int     `json:"customer_nb_bookings"`
+	CustomerTotalSpent                 *int     `json:"customer_total_spent"`
+	MatchScore                         *int     `json:"match_score"`
 	CustomerAdditionalInfo             *string  `json:"customer_additional_info"`
 	CustomerZoneCode                   *string  `json:"customer_zone_code"`
 	CustomerAddress                    *string  `json:"customer_address"`
@@ -83,6 +86,7 @@ type Customer struct {
 	CustomerTemporaryDoorNumber        *string  `json:"customer_temporary_door_number"`
 	CustomerTemporaryFloorNumber       *string  `json:"customer_temporary_floor_number"`
 	CustomerTemporaryAdditionalAddress *string  `json:"customer_temporary_additional_address"`
+	CreationDate                       *string  `json:"creation_date"`
 }
 
 type Order struct {

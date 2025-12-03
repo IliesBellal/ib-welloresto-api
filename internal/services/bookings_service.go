@@ -9,10 +9,10 @@ import (
 
 type BookingsService struct {
 	repo     *repositories.BookingsRepository
-	userRepo *repositories.UserRepository
+	userRepo *repositories.UsersRepository
 }
 
-func NewBookingsService(repo *repositories.BookingsRepository, _userRepo *repositories.UserRepository) *BookingsService {
+func NewBookingsService(repo *repositories.BookingsRepository, _userRepo *repositories.UsersRepository) *BookingsService {
 	return &BookingsService{repo: repo, userRepo: _userRepo}
 }
 

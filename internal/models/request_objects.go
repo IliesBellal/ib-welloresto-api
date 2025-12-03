@@ -156,3 +156,8 @@ type OrderHistoryRequest struct {
 	DateFrom string `json:"date_from"`
 	DateTo   string `json:"date_to"`
 }
+
+type UpdateLocationCoordinatesRequest struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}

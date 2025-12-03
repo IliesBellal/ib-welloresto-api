@@ -838,3 +838,118 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 
 	return history, nil
 }
+
+func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, merchantID, cashRegisterID string) (*models.CashRegisterDetails, error) {
+
+	// 1. Retrieve header info
+	var header struct {
+		StartDate string
+		EndDate   string
+		CashFund  int
+	}
+
+	err := r.db.QueryRowContext(ctx, `
+        SELECT start_date, end_date, cash_fund
+        FROM cash_registers
+        WHERE cash_register_id = ?
+        AND merchant_id = ?
+    `, cashRegisterID, merchantID).Scan(
+		&header.StartDate, &header.EndDate, &header.CashFund,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Call stored procedure GET_CASH_REGISTER_REPORT
+	rows, err := r.db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []models.CashReportLine
+	var totalHT, totalTTC, totalTVA int
+
+	for rows.Next() {
+		var line models.CashReportLine
+		if err := rows.Scan(
+			&line.DeliveryType,
+			&line.Label,
+			&line.TVATitle,
+			&line.HT,
+			&line.TTC,
+			&line.TVA,
+		); err != nil {
+			return nil, err
+		}
+		totalHT += line.HT
+		totalTTC += line.TTC
+		totalTVA += line.TVA
+		items = append(items, line)
+	}
+
+	// 3. Call MOP stored procedure
+	mopRows, err := r.db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	defer mopRows.Close()
+
+	var mops []models.MOPLine
+	var totalMop float64
+
+	for mopRows.Next() {
+		var m models.MOPLine
+		if err := mopRows.Scan(&m.MOP, &m.Amount); err != nil {
+			return nil, err
+		}
+		totalMop += m.Amount
+		mops = append(mops, m)
+	}
+
+	// 4. Group by delivery_type like PHP
+	grouped := make(map[string]*models.CashReportDeliveryGroup)
+
+	for _, line := range items {
+		g, ok := grouped[line.DeliveryType]
+		if !ok {
+			g = &models.CashReportDeliveryGroup{
+				DeliveryTypeID:    line.DeliveryType,
+				DeliveryTypeLabel: line.Label,
+				TVACategories:     []models.TVACategoryLine{},
+			}
+			grouped[line.DeliveryType] = g
+		}
+
+		g.TVACategories = append(g.TVACategories, models.TVACategoryLine{
+			TVATitle: line.TVATitle,
+			HT:       line.HT,
+			TTC:      line.TTC,
+			TVA:      line.TVA,
+		})
+	}
+
+	// convert map → slice
+	var report []models.CashReportDeliveryGroup
+	for _, v := range grouped {
+		report = append(report, *v)
+	}
+
+	return &models.CashRegisterDetails{
+		Status:         1,
+		CashReportID:   cashRegisterID,
+		PeriodFrom:     header.StartDate,
+		PeriodTo:       header.EndDate,
+		CashFund:       header.CashFund,
+		HT:             totalHT,
+		TTC:            totalTTC,
+		TVA:            totalTVA,
+		CashReport:     report,
+		MOP:            mops,
+		CashReportType: "Z",
+	}, nil
+}

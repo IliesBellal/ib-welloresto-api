@@ -9,10 +9,10 @@ import (
 
 type AppVersionService struct {
 	repo     *repositories.AppVersionRepository
-	userRepo *repositories.UserRepository
+	userRepo *repositories.UsersRepository
 }
 
-func NewAppVersionService(r *repositories.AppVersionRepository, u *repositories.UserRepository) *AppVersionService {
+func NewAppVersionService(r *repositories.AppVersionRepository, u *repositories.UsersRepository) *AppVersionService {
 	return &AppVersionService{repo: r, userRepo: u}
 }
 

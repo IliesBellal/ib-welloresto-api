@@ -99,6 +99,30 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
+
+	cashRegisterID := chi.URLParam(r, "cash_register_id")
+	if cashRegisterID == "" {
+		http.Error(w, "missing cash_register_id", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.cashRegisterService.GetCashRegisterTVADetails(ctx, token, cashRegisterID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "cash_register_id")
 

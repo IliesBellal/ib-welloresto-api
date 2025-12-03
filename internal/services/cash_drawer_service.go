@@ -8,10 +8,10 @@ import (
 
 type CashDrawerService struct {
 	cashDrawerRepo *repositories.CashDrawerRepository
-	userRepo       *repositories.UserRepository // used to resolve token -> merchant id
+	userRepo       *repositories.UsersRepository // used to resolve token -> merchant id
 }
 
-func NewCashDrawerService(cashDrawerRepo *repositories.CashDrawerRepository, userRepo *repositories.UserRepository) *CashDrawerService {
+func NewCashDrawerService(cashDrawerRepo *repositories.CashDrawerRepository, userRepo *repositories.UsersRepository) *CashDrawerService {
 	return &CashDrawerService{
 		cashDrawerRepo: cashDrawerRepo,
 		userRepo:       userRepo,

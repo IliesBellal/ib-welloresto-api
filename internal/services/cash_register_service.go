@@ -9,10 +9,10 @@ import (
 
 type CashRegisterService struct {
 	cashRegisterRepo *repositories.CashRegisterRepository
-	userRepo         *repositories.UserRepository // used to resolve token -> merchant id
+	userRepo         *repositories.UsersRepository
 }
 
-func NewCashRegisterService(cashRegisterRepo *repositories.CashRegisterRepository, userRepo *repositories.UserRepository) *CashRegisterService {
+func NewCashRegisterService(cashRegisterRepo *repositories.CashRegisterRepository, userRepo *repositories.UsersRepository) *CashRegisterService {
 	return &CashRegisterService{
 		cashRegisterRepo: cashRegisterRepo,
 		userRepo:         userRepo,
@@ -58,6 +58,16 @@ func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token 
 	}
 
 	return s.cashRegisterRepo.GetCashRegisterSummary(ctx, cashRegisterID, user.MerchantID)
+}
+
+func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterDetails, error) {
+
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.cashRegisterRepo.GetCashRegisterTVADetails(ctx, cashRegisterID, user.MerchantID)
 }
 
 func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req *models.AddCustomItemRequest) (map[string]interface{}, error) {

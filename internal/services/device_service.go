@@ -7,11 +7,11 @@ import (
 )
 
 type DeviceService struct {
-	userRepo   *repositories.UserRepository
+	userRepo   *repositories.UsersRepository
 	deviceRepo *repositories.DeviceRepository
 }
 
-func NewDeviceService(u *repositories.UserRepository, d *repositories.DeviceRepository) *DeviceService {
+func NewDeviceService(u *repositories.UsersRepository, d *repositories.DeviceRepository) *DeviceService {
 	return &DeviceService{userRepo: u, deviceRepo: d}
 }
 

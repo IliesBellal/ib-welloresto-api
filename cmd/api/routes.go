@@ -45,11 +45,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	menuRepoLegacy := repositories.NewMenuRepository(mysqlDB, log)
 
 	ordersRepo := repositories.NewOrdersRepository(mysqlDB, log)
+	ordersLifecycleRepo := repositories.NewOrdersLifeCycleRepository(mysqlDB, log)
 	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB, log)
 	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
 	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
 	cashRegisterRepo := repositories.NewCashRegisterRepository(mysqlDB, log)
 	bookingsRepo := repositories.NewBookingsRepository(mysqlDB, log)
+	customersRepo := repositories.NewCustomerRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -58,11 +60,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
 	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpti, false)
 	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo)
+	ordersLifecycleService := services.NewOrdersLifeCycleService(ordersLifecycleRepo, deliverySessionsRepo, userRepo)
 	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
 	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
 	locationsService := services.NewLocationsService(locationsRepo, userRepo)
 	cashRegisterService := services.NewCashRegisterService(cashRegisterRepo, userRepo)
 	bookingsService := services.NewBookingsService(bookingsRepo, userRepo)
+	customersService := services.NewCustomersService(customersRepo, userRepo)
+	usersService := services.NewUsersService(userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -71,17 +76,24 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	appVersionHandler := handlers.NewAppVersionHandler(appVersionService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 	ordersHandler := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
+	ordersLifeCycleHandler := handlers.NewOrdersLifeCycleHandler(ordersLifecycleService, deliverySessionsService)
 	deliverySessionsHandler := handlers.NewDeliverySessionsHandler(deliverySessionsService)
 	cashDrawerHandler := handlers.NewCashDrawerHandler(cashDrawerService)
 	locationsHandler := handlers.NewLocationsHandler(locationsService)
 	cashRegisterHandler := handlers.NewCashRegisterHandler(cashRegisterService)
 	bookingsHandler := handlers.NewBookingsHandler(bookingsService)
+	customersHandler := handlers.NewCustomersHandler(customersService)
+	usersHandler := handlers.NewUsersHandler(usersService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
 
 	r.Route("/auth", func(r chi.Router) {
 		r.Get("/login", authHandler.Login)
+	})
+
+	r.Route("/users", func(r chi.Router) {
+		r.Get("/{user_id}/location", usersHandler.GetUserLocation)
 	})
 
 	r.Route("/pos", func(r chi.Router) {
@@ -113,19 +125,22 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r.Route("/locations", func(r chi.Router) {
 		r.Get("/", locationsHandler.GetLocations)
+
+		r.Patch("/{location_id}/coordinates", locationsHandler.UpdateLocationCoordinates)
+
 	})
 
 	r.Route("/orders", func(r chi.Router) {
 		r.Get("/pending", ordersHandler.GetPendingOrders)
 		r.Post("/history", ordersHandler.GetHistory)
-
-		r.Post("/{order_id}/reopen", ordersHandler.ReopenClosedOrder)
 		r.Get("/{order_id}", ordersHandler.GetOrder)
-		r.Post("/orders/{order_id}/distributed_products", ordersHandler.SetDistributedProducts)
 
-		r.Post("/{order_id}/payments", ordersHandler.AddPayment)
-		r.Get("/{order_id}/payments", ordersHandler.GetPayments)
-		r.Delete("/{order_id}/payments/{payment_id}", ordersHandler.DeletePayment)
+		r.Post("/{order_id}/reopen", ordersLifeCycleHandler.ReopenClosedOrder)
+		r.Post("/orders/{order_id}/distributed_products", ordersLifeCycleHandler.SetDistributedProducts)
+
+		r.Post("/{order_id}/payments", ordersLifeCycleHandler.AddPayment)
+		r.Get("/{order_id}/payments", ordersLifeCycleHandler.GetPayments)
+		r.Delete("/{order_id}/payments/{payment_id}", ordersLifeCycleHandler.DeletePayment)
 	})
 
 	r.Route("/delivery_sessions", func(r chi.Router) {
@@ -141,11 +156,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/open", cashDrawerHandler.OpenCashDrawer)
 	})
 
+	r.Route("/customer", func(r chi.Router) {
+		r.Get("/{customer_id}/loyalty", customersHandler.GetCustomerLoyalty)
+
+		r.Patch("/{customer_id}/loyalty/progress", customersHandler.UpdateLoyaltyProgress)
+		r.Patch("/{customer_id}/loyalty/reward", customersHandler.UpdateLoyaltyReward)
+	})
+
 	r.Route("/cash_register", func(r chi.Router) {
 		r.Post("/open", cashRegisterHandler.OpenCashRegister)
 		r.Get("/history", cashRegisterHandler.GetHistory)
 
 		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
+		r.Get("/{cash_register_id}/tva_details", cashRegisterHandler.GetCashRegisterTVADetails)
 		r.Patch("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
 		r.Patch("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
 

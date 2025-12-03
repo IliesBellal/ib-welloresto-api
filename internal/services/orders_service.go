@@ -11,10 +11,10 @@ import (
 type OrdersService struct {
 	ordersRepo           *repositories.OrdersRepository
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
-	userRepo             *repositories.UserRepository // used to resolve token -> merchant id
+	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
 }
 
-func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UserRepository) *OrdersService {
+func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,

@@ -9,10 +9,10 @@ import (
 
 type DeliverySessionsService struct {
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
-	userRepo             *repositories.UserRepository // used to resolve token -> merchant id
+	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UserRepository) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
