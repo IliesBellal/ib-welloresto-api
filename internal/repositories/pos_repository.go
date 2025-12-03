@@ -292,3 +292,20 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
 
 	return result, nil
 }
+
+func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, error) {
+	var exists bool
+
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM restaurant_ticket WHERE barcode = ?
+		)`,
+		code,
+	).Scan(&exists)
+
+	if err != nil {
+		return false, err
+	}
+
+	return exists, nil
+}

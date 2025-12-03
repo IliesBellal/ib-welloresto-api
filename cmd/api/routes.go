@@ -52,6 +52,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	cashRegisterRepo := repositories.NewCashRegisterRepository(mysqlDB, log)
 	bookingsRepo := repositories.NewBookingsRepository(mysqlDB, log)
 	customersRepo := repositories.NewCustomerRepository(mysqlDB, log)
+	stocksRepo := repositories.NewStockRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -68,6 +69,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	bookingsService := services.NewBookingsService(bookingsRepo, userRepo)
 	customersService := services.NewCustomersService(customersRepo, userRepo)
 	usersService := services.NewUsersService(userRepo)
+	stocksService := services.NewStockService(stocksRepo, userRepo)
 
 	// --- Handlers ---
 	authHandler := handlers.NewAuthHandler(authService)
@@ -84,6 +86,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	bookingsHandler := handlers.NewBookingsHandler(bookingsService)
 	customersHandler := handlers.NewCustomersHandler(customersService)
 	usersHandler := handlers.NewUsersHandler(usersService)
+	stocksHandler := handlers.NewStocksHandler(stocksService, usersService)
 
 	// --- Routes ---
 	// r.Get("/health", handlers.HealthCheck)
@@ -106,6 +109,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Patch("/settings/scannorder", posHandler.ToggleScanNOrder)
 		r.Patch("/settings/production_paid_only", posHandler.ToggleProductionPaidOnly)
 		r.Patch("/settings/safety_stock", posHandler.ToggleSafetyStockActive)
+
+		r.Get("/payments/tr/check/{tr_code}", posHandler.CheckTR)
+	})
+
+	r.Route("/stocks", func(r chi.Router) {
+
+		r.Get("/barcode/{barcode_id}", stocksHandler.GetBarcodeInfo)
+		r.Post("/barcode/{barcode_id}", stocksHandler.CreateBarcode)
+		r.Delete("/barcode/{barcode_id}", stocksHandler.DeleteBarcode)
+		r.Post("/barcodes/scan", stocksHandler.AddStockBarcode)
+
+		r.Post("/barcodes/scan", stocksHandler.AddStockBarcode)
+		r.Patch("/loss", stocksHandler.SetStockLoss)
+		r.Get("/products", stocksHandler.GetStockProducts)
 	})
 
 	r.Route("/device", func(r chi.Router) {

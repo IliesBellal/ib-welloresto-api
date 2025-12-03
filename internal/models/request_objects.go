@@ -161,3 +161,13 @@ type UpdateLocationCoordinatesRequest struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 }
+
+type TRCheckResponse struct {
+	Status  string `json:"status"` // valid, used, expired, invalid_format, no_value
+	Message string `json:"message"`
+
+	ID      string  `json:"id"`
+	Value   float64 `json:"value"`
+	Vintage int     `json:"vintage"`
+	Code    string  `json:"code"`
+}

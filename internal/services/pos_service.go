@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"strconv"
+	"time"
 	"welloresto-api/internal/models"
 
 	"welloresto-api/internal/repositories"
@@ -82,4 +84,93 @@ func (s *POSService) GetDeliveryMen(ctx context.Context, token string) ([]models
 	}
 
 	return s.posRepo.GetDeliveryMen(ctx, user.MerchantID)
+}
+
+func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.TRCheckResponse, error) {
+
+	// 1) Authentication
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	// --- Parse code ---
+	if len(code) != 20 {
+		return &models.TRCheckResponse{
+			Status:  "invalid_format",
+			Message: "TR code must be 20 digits long",
+			Code:    code,
+		}, nil
+	}
+
+	// extract parts
+	id := code[:11]
+
+	valueInt, err := strconv.Atoi(code[11:16])
+	if err != nil {
+		return nil, errors.New("invalid TR value")
+	}
+	value := float64(valueInt) / 100.0
+
+	vintage, err := strconv.Atoi(code[16:])
+	if err != nil {
+		return nil, errors.New("invalid TR vintage")
+	}
+
+	if value == 0 {
+		return &models.TRCheckResponse{
+			Status:  "no_value",
+			Message: "Value cannot be 0",
+			Code:    code,
+			ID:      id,
+			Value:   value,
+			Vintage: vintage,
+		}, nil
+	}
+
+	// --- Check if TR already used ---
+	used, err := s.posRepo.IsTicketUsed(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	if used {
+		return &models.TRCheckResponse{
+			Status:  "used",
+			Message: "TR already used",
+			Code:    code,
+			ID:      id,
+			Value:   value,
+			Vintage: vintage,
+		}, nil
+	}
+
+	// --- Expiration logic ---
+	now := time.Now().UTC()
+
+	expiry := time.Date(vintage+1, 1, 31, 0, 0, 0, 0, time.UTC)
+	validFrom := time.Date(vintage-1, 12, 1, 0, 0, 0, 0, time.UTC)
+
+	if now.After(expiry) || now.Before(validFrom) {
+		return &models.TRCheckResponse{
+			Status:  "expired",
+			Message: "TR is expired",
+			Code:    code,
+			ID:      id,
+			Value:   value,
+			Vintage: vintage,
+		}, nil
+	}
+
+	// --- VALID ---
+	return &models.TRCheckResponse{
+		Status:  "valid",
+		Message: "TR can be used",
+		Code:    code,
+		ID:      id,
+		Value:   value,
+		Vintage: vintage,
+	}, nil
 }

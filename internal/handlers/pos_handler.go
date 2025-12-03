@@ -207,3 +207,17 @@ func (h *POSHandler) errorJSON(w http.ResponseWriter, err error) {
 		"error":  err.Error(),
 	})
 }
+
+func (h *POSHandler) CheckTR(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := extractToken(r)
+	code := chi.URLParam(r, "code")
+
+	resp, err := h.service.CheckTR(ctx, token, code)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
