@@ -299,8 +299,7 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
             usv.last_name,
             usv.lat,
             usv.lng,
-            usv.status,
-            usv.planning_color
+            usv.status
         FROM user_status_view usv
         INNER JOIN users_rights ur ON ur.id = usv.user_id
         INNER JOIN merchant m ON m.id = ur.merchant_id

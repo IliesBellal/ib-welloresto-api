@@ -126,16 +126,16 @@ type Order struct {
 	LastUpdate        *time.Time     `json:"last_update"`
 }
 
-// Can be use as Responsible, OrderedBy, DeliveryMan, etc...
+// OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...
 type OrderUser struct {
 	UserID         string   `json:"user_id"`
 	FirstName      *string  `json:"first_name"`
 	LastName       *string  `json:"last_name"`
-	ProfilePicture *string  `json:"profile_picture"`
-	Lat            *float64 `json:"lat"`
-	Lng            *float64 `json:"lng"`
-	PlanningColor  *string  `json:"planning_color"`
-	Status         *string  `json:"status"`
+	ProfilePicture *string  `json:"profile_picture,omitempty"`
+	Lat            *float64 `json:"lat,omitempty"`
+	Lng            *float64 `json:"lng,omitempty"`
+	PlanningColor  *string  `json:"planning_color,omitempty"`
+	Status         *string  `json:"status,omitempty"`
 }
 
 type PendingOrdersResponse struct {

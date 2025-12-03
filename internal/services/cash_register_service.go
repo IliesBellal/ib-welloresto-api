@@ -67,7 +67,7 @@ func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, tok
 		return nil, errors.New("invalid token")
 	}
 
-	return s.cashRegisterRepo.GetCashRegisterTVADetails(ctx, cashRegisterID, user.MerchantID)
+	return s.cashRegisterRepo.GetCashRegisterTVADetails(ctx, user.MerchantID, cashRegisterID)
 }
 
 func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req *models.AddCustomItemRequest) (map[string]interface{}, error) {
