@@ -319,7 +319,6 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 		&res.Lat,
 		&res.Lng,
 		&res.Status,
-		&res.PlanningColor,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

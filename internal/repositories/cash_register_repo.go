@@ -891,6 +891,9 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		totalTVA += line.TVA
 		items = append(items, line)
 	}
+	for rows.NextResultSet() {
+		// just drain
+	}
 
 	// 3. Call MOP stored procedure
 	mopRows, err := r.db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
@@ -909,6 +912,9 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		}
 		totalMop += m.Amount
 		mops = append(mops, m)
+	}
+	for mopRows.NextResultSet() {
+		// just drain
 	}
 
 	// 4. Group by delivery_type like PHP
