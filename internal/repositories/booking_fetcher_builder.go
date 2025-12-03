@@ -111,7 +111,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 		}
 
 		// build access link (like PHP)
-		r.Booking.AccessLink = "_RSV_BASE_URL/" + r.Code + "/" + r.Booking.BookingNumber
+		r.Booking.AccessLink = "https://reserve.welloresto.fr/restaurant/" + r.Code + "/" + r.Booking.BookingNumber
 
 		rawBookings = append(rawBookings, r)
 	}

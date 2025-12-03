@@ -294,16 +294,19 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 
 	query := `
         SELECT 
-            user_id,
-            first_name,
-            last_name,
-            lat,
-            lng,
-            status,
-            planning_color
-        FROM user_status_view
-        WHERE user_id = ?
-        AND merchant_id = ?
+            usv.user_id,
+            usv.first_name,
+            usv.last_name,
+            usv.lat,
+            usv.lng,
+            usv.status,
+            usv.planning_color
+        FROM user_status_view usv
+        INNER JOIN users_rights ur ON ur.id = usv.user_id
+        INNER JOIN merchant m ON m.id = ur.merchant_id
+        WHERE usv.user_id = ?
+        AND ur.merchant_id = ?
+        AND ur.enabled = TRUE
         LIMIT 1;
     `
 
