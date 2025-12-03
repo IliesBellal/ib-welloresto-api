@@ -116,7 +116,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/stocks", func(r chi.Router) {
 
 		r.Get("/barcode/{barcode_id}", stocksHandler.GetBarcodeInfo)
-		r.Post("/barcode/{barcode_id}", stocksHandler.CreateBarcode)
+		r.Post("/barcode/create", stocksHandler.CreateBarcode)
 		r.Delete("/barcode/{barcode_id}", stocksHandler.DeleteBarcode)
 		r.Post("/barcodes/scan", stocksHandler.AddStockBarcode)
 

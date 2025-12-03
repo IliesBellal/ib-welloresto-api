@@ -31,11 +31,11 @@ func (h *StocksHandler) GetBarcodeInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code := chi.URLParam(r, "code")
+	code := chi.URLParam(r, "barcode_id")
 
 	resp, err := h.stockSvc.GetBarcodeInfo(ctx, token, code)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -46,11 +46,11 @@ func (h *StocksHandler) GetBarcodeInfo(w http.ResponseWriter, r *http.Request) {
 func (h *StocksHandler) DeleteBarcode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := extractToken(r)
-	code := chi.URLParam(r, "code")
+	code := chi.URLParam(r, "barcode_id")
 
 	err := h.stockSvc.DeleteBarcode(ctx, token, code)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -65,13 +65,13 @@ func (h *StocksHandler) CreateBarcode(w http.ResponseWriter, r *http.Request) {
 
 	var p models.CreateBarcodePayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, err.Error(), 400)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	err := h.stockSvc.CreateBarcode(ctx, token, p.Code, p.ComponentID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
