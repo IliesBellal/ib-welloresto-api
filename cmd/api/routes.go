@@ -91,9 +91,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Get("/delivery_men", posHandler.GetDeliveryMen)
 
-		r.Post("/settings/scannorder", posHandler.ToggleScanNOrder)
-		r.Post("/settings/production_paid_only", posHandler.ToggleProductionPaidOnly)
-		r.Post("/settings/safety_stock", posHandler.ToggleSafetyStockActive)
+		r.Patch("/settings/scannorder", posHandler.ToggleScanNOrder)
+		r.Patch("/settings/production_paid_only", posHandler.ToggleProductionPaidOnly)
+		r.Patch("/settings/safety_stock", posHandler.ToggleSafetyStockActive)
 	})
 
 	r.Route("/device", func(r chi.Router) {
@@ -107,8 +107,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/menu", func(r chi.Router) {
 		r.Get("/", menuHandler.GetMenu)
 
-		r.Post("/component/{component_id}", menuHandler.SetComponentAvailability)
-		r.Post("/product/{product_id}", menuHandler.SetProductAvailability)
+		r.Patch("/component/{component_id}/availability", menuHandler.SetComponentAvailability)
+		r.Patch("/product/{product_id}/availability", menuHandler.SetProductAvailability)
 	})
 
 	r.Route("/locations", func(r chi.Router) {
@@ -146,8 +146,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/history", cashRegisterHandler.GetHistory)
 
 		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
-		r.Post("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
-		r.Post("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
+		r.Patch("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
+		r.Patch("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
 
 		r.Post("/{cash_register_id}/custom_items", cashRegisterHandler.AddCustomItem)
 		r.Delete("/{cash_register_id}/custom_items/{item_id}", cashRegisterHandler.DeleteCustomItem)

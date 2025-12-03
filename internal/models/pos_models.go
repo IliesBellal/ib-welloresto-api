@@ -1,12 +1,12 @@
 package models
 
 type DeletionReason struct {
-	DeletionReasonID     string `json:"deletion_reason_id"`
-	DeletionReasonType   string `json:"deletion_reason_type"`
-	DeletionReasonObject string `json:"deletion_reason_object"`
-	DeletionReasonDesc   string `json:"deletion_reason_desc"`
-	Label                string `json:"label"`
-	RequiresComment      bool   `json:"requires_comment"`
+	DeletionReasonID     string  `json:"deletion_reason_id"`
+	DeletionReasonType   *string `json:"deletion_reason_type"`
+	DeletionReasonObject string  `json:"deletion_reason_object"`
+	DeletionReasonDesc   string  `json:"deletion_reason_desc"`
+	Label                string  `json:"label"`
+	RequiresComment      bool    `json:"requires_comment"`
 }
 
 type DeletionReasonResponse struct {
