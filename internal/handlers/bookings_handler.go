@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
@@ -18,8 +19,13 @@ func NewBookingsHandler(s *services.BookingsService) *BookingsHandler {
 }
 
 func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
 
 	var req models.BookingObjectRequest
 
@@ -41,8 +47,12 @@ func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+	ctx := r.Context()
 
 	id := chi.URLParam(r, "booking_id")
 
@@ -59,8 +69,12 @@ func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+	ctx := r.Context()
 
 	var req models.BookingObjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -81,8 +95,12 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+	ctx := r.Context()
 
 	bookingID := chi.URLParam(r, "booking_id")
 
@@ -97,8 +115,12 @@ func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+	ctx := r.Context()
 
 	bookingID := chi.URLParam(r, "booking_id")
 
@@ -113,8 +135,13 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
 	date := chi.URLParam(r, "date")
 
 	avail, err := h.svc.GetBookingAvailability(ctx, token, date)

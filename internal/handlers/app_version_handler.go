@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/services"
 )
 
@@ -22,14 +21,14 @@ type CheckAppVersionRequest struct {
 }
 
 func (h *AppVersionHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	// Get token (header or ?token= fallback)
-	token := middleware.GetToken(r)
+	token := extractToken(r)
 	if strings.TrimSpace(token) == "" {
 		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
 		return
 	}
+
+	ctx := r.Context()
 
 	// Parse JSON body
 	var req CheckAppVersionRequest

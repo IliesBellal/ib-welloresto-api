@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
@@ -22,12 +23,13 @@ func NewDeliverySessionsHandler(deliverySessionsService *services.DeliverySessio
 
 // GET /delivery_sessions/pending
 func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	ctx := r.Context()
 
 	sessions, err := h.deliverySessionsService.GetPendingDeliverySessions(ctx, token)
 	if err != nil {
@@ -43,8 +45,13 @@ func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWrit
 }
 
 func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
 
 	var req models.DeliverySessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -83,8 +90,13 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 }
 
 func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
 	id := chi.URLParam(r, "delivery_session_id")
 
 	resp, err := h.deliverySessionsService.GetDeliverySession(ctx, token, id)

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
@@ -21,13 +22,13 @@ func NewCashRegisterHandler(cashRegisterService *services.CashRegisterService) *
 }
 
 func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
 		return
 	}
+
+	ctx := r.Context()
 
 	var req models.OpenCashRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -45,13 +46,13 @@ func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
 		return
 	}
+
+	ctx := r.Context()
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
@@ -75,8 +76,13 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
@@ -124,8 +130,13 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
 	id := chi.URLParam(r, "cash_register_id")
 
 	var req models.EncloseCashRegisterRequest
@@ -139,4 +150,41 @@ func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http
 	}
 
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		return
+	}
+
+	ctx := r.Context()
+
+	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, token)
+	if err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	h.json(w, models.CashRegisterHistoryResponse{
+		Status:        "1",
+		CashRegisters: result,
+	}, 200)
+}
+
+func (h *CashRegisterHandler) json(w http.ResponseWriter, data interface{}, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func (h *CashRegisterHandler) errorJSON(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "0",
+		"error":  err.Error(),
+	})
 }

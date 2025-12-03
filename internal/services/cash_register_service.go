@@ -102,3 +102,12 @@ func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token
 
 	return map[string]interface{}{"status": "1"}, nil
 }
+
+func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, token string) ([]models.CashRegisterHistoryItem, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.cashRegisterRepo.GetCashRegisterHistory(ctx, user.MerchantID, user.UserID)
+}

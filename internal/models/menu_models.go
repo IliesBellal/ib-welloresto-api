@@ -146,3 +146,12 @@ type DelayEntry struct {
 	ShortDescription string `json:"short_description"`
 	Duration         int    `json:"duration"`
 }
+
+type AvailabilityRequest struct {
+	Status string `json:"status"` // "1" or "0"
+}
+
+type AvailabilityResponse struct {
+	Status  string `json:"status"`
+	Updated int64  `json:"updated"`
+}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
@@ -25,12 +26,13 @@ func NewOrdersHandler(ordersService *services.OrdersService, deliverySessionsSer
 
 // GET /orders/pending
 func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	ctx := r.Context()
 
 	// read app param from query (default WR_RECEPTION)
 	app := r.URL.Query().Get("app")
@@ -50,12 +52,13 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *OrdersHandler) ReopenClosedOrder(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
@@ -73,9 +76,13 @@ func (h *OrdersHandler) ReopenClosedOrder(w http.ResponseWriter, r *http.Request
 }
 
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
@@ -97,12 +104,13 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	ctx := r.Context()
 
 	// read app param from query (default WR_RECEPTION)
 	app := r.URL.Query().Get("app")
@@ -128,12 +136,13 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
@@ -157,9 +166,13 @@ func (h *OrdersHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
-	orderID := chi.URLParam(r, "order_id")
-
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	orderID := chi.URLParam(r, "order_id")
 
 	payments, err := h.ordersService.GetPayments(r.Context(), token, orderID)
 	if err != nil {
@@ -173,8 +186,13 @@ func (h *OrdersHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) DeletePayment(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
 
 	paymentID := chi.URLParam(r, "payment_id")
 
@@ -188,8 +206,13 @@ func (h *OrdersHandler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) SetDistributedProducts(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 
 	var req models.SetDistributedProductsRequest

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"welloresto-api/internal/services"
 )
 
@@ -19,6 +20,10 @@ func NewLocationsHandler(locationsService *services.LocationsService) *Locations
 
 func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) {
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
 
 	resp, err := h.locationsService.GetLocations(r.Context(), token)
 	if err != nil {

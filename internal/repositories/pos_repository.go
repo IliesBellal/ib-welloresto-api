@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"time"
+	"welloresto-api/internal/models"
 )
 
 type POSRepository struct {
@@ -45,26 +46,52 @@ func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, stat
 	return tx.Commit()
 }
 
-// --------------------
-// GET POS STATUS
-// --------------------
-type POSStatus struct {
-	Wello struct {
-		IsOpen    int    `json:"is_open"`
-		Status    string `json:"status"`
-		NextStart string `json:"next_start"`
-		NextEnd   string `json:"next_end"`
-	} `json:"wello_resto_status"`
+func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) ([]models.DeletionReason, error) {
 
-	Uber struct {
-		EstimatedPrepTime string      `json:"estimated_preparation_time"`
-		DelayDuration     string      `json:"busy_mode_delay_duration"`
-		DelayUntil        interface{} `json:"busy_mode_delay_until"`
-		ClosedUntil       interface{} `json:"closed_until"`
-	} `json:"uber_eats_status"`
+	query := `
+		SELECT dr.deletion_reason_id,
+		       dr.deletion_reason_type,
+		       dr.deletion_reason_object,
+		       dr.deletion_reason_desc,
+		       dr.requires_comment,
+		       l.label
+		FROM deletion_reasons dr
+		INNER JOIN labels l 
+		       ON l.label_value = dr.deletion_reason_id
+		      AND l.lang = 'FR'
+		      AND l.label_type = 'deletion_reason'
+		WHERE dr.enabled = TRUE
+		  AND dr.deletion_reason_object = ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, object)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []models.DeletionReason
+
+	for rows.Next() {
+		var d models.DeletionReason
+		err := rows.Scan(
+			&d.DeletionReasonID,
+			&d.DeletionReasonType,
+			&d.DeletionReasonObject,
+			&d.DeletionReasonDesc,
+			&d.RequiresComment,
+			&d.Label,
+		)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, d)
+	}
+
+	return list, nil
 }
 
-func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*POSStatus, error) {
+func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*models.POSStatus, error) {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, err
@@ -139,7 +166,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*P
 	}
 
 	// Full POS Status Query
-	var result POSStatus
+	var result models.POSStatus
 
 	err = tx.QueryRowContext(ctx, `
 		SELECT 
@@ -176,4 +203,92 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*P
 	tx.Commit()
 
 	return &result, nil
+}
+
+func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID string, status string) (int64, error) {
+
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE merchant_parameters 
+		 SET kitchen_show_only_paid = ?
+		 WHERE merchant_id = ?`,
+		status, merchantID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string, status string) (int64, error) {
+
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE merchant_parameters 
+		 SET disable_components_under_safety_stock = ?
+		 WHERE merchant_id = ?`,
+		status, merchantID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+func (r *POSRepository) ToggleScanNOrder(ctx context.Context, merchantID string, status string) (int64, error) {
+
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE scannorder_settings 
+		 SET activated = ?
+		 WHERE merchant_id = ?`,
+		status, merchantID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) ([]models.DeliveryMan, error) {
+
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT DISTINCT 
+            usv.user_id,
+            usv.first_name,
+            usv.last_name,
+            usv.lat,
+            usv.lng,
+            usv.status
+        FROM user_status_view usv
+        INNER JOIN users_rights ur ON ur.id = usv.user_id
+        INNER JOIN merchant m ON m.id = ur.merchant_id
+        WHERE ur.merchant_id = ?
+          AND ur.enabled = TRUE
+    `, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []models.DeliveryMan
+
+	for rows.Next() {
+		var d models.DeliveryMan
+		err := rows.Scan(
+			&d.UserID,
+			&d.FirstName,
+			&d.LastName,
+			&d.Lat,
+			&d.Lng,
+			&d.Status,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, d)
+	}
+
+	return result, nil
 }

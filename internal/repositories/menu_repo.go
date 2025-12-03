@@ -540,3 +540,75 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	r.log.Info("GetMenu END", zap.Duration("total_elapsed", time.Since(startTotal)), zap.Int("categories", len(cats)), zap.Int("products", len(productOrder)))
 	return resp, nil
 }
+
+func (r *MenuRepository) SetComponentAvailability(ctx context.Context, merchantID, cid, status string) (int64, error) {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE components 
+		 SET status = ?
+		 WHERE component_id = ? AND merchant_id = ?`,
+		status, cid, merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchant_parameters 
+		 SET last_menu_update = UTC_TIMESTAMP 
+		 WHERE merchant_id = ?`,
+		merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID, pid, status string) (int64, error) {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE products 
+		 SET status = ?
+		 WHERE product_id = ? AND merchant_id = ?`,
+		status, pid, merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchant_parameters 
+		 SET last_menu_update = UTC_TIMESTAMP 
+		 WHERE merchant_id = ?`,
+		merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}

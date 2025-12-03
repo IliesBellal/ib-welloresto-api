@@ -780,3 +780,61 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	tx.Commit()
 	return nil
 }
+
+func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string) ([]models.CashRegisterHistoryItem, error) {
+
+	query := `
+		SELECT cr.cash_register_id,
+		       cr.start_date,
+		       cr.end_date,
+		       cd.cash_desk_id,
+		       cd.name,
+		       cr.closed
+		FROM cash_registers cr
+		INNER JOIN cash_desks cd 
+		       ON cd.cash_desk_id = cr.cash_desk_id
+		WHERE cd.merchant_id = ?
+		  AND cr.end_date IS NOT NULL
+		  AND (
+		        cr.user_id = ?
+		        OR EXISTS (
+		            SELECT 1 
+		            FROM users u
+		            INNER JOIN users_rights ur ON ur.id = u.access_id
+		            WHERE u.user_id = ?
+		              AND u.merchant_id = cd.merchant_id
+		              AND ur.admin = TRUE
+		        )
+		      )
+		ORDER BY cr.start_date DESC
+		LIMIT 50
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []models.CashRegisterHistoryItem
+
+	for rows.Next() {
+		var h models.CashRegisterHistoryItem
+
+		err := rows.Scan(
+			&h.CashRegisterID,
+			&h.StartDate,
+			&h.EndDate,
+			&h.CashDesk.CashDeskID,
+			&h.CashDesk.CashDeskName,
+			&h.Closed,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		history = append(history, h)
+	}
+
+	return history, nil
+}
