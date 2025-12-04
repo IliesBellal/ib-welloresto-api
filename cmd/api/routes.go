@@ -11,7 +11,6 @@ import (
 	"welloresto-api/internal/config"
 
 	"welloresto-api/internal/handlers"
-	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/repositories"
 	"welloresto-api/internal/services"
 )
@@ -21,7 +20,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	// r.Use(middleware.RequestLogger(log))
 	// r.Use(middleware.Recoverer)
-	r.Use(middleware.ExtractToken)
+	// r.Use(middleware.ExtractToken)
 
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
