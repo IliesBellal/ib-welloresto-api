@@ -916,7 +916,7 @@ LEFT JOIN (
     INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
 ) a ON a.product_id = p.product_id
 WHERE p.merchant_id = ?
-AND p.product_id IN (%s)
+AND p.product_id IN (?)
 AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 `, strings.Join(placeholders, ","))
 	rows, err := tx.QueryContext(ctx, query, args...)
