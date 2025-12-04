@@ -3,7 +3,7 @@ package models
 // Requête principale envoyée par le POS
 type CreateOrderRequest struct {
 	MerchantID  string       `json:"merchant_id"`
-	DeviceID    *int64       `json:"device_id"`
+	DeviceID    *string      `json:"device_id"`
 	MerchantLat *float64     `json:"merchant_lat"`
 	MerchantLng *float64     `json:"merchant_lng"`
 	Order       OrderPayload `json:"order"`

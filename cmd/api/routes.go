@@ -153,7 +153,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Post("/history", ordersH.GetHistory)
 		r.Get("/{order_id}", ordersH.GetOrder)
 
-		r.Post("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 		r.Post("/{order_id}/distributed_products", ordersLifeCycleH.SetDistributedProducts)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {
