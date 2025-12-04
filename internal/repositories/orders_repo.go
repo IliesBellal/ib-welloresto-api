@@ -677,7 +677,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 	if req.Order.Customer.CustomerID != nil {
 		// CustomerRepository expects string id often; adapt if needed
-		idStr := strconv.FormatInt(*req.Order.Customer.CustomerID, 10)
+		idStr := *req.Order.Customer.CustomerID
 		cust.CustomerID = &idStr
 	}
 	if req.Order.Customer.Name != nil {
