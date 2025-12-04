@@ -644,7 +644,7 @@ LEFT JOIN (
     INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
     INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
 ) a ON a.product_id = p.product_id
-WHERE p.product_id IN (%s)
+WHERE p.product_id IN (?)
 AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 `, joinPlaceholders(len(ids), 1))
 
