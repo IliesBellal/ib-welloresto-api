@@ -692,9 +692,6 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	if req.Order.Customer.Name != nil {
 		cust.CustomerName = req.Order.Customer.Name
 	}
-	if req.Order.Customer.MerchantID != nil {
-		cust.MerchantID = req.MerchantID
-	}
 	if req.Order.Customer.Tel != nil {
 		cust.CustomerTel = req.Order.Customer.Tel
 	}
@@ -707,7 +704,6 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	if req.Order.Customer.Lng != nil {
 		cust.CustomerLng = req.Order.Customer.Lng
 	}
-	// ... map other fields as needed
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns ID as string.

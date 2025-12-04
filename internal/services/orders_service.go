@@ -130,6 +130,16 @@ func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersService) CreateOrder(ctx context.Context, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	req.MerchantID = user.MerchantID
+
 	return s.ordersRepo.CreateOrder(ctx, req)
 }
