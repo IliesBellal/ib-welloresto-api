@@ -3,7 +3,6 @@ package repositories
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,17 +38,26 @@ func ucfirst(s string) string {
 
 func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *models.Customer) (string, error) {
 
-	if c.MerchantID == "" {
-		return "", errors.New("merchant_id is required")
-	}
-
-	fields := []string{
-		"customer_name", "customer_tel", "customer_address", "customer_email",
-		"customer_lat", "customer_lng", "customer_door_number", "customer_floor_number",
-		"customer_additional_address", "customer_business_name", "customer_birthdate",
-		"customer_additional_info", "customer_temporary_address", "customer_temporary_lat",
-		"customer_temporary_lng", "customer_temporary_door_number",
-		"customer_temporary_floor_number", "customer_temporary_additional_address",
+	// Liste des colonnes vraiment existantes et autorisées
+	allowed := map[string]bool{
+		"customer_name":                         true,
+		"customer_tel":                          true,
+		"customer_address":                      true,
+		"customer_email":                        true,
+		"customer_lat":                          true,
+		"customer_lng":                          true,
+		"customer_door_number":                  true,
+		"customer_floor_number":                 true,
+		"customer_additional_address":           true,
+		"customer_business_name":                true,
+		"customer_birthdate":                    true,
+		"customer_additional_info":              true,
+		"customer_temporary_address":            true,
+		"customer_temporary_lat":                true,
+		"customer_temporary_lng":                true,
+		"customer_temporary_door_number":        true,
+		"customer_temporary_floor_number":       true,
+		"customer_temporary_additional_address": true,
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -58,74 +66,76 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 	}
 	defer tx.Rollback()
 
-	values := make([]interface{}, 0)
-
-	//------------------------------------------
-	// UPDATE
-	//------------------------------------------
+	// -------------------------------------------------------
+	// 🔵 MODE UPDATE
+	// -------------------------------------------------------
 	if c.CustomerID != nil && *c.CustomerID != "" {
 
-		setParts := []string{}
-		for _, f := range fields {
-			setParts = append(setParts, fmt.Sprintf("%s = COALESCE(?, %s)", f, f))
+		var setParts []string
+		var args []interface{}
+
+		// pour chaque champ autorisé → ajouter au SET si != nil
+		for col := range allowed {
+			v := extractFieldValue(c, col)
+			if v != nil {
+				setParts = append(setParts, col+" = ?")
+				args = append(args, v)
+			}
 		}
 
-		sqlQuery := `
-			UPDATE customer
-			SET ` + strings.Join(setParts, ", ") + `
-			WHERE customer_id = ? AND merchant_id = ?
-		`
-
-		// params
-		for _, f := range fields {
-			values = append(values, extractFieldValue(c, f))
+		// rien à modifier → fin
+		if len(setParts) == 0 {
+			return *c.CustomerID, nil
 		}
-		values = append(values, *c.CustomerID)
-		values = append(values, c.MerchantID)
 
-		_, err := tx.ExecContext(ctx, sqlQuery, values...)
+		query := `
+            UPDATE customer
+            SET ` + strings.Join(setParts, ", ") + `
+            WHERE customer_id = ? AND merchant_id = ?
+        `
+		args = append(args, *c.CustomerID, c.MerchantID)
+
+		_, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return "", err
 		}
 
-		if err := tx.Commit(); err != nil {
-			return "", err
-		}
-
+		tx.Commit()
 		return *c.CustomerID, nil
 	}
 
-	//------------------------------------------
-	// INSERT
-	//------------------------------------------
-	cols := strings.Join(fields, ", ")
-	placeholders := strings.TrimRight(strings.Repeat("?, ", len(fields)), ", ")
+	// -------------------------------------------------------
+	// 🟢 MODE INSERT
+	// -------------------------------------------------------
+	var cols []string
+	var placeholders []string
+	var values []interface{}
 
-	sqlQuery := `
-		INSERT INTO customer (` + cols + `, merchant_id)
-		VALUES (` + placeholders + `, ?)
-	`
-
-	for _, f := range fields {
-		values = append(values, extractFieldValue(c, f))
+	for col := range allowed {
+		cols = append(cols, col)
+		placeholders = append(placeholders, "?")
+		values = append(values, extractFieldValue(c, col))
 	}
+
+	// merchant_id obligatoire
+	cols = append(cols, "merchant_id")
+	placeholders = append(placeholders, "?")
 	values = append(values, c.MerchantID)
 
-	res, err := tx.ExecContext(ctx, sqlQuery, values...)
+	query := `
+        INSERT INTO customer (` + strings.Join(cols, ", ") + `)
+        VALUES (` + strings.Join(placeholders, ", ") + `)
+    `
+
+	res, err := tx.ExecContext(ctx, query, values...)
 	if err != nil {
 		return "", err
 	}
 
-	newID, err := res.LastInsertId()
-	if err != nil {
-		return "", err
-	}
+	id, _ := res.LastInsertId()
+	tx.Commit()
 
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%d", newID), nil
+	return fmt.Sprintf("%d", id), nil
 }
 
 func extractFieldValue(c *models.Customer, field string) interface{} {
