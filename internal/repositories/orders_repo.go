@@ -628,10 +628,10 @@ func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 		return nil, nil
 	}
 	ids := make([]interface{}, 0, len(req.Order.Products))
-	placeholders := make([]string, 0, len(req.Order.Products))
+	placeholders := make([]int, 0, len(req.Order.Products))
 	for i, p := range req.Order.Products {
 		ids = append(ids, p.ProductID)
-		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+		placeholders = append(placeholders, i)
 	}
 	// SQL: find products that have missing components (source: PHP query)
 	// We adapt to a parameterized query (Postgres style with $n). If you use MySQL, replace placeholders with ? and adapt Exec accordingly.
