@@ -621,11 +621,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 	}, nil
 }
 
-func (s *OrdersRepository) validateProductAvailability(
-	ctx context.Context,
-	tx *sql.Tx,
-	req *models.CreateOrderRequest,
-) ([]int64, error) {
+func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) ([]int64, error) {
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -695,6 +691,9 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 	if req.Order.Customer.Name != nil {
 		cust.CustomerName = req.Order.Customer.Name
+	}
+	if req.Order.Customer.MerchantID != nil {
+		cust.MerchantID = req.MerchantID
 	}
 	if req.Order.Customer.Tel != nil {
 		cust.CustomerTel = req.Order.Customer.Tel

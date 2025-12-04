@@ -38,6 +38,7 @@ type OrderPayload struct {
 
 type CustomerPayload struct {
 	CustomerID   *string  `json:"customer_id"`
+	MerchantID   *string  `json:"merchant_id"`
 	Name         *string  `json:"customer_name"`
 	Tel          *string  `json:"customer_tel"`
 	Address      *string  `json:"customer_address"`
