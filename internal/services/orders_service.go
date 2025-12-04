@@ -129,3 +129,7 @@ func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string
 
 	return map[string]interface{}{"status": "1"}, nil
 }
+
+func (s *OrdersService) CreateOrder(ctx context.Context, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+	return s.ordersRepo.CreateOrder(ctx, req)
+}

@@ -3,14 +3,13 @@ package main
 import (
 	"database/sql"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
-
 	"welloresto-api/internal/handlers"
+
 	"welloresto-api/internal/repositories"
 	"welloresto-api/internal/services"
 )
@@ -18,21 +17,10 @@ import (
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
-	// r.Use(middleware.RequestLogger(log))
-	// r.Use(middleware.Recoverer)
-	// r.Use(middleware.ExtractToken)
-
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			next.ServeHTTP(w, r)
-			log.Info("request completed",
-				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
-				zap.Duration("duration", time.Since(start)),
-			)
-		})
-	})
+	// --- Global Middlewares ---
+	// r.Use(middleware.RecoveryMiddleware(log))
+	// r.Use(middleware.LoggingMiddleware(log))
+	// r.Use(middleware.ExtractTokenMiddleware)
 
 	// --- Repositories ---
 	userRepo := repositories.NewUserRepository(mysqlDB)
@@ -40,11 +28,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	deviceRepo := repositories.NewDeviceRepository(mysqlDB)
 	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
 
-	menuRepoOpti := repositories.NewOptimizedMenuRepository(mysqlDB)
+	menuRepoOpt := repositories.NewOptimizedMenuRepository(mysqlDB)
 	menuRepoLegacy := repositories.NewMenuRepository(mysqlDB, log)
 
 	ordersRepo := repositories.NewOrdersRepository(mysqlDB, log)
-	ordersLifecycleRepo := repositories.NewOrdersLifeCycleRepository(mysqlDB, log)
+	ordersLifeCycleRepo := repositories.NewOrdersLifeCycleRepository(mysqlDB, log)
 	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB, log)
 	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
 	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
@@ -58,9 +46,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	posService := services.NewPOSService(userRepo, posRepo)
 	deviceService := services.NewDeviceService(userRepo, deviceRepo)
 	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
-	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpti, false)
+	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpt, false)
 	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo)
-	ordersLifecycleService := services.NewOrdersLifeCycleService(ordersLifecycleRepo, deliverySessionsRepo, userRepo)
+	ordersLifeCycleService := services.NewOrdersLifeCycleService(ordersLifeCycleRepo, deliverySessionsRepo, userRepo)
 	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
 	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
 	locationsService := services.NewLocationsService(locationsRepo, userRepo)
@@ -71,137 +59,158 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	stocksService := services.NewStockService(stocksRepo, userRepo)
 
 	// --- Handlers ---
-	authHandler := handlers.NewAuthHandler(authService)
-	posHandler := handlers.NewPOSHandler(posService)
-	deviceHandler := handlers.NewDeviceHandler(deviceService)
-	appVersionHandler := handlers.NewAppVersionHandler(appVersionService)
-	menuHandler := handlers.NewMenuHandler(menuService)
-	ordersHandler := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
-	ordersLifeCycleHandler := handlers.NewOrdersLifeCycleHandler(ordersLifecycleService, deliverySessionsService)
-	deliverySessionsHandler := handlers.NewDeliverySessionsHandler(deliverySessionsService)
-	cashDrawerHandler := handlers.NewCashDrawerHandler(cashDrawerService)
-	locationsHandler := handlers.NewLocationsHandler(locationsService)
-	cashRegisterHandler := handlers.NewCashRegisterHandler(cashRegisterService)
-	bookingsHandler := handlers.NewBookingsHandler(bookingsService)
-	customersHandler := handlers.NewCustomersHandler(customersService)
-	usersHandler := handlers.NewUsersHandler(usersService)
-	stocksHandler := handlers.NewStocksHandler(stocksService, usersService)
+	authH := handlers.NewAuthHandler(authService)
+	posH := handlers.NewPOSHandler(posService)
+	deviceH := handlers.NewDeviceHandler(deviceService)
+	appVersionH := handlers.NewAppVersionHandler(appVersionService)
+	menuH := handlers.NewMenuHandler(menuService)
+	ordersH := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
+	ordersLifeCycleH := handlers.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService)
+	deliverySessionsH := handlers.NewDeliverySessionsHandler(deliverySessionsService)
+	cashDrawerH := handlers.NewCashDrawerHandler(cashDrawerService)
+	locationsH := handlers.NewLocationsHandler(locationsService)
+	cashRegisterH := handlers.NewCashRegisterHandler(cashRegisterService)
+	bookingsH := handlers.NewBookingsHandler(bookingsService)
+	customersH := handlers.NewCustomersHandler(customersService)
+	usersH := handlers.NewUsersHandler(usersService)
+	stocksH := handlers.NewStocksHandler(stocksService, usersService)
 
-	// --- Routes ---
-	// r.Get("/health", handlers.HealthCheck)
+	// ============================================================
+	//                      ROUTING
+	// ============================================================
 
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("OK"))
+	})
+
+	// --- AUTH ---
 	r.Route("/auth", func(r chi.Router) {
-		r.Get("/login", authHandler.Login)
+		r.Get("/login", authH.Login)
 	})
 
+	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
-		r.Get("/{user_id}/location", usersHandler.GetUserLocation)
+		r.Get("/{user_id}/location", usersH.GetUserLocation)
 	})
 
+	// --- POS ---
 	r.Route("/pos", func(r chi.Router) {
-		r.Get("/status", posHandler.GetPOSStatus)
-		r.Patch("/status", posHandler.UpdatePOSStatus)
-		r.Get("/deletion_reasons/{object}", posHandler.GetDeletionReasons)
+		r.Get("/status", posH.GetPOSStatus)
+		r.Patch("/status", posH.UpdatePOSStatus)
 
-		r.Get("/delivery_men", posHandler.GetDeliveryMen)
+		r.Get("/deletion_reasons/{object}", posH.GetDeletionReasons)
+		r.Get("/delivery_men", posH.GetDeliveryMen)
 
-		r.Patch("/settings/scannorder", posHandler.ToggleScanNOrder)
-		r.Patch("/settings/production_paid_only", posHandler.ToggleProductionPaidOnly)
-		r.Patch("/settings/safety_stock", posHandler.ToggleSafetyStockActive)
+		r.Route("/settings", func(r chi.Router) {
+			r.Patch("/scannorder", posH.ToggleScanNOrder)
+			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)
+			r.Patch("/safety_stock", posH.ToggleSafetyStockActive)
+		})
 
-		r.Get("/payments/tr/check/{tr_code}", posHandler.CheckTR)
+		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
 	})
 
+	// --- STOCKS ---
 	r.Route("/stocks", func(r chi.Router) {
+		r.Get("/barcode/{barcode_id}", stocksH.GetBarcodeInfo)
+		r.Post("/barcode", stocksH.CreateBarcode)
+		r.Delete("/barcode/{barcode_id}", stocksH.DeleteBarcode)
 
-		r.Get("/barcode/{barcode_id}", stocksHandler.GetBarcodeInfo)
-		r.Post("/barcode/create", stocksHandler.CreateBarcode)
-		r.Delete("/barcode/{barcode_id}", stocksHandler.DeleteBarcode)
-		r.Post("/barcodes/scan", stocksHandler.AddStockBarcode)
-
-		r.Post("/barcodes/scan", stocksHandler.AddStockBarcode)
-		r.Patch("/loss", stocksHandler.SetStockLoss)
-		r.Get("/products", stocksHandler.GetStockProducts)
+		r.Post("/barcodes/scan", stocksH.AddStockBarcode)
+		r.Patch("/loss", stocksH.SetStockLoss)
+		r.Get("/products", stocksH.GetStockProducts)
 	})
 
+	// --- DEVICES ---
 	r.Route("/device", func(r chi.Router) {
-		r.Post("/token", deviceHandler.SaveDeviceToken)
+		r.Post("/token", deviceH.SaveDeviceToken)
 	})
 
+	// --- APP VERSION ---
 	r.Route("/app", func(r chi.Router) {
-		r.Post("/version/check", appVersionHandler.CheckAppVersion)
+		r.Post("/version/check", appVersionH.CheckAppVersion)
 	})
 
+	// --- MENU ---
 	r.Route("/menu", func(r chi.Router) {
-		r.Get("/", menuHandler.GetMenu)
-
-		r.Patch("/component/{component_id}/availability", menuHandler.SetComponentAvailability)
-		r.Patch("/product/{product_id}/availability", menuHandler.SetProductAvailability)
+		r.Get("/", menuH.GetMenu)
+		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
+		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
 	})
 
+	// --- LOCATIONS ---
 	r.Route("/locations", func(r chi.Router) {
-		r.Get("/", locationsHandler.GetLocations)
-
-		r.Patch("/{location_id}/coordinates", locationsHandler.UpdateLocationCoordinates)
-
+		r.Get("/", locationsH.GetLocations)
+		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
 	})
 
+	// --- ORDERS ---
 	r.Route("/orders", func(r chi.Router) {
-		r.Get("/pending", ordersHandler.GetPendingOrders)
-		r.Post("/history", ordersHandler.GetHistory)
-		r.Get("/{order_id}", ordersHandler.GetOrder)
 
-		r.Post("/{order_id}/reopen", ordersLifeCycleHandler.ReopenClosedOrder)
-		r.Post("/orders/{order_id}/distributed_products", ordersLifeCycleHandler.SetDistributedProducts)
+		r.Post("/create", ordersH.CreateOrder)
 
-		r.Post("/{order_id}/payments", ordersLifeCycleHandler.AddPayment)
-		r.Get("/{order_id}/payments", ordersLifeCycleHandler.GetPayments)
-		r.Delete("/{order_id}/payments/{payment_id}", ordersLifeCycleHandler.DeletePayment)
+		r.Get("/pending", ordersH.GetPendingOrders)
+		r.Post("/history", ordersH.GetHistory)
+		r.Get("/{order_id}", ordersH.GetOrder)
+
+		r.Post("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+		r.Post("/{order_id}/distributed_products", ordersLifeCycleH.SetDistributedProducts)
+
+		r.Route("/{order_id}/payments", func(r chi.Router) {
+			r.Post("/", ordersLifeCycleH.AddPayment)
+			r.Get("/", ordersLifeCycleH.GetPayments)
+			r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+		})
 	})
 
+	// --- DELIVERY SESSIONS ---
 	r.Route("/delivery_sessions", func(r chi.Router) {
-		r.Get("/pending", deliverySessionsHandler.GetPendingDeliverySessions)
-		r.Get("/{delivery_session_id}", deliverySessionsHandler.GetDeliverySession)
-		r.Delete("/{delivery_session_id}", deliverySessionsHandler.CancelDeliverySession)
-		r.Post("/{delivery_session_id}/close", deliverySessionsHandler.CloseDeliverySession)
+		r.Get("/pending", deliverySessionsH.GetPendingDeliverySessions)
+		r.Get("/{delivery_session_id}", deliverySessionsH.GetDeliverySession)
+		r.Delete("/{delivery_session_id}", deliverySessionsH.CancelDeliverySession)
+		r.Post("/{delivery_session_id}/close", deliverySessionsH.CloseDeliverySession)
 
-		r.Post("/start", deliverySessionsHandler.StartDeliverySession)
+		r.Post("/start", deliverySessionsH.StartDeliverySession)
 	})
 
+	// --- CASH DRAWER ---
 	r.Route("/cash_drawer", func(r chi.Router) {
-		r.Get("/open", cashDrawerHandler.OpenCashDrawer)
+		r.Get("/open", cashDrawerH.OpenCashDrawer)
 	})
 
+	// --- CUSTOMERS ---
 	r.Route("/customer", func(r chi.Router) {
-		r.Get("/{customer_id}/loyalty", customersHandler.GetCustomerLoyalty)
-
-		r.Patch("/{customer_id}/loyalty/progress", customersHandler.UpdateLoyaltyProgress)
-		r.Patch("/{customer_id}/loyalty/reward", customersHandler.UpdateLoyaltyReward)
+		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
+		r.Patch("/{customer_id}/loyalty/progress", customersH.UpdateLoyaltyProgress)
+		r.Patch("/{customer_id}/loyalty/reward", customersH.UpdateLoyaltyReward)
 	})
 
+	// --- CASH REGISTER ---
 	r.Route("/cash_register", func(r chi.Router) {
-		r.Post("/open", cashRegisterHandler.OpenCashRegister)
-		r.Get("/history", cashRegisterHandler.GetHistory)
+		r.Post("/open", cashRegisterH.OpenCashRegister)
+		r.Get("/history", cashRegisterH.GetHistory)
 
-		r.Get("/{cash_register_id}/summary", cashRegisterHandler.GetCashRegisterSummary)
-		r.Get("/{cash_register_id}/tva_details", cashRegisterHandler.GetCashRegisterTVADetails)
-		r.Patch("/{cash_register_id}/close", cashRegisterHandler.CloseCashRegister)
-		r.Patch("/{cash_register_id}/enclose", cashRegisterHandler.EncloseCashRegister)
+		r.Route("/{cash_register_id}", func(r chi.Router) {
+			r.Get("/summary", cashRegisterH.GetCashRegisterSummary)
+			r.Get("/tva_details", cashRegisterH.GetCashRegisterTVADetails)
+			r.Patch("/close", cashRegisterH.CloseCashRegister)
+			r.Patch("/enclose", cashRegisterH.EncloseCashRegister)
 
-		r.Post("/{cash_register_id}/custom_items", cashRegisterHandler.AddCustomItem)
-		r.Delete("/{cash_register_id}/custom_items/{item_id}", cashRegisterHandler.DeleteCustomItem)
+			r.Post("/custom_items", cashRegisterH.AddCustomItem)
+			r.Delete("/custom_items/{item_id}", cashRegisterH.DeleteCustomItem)
+		})
 	})
 
+	// --- BOOKINGS ---
 	r.Route("/bookings", func(r chi.Router) {
-		r.Post("/", bookingsHandler.SearchBookings)
+		r.Post("/", bookingsH.SearchBookings)
+		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
 
-		r.Get("/availability/{date}", bookingsHandler.GetBookingAvailability)
+		r.Post("/create", bookingsH.CreateBooking)
+		r.Get("/{booking_id}", bookingsH.GetBooking)
 
-		r.Post("/create", bookingsHandler.CreateBooking)
-		r.Get("/{booking_id}", bookingsHandler.GetBooking)
-
-		r.Post("/{booking_id}/accept", bookingsHandler.AcceptBooking)
-		r.Post("/{booking_id}/deny", bookingsHandler.DenyBooking)
+		r.Post("/{booking_id}/accept", bookingsH.AcceptBooking)
+		r.Post("/{booking_id}/deny", bookingsH.DenyBooking)
 	})
 
 	return r

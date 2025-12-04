@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
@@ -552,4 +554,516 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 	}
 
 	return nil
+}
+
+func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// --- Étapes (appelées dans service_steps.go) -------------------------
+
+	unavailable, err := s.validateProductAvailability(ctx, tx, req)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if len(unavailable) > 0 {
+		tx.Rollback()
+		return &models.CreateOrderResult{Status: 2}, nil
+	}
+
+	customerID, err := s.upsertCustomer(ctx, tx, req)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	orderID, orderNum, err := s.insertOrderBase(ctx, tx, req, customerID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	usedItems, err := s.insertOrderItems(ctx, tx, req, orderID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := s.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := s.insertPayments(ctx, tx, req, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	// Post-commit async
+	// go s.notifier.SendNewOrderNotification(orderID)
+
+	return &models.CreateOrderResult{
+		Status:     1,
+		OrderID:    orderID,
+		OrderNum:   orderNum,
+		OrderItems: usedItems,
+		Action:     "waiting",
+	}, nil
+}
+
+// validateProductAvailability checks for products that become unavailable because of components status = 0
+func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) ([]int64, error) {
+	// build list of product ids from request
+	if len(req.Order.Products) == 0 {
+		return nil, nil
+	}
+	ids := make([]interface{}, 0, len(req.Order.Products))
+	placeholders := make([]string, 0, len(req.Order.Products))
+	for i, p := range req.Order.Products {
+		ids = append(ids, p.ProductID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	// SQL: find products that have missing components (source: PHP query)
+	// We adapt to a parameterized query (Postgres style with $n). If you use MySQL, replace placeholders with ? and adapt Exec accordingly.
+	query := fmt.Sprintf(`
+SELECT DISTINCT p.product_id
+FROM products p
+LEFT JOIN (
+    SELECT DISTINCT r.product_id
+    FROM requires rq
+    INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+    INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
+) a ON a.product_id = p.product_id
+WHERE p.product_id IN (%s)
+AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+`, joinPlaceholders(len(ids), 1))
+
+	rows, err := tx.QueryContext(ctx, query, ids...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var blocked []int64
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		blocked = append(blocked, pid)
+	}
+	return blocked, nil
+}
+
+// upsertCustomer calls the customer repository to create/update the customer and returns numeric ID (nil if none)
+func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) (*int64, error) {
+	if req.Order.Customer == nil {
+		return nil, nil
+	}
+
+	// Convert our Order CustomerPayload to the models.Customer expected by CustomerRepository
+	cust := &models.Customer{
+		MerchantID: req.MerchantID,
+	}
+	if req.Order.Customer.CustomerID != nil {
+		// CustomerRepository expects string id often; adapt if needed
+		idStr := strconv.FormatInt(*req.Order.Customer.CustomerID, 10)
+		cust.CustomerID = &idStr
+	}
+	if req.Order.Customer.Name != nil {
+		cust.CustomerName = req.Order.Customer.Name
+	}
+	if req.Order.Customer.Tel != nil {
+		cust.CustomerTel = req.Order.Customer.Tel
+	}
+	if req.Order.Customer.Address != nil {
+		cust.CustomerAddress = req.Order.Customer.Address
+	}
+	if req.Order.Customer.Lat != nil {
+		cust.CustomerLat = req.Order.Customer.Lat
+	}
+	if req.Order.Customer.Lng != nil {
+		cust.CustomerLng = req.Order.Customer.Lng
+	}
+	// ... map other fields as needed
+
+	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
+	// We call it directly. It returns ID as string.
+	custoRepo := NewCustomerRepository(s.db, s.log)
+	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, cust)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update/create customer: %w", err)
+	}
+	if newIDStr == "" {
+		return nil, nil
+	}
+	newIDInt, err := strconv.ParseInt(newIDStr, 10, 64)
+	if err != nil {
+		// return the string wrapped if parse fails
+		return nil, fmt.Errorf("customer id parse error: %w", err)
+	}
+	return &newIDInt, nil
+}
+
+// insertOrderBase inserts the orders row and returns orderID and orderNum
+func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *int64) (orderID int64, orderNum int64, err error) {
+	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
+	var lastOrderNum sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT order_num
+		FROM orders
+		WHERE merchant_id = ?
+		ORDER BY order_id DESC
+		LIMIT 1
+		`, req.MerchantID).Scan(&lastOrderNum)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, 0, err
+	}
+	if lastOrderNum.Valid {
+		orderNum = lastOrderNum.Int64 + 1
+	} else {
+		orderNum = 1
+	}
+
+	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO orders(cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, isDelivery, merchant_approval, means_of_payement, scheduled, creation_date, dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address, brand_status, order_type, places_settings, pager_number)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?, ?)`,
+		req.DeviceID, req.MerchantID, nullableInt64(customerID), orderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
+		false, // isDelivery simplified, adapt from req.Order.OrderType if needed
+		req.Order.MerchantApproval, nil, boolToInt(req.Order.IsScheduled),
+		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, req.Order.EstimatedReady,
+		boolToInt(req.Order.UseCustomerTemporaryAddress), req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	lastID, err := res.LastInsertId()
+	if err != nil {
+		return 0, 0, err
+	}
+	return lastID, orderNum, nil
+}
+
+// insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
+func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID int64) ([]models.UsedItem, error) {
+	used := make([]models.UsedItem, 0, len(req.Order.Products))
+	for _, p := range req.Order.Products {
+		if p.Quantity == 0 {
+			continue
+		}
+		item := &OrderItemInsert{
+			OrderID:    orderID,
+			ProductID:  p.ProductID,
+			MerchantID: req.MerchantID,
+			Quantity:   p.Quantity,
+			DiscountID: p.DiscountID,
+			Price:      p.Price,
+			DelayID:    p.DelayID,
+		}
+		oid, err := s.InsertOrderItem(ctx, tx, item)
+		if err != nil {
+			return nil, err
+		}
+		used = append(used, models.UsedItem{OrderItemID: oid, Quantity: p.Quantity})
+	}
+	return used, nil
+}
+
+// insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
+func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, items []models.UsedItem) error {
+	// Build maps from product iteration to order_item ids; we used ordering to match the order of products to items
+	// Simpler approach: while inserting items we could have returned corresponding mapping; for now assume order preserved.
+	extras := []ExtraInsert{}
+	withouts := []WithoutInsert{}
+	configs := []ConfigInsert{}
+
+	itemIdx := 0
+	for _, p := range req.Order.Products {
+		if p.Quantity == 0 {
+			continue
+		}
+		if itemIdx >= len(items) {
+			return fmt.Errorf("internal mapping error: items length mismatch")
+		}
+		oid := items[itemIdx].OrderItemID
+		// extras
+		for _, e := range p.Extra {
+			extras = append(extras, ExtraInsert{
+				OrderID:     items[itemIdx].OrderItemID, // in DB extra has order_id and order_item_id; we'll provide both
+				OrderItemID: oid,
+				ComponentID: e.ComponentID,
+				ProductID:   p.ProductID,
+				MerchantID:  req.MerchantID,
+				Price:       e.Price,
+			})
+		}
+		// withouts
+		for _, w := range p.Without {
+			withouts = append(withouts, WithoutInsert{
+				OrderID:     items[itemIdx].OrderItemID,
+				OrderItemID: oid,
+				ComponentID: w.ComponentID,
+				ProductID:   p.ProductID,
+				MerchantID:  req.MerchantID,
+			})
+		}
+		// configs
+		if p.Config != nil {
+			for _, attr := range p.Config.Attributes {
+				for _, opt := range attr.Options {
+					configs = append(configs, ConfigInsert{
+						OrderItemID: oid,
+						AttributeID: attr.ID,
+						OptionID:    opt.ID,
+						Quantity:    opt.Quantity,
+					})
+				}
+			}
+		}
+		itemIdx++
+	}
+
+	if len(extras) > 0 {
+		if err := s.BulkInsertExtras(ctx, tx, extras); err != nil {
+			return err
+		}
+	}
+	if len(withouts) > 0 {
+		if err := s.BulkInsertWithouts(ctx, tx, withouts); err != nil {
+			return err
+		}
+	}
+	if len(configs) > 0 {
+		if err := s.BulkInsertConfigs(ctx, tx, configs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertPayments inserts payments
+func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID int64) error {
+	for _, p := range req.Order.Payments {
+		pi := &PaymentInsert{
+			MerchantID:     req.MerchantID,
+			CashRegisterID: req.DeviceID,
+			OrderID:        orderID,
+			Amount:         p.Amount,
+			MOP:            p.MOP,
+			UserID:         req.Order.CreatedBy,
+		}
+		if err := s.InsertPayment(ctx, tx, pi); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ----------------- helpers -----------------
+func joinPlaceholders(n int, start int) string {
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return strings.Join(out, ", ")
+}
+
+func nullableInt64(i *int64) interface{} {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// ValidateProducts: check which products are blocked (return slice of product ids that are blocked)
+func (r *OrdersRepository) ValidateProducts(ctx context.Context, tx *sql.Tx, merchantID int64, productIDs []int64) ([]int64, error) {
+	if len(productIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, 0, len(productIDs)+1)
+	for i, id := range productIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	// merchant id as first arg
+	args = append([]interface{}{merchantID}, args...)
+	query := fmt.Sprintf(`
+SELECT DISTINCT p.product_id
+FROM products p
+LEFT JOIN (
+    SELECT DISTINCT r.product_id
+    FROM requires rq
+    INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+    INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
+) a ON a.product_id = p.product_id
+WHERE p.merchant_id = ?
+AND p.product_id IN (%s)
+AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+`, strings.Join(placeholders, ","))
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blocked []int64
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		blocked = append(blocked, pid)
+	}
+	return blocked, nil
+}
+
+// OrderInsert is the minimal data to create an order row
+type OrderInsert struct {
+	CashRegisterID interface{}
+	MerchantID     int64
+	CustomerID     interface{}
+	OrderNum       int64
+	Price          float64
+	TVA            float64
+	HT             float64
+	// other fields omitted for brevity
+}
+
+// InsertOrder inserts order and returns order_id
+func (r *OrdersRepository) InsertOrder(ctx context.Context, tx *sql.Tx, o *OrderInsert) (int64, error) {
+	res, err := tx.ExecContext(ctx, `
+INSERT INTO orders (cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, creation_date, dateCall, last_update)
+VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP)
+`, o.CashRegisterID, o.MerchantID, o.CustomerID, o.OrderNum, o.Price, o.TVA, o.HT)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// OrderItemInsert represents an order item insert
+type OrderItemInsert struct {
+	OrderID    int64
+	ProductID  int64
+	MerchantID string
+	Quantity   float64
+	DiscountID *int64
+	Price      float64
+	DelayID    *int64
+}
+
+// InsertOrderItem inserts a single orderitem and returns its id
+func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item *OrderItemInsert) (int64, error) {
+	res, err := tx.ExecContext(ctx, `
+INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, price, ordered_on, delay_id)
+VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
+`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, nullableInt64(item.DiscountID), item.Price, nullableInt64(item.DelayID))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+type ExtraInsert struct {
+	OrderID     int64
+	OrderItemID int64
+	ComponentID int64
+	ProductID   int64
+	MerchantID  string
+	Price       float64
+}
+type WithoutInsert struct {
+	OrderID     int64
+	OrderItemID int64
+	ComponentID int64
+	ProductID   int64
+	MerchantID  string
+}
+type ConfigInsert struct {
+	OrderItemID int64
+	AttributeID int64
+	OptionID    int64
+	Quantity    float64
+}
+
+// BulkInsertExtras performs multi-value insert for extras
+func (r *OrdersRepository) BulkInsertExtras(ctx context.Context, tx *sql.Tx, list []ExtraInsert) error {
+	if len(list) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(list))
+	args := make([]interface{}, 0, len(list)*6)
+	for _, e := range list {
+		parts = append(parts, "(?, ?, ?, ?, ?, ?)")
+		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID, e.Price)
+	}
+	query := "INSERT INTO extra (order_id, order_item_id, component_id, product_id, merchant_id, price) VALUES " + strings.Join(parts, ",")
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *OrdersRepository) BulkInsertWithouts(ctx context.Context, tx *sql.Tx, list []WithoutInsert) error {
+	if len(list) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(list))
+	args := make([]interface{}, 0, len(list)*5)
+	for _, e := range list {
+		parts = append(parts, "(?, ?, ?, ?, ?)")
+		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID)
+	}
+	query := "INSERT INTO without (order_id, order_item_id, component_id, product_id, merchant_id) VALUES " + strings.Join(parts, ",")
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, tx *sql.Tx, list []ConfigInsert) error {
+	if len(list) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(list))
+	args := make([]interface{}, 0, len(list)*4)
+	for _, c := range list {
+		parts = append(parts, "(?, ?, ?, ?)")
+		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity)
+	}
+	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES " + strings.Join(parts, ",")
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+// Payment insert
+type PaymentInsert struct {
+	MerchantID     string
+	CashRegisterID interface{}
+	OrderID        int64
+	Amount         float64
+	MOP            string
+	UserID         *string
+}
+
+func (r *OrdersRepository) InsertPayment(ctx context.Context, tx *sql.Tx, p *PaymentInsert) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, payment_date, user_id)
+VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
+`, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID)
+	return err
 }
