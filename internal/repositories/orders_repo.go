@@ -621,32 +621,44 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 	}, nil
 }
 
-// validateProductAvailability checks for products that become unavailable because of components status = 0
-func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) ([]int64, error) {
-	// build list of product ids from request
+func (s *OrdersRepository) validateProductAvailability(
+	ctx context.Context,
+	tx *sql.Tx,
+	req *models.CreateOrderRequest,
+) ([]int64, error) {
+
 	if len(req.Order.Products) == 0 {
 		return nil, nil
 	}
+
+	// Build product IDs and placeholders
 	ids := make([]interface{}, 0, len(req.Order.Products))
-	placeholders := make([]int, 0, len(req.Order.Products))
-	for i, p := range req.Order.Products {
+	placeholders := make([]string, 0, len(req.Order.Products))
+
+	for _, p := range req.Order.Products {
 		ids = append(ids, p.ProductID)
-		placeholders = append(placeholders, i)
+		placeholders = append(placeholders, "?")
 	}
-	// SQL: find products that have missing components (source: PHP query)
-	// We adapt to a parameterized query (Postgres style with $n). If you use MySQL, replace placeholders with ? and adapt Exec accordingly.
+
+	// JOIN placeholders: "?, ?, ?, ?"
+	inClause := strings.Join(placeholders, ", ")
+
+	// MySQL-compatible query
 	query := fmt.Sprintf(`
-SELECT DISTINCT p.product_id
-FROM products p
-LEFT JOIN (
-    SELECT DISTINCT r.product_id
-    FROM requires rq
-    INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-    INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
-) a ON a.product_id = p.product_id
-WHERE p.product_id IN (?)
-AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
-`, joinPlaceholders(len(ids), 1))
+        SELECT DISTINCT p.product_id
+        FROM products p
+        LEFT JOIN (
+            SELECT DISTINCT r.product_id
+            FROM requires rq
+            INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+            INNER JOIN components c 
+                   ON rq.component_id = c.component_id
+                  AND c.status = 0
+                  AND rq.enabled = TRUE
+        ) a ON a.product_id = p.product_id
+        WHERE p.product_id IN (%s)
+          AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+    `, inClause)
 
 	rows, err := tx.QueryContext(ctx, query, ids...)
 	if err != nil {
@@ -656,13 +668,14 @@ AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 
 	var blocked []int64
 	for rows.Next() {
-		var pid int64
-		if err := rows.Scan(&pid); err != nil {
+		var productID int64
+		if err := rows.Scan(&productID); err != nil {
 			return nil, err
 		}
-		blocked = append(blocked, pid)
+		blocked = append(blocked, productID)
 	}
-	return blocked, nil
+
+	return blocked, rows.Err()
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric ID (nil if none)
