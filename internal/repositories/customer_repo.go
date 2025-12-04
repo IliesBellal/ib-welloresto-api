@@ -95,6 +95,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
         `
 		args = append(args, *c.CustomerID, c.MerchantID)
 
+		debugSQL(r.log, query, args)
 		_, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return "", err
@@ -127,6 +128,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
         VALUES (` + strings.Join(placeholders, ", ") + `)
     `
 
+	debugSQL(r.log, query, values)
 	res, err := tx.ExecContext(ctx, query, values...)
 	if err != nil {
 		return "", err
@@ -136,6 +138,13 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 	tx.Commit()
 
 	return fmt.Sprintf("%d", id), nil
+}
+
+func debugSQL(log *zap.Logger, query string, args []interface{}) {
+	log.Info("SQL EXEC",
+		zap.String("query", query),
+		zap.Any("args", args),
+	)
 }
 
 func extractFieldValue(c *models.Customer, field string) interface{} {
