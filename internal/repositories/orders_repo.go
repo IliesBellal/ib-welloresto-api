@@ -574,7 +574,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 	}
 	if len(unavailable) > 0 {
 		tx.Rollback()
-		return &models.CreateOrderResult{Status: 2}, nil
+		return &models.CreateOrderResult{Status: "2"}, nil
 	}
 
 	customerID, err := s.upsertCustomer(ctx, tx, req)
@@ -613,7 +613,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 	// go s.notifier.SendNewOrderNotification(orderID)
 
 	return &models.CreateOrderResult{
-		Status:     1,
+		Status:     "1",
 		OrderID:    orderID,
 		OrderNum:   orderNum,
 		OrderItems: usedItems,
@@ -716,7 +716,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 }
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
-func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *int64) (orderID int64, orderNum int64, err error) {
+func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *int64) (orderID string, orderNum int64, err error) {
 	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
 	var lastOrderNum sql.NullInt64
 	err = tx.QueryRowContext(ctx, `
@@ -727,7 +727,7 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 		LIMIT 1
 		`, req.MerchantID).Scan(&lastOrderNum)
 	if err != nil && err != sql.ErrNoRows {
-		return 0, 0, err
+		return "0", 0, err
 	}
 	if lastOrderNum.Valid {
 		orderNum = lastOrderNum.Int64 + 1
@@ -746,17 +746,17 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 		boolToInt(req.Order.UseCustomerTemporaryAddress), req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,
 	)
 	if err != nil {
-		return 0, 0, err
+		return "0", 0, err
 	}
 	lastID, err := res.LastInsertId()
 	if err != nil {
-		return 0, 0, err
+		return "0", 0, err
 	}
-	return lastID, orderNum, nil
+	return strconv.FormatInt(lastID, 10), orderNum, nil
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID int64) ([]models.UsedItem, error) {
+func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID string) ([]models.UsedItem, error) {
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		if p.Quantity == 0 {
@@ -775,7 +775,7 @@ func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 		if err != nil {
 			return nil, err
 		}
-		used = append(used, models.UsedItem{OrderItemID: oid, Quantity: p.Quantity})
+		used = append(used, models.UsedItem{OrderItemID: strconv.FormatInt(oid, 10), Quantity: p.Quantity})
 	}
 	return used, nil
 }
@@ -853,7 +853,7 @@ func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 }
 
 // insertPayments inserts payments
-func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID int64) error {
+func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID string) error {
 	for _, p := range req.Order.Payments {
 		pi := &PaymentInsert{
 			MerchantID:     req.MerchantID,
@@ -961,21 +961,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP)
 
 // OrderItemInsert represents an order item insert
 type OrderItemInsert struct {
-	OrderID    int64
-	ProductID  int64
+	OrderID    string
+	ProductID  string
 	MerchantID string
-	Quantity   float64
-	DiscountID *int64
-	Price      float64
-	DelayID    *int64
+	Quantity   int
+	DiscountID *string
+	Price      int
+	DelayID    *string
 }
 
 // InsertOrderItem inserts a single orderitem and returns its id
 func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item *OrderItemInsert) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
-INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, price, ordered_on, delay_id)
-VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
-`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, nullableInt64(item.DiscountID), item.Price, nullableInt64(item.DelayID))
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, price, ordered_on, delay_id)
+		VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
+		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.Price, item.DelayID)
 	if err != nil {
 		return 0, err
 	}
@@ -983,25 +983,25 @@ VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 }
 
 type ExtraInsert struct {
-	OrderID     int64
-	OrderItemID int64
-	ComponentID int64
-	ProductID   int64
+	OrderID     string
+	OrderItemID string
+	ComponentID string
+	ProductID   string
 	MerchantID  string
-	Price       float64
+	Price       int
 }
 type WithoutInsert struct {
-	OrderID     int64
-	OrderItemID int64
-	ComponentID int64
-	ProductID   int64
+	OrderID     string
+	OrderItemID string
+	ComponentID string
+	ProductID   string
 	MerchantID  string
 }
 type ConfigInsert struct {
-	OrderItemID int64
-	AttributeID int64
-	OptionID    int64
-	Quantity    float64
+	OrderItemID string
+	AttributeID string
+	OptionID    string
+	Quantity    int
 }
 
 // BulkInsertExtras performs multi-value insert for extras
@@ -1054,8 +1054,8 @@ func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, tx *sql.Tx, li
 type PaymentInsert struct {
 	MerchantID     string
 	CashRegisterID interface{}
-	OrderID        int64
-	Amount         float64
+	OrderID        string
+	Amount         int
 	MOP            string
 	UserID         *string
 }

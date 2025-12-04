@@ -10,11 +10,11 @@ type CreateOrderRequest struct {
 }
 
 type OrderPayload struct {
-	OrderID                     *int64                `json:"order_id"`
+	OrderID                     *string               `json:"order_id"`
 	OrderNum                    *int64                `json:"order_num"`
-	TTC                         float64               `json:"TTC"`
-	TVA                         float64               `json:"TVA"`
-	HT                          float64               `json:"HT"`
+	TTC                         int                   `json:"TTC"`
+	TVA                         int                   `json:"TVA"`
+	HT                          int                   `json:"HT"`
 	Products                    []OrderProductPayload `json:"products"`
 	Customer                    *CustomerPayload      `json:"customer"`
 	OrderType                   string                `json:"order_type"`
@@ -24,16 +24,16 @@ type OrderPayload struct {
 	Comment                     *string               `json:"comment"`
 	Payments                    []PaymentPayload      `json:"payments"`
 	Locations                   []OrderLocation       `json:"locations"`
-	DeliveryFees                float64               `json:"delivery_fees"`
+	DeliveryFees                int                   `json:"delivery_fees"`
 	EstimatedReady              string                `json:"estimated_ready"`
 	IsScheduled                 bool                  `json:"is_scheduled"`
 	UseCustomerTemporaryAddress bool                  `json:"use_customer_temporary_address"`
 	MerchantApproval            string                `json:"merchant_approval"`
 	BrandStatus                 string                `json:"brand_status"`
-	DelayID                     *int64                `json:"delay_id"`
+	DelayID                     *string               `json:"delay_id"`
 	PagerNumber                 *string               `json:"pager_number"`
 	OnlinePayment               bool                  `json:"online_payment"`
-	BookingID                   *int64                `json:"booking_id"`
+	BookingID                   *string               `json:"booking_id"`
 }
 
 type CustomerPayload struct {
@@ -51,11 +51,11 @@ type CustomerPayload struct {
 }
 
 type OrderProductPayload struct {
-	ProductID  int64   `json:"product_id"`
-	Quantity   float64 `json:"quantity"`
-	Price      float64 `json:"price"`
-	DiscountID *int64  `json:"discount_id"`
-	DelayID    *int64  `json:"delay_id"`
+	ProductID  string  `json:"product_id"`
+	Quantity   int     `json:"quantity"`
+	Price      int     `json:"price"`
+	DiscountID *string `json:"discount_id"`
+	DelayID    *string `json:"delay_id"`
 
 	Extra   []OrderExtraPayload      `json:"extra"`
 	Without []OrderWithoutPayload    `json:"without"`
@@ -64,12 +64,12 @@ type OrderProductPayload struct {
 }
 
 type OrderExtraPayload struct {
-	ComponentID int64   `json:"component_id"`
-	Price       float64 `json:"price"`
+	ComponentID string `json:"component_id"`
+	Price       int    `json:"price"`
 }
 
 type OrderWithoutPayload struct {
-	ComponentID int64 `json:"component_id"`
+	ComponentID string `json:"component_id"`
 }
 
 type OrderConfigPayload struct {
@@ -77,38 +77,38 @@ type OrderConfigPayload struct {
 }
 
 type ConfigAttribute struct {
-	ID      int64                   `json:"id"`
+	ID      string                  `json:"id"`
 	Options []ConfigAttributeOption `json:"options"`
 }
 
 type ConfigAttributeOption struct {
-	ID       int64   `json:"id"`
-	Quantity float64 `json:"quantity"`
+	ID       string `json:"id"`
+	Quantity int    `json:"quantity"`
 }
 
 type OrderItemCommentPayload struct {
-	UserID  int64  `json:"user_id"`
+	UserID  string `json:"user_id"`
 	Content string `json:"content"`
 }
 
 type OrderLocation struct {
-	LocationID int64 `json:"location_id"`
+	LocationID string `json:"location_id"`
 }
 
 type PaymentPayload struct {
-	Amount float64 `json:"amount"`
-	MOP    string  `json:"mop"`
+	Amount int    `json:"amount"`
+	MOP    string `json:"mop"`
 }
 
 type CreateOrderResult struct {
-	Status     int64      `json:"status"`
-	OrderID    int64      `json:"order_id"`
+	Status     string     `json:"status"`
+	OrderID    string     `json:"order_id"`
 	OrderNum   int64      `json:"order_num"`
 	Action     string     `json:"action"`
 	OrderItems []UsedItem `json:"order_items"`
 }
 
 type UsedItem struct {
-	OrderItemID int64   `json:"order_item_id"`
-	Quantity    float64 `json:"quantity"`
+	OrderItemID string `json:"order_item_id"`
+	Quantity    int    `json:"quantity"`
 }
