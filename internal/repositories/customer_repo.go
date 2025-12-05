@@ -97,7 +97,8 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
 			return "", err
 		}
 
-		tx.Commit()
+		// DO NOT COMMIT OTHERWISE ORDER CREATION WILL NOT WORK
+		// tx.Commit()
 		return *c.CustomerID, nil
 	}
 
