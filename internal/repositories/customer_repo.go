@@ -38,6 +38,8 @@ func ucfirst(s string) string {
 
 func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *models.Customer) (string, error) {
 
+	r.log.Info("Start function UpdateOrCreateCustomer")
+
 	// Liste des colonnes vraiment existantes et autorisées
 	allowed := map[string]bool{
 		"customer_name":                         true,
@@ -94,6 +96,11 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
             WHERE customer_id = ? AND merchant_id = ?
         `
 		args = append(args, *c.CustomerID, c.MerchantID)
+
+		r.log.Info("SQL EXEC",
+			zap.String("query", query),
+			zap.Any("args", args),
+		)
 
 		debugSQL(r.log, query, args)
 		_, err := tx.ExecContext(ctx, query, args...)
