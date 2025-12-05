@@ -590,11 +590,17 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 		return nil, err
 	}
 
+	s.log.Info("STEP 4: After upsertCustomer")
+
 	orderID, orderNum, err := s.insertOrderBase(ctx, tx, req, customerID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
+
+	s.log.Info("STEP 5: After insertOrderBase")
+
+	s.log.Info("STEP 6: Before insertOrderItems")
 
 	usedItems, err := s.insertOrderItems(ctx, tx, req, orderID)
 	if err != nil {
@@ -602,15 +608,27 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 		return nil, err
 	}
 
+	s.log.Info("STEP 7: After insertOrderItems")
+
+	s.log.Info("STEP 8: Before insertExtrasWithoutsConfigs")
+
 	if err := s.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
+	s.log.Info("STEP 9: After insertExtrasWithoutsConfigs")
+
+	s.log.Info("STEP 10: Before insertPayments")
+
 	if err := s.insertPayments(ctx, tx, req, orderID); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
+
+	s.log.Info("STEP 11: After insertPayments")
+
+	s.log.Info("STEP 12: Before Commit")
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
