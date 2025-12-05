@@ -567,7 +567,12 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 
 	// --- Étapes (appelées dans service_steps.go) -------------------------
 
+	s.log.Info("STEP 1: Before validateProductAvailability")
+
 	unavailable, err := s.validateProductAvailability(ctx, tx, req)
+
+	s.log.Info("STEP 2: After validateProductAvailability", zap.Any("unavailable", unavailable))
+
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -576,6 +581,8 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 		tx.Rollback()
 		return &models.CreateOrderResult{Status: "2"}, nil
 	}
+
+	s.log.Info("STEP 3: Before upsertCustomer")
 
 	customerID, err := s.upsertCustomer(ctx, tx, req)
 	if err != nil {
