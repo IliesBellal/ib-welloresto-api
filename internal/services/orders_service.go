@@ -140,6 +140,7 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	}
 
 	req.MerchantID = user.MerchantID
+	req.Order.CreatedBy = &user.UserID
 
 	return s.ordersRepo.CreateOrder(ctx, req)
 }
