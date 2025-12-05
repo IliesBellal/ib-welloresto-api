@@ -36,7 +36,7 @@ func ucfirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *models.Customer) (string, error) {
+func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (string, error) {
 
 	r.log.Info("Start function UpdateOrCreateCustomer")
 
@@ -61,12 +61,6 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 		"customer_temporary_floor_number":       true,
 		"customer_temporary_additional_address": true,
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
 
 	// -------------------------------------------------------
 	// 🔵 MODE UPDATE

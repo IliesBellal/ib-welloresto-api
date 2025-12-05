@@ -715,7 +715,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns ID as string.
 	custoRepo := NewCustomerRepository(s.db, s.log)
-	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, cust)
+	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
 	}

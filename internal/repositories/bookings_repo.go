@@ -58,8 +58,13 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 		// Tous les autres champs sont optionnels → nil
 	}
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+
 	// 2️⃣ Update or Create
-	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
+	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, tx, customer)
 	if err != nil {
 		return "", fmt.Errorf("failed to update/create customer: %w", err)
 	}
@@ -70,11 +75,6 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 	// 3️⃣ Check dates
 	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
 		return "", fmt.Errorf("start_date or end_date is empty")
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
 	}
 
 	rollback := func(err error) (string, error) {
