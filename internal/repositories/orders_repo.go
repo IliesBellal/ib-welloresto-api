@@ -770,13 +770,14 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO orders(cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, isDelivery, merchant_approval, means_of_payement, scheduled, creation_date, dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address, brand_status, order_type, places_settings, pager_number)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?, ?)`,
-		req.DeviceID, req.MerchantID, nullableInt64(customerID), orderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
-		false, // isDelivery simplified, adapt from req.Order.OrderType if needed
-		req.Order.MerchantApproval, nil, boolToInt(req.Order.IsScheduled),
+		INSERT INTO orders(cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
+		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
+		                   brand_status, order_type, places_settings, pager_number)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.DeviceID, req.MerchantID, customerID, orderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
+		req.Order.MerchantApproval, req.Order.IsScheduled,
 		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, req.Order.EstimatedReady,
-		boolToInt(req.Order.UseCustomerTemporaryAddress), req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,
+		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,
 	)
 	if err != nil {
 		return "0", 0, err
