@@ -1259,7 +1259,7 @@ VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 }
 
 func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantID string) (*models.MerchantPricingInfo, error) {
-	const q = `
+	q := `
 		SELECT m.timezone, mp.currency, COALESCE(mp.delivery_fees,0) as delivery_fees,
 			   COALESCE(mp.delivery_fees_limit,0) as delivery_fees_limit,
 			   COALESCE(mp.minimum_cart_for_delivery_order,0) as minimum_cart_for_delivery_order

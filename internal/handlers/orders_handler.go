@@ -137,6 +137,12 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
 	ctx := r.Context()
 
 	var req models.PricingRequest
@@ -145,7 +151,7 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ordersService.GetPricing(ctx, &req)
+	result, err := h.ordersService.GetPricing(ctx, token, &req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

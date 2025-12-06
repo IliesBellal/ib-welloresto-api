@@ -150,7 +150,16 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	return s.ordersRepo.CreateOrder(ctx, req)
 }
 
-func (s *OrdersService) GetPricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
+func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	req.MerchantID = user.MerchantID
 
 	// --- Step 0: Init totals ---
 	req.Order.TTC = 0
