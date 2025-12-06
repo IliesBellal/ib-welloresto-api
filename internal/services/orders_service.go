@@ -79,6 +79,19 @@ func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*m
 	return s.ordersRepo.GetOrder(ctx, user.MerchantID, orderID)
 }
 
+func (s *OrdersService) GetOrders(ctx context.Context, token string, req *models.OrderRequest) ([]models.Order, error) {
+	// Resolve user by token to get merchant id
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
+}
+
 func (s *OrdersService) GetHistory(ctx context.Context, token string, req models.OrderHistoryRequest) ([]models.Order, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -135,7 +148,7 @@ func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -327,10 +340,7 @@ func (s *OrdersService) buildSelectedProducts(req *models.PricingRequest, dbProd
 	return out, count, total
 }
 
-func (s *OrdersService) applyConfigurationOptionPrices(
-	ctx context.Context,
-	products []models.OrderProductPayload,
-) error {
+func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, products []models.OrderProductPayload) error {
 
 	// Collect option IDs
 	optIDs := map[string]bool{}
@@ -557,10 +567,7 @@ func (s *OrdersService) generateProductKey(p models.OrderProductPayload) string 
 	return hex.EncodeToString(hash[:])
 }
 
-func (s *OrdersService) applyDiscountedOptionsPrice(
-	product *models.SelectedProduct,
-	discount *models.DBDiscount,
-) {
+func (s *OrdersService) applyDiscountedOptionsPrice(product *models.SelectedProduct, discount *models.DBDiscount) {
 
 	// aucune configuration
 	if product.Config == nil ||
@@ -600,10 +607,7 @@ func (s *OrdersService) applyDiscountedOptionsPrice(
 	}
 }
 
-func (s *OrdersService) optionsMatchPromotion(
-	product *models.SelectedProduct,
-	promoOptions map[string][]models.DiscountOptionInfo,
-) bool {
+func (s *OrdersService) optionsMatchPromotion(product *models.SelectedProduct, promoOptions map[string][]models.DiscountOptionInfo) bool {
 
 	// aucun contrôle à faire
 	if product.Config == nil ||

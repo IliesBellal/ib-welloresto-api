@@ -143,6 +143,84 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 	return &orders[0], nil
 }
 
+func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req *models.OrderRequest) ([]models.Order, error) {
+	r.log.Info("GetOrder START", zap.String("merchant_id", merchantID))
+
+	// Filtre strict sur l'ID
+	ids, err := r.GetOrdersBasic(ctx, merchantID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ids) == 0 {
+		return []models.Order{}, nil
+	}
+
+	// build IN (...)
+	in := ""
+	for i, id := range ids {
+		if i > 0 {
+			in += ","
+		}
+		in += fmt.Sprintf("'%s'", id)
+	}
+
+	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", in)
+
+	orders, err := r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(orders) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	return orders, nil
+}
+
+func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string, req *models.OrderRequest) ([]string, error) {
+
+	where := " WHERE o.merchant_id = ? "
+	args := []interface{}{merchantID}
+
+	// Filtre order_id
+	if req.OrderID != nil {
+		where += " AND o.order_id = ? "
+		args = append(args, *req.OrderID)
+	}
+
+	// Filtre customer_id
+	if req.Customer != nil && req.Customer.CustomerID != nil {
+		where += " AND o.customer_id = ? "
+		args = append(args, req.Customer.CustomerID)
+	}
+
+	query := `
+        SELECT o.order_id
+        FROM orders o
+        ` + where + `
+        ORDER BY o.creation_date DESC
+        LIMIT 10
+    `
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+
+	return out, nil
+}
+
 func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
 	r.log.Info("ReopenClosedOrder START", zap.String("order_id", orderID))
 
@@ -556,7 +634,7 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 	return nil
 }
 
-func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOrderRequest) (*models.CreateOrderResult, error) {
+func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -747,7 +825,7 @@ func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context
 	return false, nil
 }
 
-func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) ([]int64, error) {
+func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]int64, error) {
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -801,12 +879,12 @@ func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric ID (nil if none)
-func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) (*string, error) {
+func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
 	if req.Order.Customer == nil {
 		return nil, nil
 	}
 
-	// Convert our Order CustomerPayload to the models.Customer expected by CustomerRepository
+	// Convert our Order CustomerRequest to the models.Customer expected by CustomerRepository
 	cust := &models.Customer{
 		MerchantID: req.MerchantID,
 	}
@@ -911,7 +989,7 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 }
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
-func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *string) (orderID string, err error) {
+func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject, customerID *string) (orderID string, err error) {
 	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
 	/*
 		var lastOrderNum sql.NullInt64
@@ -969,7 +1047,7 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID string) ([]models.UsedItem, error) {
+func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) ([]models.UsedItem, error) {
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		if p.Quantity == 0 {
@@ -994,7 +1072,7 @@ func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
-func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, items []models.UsedItem) error {
+func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.RequestObject, items []models.UsedItem) error {
 	// Build maps from product iteration to order_item ids; we used ordering to match the order of products to items
 	// Simpler approach: while inserting items we could have returned corresponding mapping; for now assume order preserved.
 	extras := []ExtraInsert{}
@@ -1066,7 +1144,7 @@ func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 }
 
 // insertPayments inserts payments
-func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, orderID string) error {
+func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) error {
 	for _, p := range req.Order.Payments {
 		pi := &PaymentInsert{
 			MerchantID:     req.MerchantID,

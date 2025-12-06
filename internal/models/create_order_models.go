@@ -1,15 +1,15 @@
 package models
 
 // Requête principale envoyée par le POS
-type CreateOrderRequest struct {
+type RequestObject struct {
 	MerchantID  string       `json:"merchant_id"`
 	DeviceID    *string      `json:"device_id"`
 	MerchantLat *float64     `json:"merchant_lat"`
 	MerchantLng *float64     `json:"merchant_lng"`
-	Order       OrderPayload `json:"order"`
+	Order       OrderRequest `json:"order"`
 }
 
-type OrderPayload struct {
+type OrderRequest struct {
 	OrderID                     *string               `json:"order_id"`
 	OrderNum                    *string               `json:"order_num"`
 	CashRegisterId              *string               `json:"cash_register_id"`
@@ -17,7 +17,7 @@ type OrderPayload struct {
 	TVA                         int                   `json:"TVA"`
 	HT                          int                   `json:"HT"`
 	Products                    []OrderProductPayload `json:"products"`
-	Customer                    *CustomerPayload      `json:"customer"`
+	Customer                    *CustomerRequest      `json:"customer"`
 	OrderType                   string                `json:"order_type"`
 	PlacesSettings              int                   `json:"places_settings"`
 	CreatedBy                   *string               `json:"created_by"`
@@ -39,7 +39,7 @@ type OrderPayload struct {
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
 }
 
-type CustomerPayload struct {
+type CustomerRequest struct {
 	CustomerID       *string    `json:"customer_id"`
 	MerchantID       *string    `json:"merchant_id"`
 	Name             *string    `json:"customer_name"`

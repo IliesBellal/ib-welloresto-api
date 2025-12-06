@@ -176,7 +176,7 @@ type TRCheckResponse struct {
 
 type PricingRequest struct {
 	MerchantID                  string        `json:"merchant_id"`
-	Order                       *OrderPayload `json:"order"`
+	Order                       *OrderRequest `json:"order"`
 	DayOfWeek                   int           `json:"day_of_week"`
 	Time                        string        `json:"time"`
 	DiscountCode                string        `json:"discount_code,omitempty"`
@@ -188,7 +188,7 @@ type PricingRequest struct {
 
 type PricingResult struct {
 	Status                int           `json:"status"`
-	Order                 *OrderPayload `json:"order"`
+	Order                 *OrderRequest `json:"order"`
 	EstimatedDistribution int           `json:"estimated_distribution_time"`
 	RetrievedDiscounts    interface{}   `json:"retrieved_discounts"`
 }

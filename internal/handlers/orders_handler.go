@@ -79,6 +79,30 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(order)
 }
 
+func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+	ctx := r.Context()
+
+	var req models.OrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	orders, err := h.ordersService.GetOrders(ctx, token, &req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(orders)
+}
+
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	token := extractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -120,7 +144,7 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	var req models.CreateOrderRequest
+	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

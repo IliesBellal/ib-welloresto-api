@@ -59,7 +59,7 @@ func (s *OrderService) upsertCustomer(ctx context.Context, tx *sql.Tx, req *Crea
 		return nil, nil
 	}
 
-	// Convert our Order CustomerPayload to the models.Customer expected by CustomerRepository
+	// Convert our Order CustomerRequest to the models.Customer expected by CustomerRepository
 	cust := &models.Customer{
 		MerchantID: req.MerchantID,
 	}
