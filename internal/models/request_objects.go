@@ -50,8 +50,12 @@ type CashRegisterSummary struct {
 }
 
 type CashDeskInfo struct {
-	CashDeskID   string `json:"cash_desk_id"`
-	CashDeskName string `json:"cash_desk_name"`
+	CashDeskID     string       `json:"cash_desk_id"`
+	CashDeskName   string       `json:"cash_desk_name"`
+	Active         int          `json:"active"`
+	DeviceID       *string      `json:"device_id"`
+	CashRegisterID *string      `json:"cash_register_id"`
+	OpenedBy       OpenedByInfo `json:"opened_by"`
 }
 
 type UserBaseInfo struct {

@@ -40,6 +40,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	bookingsRepo := repositories.NewBookingsRepository(mysqlDB, log)
 	customersRepo := repositories.NewCustomerRepository(mysqlDB, log)
 	stocksRepo := repositories.NewStockRepository(mysqlDB, log)
+	servicesRepo := repositories.NewServicesRepository(mysqlDB, log)
 
 	// --- Services ---
 	authService := services.NewAuthService(userRepo)
@@ -57,6 +58,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	customersService := services.NewCustomersService(customersRepo, userRepo)
 	usersService := services.NewUsersService(userRepo)
 	stocksService := services.NewStockService(stocksRepo, userRepo)
+	servicesService := services.NewServicesService(servicesRepo, userRepo)
 
 	// --- Handlers ---
 	authH := handlers.NewAuthHandler(authService)
@@ -74,6 +76,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	customersH := handlers.NewCustomersHandler(customersService)
 	usersH := handlers.NewUsersHandler(usersService)
 	stocksH := handlers.NewStocksHandler(stocksService, usersService)
+	servicesH := handlers.NewServicesHandler(servicesService)
 
 	// ============================================================
 	//                      ROUTING
@@ -142,6 +145,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/locations", func(r chi.Router) {
 		r.Get("/", locationsH.GetLocations)
 		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
+	})
+
+	// --- SERVICES ---
+	r.Route("/services", func(r chi.Router) {
+		r.Get("/{device_id}", servicesH.GetCurrentService)
 	})
 
 	// --- ORDERS ---

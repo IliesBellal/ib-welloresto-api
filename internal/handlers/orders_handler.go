@@ -103,6 +103,23 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(orders)
 }
 
+func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req models.MultipleProductsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.ordersService.UpdateMultipleProductsStatus(ctx, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Error(w, `{"status":"ok"}`, http.StatusOK)
+}
+
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	token := extractToken(r)
 	if strings.TrimSpace(token) == "" {

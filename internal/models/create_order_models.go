@@ -72,6 +72,16 @@ type OrderProductPayload struct {
 	Comment         *OrderItemCommentPayload `json:"comment"`
 }
 
+type MultipleProductsRequest struct {
+	Products []UpdateProductStatusPayload `json:"products"`
+}
+
+type UpdateProductStatusPayload struct {
+	OrderID          string `json:"order_id"`
+	OrderItemID      string `json:"order_item_id"`
+	ProductionStatus string `json:"production_status"`
+}
+
 type OrderExtraPayload struct {
 	ComponentID string `json:"component_id"`
 	Price       int    `json:"price"`
@@ -120,4 +130,33 @@ type CreateOrderResult struct {
 type UsedItem struct {
 	OrderItemID string `json:"order_item_id"`
 	Quantity    int    `json:"quantity"`
+}
+
+type CurrentServiceResponse struct {
+	Service      *PerformedService `json:"service"`
+	CashRegister *CashRegisterInfo `json:"cash_register"`
+	CashDesks    []CashDeskInfo    `json:"cash_desks"`
+}
+
+type PerformedService struct {
+	ServiceID string  `json:"service_id"`
+	StartDate *string `json:"start_date"`
+	EndDate   *string `json:"end_date"`
+}
+
+type CashRegisterInfo struct {
+	DeviceID       string           `json:"device_id"`
+	CashRegisterID string           `json:"cash_register_id"`
+	CashDesk       CashRegisterDesk `json:"cash_desk"`
+}
+
+type CashRegisterDesk struct {
+	CashDeskName string `json:"cash_desk_name"`
+	CashDeskID   string `json:"cash_desk_id"`
+}
+
+type OpenedByInfo struct {
+	FirstName *string `json:"first_name"`
+	LastName  *string `json:"last_name"`
+	UserID    *string `json:"user_id"`
 }

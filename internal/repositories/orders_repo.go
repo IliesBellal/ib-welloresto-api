@@ -1792,3 +1792,59 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(
 
 	return out, nil
 }
+
+func (r *OrdersRepository) UpdateMultipleProductsStatus(ctx context.Context, req *models.MultipleProductsRequest) error {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	orderIDs := map[string]bool{}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	query := `
+		UPDATE orderitems
+		SET 
+			production_status = ?,
+			production_status_done_quantity = CASE
+				WHEN ? = 'DONE' THEN quantity
+				ELSE ready_for_distribution_quantity
+			END
+		WHERE order_item_id = ?
+		AND order_id = ?
+	`
+
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, p := range req.Products {
+
+		orderIDs[p.OrderID] = true
+
+		_, err = stmt.ExecContext(ctx,
+			p.ProductionStatus,
+			p.ProductionStatus,
+			p.OrderItemID,
+			p.OrderID,
+		)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}

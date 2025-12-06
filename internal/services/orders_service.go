@@ -92,6 +92,11 @@ func (s *OrdersService) GetOrders(ctx context.Context, token string, req *models
 	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
 }
 
+func (s *OrdersService) UpdateMultipleProductsStatus(ctx context.Context, req *models.MultipleProductsRequest) error {
+
+	return s.ordersRepo.UpdateMultipleProductsStatus(ctx, req)
+}
+
 func (s *OrdersService) GetHistory(ctx context.Context, token string, req models.OrderHistoryRequest) ([]models.Order, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
