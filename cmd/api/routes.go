@@ -148,6 +148,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/orders", func(r chi.Router) {
 
 		r.Post("/create", ordersH.CreateOrder)
+		r.Post("/pricing", ordersH.GetPricing)
 
 		r.Get("/pending", ordersH.GetPendingOrders)
 		r.Post("/history", ordersH.GetHistory)
