@@ -171,3 +171,220 @@ type TRCheckResponse struct {
 	Vintage int     `json:"vintage"`
 	Code    string  `json:"code"`
 }
+
+// models/pricing.go
+
+type PricingRequest struct {
+	MerchantID                  string        `json:"merchant_id"`
+	Order                       *OrderPayload `json:"order"`
+	DayOfWeek                   int           `json:"day_of_week"`
+	Time                        string        `json:"time"`
+	DiscountCode                string        `json:"discount_code,omitempty"`
+	MinimumCartForDeliveryOrder int
+	IsOrderable                 bool
+	IsSNO                       bool
+	NotOrderableReason          string
+}
+
+type PricingResult struct {
+	Status                int           `json:"status"`
+	Order                 *OrderPayload `json:"order"`
+	EstimatedDistribution int           `json:"estimated_distribution_time"`
+	RetrievedDiscounts    interface{}   `json:"retrieved_discounts"`
+}
+
+type PricingDBData struct {
+	Merchant    *MerchantPricingInfo
+	Products    []DBProduct
+	Unavailable []int64
+	Discounts   []*DBDiscount
+	Rewards     []*DBReward
+	DistTimeSec int
+}
+
+type MerchantPricingInfo struct {
+	Timezone                    string
+	Currency                    *string
+	DeliveryFees                int
+	DeliveryFeesLimit           int
+	MinimumCartForDeliveryOrder int
+}
+
+// DBProduct représente les données côté base nécessaires au pricing.
+type DBProduct struct {
+	ProductID       string  `json:"product_id"`
+	Name            string  `json:"name"`
+	Price           int     `json:"price"`              // prix par défaut (in-store)
+	PriceTakeAway   int     `json:"price_take_away"`    // prix takeaway
+	PriceDelivery   int     `json:"price_delivery"`     // prix delivery
+	TVARateIn       float64 `json:"tva_rate_in"`        // TVA rate for "in"
+	TVARateDelivery float64 `json:"tva_rate_delivery"`  // TVA rate for delivery
+	TVARateTakeAway float64 `json:"tva_rate_take_away"` // TVA rate for takeaway
+
+	// Optional: configuration / extras / without / components may be filled separately
+	// (we keep them generic so que la couche service puisse y attacher les payloads reçus)
+	Configuration *ProductConfiguration `json:"configuration,omitempty"`
+	Extra         []ExtraLine           `json:"extra,omitempty"`
+	Without       []WithoutLine         `json:"without,omitempty"`
+	// other DB-side fields if needed
+}
+
+// ProductConfiguration is a minimal model for configurable attributes/options.
+type ProductConfiguration struct {
+	Attributes []ConfigurationAttribute `json:"attributes,omitempty"`
+}
+
+type ConfigurationAttribute struct {
+	ID      string                `json:"id"`
+	Name    *string               `json:"name,omitempty"`
+	Options []ConfigurationOption `json:"options,omitempty"`
+}
+
+type ConfigurationOption struct {
+	ID         string  `json:"id"`
+	Label      *string `json:"label,omitempty"`
+	ExtraPrice int     `json:"extra_price,omitempty"` // may be filled from DB
+	Selected   bool    `json:"selected,omitempty"`    // payload flag
+	Quantity   int     `json:"quantity,omitempty"`
+}
+
+type ExtraLine struct {
+	ComponentID int64    `json:"component_id"`
+	Price       *float64 `json:"price,omitempty"`
+}
+
+type WithoutLine struct {
+	ComponentID int64 `json:"component_id"`
+}
+
+// DBDiscount représente une promotion (discount) côté DB,
+// incluant produits et options reliés (pré-groupés pour faciliter la logique business).
+type DBDiscount struct {
+	DiscountID         string   `json:"discount_id"`
+	DiscountOrderType  string   `json:"discount_order_type,omitempty"` // e.g. "DELIVERY", "TAKE_AWAY", ...
+	DiscountCode       *string  `json:"discount_code,omitempty"`
+	DiscountDesc       *string  `json:"discount_desc,omitempty"`
+	DiscountValue      int      `json:"discount_value"`
+	DiscountUnit       string   `json:"discount_unit,omitempty"` // e.g. "PERCENTAGE", "CURRENCY", "NEWPRICE"
+	MinOrderValue      int      `json:"min_order_value,omitempty"`
+	MinOrderUnit       string   `json:"min_order_unit,omitempty"` // "QTY" or "CURRENCY"
+	MaxDiscountValue   *float64 `json:"max_discount_value,omitempty"`
+	MaxDiscountUnit    *string  `json:"max_discount_unit,omitempty"`
+	DiscountedQuantity int      `json:"discounted_quantity"`
+	IsCumulative       bool     `json:"is_cumulative"` // true/false
+	Available          bool     `json:"available"`
+	PreferredOrder     int      `json:"prefered_order"`
+	// RelatedProducts: product -> new_price (if unit NEWPRICE) or presence for discount targeting
+	RelatedProductIDs []int64                       `json:"related_products_ids,omitempty"`
+	RelatedProducts   map[int64]DiscountProductInfo `json:"related_products,omitempty"` // key = product_id
+	// Related options per product for option-based promotions:
+	// map[discount_id][product_id] -> []DiscountOptionInfo in PHP; here we attach directly
+	RelatedProductOptions map[string][]DiscountOptionInfo `json:"related_products_options,omitempty"` // key=product_id
+}
+
+type DiscountProductInfo struct {
+	ProductID string `json:"product_id"`
+	NewPrice  int    `json:"new_price,omitempty"`
+}
+
+type DiscountOptionInfo struct {
+	OptionID          string `json:"option_id"`
+	IsOptionMandatory bool   `json:"is_option_mandatory"`
+	NewPrice          *int   `json:"new_price,omitempty"`
+}
+
+// DBReward représente une reward utilisateur (customer reward) et les produits liés.
+type DBReward struct {
+	RewardID         string   `json:"reward_id"`
+	LoyaltyProgramID int64    `json:"loyalty_program_id"`
+	RewardType       string   `json:"reward_type,omitempty"`       // e.g. "free_product", "fixed_discount"
+	RewardOrderType  string   `json:"reward_order_type,omitempty"` // order type constraint
+	RewardValue      *int     `json:"reward_value,omitempty"`
+	CreationDate     *string  `json:"creation_date,omitempty"`
+	IsUsed           bool     `json:"is_used"`
+	ProductIDs       []string `json:"products,omitempty"`
+	ProgramName      *string  `json:"program_name,omitempty"` // optional human label
+}
+
+type PricingOrder struct {
+	OrderType  string `json:"order_type"`
+	IsDelivery string `json:"is_delivery"`
+	Currency   string `json:"currency"`
+
+	Products []*PricingOrderProduct `json:"products"`
+
+	// Calculated values
+	TTC          float64 `json:"ttc"`
+	TVA          float64 `json:"tva"`
+	HT           float64 `json:"ht"`
+	DeliveryFees float64 `json:"delivery_fees"`
+
+	UsedRewards []UsedReward `json:"used_rewards,omitempty"`
+}
+
+type PricingOrderProduct struct {
+	ProductID   int64   `json:"product_id"`
+	Quantity    int     `json:"quantity"`
+	Comment     *string `json:"comment,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Options & extras
+	Extra         []*ProductExtra       `json:"extra,omitempty"`
+	Without       []*ProductWithout     `json:"without,omitempty"`
+	Configuration *ProductConfiguration `json:"configuration,omitempty"`
+}
+
+type PricingResponse struct {
+	Status       int             `json:"status"`
+	OrderRequest *PricingRequest `json:"order_request"`
+
+	UnavailableProduct []int64 `json:"unavailable_products,omitempty"`
+
+	EstimatedDistributionTime int `json:"estimated_distribution_time"`
+
+	MinimumCartForDeliveryOrder float64 `json:"minimum_cart_for_delivery_order,omitempty"`
+	IsOrderable                 bool    `json:"is_orderable"`
+	NotOrderableReason          string  `json:"not_orderable_reason,omitempty"`
+
+	AppliedDiscounts []string `json:"applied_discounts,omitempty"`
+}
+
+type SelectedProduct struct {
+	ProductID       string                   `json:"product_id"`
+	ProductName     string                   `json:"product_name"`
+	Quantity        int                      `json:"quantity"`
+	Comment         *OrderItemCommentPayload `json:"comment"`
+	Description     *string                  `json:"description,omitempty"`
+	Price           int                      `json:"price"`
+	TvaRate         float64                  `json:"tva_rate"`
+	Extra           []*OrderExtraPayload     `json:"extra,omitempty"`
+	Without         []*OrderWithoutPayload   `json:"without,omitempty"`
+	Config          *ProductConfiguration    `json:"configuration,omitempty"`
+	DiscountID      *string                  `json:"discount_id,omitempty"`
+	DiscountedPrice *int                     `json:"discounted_price,omitempty"`
+	OrderedDate     string                   `json:"ordered_date"`
+}
+
+type ProductExtra struct {
+	ExtraID int64   `json:"extra_id"`
+	Price   float64 `json:"price"`
+	Name    string  `json:"name"`
+}
+
+type ProductWithout struct {
+	WithoutID int64  `json:"without_id"`
+	Name      string `json:"name"`
+}
+
+type ConfigOption struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Selected bool   `json:"selected"`
+
+	// Loaded from DB
+	ExtraPrice float64 `json:"extra_price"`
+}
+
+type UsedReward struct {
+	RewardID string `json:"reward_id"`
+}

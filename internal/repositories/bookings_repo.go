@@ -70,7 +70,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 	}
 
 	// injecter l’ID dans la requête
-	req.Customer.CustomerID = &customerID
+	req.Customer.CustomerID = customerID
 
 	// 3️⃣ Check dates
 	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {

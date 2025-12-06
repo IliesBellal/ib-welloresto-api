@@ -590,9 +590,57 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 		return nil, err
 	}
 
+	s.log.Info("STEP 3: Before ComputeEstimatedReady")
+
+	// compute estimated ready if not provided
+	estimatedReady := req.Order.EstimatedReady // string or empty
+	if estimatedReady == "" {
+		est, err := s.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
+		if err != nil {
+			s.log.Warn("ComputeEstimatedReady warning", zap.Error(err))
+		}
+		if est != "" {
+			estimatedReady = est
+		}
+	}
+	req.Order.EstimatedReady = estimatedReady
+
+	// get next order number
+	orderNum, err := s.GetNextOrderNum(ctx, tx, req.MerchantID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	req.Order.OrderNum = &orderNum
+
+	cashRegisterID := "0"
+	if req.DeviceID != nil && *req.DeviceID != "" {
+		id, found, err := s.GetActiveCashRegisterID(ctx, tx, *req.DeviceID, req.MerchantID)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if found {
+			cashRegisterID = id
+		} else {
+			// if no cash register found, check merchant parameter
+			required, err := s.IsCashRegisterRequiredForOrdering(ctx, tx, req.MerchantID)
+			if err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+			if required {
+				tx.Rollback()
+				return &models.CreateOrderResult{Status: "no_cash_register_opened"}, nil
+			}
+		}
+	}
+
+	req.Order.CashRegisterId = &cashRegisterID
+
 	s.log.Info("STEP 4: After upsertCustomer")
 
-	orderID, orderNum, err := s.insertOrderBase(ctx, tx, req, customerID)
+	orderID, err := s.insertOrderBase(ctx, tx, req, customerID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -640,10 +688,63 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.CreateOr
 	return &models.CreateOrderResult{
 		Status:     "1",
 		OrderID:    orderID,
-		OrderNum:   orderNum,
+		OrderNum:   &orderNum,
 		OrderItems: usedItems,
 		Action:     "waiting",
 	}, nil
+}
+
+// GetActiveCashRegisterID returns cash_register_id if an open cash register or sub_cash_register is found for this device and merchant.
+// returns (id, true, nil) if found, (0, false, nil) if not found, or error.
+func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, tx *sql.Tx, deviceID, merchantID string) (string, bool, error) {
+	if deviceID == "" {
+		return "0", false, nil
+	}
+
+	query := `
+		SELECT DISTINCT cr.cash_register_id
+		FROM cash_registers cr
+		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
+		INNER JOIN cash_desks cd ON (cd.cash_desk_id = cr.cash_desk_id OR cr.cash_desk_id = '-1') AND cr.end_date IS NULL
+		WHERE (cr.device_id = ? OR scr.device_id = ?)
+		  AND cd.merchant_id = ?
+		  AND cr.end_date IS NULL
+		LIMIT 1;
+		`
+
+	var id sql.NullString
+	err := tx.QueryRowContext(ctx, query, deviceID, deviceID, merchantID).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "0", false, nil
+		}
+		return "0", false, err
+	}
+	if !id.Valid {
+		return "0", false, nil
+	}
+	return id.String, true, nil
+}
+
+// IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
+func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, tx *sql.Tx, merchantID string) (bool, error) {
+	var required sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT mp.cash_register_required_for_ordering
+		FROM merchant_parameters mp
+		WHERE mp.merchant_id = ? LIMIT 1
+		`, merchantID).Scan(&required)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	// DB may store '1' as string or tinyint -> be permissive
+	if required.Valid && (required.String == "1" || required.String == "true") {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) ([]int64, error) {
@@ -700,7 +801,7 @@ func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric ID (nil if none)
-func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) (*int64, error) {
+func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest) (*string, error) {
 	if req.Order.Customer == nil {
 		return nil, nil
 	}
@@ -737,36 +838,114 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	if err != nil {
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
 	}
-	if newIDStr == "" {
+	if newIDStr == nil {
 		return nil, nil
 	}
-	newIDInt, err := strconv.ParseInt(newIDStr, 10, 64)
-	if err != nil {
-		// return the string wrapped if parse fails
-		return nil, fmt.Errorf("customer id parse error: %w", err)
-	}
-	return &newIDInt, nil
+	/*
+		newIDInt, err := strconv.ParseInt(newIDStr, 10, 64)
+		if err != nil {
+			// return the string wrapped if parse fails
+			return nil, fmt.Errorf("customer id parse error: %w", err)
+		}*/
+	return newIDStr, nil
 }
 
-// insertOrderBase inserts the orders row and returns orderID and orderNum
-func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *int64) (orderID string, orderNum int64, err error) {
-	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
-	var lastOrderNum sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
+// GetNextOrderNum returns the next order_num following the PHP behaviour:
+// - if last order_num is 99 or null -> return 1
+// - otherwise last + 1
+func (r *OrdersRepository) GetNextOrderNum(ctx context.Context, tx *sql.Tx, merchantID string) (string, error) {
+	var last sql.NullInt64
+
+	err := tx.QueryRowContext(ctx, `
 		SELECT order_num
 		FROM orders
 		WHERE merchant_id = ?
 		ORDER BY order_id DESC
 		LIMIT 1
-		`, req.MerchantID).Scan(&lastOrderNum)
+		`, merchantID).Scan(&last)
+
+	// Toute erreur SQL sauf "aucune ligne"
 	if err != nil && err != sql.ErrNoRows {
-		return "0", 0, err
+		return "1", err
 	}
-	if lastOrderNum.Valid {
-		orderNum = lastOrderNum.Int64 + 1
-	} else {
-		orderNum = 1
+
+	// Si aucune commande trouvée → première valeur
+	if !last.Valid {
+		return "1", nil
 	}
+
+	// Cas spécifique si dernier = 99
+	if last.Int64 == 99 {
+		return "1", nil
+	}
+
+	// Valeur par défaut : incrémenter et convertir en string
+	return strconv.FormatInt(last.Int64+1, 10), nil
+}
+
+func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx, merchantID string, productsCount int) (string, error) {
+	// call stored proc; adapt if your DB driver requires different handling
+	rows, err := tx.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
+	if err != nil {
+		// do not fail hard on missing proc; log and continue
+		r.log.Debug("GET_AVERAGE_DISTRIBUTION_TIME call failed", zap.Error(err))
+		return "", nil
+	}
+	defer rows.Close()
+
+	var seconds sql.NullInt64
+	if rows.Next() {
+		if err := rows.Scan(&seconds); err != nil {
+			r.log.Debug("scan GET_AVERAGE_DISTRIBUTION_TIME failed", zap.Error(err))
+			return "", nil
+		}
+	}
+
+	if !seconds.Valid || seconds.Int64 <= 0 {
+		return "", nil
+	}
+
+	// compute estimated ready as now UTC + seconds
+	t := time.Now().UTC().Add(time.Duration(seconds.Int64) * time.Second)
+	return t.Format("2006-01-02 15:04:05"), nil
+}
+
+// insertOrderBase inserts the orders row and returns orderID and orderNum
+func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.CreateOrderRequest, customerID *string) (orderID string, err error) {
+	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
+	/*
+		var lastOrderNum sql.NullInt64
+		err = tx.QueryRowContext(ctx, `
+			SELECT order_num
+			FROM orders
+			WHERE merchant_id = ?
+			ORDER BY order_id DESC
+			LIMIT 1
+			`, req.MerchantID).Scan(&lastOrderNum)
+		if err != nil && err != sql.ErrNoRows {
+			return "0", 0, err
+		}
+		if lastOrderNum.Valid {
+			req.Order.OrderNum = lastOrderNum.Int64 + 1
+		} else {
+			req.Order.OrderNum = 1
+		}
+
+	*/
+
+	/*
+
+
+		AJOUTER LES VALEURS PAR DEFAUT ICI
+
+		// INSERT ORDER
+		// Default values
+		$merchant_approval = $order_object->order->merchant_approval ?? "ACCEPTED";
+		$order_object->order->brand_status = $order_object->order->brand_status ?? (($order_object->order->online_payment ?? false) ? "ONLINE_PAYMENT_PENDING": "PENDING");
+		$order_object->order->is_scheduled = isset($order_object->order->is_scheduled) && $order_object->order->is_scheduled ? "1" : "0";
+		$order_object->order->places_settings = $order_object->order->places_settings ?? 0;
+
+	*/
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `
@@ -774,19 +953,19 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.DeviceID, req.MerchantID, customerID, orderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
+		req.DeviceID, req.MerchantID, customerID, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, req.Order.IsScheduled,
 		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, req.Order.EstimatedReady,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,
 	)
 	if err != nil {
-		return "0", 0, err
+		return "no_order_created", err
 	}
 	lastID, err := res.LastInsertId()
 	if err != nil {
-		return "0", 0, err
+		return "no_order_created", err
 	}
-	return strconv.FormatInt(lastID, 10), orderNum, nil
+	return strconv.FormatInt(lastID, 10), nil
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
@@ -902,29 +1081,6 @@ func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *
 		}
 	}
 	return nil
-}
-
-// ----------------- helpers -----------------
-func joinPlaceholders(n int, start int) string {
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		out[i] = fmt.Sprintf("$%d", start+i)
-	}
-	return strings.Join(out, ", ")
-}
-
-func nullableInt64(i *int64) interface{} {
-	if i == nil {
-		return nil
-	}
-	return *i
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // ValidateProducts: check which products are blocked (return slice of product ids that are blocked)
@@ -1100,4 +1256,516 @@ INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, paym
 VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 `, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID)
 	return err
+}
+
+func (r *OrdersRepository) GetPricing(ctx context.Context, req *models.PricingRequest) (*models.PricingDBData, error) {
+
+	if req.MerchantID == "" {
+		return nil, fmt.Errorf("Merchant ID required")
+	}
+
+	// START TRANSACTION
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	r.log.Info("Repo: GetPricing DB fetch")
+
+	// ---- Query merchant timezone, currency, fees
+	merchantInfo, err := r.GetMerchantPricingInfo(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- Fetch product availability
+	unavailable, err := r.GetUnavailableProducts(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- Fetch products + TVA + base prices
+	products, err := r.GetProductsForPricing(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- Fetch discounts from DB
+	discounts, err := r.GetDiscounts(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- Fetch rewards (loyalty)
+	rewards, err := r.GetRewards(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- Fetch distribution time
+	distTime, err := r.GetEstimatedDistributionTime(ctx, req, len(req.Order.Products))
+	if err != nil {
+		return nil, err
+	}
+
+	tx.Commit()
+
+	return &models.PricingDBData{
+		Merchant:    merchantInfo,
+		Products:    products,
+		Unavailable: unavailable,
+		Discounts:   discounts,
+		Rewards:     rewards,
+		DistTimeSec: distTime,
+	}, nil
+}
+
+func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, req *models.PricingRequest) (*models.MerchantPricingInfo, error) {
+	const q = `
+		SELECT m.timezone, mp.currency, COALESCE(mp.delivery_fees,0) as delivery_fees,
+			   COALESCE(mp.delivery_fees_limit,0) as delivery_fees_limit,
+			   COALESCE(mp.minimum_cart_for_delivery_order,0) as minimum_cart_for_delivery_order
+		FROM merchant m
+		JOIN merchant_parameters mp ON mp.merchant_id = m.id
+		WHERE m.id = ? LIMIT 1;
+		`
+	var cfg models.MerchantPricingInfo
+	row := r.db.QueryRowContext(ctx, q, req.MerchantID)
+	if err := row.Scan(&cfg.Timezone, &cfg.Currency, &cfg.DeliveryFees, &cfg.DeliveryFeesLimit, &cfg.MinimumCartForDeliveryOrder); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *models.PricingRequest) ([]int64, error) {
+	if len(req.Order.Products) == 0 {
+		return []int64{}, nil
+	}
+
+	productIDs := make([]string, 0, len(req.Order.Products))
+	for _, p := range req.Order.Products {
+		productIDs = append(productIDs, p.ProductID)
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(productIDs)), ",")
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT p.product_id
+		FROM products p
+		LEFT JOIN (
+			SELECT DISTINCT r.product_id
+			FROM requires rq
+			INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+			INNER JOIN components c 
+			    ON rq.component_id = c.component_id 
+			    AND c.status = 0 
+			    AND rq.enabled = TRUE
+		) a ON a.product_id = p.product_id
+		WHERE p.merchant_id = ?
+		AND p.product_id IN (%s)
+		HAVING (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+	`, placeholders)
+
+	args := []interface{}{req.MerchantID}
+	for _, id := range productIDs {
+		args = append(args, id)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		out = append(out, pid)
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *models.PricingRequest) ([]models.DBProduct, error) {
+	if len(req.Order.Products) == 0 {
+		return []models.DBProduct{}, nil
+	}
+
+	productIDs := make([]string, 0)
+	for _, p := range req.Order.Products {
+		productIDs = append(productIDs, p.ProductID)
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(productIDs)), ",")
+
+	query := fmt.Sprintf(`
+		SELECT 
+		    p.product_id,
+		    p.name,
+		    p.price,
+		    p.price_take_away,
+		    p.price_delivery,
+		    tva_in.tva_rate AS tva_rate_in,
+		    tva_delivery.tva_rate AS tva_rate_delivery,
+		    tva_take_away.tva_rate AS tva_rate_take_away
+		FROM products p
+		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
+		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
+		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
+		WHERE p.merchant_id = ?
+		AND p.product_id IN (%s)
+	`, placeholders)
+
+	args := []interface{}{req.MerchantID}
+	for _, id := range productIDs {
+		args = append(args, id)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.DBProduct{}
+
+	for rows.Next() {
+		p := models.DBProduct{}
+		err := rows.Scan(
+			&p.ProductID,
+			&p.Name,
+			&p.Price,
+			&p.PriceTakeAway,
+			&p.PriceDelivery,
+			&p.TVARateIn,
+			&p.TVARateDelivery,
+			&p.TVARateTakeAway,
+		)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.PricingRequest) ([]*models.DBDiscount, error) {
+	query := `
+		SELECT 
+			d.discount_id,
+			d.discount_order_type,
+			d.discount_code,
+			d.discount_desc,
+			d.discount_value,
+			d.discount_unit,
+			d.min_order_value,
+			d.min_order_unit,
+			d.max_discount_value,
+			d.max_discount_unit,
+			d.discounted_quantity,
+			d.is_cumulative,
+			d.available,
+			d.prefered_order
+		FROM discounts d
+		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
+		WHERE d.merchant_id = ?
+		  AND (d.valid_from < UTC_TIMESTAMP() AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
+		  AND ((TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to AND DAYOFWEEK(UTC_TIMESTAMP()) = ds.day_of_week)
+		       OR NOT d.is_time_limited)
+		  AND d.available = TRUE
+		ORDER BY d.prefered_order ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, req.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*models.DBDiscount
+
+	for rows.Next() {
+		var d models.DBDiscount
+		err := rows.Scan(
+			&d.DiscountID,
+			&d.DiscountOrderType,
+			&d.DiscountCode,
+			&d.DiscountDesc,
+			&d.DiscountValue,
+			&d.DiscountUnit,
+			&d.MinOrderValue,
+			&d.MinOrderUnit,
+			&d.MaxDiscountValue,
+			&d.MaxDiscountUnit,
+			&d.DiscountedQuantity,
+			&d.IsCumulative,
+			&d.Available,
+			&d.PreferredOrder,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, &d)
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID string) (map[string]map[string]*models.DiscountProductInfo, error) {
+	query := `
+		SELECT dp.discount_id, dp.product_id, dp.new_price
+		FROM discounts_products dp
+		INNER JOIN discounts d ON d.discount_id = dp.discount_id
+		WHERE d.merchant_id = ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]map[string]*models.DiscountProductInfo{}
+
+	for rows.Next() {
+		var discountID, productID string
+		var newPrice sql.NullInt64
+
+		if err := rows.Scan(&discountID, &productID, &newPrice); err != nil {
+			return nil, err
+		}
+
+		if _, exists := out[discountID]; !exists {
+			out[discountID] = map[string]*models.DiscountProductInfo{}
+		}
+
+		var p int
+		if newPrice.Valid {
+			v := newPrice.Int64
+			p = int(v)
+		}
+
+		out[discountID][productID] = &models.DiscountProductInfo{
+			ProductID: productID,
+			NewPrice:  p,
+		}
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, merchantID string) (map[string]map[string][]models.DiscountOptionInfo, error) {
+	query := `
+		SELECT dpo.discount_id, dpo.product_id, dpo.option_id, dpo.new_price, dpo.is_option_mandatory
+		FROM discounts_products_options dpo
+		WHERE dpo.merchant_id = ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]map[string][]models.DiscountOptionInfo{}
+
+	for rows.Next() {
+		var discountID, productID, optionID string
+		var newPrice sql.NullInt64
+		var mandatory sql.NullBool
+
+		if err := rows.Scan(&discountID, &productID, &optionID, &newPrice, &mandatory); err != nil {
+			return nil, err
+		}
+
+		if _, exists := out[discountID]; !exists {
+			out[discountID] = map[string][]models.DiscountOptionInfo{}
+		}
+
+		var np *int
+		if newPrice.Valid {
+			v := int(newPrice.Int64)
+			np = &v
+		}
+
+		out[discountID][productID] = append(out[discountID][productID], models.DiscountOptionInfo{
+			OptionID:          optionID,
+			IsOptionMandatory: mandatory.Bool,
+			NewPrice:          np,
+		})
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRequest) ([]*models.DBReward, error) {
+	if req.Order.Customer == nil || len(req.Order.Customer.AvailableRewards) == 0 {
+		return []*models.DBReward{}, nil
+	}
+
+	rewardIDs := make([]string, 0)
+	for _, rw := range req.Order.Customer.AvailableRewards {
+		rewardIDs = append(rewardIDs, rw.RewardID)
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(rewardIDs)), ",")
+
+	query := fmt.Sprintf(`
+		SELECT 
+		    cr.reward_id,
+		    cr.reward_type,
+		    cr.reward_order_type,
+		    cr.reward_value,
+		    cr.loyalty_program_id,
+		    cr.creation_date,
+		    cr.is_used
+		FROM customer_rewards cr
+		WHERE cr.reward_id IN (%s)
+		  AND cr.usage_date IS NULL
+		  AND cr.is_used = FALSE
+	`, placeholders)
+
+	args := make([]interface{}, len(rewardIDs))
+	for i, id := range rewardIDs {
+		args[i] = id
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	outMap := map[string]*models.DBReward{}
+
+	for rows.Next() {
+		rw := &models.DBReward{}
+		err := rows.Scan(
+			&rw.RewardID,
+			&rw.RewardType,
+			&rw.RewardOrderType,
+			&rw.RewardValue,
+			&rw.LoyaltyProgramID,
+			&rw.CreationDate,
+			&rw.IsUsed,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		rw.ProductIDs = []string{}
+		outMap[rw.RewardID] = rw
+	}
+
+	if len(outMap) == 0 {
+		return []*models.DBReward{}, nil
+	}
+
+	// Load related products
+	placeholders2 := strings.TrimRight(strings.Repeat("?,", len(outMap)), ",")
+
+	query2 := fmt.Sprintf(`
+		SELECT cr.reward_id, clprp.product_id
+		FROM customer_rewards cr
+		JOIN customer_loyalty_programs clp ON clp.id = cr.loyalty_program_id
+		JOIN customer_loyalty_program_reward_products clprp ON clprp.loyalty_program_id = clp.id
+		WHERE cr.reward_id IN (%s)
+	`, placeholders2)
+
+	args2 := make([]interface{}, 0, len(outMap))
+	for id := range outMap {
+		args2 = append(args2, id)
+	}
+
+	rows2, err := r.db.QueryContext(ctx, query2, args2...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+
+	for rows2.Next() {
+		var rewardID, productID string
+		if err := rows2.Scan(&rewardID, &productID); err != nil {
+			return nil, err
+		}
+
+		outMap[rewardID].ProductIDs = append(outMap[rewardID].ProductIDs, productID)
+	}
+
+	// map → slice
+	out := make([]*models.DBReward, 0, len(outMap))
+	for _, rw := range outMap {
+		out = append(out, rw)
+	}
+
+	return out, nil
+}
+
+func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req *models.PricingRequest, count int) (int, error) {
+	rows, err := r.db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", req.MerchantID, count)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var sec int
+	if rows.Next() {
+		if err := rows.Scan(&sec); err != nil {
+			return 0, err
+		}
+	}
+
+	return sec, nil
+}
+
+func (r *OrdersRepository) GetConfigurationOptionPrices(
+	ctx context.Context,
+	optionIDs []string,
+) (map[string]int, error) {
+
+	if len(optionIDs) == 0 {
+		return map[string]int{}, nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(optionIDs)), ",")
+	query := fmt.Sprintf(`
+        SELECT id, extra_price
+        FROM configurable_attribute_options
+        WHERE id IN (%s)
+    `, placeholders)
+
+	args := make([]interface{}, len(optionIDs))
+	for i, id := range optionIDs {
+		args[i] = id
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+
+	for rows.Next() {
+		var (
+			id    string
+			price int
+		)
+		if err := rows.Scan(&id, &price); err != nil {
+			return nil, err
+		}
+		out[id] = price
+	}
+
+	return out, nil
 }

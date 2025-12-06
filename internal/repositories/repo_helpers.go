@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.uber.org/zap"
@@ -16,6 +17,11 @@ func nullStringToPtr(s sql.NullString) *string {
 		return &s.String
 	}
 	return nil
+}
+
+func nullInt64ToString(last sql.NullInt64) (string, error) {
+	value := last.Int64 // si last.Valid = false → 0
+	return strconv.FormatInt(value+1, 10), nil
 }
 
 func nullInt64ToPtr(i sql.NullInt64) *int64 {
@@ -134,6 +140,11 @@ func safeString(ptr *string) string {
 		return ""
 	}
 	return *ptr
+}
+
+func Int64ToStringPtr(v int64) *string {
+	s := strconv.FormatInt(v, 10)
+	return &s
 }
 
 func debugSQL(log *zap.Logger, query string, args []interface{}) {

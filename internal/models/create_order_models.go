@@ -11,7 +11,8 @@ type CreateOrderRequest struct {
 
 type OrderPayload struct {
 	OrderID                     *string               `json:"order_id"`
-	OrderNum                    *int64                `json:"order_num"`
+	OrderNum                    *string               `json:"order_num"`
+	CashRegisterId              *string               `json:"cash_register_id"`
 	TTC                         int                   `json:"TTC"`
 	TVA                         int                   `json:"TVA"`
 	HT                          int                   `json:"HT"`
@@ -34,34 +35,41 @@ type OrderPayload struct {
 	PagerNumber                 *string               `json:"pager_number"`
 	OnlinePayment               bool                  `json:"online_payment"`
 	BookingID                   *string               `json:"booking_id"`
+	Currency                    *string               `json:"currency"`
+	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
 }
 
 type CustomerPayload struct {
-	CustomerID   *string  `json:"customer_id"`
-	MerchantID   *string  `json:"merchant_id"`
-	Name         *string  `json:"customer_name"`
-	Tel          *string  `json:"customer_tel"`
-	Address      *string  `json:"customer_address"`
-	Lat          *float64 `json:"customer_lat"`
-	Lng          *float64 `json:"customer_lng"`
-	DoorNumber   *string  `json:"customer_door_number"`
-	FloorNumber  *string  `json:"customer_floor_number"`
-	Additional   *string  `json:"customer_additional_address"`
-	BusinessName *string  `json:"customer_business_name"`
-	Birthdate    *string  `json:"customer_birthdate"`
+	CustomerID       *string    `json:"customer_id"`
+	MerchantID       *string    `json:"merchant_id"`
+	Name             *string    `json:"customer_name"`
+	Tel              *string    `json:"customer_tel"`
+	Address          *string    `json:"customer_address"`
+	Lat              *float64   `json:"customer_lat"`
+	Lng              *float64   `json:"customer_lng"`
+	DoorNumber       *string    `json:"customer_door_number"`
+	FloorNumber      *string    `json:"customer_floor_number"`
+	Additional       *string    `json:"customer_additional_address"`
+	BusinessName     *string    `json:"customer_business_name"`
+	Birthdate        *string    `json:"customer_birthdate"`
+	AvailableRewards []DBReward `json:"available_rewards"`
 }
 
 type OrderProductPayload struct {
-	ProductID  string  `json:"product_id"`
-	Quantity   int     `json:"quantity"`
-	Price      int     `json:"price"`
-	DiscountID *string `json:"discount_id"`
-	DelayID    *string `json:"delay_id"`
-
-	Extra   []OrderExtraPayload      `json:"extra"`
-	Without []OrderWithoutPayload    `json:"without"`
-	Config  *OrderConfigPayload      `json:"configuration"`
-	Comment *OrderItemCommentPayload `json:"comment"`
+	ProductID       string                   `json:"product_id"`
+	Quantity        int                      `json:"quantity"`
+	Price           int                      `json:"price"`
+	Description     *string                  `json:"description,omitempty"`
+	DiscountID      *string                  `json:"discount_id"`
+	DelayID         *string                  `json:"delay_id"`
+	ProductName     string                   `json:"product_name"`
+	TvaRate         float64                  `json:"tva_rate"`
+	DiscountedPrice *int                     `json:"discounted_price,omitempty"`
+	OrderedDate     string                   `json:"ordered_date"`
+	Extra           []*OrderExtraPayload     `json:"extra"`
+	Without         []*OrderWithoutPayload   `json:"without"`
+	Config          *ProductConfiguration    `json:"configuration"`
+	Comment         *OrderItemCommentPayload `json:"comment"`
 }
 
 type OrderExtraPayload struct {
@@ -104,7 +112,7 @@ type PaymentPayload struct {
 type CreateOrderResult struct {
 	Status     string     `json:"status"`
 	OrderID    string     `json:"order_id"`
-	OrderNum   int64      `json:"order_num"`
+	OrderNum   *string    `json:"order_num"`
 	Action     string     `json:"action"`
 	OrderItems []UsedItem `json:"order_items"`
 }

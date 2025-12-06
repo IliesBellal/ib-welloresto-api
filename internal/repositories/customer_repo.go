@@ -3,7 +3,6 @@ package repositories
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -36,7 +35,7 @@ func ucfirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (string, error) {
+func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (*string, error) {
 
 	r.log.Info("Start function UpdateOrCreateCustomer")
 
@@ -81,7 +80,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
 
 		// rien à modifier → fin
 		if len(setParts) == 0 {
-			return *c.CustomerID, nil
+			return c.CustomerID, nil
 		}
 
 		query := `
@@ -94,12 +93,12 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
 		debugSQL(r.log, query, args)
 		_, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
 		// DO NOT COMMIT OTHERWISE ORDER CREATION WILL NOT WORK
 		// tx.Commit()
-		return *c.CustomerID, nil
+		return c.CustomerID, nil
 	}
 
 	// -------------------------------------------------------
@@ -126,13 +125,13 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
     `
 	res, err := tx.ExecContext(ctx, query, values...)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	id, _ := res.LastInsertId()
 	tx.Commit()
 
-	return fmt.Sprintf("%d", id), nil
+	return Int64ToStringPtr(id), nil
 }
 
 func extractFieldValue(c *models.Customer, field string) interface{} {
