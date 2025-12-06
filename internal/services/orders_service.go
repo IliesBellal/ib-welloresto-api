@@ -158,7 +158,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, req *models.PricingReque
 	req.Order.HT = 0
 
 	// --- Step 1: Load merchant info ---
-	merchant, err := s.ordersRepo.GetMerchantPricingInfo(ctx, req)
+	merchant, err := s.ordersRepo.GetMerchantPricingInfo(ctx, req.MerchantID)
 	if err != nil {
 		return nil, err
 	}

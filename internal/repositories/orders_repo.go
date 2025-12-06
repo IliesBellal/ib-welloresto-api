@@ -1258,70 +1258,7 @@ VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 	return err
 }
 
-func (r *OrdersRepository) GetPricing(ctx context.Context, req *models.PricingRequest) (*models.PricingDBData, error) {
-
-	if req.MerchantID == "" {
-		return nil, fmt.Errorf("Merchant ID required")
-	}
-
-	// START TRANSACTION
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	r.log.Info("Repo: GetPricing DB fetch")
-
-	// ---- Query merchant timezone, currency, fees
-	merchantInfo, err := r.GetMerchantPricingInfo(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// ---- Fetch product availability
-	unavailable, err := r.GetUnavailableProducts(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// ---- Fetch products + TVA + base prices
-	products, err := r.GetProductsForPricing(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// ---- Fetch discounts from DB
-	discounts, err := r.GetDiscounts(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// ---- Fetch rewards (loyalty)
-	rewards, err := r.GetRewards(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// ---- Fetch distribution time
-	distTime, err := r.GetEstimatedDistributionTime(ctx, req, len(req.Order.Products))
-	if err != nil {
-		return nil, err
-	}
-
-	tx.Commit()
-
-	return &models.PricingDBData{
-		Merchant:    merchantInfo,
-		Products:    products,
-		Unavailable: unavailable,
-		Discounts:   discounts,
-		Rewards:     rewards,
-		DistTimeSec: distTime,
-	}, nil
-}
-
-func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, req *models.PricingRequest) (*models.MerchantPricingInfo, error) {
+func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantID string) (*models.MerchantPricingInfo, error) {
 	const q = `
 		SELECT m.timezone, mp.currency, COALESCE(mp.delivery_fees,0) as delivery_fees,
 			   COALESCE(mp.delivery_fees_limit,0) as delivery_fees_limit,
@@ -1331,7 +1268,7 @@ func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, req *mode
 		WHERE m.id = ? LIMIT 1;
 		`
 	var cfg models.MerchantPricingInfo
-	row := r.db.QueryRowContext(ctx, q, req.MerchantID)
+	row := r.db.QueryRowContext(ctx, q, MerchantID)
 	if err := row.Scan(&cfg.Timezone, &cfg.Currency, &cfg.DeliveryFees, &cfg.DeliveryFeesLimit, &cfg.MinimumCartForDeliveryOrder); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
