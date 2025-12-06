@@ -1283,7 +1283,8 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 		return []int64{}, nil
 	}
 
-	productIDs := make([]string, 0, len(req.Order.Products))
+	// product IDs
+	productIDs := make([]interface{}, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		productIDs = append(productIDs, p.ProductID)
 	}
@@ -1291,7 +1292,12 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(productIDs)), ",")
 
 	query := fmt.Sprintf(`
-		SELECT DISTINCT p.product_id
+		SELECT 
+		    p.product_id,
+		    CASE 
+		        WHEN a.product_id IS NOT NULL THEN 1  -- unavailable (component missing)
+		        ELSE p.status                         -- product inactive
+		    END AS unavailable_flag
 		FROM products p
 		LEFT JOIN (
 			SELECT DISTINCT r.product_id
@@ -1304,13 +1310,11 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 		) a ON a.product_id = p.product_id
 		WHERE p.merchant_id = ?
 		AND p.product_id IN (%s)
-		HAVING (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 	`, placeholders)
 
-	args := []interface{}{req.MerchantID}
-	for _, id := range productIDs {
-		args = append(args, id)
-	}
+	args := make([]interface{}, 0, len(productIDs)+1)
+	args = append(args, req.MerchantID)
+	args = append(args, productIDs...)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1318,16 +1322,20 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 	}
 	defer rows.Close()
 
-	var out []int64
+	unavailable := []int64{}
 	for rows.Next() {
 		var pid int64
-		if err := rows.Scan(&pid); err != nil {
+		var unavailableFlag int
+		if err := rows.Scan(&pid, &unavailableFlag); err != nil {
 			return nil, err
 		}
-		out = append(out, pid)
+
+		if unavailableFlag == 1 {
+			unavailable = append(unavailable, pid)
+		}
 	}
 
-	return out, nil
+	return unavailable, nil
 }
 
 func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *models.PricingRequest) ([]models.DBProduct, error) {
