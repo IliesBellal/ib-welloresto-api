@@ -13,16 +13,13 @@ type MenuService struct {
 	userRepo *repositories.UsersRepository // uses your existing interface
 	legacy   *repositories.MenuRepository
 	opt      *repositories.OptimizedMenuRepository
-	// choose repo via config; for now use both
-	useOptimized bool
 }
 
-func NewMenuService(userRepo *repositories.UsersRepository, legacy *repositories.MenuRepository, opt *repositories.OptimizedMenuRepository, useOptimized bool) *MenuService {
+func NewMenuService(userRepo *repositories.UsersRepository, legacy *repositories.MenuRepository, opt *repositories.OptimizedMenuRepository) *MenuService {
 	return &MenuService{
-		userRepo:     userRepo,
-		legacy:       legacy,
-		opt:          opt,
-		useOptimized: useOptimized,
+		userRepo: userRepo,
+		legacy:   legacy,
+		opt:      opt,
 	}
 }
 
@@ -35,11 +32,6 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 		return nil, errors.New("invalid token")
 	}
 
-	// Branch: check last_menu_update early (both repos implement check)
-	if s.useOptimized {
-		log.Printf("MenuRepository: using OPTIMIZED mode")
-		return s.opt.GetMenu(ctx, user.MerchantID, lastMenu)
-	}
 	log.Printf("MenuRepository: using LEGACY mode")
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }

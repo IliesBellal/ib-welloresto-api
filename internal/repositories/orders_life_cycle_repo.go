@@ -16,6 +16,12 @@ type OrdersLifeCycleRepository struct {
 	ordersFetcher *OrdersFetcher
 }
 
+type OrderIntegrationInfo struct {
+	MerchantID   string
+	Brand        string
+	BrandOrderID string
+}
+
 func NewOrdersLifeCycleRepository(db *sql.DB, log *zap.Logger) *OrdersLifeCycleRepository {
 	temp := NewOrdersFetcher(db, log)
 	return &OrdersLifeCycleRepository{
@@ -509,4 +515,271 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 	}
 
 	return tx.Commit()
+}
+
+func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context, orderID string) (*models.OrderMeta, error) {
+	const q = `
+		SELECT o.brand, o.merchant_id, o.brand_order_id, o.creation_date
+		FROM orders o
+		WHERE o.order_id = ?
+		LIMIT 1;
+	`
+	row := r.db.QueryRowContext(ctx, q, orderID)
+	var m models.OrderMeta
+	var merchantID sql.NullInt64
+	var brand sql.NullString
+	var brandOrder sql.NullString
+	var creation sql.NullTime
+
+	if err := row.Scan(&brand, &merchantID, &brandOrder, &creation); err != nil {
+		return nil, fmt.Errorf("get order meta: %w", err)
+	}
+	if brand.Valid {
+		m.Brand = brand.String
+	}
+	if merchantID.Valid {
+		// convert int64 -> string to match your models (in PHP merchant_id was int)
+		m.MerchantID = fmt.Sprintf("%d", merchantID.Int64)
+	}
+	if brandOrder.Valid {
+		m.BrandOrderID = brandOrder.String
+	}
+	if creation.Valid {
+		m.CreationDate = creation.Time
+	}
+	return &m, nil
+}
+
+// SetOrderAcceptedLocal : mirrors PHP update: state = 'OPEN', brand_status = 'PENDING', merchant_approval = 'ACCEPTED', last_update = UTC_TIMESTAMP
+func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, orderID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	q := `
+		UPDATE orders
+		SET last_update = UTC_TIMESTAMP(),
+		    state = 'OPEN',
+		    brand_status = 'PENDING',
+		    merchant_approval = 'ACCEPTED'
+		WHERE order_id = ?;
+	`
+	if _, err := tx.ExecContext(ctx, q, orderID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Context, orderID string, userID string) (*OrderIntegrationInfo, error) {
+
+	// Update order
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE orders
+		SET last_update = UTC_TIMESTAMP,
+			brand_status = 'EN_ROUTE_TO_DROPOFF',
+			delivery_start = UTC_TIMESTAMP,
+			responsible = ?
+		WHERE order_id = ?
+	`, userID, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load integration info
+	row := r.db.QueryRowContext(ctx, `
+		SELECT o.merchant_id, o.brand, o.brand_order_id
+		FROM orders o
+		WHERE o.order_id = ?
+	`, orderID)
+
+	var info OrderIntegrationInfo
+	err = row.Scan(&info.MerchantID, &info.Brand, &info.BrandOrderID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &info, nil
+}
+
+func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+        UPDATE orders
+        SET last_update = UTC_TIMESTAMP,
+            brand_status = 'DENIED',
+            merchant_approval = 'DENIED',
+            state = 'CLOSED',
+            deletion_reason_id = ?,
+            deletion_comment = ?
+        WHERE order_id = ?`,
+		deletionReasonID, comment, orderID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+        UPDATE customer_rewards
+        SET is_used = false,
+            usage_date = null,
+            used_on_order_id = null
+        WHERE used_on_order_id = ?`,
+		orderID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// Cancel Stripe Payments
+func (r *OrdersLifeCycleRepository) CancelStripePayments(ctx context.Context, orderID string) error {
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT p.mop, sp.checkout_session_id, sa.account_id, sp.payment_intent_id
+        FROM payments p
+        INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
+        INNER JOIN stripe_accounts sa ON sa.merchant_id = p.merchant_id
+        WHERE p.order_id = ?`,
+		orderID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var mop, sessionID, accountID, paymentIntent string
+		if err := rows.Scan(&mop, &sessionID, &accountID, &paymentIntent); err != nil {
+			return err
+		}
+
+		if mop == "STRIPE" {
+			/*
+				if err := stripeSvc.CancelPayment(ctx, sessionID, accountID, paymentIntent); err != nil {
+					return err
+				}
+
+			*/
+		}
+	}
+
+	return nil
+}
+
+func (r *OrdersLifeCycleRepository) GetOrderBrand(ctx context.Context, orderID string) (string, error) {
+	var brand string
+	err := r.db.QueryRowContext(ctx, `
+        SELECT brand
+        FROM orders
+        WHERE order_id = ? LIMIT 1`,
+		orderID,
+	).Scan(&brand)
+	return brand, err
+}
+
+func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context, orderID, merchantID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// Update orders
+	_, err = tx.ExecContext(ctx, `
+        UPDATE orders
+        SET 
+            brand_status = CASE 
+                WHEN order_type = 'DELIVERY' THEN 'READY_FOR_HANDOFF'
+                WHEN order_type = 'TAKE_AWAY' THEN 'READY_FOR_TAKE_AWAY'
+                ELSE brand_status
+            END,
+            last_update = UTC_TIMESTAMP
+        WHERE order_id = ? AND merchant_id = ?`,
+		orderID, merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Update items
+	_, err = tx.ExecContext(ctx, `
+        UPDATE orderitems
+        SET ready_for_distribution_quantity = quantity
+        WHERE order_id = ? AND merchant_id = ?`,
+		orderID, merchantID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (r *OrdersLifeCycleRepository) DeleteOrderLocal(
+	ctx context.Context,
+	orderID string,
+	reasonID string,
+	comment string,
+) error {
+
+	_, err := r.db.ExecContext(ctx, `
+        UPDATE orders
+        SET deletion_reason_id = ?,
+            deletion_comment = ?,
+            last_update = UTC_TIMESTAMP,
+            state = 'CLOSED',
+            brand_status = 'CANCELED',
+            delivered_on = UTC_TIMESTAMP
+        WHERE order_id = ?`,
+		reasonID, comment, orderID,
+	)
+
+	return err
+}
+
+// Disable payments
+func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+        UPDATE payments
+        SET enabled = 0
+        WHERE order_id = ?`,
+		orderID,
+	)
+	return err
+}
+
+// Delete QR codes
+func (r *OrdersLifeCycleRepository) DeleteQRCode(ctx context.Context, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+        DELETE qr
+        FROM qrcodes qr
+        INNER JOIN order_location ol ON qr.location_id = ol.location_id
+        INNER JOIN orders o ON o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
+        WHERE o.order_id = ?`,
+		orderID,
+	)
+	return err
+}
+
+// Clear bookings
+func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+        UPDATE bookings
+        SET order_id = NULL,
+            status NOT IN ('DONE')
+        WHERE order_id = ?`,
+		orderID,
+	)
+	return err
 }

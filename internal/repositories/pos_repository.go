@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 	"welloresto-api/internal/models"
 )
@@ -308,4 +310,614 @@ func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, er
 	}
 
 	return exists, nil
+}
+
+func (s *POSRepository) UpdateMerchantSettings(ctx context.Context, merchantID string, req *models.UpdateMerchantSettingsRequest) error {
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if req.Merchant != nil {
+		if err := s.UpdateMerchant(ctx, tx, merchantID, req.Merchant); err != nil {
+			return err
+		}
+	}
+
+	if req.Parameters != nil {
+		if err := s.UpdateMerchantParameters(ctx, tx, merchantID, req.Parameters); err != nil {
+			return err
+		}
+	}
+
+	if req.Marketing != nil {
+		if err := s.UpdateMerchantMarketing(ctx, tx, merchantID, req.Marketing); err != nil {
+			return err
+		}
+	}
+
+	if req.Scannorder != nil {
+		if err := s.UpdateScannorderSettings(ctx, tx, merchantID, req.Scannorder); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (r *POSRepository) UpdateMerchant(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantSettings) error {
+
+	updates := []string{}
+	args := []interface{}{}
+
+	if req.FullName != nil {
+		updates = append(updates, "fullName = ?")
+		args = append(args, *req.FullName)
+	}
+	if req.Address != nil {
+		updates = append(updates, "address = ?")
+		args = append(args, *req.Address)
+	}
+	if req.StreetNumber != nil {
+		updates = append(updates, "street_number = ?")
+		args = append(args, *req.StreetNumber)
+	}
+	if req.Street != nil {
+		updates = append(updates, "street = ?")
+		args = append(args, *req.Street)
+	}
+	if req.ZipCode != nil {
+		updates = append(updates, "zip_code = ?")
+		args = append(args, *req.ZipCode)
+	}
+	if req.City != nil {
+		updates = append(updates, "city = ?")
+		args = append(args, *req.City)
+	}
+	if req.Country != nil {
+		updates = append(updates, "country = ?")
+		args = append(args, *req.Country)
+	}
+	if req.Lat != nil {
+		updates = append(updates, "lat = ?")
+		args = append(args, *req.Lat)
+	}
+	if req.Lng != nil {
+		updates = append(updates, "lng = ?")
+		args = append(args, *req.Lng)
+	}
+	if req.Timezone != nil {
+		updates = append(updates, "timezone = ?")
+		args = append(args, *req.Timezone)
+	}
+	if req.Logo != nil {
+		updates = append(updates, "logo = ?")
+		args = append(args, *req.Logo)
+	}
+	if req.HandicapAccess != nil {
+		updates = append(updates, "handicap_access = ?")
+		args = append(args, *req.HandicapAccess)
+	}
+	if req.SIRET != nil {
+		updates = append(updates, "SIRET = ?")
+		args = append(args, *req.SIRET)
+	}
+	if req.Website != nil {
+		updates = append(updates, "web_site = ?")
+		args = append(args, *req.Website)
+	}
+	if req.MerchantTel != nil {
+		updates = append(updates, "merchantTel = ?")
+		args = append(args, *req.MerchantTel)
+	}
+	if req.IsActive != nil {
+		updates = append(updates, "is_active = ?")
+		args = append(args, *req.IsActive)
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	args = append(args, merchantID)
+
+	query := fmt.Sprintf(`
+		UPDATE merchant
+		SET %s
+		WHERE id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, tx *sql.Tx, merchantID string, req *models.ScannorderSettings) error {
+
+	updates := []string{}
+	args := []interface{}{}
+
+	if req.Activated != nil {
+		updates = append(updates, "activated = ?")
+		args = append(args, *req.Activated)
+	}
+	if req.ShowAddress != nil {
+		updates = append(updates, "show_address = ?")
+		args = append(args, *req.ShowAddress)
+	}
+	if req.HeaderBackground != nil {
+		updates = append(updates, "header_background = ?")
+		args = append(args, *req.HeaderBackground)
+	}
+	if req.HeaderBackgroundURL != nil {
+		updates = append(updates, "header_background_url = ?")
+		args = append(args, *req.HeaderBackgroundURL)
+	}
+	if req.HomePage != nil {
+		updates = append(updates, "home_page = ?")
+		args = append(args, *req.HomePage)
+	}
+	if req.HomePageTitle != nil {
+		updates = append(updates, "home_page_title = ?")
+		args = append(args, *req.HomePageTitle)
+	}
+	if req.HomePageDesc != nil {
+		updates = append(updates, "home_page_desc = ?")
+		args = append(args, *req.HomePageDesc)
+	}
+	if req.InfoPopupEnabled != nil {
+		updates = append(updates, "info_popup_enabled = ?")
+		args = append(args, *req.InfoPopupEnabled)
+	}
+	if req.ProductBgColor != nil {
+		updates = append(updates, "product_bg_color = ?")
+		args = append(args, *req.ProductBgColor)
+	}
+	if req.BtnColor != nil {
+		updates = append(updates, "btn_color = ?")
+		args = append(args, *req.BtnColor)
+	}
+	if req.BtnTextColor != nil {
+		updates = append(updates, "btn_text_color = ?")
+		args = append(args, *req.BtnTextColor)
+	}
+	if req.DeliveryType != nil {
+		updates = append(updates, "delivery_type = ?")
+		args = append(args, *req.DeliveryType)
+	}
+	if req.EnablePayments != nil {
+		updates = append(updates, "enable_payments = ?")
+		args = append(args, *req.EnablePayments)
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	args = append(args, merchantID)
+
+	query := fmt.Sprintf(`
+		UPDATE scannorder_settings
+		SET %s
+		WHERE merchant_id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantMarketingSettings) error {
+
+	updates := []string{}
+	args := []interface{}{}
+
+	if req.SMSEnabled != nil {
+		updates = append(updates, "sms_enabled = ?")
+		args = append(args, *req.SMSEnabled)
+	}
+	if req.EmailEnabled != nil {
+		updates = append(updates, "email_enabled = ?")
+		args = append(args, *req.EmailEnabled)
+	}
+	if req.SMSSenderName != nil {
+		updates = append(updates, "sms_sender_name = ?")
+		args = append(args, *req.SMSSenderName)
+	}
+	if req.EmailSenderName != nil {
+		updates = append(updates, "email_sender_name = ?")
+		args = append(args, *req.EmailSenderName)
+	}
+	if req.SMSTemplate != nil {
+		updates = append(updates, "sms_template = ?")
+		args = append(args, *req.SMSTemplate)
+	}
+	if req.EmailTemplate != nil {
+		updates = append(updates, "email_template = ?")
+		args = append(args, *req.EmailTemplate)
+	}
+	if req.TrackingTemplate != nil {
+		updates = append(updates, "tracking_template = ?")
+		args = append(args, *req.TrackingTemplate)
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	args = append(args, merchantID)
+
+	query := fmt.Sprintf(`
+		UPDATE merchant_marketing_settings
+		SET %s
+		WHERE merchant_id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantParametersSettings) error {
+
+	updates := []string{}
+	args := []interface{}{}
+
+	if req.ManageOnSite != nil {
+		updates = append(updates, "manage_on_site = ?")
+		args = append(args, *req.ManageOnSite)
+	}
+	if req.ManageTakeAway != nil {
+		updates = append(updates, "manage_take_away = ?")
+		args = append(args, *req.ManageTakeAway)
+	}
+	if req.ManageDelivery != nil {
+		updates = append(updates, "manage_delivery = ?")
+		args = append(args, *req.ManageDelivery)
+	}
+	if req.ConcurrentPreparationCapacity != nil {
+		updates = append(updates, "concurrent_preparation_capacity = ?")
+		args = append(args, *req.ConcurrentPreparationCapacity)
+	}
+	if req.DeliveryFees != nil {
+		updates = append(updates, "delivery_fees = ?")
+		args = append(args, *req.DeliveryFees)
+	}
+	if req.DeliveryFeesLimit != nil {
+		updates = append(updates, "delivery_fees_limit = ?")
+		args = append(args, *req.DeliveryFeesLimit)
+	}
+	if req.DeliveryDistanceLimit != nil {
+		updates = append(updates, "delivery_distance_limit = ?")
+		args = append(args, *req.DeliveryDistanceLimit)
+	}
+	if req.MinimumCartForDeliveryOrder != nil {
+		updates = append(updates, "minimum_cart_for_delivery_order = ?")
+		args = append(args, *req.MinimumCartForDeliveryOrder)
+	}
+	if req.KitchenShowOnlyPaid != nil {
+		updates = append(updates, "kitchen_show_only_paid = ?")
+		args = append(args, *req.KitchenShowOnlyPaid)
+	}
+	if req.KitchenShowPendingApproval != nil {
+		updates = append(updates, "kitchen_show_pending_approval = ?")
+		args = append(args, *req.KitchenShowPendingApproval)
+	}
+	if req.KitchenDistributionMode != nil {
+		updates = append(updates, "kitchen_distribution_mode = ?")
+		args = append(args, *req.KitchenDistributionMode)
+	}
+	if req.ProductionDisplayMode != nil {
+		updates = append(updates, "production_display_mode = ?")
+		args = append(args, *req.ProductionDisplayMode)
+	}
+	if req.MinimumPreparationTime != nil {
+		updates = append(updates, "minimum_preparation_time = ?")
+		args = append(args, *req.MinimumPreparationTime)
+	}
+	if req.MaximumPreparationTime != nil {
+		updates = append(updates, "maximum_preparation_time = ?")
+		args = append(args, *req.MaximumPreparationTime)
+	}
+	if req.DisableComponentsUnderSafetyStock != nil {
+		updates = append(updates, "disable_components_under_safety_stock = ?")
+		args = append(args, *req.DisableComponentsUnderSafetyStock)
+	}
+	if req.ServiceRequiredForOrdering != nil {
+		updates = append(updates, "service_required_for_ordering = ?")
+		args = append(args, *req.ServiceRequiredForOrdering)
+	}
+	if req.CashRegisterRequiredForOrdering != nil {
+		updates = append(updates, "cash_register_required_for_ordering = ?")
+		args = append(args, *req.CashRegisterRequiredForOrdering)
+	}
+	if req.WaiterAppCanCashIn != nil {
+		updates = append(updates, "waiter_app_can_cash_in = ?")
+		args = append(args, *req.WaiterAppCanCashIn)
+	}
+	if req.WaiterAppCanClockIn != nil {
+		updates = append(updates, "waiter_app_can_clock_in = ?")
+		args = append(args, *req.WaiterAppCanClockIn)
+	}
+	if req.AutoCompleteOrders != nil {
+		updates = append(updates, "auto_complete_orders = ?")
+		args = append(args, *req.AutoCompleteOrders)
+	}
+	if req.AutoCompleteOrdersDelay != nil {
+		updates = append(updates, "auto_complete_orders_delay = ?")
+		args = append(args, *req.AutoCompleteOrdersDelay)
+	}
+	if req.AutoAcceptSnoDeliveryOrders != nil {
+		updates = append(updates, "auto_accept_sno_delivery_orders = ?")
+		args = append(args, *req.AutoAcceptSnoDeliveryOrders)
+	}
+	if req.AutoAcceptSnoTakeAwayOrders != nil {
+		updates = append(updates, "auto_accept_sno_take_away_orders = ?")
+		args = append(args, *req.AutoAcceptSnoTakeAwayOrders)
+	}
+	if req.AutomaticallyAddCustomerRewards != nil {
+		updates = append(updates, "automatically_add_customer_rewards = ?")
+		args = append(args, *req.AutomaticallyAddCustomerRewards)
+	}
+	if req.WarningNewOrderNotPaid != nil {
+		updates = append(updates, "warning_new_order_not_paid = ?")
+		args = append(args, *req.WarningNewOrderNotPaid)
+	}
+	if req.EnableAdvanceOrders != nil {
+		updates = append(updates, "enable_advance_orders = ?")
+		args = append(args, *req.EnableAdvanceOrders)
+	}
+	if req.AdvanceOrderDays != nil {
+		updates = append(updates, "advance_order_days = ?")
+		args = append(args, *req.AdvanceOrderDays)
+	}
+	if req.PagerNumberRequired != nil {
+		updates = append(updates, "pager_number_required = ?")
+		args = append(args, *req.PagerNumberRequired)
+	}
+	if req.Currency != nil {
+		updates = append(updates, "currency = ?")
+		args = append(args, *req.Currency)
+	}
+	if req.IsOpen != nil {
+		updates = append(updates, "is_open = ?")
+		args = append(args, *req.IsOpen)
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	args = append(args, merchantID)
+
+	query := fmt.Sprintf(`
+		UPDATE merchant_parameters
+		SET %s
+		WHERE merchant_id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID string) (
+	*models.MerchantSettings,
+	*models.MerchantParametersSettings,
+	*models.MerchantMarketingSettings,
+	*models.ScannorderSettings,
+	error,
+) {
+
+	// ───────────────────────────────
+	// 1) Merchant
+	// ───────────────────────────────
+	queryMerchant := `
+		SELECT id, fullName, address, street_number, street, zip_code, city,
+		       country, lat, lng, timezone, logo, logo_url, handicap_access,
+		       SIRET, web_site, email, merchantTel, creation_date,
+		       is_active
+		FROM merchant
+		WHERE id = ?
+	`
+
+	var m models.MerchantSettings
+	row := r.db.QueryRowContext(ctx, queryMerchant, merchantID)
+	err := row.Scan(
+		&m.MerchantID,
+		&m.FullName,
+		&m.Address,
+		&m.StreetNumber,
+		&m.Street,
+		&m.ZipCode,
+		&m.City,
+		&m.Country,
+		&m.Lat,
+		&m.Lng,
+		&m.Timezone,
+		&m.Logo,
+		&m.LogoURL,
+		&m.HandicapAccess,
+		&m.SIRET,
+		&m.WebSite,
+		&m.Email,
+		&m.MerchantTel,
+		&m.CreationDate,
+		&m.IsActive,
+	)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	// ───────────────────────────────
+	// 2) Merchant Parameters
+	// ───────────────────────────────
+	queryParams := `
+		SELECT merchant_id, manage_on_site, manage_take_away, manage_delivery,
+		       last_menu_update, concurrent_preparation_capacity, delivery_fees,
+		       delivery_fees_limit, delivery_distance_limit, minimum_cart_for_delivery_order,
+		       kitchen_show_only_paid, kitchen_show_pending_approval, kitchen_distribution_mode,
+		       production_display_mode, minimum_preparation_time, maximum_preparation_time,
+		       disable_components_under_safety_stock, service_required_for_ordering,
+		       cash_register_required_for_ordering, waiter_app_can_cash_in,
+		       waiter_app_can_clock_in, auto_complete_orders, auto_complete_orders_delay,
+		       auto_accept_sno_delivery_orders, auto_accept_sno_take_away_orders,
+		       automatically_add_customer_rewards, warning_new_order_not_paid,
+		       enable_advance_orders, advance_order_days, pager_number_required,
+		       enabled_rating, currency, is_open, primary_color, text_color_on_primary_color,
+		       zoning_type, radial_cone_count, radial_zone_ranges, grid_cell_size_km,
+		       grid_origin_lat, grid_origin_lng, cardinal_cone_count, cardinal_zone_ranges
+		FROM merchant_parameters
+		WHERE merchant_id = ?
+	`
+
+	var params models.MerchantParametersSettings
+	row = r.db.QueryRowContext(ctx, queryParams, merchantID)
+	err = row.Scan(
+		&params.MerchantID,
+		&params.ManageOnSite,
+		&params.ManageTakeAway,
+		&params.ManageDelivery,
+		&params.LastMenuUpdate,
+		&params.ConcurrentPreparationCapacity,
+		&params.DeliveryFees,
+		&params.DeliveryFeesLimit,
+		&params.DeliveryDistanceLimit,
+		&params.MinimumCartForDeliveryOrder,
+		&params.KitchenShowOnlyPaid,
+		&params.KitchenShowPendingApproval,
+		&params.KitchenDistributionMode,
+		&params.ProductionDisplayMode,
+		&params.MinimumPreparationTime,
+		&params.MaximumPreparationTime,
+		&params.DisableComponentsUnderSafetyStock,
+		&params.ServiceRequiredForOrdering,
+		&params.CashRegisterRequiredForOrdering,
+		&params.WaiterAppCanCashIn,
+		&params.WaiterAppCanClockIn,
+		&params.AutoCompleteOrders,
+		&params.AutoCompleteOrdersDelay,
+		&params.AutoAcceptSnoDeliveryOrders,
+		&params.AutoAcceptSnoTakeAwayOrders,
+		&params.AutomaticallyAddCustomerRewards,
+		&params.WarningNewOrderNotPaid,
+		&params.EnableAdvanceOrders,
+		&params.AdvanceOrderDays,
+		&params.PagerNumberRequired,
+		&params.EnabledRating,
+		&params.Currency,
+		&params.IsOpen,
+		&params.PrimaryColor,
+		&params.TextColorOnPrimaryColor,
+		&params.ZoningType,
+		&params.RadialConeCount,
+		&params.RadialZoneRanges,
+		&params.GridCellSizeKm,
+		&params.GridOriginLat,
+		&params.GridOriginLng,
+		&params.CardinalConeCount,
+		&params.CardinalZoneRanges,
+	)
+	if err != nil {
+		return &m, nil, nil, nil, err
+	}
+
+	// ───────────────────────────────
+	// 3) Merchant Marketing
+	// ───────────────────────────────
+	queryMarketing := `
+		SELECT id, merchant_id, sms_enabled, sms_unit_price, email_enabled,
+		       sms_sender_name, email_sender_name, sms_template, email_template,
+		       tracking_template, messaggio_login, messaggio_from, created_at,
+		       updated_at
+		FROM merchant_marketing_settings
+		WHERE merchant_id = ?
+	`
+
+	var marketing models.MerchantMarketingSettings
+	row = r.db.QueryRowContext(ctx, queryMarketing, merchantID)
+	err = row.Scan(
+		&marketing.ID,
+		&marketing.MerchantID,
+		&marketing.SMSEnabled,
+		&marketing.SMSUnitPrice,
+		&marketing.EmailEnabled,
+		&marketing.SMSSenderName,
+		&marketing.EmailSenderName,
+		&marketing.SMSTemplate,
+		&marketing.EmailTemplate,
+		&marketing.TrackingTemplate,
+		&marketing.MessaggioLogin,
+		&marketing.MessaggioFrom,
+		&marketing.CreatedAt,
+		&marketing.UpdatedAt,
+	)
+	if err != nil {
+		return &m, &params, nil, nil, err
+	}
+
+	// ───────────────────────────────
+	// 4) Scannorder Settings
+	// ───────────────────────────────
+	queryScann := `
+		SELECT merchant_id, activated, show_address, header_background,
+		       header_background_url, home_page, home_page_title,
+		       home_page_desc, info_popup_enabled, info_popup_title,
+		       info_popup_content, info_popup_button_content,
+		       product_bg_color, nav_bg_color, bg_color, btn_color,
+		       btn_text_color, product_categ_bg_color,
+		       product_categ_text_color, popup_bg_color, popup_text_color,
+		       ad_text_color, home_text_color, product_text_color,
+		       discount_color, discount_text_color, border_radius,
+		       shadow_style, delivery_type, enable_payments,
+		       variable_fees, fixed_fees, users_default_name,
+		       seo_title, seo_description, seo_keywords, seo_cuisine_type
+		FROM scannorder_settings
+		WHERE merchant_id = ?
+	`
+
+	var scann models.ScannorderSettings
+	row = r.db.QueryRowContext(ctx, queryScann, merchantID)
+	err = row.Scan(
+		&scann.MerchantID,
+		&scann.Activated,
+		&scann.ShowAddress,
+		&scann.HeaderBackground,
+		&scann.HeaderBackgroundURL,
+		&scann.HomePage,
+		&scann.HomePageTitle,
+		&scann.HomePageDesc,
+		&scann.InfoPopupEnabled,
+		&scann.InfoPopupTitle,
+		&scann.InfoPopupContent,
+		&scann.InfoPopupButtonContent,
+		&scann.ProductBGColor,
+		&scann.NavBGColor,
+		&scann.BGColor,
+		&scann.BtnColor,
+		&scann.BtnTextColor,
+		&scann.ProductCategBGColor,
+		&scann.ProductCategTextColor,
+		&scann.PopupBGColor,
+		&scann.PopupTextColor,
+		&scann.ADTextColor,
+		&scann.HomeTextColor,
+		&scann.ProductTextColor,
+		&scann.DiscountColor,
+		&scann.DiscountTextColor,
+		&scann.BorderRadius,
+		&scann.ShadowStyle,
+		&scann.DeliveryType,
+		&scann.EnablePayments,
+		&scann.VariableFees,
+		&scann.FixedFees,
+		&scann.UsersDefaultName,
+		&scann.SEOTitle,
+		&scann.SEODescription,
+		&scann.SEOKeywords,
+		&scann.SEOCuisineType,
+	)
+	if err != nil {
+		return &m, &params, &marketing, nil, err
+	}
+
+	return &m, &params, &marketing, &scann, nil
 }

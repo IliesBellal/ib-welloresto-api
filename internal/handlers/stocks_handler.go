@@ -55,7 +55,7 @@ func (h *StocksHandler) DeleteBarcode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": 1,
+		"status": "ok",
 	})
 }
 

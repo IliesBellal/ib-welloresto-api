@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type PaymentRequest struct {
 	DeviceID        string        `json:"device_id"`
 	OrderID         string        `json:"order_id"`
@@ -391,4 +393,213 @@ type ConfigOption struct {
 
 type UsedReward struct {
 	RewardID string `json:"reward_id"`
+}
+
+type UserSettingsRequest struct {
+	FirstName            *string `json:"first_name,omitempty"`
+	LastName             *string `json:"last_name,omitempty"`
+	Email                *string `json:"email,omitempty"`
+	Tel                  *string `json:"tel,omitempty"`
+	Address              *string `json:"address,omitempty"`
+	StreetNumber         *string `json:"street_number,omitempty"`
+	Street               *string `json:"street,omitempty"`
+	City                 *string `json:"city,omitempty"`
+	Country              *string `json:"country,omitempty"`
+	ZipCode              *string `json:"zip_code,omitempty"`
+	PlanningColor        *string `json:"planning_color,omitempty"`
+	ProfilePicture       *string `json:"profile_picture,omitempty"`
+	TermsOfUseAccepted   *bool   `json:"terms_of_use_accepted,omitempty"`
+	WaiterDeviceToken    *string `json:"waiter_device_token,omitempty"`
+	ReceptionDeviceToken *string `json:"reception_device_token,omitempty"`
+	DeliveryDeviceToken  *string `json:"delivery_device_token,omitempty"`
+}
+
+type ScannorderSettings struct {
+	MerchantID             *string `json:"merchant_id,omitempty"`
+	Activated              *bool   `json:"activated,omitempty"`
+	ShowAddress            *bool   `json:"show_address,omitempty"`
+	HeaderBackground       *string `json:"header_background,omitempty"`
+	HeaderBackgroundURL    *string `json:"header_background_url,omitempty"`
+	HomePage               *bool   `json:"home_page,omitempty"`
+	HomePageTitle          *string `json:"home_page_title,omitempty"`
+	HomePageDesc           *string `json:"home_page_desc,omitempty"`
+	InfoPopupEnabled       *bool   `json:"info_popup_enabled,omitempty"`
+	ProductBgColor         *string `json:"product_bg_color,omitempty"`
+	BtnColor               *string `json:"btn_color,omitempty"`
+	BtnTextColor           *string `json:"btn_text_color,omitempty"`
+	DeliveryType           *int    `json:"delivery_type,omitempty"`
+	EnablePayments         *bool   `json:"enable_payments,omitempty"`
+	InfoPopupTitle         *string `json:"info_popup_title,omitempty"`
+	InfoPopupContent       *string `json:"info_popup_content,omitempty"`
+	InfoPopupButtonContent *string `json:"info_popup_button_content,omitempty"`
+	ProductBGColor         *string `json:"product_bg_color,omitempty"`
+	NavBGColor             *string `json:"nav_bg_color,omitempty"`
+	BGColor                *string `json:"bg_color,omitempty"`
+	ProductCategBGColor    *string `json:"product_categ_bg_color,omitempty"`
+	ProductCategTextColor  *string `json:"product_categ_text_color,omitempty"`
+	PopupBGColor           *string `json:"popup_bg_color,omitempty"`
+	PopupTextColor         *string `json:"popup_text_color,omitempty"`
+	ADTextColor            *string `json:"ad_text_color,omitempty"`
+	HomeTextColor          *string `json:"home_text_color,omitempty"`
+	ProductTextColor       *string `json:"product_text_color,omitempty"`
+	DiscountColor          *string `json:"discount_color,omitempty"`
+	DiscountTextColor      *string `json:"discount_text_color,omitempty"`
+	BorderRadius           *string `json:"border_radius,omitempty"`
+	VariableFees           *string `json:"variable_fees,omitempty"`
+	FixedFees              *string `json:"fixed_fees,omitempty"`
+	UsersDefaultName       *string `json:"users_default_name,omitempty"`
+	SEOTitle               *string `json:"seo_title,omitempty"`
+	SEODescription         *string `json:"seo_description,omitempty"`
+	SEOKeywords            *string `json:"seo_keywords,omitempty"`
+	SEOCuisineType         *string `json:"seo_cuisine_type,omitempty"`
+	ShadowStyle            *string `json:"shadow_style,omitempty"`
+}
+type MerchantMarketingSettings struct {
+	ID               string  `json:"id"`
+	MerchantID       string  `json:"merchant_id"`
+	SMSUnitPrice     string  `json:"sms_unit_price"`
+	SMSEnabled       *bool   `json:"sms_enabled,omitempty"`
+	EmailEnabled     *bool   `json:"email_enabled,omitempty"`
+	SMSSenderName    *string `json:"sms_sender_name,omitempty"`
+	EmailSenderName  *string `json:"email_sender_name,omitempty"`
+	SMSTemplate      *string `json:"sms_template,omitempty"`
+	EmailTemplate    *string `json:"email_template,omitempty"`
+	TrackingTemplate *string `json:"tracking_template,omitempty"`
+	MessaggioLogin   *string `json:"messaggio_login,omitempty"`
+	MessaggioFrom    *string `json:"messaggio_from,omitempty"`
+	CreatedAt        *string `json:"created_at,omitempty"`
+	UpdatedAt        *string `json:"updated_at,omitempty"`
+}
+type MerchantParametersSettings struct {
+	MerchantID                        string  `json:"merchant_id"`
+	LastMenuUpdate                    *string `json:"last_menu_update,omitempty"`
+	ManageOnSite                      *bool   `json:"manage_on_site,omitempty"`
+	EnabledRating                     *bool   `json:"enabled_rating,omitempty"`
+	ManageTakeAway                    *bool   `json:"manage_take_away,omitempty"`
+	ManageDelivery                    *bool   `json:"manage_delivery,omitempty"`
+	ConcurrentPreparationCapacity     *int    `json:"concurrent_preparation_capacity,omitempty"`
+	DeliveryFees                      *int    `json:"delivery_fees,omitempty"`
+	DeliveryFeesLimit                 *int    `json:"delivery_fees_limit,omitempty"`
+	DeliveryDistanceLimit             *int    `json:"delivery_distance_limit,omitempty"`
+	MinimumCartForDeliveryOrder       *int    `json:"minimum_cart_for_delivery_order,omitempty"`
+	KitchenShowOnlyPaid               *bool   `json:"kitchen_show_only_paid,omitempty"`
+	KitchenShowPendingApproval        *bool   `json:"kitchen_show_pending_approval,omitempty"`
+	KitchenDistributionMode           *string `json:"kitchen_distribution_mode,omitempty"`
+	ProductionDisplayMode             *string `json:"production_display_mode,omitempty"`
+	MinimumPreparationTime            *int    `json:"minimum_preparation_time,omitempty"`
+	MaximumPreparationTime            *int    `json:"maximum_preparation_time,omitempty"`
+	DisableComponentsUnderSafetyStock *bool   `json:"disable_components_under_safety_stock,omitempty"`
+	ServiceRequiredForOrdering        *bool   `json:"service_required_for_ordering,omitempty"`
+	CashRegisterRequiredForOrdering   *bool   `json:"cash_register_required_for_ordering,omitempty"`
+	WaiterAppCanCashIn                *bool   `json:"waiter_app_can_cash_in,omitempty"`
+	WaiterAppCanClockIn               *bool   `json:"waiter_app_can_clock_in,omitempty"`
+	AutoCompleteOrders                *bool   `json:"auto_complete_orders,omitempty"`
+	AutoCompleteOrdersDelay           *int    `json:"auto_complete_orders_delay,omitempty"`
+	AutoAcceptSnoDeliveryOrders       *bool   `json:"auto_accept_sno_delivery_orders,omitempty"`
+	AutoAcceptSnoTakeAwayOrders       *bool   `json:"auto_accept_sno_take_away_orders,omitempty"`
+	AutomaticallyAddCustomerRewards   *bool   `json:"automatically_add_customer_rewards,omitempty"`
+	WarningNewOrderNotPaid            *bool   `json:"warning_new_order_not_paid,omitempty"`
+	EnableAdvanceOrders               *bool   `json:"enable_advance_orders,omitempty"`
+	AdvanceOrderDays                  *int    `json:"advance_order_days,omitempty"`
+	PagerNumberRequired               *bool   `json:"pager_number_required,omitempty"`
+	Currency                          *string `json:"currency,omitempty"`
+	IsOpen                            *bool   `json:"is_open,omitempty"`
+	PrimaryColor                      *string `json:"primary_color,omitempty"`
+	TextColorOnPrimaryColor           *string `json:"text_color_on_primary_color,omitempty"`
+	ZoningType                        *string `json:"zoning_type,omitempty"`
+	RadialConeCount                   *string `json:"radial_cone_count,omitempty"`
+	GridCellSizeKm                    *string `json:"grid_cell_size_km,omitempty"`
+	RadialZoneRanges                  *string `json:"radial_zone_ranges,omitempty"`
+	GridOriginLat                     *string `json:"grid_origin_lat,omitempty"`
+	GridOriginLng                     *string `json:"grid_origin_lng,omitempty"`
+	CardinalConeCount                 *string `json:"cardinal_cone_count,omitempty"`
+	CardinalZoneRanges                *string `json:"cardinal_zone_ranges,omitempty"`
+}
+type MerchantSettings struct {
+	MerchantID     *string  `json:"merchant_id,omitempty"`
+	FullName       *string  `json:"full_name,omitempty"`
+	Address        *string  `json:"address,omitempty"`
+	StreetNumber   *string  `json:"street_number,omitempty"`
+	Street         *string  `json:"street,omitempty"`
+	ZipCode        *string  `json:"zip_code,omitempty"`
+	City           *string  `json:"city,omitempty"`
+	Country        *string  `json:"country,omitempty"`
+	Lat            *float64 `json:"lat,omitempty"`
+	Lng            *float64 `json:"lng,omitempty"`
+	Timezone       *string  `json:"timezone,omitempty"`
+	Logo           *string  `json:"logo,omitempty"`
+	LogoURL        *string  `json:"logo_url,omitempty"`
+	HandicapAccess *bool    `json:"handicap_access,omitempty"`
+	SIRET          *string  `json:"SIRET,omitempty"`
+	Website        *string  `json:"web_site,omitempty"`
+	Email          *string  `json:"email,omitempty"`
+	MerchantTel    *string  `json:"merchant_tel,omitempty"`
+	IsActive       *bool    `json:"is_active,omitempty"`
+	CreationDate   *string  `json:"creation_date,omitempty"`
+	WebSite        *string  `json:"web_site,omitempty"`
+}
+type UpdateMerchantSettingsRequest struct {
+	Merchant   *MerchantSettings           `json:"merchant,omitempty"`
+	Parameters *MerchantParametersSettings `json:"parameters,omitempty"`
+	Marketing  *MerchantMarketingSettings  `json:"marketing,omitempty"`
+	Scannorder *ScannorderSettings         `json:"scannorder,omitempty"`
+}
+
+type MerchantSettingsResponse struct {
+	Merchant   *MerchantSettings           `json:"merchant"`
+	Parameters *MerchantParametersSettings `json:"parameters"`
+	Marketing  *MerchantMarketingSettings  `json:"marketing"`
+	Scannorder *ScannorderSettings         `json:"scannorder"`
+}
+
+type UpdatePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+const (
+	BrandUberEats  = "UBER_EATS"
+	BrandDeliveroo = "DELIVEROO"
+)
+
+type OrderMeta struct {
+	Brand        string
+	MerchantID   string // kept as string to match your desired future ids
+	BrandOrderID string
+	CreationDate time.Time
+}
+
+type DenyOrderRequest struct {
+	DeletionReasonID   string `json:"deletion_reason_id" binding:"required"`
+	DeletionReasonType string `json:"deletion_reason_type" binding:"required"`
+	DeletionComment    string `json:"deletion_comment"     binding:"required"`
+	UserID             string `json:"user_id"              binding:"required"`
+	MerchantID         string `json:"merchant_id"          binding:"required"`
+}
+
+type DenyOrderInput struct {
+	OrderID            string
+	DeletionReasonID   string
+	DeletionReasonType string
+	DeletionComment    string
+	UserID             string
+	MerchantID         string
+}
+
+type ReadyForDistributionInput struct {
+	OrderID    string
+	MerchantID string
+	UserID     string
+}
+
+type ReadyForDistributionRequest struct {
+	MerchantID string `json:"merchant_id" binding:"required"`
+	UserID     string `json:"user_id"     binding:"required"`
+}
+
+type DeleteOrderRequest struct {
+	MerchantID       int    `json:"merchant_id" binding:"required"`
+	UserID           int    `json:"user_id" binding:"required"`
+	DeletionReasonID int    `json:"deletion_reason_id" binding:"required"`
+	DeletionComment  string `json:"deletion_comment"`
 }

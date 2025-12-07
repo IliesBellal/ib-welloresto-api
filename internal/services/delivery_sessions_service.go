@@ -4,18 +4,21 @@ import (
 	"context"
 	"errors"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/notification"
 	"welloresto-api/internal/repositories"
 )
 
 type DeliverySessionsService struct {
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
 	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
+	notificationsService *notification.NotificationService
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository, notificationsService *notification.NotificationService) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
+		notificationsService: notificationsService,
 	}
 }
 

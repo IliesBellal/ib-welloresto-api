@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "wello-resto-150721",
+  "private_key_id": "6d1253e00d6d453aadfae381740239ed246ff8f6",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDk2E6A9LVsaAmn\n0+Ds1jQVJJs6UplmApQwATOh5SOajKiRTx2zpp85z82VLJQoC1zcqS2Tyo/xQVYM\nsus/D9Naexmno7xp5TOJhosLVG12qfsWuAg62+Xdv3B1NNMif+rZUNeVfFU4V6+P\n8piXv889Rmz36VI72x5dlLaPq1vNdrl1Z/sgAaslMsmO2ief5DMWKFHXEhw/da1u\nO/yF1UQjcFHbwzQ0bItxpUsmxV5sk8Hbar5CP8VuC8IezfM+Hkj1KcO0yY2O1J1X\nv1mYqF8Cf+UmZwb0KFIRghYzOjf3P7bqb7C0cJxEkkIzZZfW0Hyy3WE+4G+GG1Jt\n009n6d/XAgMBAAECggEAGnRG3vFq55U/SH9dyQMaEjehGiTiRsCVkNcSuOxcKUmJ\nUwLqVBI25d/3y/7TQa3OllOYSTVpXmJHKECmoSubKyJ/3Lk41qUASC2ddTnVTZpo\nxD+R8/vnnrK6tVHd9mcDJwwJX+Z3k4PPb7yDl0c9FcBGaII4V2MFJ5xBXmpYum9/\nEHtScVjA4Q1a63q+g4bWK+z/CxjhdEY2I7a+7L1PeUAf8tFD53Xv3Z0/OY+NE154\nDxc7CVRIK2xt/a+aghUaW3uOKs9z5pLVj1xAkM2NZqpxsId4jSrAVN1YgNsaUmoN\nJ2S+YCqV2XOsSbKPjS99lHUhNjN93HFh3UEwSQQsQQKBgQD7hkzC4cdnBIhMuJf1\n6fMwR7QD0NXj45i7+NNixMcmDOVPVSejGOIVQuz82eyh3ikooxNhzQbg10fDyJRC\nWre8qmVMHGlT3zF6Ki2rNj9ScQeKd0zyIRWyEJdSuk60eNhR7A8tUrDJjdNvOBlj\n0UqRRHMDletCVC8fABHw2XOA8wKBgQDo6rNQr2MCpboITDNCQlS0UXS+v2l7OdAn\n/+vj+fN7q4HHOYX73MNAztnu6jfwFxUPKk7ovScALBno6NL1w8kRRfja3E73yvuq\nRHxT7Jx407SgDsIwPb2Ocf4LteRgtJeHAY6LU2O1Yc+pK3RwlV6g9Tefgd8ki/ec\nodNLSes+jQKBgGKSm3q0qUUCTbhjj4pciWYec7obGfgZtj3UomNO4w1SeHvCz6nn\nkpLqi538efRl8JNwdaQaiduMAyADd7cZfnB+BvzxFYY9LlLGPOegduiES4REhO9P\ncAU841EUmsu3oG9aqAgHJCmZX4dy4OBxoVuVC84X7v8rptvrVxyg29dpAoGBAK+/\nYNyR6oi12mCmdssZV+bTy96eeg4kOn/kKO9VzDZV3FAihIneM2p0apdPHjRIhnhx\n+Sa+i24i2M4Y2A3f1Jj3Dma+c8uf2zPIB3QgBpVZUWKwoDBcderE8ueNMS0TN38E\nWrWgj4zuqA3DH1JQMx4KyhTOnzxpbMZAiTm3Jg2FAoGBAJZP0ejS771wIAtaLMtQ\nE/c0VX0Toqlhvew2f/GIsjZ+QUrFBLEDNZp2viOYJ6Yxd+FEUUPhSA4jC6yv33Y5\noEErgf6II+kKJfD4m52Y6e4nu0hx4tTpKDXKygOefX/3i0JHqKJFok3oLCSCqOr4\npuNnI6eLGxVDG4J+owMMBGGd\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-oiejh@wello-resto-150721.iam.gserviceaccount.com",
+  "client_id": "102571427235351888052",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-oiejh%40wello-resto-150721.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

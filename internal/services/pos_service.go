@@ -174,3 +174,41 @@ func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.T
 		Vintage: vintage,
 	}, nil
 }
+
+func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, req *models.UpdateMerchantSettingsRequest) error {
+
+	// 1) Authentication
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	return s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req)
+}
+
+func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*models.MerchantSettingsResponse, error) {
+
+	// 1) Authentication
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	m, params, marketing, scann, err := s.posRepo.GetMerchantSettings(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.MerchantSettingsResponse{
+		Merchant:   m,
+		Parameters: params,
+		Marketing:  marketing,
+		Scannorder: scann,
+	}, nil
+}

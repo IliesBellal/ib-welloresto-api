@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"welloresto-api/internal/models"
 )
 
@@ -177,6 +179,7 @@ func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*mo
 	query := `
 SELECT
     u.user_id,
+    u.password,
     u.name,
     u.first_name,
     u.last_name,
@@ -257,7 +260,7 @@ LIMIT 1;
 	data := &models.UserLoginRow{}
 
 	err := row.Scan(
-		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
+		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
 
@@ -328,4 +331,100 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 	}
 
 	return &res, nil
+}
+
+func (r *UsersRepository) UpdateUserSettings(ctx context.Context, userID string, req *models.UserSettingsRequest) error {
+
+	updates := []string{}
+	args := []interface{}{}
+
+	// Build dynamic update
+	if req.FirstName != nil {
+		updates = append(updates, "first_name = ?")
+		args = append(args, *req.FirstName)
+	}
+	if req.LastName != nil {
+		updates = append(updates, "last_name = ?")
+		args = append(args, *req.LastName)
+	}
+	if req.Email != nil {
+		updates = append(updates, "email = ?")
+		args = append(args, *req.Email)
+	}
+	if req.Tel != nil {
+		updates = append(updates, "tel = ?")
+		args = append(args, *req.Tel)
+	}
+	if req.Address != nil {
+		updates = append(updates, "address = ?")
+		args = append(args, *req.Address)
+	}
+	if req.StreetNumber != nil {
+		updates = append(updates, "street_number = ?")
+		args = append(args, *req.StreetNumber)
+	}
+	if req.Street != nil {
+		updates = append(updates, "street = ?")
+		args = append(args, *req.Street)
+	}
+	if req.City != nil {
+		updates = append(updates, "city = ?")
+		args = append(args, *req.City)
+	}
+	if req.Country != nil {
+		updates = append(updates, "country = ?")
+		args = append(args, *req.Country)
+	}
+	if req.ZipCode != nil {
+		updates = append(updates, "zip_code = ?")
+		args = append(args, *req.ZipCode)
+	}
+	if req.PlanningColor != nil {
+		updates = append(updates, "planning_color = ?")
+		args = append(args, *req.PlanningColor)
+	}
+	if req.ProfilePicture != nil {
+		updates = append(updates, "profile_picture = ?")
+		args = append(args, *req.ProfilePicture)
+	}
+	if req.TermsOfUseAccepted != nil {
+		updates = append(updates, "terms_of_use_accepted = ?")
+		args = append(args, *req.TermsOfUseAccepted)
+	}
+	if req.WaiterDeviceToken != nil {
+		updates = append(updates, "waiter_device_token = ?")
+		args = append(args, *req.WaiterDeviceToken)
+	}
+	if req.ReceptionDeviceToken != nil {
+		updates = append(updates, "reception_device_token = ?")
+		args = append(args, *req.ReceptionDeviceToken)
+	}
+	if req.DeliveryDeviceToken != nil {
+		updates = append(updates, "delivery_device_token = ?")
+		args = append(args, *req.DeliveryDeviceToken)
+	}
+
+	if len(updates) == 0 {
+		return nil // nothing to update
+	}
+
+	args = append(args, userID)
+
+	query := fmt.Sprintf(`
+		UPDATE users
+		SET %s
+		WHERE user_id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, hash string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET password = ?
+		WHERE user_id = ?
+	`, hash, userID)
+	return err
 }

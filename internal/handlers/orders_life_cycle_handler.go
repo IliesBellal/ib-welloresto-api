@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/services"
 
@@ -160,4 +162,147 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 	}
 
 	json.NewEncoder(w).Encode(result)
+}
+
+func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, `{"status":"-1","error":"missing order_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// extract token -> get user id (AuthService should validate)
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Call service (non blocking), but return result of immediate DB update
+	ctx2, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, token, orderID)
+	if err != nil {
+		http.Error(w, `{"status":"-2","error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if token == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, `{"status":"-1","error":"missing order_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id") // nécessaire, identique au PHP
+	if userID == "" {
+		http.Error(w, `{"status":"-1","error":"missing user_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), token, orderID, userID)
+	if err != nil {
+		http.Error(w, `{"status":"0","error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req models.DenyOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersLifeCycleService.DenyOrder(r.Context(), models.DenyOrderInput{
+		OrderID:            orderID,
+		DeletionReasonID:   req.DeletionReasonID,
+		DeletionReasonType: req.DeletionReasonType,
+		DeletionComment:    req.DeletionComment,
+		UserID:             req.UserID,
+		MerchantID:         req.MerchantID,
+	})
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req models.ReadyForDistributionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersLifeCycleService.SetReadyForDistribution(r.Context(), models.ReadyForDistributionInput{
+		OrderID:    orderID,
+		MerchantID: req.MerchantID,
+		UserID:     req.UserID,
+	})
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req models.DenyOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersLifeCycleService.DeleteOrder(r.Context(), models.DenyOrderInput{
+		OrderID:          orderID,
+		MerchantID:       req.MerchantID,
+		UserID:           req.UserID,
+		DeletionReasonID: req.DeletionReasonID,
+		DeletionComment:  req.DeletionComment,
+	})
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

@@ -70,3 +70,7 @@ func (s *CustomersService) SearchCustomers(ctx context.Context, token string, p 
 
 	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, p)
 }
+
+func (s *CustomersService) ReactivateRewards(ctx context.Context, orderID string) error {
+	return s.customerRepo.ReactivateRewards(ctx, orderID)
+}

@@ -477,3 +477,15 @@ func computeScore(name, tel, address, code string, c *models.CustomerSearchResul
 
 	return score
 }
+
+func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+        UPDATE customer_rewards
+        SET is_used = false,
+            usage_date = NULL,
+            used_on_order_id = NULL
+        WHERE used_on_order_id = ?`,
+		orderID,
+	)
+	return err
+}

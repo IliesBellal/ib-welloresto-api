@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/models"
@@ -211,11 +212,57 @@ func (h *POSHandler) errorJSON(w http.ResponseWriter, err error) {
 func (h *POSHandler) CheckTR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
 	code := chi.URLParam(r, "code")
 
 	resp, err := h.service.CheckTR(ctx, token, code)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Request) {
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req models.UpdateMerchantSettingsRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	if err := h.service.UpdateMerchantSettings(r.Context(), token, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+	})
+}
+
+func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	token := extractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	resp, err := h.service.GetMerchantSettings(ctx, token)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"status":"-2","error":"%s"}`, err.Error()), 500)
 		return
 	}
 

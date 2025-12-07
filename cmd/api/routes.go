@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"welloresto-api/internal/notification"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -22,11 +23,17 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	// r.Use(middleware.LoggingMiddleware(log))
 	// r.Use(middleware.ExtractTokenMiddleware)
 
+	// --- Clients ---
+	fcmClient := notification.NewFCMClient()
+	fcmTokenManager := notification.NewGoogleFCMTokenManager("./internal/notification/service_accounts/wello-resto-150721.json")
+
 	// --- Repositories ---
 	userRepo := repositories.NewUserRepository(mysqlDB)
 	posRepo := repositories.NewPOSRepository(mysqlDB)
 	deviceRepo := repositories.NewDeviceRepository(mysqlDB)
 	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
+	uberRepo := repositories.NewUberEatsRepository(mysqlDB, log)
+	deliverooRepo := repositories.NewDeliverooRepo(mysqlDB, log)
 
 	menuRepoOpt := repositories.NewOptimizedMenuRepository(mysqlDB)
 	menuRepoLegacy := repositories.NewMenuRepository(mysqlDB, log)
@@ -41,16 +48,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	customersRepo := repositories.NewCustomerRepository(mysqlDB, log)
 	stocksRepo := repositories.NewStockRepository(mysqlDB, log)
 	servicesRepo := repositories.NewServicesRepository(mysqlDB, log)
+	notificationRepo := notification.NewNotificationRepository(mysqlDB, log)
 
 	// --- Services ---
+	notificationService := notification.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 	authService := services.NewAuthService(userRepo)
 	posService := services.NewPOSService(userRepo, posRepo)
 	deviceService := services.NewDeviceService(userRepo, deviceRepo)
 	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
-	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpt, false)
-	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo)
-	ordersLifeCycleService := services.NewOrdersLifeCycleService(ordersLifeCycleRepo, deliverySessionsRepo, userRepo)
-	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo)
+	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpt)
+	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo, notificationService)
+	uberSvc := services.NewUberEatsService(uberRepo, mysqlDB, log)
+	deliverooSvc := services.NewDeliverooService(deliverooRepo, mysqlDB, log)
+	ordersLifeCycleService := services.NewOrdersLifeCycleService(ordersLifeCycleRepo, uberSvc, deliverooSvc, deliverySessionsRepo, userRepo, log, notificationService, customersRepo)
+	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo, notificationService)
 	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
 	locationsService := services.NewLocationsService(locationsRepo, userRepo)
 	cashRegisterService := services.NewCashRegisterService(cashRegisterRepo, userRepo)
@@ -100,6 +111,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/pos", func(r chi.Router) {
 		r.Get("/status", posH.GetPOSStatus)
 		r.Patch("/status", posH.UpdatePOSStatus)
+		r.Patch("/settings", posH.UpdateMerchantSettings)
+		r.Get("/settings", posH.UpdateMerchantSettings)
 
 		r.Get("/deletion_reasons/{object}", posH.GetDeletionReasons)
 		r.Get("/delivery_men", posH.GetDeliveryMen)
@@ -164,6 +177,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/{order_id}", ordersH.GetOrder)
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
+		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+		r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+		r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
 		r.Post("/{order_id}/distributed_products", ordersLifeCycleH.SetDistributedProducts)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/notification"
 	"welloresto-api/internal/repositories"
 )
 
@@ -17,13 +18,15 @@ type OrdersService struct {
 	ordersRepo           *repositories.OrdersRepository
 	deliverySessionsRepo *repositories.DeliverySessionsRepository
 	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
+	notificationsService *notification.NotificationService
 }
 
-func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository) *OrdersService {
+func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository, notificationsService *notification.NotificationService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
+		notificationsService: notificationsService,
 	}
 }
 
@@ -165,7 +168,11 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
-	return s.ordersRepo.CreateOrder(ctx, req)
+	result, err := s.ordersRepo.CreateOrder(ctx, req)
+
+	s.notificationsService.SendNotificationAsync(ctx, user.MerchantID, result.OrderID, "NEW_ORDER")
+
+	return result, err
 }
 
 func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {
