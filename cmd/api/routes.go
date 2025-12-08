@@ -38,7 +38,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	// ---- Notification ---
 	fcmClient := notificationModule.NewFCMClient()
-	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager("./internal/modules/notification/service_accounts/wello-resto-150721.json")
+	saPath := "/etc/secrets/SERVICE_ACCOUNT.json"
+	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager(saPath)
 	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB, log)
 	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 
