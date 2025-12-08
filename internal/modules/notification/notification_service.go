@@ -28,11 +28,11 @@ func (s *NotificationService) log(msg string) {
 }
 
 func (s *NotificationService) SendNotificationAsync(
-	ctx context.Context,
 	merchantID string,
 	orderID string,
 	nType string,
 ) error {
+	ctx := context.Background()
 
 	tokens, err := s.repo.GetDeviceTokens(ctx, merchantID)
 	if err != nil {
@@ -52,12 +52,12 @@ func (s *NotificationService) SendNotificationAsync(
 }
 
 func (s *NotificationService) SendNotificationAsyncWithPayload(
-	ctx context.Context,
 	merchantID string,
 	nType string,
 	entityID string,
 	payload map[string]interface{},
 ) error {
+	ctx := context.Background()
 
 	tokens, err := s.repo.GetDeviceTokens(ctx, merchantID)
 	if err != nil {
