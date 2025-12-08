@@ -1,4 +1,4 @@
-package services
+package order_life_cycle
 
 import (
 	"context"
@@ -7,26 +7,30 @@ import (
 	"log"
 	"time"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/notification"
-	"welloresto-api/internal/repositories"
+	"welloresto-api/internal/modules/ubereats"
 
 	"go.uber.org/zap"
 )
 
 type OrdersLifeCycleService struct {
-	ordersLifeCycleRepo  *repositories.OrdersLifeCycleRepository
-	deliverySessionsRepo *repositories.DeliverySessionsRepository
-	uberSvc              *UberEatsService
-	deliverooSvc         *DeliverooService
-	userRepo             *repositories.UsersRepository
+	ordersLifeCycleRepo  *OrdersLifeCycleRepository
+	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository
+	uberSvc              *ubereats.UberEatsService
+	deliverooSvc         *deliveroo.DeliverooService
+	userRepo             auth.AuthService
 	log                  *zap.Logger
 	notificationsService *notification.NotificationService
-	customersRepo        *repositories.CustomersRepository
+	customersRepo        *customers.CustomersRepository
 }
 
-func NewOrdersLifeCycleService(ordersRepo *repositories.OrdersLifeCycleRepository, uberSvc *UberEatsService, deliverooSvc *DeliverooService,
-	deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository,
-	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *repositories.CustomersRepository) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
+	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, userRepo auth.AuthService,
+	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,

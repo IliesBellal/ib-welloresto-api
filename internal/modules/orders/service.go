@@ -1,4 +1,4 @@
-package services
+package orders
 
 import (
 	"context"
@@ -10,21 +10,20 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
-	"welloresto-api/internal/repositories"
 )
 
 type OrdersService struct {
-	ordersRepo           *repositories.OrdersRepository
-	deliverySessionsRepo *repositories.DeliverySessionsRepository
-	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
+	ordersRepo           *OrdersRepository
+	userRepo             auth.AuthService
 	notificationsService *notification.NotificationService
 }
 
-func NewOrdersService(ordersRepo *repositories.OrdersRepository, deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository, notificationsService *notification.NotificationService) *OrdersService {
+func NewOrdersService(ordersRepo *OrdersRepository,
+	userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
-		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
 		notificationsService: notificationsService,
 	}

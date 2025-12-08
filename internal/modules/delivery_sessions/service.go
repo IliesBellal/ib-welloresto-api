@@ -1,20 +1,20 @@
-package services
+package delivery_sessions
 
 import (
 	"context"
 	"errors"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
-	"welloresto-api/internal/repositories"
 )
 
 type DeliverySessionsService struct {
-	deliverySessionsRepo *repositories.DeliverySessionsRepository
-	userRepo             *repositories.UsersRepository // used to resolve token -> merchant id
+	deliverySessionsRepo *DeliverySessionsRepository
+	userRepo             auth.AuthService
 	notificationsService *notification.NotificationService
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessionsRepository, userRepo *repositories.UsersRepository, notificationsService *notification.NotificationService) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, userRepo auth.AuthService, notificationsService *notification.NotificationService) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		userRepo:             userRepo,
@@ -25,7 +25,7 @@ func NewDeliverySessionsService(deliverySessionsRepo *repositories.DeliverySessi
 // /delivery_sessions/pending
 
 // GetPendingDeliverySessions returns delivery sessions (no orders)
-func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
+func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]DeliverySession, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return nil, err

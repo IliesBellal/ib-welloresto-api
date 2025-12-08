@@ -3,91 +3,131 @@ package main
 import (
 	"database/sql"
 	"net/http"
-	"welloresto-api/internal/notification"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
-	"welloresto-api/internal/handlers"
 
-	"welloresto-api/internal/repositories"
-	"welloresto-api/internal/services"
+	// ---- MODULES ----
+	authModule "welloresto-api/internal/modules/auth"
+	bookingsModule "welloresto-api/internal/modules/bookings"
+	cashregisterModule "welloresto-api/internal/modules/cash_registers"
+	customersModule "welloresto-api/internal/modules/customers"
+	deliverooModule "welloresto-api/internal/modules/deliveroo"
+	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
+	locModule "welloresto-api/internal/modules/locations"
+	menuModule "welloresto-api/internal/modules/menu"
+	notificationModule "welloresto-api/internal/modules/notification"
+	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
+	ordersModule "welloresto-api/internal/modules/orders"
+	posModule "welloresto-api/internal/modules/pos"
+	stocksModule "welloresto-api/internal/modules/stocks"
+	uberModule "welloresto-api/internal/modules/ubereats"
+	servicesModule "welloresto-api/internal/modules/user_services"
+	usersModule "welloresto-api/internal/modules/users"
 )
 
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
+
 	r := chi.NewRouter()
 
-	// --- Global Middlewares ---
-	// r.Use(middleware.RecoveryMiddleware(log))
-	// r.Use(middleware.LoggingMiddleware(log))
-	// r.Use(middleware.ExtractTokenMiddleware)
+	// =============================
+	//  MODULE INITIALIZATION
+	// =============================
 
-	// --- Clients ---
-	fcmClient := notification.NewFCMClient()
-	fcmTokenManager := notification.NewGoogleFCMTokenManager("./internal/notification/service_accounts/wello-resto-150721.json")
+	// ---- Notification ---
+	fcmClient := notificationModule.NewFCMClient()
+	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager("./internal/modules/notification/service_accounts/wello-resto-150721.json")
+	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB, log)
+	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 
-	// --- Repositories ---
-	userRepo := repositories.NewUserRepository(mysqlDB)
-	posRepo := repositories.NewPOSRepository(mysqlDB)
-	deviceRepo := repositories.NewDeviceRepository(mysqlDB)
-	appVersionRepo := repositories.NewAppVersionRepository(mysqlDB)
-	uberRepo := repositories.NewUberEatsRepository(mysqlDB, log)
-	deliverooRepo := repositories.NewDeliverooRepo(mysqlDB, log)
+	// ---- Auth ----
+	authRepo := authModule.NewAuthRepository(mysqlDB)
+	authService := authModule.NewAuthService(authRepo)
 
-	menuRepoOpt := repositories.NewOptimizedMenuRepository(mysqlDB)
-	menuRepoLegacy := repositories.NewMenuRepository(mysqlDB, log)
+	// ---- POS ----
+	posRepo := posModule.NewPOSRepository(mysqlDB)
+	posService := posModule.NewPOSService(authService, posRepo)
 
-	ordersRepo := repositories.NewOrdersRepository(mysqlDB, log)
-	ordersLifeCycleRepo := repositories.NewOrdersLifeCycleRepository(mysqlDB, log)
-	deliverySessionsRepo := repositories.NewDeliverySessionsRepository(mysqlDB, log)
-	cashDrawerRepo := repositories.NewCashDrawerRepository(mysqlDB, log)
-	locationsRepo := repositories.NewLocationsRepository(mysqlDB, log)
-	cashRegisterRepo := repositories.NewCashRegisterRepository(mysqlDB, log)
-	bookingsRepo := repositories.NewBookingsRepository(mysqlDB, log)
-	customersRepo := repositories.NewCustomerRepository(mysqlDB, log)
-	stocksRepo := repositories.NewStockRepository(mysqlDB, log)
-	servicesRepo := repositories.NewServicesRepository(mysqlDB, log)
-	notificationRepo := notification.NewNotificationRepository(mysqlDB, log)
+	// ---- Menu ----
+	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB, log)
+	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
 
-	// --- Services ---
-	notificationService := notification.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
-	authService := services.NewAuthService(userRepo)
-	posService := services.NewPOSService(userRepo, posRepo)
-	deviceService := services.NewDeviceService(userRepo, deviceRepo)
-	appVersionService := services.NewAppVersionService(appVersionRepo, userRepo)
-	menuService := services.NewMenuService(userRepo, menuRepoLegacy, menuRepoOpt)
-	ordersService := services.NewOrdersService(ordersRepo, deliverySessionsRepo, userRepo, notificationService)
-	uberSvc := services.NewUberEatsService(uberRepo, mysqlDB, log)
-	deliverooSvc := services.NewDeliverooService(deliverooRepo, mysqlDB, log)
-	ordersLifeCycleService := services.NewOrdersLifeCycleService(ordersLifeCycleRepo, uberSvc, deliverooSvc, deliverySessionsRepo, userRepo, log, notificationService, customersRepo)
-	deliverySessionsService := services.NewDeliverySessionsService(deliverySessionsRepo, userRepo, notificationService)
-	cashDrawerService := services.NewCashDrawerService(cashDrawerRepo, userRepo)
-	locationsService := services.NewLocationsService(locationsRepo, userRepo)
-	cashRegisterService := services.NewCashRegisterService(cashRegisterRepo, userRepo)
-	bookingsService := services.NewBookingsService(bookingsRepo, userRepo)
-	customersService := services.NewCustomersService(customersRepo, userRepo)
-	usersService := services.NewUsersService(userRepo)
-	stocksService := services.NewStockService(stocksRepo, userRepo)
-	servicesService := services.NewServicesService(servicesRepo, userRepo)
+	// ---- Orders ----
+	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, log)
+	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, log)
+	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
-	// --- Handlers ---
-	authH := handlers.NewAuthHandler(authService)
-	posH := handlers.NewPOSHandler(posService)
-	deviceH := handlers.NewDeviceHandler(deviceService)
-	appVersionH := handlers.NewAppVersionHandler(appVersionService)
-	menuH := handlers.NewMenuHandler(menuService)
-	ordersH := handlers.NewOrdersHandler(ordersService, deliverySessionsService)
-	ordersLifeCycleH := handlers.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService)
-	deliverySessionsH := handlers.NewDeliverySessionsHandler(deliverySessionsService)
-	cashDrawerH := handlers.NewCashDrawerHandler(cashDrawerService)
-	locationsH := handlers.NewLocationsHandler(locationsService)
-	cashRegisterH := handlers.NewCashRegisterHandler(cashRegisterService)
-	bookingsH := handlers.NewBookingsHandler(bookingsService)
-	customersH := handlers.NewCustomersHandler(customersService)
-	usersH := handlers.NewUsersHandler(usersService)
-	stocksH := handlers.NewStocksHandler(stocksService, usersService)
-	servicesH := handlers.NewServicesHandler(servicesService)
+	// ---- Uber ----
+	uberRepo := uberModule.NewUberEatsRepository(mysqlDB, log)
+	uberService := uberModule.NewUberEatsService(uberRepo, mysqlDB, log)
+
+	// ---- Deliveroo ----
+	deliverooRepo := deliverooModule.NewDeliverooRepo(mysqlDB, log)
+	deliverooService := deliverooModule.NewDeliverooService(deliverooRepo, mysqlDB, log)
+
+	// ---- Customers ----
+	customersRepo := customersModule.NewCustomerRepository(mysqlDB, log)
+	customersService := customersModule.NewCustomersService(customersRepo, authService)
+
+	// ---- Orders Lifecycle ----
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, log)
+	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
+		ordersLifeCycleRepo,
+		uberService,
+		deliverooService,
+		deliverySessionsRepo,
+		authService,
+		log,
+		notificationService,
+		customersRepo,
+	)
+
+	// ---- Delivery Sessions ----
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
+
+	// ---- Locations ----
+	locationsRepo := locModule.NewLocationsRepository(mysqlDB, log)
+	locationsService := locModule.NewLocationsService(locationsRepo, authService)
+
+	// ---- Cash Register ----
+	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB, log)
+	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo, authService)
+
+	// ---- Bookings ----
+	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, authService)
+
+	// ---- Users ----
+	usersRepo := usersModule.NewUserRepository(mysqlDB)
+	usersService := usersModule.NewUsersService(usersRepo)
+
+	// ---- Stocks ----
+	stocksRepo := stocksModule.NewStockRepository(mysqlDB, log)
+	stocksService := stocksModule.NewStockService(stocksRepo, authService)
+
+	// ---- Services ----
+	servicesRepo := servicesModule.NewServicesRepository(mysqlDB, log)
+	servicesService := servicesModule.NewServicesService(servicesRepo, authService)
+
+	// =============================
+	//  HANDLERS
+	// =============================
+
+	authH := authModule.NewAuthHandler(authService)
+	posH := posModule.NewPOSHandler(posService)
+	menuH := menuModule.NewMenuHandler(menuService)
+	ordersH := ordersModule.NewOrdersHandler(ordersService)
+	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService)
+	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
+	locationsH := locModule.NewLocationsHandler(locationsService)
+	cashRegisterH := cashregisterModule.NewCashRegisterHandler(cashRegisterService)
+	bookingsH := bookingsModule.NewBookingsHandler(bookingsService)
+	customersH := customersModule.NewCustomersHandler(customersService)
+	usersH := usersModule.NewUsersHandler(usersService)
+	stocksH := stocksModule.NewStocksHandler(stocksService)
+	servicesH := servicesModule.NewServicesHandler(servicesService)
 
 	// ============================================================
 	//                      ROUTING
@@ -139,12 +179,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	// --- DEVICES ---
 	r.Route("/device", func(r chi.Router) {
-		r.Post("/token", deviceH.SaveDeviceToken)
+		r.Post("/token", authH.SaveDeviceToken)
 	})
 
 	// --- APP VERSION ---
 	r.Route("/app", func(r chi.Router) {
-		r.Post("/version/check", appVersionH.CheckAppVersion)
+		r.Post("/version/check", authH.CheckAppVersion)
 	})
 
 	// --- MENU ---
@@ -202,7 +242,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	// --- CASH DRAWER ---
 	r.Route("/cash_drawer", func(r chi.Router) {
-		r.Get("/open", cashDrawerH.OpenCashDrawer)
+		r.Get("/open", cashRegisterH.OpenCashDrawer)
 	})
 
 	// --- CUSTOMERS ---
