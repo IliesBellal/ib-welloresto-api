@@ -183,18 +183,22 @@ func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 
 	token, err := s.repo.GetValidFCMToken(ctx)
 	if err != nil {
+		s.log("Error in getFCMToken : " + err.Error())
 		return "", err
 	}
 
 	if token != "" {
+		s.log("token found : " + token)
 		return token, nil
 	}
 
 	// Generate new token via FCM token manager
 	token, err = s.tokenm.GenerateToken(ctx)
 	if err != nil {
+		s.log("Error in getFCMToken after generation : " + err.Error())
 		return "", err
 	}
+	s.log("New Token generated : " + token)
 
 	_ = s.repo.StoreFCMToken(ctx, token)
 
