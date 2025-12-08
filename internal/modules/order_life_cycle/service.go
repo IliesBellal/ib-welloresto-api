@@ -69,7 +69,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 	switch order.Brand {
 	case "UBER_EATS":
 		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
-			return s.uberSvc.SetDelivered(ctx, merchantID, order.BrandOrderID)
+			return s.uberSvc.SetDelivered(ctx, merchantID, *order.BrandOrderID)
 		}
 		return nil
 
@@ -78,7 +78,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 			// Not coded in PHP -> return simple OK or your logic
 			return fmt.Errorf("not implemented for Deliveroo BYR")
 		}
-		return s.deliverooSvc.SetCollected(ctx, order.BrandOrderID)
+		return s.deliverooSvc.SetCollected(ctx, *order.BrandOrderID)
 
 	default:
 		return nil

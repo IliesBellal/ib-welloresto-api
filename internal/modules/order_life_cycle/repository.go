@@ -756,7 +756,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	}
 
 	// 1) Get brand, brand_order_id, fulfillment_type
-	const qOrder = `
+	qOrder := `
 	SELECT brand, brand_order_id, merchant_id, fulfillment_type
 	FROM orders
 	WHERE order_id = ?
@@ -769,7 +769,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	}
 
 	// 2) Update orders table
-	const qUpd = `
+	qUpd := `
 	UPDATE orders
 	SET last_update = UTC_TIMESTAMP(),
 	    brand_status = 'CLOSED',
@@ -785,7 +785,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	}
 
 	// 3) Delete qrcodes
-	const qDelQR = `
+	qDelQR := `
 	DELETE qr
 	FROM qrcodes qr
 	INNER JOIN order_location ol ON qr.location_id = ol.location_id
@@ -798,14 +798,14 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	}
 
 	// 4) Set bookings status = 0
-	const qUpdBook = `UPDATE bookings SET status = '0' WHERE order_id = ?`
+	qUpdBook := `UPDATE bookings SET status = '0' WHERE order_id = ?`
 	if _, err := tx.ExecContext(ctx, qUpdBook, orderID); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
 	// 5) Close delivery_session if last order
-	const qCheck = `
+	qCheck := `
 	SELECT o.order_id
 	FROM delivery_session_order dso
 	INNER JOIN delivery_session_order dso2 ON dso.delivery_session_id = dso2.delivery_session_id
@@ -836,7 +836,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	}
 
 	// 6) Update orderitems (distributed)
-	const qUpdItems = `
+	qUpdItems := `
 	UPDATE orderitems oi
 	LEFT JOIN delays d ON oi.delay_id = d.id
 	SET 
