@@ -43,6 +43,48 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *u
 	}
 }
 
+func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderID string) error {
+
+	// 1) Auth
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid user token")
+	}
+
+	merchantID := user.MerchantID
+
+	// 2) Mettre la commande en Delivered (local DB updates)
+	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+	if err != nil {
+		return err
+	}
+
+	// 3) Notify app
+	_ = s.notificationsService.SendNotificationAsync(ctx, merchantID, orderID, "UPDATE_ORDER")
+
+	// 4) Handle integration
+	switch order.Brand {
+	case "UBER_EATS":
+		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
+			return s.uberSvc.SetDelivered(ctx, merchantID, order.BrandOrderID)
+		}
+		return nil
+
+	case "DELIVEROO":
+		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
+			// Not coded in PHP -> return simple OK or your logic
+			return fmt.Errorf("not implemented for Deliveroo BYR")
+		}
+		return s.deliverooSvc.SetCollected(ctx, order.BrandOrderID)
+
+	default:
+		return nil
+	}
+}
+
 func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, orderID string) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

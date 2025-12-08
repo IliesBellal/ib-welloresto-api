@@ -240,3 +240,39 @@ func (s *UberEatsService) CancelOrder(
 
 	return fmt.Errorf("uber cancel returned %d", resp.StatusCode)
 }
+
+func (s *UberEatsService) SetDelivered(
+	ctx context.Context,
+	merchantID string,
+	brandOrderID string,
+) error {
+
+	// Get store token from DB
+	token, err := s.repo.GetUberBearerToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"status": "delivered",
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := s.httpClient.UpdateBYOCStatus(ctx, brandOrderID, token, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 200 → OK
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+
+	// 404 → Return same PHP result
+	if resp.StatusCode == 404 {
+		return fmt.Errorf("ubereats returned -1 (404)")
+	}
+
+	return fmt.Errorf("ubereats returned %d", resp.StatusCode)
+}

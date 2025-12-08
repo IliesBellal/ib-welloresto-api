@@ -70,3 +70,26 @@ func (c *UberEatsClient) FinishOrderIfDoesNotExist(ctx context.Context, bearerTo
 	// On laisse vide pour l'instant
 	return nil
 }
+
+func (c *UberEatsClient) UpdateBYOCStatus(
+	ctx context.Context,
+	brandOrderID string,
+	token string,
+	payload []byte,
+) (*http.Response, error) {
+
+	url := fmt.Sprintf(
+		"https://api.uber.com/v1/eats/orders/%s/restaurantdelivery/status",
+		brandOrderID,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	return c.httpClient.Do(req)
+}

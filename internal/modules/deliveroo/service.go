@@ -25,6 +25,31 @@ func NewDeliverooService(repo *DeliverooRepository, db *sql.DB, log *zap.Logger)
 	return &DeliverooService{repo: repo, db: db, log: log, client: dc}
 }
 
+func (s *DeliverooService) SetCollected(ctx context.Context, brandOrderID string) error {
+
+	token, err := s.repo.GetBearerToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"stage":       "collected",
+		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	resp, err := s.client.CreateStage(ctx, brandOrderID, payload, token)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("deliveroo collected returned %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 func (s *DeliverooService) AcceptOrder(ctx context.Context, merchantID string, orderID string) error {
 
 	// 1️⃣ Load brand_order_id in DB

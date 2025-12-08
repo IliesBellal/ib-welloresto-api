@@ -748,6 +748,117 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(
 
 	return err
 }
+func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1) Get brand, brand_order_id, fulfillment_type
+	const qOrder = `
+	SELECT brand, brand_order_id, merchant_id, fulfillment_type
+	FROM orders
+	WHERE order_id = ?
+	`
+	meta := &DeliveredOrderMetadata{}
+	if err := tx.QueryRowContext(ctx, qOrder, orderID).
+		Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// 2) Update orders table
+	const qUpd = `
+	UPDATE orders
+	SET last_update = UTC_TIMESTAMP(),
+	    brand_status = 'CLOSED',
+	    state = 'CLOSED',
+	    isPaid = 1,
+	    isDistributed = 1,
+	    delivered_on = UTC_TIMESTAMP()
+	WHERE order_id = ?
+	`
+	if _, err := tx.ExecContext(ctx, qUpd, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// 3) Delete qrcodes
+	const qDelQR = `
+	DELETE qr
+	FROM qrcodes qr
+	INNER JOIN order_location ol ON qr.location_id = ol.location_id
+	INNER JOIN orders o ON o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
+	WHERE o.order_id = ?
+	`
+	if _, err := tx.ExecContext(ctx, qDelQR, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// 4) Set bookings status = 0
+	const qUpdBook = `UPDATE bookings SET status = '0' WHERE order_id = ?`
+	if _, err := tx.ExecContext(ctx, qUpdBook, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// 5) Close delivery_session if last order
+	const qCheck = `
+	SELECT o.order_id
+	FROM delivery_session_order dso
+	INNER JOIN delivery_session_order dso2 ON dso.delivery_session_id = dso2.delivery_session_id
+	INNER JOIN orders o ON o.order_id = dso2.order_id AND o.status > 0
+	WHERE dso.order_id = ?
+	`
+	rows, err := tx.QueryContext(ctx, qCheck, orderID)
+	if err == nil {
+		var tmp []string
+		for rows.Next() {
+			var oid string
+			rows.Scan(&oid)
+			tmp = append(tmp, oid)
+		}
+		rows.Close()
+		if len(tmp) == 0 {
+			const qCloseDS = `
+				UPDATE delivery_session
+				JOIN delivery_session_order ON delivery_session_order.delivery_session_id = delivery_session.id
+				SET delivery_session.status = 0
+				WHERE delivery_session_order.order_id = ?
+			`
+			if _, err := tx.ExecContext(ctx, qCloseDS, orderID); err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+		}
+	}
+
+	// 6) Update orderitems (distributed)
+	const qUpdItems = `
+	UPDATE orderitems oi
+	LEFT JOIN delays d ON oi.delay_id = d.id
+	SET 
+		isDistributed = CASE WHEN ready_for_distribution_quantity >= quantity OR ready_for_distribution_quantity = 0 THEN 1 ELSE 0 END,
+		distributed_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
+		ready_for_distribution_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
+		distributed_on = UTC_TIMESTAMP()
+	WHERE order_id = ?
+	  AND oi.distributed_on IS NULL
+	  AND TIMESTAMPADD(SECOND, IFNULL(d.duration,0), oi.ordered_on) <= UTC_TIMESTAMP()
+	`
+	if _, err := tx.ExecContext(ctx, qUpdItems, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return meta, nil
+}
 
 // Disable payments
 func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID string) error {

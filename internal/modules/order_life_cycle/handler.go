@@ -328,3 +328,17 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
+
+func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	orderID := chi.URLParam(r, "order_id")
+
+	err := h.ordersLifeCycleService.SetDelivered(ctx, token, orderID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
