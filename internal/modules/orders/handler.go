@@ -31,17 +31,22 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	// read app param from query (default WR_RECEPTION)
 	app := r.URL.Query().Get("app")
 	if app == "" {
-		// default to WR_RECEPTION as in legacy
 		app = "WR_RECEPTION"
 	}
 
-	resp, err := h.ordersService.GetPendingOrders(ctx, token, app)
+	orders, err := h.ordersService.GetPendingOrders(ctx, token, app)
 	if err != nil {
 		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	resp := models.PendingOrdersHandlerResponse{
+		ID: 10, // ⚠️ même valeur que PHP
+		Data: models.PendingOrdersData{
+			Orders: orders.Orders,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

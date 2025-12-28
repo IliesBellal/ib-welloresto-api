@@ -148,10 +148,10 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 	defer locRows.Close()
 
 	// group by booking_id
-	locationsByBooking := make(map[string][]models.BookingLocation)
+	locationsByBooking := make(map[string][]models.Location)
 
 	for locRows.Next() {
-		var l models.BookingLocation
+		var l models.Location
 
 		err := locRows.Scan(
 			&l.BookingID,
@@ -163,7 +163,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 			return nil, err
 		}
 
-		locationsByBooking[l.BookingID] = append(locationsByBooking[l.BookingID], l)
+		locationsByBooking[*l.BookingID] = append(locationsByBooking[*l.BookingID], l)
 	}
 
 	//-----------------------------------------------------

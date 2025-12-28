@@ -98,7 +98,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, err
 			}
 			locationsByOrderID[orderID.String] = append(locationsByOrderID[orderID.String], models.Location{
-				OrderID: orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: helpers.NullStringToPtr(locationDesc),
+				OrderID: &orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: helpers.NullStringToPtr(locationDesc),
 			})
 		}
 		r.log.Info("locations loaded")

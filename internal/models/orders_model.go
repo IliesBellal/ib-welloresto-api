@@ -22,8 +22,9 @@ type OrderComment struct {
 }
 
 type Location struct {
-	OrderID      string         `json:"order_id"`
 	LocationID   string         `json:"location_id"`
+	OrderID      *string        `json:"order_id"`
+	BookingID    *string        `json:"booking_id"`
 	LocationName string         `json:"location_name"`
 	LocationDesc *string        `json:"location_desc"`
 	Seats        int            `json:"seats"`

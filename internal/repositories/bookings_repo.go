@@ -73,7 +73,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 	req.Customer.CustomerID = customerID
 
 	// 3️⃣ Check dates
-	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
+	if req.Booking.StartDate == nil || *req.Booking.StartDate == "" || req.Booking.EndDate == nil || *req.Booking.EndDate == "" {
 		return "", fmt.Errorf("start_date or end_date is empty")
 	}
 
@@ -107,12 +107,12 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 	//---------------------------------------------------------
 	// 2. Compute duration
 	//---------------------------------------------------------
-	start, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	start, err := time.Parse("2006-01-02 15:04:05", *req.Booking.StartDate)
 	if err != nil {
 		return rollback(err)
 	}
 
-	end, err := time.Parse("2006-01-02 15:04:05", req.Booking.EndDate)
+	end, err := time.Parse("2006-01-02 15:04:05", *req.Booking.EndDate)
 	if err != nil {
 		return rollback(err)
 	}
@@ -359,7 +359,7 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, tx *sql.T
 	return list, dayOfWeek, nil
 }
 
-func (r *BookingsRepository) loadExistingBookings(ctx context.Context, tx *sql.Tx, merchantID, requestedDate string) ([]models.ExistingBooking, error) {
+func (r *BookingsRepository) loadExistingBookings(ctx context.Context, tx *sql.Tx, merchantID, requestedDate string) ([]models.Booking, error) {
 
 	rows, err := tx.QueryContext(ctx, `
         SELECT party_size, booking_date_from, booking_date_to
@@ -373,10 +373,10 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, tx *sql.T
 	}
 	defer rows.Close()
 
-	list := []models.ExistingBooking{}
+	list := []models.Booking{}
 
 	for rows.Next() {
-		var b models.ExistingBooking
+		var b models.Booking
 		if err := rows.Scan(&b.PartySize, &b.StartDate, &b.EndDate); err != nil {
 			return nil, err
 		}
@@ -386,13 +386,13 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, tx *sql.T
 	return list, nil
 }
 
-func (r *BookingsRepository) computeOccupation(bookings []models.ExistingBooking, interval int) map[string]int {
+func (r *BookingsRepository) computeOccupation(bookings []models.Booking, interval int) map[string]int {
 
 	occ := make(map[string]int)
 
 	for _, b := range bookings {
 
-		start, _ := time.Parse("2006-01-02 15:04:05", b.StartDate)
+		start, _ := time.Parse("2006-01-02 15:04:05", *b.StartDate)
 		end := start
 
 		if b.EndDate != nil {
@@ -456,15 +456,12 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *models.MerchantBooki
 			remaining := tr.BookingCapacity - maxOcc
 
 			slot := models.BookingSlot{
-				HourOfOperationID:      tr.ID,
-				DateFrom:               start.Format("2006-01-02 15:04:05"),
-				DateTo:                 start.Add(time.Duration(params.SlotIntervalMinutes) * time.Minute).Format("2006-01-02 15:04:05"),
-				Available:              available,
-				Capacity:               tr.BookingCapacity,
-				RemainingCapacity:      remaining,
-				DebugCapacity:          tr.BookingCapacity,
-				DebugMaxBookedInWindow: maxOcc,
-				DebugRemainingCapacity: remaining,
+				HourOfOperationID: tr.ID,
+				DateFrom:          start.Format("2006-01-02 15:04:05"),
+				DateTo:            start.Add(time.Duration(params.SlotIntervalMinutes) * time.Minute).Format("2006-01-02 15:04:05"),
+				Available:         available,
+				Capacity:          tr.BookingCapacity,
+				RemainingCapacity: remaining,
 			}
 
 			slots = append(slots, slot)
