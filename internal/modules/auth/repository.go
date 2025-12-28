@@ -182,6 +182,7 @@ SELECT
     mp.production_display_mode,
     mp.pager_number_required,
     mp.service_required_for_ordering,
+    mp.cash_register_required_for_ordering,
     mp.warning_new_order_not_paid,
     mp.disable_components_under_safety_stock,
     mp.currency,
@@ -248,7 +249,7 @@ LIMIT 1;
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
 		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.ProductionDisplayMode, &data.PagerNumberRequired, &data.ServiceRequiredForOrdering,
-		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
+		&data.CashRegisterRequiredForOrdering, &data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.Currency, &data.IsOpen,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,

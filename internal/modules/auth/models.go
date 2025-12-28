@@ -62,21 +62,22 @@ type UserLoginRow struct {
 	WebSite         sql.NullString
 
 	// merchant parameters
-	DeliveryFees               int
-	DeliveryFeesLimit          int
-	DeliveryDistanceLimit      int
-	ManageOnSite               bool
-	ManageTakeAway             bool
-	ManageDelivery             bool
-	KitchenShowOnlyPaid        bool
-	KitchenDistributionMode    string
-	ProductionDisplayMode      string
-	PagerNumberRequired        bool
-	ServiceRequiredForOrdering bool
-	WarningNewOrderNotPaid     bool
-	DisableSafetyStock         bool
-	Currency                   string
-	IsOpen                     bool
+	DeliveryFees                    int
+	DeliveryFeesLimit               int
+	DeliveryDistanceLimit           int
+	ManageOnSite                    bool
+	ManageTakeAway                  bool
+	ManageDelivery                  bool
+	KitchenShowOnlyPaid             bool
+	KitchenDistributionMode         string
+	ProductionDisplayMode           string
+	PagerNumberRequired             bool
+	ServiceRequiredForOrdering      bool
+	WarningNewOrderNotPaid          bool
+	CashRegisterRequiredForOrdering bool
+	DisableSafetyStock              bool
+	Currency                        string
+	IsOpen                          bool
 
 	// subscription / package
 	AllowWaiterAccount   bool
