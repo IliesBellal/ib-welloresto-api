@@ -139,11 +139,13 @@ func (s *AuthService) Login(ctx context.Context, app string, deviceID string, us
 		"device_cash_desk": nil, // à implémenter plus tard
 		"enabled":          "true",
 
-		"name":       user.Name,
-		"first_name": user.FirstName,
-		"userId":     user.UserID,
-		"user_mail":  user.Email,
-		"user_tel":   user.Tel,
+		"name":                  user.Name,
+		"first_name":            user.FirstName,
+		"userId":                user.UserID,
+		"user_mail":             user.Email,
+		"user_tel":              user.Tel,
+		"open_cash_drawer":      user.OpenCashDrawer,
+		"terms_of_use_accepted": user.TermsOfUseAccepted,
 
 		"merchantId":                 user.MerchantID,
 		"merchantName":               user.MerchantName,
@@ -157,6 +159,7 @@ func (s *AuthService) Login(ctx context.Context, app string, deviceID string, us
 		"merchant_lat":               user.MerchantLat,
 		"delivery_distance_limit":    user.DeliveryDistanceLimit,
 		"kitchen_distribution_mode":  user.KitchenDistributionMode,
+		"production_display_mode":    user.ProductionDisplayMode,
 		"pager_number_required":      user.PagerNumberRequired,
 		"merchant_lng":               user.MerchantLng,
 		"timezone":                   user.TimeZone,

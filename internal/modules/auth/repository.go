@@ -150,6 +150,7 @@ SELECT
     u.reception_device_token,
     u.waiter_device_token,
     u.delivery_device_token,
+    u.terms_of_use_accepted,
 
     ur.token AS rights_token,
     ur.access_wrreception,
@@ -176,6 +177,7 @@ SELECT
     mp.manage_delivery,
     mp.kitchen_show_only_paid,
     mp.kitchen_distribution_mode,
+    mp.production_display_mode,
     mp.pager_number_required,
     mp.service_required_for_ordering,
     mp.warning_new_order_not_paid,
@@ -230,7 +232,7 @@ LIMIT 1;
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
-		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
+		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted,
 
 		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
 		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID,
@@ -240,7 +242,7 @@ LIMIT 1;
 
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
-		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.PagerNumberRequired, &data.ServiceRequiredForOrdering,
+		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.ProductionDisplayMode, &data.PagerNumberRequired, &data.ServiceRequiredForOrdering,
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.Currency, &data.IsOpen,
 

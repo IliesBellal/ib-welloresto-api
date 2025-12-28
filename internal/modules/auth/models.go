@@ -34,6 +34,7 @@ type UserLoginRow struct {
 	Email                string
 	Tel                  string
 	Enabled              bool
+	TermsOfUseAccepted   bool
 	PinCode              sql.NullString
 	ProfilePicture       sql.NullString
 	ReceptionDeviceToken sql.NullString
@@ -68,6 +69,7 @@ type UserLoginRow struct {
 	ManageDelivery             bool
 	KitchenShowOnlyPaid        bool
 	KitchenDistributionMode    string
+	ProductionDisplayMode      string
 	PagerNumberRequired        bool
 	ServiceRequiredForOrdering bool
 	WarningNewOrderNotPaid     bool
