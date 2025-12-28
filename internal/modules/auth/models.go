@@ -48,6 +48,7 @@ type UserLoginRow struct {
 	AccessWaiter            bool
 	PrintMerchantCashReport bool
 	OpenCashDrawer          bool
+	Admin                   bool
 	MerchantID              string
 
 	// merchant

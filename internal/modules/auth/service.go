@@ -146,6 +146,7 @@ func (s *AuthService) Login(ctx context.Context, app string, deviceID string, us
 		"user_tel":              user.Tel,
 		"open_cash_drawer":      user.OpenCashDrawer,
 		"terms_of_use_accepted": user.TermsOfUseAccepted,
+		"admin":                 user.Admin,
 
 		"merchantId":                 user.MerchantID,
 		"merchantName":               user.MerchantName,

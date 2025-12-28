@@ -160,6 +160,7 @@ SELECT
     ur.print_merchant_cash_report,
     ur.open_cash_drawer,
     ur.merchant_id,
+    ur.admin,
 
     m.fullName,
     m.merchantTel,
@@ -239,7 +240,7 @@ LIMIT 1;
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted,
 
 		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
-		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID,
+		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID, &data.Admin,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
