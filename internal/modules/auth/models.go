@@ -67,6 +67,8 @@ type UserLoginRow struct {
 	ManageTakeAway             bool
 	ManageDelivery             bool
 	KitchenShowOnlyPaid        bool
+	KitchenDistributionMode    string
+	PagerNumberRequired        bool
 	ServiceRequiredForOrdering bool
 	WarningNewOrderNotPaid     bool
 	DisableSafetyStock         bool

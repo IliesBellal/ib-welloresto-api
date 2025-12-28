@@ -175,6 +175,8 @@ SELECT
     mp.manage_take_away,
     mp.manage_delivery,
     mp.kitchen_show_only_paid,
+    mp.kitchen_distribution_mode,
+    mp.pager_number_required,
     mp.service_required_for_ordering,
     mp.warning_new_order_not_paid,
     mp.disable_components_under_safety_stock,
@@ -238,7 +240,7 @@ LIMIT 1;
 
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
-		&data.KitchenShowOnlyPaid, &data.ServiceRequiredForOrdering,
+		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.PagerNumberRequired, &data.ServiceRequiredForOrdering,
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.Currency, &data.IsOpen,
 
