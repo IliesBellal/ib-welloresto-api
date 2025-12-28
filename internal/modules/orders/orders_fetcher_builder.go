@@ -603,9 +603,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		for rows.Next() {
 			var ord models.Order
 			var customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
-			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, estimatedReady, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
+			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
 			var customerLat, customerLng, customerTemporaryLat, customerTemporaryLng, userLat, userLng sql.NullFloat64
-			var lastUpdate, creationDate sql.NullTime
+			var lastUpdate, creationDate, estimatedReady sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
 			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode, cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth, cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 			var delTel, delUserName sql.NullString
@@ -641,11 +641,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "-1"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
-			ord.EstimatedReady = helpers.NullStringToPtr(estimatedReady)
+			ord.EstimatedReady = helpers.NullTimePtr(estimatedReady).UTC().Unix()
 			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
-			ord.CreationDate = helpers.NullTimePtr(creationDate)
+			ord.CreationDate = helpers.NullTimePtr(creationDate).UTC().Unix()
 			ord.FulfillmentType = helpers.NullStringToPtr(fulfillmentType)
 			ord.LastUpdate = helpers.NullTimePtr(lastUpdate).UTC().Unix()
 

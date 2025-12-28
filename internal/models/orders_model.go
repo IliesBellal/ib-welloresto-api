@@ -111,7 +111,7 @@ type Order struct {
 	IsDistributed     bool           `json:"isDistributed"`
 	IsSNO             bool           `json:"isSNO"`
 	CallHour          *string        `json:"callHour"`
-	EstimatedReady    *string        `json:"estimated_ready"`
+	EstimatedReady    int64          `json:"estimated_ready"`
 	IsDelivery        int            `json:"isDelivery"`
 	MerchantApproval  string         `json:"merchant_approval"`
 	DeliveryFees      *int64         `json:"delivery_fees"`
@@ -122,7 +122,7 @@ type Order struct {
 	Location          []Location     `json:"location"`
 	Products          []ProductEntry `json:"products"`
 	Priority          *int           `json:"priority"`
-	CreationDate      *time.Time     `json:"creation_date"`
+	CreationDate      int64          `json:"creation_date"`
 	FulfillmentType   *string        `json:"fulfillment_type"`
 	LastUpdate        int64          `json:"last_update"`
 }
