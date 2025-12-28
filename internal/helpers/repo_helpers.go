@@ -52,6 +52,13 @@ func NullTimePtr(t sql.NullTime) *time.Time {
 	return nil
 }
 
+func NullTimeToUnix(nt sql.NullTime) int {
+	if !nt.Valid {
+		return 0
+	}
+	return int(nt.Time.UTC().Unix())
+}
+
 func nilIfZeroTime(t sql.NullTime) *time.Time {
 	if t.Valid && !t.Time.IsZero() {
 		return &t.Time

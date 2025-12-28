@@ -172,9 +172,9 @@ func (s *AuthService) Login(ctx context.Context, app string, deviceID string, us
 		"integration_uber_eats": map[string]interface{}{
 			"store_id":                   user.UEStoreID.String,
 			"estimated_preparation_time": user.UEPrepTime.String,
-			"delay_until":                user.UEDelayUntil.Time,
+			"delay_until":                user.UEDelayUntil,
 			"delay_duration":             user.UEDelayDuration.Int64,
-			"closed_until":               user.UEClosedUntil.Time,
+			"closed_until":               user.UEClosedUntil,
 		},
 
 		"integration_uber_direct": map[string]interface{}{

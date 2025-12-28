@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/helpers"
 )
 
 type AuthRepository struct {
@@ -251,7 +252,7 @@ LIMIT 1;
 
 		&data.SNOActivated,
 
-		&data.UEStoreID, &data.UEPrepTime, &data.UEDelayUntil, &data.UEDelayDuration, &data.UEClosedUntil,
+		&data.UEStoreID, &data.UEPrepTime, helpers.NullTimeToUnix(data.UEDelayUntil), &data.UEDelayDuration, helpers.NullTimeToUnix(data.UEClosedUntil),
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
