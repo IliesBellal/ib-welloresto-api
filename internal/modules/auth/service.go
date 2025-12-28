@@ -151,6 +151,7 @@ func (s *AuthService) Login(ctx context.Context, app string, deviceID string, us
 		"delivery_fees":          user.DeliveryFees,
 		"delivery_fees_limit":    user.DeliveryFeesLimit,
 		"kitchen_show_only_paid": user.KitchenShowOnlyPaid,
+		"allow_waiter_account":   user.AllowWaiterAccount,
 		"merchantAd":             user.MerchantAddress,
 		"merchant_lat":           user.MerchantLat,
 		"merchant_lng":           user.MerchantLng,
