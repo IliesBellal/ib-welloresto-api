@@ -518,7 +518,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			op := models.ProductEntry{
 				OrderID:                      orderID.String,
 				OrderItemID:                  orderItemID.String,
-				OrderedOn:                    helpers.NullTimePtr(orderedOn),
+				OrderedOn:                    helpers.NullTimePtr(orderedOn).UTC().Unix(),
 				ProductID:                    productID.String,
 				ProductionStatus:             productionStatus.String,
 				ProductionStatusDoneQuantity: int(productionDoneQty.Int64),
