@@ -90,9 +90,9 @@ type UserLoginRow struct {
 	// integrations: Uber Eats
 	UEStoreID       sql.NullString
 	UEPrepTime      sql.NullString
-	UEDelayUntil    sql.NullTime
+	UEDelayUntil    int
 	UEDelayDuration sql.NullInt64
-	UEClosedUntil   sql.NullTime
+	UEClosedUntil   int
 
 	// Uber Direct
 	UDCustomerID sql.NullString

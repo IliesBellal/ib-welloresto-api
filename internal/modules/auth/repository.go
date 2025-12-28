@@ -230,6 +230,9 @@ LIMIT 1;
 
 	data := &UserLoginRow{}
 
+	var ueDelayUntil sql.NullTime
+	var ueClosedUntil sql.NullTime
+
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
@@ -252,11 +255,14 @@ LIMIT 1;
 
 		&data.SNOActivated,
 
-		&data.UEStoreID, &data.UEPrepTime, helpers.NullTimeToUnix(data.UEDelayUntil), &data.UEDelayDuration, helpers.NullTimeToUnix(data.UEClosedUntil),
+		&data.UEStoreID, &data.UEPrepTime, &ueDelayUntil, &data.UEDelayDuration, &ueClosedUntil,
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
 	)
+
+	data.UEDelayUntil = helpers.NullTimeToUnix(ueDelayUntil)
+	data.UEClosedUntil = helpers.NullTimeToUnix(ueClosedUntil)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
