@@ -124,7 +124,7 @@ type Order struct {
 	Priority          *int           `json:"priority"`
 	CreationDate      *time.Time     `json:"creation_date"`
 	FulfillmentType   *string        `json:"fulfillment_type"`
-	LastUpdate        *time.Time     `json:"last_update"`
+	LastUpdate        int64          `json:"last_update"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

@@ -647,7 +647,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
 			ord.CreationDate = helpers.NullTimePtr(creationDate)
 			ord.FulfillmentType = helpers.NullStringToPtr(fulfillmentType)
-			ord.LastUpdate = helpers.NullTimePtr(lastUpdate)
+			ord.LastUpdate = helpers.NullTimePtr(lastUpdate).UTC().Unix()
 
 			// --- Customer ---
 			if customerID.Valid {
