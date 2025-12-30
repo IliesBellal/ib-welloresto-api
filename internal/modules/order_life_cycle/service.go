@@ -123,7 +123,7 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, token string, 
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
-func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token string, paymentID string) error {
+func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orderID, paymentID string) error {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
@@ -133,7 +133,11 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token strin
 		return errors.New("invalid token")
 	}
 
-	return s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
+	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
+
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+
+	return err
 }
 
 func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {

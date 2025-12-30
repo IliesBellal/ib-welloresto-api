@@ -110,8 +110,9 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 	ctx := r.Context()
 
 	paymentID := chi.URLParam(r, "payment_id")
+	orderID := chi.URLParam(r, "order_id")
 
-	err := h.ordersLifeCycleService.DisablePayment(ctx, token, paymentID)
+	err := h.ordersLifeCycleService.DisablePayment(ctx, token, orderID, paymentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

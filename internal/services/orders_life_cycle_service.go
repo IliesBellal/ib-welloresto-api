@@ -230,7 +230,7 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, in models.DenyOr
 	}
 
 	// Notify
-	s.notificationsService.SendNotificationAsync(ctx, in.MerchantID, in.OrderID, "ORDER_UPDATE")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "ORDER_UPDATE")
 
 	// Dispatch to integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
@@ -256,7 +256,7 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	}
 
 	// 2 → Send notif
-	s.notificationsService.SendNotificationAsync(ctx, in.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
 
 	// 3 → Async integrations
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
@@ -308,7 +308,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	}
 
 	// Send notif
-	s.notificationsService.SendNotificationAsync(ctx, in.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
 
 	// Integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)

@@ -170,7 +170,7 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 
 	result, err := s.ordersRepo.CreateOrder(ctx, req)
 
-	s.notificationsService.SendNotificationAsync(ctx, user.MerchantID, result.OrderID, "NEW_ORDER")
+	s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
 
 	return result, err
 }
