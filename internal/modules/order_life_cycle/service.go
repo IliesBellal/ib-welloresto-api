@@ -108,7 +108,11 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, token string, o
 	// sécurité : orderID dans l’URL > orderID dans req
 	req.OrderID = orderID
 
-	return s.ordersLifeCycleRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
+	err = s.ordersLifeCycleRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
+
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+
+	return err
 }
 
 func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, token string, orderID string) ([]models.Payment, error) {
