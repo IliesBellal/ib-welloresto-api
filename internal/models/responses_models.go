@@ -1,6 +1,6 @@
 package models
 
-type PendingOrdersHandlerResponse struct {
+type OrdersHandlerResponse struct {
 	ID   int               `json:"id"`
 	Data PendingOrdersData `json:"data"`
 }

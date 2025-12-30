@@ -42,7 +42,7 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := models.PendingOrdersHandlerResponse{
+	resp := models.OrdersHandlerResponse{
 		ID: 10, // ⚠️ même valeur que PHP
 		Data: models.PendingOrdersData{
 			Orders: orders.Orders,
@@ -101,8 +101,15 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := models.OrdersHandlerResponse{
+		ID: 10, // ⚠️ même valeur que PHP
+		Data: models.PendingOrdersData{
+			Orders: orders,
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(orders)
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *http.Request) {
