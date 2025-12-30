@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
@@ -523,14 +524,9 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	committed = true
 
 	// prepare response
-	var lastMenuTime *time.Time
-	if dbLastMenu.Valid {
-		t := dbLastMenu.Time
-		lastMenuTime = &t
-	}
 	resp := &models.MenuResponse{
 		Status:          "ok",
-		LastMenuUpdate:  lastMenuTime,
+		LastMenuUpdate:  helpers.NullTimeToNullUnixInt(dbLastMenu),
 		ProductsTypes:   productTypes,
 		ComponentsTypes: compTypes,
 		Delays:          delays,

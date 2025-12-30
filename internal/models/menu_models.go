@@ -1,11 +1,9 @@
 package models
 
-import "time"
-
 // Top-level response
 type MenuResponse struct {
 	Status          string              `json:"status"`
-	LastMenuUpdate  *time.Time          `json:"last_menu_update"` // will be marshalled like "2006-01-02 15:04:05"
+	LastMenuUpdate  *int                `json:"last_menu_update"` // will be marshalled like "2006-01-02 15:04:05"
 	ProductsTypes   []ProductCategory   `json:"products_types"`   // same as products_types in old API
 	ComponentsTypes []ComponentCategory `json:"components_types"`
 	Delays          []DelayEntry        `json:"delays"`
