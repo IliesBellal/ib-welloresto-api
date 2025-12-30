@@ -102,6 +102,9 @@ LIMIT 1;
 
 	data := &UserLoginRow{}
 
+	var ueDelayUntil sql.NullTime
+	var ueClosedUntil sql.NullTime
+
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
@@ -124,11 +127,14 @@ LIMIT 1;
 
 		&data.SNOActivated,
 
-		&data.UEStoreID, &data.UEPrepTime, &data.UEDelayUntil, &data.UEDelayDuration, &data.UEClosedUntil,
+		&data.UEStoreID, &data.UEPrepTime, &ueDelayUntil, &data.UEDelayDuration, &ueClosedUntil,
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
 	)
+
+	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
+	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
 
 	if err == sql.ErrNoRows {
 		return nil, err
@@ -236,9 +242,9 @@ LIMIT 1;
 	var ueClosedUntil sql.NullTime
 
 	err := row.Scan(
-		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
-		&data.Enabled, &data.PinCode, &data.ProfilePicture,
-		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted,
+		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
+		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.ReceptionDeviceToken,
+		&data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted,
 
 		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
 		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID, &data.Admin,
