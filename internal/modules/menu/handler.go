@@ -40,7 +40,7 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := h.service.GetMenu(ctx, token, lastMenu)
+	menu, err := h.service.GetMenu(ctx, token, lastMenu)
 	if err != nil {
 		// LOG SERVER SIDE
 		log.Printf("[ERROR] GetMenu token=%s last_menu=%v err=%+v", token, lastMenu, err)
@@ -54,7 +54,11 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// success
+	resp := models.MenuHandlerResponse{
+		ID:   10, // ⚠️ même valeur que PHP
+		Data: menu,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
