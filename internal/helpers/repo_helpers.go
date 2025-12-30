@@ -52,11 +52,13 @@ func NullTimePtr(t sql.NullTime) *time.Time {
 	return nil
 }
 
-func NullTimeToUnix(nt sql.NullTime) int {
+func NullTimeToNullUnixInt(nt sql.NullTime) *int {
 	if !nt.Valid {
-		return 0
+		return nil
 	}
-	return int(nt.Time.UTC().Unix())
+
+	v := int(nt.Time.UTC().Unix())
+	return &v
 }
 
 func nilIfZeroTime(t sql.NullTime) *time.Time {

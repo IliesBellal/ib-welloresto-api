@@ -263,8 +263,8 @@ LIMIT 1;
 		&data.DrooLocationID,
 	)
 
-	data.UEDelayUntil = helpers.NullTimeToUnix(ueDelayUntil)
-	data.UEClosedUntil = helpers.NullTimeToUnix(ueClosedUntil)
+	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
+	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
