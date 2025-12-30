@@ -257,7 +257,11 @@ LIMIT 1;
 
 		&data.SNOActivated,
 
-		&data.UEStoreID, &data.UEPrepTime, &ueDelayUntil, &data.UEDelayDuration, &ueClosedUntil,
+		&data.UEStoreID,
+		&data.UEPrepTime,
+		&ueDelayUntil,
+		&data.UEDelayDuration,
+		&ueClosedUntil,
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
