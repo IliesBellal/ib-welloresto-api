@@ -124,6 +124,7 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, token string, 
 	if user == nil {
 		return nil, errors.New("invalid token")
 	}
+
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
