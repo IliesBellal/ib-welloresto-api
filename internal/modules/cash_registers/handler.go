@@ -78,7 +78,13 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	current_service := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(current_service)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {
