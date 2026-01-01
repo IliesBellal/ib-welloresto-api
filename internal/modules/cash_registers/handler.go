@@ -221,10 +221,16 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.json(w, models.CashRegisterHistoryResponse{
-		Status:        "1",
-		CashRegisters: result,
-	}, 200)
+	enclose_cash_register := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.CashRegisterHistoryResponse{
+			Status:        "1",
+			CashRegisters: result,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(enclose_cash_register)
 }
 
 func (h *CashRegisterHandler) json(w http.ResponseWriter, data interface{}, status int) {
