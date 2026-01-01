@@ -168,7 +168,13 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	delete_item := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delete_item)
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +197,13 @@ func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	enclose_cash_register := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(enclose_cash_register)
 }
 
 func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
