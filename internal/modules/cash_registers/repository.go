@@ -21,7 +21,7 @@ func NewCashRegisterRepository(db *sql.DB, log *zap.Logger) *CashRegisterReposit
 	return &CashRegisterRepository{db: db, log: log}
 }
 
-func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (map[string]interface{}, error) {
+func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (*models.CashRegisterOpenResponse, error) {
 
 	r.log.Info("OpenCashRegister START",
 		zap.String("merchant_id", merchantID),
@@ -52,16 +52,21 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
     `, req.DeviceID, merchantID).Scan(&exists)
 
 	if err == nil {
-		// Requête a retourné une ligne → device déjà utilisé
-		return map[string]interface{}{
-			"status": "device_already_opened_cash_register",
-		}, nil
+
+		if err == nil {
+			res_already_opened := &models.CashRegisterOpenResponse{
+				Status: "device_already_opened_cash_register",
+			}
+			return res_already_opened, nil
+		}
 	}
 	if err != sql.ErrNoRows {
-		return rollback(err)
+		if err != nil {
+			rollback(err)
+			return nil, err
+		}
 	}
-
-	var cashRegisterID int64
+	var cashRegisterID string
 
 	// -------------------------------------------------------------
 	// 2) Sous-registre (cash_register_id fourni)
@@ -80,12 +85,16 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
         `, req.DeviceID, merchantID).Scan(&exists)
 
 		if err == nil {
-			return map[string]interface{}{
-				"status": "device_already_opened_sub_cash_register",
-			}, nil
+			res_already_opened := &models.CashRegisterOpenResponse{
+				Status: "device_already_opened_sub_cash_register",
+			}
+			return res_already_opened, nil
 		}
 		if err != sql.ErrNoRows {
-			return rollback(err)
+			if err != nil {
+				rollback(err)
+				return nil, err
+			}
 		}
 
 		// Créer le sous-registre
@@ -94,13 +103,15 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
             VALUES (?, ?, UTC_TIMESTAMP)
         `, *req.CashRegister.CashRegisterID, req.DeviceID)
 		if err != nil {
-			return rollback(err)
+			rollback(err)
+			return nil, err
 		}
 
 		// ID du registre parent existant
-		cashRegisterID, err = strconv.ParseInt(*req.CashRegister.CashRegisterID, 10, 64)
+		cashRegisterID = *req.CashRegister.CashRegisterID
 		if err != nil {
-			return rollback(err)
+			rollback(err)
+			return nil, err
 		}
 
 	} else {
@@ -119,12 +130,16 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
         `, req.CashRegister.CashDeskID, merchantID).Scan(&exists)
 
 		if err == nil {
-			return map[string]interface{}{
-				"status": "cash_desk_already_opened_in_a_cash_register",
-			}, nil
+			res_already_opened := &models.CashRegisterOpenResponse{
+				Status: "cash_desk_already_opened_in_a_cash_register",
+			}
+			return res_already_opened, nil
 		}
 		if err != sql.ErrNoRows {
-			return rollback(err)
+			if err != nil {
+				rollback(err)
+				return nil, err
+			}
 		}
 
 		// Créer le registre
@@ -140,12 +155,15 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 			req.CashRegister.CashFund,
 		)
 		if err != nil {
-			return rollback(err)
+			rollback(err)
+			return nil, err
 		}
 
-		cashRegisterID, err = res.LastInsertId()
+		var lai, _ = res.LastInsertId()
+		cashRegisterID = strconv.Itoa(int(lai))
 		if err != nil {
-			return rollback(err)
+			rollback(err)
+			return nil, err
 		}
 	}
 
@@ -153,15 +171,26 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 	// COMMIT
 	// -------------------------------------------------------------
 	if err := tx.Commit(); err != nil {
-		return rollback(err)
+		rollback(err)
+		return nil, err
 	}
 
-	return map[string]interface{}{
-		"status": "cash_register_created",
-		"cash_register": map[string]interface{}{
-			"cash_register": cashRegisterID,
+	res := &models.CashRegisterOpenResponse{
+		Status: "cash_register_created",
+		CashRegister: &models.CashRegisterOpen{
+			CashRegisterId: cashRegisterID,
 		},
-	}, nil
+	}
+
+	return res, nil
+	/*
+		return map[string]interface{}{
+			"status": "cash_register_created",
+			"cash_register": map[string]interface{}{
+				"cash_register": cashRegisterID,
+			},
+		}, nil
+	*/
 }
 
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {

@@ -19,7 +19,7 @@ func NewCashRegisterService(cashRegisterRepo *CashRegisterRepository, userRepo a
 	}
 }
 
-func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string, req *models.OpenCashRegisterRequest) (map[string]interface{}, error) {
+func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string, req *models.OpenCashRegisterRequest) (*models.CashRegisterOpenResponse, error) {
 
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

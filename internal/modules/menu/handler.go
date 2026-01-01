@@ -54,8 +54,8 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := models.MenuHandlerResponse{
-		ID:   10, // ⚠️ même valeur que PHP
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
 		Data: menu,
 	}
 

@@ -36,12 +36,18 @@ func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resp, err := h.cashRegisterService.OpenCashRegister(ctx, token, &req)
+	open_call, err := h.cashRegisterService.OpenCashRegister(ctx, token, &req)
 	if err != nil {
 		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: open_call,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 

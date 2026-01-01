@@ -118,6 +118,15 @@ type CashRegisterReport struct {
 	CashReportType string                    `json:"cash_report_type"`
 }
 
+type CashRegisterOpenResponse struct {
+	Status       string            `json:"status"`
+	CashRegister *CashRegisterOpen `json:"cash_register"`
+}
+
+type CashRegisterOpen struct {
+	CashRegisterId string `json:"cash_register_id"`
+}
+
 type CashReportDeliveryGroup struct {
 	DeliveryTypeID    string            `json:"delivery_type_id"`
 	DeliveryTypeLabel string            `json:"delivery_type_label"`
