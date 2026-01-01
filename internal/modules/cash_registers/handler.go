@@ -148,7 +148,13 @@ func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	current_service := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(current_service)
 }
 
 func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Request) {
