@@ -2,8 +2,8 @@ package models
 
 type CashRegisterHistoryItem struct {
 	CashRegisterID string              `json:"cash_register_id"`
-	StartDate      string              `json:"start_date"`
-	EndDate        string              `json:"end_date"`
+	StartDate      *int                `json:"start_date"`
+	EndDate        *int                `json:"end_date"`
 	Closed         bool                `json:"closed"`
 	CashDesk       CashRegisterDeskRef `json:"cash_desk"`
 }

@@ -850,11 +850,12 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 
 	for rows.Next() {
 		var h models.CashRegisterHistoryItem
+		var rawStartDate, rawEndDate sql.NullTime
 
 		err := rows.Scan(
 			&h.CashRegisterID,
-			&h.StartDate,
-			&h.EndDate,
+			&rawStartDate,
+			&rawEndDate,
 			&h.CashDesk.CashDeskID,
 			&h.CashDesk.CashDeskName,
 			&h.Closed,
@@ -862,6 +863,9 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		if err != nil {
 			return nil, err
 		}
+
+		h.StartDate = helpers.NullTimeToNullUnixInt(rawStartDate)
+		h.EndDate = helpers.NullTimeToNullUnixInt(rawEndDate)
 
 		history = append(history, h)
 	}
