@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -36,6 +37,11 @@ func (h *ServicesHandler) GetCurrentService(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	current_service := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(current_service)
 }
