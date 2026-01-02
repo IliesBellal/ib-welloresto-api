@@ -330,7 +330,15 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	return nil
 }
 
-func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
+func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, token string, in models.DenyOrderInput) error {
+
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
 
 	// 1 — Local DB operations
 	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
@@ -363,7 +371,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	}
 
 	// Send notif
-	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(user.MerchantID, in.OrderID, "UPDATE_ORDER")
 
 	// Integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)

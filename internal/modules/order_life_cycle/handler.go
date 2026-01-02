@@ -325,8 +325,6 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		DeletionComment:  req.DeletionComment,
 	})
 
-	h.notificationsService.SendNotificationAsync(req.MerchantID, orderID, "UPDATE_ORDER")
-
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
