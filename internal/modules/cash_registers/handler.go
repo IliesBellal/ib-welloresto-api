@@ -250,7 +250,13 @@ func (h *CashRegisterHandler) errorJSON(w http.ResponseWriter, err error) {
 }
 
 func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "1",
-	})
+	open_cash_drawer := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: map[string]interface{}{
+			"status": "1",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(open_cash_drawer)
 }

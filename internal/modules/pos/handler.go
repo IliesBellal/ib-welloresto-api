@@ -193,9 +193,15 @@ func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.json(w, models.DeliveryMenResponse{
-		Users: users,
-	}, 200)
+	open_cash_drawer := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.DeliveryMenResponse{
+			Users: users,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(open_cash_drawer)
 }
 
 func (h *POSHandler) json(w http.ResponseWriter, data interface{}, status int) {
