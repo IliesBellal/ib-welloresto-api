@@ -120,7 +120,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	posH := posModule.NewPOSHandler(posService)
 	menuH := menuModule.NewMenuHandler(menuService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService)
-	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService)
+	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
 	locationsH := locModule.NewLocationsHandler(locationsService)
 	cashRegisterH := cashregisterModule.NewCashRegisterHandler(cashRegisterService)

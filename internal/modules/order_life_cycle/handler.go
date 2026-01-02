@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/delivery_sessions"
+	"welloresto-api/internal/modules/notification"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -17,12 +18,14 @@ import (
 type OrdersLifeCycleHandler struct {
 	ordersLifeCycleService  *OrdersLifeCycleService
 	deliverySessionsService *delivery_sessions.DeliverySessionsService
+	notificationsService    *notification.NotificationService
 }
 
-func NewOrdersLifeCycleHandler(ordersService *OrdersLifeCycleService, deliverySessionsService *delivery_sessions.DeliverySessionsService) *OrdersLifeCycleHandler {
+func NewOrdersLifeCycleHandler(ordersService *OrdersLifeCycleService, deliverySessionsService *delivery_sessions.DeliverySessionsService, notificationsService *notification.NotificationService) *OrdersLifeCycleHandler {
 	return &OrdersLifeCycleHandler{
 		ordersLifeCycleService:  ordersService,
 		deliverySessionsService: deliverySessionsService,
+		notificationsService:    notificationsService,
 	}
 }
 
@@ -321,6 +324,8 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		DeletionReasonID: req.DeletionReasonID,
 		DeletionComment:  req.DeletionComment,
 	})
+
+	h.notificationsService.SendNotificationAsync(req.MerchantID, orderID, "UPDATE_ORDER")
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
