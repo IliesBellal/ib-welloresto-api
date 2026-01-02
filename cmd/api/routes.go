@@ -220,7 +220,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
 		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
-		r.Delete("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+		r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
 		r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
 		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
