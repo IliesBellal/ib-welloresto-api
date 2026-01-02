@@ -888,8 +888,7 @@ func (r *OrdersLifeCycleRepository) DeleteQRCode(ctx context.Context, orderID st
 func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID string) error {
 	_, err := r.db.ExecContext(ctx, `
         UPDATE bookings
-        SET order_id = NULL,
-            status NOT IN ('DONE')
+        SET order_id = NULL
         WHERE order_id = ?`,
 		orderID,
 	)
