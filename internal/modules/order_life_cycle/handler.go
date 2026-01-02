@@ -317,7 +317,7 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err := h.ordersLifeCycleService.DeleteOrder(r.Context(), models.DenyOrderInput{
+	err := h.ordersLifeCycleService.DeleteOrder(r.Context(), token, models.DenyOrderInput{
 		OrderID:          orderID,
 		MerchantID:       req.MerchantID,
 		UserID:           req.UserID,
