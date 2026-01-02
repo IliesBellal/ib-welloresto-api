@@ -327,7 +327,15 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	delete_order := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.CashRegisterHistoryResponse{
+			Status: "success",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delete_order)
 }
 
 func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Request) {
