@@ -155,15 +155,22 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	resp, err := h.ordersService.GetHistory(ctx, token, req)
+	orders, err := h.ordersService.GetHistory(ctx, token, req)
 
 	if err != nil {
 		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	order_history := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.PendingOrdersData{
+			Orders: orders,
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(order_history)
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
