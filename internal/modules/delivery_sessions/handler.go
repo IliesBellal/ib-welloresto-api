@@ -65,7 +65,13 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	start_delivery_session := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(start_delivery_session)
 }
 
 func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r *http.Request) {

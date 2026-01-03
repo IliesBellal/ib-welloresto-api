@@ -238,7 +238,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/pending", deliverySessionsH.GetPendingDeliverySessions)
 		r.Get("/{delivery_session_id}", deliverySessionsH.GetDeliverySession)
 		r.Delete("/{delivery_session_id}", deliverySessionsH.CancelDeliverySession)
-		r.Post("/{delivery_session_id}/close", deliverySessionsH.CloseDeliverySession)
+		r.Patch("/{delivery_session_id}/close", deliverySessionsH.CloseDeliverySession)
 
 		r.Post("/start", deliverySessionsH.StartDeliverySession)
 	})

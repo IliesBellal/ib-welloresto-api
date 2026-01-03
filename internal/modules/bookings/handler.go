@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -39,10 +40,16 @@ func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.json(w, map[string]interface{}{
-		"status":   "1",
-		"bookings": bookings,
-	}, 200)
+	search_result := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":   "1",
+			"bookings": bookings,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(search_result)
 }
 
 func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +98,17 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 		"status":  "1",
 		"booking": booking,
 	}, 200)
+
+	search_result := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":  "1",
+			"booking": booking,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(search_result)
 }
 
 func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) {
