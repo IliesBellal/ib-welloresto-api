@@ -37,11 +37,16 @@ func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWrit
 		return
 	}
 
-	resp := map[string]interface{}{
-		"delivery_sessions": sessions,
+	delivery_sessions := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":            "success",
+			"delivery_sessions": sessions,
+		},
 	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(delivery_sessions)
 }
 
 func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -128,5 +133,14 @@ func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *h
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	delivery_session := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":           "success",
+			"delivery_session": resp,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delivery_session)
 }
