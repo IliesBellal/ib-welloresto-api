@@ -36,11 +36,7 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }
 
-func (s *DeliverySessionsService) StartDeliverySession(
-	ctx context.Context,
-	token string,
-	req *models.DeliverySessionRequest,
-) (interface{}, error) {
+func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, token string, req *models.DeliverySessionRequest, ) (interface{}, error) {
 
 	// 1. Check token → get user + merchant
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -57,17 +53,25 @@ func (s *DeliverySessionsService) StartDeliverySession(
 		}, nil
 	}
 
+	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
+
 	return session, nil
 }
 
-func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, sessionID string) (interface{}, error) {
+func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {
+
+	// 1. Check token → get user + merchant
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return map[string]string{"status": "invalid_token"}, nil
+	}
 
 	session, err := s.deliverySessionsRepo.CloseDeliverySession(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	// s.notifications.SendDeliverySessionUpdate(session.MerchantID, sessionID)
+	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
 
 	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
 }
@@ -83,7 +87,13 @@ func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token,
 	return s.deliverySessionsRepo.GetDeliverySession(ctx, user.MerchantID, delivery_session_id)
 }
 
-func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, sessionID string) (interface{}, error) {
+func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {
+
+	// 1. Check token → get user + merchant
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return map[string]string{"status": "invalid_token"}, nil
+	}
 
 	// repo returns DeliverySession struct
 	session, err := s.deliverySessionsRepo.CancelDeliverySession(ctx, sessionID)
@@ -92,7 +102,7 @@ func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, ses
 	}
 
 	// Notifications
-	// s.notifications.SendCanceledDeliverySession(session.MerchantID, sessionID)
+	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
 
 	// Return full delivery session object
 	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)

@@ -92,7 +92,7 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 	ctx := r.Context()
 	id := chi.URLParam(r, "delivery_session_id")
 
-	resp, err := h.deliverySessionsService.CancelDeliverySession(ctx, id)
+	resp, err := h.deliverySessionsService.CancelDeliverySession(ctx, token, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -120,7 +120,7 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 	ctx := r.Context()
 	id := chi.URLParam(r, "delivery_session_id")
 
-	resp, err := h.deliverySessionsService.CloseDeliverySession(ctx, id)
+	resp, err := h.deliverySessionsService.CloseDeliverySession(ctx, token, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
