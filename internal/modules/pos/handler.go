@@ -86,10 +86,16 @@ func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.json(w, models.DeletionReasonResponse{
-		Status:          "1",
-		DeletionReasons: reasons,
-	}, 200)
+	search_result := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.DeletionReasonResponse{
+			Status:          "1",
+			DeletionReasons: reasons,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(search_result)
 }
 
 func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {

@@ -279,8 +279,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Post("/create", bookingsH.CreateBooking)
 		r.Get("/{booking_id}", bookingsH.GetBooking)
 
-		r.Post("/{booking_id}/accept", bookingsH.AcceptBooking)
-		r.Post("/{booking_id}/deny", bookingsH.DenyBooking)
+		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
+		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
 	})
 
 	return r
