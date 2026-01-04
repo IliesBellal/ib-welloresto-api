@@ -66,21 +66,6 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 	}
 
 	resp, err := h.deliverySessionsService.StartDeliverySession(ctx, token, &req)
-	if err != nil {
-
-		switch {
-		case errors.Is(err, models.ErrInvalidToken):
-			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
-
-		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
-			http.Error(w, `{"error":"delivery_session_already_active"}`, http.StatusConflict)
-
-		default:
-			http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
-		}
-
-		return
-	}
 
 	start_delivery_session := models.HandlerDefaultResponse{
 		ID: "10",
@@ -88,6 +73,28 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 			"status":           "success",
 			"delivery_session": resp,
 		},
+	}
+	if err != nil {
+
+		switch {
+		case errors.Is(err, models.ErrInvalidToken):
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+
+		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
+			http.Error(w, `{"error":"delivery_session_already_active"}`, http.StatusConflict)
+
+			start_delivery_session = models.HandlerDefaultResponse{
+				ID: "10",
+				Data: map[string]interface{}{
+					"status": "delivery_session_already_active",
+				},
+			}
+
+		default:
+			http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
