@@ -95,9 +95,9 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 			&r.Booking.Customer.CustomerEmail,
 			&r.Booking.Comment,
 
-			date_from,
-			date_to,
-			creation_date,
+			&date_from,
+			&date_to,
+			&creation_date,
 
 			&r.Booking.Customer.CustomerNbOrders,
 			&r.Booking.Customer.CustomerNbBookings,
@@ -109,6 +109,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 			&r.Booking.Merchant.LogoURL,
 			&r.Booking.CreatedBy,
 		)
+
 		r.Booking.BookingDateFrom = helpers.NullTimePtr(date_from).UTC().Unix()
 		r.Booking.BookingDateTo = helpers.NullTimePtr(date_to).UTC().Unix()
 		r.Booking.CreationDate = helpers.NullTimePtr(creation_date).UTC().Unix()
