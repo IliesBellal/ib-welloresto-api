@@ -80,7 +80,7 @@ func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req 
 	}
 
 	return map[string]interface{}{
-		"status": "1",
+		"status": "success",
 		"data1":  itemID,
 	}, nil
 }

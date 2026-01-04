@@ -262,7 +262,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Route("/{cash_register_id}", func(r chi.Router) {
 			r.Get("/summary", cashRegisterH.GetCashRegisterSummary)
-			r.Get("/tva_details", cashRegisterH.GetCashRegisterTVADetails)
+			r.Get("/tva-details", cashRegisterH.GetCashRegisterTVADetails)
 			r.Patch("/close", cashRegisterH.CloseCashRegister)
 			r.Patch("/enclose", cashRegisterH.EncloseCashRegister)
 

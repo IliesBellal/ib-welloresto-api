@@ -132,7 +132,13 @@ func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	tva_details := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tva_details)
 }
 
 func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Request) {
