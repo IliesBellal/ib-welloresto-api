@@ -95,7 +95,13 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	cancel_delivery_session := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cancel_delivery_session)
 }
 
 func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +120,13 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	close_delivery_session := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: resp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(close_delivery_session)
 }
 
 func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *http.Request) {
