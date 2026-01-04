@@ -94,11 +94,6 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.json(w, map[string]interface{}{
-		"status":  "1",
-		"booking": booking,
-	}, 200)
-
 	search_result := models.HandlerDefaultResponse{
 		ID: "10",
 		Data: map[string]interface{}{
