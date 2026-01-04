@@ -71,8 +71,11 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 	}
 
 	start_delivery_session := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":           "success",
+			"delivery_session": resp,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -96,8 +99,11 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 	}
 
 	cancel_delivery_session := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":           "success",
+			"delivery_session": resp,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -121,8 +127,11 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 	}
 
 	close_delivery_session := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
+		ID: "10",
+		Data: map[string]interface{}{
+			"status":           "success",
+			"delivery_session": resp,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
