@@ -82,8 +82,6 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 			return
 
 		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
-			http.Error(w, `{"error":"delivery_session_already_active"}`, http.StatusConflict)
-
 			start_delivery_session = models.HandlerDefaultResponse{
 				ID: "10",
 				Data: map[string]interface{}{
