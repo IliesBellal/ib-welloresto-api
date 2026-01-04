@@ -2,6 +2,7 @@ package delivery_sessions
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -66,7 +67,18 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 
 	resp, err := h.deliverySessionsService.StartDeliverySession(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		switch {
+		case errors.Is(err, models.ErrInvalidToken):
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+
+		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
+			http.Error(w, `{"error":"delivery_session_already_active"}`, http.StatusConflict)
+
+		default:
+			http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
+		}
+
 		return
 	}
 

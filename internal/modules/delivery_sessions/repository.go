@@ -244,8 +244,7 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 	`, userID).Scan(&existing)
 
 	if err != sql.ErrNoRows {
-		// Active session exists
-		return nil, fmt.Errorf("delivery_session_already_active")
+		return nil, models.ErrDeliverySessionAlreadyActive
 	}
 
 	// 3. Insert new delivery_session

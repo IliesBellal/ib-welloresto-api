@@ -36,7 +36,7 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }
 
-func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, token string, req *models.DeliverySessionRequest, ) (interface{}, error) {
+func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, token string, req *models.DeliverySessionRequest) (interface{}, error) {
 
 	// 1. Check token → get user + merchant
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -47,10 +47,7 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 	// 2. Delegate to repo
 	session, err := s.deliverySessionsRepo.StartDeliverySession(ctx, req)
 	if err != nil {
-		return map[string]interface{}{
-			"status": "-1",
-			"error":  err.Error(),
-		}, nil
+		return nil, err // ← propagation propre de l'erreur
 	}
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
