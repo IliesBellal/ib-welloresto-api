@@ -3,6 +3,7 @@ package bookings
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/helpers"
 
 	"go.uber.org/zap"
 )
@@ -79,6 +80,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 
 	for rows.Next() {
 		var r RawBooking
+		var date_from, date_to, creation_date sql.NullTime
 
 		err := rows.Scan(
 			&r.Booking.BookingID,
@@ -92,9 +94,11 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 			&r.Booking.Customer.CustomerTel,
 			&r.Booking.Customer.CustomerEmail,
 			&r.Booking.Comment,
-			&r.Booking.BookingDateFrom,
-			&r.Booking.BookingDateTo,
-			&r.Booking.CreationDate,
+
+			date_from,
+			date_to,
+			creation_date,
+
 			&r.Booking.Customer.CustomerNbOrders,
 			&r.Booking.Customer.CustomerNbBookings,
 			&r.Code,
@@ -105,6 +109,9 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 			&r.Booking.Merchant.LogoURL,
 			&r.Booking.CreatedBy,
 		)
+		r.Booking.BookingDateFrom = helpers.NullTimePtr(date_from).UTC().Unix()
+		r.Booking.BookingDateTo = helpers.NullTimePtr(date_to).UTC().Unix()
+		r.Booking.CreationDate = helpers.NullTimePtr(creation_date).UTC().Unix()
 		if err != nil {
 			return nil, err
 		}

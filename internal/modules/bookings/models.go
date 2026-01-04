@@ -11,10 +11,10 @@ type Booking struct {
 	AccessLink      string            `json:"access_link"`
 	Status          string            `json:"status"`
 	SequenceNumber  int               `json:"sequence_number"`
-	BookingDateFrom string            `json:"booking_date_from"`
-	BookingDateTo   string            `json:"booking_date_to"`
+	BookingDateFrom int64             `json:"booking_date_from"`
+	BookingDateTo   int64             `json:"booking_date_to"`
 	PartySize       int               `json:"party_size"`
-	CreationDate    string            `json:"creation_date"`
+	CreationDate    int64             `json:"creation_date"`
 	CreatedBy       string            `json:"created_by"`
 	Comment         *string           `json:"comment"`
 	StartDate       string            `json:"start_date"`
