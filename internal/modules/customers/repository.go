@@ -259,9 +259,9 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 
 	// rewards
 	rows2, err := r.db.QueryContext(ctx, `
-        SELECT reward_id, loyalty_program_id, creation_date, reward_type, reward_value, is_used
-        FROM customer_rewards
-        WHERE customer_id = ?
+        SELECT cr.customer_id, cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value, cr.is_used
+        FROM customer_rewards cr
+        WHERE cr.customer_id = ?
     `, customerID)
 	if err != nil {
 		return nil, err
@@ -271,6 +271,7 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 	for rows2.Next() {
 		var rwd LoyaltyReward
 		if err := rows2.Scan(
+			&rwd.CustomerID,
 			&rwd.RewardID,
 			&rwd.LoyaltyProgramID,
 			&rwd.CreationDate,

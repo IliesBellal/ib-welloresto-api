@@ -12,6 +12,7 @@ type LoyaltyProgress struct {
 }
 
 type LoyaltyReward struct {
+	CustomerID       string `json:"customer_id"`
 	RewardID         string `json:"reward_id"`
 	LoyaltyProgramID string `json:"loyalty_program_id"`
 	CreationDate     string `json:"creation_date"`
