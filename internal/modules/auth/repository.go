@@ -226,13 +226,14 @@ LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 WHERE 
     (
         (UPPER(u.name)=UPPER(?) AND u.password IN (?, ?))
+        OR (UPPER(u.email)=UPPER(?) AND u.password IN (?, ?))
         OR (ur.token = ?)
     )
 LIMIT 1;
 `
 
 	row := r.db.QueryRowContext(ctx, query,
-		username, encryptedPwd, plainPwd,
+		username, username, encryptedPwd, plainPwd,
 		token,
 	)
 
