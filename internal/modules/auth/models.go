@@ -13,6 +13,13 @@ type CheckAppVersionRequest struct {
 	App     string `json:"app"`
 }
 
+type LoginRequestPayload struct {
+	App      string `json:"app"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Email    string `json:"email"`
+}
+
 type MerchantRow struct {
 	ID       string
 	FullName string

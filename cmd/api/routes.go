@@ -169,9 +169,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	// --- STOCKS ---
 	r.Route("/stocks", func(r chi.Router) {
-		r.Get("/barcode/{barcode_id}", stocksH.GetBarcodeInfo)
-		r.Post("/barcode", stocksH.CreateBarcode)
-		r.Delete("/barcode/{barcode_id}", stocksH.DeleteBarcode)
+		r.Get("/barcode/{barcode}", stocksH.GetBarcodeInfo)
+		r.Post("/barcode/create", stocksH.CreateBarcode)
+		r.Delete("/barcode/{barcode}", stocksH.DeleteBarcode)
 
 		r.Post("/barcodes/scan", stocksH.AddStockBarcode)
 		r.Patch("/loss", stocksH.SetStockLoss)
@@ -227,7 +227,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {
-			r.Post("/", ordersLifeCycleH.AddPayment)
+			r.Post("/create", ordersLifeCycleH.AddPayment)
 			r.Get("/", ordersLifeCycleH.GetPayments)
 			r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
 		})

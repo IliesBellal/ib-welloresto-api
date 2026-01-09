@@ -30,7 +30,7 @@ func (h *StocksHandler) GetBarcodeInfo(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	code := chi.URLParam(r, "barcode_id")
+	code := chi.URLParam(r, "barcode")
 
 	resp, err := h.stockSvc.GetBarcodeInfo(ctx, token, code)
 	if err != nil {
@@ -50,7 +50,7 @@ func (h *StocksHandler) DeleteBarcode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	code := chi.URLParam(r, "barcode_id")
+	code := chi.URLParam(r, "barcode")
 
 	err := h.stockSvc.DeleteBarcode(ctx, token, code)
 	if err != nil {
@@ -78,7 +78,7 @@ func (h *StocksHandler) CreateBarcode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.stockSvc.CreateBarcode(ctx, token, p.Code, p.ComponentID)
+	err := h.stockSvc.CreateBarcode(ctx, token, p.Barcode, p.ComponentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

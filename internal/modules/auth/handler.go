@@ -18,13 +18,15 @@ func NewAuthHandler(s AuthService) *AuthHandler {
 // Can be used with user and pwd, with token in get, or token in authorization
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
-	app := r.URL.Query().Get("app")
-	device := r.URL.Query().Get("device_id")
-	user := r.URL.Query().Get("user")
-	pwd := r.URL.Query().Get("pwd")
+	// Parse JSON body
+	var req LoginRequestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"status":"-2","error":"invalid payload"}`, 400)
+		return
+	}
 	token := helpers.ExtractToken(r)
 
-	resp, err := h.svc.Login(r.Context(), app, device, user, pwd, token)
+	resp, err := h.svc.Login(r.Context(), req, token)
 	if err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]interface{}{

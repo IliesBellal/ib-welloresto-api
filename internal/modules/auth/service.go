@@ -74,21 +74,22 @@ func convertApp(app string) (int, error) {
 	}
 }
 
-func (s *AuthService) Login(ctx context.Context, app string, deviceID string, username string, password string, token string) (map[string]interface{}, error) {
+func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string) (map[string]interface{}, error) {
 
-	appID, _ := convertApp(app)
+	appID, _ := convertApp(payload.App)
 
-	var encrypted string
+	var encrypted, username string
 	var err error
 
-	if username != "" && password != "" {
-		encrypted, err = encryptPHP(password)
+	if (payload.Username != "" || payload.Email != "") && payload.Password != "" {
+		encrypted, err = encryptPHP(payload.Password)
 		if err != nil {
 			return nil, err
 		}
 	}
+	username = payload.Username + payload.Username
 
-	user, err := s.repo.Login(ctx, username, encrypted, password, token)
+	user, err := s.repo.Login(ctx, username, encrypted, payload.Password, token)
 	if err != nil {
 		return nil, err
 	}

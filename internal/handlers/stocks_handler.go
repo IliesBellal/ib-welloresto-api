@@ -69,7 +69,7 @@ func (h *StocksHandler) CreateBarcode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.stockSvc.CreateBarcode(ctx, token, p.Code, p.ComponentID)
+	err := h.stockSvc.CreateBarcode(ctx, token, p.Barcode, p.ComponentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

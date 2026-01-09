@@ -46,7 +46,7 @@ type StockLossRequest struct {
 }
 
 type CreateBarcodePayload struct {
-	Code        string `json:"code"`
+	Barcode     string `json:"barcode"`
 	ComponentID string `json:"component_id"`
 }
 
