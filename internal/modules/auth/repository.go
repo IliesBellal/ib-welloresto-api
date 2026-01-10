@@ -233,7 +233,8 @@ LIMIT 1;
 `
 
 	row := r.db.QueryRowContext(ctx, query,
-		username, username, encryptedPwd, plainPwd,
+		username, encryptedPwd, plainPwd,
+		username, encryptedPwd, plainPwd,
 		token,
 	)
 
