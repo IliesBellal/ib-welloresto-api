@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
+	"welloresto-api/internal/middleware"
 
 	// ---- MODULES ----
 	authModule "welloresto-api/internal/modules/auth"
@@ -31,6 +32,9 @@ import (
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r := chi.NewRouter()
+
+	// --- Global Middlewares ---
+	r.Use(middleware.CORSMiddleware().Handler)
 
 	// =============================
 	//  MODULE INITIALIZATION
