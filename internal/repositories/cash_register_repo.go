@@ -96,7 +96,7 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 			return rollback(err)
 		}
 
-		// ID du registre parent existant
+		// MerchantID du registre parent existant
 		cashRegisterID, err = strconv.ParseInt(*req.CashRegister.CashRegisterID, 10, 64)
 		if err != nil {
 			return rollback(err)

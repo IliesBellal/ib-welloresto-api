@@ -36,7 +36,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 	// 2. OPTIMISATION CRITIQUE : Récupérer les Order IDs AVANT d'appeler le gros constructeur
 	// Cela évite de refaire les jointures sessions <-> orders dans les 11 requêtes suivantes.
 
-	// A. Construire la liste des ID de sessions
+	// A. Construire la liste des MerchantID de sessions
 	sessionIDs := ""
 	for i, s := range sessions {
 		if i > 0 {
@@ -73,7 +73,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		return sessions, nil
 	}
 
-	// 3. Construire le filtre PAR ORDER ID (MySQL adore ça, c'est instantané)
+	// 3. Construire le filtre PAR ORDER MerchantID (MySQL adore ça, c'est instantané)
 	ordersFilter := ""
 	for i, oid := range orderIDList {
 		if i > 0 {
@@ -93,7 +93,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 
 	// 5. Assemblage : Mettre les commandes dans les bonnes sessions
 
-	// Map pour regrouper les commandes par Session ID
+	// Map pour regrouper les commandes par Session MerchantID
 	// (On utilise string comme clé car dans tes logs précédents c'était souvent traité comme string)
 	ordersBySession := make(map[string][]models.Order)
 
@@ -112,7 +112,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 
 	// On remplit les sessions
 	for i := range sessions {
-		// On récupère l'ID de la session (c'est un string dans ton struct DeliverySession ci-dessous)
+		// On récupère l'MerchantID de la session (c'est un string dans ton struct DeliverySession ci-dessous)
 		sID := sessions[i].DeliverySessionID
 
 		if sessionOrders, found := ordersBySession[sID]; found {
@@ -146,7 +146,7 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 			return nil, err
 		}
 
-		// Conversion ID int64 (si besoin)
+		// Conversion MerchantID int64 (si besoin)
 		// sessID, _ := strconv.ParseInt(id.String, 10, 64)
 
 		ds := models.DeliverySession{
@@ -334,7 +334,7 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 		return nil, err
 	}
 
-	// ⚠ PHP version commented out the negative ID update → we skip it, as requested.
+	// ⚠ PHP version commented out the negative MerchantID update → we skip it, as requested.
 
 	// 2) Mark session as canceled
 	_, err = tx.ExecContext(ctx, `

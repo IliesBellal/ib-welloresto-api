@@ -129,7 +129,7 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.Order, error) {
 	r.log.Info("GetOrder START", zap.String("order_id", orderID))
 
-	// Filtre strict sur l'ID
+	// Filtre strict sur l'MerchantID
 	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
 
 	orders, err := r.ordersFetcher.fetchAndBuildOrders(ctx, merchantID, filter)
@@ -146,7 +146,7 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req *models.OrderRequest) ([]models.Order, error) {
 	r.log.Info("GetOrder START", zap.String("merchant_id", merchantID))
 
-	// Filtre strict sur l'ID
+	// Filtre strict sur l'MerchantID
 	ids, err := r.GetOrdersBasic(ctx, merchantID, req)
 	if err != nil {
 		return nil, err
@@ -878,7 +878,7 @@ func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 	return blocked, rows.Err()
 }
 
-// upsertCustomer calls the customer repository to create/update the customer and returns numeric ID (nil if none)
+// upsertCustomer calls the customer repository to create/update the customer and returns numeric MerchantID (nil if none)
 func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
 	if req.Order.Customer == nil {
 		return nil, nil
@@ -910,7 +910,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
-	// We call it directly. It returns ID as string.
+	// We call it directly. It returns MerchantID as string.
 	custoRepo := NewCustomerRepository(s.db, s.log)
 	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
 	if err != nil {

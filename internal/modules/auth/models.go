@@ -21,7 +21,7 @@ type LoginRequestPayload struct {
 }
 
 type MerchantRow struct {
-	ID           string
+	MerchantID   string
 	FullName     string
 	BusinessName string
 	Lat          float64

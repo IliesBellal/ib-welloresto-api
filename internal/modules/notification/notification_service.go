@@ -91,7 +91,7 @@ func (s *NotificationService) sendWithoutPayload(
 			"token": token,
 			"notification": map[string]string{
 				"title": "Nouvelle commande reçue",
-				"body":  fmt.Sprintf("Vous avez une nouvelle commande. ID Commande : %d", orderID),
+				"body":  fmt.Sprintf("Vous avez une nouvelle commande. MerchantID Commande : %d", orderID),
 			},
 			"data": map[string]interface{}{
 				"type":        nType,

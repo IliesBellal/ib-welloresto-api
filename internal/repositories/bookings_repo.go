@@ -69,7 +69,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *models.Book
 		return "", fmt.Errorf("failed to update/create customer: %w", err)
 	}
 
-	// injecter l’ID dans la requête
+	// injecter l’MerchantID dans la requête
 	req.Customer.CustomerID = customerID
 
 	// 3️⃣ Check dates
