@@ -486,11 +486,12 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			bg = &c.Bg.String
 		}
 		productTypes = append(productTypes, models.ProductCategory{
-			Category:   c.Name,
-			CategoryID: c.ID,
-			Order:      c.Order,
-			BgColor:    bg,
-			Products:   actual,
+			Category:     c.Name,
+			CategoryName: c.Name,
+			CategoryID:   c.ID,
+			Order:        c.Order,
+			BgColor:      bg,
+			Products:     actual,
 		})
 	}
 

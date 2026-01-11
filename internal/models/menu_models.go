@@ -11,11 +11,12 @@ type MenuResponse struct {
 
 // product category (type)
 type ProductCategory struct {
-	Category   string         `json:"category"`
-	CategoryID *string        `json:"category_id"`
-	Order      int            `json:"order"`
-	BgColor    *string        `json:"bg_color,omitempty"`
-	Products   []ProductEntry `json:"products"`
+	Category     string         `json:"category"`
+	CategoryName string         `json:"category_name"`
+	CategoryID   *string        `json:"category_id"`
+	Order        int            `json:"order"`
+	BgColor      *string        `json:"bg_color,omitempty"`
+	Products     []ProductEntry `json:"products"`
 }
 
 // product
