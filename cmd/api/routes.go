@@ -145,6 +145,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	// --- AUTH ---
 	r.Route("/auth", func(r chi.Router) {
 		r.Get("/login", authH.Login)
+		r.Post("/login", authH.Login)
 	})
 
 	// --- USERS ---
