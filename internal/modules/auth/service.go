@@ -87,7 +87,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 			return nil, err
 		}
 	}
-	username = payload.Username + payload.Username
+	username = payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, encrypted, payload.Password, token)
 	if err != nil {
@@ -95,14 +95,14 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 	if user == nil {
 		return map[string]interface{}{
-			"status":  "user_not_found",
+			"status":  "user_not_found", // 0
 			"enabled": "no user found",
 		}, nil
 	}
 
 	if !user.Enabled {
 		return map[string]interface{}{
-			"status":  "3",
+			"status":  "account_disabled", //3
 			"enabled": "false",
 		}, nil
 	}
