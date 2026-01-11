@@ -147,7 +147,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	{
 		step := "products_roots"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image
@@ -175,7 +175,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var hasImage bool
 
 			if err := rows.Scan(
-				&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
+				&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
 				&availIn, &availTake, &availDel, &hasImage,
 			); err != nil {
@@ -225,7 +225,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	{
 		step := "sub_products"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
@@ -245,7 +245,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var tvaIn, tvaDel, tvaTake sql.NullFloat64
 			var bg sql.NullString
 			var desc sql.NullString
-			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
 				r.log.Error("sub_products scan failed", zap.Error(err))
 				return nil, err
 			}
@@ -477,7 +477,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	for _, c := range cats {
 		actual := []models.ProductEntry{}
 		for _, pid := range productOrder {
-			if p, ok := products[pid]; ok && p != nil && *p.Category == *c.ID {
+			if p, ok := products[pid]; ok && p != nil && *p.CategoryID == *c.ID {
 				actual = append(actual, *p)
 			}
 		}

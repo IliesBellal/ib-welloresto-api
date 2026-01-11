@@ -43,7 +43,8 @@ type ProductEntry struct {
 	AvailableIn                  bool                  `json:"available_in,omitempty"`
 	AvailableTakeAway            bool                  `json:"available_take_away,omitempty"`
 	AvailableDelivery            bool                  `json:"available_delivery,omitempty"`
-	Category                     *string               `json:"category"`
+	Category                     *string               `json:"category"` // To Be Deleted
+	CategoryID                   *string               `json:"category_id"`
 	IsProductGroup               bool                  `json:"is_product_group"`
 	BgColor                      *string               `json:"bg_color,omitempty"`
 	Status                       int                   `json:"status"`

@@ -528,6 +528,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 				Name:                         name.String,
 				ImageURL:                     nullStringToPtr(imageURL),
 				Category:                     nullStringToPtr(categName),
+				CategoryID:                   nullStringToPtr(categName),
 				Description:                  nullStringToPtr(productDesc),
 				Quantity:                     int(quantity.Int64),
 				PaidQuantity:                 int(paidQuantity.Int64),
