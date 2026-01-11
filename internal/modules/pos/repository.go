@@ -222,6 +222,35 @@ func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID
 	return res.RowsAffected()
 }
 
+func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]ConsumptionType, error) {
+
+	return []ConsumptionType{
+		{
+			ID:   1,
+			Name: "Sur Place",
+			Rates: []Rate{
+				{ID: 10, Value: 10, Label: "TVA 10%"},
+				{ID: 20, Value: 20, Label: "TVA 20%"},
+			},
+		},
+		{
+			ID:   2,
+			Name: "Emporter",
+			Rates: []Rate{
+				{ID: 5, Value: 5.5, Label: "TVA 5.5%"},
+				{ID: 10, Value: 10, Label: "TVA 10%"},
+			},
+		},
+		{
+			ID:   3,
+			Name: "Livraison",
+			Rates: []Rate{
+				{ID: 20, Value: 20, Label: "TVA 20%"},
+			},
+		},
+	}, nil
+}
+
 func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string, status string) (int64, error) {
 
 	res, err := r.db.ExecContext(ctx,

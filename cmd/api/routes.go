@@ -162,6 +162,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Get("/deletion_reasons/{object}", posH.GetDeletionReasons)
 		r.Get("/delivery_men", posH.GetDeliveryMen)
+		r.Get("/tva_rates", posH.GetTVARates)
 
 		r.Route("/settings", func(r chi.Router) {
 			r.Patch("/scannorder", posH.ToggleScanNOrder)

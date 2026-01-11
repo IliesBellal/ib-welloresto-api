@@ -67,6 +67,15 @@ func (s *POSService) ToggleProductionPaidOnly(ctx context.Context, token, status
 	return s.posRepo.ToggleProductionPaidOnly(ctx, user.MerchantID, status)
 }
 
+func (s *POSService) GetTVARates(ctx context.Context, token string) ([]ConsumptionType, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return nil, errors.New("invalid_token")
+	}
+
+	return s.posRepo.GetTVARates(ctx, user.MerchantID)
+}
+
 func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string) (int64, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {

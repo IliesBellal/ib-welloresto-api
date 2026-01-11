@@ -152,6 +152,24 @@ func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Req
 	}, 200)
 }
 
+func (h *POSHandler) GetTVARates(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+
+	updated, err := h.service.GetTVARates(ctx, token)
+	if err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	h.json(w, updated, 200)
+}
+
 func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

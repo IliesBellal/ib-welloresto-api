@@ -42,3 +42,15 @@ type DeliveryMan struct {
 type DeliveryMenResponse struct {
 	Users []DeliveryMan `json:"users"`
 }
+
+type Rate struct {
+	ID    int     `json:"id"`
+	Value float64 `json:"value"`
+	Label string  `json:"label"`
+}
+
+type ConsumptionType struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Rates []Rate `json:"rates"`
+}
