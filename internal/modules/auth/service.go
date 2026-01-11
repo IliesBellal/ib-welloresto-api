@@ -95,7 +95,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 	if user == nil {
 		return map[string]interface{}{
-			"status":  "0",
+			"status":  "user_not_found",
 			"enabled": "no user found",
 		}, nil
 	}
@@ -150,14 +150,18 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"admin":                 user.Admin,
 
 		"merchantId":                          user.MerchantID,
+		"merchant_id":                         user.MerchantID,
 		"merchantName":                        user.MerchantName,
+		"business_name":                       user.MerchantName,
 		"merchantTel":                         user.MerchantTel,
+		"merchant_tel":                        user.MerchantTel,
 		"delivery_fees":                       user.DeliveryFees,
 		"delivery_fees_limit":                 user.DeliveryFeesLimit,
 		"kitchen_show_only_paid":              user.KitchenShowOnlyPaid,
 		"allow_waiter_account":                user.AllowWaiterAccount,
 		"print_merchant_cash_report":          user.PrintMerchantCashReport,
 		"merchantAd":                          user.MerchantAddress,
+		"merchant_address":                    user.MerchantAddress,
 		"merchant_lat":                        user.MerchantLat,
 		"delivery_distance_limit":             user.DeliveryDistanceLimit,
 		"kitchen_distribution_mode":           user.KitchenDistributionMode,
@@ -166,7 +170,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"cash_register_required_for_ordering": user.CashRegisterRequiredForOrdering,
 		"merchant_lng":                        user.MerchantLng,
 		"timezone":                            user.TimeZone,
-		"merchantLogo":                        user.MerchantLogo.String,
+		//"merchantLogo":                        user.MerchantLogo.String,
 
 		"SNOSettings": map[string]interface{}{
 			"activated": user.SNOActivated,
