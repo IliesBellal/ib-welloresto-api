@@ -289,6 +289,7 @@ func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]Mer
 SELECT 
     m.id,
     m.fullName,
+    m.fullName,
     m.lat,
     m.lng,
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
@@ -309,7 +310,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 	var list []MerchantRow
 	for rows.Next() {
 		var m MerchantRow
-		rows.Scan(&m.ID, &m.FullName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode)
+		rows.Scan(&m.ID, &m.FullName, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode)
 		list = append(list, m)
 	}
 	return list, nil

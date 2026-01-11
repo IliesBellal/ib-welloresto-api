@@ -21,14 +21,15 @@ type LoginRequestPayload struct {
 }
 
 type MerchantRow struct {
-	ID       string
-	FullName string
-	Lat      float64
-	Lng      float64
-	Address  string
-	City     string
-	Country  string
-	ZipCode  string
+	ID           string
+	FullName     string
+	BusinessName string
+	Lat          float64
+	Lng          float64
+	Address      string
+	City         string
+	Country      string
+	ZipCode      string
 }
 
 type UserLoginRow struct {
