@@ -20,6 +20,10 @@ func NewMenuRepository(db *sql.DB, log *zap.Logger) *MenuRepository {
 	return &MenuRepository{db: db, log: log}
 }
 
+func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (*models.MenuResponse, error) {
+	return nil, nil
+
+}
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	startTotal := time.Now()
 	r.log.Info("GetMenu START", zap.String("merchant_id", merchantID), zap.Time("start_at", startTotal))

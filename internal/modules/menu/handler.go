@@ -63,6 +63,24 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *MenuHandler) GetAttributes(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+
+	updated, err := h.service.GetAttributes(ctx, token)
+	if err != nil {
+		h.errorJSON(w, err)
+		return
+	}
+
+	h.json(w, updated, 200)
+}
+
 func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
