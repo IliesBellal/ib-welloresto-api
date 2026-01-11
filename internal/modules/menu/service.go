@@ -34,6 +34,18 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
+func (s *MenuService) GetUnitsOfMeasures(ctx context.Context, token string) (interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.legacy.GetUnitsOfMeasures(ctx, user.MerchantID)
+}
+
 func (s *MenuService) GetAttributes(ctx context.Context, token string) (interface{}, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
@@ -43,7 +55,6 @@ func (s *MenuService) GetAttributes(ctx context.Context, token string) (interfac
 		return nil, errors.New("invalid token")
 	}
 
-	log.Printf("MenuRepository: using LEGACY mode")
 	return s.legacy.GetAttributes(ctx, user.MerchantID)
 }
 

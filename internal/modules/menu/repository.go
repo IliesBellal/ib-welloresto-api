@@ -20,10 +20,44 @@ func NewMenuRepository(db *sql.DB, log *zap.Logger) *MenuRepository {
 	return &MenuRepository{db: db, log: log}
 }
 
-func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (*models.MenuResponse, error) {
-	return nil, nil
-
+func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID string) ([]Unit, error) {
+	return []Unit{
+		{ID: 10, Name: "Grammes (g)", CompatibleWith: []string{"10", "11", "12"}},
+		{ID: 11, Name: "Kilogrammes (kg)", CompatibleWith: []string{"10", "11", "12"}},
+		{ID: 12, Name: "Milligrammes (mg)", CompatibleWith: []string{"10", "11", "12"}},
+		{ID: 20, Name: "Litres (L)", CompatibleWith: []string{"20", "21"}},
+		{ID: 21, Name: "Centilitres (cL)", CompatibleWith: []string{"20", "21"}},
+	}, nil
 }
+
+func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) ([]Attribute, error) {
+	return []Attribute{
+		{
+			ID:    "attr_1",
+			Title: "Taille Pizza",
+			Type:  "CHECK",
+			Min:   1,
+			Max:   1,
+			Options: []AttributeOption{
+				{ID: "opt_1", Title: "Junior", Price: 0},
+				{ID: "opt_2", Title: "Senior", Price: 200},
+				{ID: "opt_3", Title: "Mega", Price: 500},
+			},
+		},
+		{
+			ID:    "attr_2",
+			Title: "Suppléments",
+			Type:  "CHECK",
+			Min:   0,
+			Max:   5,
+			Options: []AttributeOption{
+				{ID: "opt_4", Title: "Olive", Price: 50},
+				{ID: "opt_5", Title: "Oeuf", Price: 100},
+			},
+		},
+	}, nil
+}
+
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	startTotal := time.Now()
 	r.log.Info("GetMenu START", zap.String("merchant_id", merchantID), zap.Time("start_at", startTotal))

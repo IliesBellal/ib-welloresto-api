@@ -158,3 +158,25 @@ type AvailabilityResponse struct {
 	Status  string `json:"status"`
 	Updated int64  `json:"updated"`
 }
+
+type Unit struct {
+	ID             int      `json:"id"`
+	Name           string   `json:"name"`
+	CompatibleWith []string `json:"compatible_with"`
+}
+
+// Temporaire, à remplacer par les vraies struct
+type AttributeOption struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Price int    `json:"price"`
+}
+
+type Attribute struct {
+	ID      string            `json:"id"`
+	Title   string            `json:"title"`
+	Type    string            `json:"type"`
+	Min     int               `json:"min"`
+	Max     int               `json:"max"`
+	Options []AttributeOption `json:"options"`
+}
