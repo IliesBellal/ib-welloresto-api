@@ -200,7 +200,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
 		r.Get("/attributes", menuH.GetAttributes)
-		r.Get("/attributes", menuH.GetUnitsOfMeasures)
+		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 	})
 
 	// --- LOCATIONS ---
