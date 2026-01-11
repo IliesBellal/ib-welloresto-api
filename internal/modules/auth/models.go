@@ -21,15 +21,16 @@ type LoginRequestPayload struct {
 }
 
 type MerchantRow struct {
-	MerchantID   string
+	MerchantID   string `json:"merchant_id"`
 	FullName     string
-	BusinessName string
+	BusinessName string `json:"business_name"`
 	Lat          float64
 	Lng          float64
 	Address      string
 	City         string
 	Country      string
 	ZipCode      string
+	Token        string `json:"token"`
 }
 
 type UserLoginRow struct {

@@ -295,7 +295,8 @@ SELECT
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.city,
     m.country,
-    m.zip_code
+    m.zip_code,
+    ur.token
 FROM merchant m
 INNER JOIN users_rights ur ON ur.merchant_id = m.id
 WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
@@ -310,7 +311,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 	var list []MerchantRow
 	for rows.Next() {
 		var m MerchantRow
-		rows.Scan(&m.MerchantID, &m.FullName, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode)
+		rows.Scan(&m.MerchantID, &m.FullName, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.Token)
 		list = append(list, m)
 	}
 	return list, nil
