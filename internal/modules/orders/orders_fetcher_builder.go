@@ -25,7 +25,7 @@ func NewOrdersFetcher(db *sql.DB, log *zap.Logger) *OrdersFetcher {
 
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
 	startTotal := time.Now()
-	r.log.Info("fetchAndBuildOrders START", zap.String("merchant_id", merchantID))
+	r.log.Info("fetchAndBuildOrders START with filters "+additionalFilter, zap.String("merchant_id", merchantID))
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
@@ -573,7 +573,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
 		}
-		r.log.Info("products loaded " + additionalFilter)
+		r.log.Info("products loaded")
 	}
 
 	// --- 1. HEADER ---
