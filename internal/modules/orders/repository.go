@@ -3,7 +3,6 @@ package orders
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -303,66 +302,92 @@ func (r *OrdersRepository) GetHistory(
 
 	r.log.Info("GetHistory START", zap.String("merchant_id", merchantID))
 
-	var whereFilters string
-	var orderByFilters string
-	var limitFilters string
+	// =========================
+	// 1️⃣ BUILD WHERE + ARGS
+	// =========================
+	where := " WHERE o.merchant_id = ? AND o.state = 'CLOSED' "
+	args := []interface{}{merchantID}
 
-	// =========================
-	// 1️⃣ WHERE – MODE DATE
-	// =========================
 	if req.DateFrom != nil && req.DateTo != nil {
-		whereFilters += fmt.Sprintf(
-			" AND o.state = 'CLOSED' AND o.creation_date BETWEEN '%s' AND '%s' ",
-			*req.DateFrom,
-			*req.DateTo,
-		)
+		where += " AND o.creation_date BETWEEN ? AND ? "
+		args = append(args, *req.DateFrom, *req.DateTo)
 	}
 
 	// =========================
-	// 2️⃣ LIMIT / OFFSET – PAGINATION
+	// 2️⃣ PAGINATION (IDS ONLY)
 	// =========================
-	if req.Page != nil {
-		limit := 20
-		if req.Limit != nil && *req.Limit > 0 {
-			limit = *req.Limit
+	limit := 20
+	if req.Limit != nil && *req.Limit > 0 {
+		limit = *req.Limit
+	}
+
+	page := 1
+	if req.Page != nil && *req.Page > 0 {
+		page = *req.Page
+	}
+
+	offset := (page - 1) * limit
+
+	// =========================
+	// 3️⃣ FETCH ORDER IDS
+	// =========================
+	query := `
+		SELECT o.order_id
+		FROM orders o
+	` + where + `
+		ORDER BY o.creation_date DESC
+		LIMIT ? OFFSET ?
+	`
+
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orderIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		orderIDs = append(orderIDs, id)
+	}
 
-		page := *req.Page
-		if page < 1 {
-			page = 1
-		}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		offset := (page - 1) * limit
-
-		limitFilters = fmt.Sprintf(" LIMIT %d OFFSET %d ", limit, offset)
-
-		// sécurité : pagination sans filtre date
-		if whereFilters == "" {
-			whereFilters = " AND o.state = 'CLOSED' "
-		}
+	if len(orderIDs) == 0 {
+		return []models.Order{}, nil
 	}
 
 	// =========================
-	// 3️⃣ VALIDATION
+	// 4️⃣ BUILD IN (...) FILTER
 	// =========================
-	if whereFilters == "" && limitFilters == "" {
-		return nil, errors.New("either date range or pagination must be provided")
+	var inParts []string
+	for _, id := range orderIDs {
+		inParts = append(inParts, fmt.Sprintf("'%s'", id))
 	}
 
-	// =========================
-	// 4️⃣ ORDER BY – TOUJOURS
-	// =========================
-	orderByFilters = " ORDER BY o.creation_date DESC "
+	whereFilter := fmt.Sprintf(
+		" AND o.order_id IN (%s) ",
+		strings.Join(inParts, ","),
+	)
+
+	orderBy := " ORDER BY o.creation_date DESC "
 
 	// =========================
-	// 5️⃣ FETCH
+	// 5️⃣ FETCH FULL ORDERS
 	// =========================
 	return r.ordersFetcher.FetchAndBuildOrders(
 		ctx,
 		merchantID,
-		whereFilters,
-		orderByFilters,
-		limitFilters,
+		whereFilter,
+		orderBy,
+		"",
 	)
 }
 

@@ -23,7 +23,7 @@ func NewOrdersFetcher(db *sql.DB, log *zap.Logger) *OrdersFetcher {
 		log: log}
 }
 
-func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, ordersFilter, limitsFilters string) ([]models.Order, error) {
+func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, orderByFilter, limitsFilters string) ([]models.Order, error) {
 	startTotal := time.Now()
 	r.log.Info("fetchAndBuildOrders START with filters "+whereFilters, zap.String("merchant_id", merchantID))
 
@@ -229,7 +229,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orders o ON o.order_id = oi.order_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE oi.merchant_id = ? ` + whereFilters + " " + ordersFilter
+		WHERE oi.merchant_id = ? ` + whereFilters + " " + orderByFilter
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -594,7 +594,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
-		WHERE o.merchant_id = ? ` + whereFilters + " " + ordersFilter + " " + limitsFilters
+		WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
