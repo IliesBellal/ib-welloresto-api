@@ -300,6 +300,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	r.log.Info("GetHistory START", zap.String("merchant_id", merchantID))
 
 	var filter string
+	var orderBy string
 	var pagination string
 
 	// =========================
@@ -331,7 +332,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 		pagination = fmt.Sprintf(" LIMIT %d OFFSET %d ", limit, offset)
 
-		// sécurité : si pagination sans filtre date
+		// sécurité : pagination sans filtre date
 		if filter == "" {
 			filter = " AND o.state = 'CLOSED' "
 		}
@@ -345,9 +346,14 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	}
 
 	// =========================
-	// 4️⃣ FETCH
+	// 4️⃣ ORDER BY (TOUJOURS)
 	// =========================
-	finalFilter := filter + pagination
+	orderBy = " ORDER BY o.creation_date DESC "
+
+	// =========================
+	// 5️⃣ FETCH
+	// =========================
+	finalFilter := filter + orderBy + pagination
 
 	return r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, finalFilter)
 }
