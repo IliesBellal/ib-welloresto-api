@@ -213,7 +213,7 @@ SELECT
     ind.location_id
 
 FROM users u
-INNER JOIN users_rights ur ON ur.id = u.access_id
+INNER JOIN users_rights ur ON ur.user_id = u.user_id
 INNER JOIN merchant m ON m.id = ur.merchant_id
 LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
 LEFT JOIN subscriptions s ON s.merchant_id = m.id
