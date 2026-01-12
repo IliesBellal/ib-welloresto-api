@@ -94,6 +94,7 @@ type Order struct {
 	OrderID           string         `json:"order_id"`
 	OrderNum          *string        `json:"order_num"`
 	DeliverySessionID *string        `json:"delivery_session_id"`
+	DeliveryPriority  *int           `json:"delivery_priority"`
 	Brand             *string        `json:"brand"`
 	BrandOrderID      *string        `json:"brand_order_id"`
 	BrandOrderNum     *string        `json:"brand_order_num"`

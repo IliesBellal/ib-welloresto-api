@@ -576,59 +576,155 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		r.log.Info("products loaded")
 	}
 
-	// --- 1. HEADER ---
-	// On injecte 'whereFilters' qui contient soit "state='OPEN'" soit "order_id=X"
+	// =====================================================
+	// TEMP DELIVERY SESSIONS (AVANT HEADER)
+	// =====================================================
+	type deliverySessionTmp struct {
+		SessionID string
+		Priority  *int
+	}
+
+	deliverySessionsByOrderID := make(map[string]deliverySessionTmp)
+
+	{
+		step := "delivery_sessions_tmp"
+
+		q := `
+	SELECT
+		dso.order_id,
+		ds.id AS delivery_session_id,
+		dso.priority
+	FROM delivery_session_order dso
+	INNER JOIN delivery_session ds
+		ON ds.id = dso.delivery_session_id
+		AND ds.status IN ('1','PENDING')
+	`
+
+		rows, err := runQuery(step, q)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var orderID string
+			var sessionID sql.NullString
+			var priority sql.NullInt64
+
+			if err := rows.Scan(&orderID, &sessionID, &priority); err != nil {
+				return nil, err
+			}
+
+			if sessionID.Valid {
+				var p *int
+				if priority.Valid {
+					v := int(priority.Int64)
+					p = &v
+				}
+
+				deliverySessionsByOrderID[orderID] = deliverySessionTmp{
+					SessionID: sessionID.String,
+					Priority:  p,
+				}
+			}
+		}
+	}
+
+	// =====================================================
+	// HEADER ORDERS
+	// =====================================================
 	var orders []models.Order
 	{
 		step := "header"
 		q := `
-		SELECT o.order_id, o.order_num, o.order_type, o.state, o.scheduled, o.brand, o.brand_status, o.brand_order_id, o.brand_order_num, o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT, o.monnaie, o.cutlery_notes,
-		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery, o.merchant_approval, o.delivery_fees, o.last_update, o.fulfillment_type, o.use_customer_temporary_address, o.creation_date, o.places_settings, o.pager_number,
-		c.customer_id, c.customer_name, c.customer_tel, c.customer_lat, c.customer_lng, c.customer_temporary_phone, c.customer_temporary_phone_code, c.customer_nb_orders, c.customer_zone_code,
-		c.customer_address, c.customer_floor_number, c.customer_door_number, c.customer_additional_address, c.customer_business_name, c.customer_birthdate, c.customer_additional_info,
-		c.customer_temporary_address, c.customer_temporary_lat, c.customer_temporary_lng, c.customer_temporary_floor_number, c.customer_temporary_door_number, c.customer_temporary_additional_address,
-		u.user_id, u.lat, u.lng, u.tel as deliveryTel, u.userName,
-		ds.id as delivery_session_id, dso.priority
-		FROM orders o
-		LEFT JOIN customer c ON o.customer_id = c.customer_id
-		LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
-		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
-		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
-		WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
+	SELECT
+		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
+		o.brand, o.brand_status, o.brand_order_id, o.brand_order_num,
+		o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT,
+		o.monnaie, o.cutlery_notes,
+		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery,
+		o.merchant_approval, o.delivery_fees, o.last_update,
+		o.fulfillment_type, o.use_customer_temporary_address,
+		o.creation_date, o.places_settings, o.pager_number,
+
+		c.customer_id, c.customer_name, c.customer_tel,
+		c.customer_lat, c.customer_lng,
+		c.customer_temporary_phone, c.customer_temporary_phone_code,
+		c.customer_nb_orders, c.customer_zone_code,
+		c.customer_address, c.customer_floor_number,
+		c.customer_door_number, c.customer_additional_address,
+		c.customer_business_name, c.customer_birthdate,
+		c.customer_additional_info,
+		c.customer_temporary_address, c.customer_temporary_lat,
+		c.customer_temporary_lng, c.customer_temporary_floor_number,
+		c.customer_temporary_door_number,
+		c.customer_temporary_additional_address,
+
+		u.user_id, u.lat, u.lng, u.tel AS deliveryTel, u.userName
+	FROM orders o
+	LEFT JOIN customer c ON o.customer_id = c.customer_id
+	LEFT JOIN users u ON o.responsible = u.user_id
+		AND o.merchant_id = u.merchant_id
+	WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
+
 		for rows.Next() {
 			var ord models.Order
-			var customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
-			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
-			var customerLat, customerLng, customerTemporaryLat, customerTemporaryLng, userLat, userLng sql.NullFloat64
+
+			var customerNbOrders, isDelivery, useCustomerTemporaryAddress,
+				price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
+
+			var customerID, orderID, orderNum, orderType, state,
+				brand, brandStatus, brandOrderID, brandOrderNum,
+				meansOfPayment, monnaie, cutleryNotes, dateCall,
+				fulfillmentType, pagerNumber, merchantApproval, userID sql.NullString
+
+			var customerLat, customerLng, customerTemporaryLat,
+				customerTemporaryLng, userLat, userLng sql.NullFloat64
+
 			var lastUpdate, creationDate, estimatedReady sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
-			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode, cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth, cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
+
+			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
+				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
+				cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
+
 			var delTel, delUserName sql.NullString
 
-			if err := rows.Scan(&orderID, &orderNum, &orderType, &state, &scheduled, &brand, &brandStatus, &brandOrderID, &brandOrderNum, &estimatedReady, &meansOfPayment, &price, &TVA, &HT, &monnaie, &cutleryNotes,
-				&isPaid, &isDistributed, &dateCall, &isDelivery, &merchantApproval, &deliveryFees, &lastUpdate, &fulfillmentType, &useCustomerTemporaryAddress, &creationDate, &placesSettings, &pagerNumber,
-				&customerID, &cName, &cTel, &customerLat, &customerLng, &cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
-				&cAddr, &cFloor, &cDoor, &cAddAddr, &cBusName, &cBirth, &cInfo,
-				&cTempAddr, &customerTemporaryLat, &customerTemporaryLng, &cTempFloor, &cTempDoor, &cTempAddAddr,
+			if err := rows.Scan(
+				&orderID, &orderNum, &orderType, &state, &scheduled,
+				&brand, &brandStatus, &brandOrderID, &brandOrderNum,
+				&estimatedReady, &meansOfPayment, &price, &TVA, &HT,
+				&monnaie, &cutleryNotes,
+				&isPaid, &isDistributed, &dateCall, &isDelivery,
+				&merchantApproval, &deliveryFees, &lastUpdate,
+				&fulfillmentType, &useCustomerTemporaryAddress,
+				&creationDate, &placesSettings, &pagerNumber,
+
+				&customerID, &cName, &cTel, &customerLat, &customerLng,
+				&cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
+				&cAddr, &cFloor, &cDoor, &cAddAddr, &cBusName, &cBirth,
+				&cInfo,
+				&cTempAddr, &customerTemporaryLat, &customerTemporaryLng,
+				&cTempFloor, &cTempDoor, &cTempAddAddr,
+
 				&userID, &userLat, &userLng, &delTel, &delUserName,
-				&deliverySessionID, &priority); err != nil {
+			); err != nil {
 				return nil, err
 			}
 
-			// --- Mapping Fields ---
+			// --- Mapping Order ---
 			ord.OrderID = orderID.String
 			ord.OrderNum = helpers.NullStringToPtr(orderNum)
 			ord.Brand = helpers.NullStringToPtr(brand)
 			ord.BrandOrderID = helpers.NullStringToPtr(brandOrderID)
 			ord.BrandOrderNum = helpers.NullStringToPtr(brandOrderNum)
 			ord.BrandStatus = helpers.NullStringToPtr(brandStatus)
-			ord.DeliverySessionID = &deliverySessionID.String
 			ord.OrderType = helpers.NullStringToPtr(orderType)
 			ord.CutleryNotes = helpers.NullStringToPtr(cutleryNotes)
 			ord.State = helpers.NullStringToPtr(state)
@@ -649,6 +745,14 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.CreationDate = helpers.NullTimePtr(creationDate).UTC().Unix()
 			ord.FulfillmentType = helpers.NullStringToPtr(fulfillmentType)
 			ord.LastUpdate = helpers.NullTimePtr(lastUpdate).UTC().Unix()
+
+			// --- Delivery Session (ASSOCIATION TEMPORAIRE) ---
+			if ds, ok := deliverySessionsByOrderID[orderID.String]; ok {
+				ord.DeliverySessionID = &ds.SessionID
+				if ds.Priority != nil {
+					ord.DeliveryPriority = ds.Priority
+				}
+			}
 
 			// --- Customer ---
 			if customerID.Valid {
@@ -681,18 +785,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ord.Customer = &cust
 			}
 
-			// --- Responsible (Delivery Man info on Order) ---
-			if userID.Valid && userID.String != "0" && false {
-				ord.Responsible = &models.OrderUser{
-					UserID:    userID.String,
-					Lat:       helpers.NullFloat64Ptr(userLat),
-					Lng:       helpers.NullFloat64Ptr(userLng),
-					FirstName: &delUserName.String, // Assuming userName contains name
-					// Phone etc not explicitly selected in header join for u.*, assumed ok
-				}
-			}
-
-			// Attach Children
+			// --- Attach Children ---
 			if prods, ok := productsByOrderID[orderID.String]; ok {
 				ord.Products = prods
 			} else {
@@ -716,12 +809,15 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			orders = append(orders, ord)
 		}
+
 		r.log.Info("header loaded")
 	}
 
 	r.log.Info(
 		"fetchAndBuildOrders END",
 		zap.Int("orders_count", len(orders)),
-		zap.Duration("total_duration", time.Since(startTotal)))
+		zap.Duration("total_duration", time.Since(startTotal)),
+	)
+
 	return orders, nil
 }
