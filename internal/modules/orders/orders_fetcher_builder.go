@@ -594,11 +594,10 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		dso.order_id,
 		ds.id AS delivery_session_id,
 		dso.priority
-	FROM delivery_session_order dso
-	INNER JOIN delivery_session ds
-		ON ds.id = dso.delivery_session_id
-		AND ds.status IN ('1','PENDING')
-	`
+	FROM orders o 
+	INNER JOIN delivery_session_order dso on o.order_id = dso.order_id
+	INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+	WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q)
 		if err != nil {
