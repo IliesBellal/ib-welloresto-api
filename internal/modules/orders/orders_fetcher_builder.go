@@ -573,7 +573,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
 		}
-		r.log.Info("products loaded")
+		r.log.Info("products loaded " + additionalFilter)
 	}
 
 	// --- 1. HEADER ---
