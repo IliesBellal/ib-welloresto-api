@@ -642,7 +642,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "-1"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
-			ord.EstimatedReady = helpers.NullTimePtr(estimatedReady).UTC().Unix()
+			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
 			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
