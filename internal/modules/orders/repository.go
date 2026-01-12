@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -295,15 +296,60 @@ func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, or
 }
 
 func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
+
 	r.log.Info("GetHistory START", zap.String("merchant_id", merchantID))
 
-	filter := fmt.Sprintf(
-		" AND o.state = 'CLOSED' "+
-			"AND o.creation_date BETWEEN '%s' AND '%s' ",
-		req.DateFrom, req.DateTo,
-	)
+	var filter string
+	var pagination string
 
-	return r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter)
+	// =========================
+	// 1️⃣ MODE DATE
+	// =========================
+	if req.DateFrom != nil && req.DateTo != nil {
+		filter += fmt.Sprintf(
+			" AND o.state = 'CLOSED' AND o.creation_date BETWEEN '%s' AND '%s' ",
+			*req.DateFrom,
+			*req.DateTo,
+		)
+	}
+
+	// =========================
+	// 2️⃣ MODE PAGINATION
+	// =========================
+	if req.Page != nil {
+		limit := 20
+		if req.Limit != nil && *req.Limit > 0 {
+			limit = *req.Limit
+		}
+
+		page := *req.Page
+		if page < 1 {
+			page = 1
+		}
+
+		offset := (page - 1) * limit
+
+		pagination = fmt.Sprintf(" LIMIT %d OFFSET %d ", limit, offset)
+
+		// sécurité : si pagination sans filtre date
+		if filter == "" {
+			filter = " AND o.state = 'CLOSED' "
+		}
+	}
+
+	// =========================
+	// 3️⃣ VALIDATION
+	// =========================
+	if filter == "" && pagination == "" {
+		return nil, errors.New("either date range or pagination must be provided")
+	}
+
+	// =========================
+	// 4️⃣ FETCH
+	// =========================
+	finalFilter := filter + pagination
+
+	return r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, finalFilter)
 }
 
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
