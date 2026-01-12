@@ -23,9 +23,9 @@ func NewOrdersFetcher(db *sql.DB, log *zap.Logger) *OrdersFetcher {
 		log: log}
 }
 
-func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, additionalFilter string) ([]models.Order, error) {
+func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, ordersFilter, limitsFilters string) ([]models.Order, error) {
 	startTotal := time.Now()
-	r.log.Info("fetchAndBuildOrders START with filters "+additionalFilter, zap.String("merchant_id", merchantID))
+	r.log.Info("fetchAndBuildOrders START with filters "+whereFilters, zap.String("merchant_id", merchantID))
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
@@ -85,7 +85,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN locations l on l.merchant_id = o.merchant_id and l.location_id = ol.location_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -154,7 +154,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN components ce on e.component_id = ce.component_id and ce.merchant_id = o.merchant_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -192,7 +192,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN components cw on w.component_id = cw.component_id and cw.merchant_id = o.merchant_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -229,7 +229,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orders o ON o.order_id = oi.order_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE oi.merchant_id = ? ` + additionalFilter
+		WHERE oi.merchant_id = ? ` + whereFilters + " " + ordersFilter
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -269,7 +269,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -311,7 +311,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -354,7 +354,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		left join users u on u.user_id = oc.user_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? and oc.order_item_id is null ` + additionalFilter
+		WHERE o.merchant_id = ? and oc.order_item_id is null ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -396,7 +396,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orders o on o.order_id = p.order_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -452,7 +452,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE oi.quantity > 0 AND o.merchant_id = ? ` + additionalFilter
+		WHERE oi.quantity > 0 AND o.merchant_id = ? ` + whereFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -577,7 +577,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	}
 
 	// --- 1. HEADER ---
-	// On injecte 'additionalFilter' qui contient soit "state='OPEN'" soit "order_id=X"
+	// On injecte 'whereFilters' qui contient soit "state='OPEN'" soit "order_id=X"
 	var orders []models.Order
 	{
 		step := "header"
@@ -594,7 +594,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
 		LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
-		WHERE o.merchant_id = ? ` + additionalFilter
+		WHERE o.merchant_id = ? ` + whereFilters + " " + ordersFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {

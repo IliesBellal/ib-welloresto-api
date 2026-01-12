@@ -104,7 +104,7 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 	// Le filtre magique qui va rendre les 11 requêtes suivantes instantanées
 	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
 
-	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filterOptimized)
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filterOptimized, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 	// Filtre strict sur l'MerchantID
 	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
 
-	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter)
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req
 
 	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", in)
 
-	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter)
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -295,19 +295,23 @@ func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, or
 	return nil
 }
 
-func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
+func (r *OrdersRepository) GetHistory(
+	ctx context.Context,
+	merchantID string,
+	req models.OrderHistoryRequest,
+) ([]models.Order, error) {
 
 	r.log.Info("GetHistory START", zap.String("merchant_id", merchantID))
 
-	var filter string
-	var orderBy string
-	var pagination string
+	var whereFilters string
+	var orderByFilters string
+	var limitFilters string
 
 	// =========================
-	// 1️⃣ MODE DATE
+	// 1️⃣ WHERE – MODE DATE
 	// =========================
 	if req.DateFrom != nil && req.DateTo != nil {
-		filter += fmt.Sprintf(
+		whereFilters += fmt.Sprintf(
 			" AND o.state = 'CLOSED' AND o.creation_date BETWEEN '%s' AND '%s' ",
 			*req.DateFrom,
 			*req.DateTo,
@@ -315,7 +319,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	}
 
 	// =========================
-	// 2️⃣ MODE PAGINATION
+	// 2️⃣ LIMIT / OFFSET – PAGINATION
 	// =========================
 	if req.Page != nil {
 		limit := 20
@@ -330,32 +334,36 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 		offset := (page - 1) * limit
 
-		pagination = fmt.Sprintf(" LIMIT %d OFFSET %d ", limit, offset)
+		limitFilters = fmt.Sprintf(" LIMIT %d OFFSET %d ", limit, offset)
 
 		// sécurité : pagination sans filtre date
-		if filter == "" {
-			filter = " AND o.state = 'CLOSED' "
+		if whereFilters == "" {
+			whereFilters = " AND o.state = 'CLOSED' "
 		}
 	}
 
 	// =========================
 	// 3️⃣ VALIDATION
 	// =========================
-	if filter == "" && pagination == "" {
+	if whereFilters == "" && limitFilters == "" {
 		return nil, errors.New("either date range or pagination must be provided")
 	}
 
 	// =========================
-	// 4️⃣ ORDER BY (TOUJOURS)
+	// 4️⃣ ORDER BY – TOUJOURS
 	// =========================
-	orderBy = " ORDER BY o.creation_date DESC "
+	orderByFilters = " ORDER BY o.creation_date DESC "
 
 	// =========================
 	// 5️⃣ FETCH
 	// =========================
-	finalFilter := filter + orderBy + pagination
-
-	return r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, finalFilter)
+	return r.ordersFetcher.FetchAndBuildOrders(
+		ctx,
+		merchantID,
+		whereFilters,
+		orderByFilters,
+		limitFilters,
+	)
 }
 
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {

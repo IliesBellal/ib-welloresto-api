@@ -88,7 +88,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", ordersFilter)
 
 	// 4. On appelle le monstre partagé avec ce filtre optimisé
-	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter)
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +526,7 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 
 	for _, oid := range orderIDs {
 		filter := fmt.Sprintf(" AND o.order_id = '%s' ", oid)
-		orders, err := r.ordersFetcher.FetchAndBuildOrders(context.Background(), merchantID, filter)
+		orders, err := r.ordersFetcher.FetchAndBuildOrders(context.Background(), merchantID, filter, "", "")
 		if err != nil {
 			return nil, err
 		}
