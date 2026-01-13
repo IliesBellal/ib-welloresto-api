@@ -7,7 +7,7 @@ func CORSMiddleware() *cors.Cors {
 		AllowedOrigins: []string{
 			"https://mywelloresto.welloresto.fr",
 			"https://wello-back-office.onrender.com",
-			"https://id-preview--d97a501b-ebd7-46a4-9288-bca03030e30f.lovable.app",
+			"*.lovable.app",
 			"http://localhost:8080",
 		},
 
