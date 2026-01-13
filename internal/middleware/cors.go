@@ -8,6 +8,7 @@ func CORSMiddleware() *cors.Cors {
 			"https://mywelloresto.welloresto.fr",
 			"https://wello-back-office.onrender.com",
 			"*.lovable.app",
+			"*.lovableproject.com",
 			"http://localhost:8080",
 		},
 
