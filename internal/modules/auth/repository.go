@@ -94,7 +94,7 @@ LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_tok
 LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
 LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
-WHERE ur.token = ? OR u.token = ?
+WHERE ur.token = ? -- OR u.token = ?
 LIMIT 1;
 `
 

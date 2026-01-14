@@ -18,6 +18,8 @@ type LoginRequestPayload struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Email    string `json:"email"`
+	NFC      string `json:"nfc"`
+	PIN      string `json:"pin"`
 	// Use only Username or Email, one field will be removed as we will get rid of username and use only email for login
 	// Or keep Username if it is better for evolving
 }

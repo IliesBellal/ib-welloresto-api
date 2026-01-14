@@ -80,25 +80,12 @@ func (h *AuthHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Retrieve token (Authorization + fallback "?token=")
-	auth := r.Header.Get("Authorization")
-	var token string
-
-	if strings.HasPrefix(auth, "Bearer ") {
-		token = strings.TrimPrefix(auth, "Bearer ")
-	}
-
-	if token == "" {
-		// temporary backward compatibility
-		token = r.URL.Query().Get("token")
-	}
-
-	if token == "" {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
 		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
 		return
 	}
+	ctx := r.Context()
 
 	var req SaveDeviceTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
