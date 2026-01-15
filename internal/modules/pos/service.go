@@ -208,13 +208,6 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 		return nil, errors.New("invalid token")
 	}
 
-	return &models.MerchantSettingsResponse{
-		Merchant:   nil,
-		Parameters: nil,
-		Marketing:  nil,
-		Scannorder: nil,
-	}, nil
-
 	m, params, marketing, scann, err := s.posRepo.GetMerchantSettings(ctx, user.MerchantID)
 	if err != nil {
 		return nil, err

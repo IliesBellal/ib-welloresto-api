@@ -288,6 +288,8 @@ func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+	return
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
 		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
