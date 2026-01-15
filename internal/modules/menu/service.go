@@ -34,6 +34,36 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
+func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*ProductEntry, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	req.MerchantID = user.MerchantID
+	productID, err := s.legacy.CreateProduct(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
+}
+
+func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) (*ProductEntry, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	return s.legacy.GetProduct(ctx, user.MerchantID, product_id)
+}
+
 func (s *MenuService) GetUnitsOfMeasures(ctx context.Context, token string) (interface{}, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

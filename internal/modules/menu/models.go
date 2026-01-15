@@ -28,6 +28,7 @@ type ProductEntry struct {
 	OrderID                      string                `json:"order_id,omitempty"`
 	OrderItemID                  string                `json:"order_item_id"`
 	ProductID                    string                `json:"product_id"`
+	MerchantID                   *string               `json:"merchantID"`
 	OrderedOn                    *time.Time            `json:"ordered_on,omitempty"`
 	ProductionStatus             string                `json:"production_status,omitempty"`
 	ProductionStatusDoneQuantity int                   `json:"production_status_done_quantity,omitempty"`
@@ -179,4 +180,18 @@ type Attribute struct {
 	Min     int               `json:"min"`
 	Max     int               `json:"max"`
 	Options []AttributeOption `json:"options"`
+}
+
+type CreateProductPayload struct {
+	MerchantID     string  `json:"merchant_id"`
+	Name           string  `json:"name"`
+	ProductDesc    string  `json:"product_desc"`
+	Price          float64 `json:"price"`
+	PriceTakeAway  float64 `json:"price_take_away"`
+	PriceDelivery  float64 `json:"price_delivery"`
+	TvaInID        int64   `json:"tva_in"`
+	TvaDeliveryID  int64   `json:"tva_delivery"`
+	TvaTakeAwayID  int64   `json:"tva_take_away"`
+	Category       int64   `json:"category"`
+	IsProductGroup bool    `json:"is_product_group"`
 }

@@ -528,7 +528,7 @@ type MerchantParametersSettings struct {
 }
 type MerchantSettings struct {
 	MerchantID     *string  `json:"merchant_id,omitempty"`
-	FullName       *string  `json:"full_name,omitempty"`
+	BusinessName   *string  `json:"business_name,omitempty"`
 	Address        *string  `json:"address,omitempty"`
 	StreetNumber   *string  `json:"street_number,omitempty"`
 	Street         *string  `json:"street,omitempty"`
@@ -544,6 +544,7 @@ type MerchantSettings struct {
 	SIRET          *string  `json:"SIRET,omitempty"`
 	Website        *string  `json:"web_site,omitempty"`
 	Email          *string  `json:"email,omitempty"`
+	Phone          *string  `json:"phone,omitempty"`
 	MerchantTel    *string  `json:"merchant_tel,omitempty"`
 	IsActive       *bool    `json:"is_active,omitempty"`
 	CreationDate   *string  `json:"creation_date,omitempty"`

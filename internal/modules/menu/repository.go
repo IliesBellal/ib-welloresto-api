@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -573,6 +574,97 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 	r.log.Info("GetMenu END", zap.Duration("total_elapsed", time.Since(startTotal)), zap.Int("categories", len(cats)), zap.Int("products", len(productOrder)))
 	return resp, nil
+}
+
+func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "0", err
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT INTO products (
+			merchant_id,
+			name,
+			product_desc,
+			price,
+			price_take_away,
+			price_delivery,
+			tva_in_id,
+			tva_delivery_id,
+			tva_take_away_id,
+			category,
+			is_product_group
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	res, err := tx.ExecContext(
+		ctx,
+		query,
+		p.MerchantID,
+		p.Name,
+		p.ProductDesc,
+		p.Price,
+		p.PriceTakeAway,
+		p.PriceDelivery,
+		p.TvaInID,
+		p.TvaDeliveryID,
+		p.TvaTakeAwayID,
+		p.Category,
+		p.IsProductGroup,
+	)
+	if err != nil {
+		return "0", err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "0", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "0", err
+	}
+
+	return strconv.FormatInt(id, 10), nil
+}
+
+func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*ProductEntry, error) {
+	query := `
+		SELECT
+			product_id,
+			merchant_id,
+			name,
+			product_desc,
+			price,
+			price_take_away,
+			price_delivery,
+			category,
+			is_product_group
+		FROM products
+		WHERE merchant_id = ? AND product_id = ?
+		LIMIT 1
+	`
+
+	var p ProductEntry
+	err := r.db.QueryRowContext(ctx, query, merchantID, productID).Scan(
+		&p.ProductID,
+		&p.MerchantID,
+		&p.Name,
+		&p.Description,
+		&p.Price,
+		&p.PriceTakeAway,
+		&p.PriceDelivery,
+		&p.Category,
+		&p.IsProductGroup,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
 }
 
 func (r *MenuRepository) SetComponentAvailability(ctx context.Context, merchantID, cid, status string) (int64, error) {

@@ -352,9 +352,9 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, tx *sql.Tx, merchant
 	updates := []string{}
 	args := []interface{}{}
 
-	if req.FullName != nil {
+	if req.BusinessName != nil {
 		updates = append(updates, "fullName = ?")
-		args = append(args, *req.FullName)
+		args = append(args, *req.BusinessName)
 	}
 	if req.Address != nil {
 		updates = append(updates, "address = ?")
@@ -723,7 +723,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	row := r.db.QueryRowContext(ctx, queryMerchant, merchantID)
 	err := row.Scan(
 		&m.MerchantID,
-		&m.FullName,
+		&m.BusinessName,
 		&m.Address,
 		&m.StreetNumber,
 		&m.Street,
