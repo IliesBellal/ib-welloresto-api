@@ -298,7 +298,7 @@ func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMerchantSettings(ctx, token)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"-2","error":"%s"}`, err.Error()), 500)
+		http.Error(w, fmt.Sprintf(`{"status":"-2","error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
