@@ -98,7 +98,7 @@ WHERE ur.token = ? -- OR u.token = ?
 LIMIT 1;
 `
 
-	row := r.db.QueryRowContext(ctx, query, token, token)
+	row := r.db.QueryRowContext(ctx, query, token/*, token*/)
 
 	data := &UserLoginRow{}
 
