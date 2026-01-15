@@ -167,6 +167,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 		r.Route("/settings", func(r chi.Router) {
 			r.Patch("/scannorder", posH.ToggleScanNOrder)
+			r.Get("/", posH.GetSettings)
 			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)
 			r.Patch("/safety_stock", posH.ToggleSafetyStockActive)
 		})
