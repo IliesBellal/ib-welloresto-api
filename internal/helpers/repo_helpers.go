@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -73,6 +74,10 @@ func NilIfNullInt64Discount(discountID sql.NullInt64, price int64) *int64 {
 		return &price
 	}
 	return nil
+}
+
+func RoundToNearestInt(val float64) int {
+	return int(math.Round(val))
 }
 
 func FormatQueryForLog(query string, args ...interface{}) string {

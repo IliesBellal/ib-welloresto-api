@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
@@ -236,8 +237,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	}
 
 	// --- Step 4: Expand products and compute base total ---
-	selectedProducts, countProducts, baseTotal :=
-		s.buildSelectedProducts(req, dbProducts)
+	selectedProducts, countProducts, baseTotal := s.buildSelectedProducts(req, dbProducts)
 
 	// --- Step 5: Apply option price overrides ---
 	if err := s.applyConfigurationOptionPrices(ctx, selectedProducts); err != nil {
@@ -245,15 +245,13 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	}
 
 	// --- Step 6: Load discount structures ---
-	discounts, discountProducts, discountOptions, err :=
-		s.loadDiscountStructures(ctx, req)
+	discounts, discountProducts, discountOptions, err := s.loadDiscountStructures(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
 	// --- Step 7: Apply discounts ---
-	appliedDiscounts :=
-		s.applyDiscounts(req, selectedProducts, discounts, discountProducts, discountOptions, baseTotal)
+	appliedDiscounts := s.applyDiscounts(req, selectedProducts, discounts, discountProducts, discountOptions, baseTotal)
 
 	// --- Step 8: Load rewards ---
 	rewards, err := s.ordersRepo.GetRewards(ctx, req)
@@ -268,10 +266,12 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	finalProducts := s.groupProducts(selectedProducts)
 
 	// --- Step 11: Compute TTC/TVA/HT ---
-	s.computeTotals(req, finalProducts)
+	// On récupère le taux de TVA max ici
+	maxTVARate := s.computeTotals(req, finalProducts)
 
 	// --- Step 12: Apply delivery rules ---
-	s.applyDeliveryRules(req, merchant)
+	// On passe le taux max
+	s.applyDeliveryRules(req, merchant, maxTVARate)
 
 	// --- Step 13: Estimated distribution time ---
 	estimatedTime, _ := s.ordersRepo.GetEstimatedDistributionTime(ctx, req, countProducts)
@@ -698,56 +698,114 @@ func (s *OrdersService) groupProducts(products []models.OrderProductPayload) []m
 	return out
 }
 
-func (s *OrdersService) computeTotals(req *models.PricingRequest, products []models.OrderProductPayload) {
+// Retourne le taux de TVA max trouvé (pour les frais de livraison)
+func (s *OrdersService) computeTotals(req *models.PricingRequest, products []models.OrderProductPayload) float64 {
 	req.Order.Products = products
+	// Réinitialisation (Step 0 du PHP)
 	req.Order.TTC = 0
 	req.Order.TVA = 0
 	req.Order.HT = 0
 
-	for _, p := range products {
-		price := p.Price
+	var maxTVARate float64 = 0
+
+	for i := range req.Order.Products {
+		// Utilisation d'un pointeur pour pouvoir mettre à jour les sous-totaux dans le slice si besoin,
+		// bien que ici on ne modifie que les totaux globaux.
+		p := &req.Order.Products[i]
+
+		// 1. Déterminer le prix unitaire TTC effectif
+		unitTTC := p.Price
 		if p.DiscountedPrice != nil {
-			price = *p.DiscountedPrice
+			unitTTC = *p.DiscountedPrice
 		}
 
-		line := price * p.Quantity
-		req.Order.TTC += line
-		req.Order.TVA += int(float64(line) * p.TvaRate)
-		req.Order.HT += line - int(float64(line)*p.TvaRate)/100
+		qty := p.Quantity
+		tvaRate := p.TvaRate
 
+		// Tracking du taux max pour la livraison
+		if tvaRate > maxTVARate {
+			maxTVARate = tvaRate
+		}
+
+		// --- CALCUL PRODUIT (Logique PHP) ---
+		// $product_ttc = round($unit_ttc * $qty, 2);
+		lineTTC := unitTTC * qty // Int * Int
+
+		// $product_ht = round($product_ttc / (1 + $tvaRate / 100), 2);
+		lineHT := helpers.RoundToNearestInt(float64(lineTTC) / (1 + tvaRate/100))
+
+		// $product_tva = round($product_ttc - $product_ht, 2);
+		lineTVA := lineTTC - lineHT
+
+		req.Order.TTC += lineTTC
+		req.Order.HT += lineHT
+		req.Order.TVA += lineTVA
+
+		// --- CALCUL EXTRAS ---
 		if p.Extra != nil {
 			for _, e := range p.Extra {
-				req.Order.TTC += e.Price * p.Quantity
+				if e.Price != 0 {
+					extraTTC := e.Price * qty
+					extraHT := helpers.RoundToNearestInt(float64(extraTTC) / (1 + tvaRate/100))
+					extraTVA := extraTTC - extraHT
+
+					req.Order.TTC += extraTTC
+					req.Order.HT += extraHT
+					req.Order.TVA += extraTVA
+				}
 			}
 		}
 
+		// --- CALCUL OPTIONS / CONFIG ---
 		if p.Config != nil && p.Config.Attributes != nil {
 			for _, a := range p.Config.Attributes {
 				for _, o := range a.Options {
-					if o.Selected {
-						req.Order.TTC += o.ExtraPrice * p.Quantity
+					if o.Selected && o.ExtraPrice != 0 {
+						optTTC := o.ExtraPrice * qty
+						optHT := helpers.RoundToNearestInt(float64(optTTC) / (1 + tvaRate/100))
+						optTVA := optTTC - optHT
+
+						req.Order.TTC += optTTC
+						req.Order.HT += optHT
+						req.Order.TVA += optTVA
 					}
 				}
 			}
 		}
 	}
+
+	return maxTVARate
 }
 
-func (s *OrdersService) applyDeliveryRules(req *models.PricingRequest, merchant *models.MerchantPricingInfo) {
-
+func (s *OrdersService) applyDeliveryRules(req *models.PricingRequest, merchant *models.MerchantPricingInfo, maxTVARate float64) {
 	req.MinimumCartForDeliveryOrder = merchant.MinimumCartForDeliveryOrder
 	req.IsOrderable = true
 
+	// Règle d'éligibilité (Minimum de commande)
 	if req.Order.OrderType == "DELIVERY" &&
-		req.IsSNO &&
+		req.IsSNO && // Supposons que IsSNO est défini ailleurs ou passé dans le contexte
 		req.Order.TTC < merchant.MinimumCartForDeliveryOrder {
 		req.IsOrderable = false
 		req.NotOrderableReason = "minimum_cart_for_delivery_not_reached"
 	}
 
+	// Calcul des frais (Logique PHP)
+	// if ($order_type === "DELIVERY" && $TTC < $limit)
 	if req.Order.OrderType == "DELIVERY" && req.Order.TTC < merchant.DeliveryFeesLimit {
-		req.Order.DeliveryFees = merchant.DeliveryFees
-		req.Order.TTC += merchant.DeliveryFees
+
+		deliveryTTC := merchant.DeliveryFees
+
+		// Calcul HT/TVA sur la livraison basé sur le taux max du panier
+		// $delivery_ht = round($delivery_ttc / (1 + $delivery_tva_rate / 100), 2);
+		deliveryHT := helpers.RoundToNearestInt(float64(deliveryTTC) / (1 + maxTVARate/100))
+		deliveryTVA := deliveryTTC - deliveryHT
+
+		req.Order.DeliveryFees = deliveryTTC
+
+		req.Order.TTC += deliveryTTC
+		req.Order.HT += deliveryHT
+		req.Order.TVA += deliveryTVA
+
 	} else {
 		req.Order.DeliveryFees = 0
 	}
