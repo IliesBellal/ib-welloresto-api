@@ -219,6 +219,11 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: result,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(resp)
 }
