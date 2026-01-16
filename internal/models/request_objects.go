@@ -355,7 +355,7 @@ type PricingResponse struct {
 	Status       int             `json:"status"`
 	OrderRequest *PricingRequest `json:"order_request"`
 
-	UnavailableProduct []int64 `json:"unavailable_products,omitempty"`
+	UnavailableProduct []UnavailableProductInfo `json:"unavailable_products"`
 
 	EstimatedDistributionTime int `json:"estimated_distribution_time"`
 
@@ -364,6 +364,12 @@ type PricingResponse struct {
 	NotOrderableReason          string  `json:"not_orderable_reason,omitempty"`
 
 	AppliedDiscounts []string `json:"applied_discounts,omitempty"`
+}
+
+type UnavailableProductInfo struct {
+	ProductID int64  `json:"product_id"`
+	Name      string `json:"name"`
+	Status    int    `json:"status"`
 }
 
 type SelectedProduct struct {

@@ -1441,64 +1441,75 @@ func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantI
 	return &cfg, nil
 }
 
-func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *models.PricingRequest) ([]int64, error) {
+func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *models.PricingRequest) ([]models.UnavailableProductInfo, error) {
+	// Si aucun produit dans la requête, on retourne un tableau vide
 	if len(req.Order.Products) == 0 {
-		return []int64{}, nil
+		return []models.UnavailableProductInfo{}, nil
 	}
 
-	// product IDs
+	// 1. Extraction des IDs pour la clause IN
 	productIDs := make([]interface{}, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		productIDs = append(productIDs, p.ProductID)
 	}
 
+	// Génération des placeholders (?,?,?)
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(productIDs)), ",")
 
+	// 2. La Query (Identique au PHP)
+	// On utilise le CASE pour déterminer le statut et HAVING pour filtrer
 	query := fmt.Sprintf(`
-		SELECT 
-		    p.product_id,
-		    CASE 
-		        WHEN a.product_id IS NOT NULL THEN 1  -- unavailable (component missing)
-		        ELSE p.status                         -- product inactive
-		    END AS unavailable_flag
-		FROM products p
-		LEFT JOIN (
-			SELECT DISTINCT r.product_id
-			FROM requires rq
-			INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-			INNER JOIN components c 
-			    ON rq.component_id = c.component_id 
-			    AND c.status = 0 
-			    AND rq.enabled = TRUE
-		) a ON a.product_id = p.product_id
-		WHERE p.merchant_id = ?
-		AND p.product_id IN (%s)
-	`, placeholders)
+       SELECT 
+           p.product_id, 
+           p.name,
+           CASE
+               WHEN a.product_id IS NOT NULL THEN 0 -- Composant manquant = Indisponible (0)
+               ELSE p.status                        -- Sinon statut du produit
+           END as status
+       FROM products p
+       LEFT JOIN (
+           SELECT DISTINCT r.product_id
+           FROM requires rq
+           INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+           INNER JOIN components c ON rq.component_id = c.component_id 
+               AND c.status = 0      -- Composant inactif/épuisé
+               AND rq.enabled = TRUE -- Recette active
+       ) a ON a.product_id = p.product_id
+       WHERE p.merchant_id = ?
+       AND p.product_id IN (%s)
+       HAVING status = 0
+    `, placeholders)
 
+	// 3. Préparation des arguments (MerchantID + Liste des ProductIDs)
 	args := make([]interface{}, 0, len(productIDs)+1)
 	args = append(args, req.MerchantID)
 	args = append(args, productIDs...)
 
+	// 4. Exécution
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	unavailable := []int64{}
+	// 5. Mapping des résultats
+	results := []models.UnavailableProductInfo{}
+
 	for rows.Next() {
-		var pid int64
-		var unavailableFlag int
-		if err := rows.Scan(&pid, &unavailableFlag); err != nil {
+		var info models.UnavailableProductInfo
+		// Scan doit correspondre à l'ordre du SELECT : product_id, name, status
+		if err := rows.Scan(&info.ProductID, &info.Name, &info.Status); err != nil {
 			return nil, err
 		}
-
-		if unavailableFlag == 1 {
-			unavailable = append(unavailable, pid)
-		}
+		results = append(results, info)
 	}
 
-	return unavailable, nil
+	// Vérification d'erreurs post-itération
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }
 
 func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *models.PricingRequest) ([]models.DBProduct, error) {
