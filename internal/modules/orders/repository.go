@@ -1684,9 +1684,15 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 
 func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, merchantID string) (map[string]map[string][]models.DiscountOptionInfo, error) {
 	query := `
-		SELECT dpo.discount_id, dpo.product_id, dpo.option_id, dpo.new_price, dpo.is_option_mandatory
-		FROM discounts_products_options dpo
-		WHERE dpo.merchant_id = ?
+		SELECT dpo.option_id, dpo.product_id, dpo.discount_id, dpo.new_price, dpo.is_option_mandatory
+                FROM discounts d
+                INNER JOIN discounts_products dp ON dp.discount_id = d.discount_id
+                INNER JOIN discounts_products_options dpo ON dpo.discount_id = d.discount_id AND dpo.product_id = dp.product_id
+                LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
+                WHERE merchant_id = ?
+                  AND (valid_from < UTC_TIMESTAMP AND (valid_to > UTC_TIMESTAMP OR valid_to IS NULL))
+                  AND ((available_from < UTC_TIMESTAMP AND available_to > UTC_TIMESTAMP) OR NOT is_time_limited)
+                  AND d.available IS TRUE
 	`
 
 	rows, err := r.db.QueryContext(ctx, query, merchantID)
