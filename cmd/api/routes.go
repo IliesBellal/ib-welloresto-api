@@ -157,8 +157,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	r.Route("/pos", func(r chi.Router) {
 		r.Get("/status", posH.GetPOSStatus)
 		r.Patch("/status", posH.UpdatePOSStatus)
-		r.Patch("/settings", posH.UpdateMerchantSettings)
-		r.Get("/settings", posH.GetSettings)
 
 		r.Get("/deletion_reasons/{object}", posH.GetDeletionReasons)
 		r.Get("/delivery_men", posH.GetDeliveryMen)
@@ -166,8 +164,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 		r.Get("/tva_rates", posH.GetTVARates)
 
 		r.Route("/settings", func(r chi.Router) {
-			r.Patch("/scannorder", posH.ToggleScanNOrder)
 			r.Get("/", posH.GetSettings)
+			r.Patch("/", posH.UpdateMerchantSettings)
+
+			r.Patch("/scannorder", posH.ToggleScanNOrder)
 			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)
 			r.Patch("/safety_stock", posH.ToggleSafetyStockActive)
 		})

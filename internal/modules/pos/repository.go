@@ -741,7 +741,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	// ───────────────────────────────
 	queryMerchant := `
 		SELECT id, fullName, address, street_number, street, zip_code, city,
-		       country, lat, lng, timezone, logo, logo_url, handicap_access,
+		       country, lat, lng, timezone, /*logo, */logo_url, handicap_access,
 		       SIRET, web_site, email, merchantTel, creation_date,
 		       is_active
 		FROM merchant
@@ -762,7 +762,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&m.Lat,
 		&m.Lng,
 		&m.Timezone,
-		&m.Logo,
+		//&m.Logo,
 		&m.LogoURL,
 		&m.HandicapAccess,
 		&m.SIRET,
