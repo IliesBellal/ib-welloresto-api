@@ -742,7 +742,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	}
 	if len(unavailable) > 0 {
 		tx.Rollback()
-		return &models.CreateOrderResult{Status: "2"}, nil
+		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
 	}
 
 	s.log.Info("STEP 3: Before upsertCustomer")
@@ -849,7 +849,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	// go s.notifier.SendNewOrderNotification(orderID)
 
 	return &models.CreateOrderResult{
-		Status:     "1",
+		Status:     "success",
 		OrderID:    orderID,
 		OrderNum:   &orderNum,
 		OrderItems: usedItems,

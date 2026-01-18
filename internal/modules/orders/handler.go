@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
@@ -211,6 +212,8 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	log.Info("Orders.Pricing - request received")
 
 	var req models.PricingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

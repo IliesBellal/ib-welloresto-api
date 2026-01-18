@@ -64,7 +64,7 @@ type OrderProductPayload struct {
 	DelayID         *string                  `json:"delay_id"`
 	ProductName     string                   `json:"product_name"`
 	TvaRate         float64                  `json:"tva_rate"`
-	DiscountedPrice *int                     `json:"discounted_price,omitempty"`
+	DiscountedPrice *int                     `json:"discounted_price"`
 	OrderedDate     string                   `json:"ordered_date"`
 	Extra           []*OrderExtraPayload     `json:"extra"`
 	Without         []*OrderWithoutPayload   `json:"without"`

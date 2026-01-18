@@ -427,6 +427,7 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 	discountAlreadyApplied := false
 
 	for _, d := range discounts {
+		// --- 1. Filtres d'éligibilité globaux ---
 		if d.DiscountOrderType != "" && !strings.Contains(d.DiscountOrderType, req.Order.OrderType) {
 			continue
 		}
@@ -440,11 +441,11 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 		relatedProducts := dp[d.DiscountID]
 		relatedOptions := do[d.DiscountID]
 
-		// Count eligible products
+		// --- 2. Comptage des produits éligibles (via Index pour éviter la copie) ---
 		countEligible := 0
-		for _, sp := range products {
-			if _, ok := relatedProducts[sp.ProductID]; ok || len(relatedProducts) == 0 {
-				if s.optionsMatch(sp, relatedOptions[sp.ProductID]) {
+		for i := range products {
+			if _, ok := relatedProducts[products[i].ProductID]; ok || len(relatedProducts) == 0 {
+				if s.optionsMatch(products[i], relatedOptions[products[i].ProductID]) {
 					countEligible++
 				}
 			}
@@ -454,7 +455,7 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 			continue
 		}
 
-		// Check min
+		// --- 3. Vérification des conditions minimales ---
 		testPassed := false
 		switch d.MinOrderUnit {
 		case "QTY":
@@ -473,40 +474,67 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 			continue
 		}
 
+		// --- 4. Détermination du nombre d'applications ---
 		n := d.DiscountedQuantity
 		if d.IsCumulative {
+			// Si cumulable, on applique la remise par paliers (ex: tous les 2 produits)
 			n = countEligible - (countEligible % d.DiscountedQuantity)
 		}
 
-		for i := 0; i < n; i++ {
-			// apply to first non-discounted matching product
-			for _, sp := range products {
+		// --- 5. Application de la remise ---
+		appliedInThisLoop := 0
+		for j := 0; j < n; j++ {
+			found := false
+			// On parcourt le slice original par index pour modifier les valeurs réelles
+			for i := range products {
+				sp := &products[i] // Pointeur sur l'élément du slice
+
+				// On vérifie si le produit n'a pas déjà une remise et s'il correspond aux critères
 				if sp.DiscountedPrice == nil && (len(relatedProducts) == 0 || relatedProducts[sp.ProductID] != nil) {
-					if !s.optionsMatch(sp, relatedOptions[sp.ProductID]) {
+					if !s.optionsMatch(*sp, relatedOptions[sp.ProductID]) {
 						continue
 					}
 
-					var newPrice int
-
+					var calculatedPrice int
 					switch d.DiscountUnit {
 					case "PERCENTAGE":
-						newPrice = sp.Price * (1 - d.DiscountValue/100)
+						// Utilisation de float64 pour éviter la division entière (50/100 = 0)
+						ratio := float64(d.DiscountValue) / 100.0
+						calculatedPrice = int(float64(sp.Price) * (1.0 - ratio))
+
 					case "CURRENCY":
-						newPrice = sp.Price * d.DiscountValue
+						calculatedPrice = sp.Price - d.DiscountValue
+
 					case "NEWPRICE":
-						newPrice = relatedProducts[sp.ProductID].NewPrice
+						if prodInfo, ok := relatedProducts[sp.ProductID]; ok {
+							calculatedPrice = prodInfo.NewPrice
+						} else {
+							calculatedPrice = sp.Price
+						}
 					}
 
-					sp.DiscountedPrice = &newPrice
-					sp.DiscountID = &d.DiscountID
+					// Sécurisation des pointeurs : on crée de nouvelles adresses mémoire
+					// pour que chaque produit ait sa propre instance de prix et d'ID
+					finalPrice := calculatedPrice
+					finalID := d.DiscountID
+
+					sp.DiscountedPrice = &finalPrice
+					sp.DiscountID = &finalID
 
 					applied = append(applied, d.DiscountID)
 					discountAlreadyApplied = true
-					break
+					appliedInThisLoop++
+					found = true
+					break // On passe au "j" suivant (prochaine application de la remise)
 				}
+			}
+			// Si on n'a plus de produits éligibles dans cette boucle, on arrête
+			if !found {
+				break
 			}
 		}
 
+		// Si une remise non-cumulable a été appliquée, on stoppe le traitement des autres remises
 		if discountAlreadyApplied && !d.IsCumulative {
 			break
 		}

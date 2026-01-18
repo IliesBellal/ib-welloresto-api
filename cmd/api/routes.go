@@ -33,9 +33,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r := chi.NewRouter()
 
-	// --- Global Middlewares ---
+	// =============================
+	//  GLOBAL MIDDLEWARES
+	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
-
+	r.Use(middleware.LoggingMiddleware(log))
+	
 	// =============================
 	//  MODULE INITIALIZATION
 	// =============================

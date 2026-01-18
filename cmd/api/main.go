@@ -17,6 +17,7 @@ func main() {
 
 	// Logger
 	zlog := logger.New()
+	zap.ReplaceGlobals(zlog)
 
 	// MySQL
 	mysqlDB, err := database.NewMySQL(cfg.MySQLURL)
