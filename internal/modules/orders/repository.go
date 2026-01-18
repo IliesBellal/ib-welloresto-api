@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 
@@ -721,6 +722,10 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 
 func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+
+	log := logger.FromContext(ctx)
+	log.Info("Orders.Create - request received")
+
 	defer cancel()
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
@@ -728,13 +733,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return nil, err
 	}
 
-	// --- Étapes (appelées dans service_steps.go) -------------------------
-
-	s.log.Info("STEP 1: Before validateProductAvailability")
-
 	unavailable, err := s.validateProductAvailability(ctx, tx, req)
-
-	s.log.Info("STEP 2: After validateProductAvailability", zap.Any("unavailable", unavailable))
 
 	if err != nil {
 		tx.Rollback()
@@ -745,15 +744,11 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
 	}
 
-	s.log.Info("STEP 3: Before upsertCustomer")
-
 	customerID, err := s.upsertCustomer(ctx, tx, req)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
-
-	s.log.Info("STEP 3: Before ComputeEstimatedReady")
 
 	// compute estimated ready if not provided
 	estimatedReady := req.Order.EstimatedReady // string or empty
@@ -801,7 +796,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	req.Order.CashRegisterId = &cashRegisterID
 
-	s.log.Info("STEP 4: After upsertCustomer")
+	s.setOrderDefaults(ctx, req)
 
 	orderID, err := s.insertOrderBase(ctx, tx, req, customerID)
 	if err != nil {
@@ -809,44 +804,25 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return nil, err
 	}
 
-	s.log.Info("STEP 5: After insertOrderBase")
-
-	s.log.Info("STEP 6: Before insertOrderItems")
-
 	usedItems, err := s.insertOrderItems(ctx, tx, req, orderID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	s.log.Info("STEP 7: After insertOrderItems")
-
-	s.log.Info("STEP 8: Before insertExtrasWithoutsConfigs")
-
 	if err := s.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
-
-	s.log.Info("STEP 9: After insertExtrasWithoutsConfigs")
-
-	s.log.Info("STEP 10: Before insertPayments")
 
 	if err := s.insertPayments(ctx, tx, req, orderID); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	s.log.Info("STEP 11: After insertPayments")
-
-	s.log.Info("STEP 12: Before Commit")
-
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-
-	// Post-commit async
-	// go s.notifier.SendNewOrderNotification(orderID)
 
 	return &models.CreateOrderResult{
 		Status:     "success",
@@ -1073,32 +1049,9 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 	return t.Format("2006-01-02 15:04:05"), nil
 }
 
-// insertOrderBase inserts the orders row and returns orderID and orderNum
-func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject, customerID *string) (orderID string, err error) {
-	// determine orderNum (simple approach: take max + 1). For performance you may want a sequence.
+// setOrderDefaults applique les règles métier par défaut (équivalent du bloc PHP)
+func (s *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.RequestObject) {
 	/*
-		var lastOrderNum sql.NullInt64
-		err = tx.QueryRowContext(ctx, `
-			SELECT order_num
-			FROM orders
-			WHERE merchant_id = ?
-			ORDER BY order_id DESC
-			LIMIT 1
-			`, req.MerchantID).Scan(&lastOrderNum)
-		if err != nil && err != sql.ErrNoRows {
-			return "0", 0, err
-		}
-		if lastOrderNum.Valid {
-			req.Order.OrderNum = lastOrderNum.Int64 + 1
-		} else {
-			req.Order.OrderNum = 1
-		}
-
-	*/
-
-	/*
-
-
 		AJOUTER LES VALEURS PAR DEFAUT ICI
 
 		// INSERT ORDER
@@ -1109,6 +1062,38 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 		$order_object->order->places_settings = $order_object->order->places_settings ?? 0;
 
 	*/
+
+	// PHP: $merchant_approval = ... ?? "ACCEPTED";
+	log := logger.FromContext(ctx)
+	log.Info("Orders.Create - Merchant Approval default : " + req.Order.MerchantApproval)
+	if req.Order.MerchantApproval == "" {
+		req.Order.MerchantApproval = "ACCEPTED"
+	}
+	log.Info("Orders.Create - Merchant Approval defined : " + req.Order.MerchantApproval)
+
+	// PHP: $brand_status = ... ?? (($online_payment) ? "ONLINE_PAYMENT_PENDING" : "PENDING");
+	if req.Order.BrandStatus == "" {
+		// Note : Assure-toi que le champ OnlinePayment existe bien dans ton modèle Go
+		if req.Order.OnlinePayment {
+			req.Order.BrandStatus = "ONLINE_PAYMENT_PENDING"
+		} else {
+			req.Order.BrandStatus = "PENDING"
+		}
+	}
+
+	// PHP: places_settings = ... ?? 0;
+	// En Go, un int est par défaut à 0. Cette ligne est implicite,
+	// mais on peut la garder si places_settings est un pointeur (*int).
+	// Si c'est un int simple, rien à faire, c'est déjà 0 si absent du JSON.
+
+	// PHP: is_scheduled = ... ? "1" : "0";
+	// En Go, le booléen est "false" par défaut.
+	// Le driver SQL convertira automatiquement le bool true/false en 1/0 (TINYINT) pour MySQL.
+	// Pas besoin de conversion manuelle en string sauf si ta colonne DB est un VARCHAR.
+}
+
+// insertOrderBase inserts the orders row and returns orderID and orderNum
+func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject, customerID *string) (orderID string, err error) {
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `

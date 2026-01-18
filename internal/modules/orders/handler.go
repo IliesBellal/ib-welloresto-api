@@ -182,6 +182,8 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	log.Info("Orders.Create - request received")
 
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
