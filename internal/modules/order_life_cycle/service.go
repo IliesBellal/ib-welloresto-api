@@ -187,6 +187,14 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, or
 }
 
 func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (map[string]string, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, orderID)
 	if err != nil {
@@ -221,6 +229,8 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 			if err := s.uberSvc.AcceptOrder(ctxTimeout, mID, oID); err != nil {
 				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
 			}
+
+			s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 		}(merchantID, orderID)
 	case models.BrandDeliveroo:
 		go func(mID, oID string) {
@@ -229,9 +239,12 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 			if err := s.deliverooSvc.AcceptOrder(ctxTimeout, merchantID, orderID); err != nil {
 				s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
 			}
+
+			s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 		}(merchantID, orderID)
 	default:
 		// Internal order — nothing else to do
+		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 	}
 
 	return map[string]string{"status": "1"}, nil
@@ -270,10 +283,19 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, in models.DenyOrderInput) error {
+func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID string, in models.DenyOrderRequest) error {
+
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
 	// Local DB update (atomic)
-	err := s.ordersLifeCycleRepo.DenyOrderLocal(ctx,
-		in.OrderID,
+	err = s.ordersLifeCycleRepo.DenyOrderLocal(ctx,
+		OrderID,
 		in.DeletionReasonID,
 		in.DeletionComment,
 	)
@@ -282,26 +304,32 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, in models.DenyOr
 	}
 
 	// Cancel stripe payments
-	err = s.ordersLifeCycleRepo.CancelStripePayments(ctx, in.OrderID)
+	err = s.ordersLifeCycleRepo.CancelStripePayments(ctx, OrderID)
 	if err != nil {
 		return fmt.Errorf("stripe cancel: %w", err)
 	}
 
 	// Notify
-	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "ORDER_UPDATE")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "ORDER_UPDATE")
 
 	// Dispatch to integration
-	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
+	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, OrderID)
 	if err != nil {
 		return err
 	}
 
 	switch brand {
 	case "UBER_EATS":
-		go s.uberSvc.DenyOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
+		go s.uberSvc.DenyOrder(ctx, user.MerchantID, OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
+		s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
 
 	case "DELIVEROO":
-		go s.deliverooSvc.DenyOrder(ctx, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
+		go s.deliverooSvc.DenyOrder(ctx, OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
+		s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
+
+	default:
+		// Internal order — nothing else to do
+		s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
 	}
 
 	return nil

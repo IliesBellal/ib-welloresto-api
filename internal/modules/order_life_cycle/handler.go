@@ -254,14 +254,7 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := h.ordersLifeCycleService.DenyOrder(r.Context(), models.DenyOrderInput{
-		OrderID:            orderID,
-		DeletionReasonID:   req.DeletionReasonID,
-		DeletionReasonType: req.DeletionReasonType,
-		DeletionComment:    req.DeletionComment,
-		UserID:             req.UserID,
-		MerchantID:         req.MerchantID,
-	})
+	err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
