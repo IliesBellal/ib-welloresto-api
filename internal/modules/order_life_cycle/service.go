@@ -160,6 +160,9 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 		}, nil
 	}
 
+	// Notify
+	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, "ORDER_UPDATE")
+
 	return map[string]interface{}{"status": "1"}, nil
 }
 

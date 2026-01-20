@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
 
@@ -311,6 +313,129 @@ func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentI
 }
 
 func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
+	// 1. Préparation des outils de compatibilité
+	now := time.Now().UTC()
+	orderID := req.OrderID
+
+	// On détermine le driver une seule fois (à adapter selon votre config r.db)
+	// Idéalement, stockez r.isPostgres lors de l'initialisation du repo
+	isPostgres := false
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 2. Mise à jour des items (Boucle)
+	for _, p := range req.Products {
+		var beforeIsDistributed sql.NullInt64
+
+		// SELECT : On récupère l'ancienne valeur pour le log
+		querySelect := r.formatQuery(`SELECT isDistributed FROM orderitems WHERE order_id = ? AND order_item_id = ?`, isPostgres)
+		err = tx.QueryRowContext(ctx, querySelect, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
+		if err != nil {
+			return err
+		}
+
+		// UPDATE ITEM : On injecte 'now' depuis Go
+		queryUpdateItem := r.formatQuery(`
+			UPDATE orderitems
+			SET isDistributed = 1,
+			    distributed_quantity = quantity,
+			    ready_for_distribution_quantity = quantity,
+			    distributed_on = ?
+			WHERE order_id = ? AND order_item_id = ?`, isPostgres)
+
+		_, err = tx.ExecContext(ctx, queryUpdateItem, now, orderID, p.OrderItemID)
+		if err != nil {
+			return err
+		}
+
+		// Log (Zap)
+		r.log.Info("Order item updated", zap.String("order_item_id", p.OrderItemID))
+	}
+
+	// 3. Calcul de l'état global (Optimisé : hors de la boucle précédente)
+	var countNotDistributed int
+	queryCheck := r.formatQuery(`SELECT COUNT(*) FROM orderitems WHERE order_id = ? AND isDistributed = 0`, isPostgres)
+	err = tx.QueryRowContext(ctx, queryCheck, orderID).Scan(&countNotDistributed)
+	if err != nil {
+		return err
+	}
+
+	// On utilise des int pour la compatibilité des types (Postgres est strict)
+	orderFullyDistributedInt := 1
+	if countNotDistributed > 0 {
+		orderFullyDistributedInt = 0
+	}
+
+	// 4. UPDATE ORDER : Une seule fois après la boucle
+	// On passe toutes les valeurs de statuts en paramètres pour éviter les erreurs de collation
+	queryUpdateOrder := r.formatQuery(`
+		UPDATE orders
+		SET isDistributed = ?,
+		    delivered_on = CASE 
+		        WHEN ? = 0 OR order_type = 'DELIVERY' THEN delivered_on
+		        ELSE ?
+		    END,
+		    brand_status = CASE
+		        WHEN order_type = 'DELIVERY' AND ? = 1 THEN 'READY_FOR_HANDOFF'
+		        WHEN order_type = 'TAKE_AWAY' AND ? = 1 THEN 'READY_FOR_TAKE_AWAY'
+		        WHEN ? = 0 THEN 'PENDING'
+		        ELSE 'DONE'
+		    END,
+		    last_update = ?
+		WHERE order_id = ? AND merchant_id = ?`, isPostgres)
+
+	_, err = tx.ExecContext(ctx, queryUpdateOrder,
+		orderFullyDistributedInt, // isDistributed
+		orderFullyDistributedInt, // CASE delivered_on (comparaison)
+		now,                      // delivered_on (valeur)
+		orderFullyDistributedInt, // CASE handoff
+		orderFullyDistributedInt, // CASE takeaway
+		orderFullyDistributedInt, // CASE pending
+		now,                      // last_update
+		orderID,
+		merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// 5. Récupération de la marque pour notification
+	var brand sql.NullString
+	queryBrand := r.formatQuery(`SELECT brand FROM orders WHERE order_id = ?`, isPostgres)
+	err = tx.QueryRowContext(ctx, queryBrand, orderID).Scan(&brand)
+	if err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// formatQuery remplace les ? par $1, $2, etc. si Postgres est utilisé
+func (r *OrdersLifeCycleRepository) formatQuery(q string, isPostgres bool) string {
+	if !isPostgres {
+		return q
+	}
+	parts := strings.Split(q, "?")
+	var result strings.Builder
+	for i := 0; i < len(parts)-1; i++ {
+		result.WriteString(parts[i])
+		result.WriteString(fmt.Sprintf("$%d", i+1))
+	}
+	result.WriteString(parts[len(parts)-1])
+	return result.String()
+}
+
+func (r *OrdersLifeCycleRepository) SetDistributedProductsOld(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
+
+	//log := logger.FromContext(ctx)
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
