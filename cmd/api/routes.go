@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"welloresto-api/internal/modules/googlemaps"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -29,7 +31,7 @@ import (
 	usersModule "welloresto-api/internal/modules/users"
 )
 
-func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
+func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
 
 	r := chi.NewRouter()
 
@@ -38,10 +40,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
 	r.Use(middleware.LoggingMiddleware(log))
-	
+
 	// =============================
 	//  MODULE INITIALIZATION
 	// =============================
+
+	apiKey := os.Getenv("GOOGLE_API_KEY")
+	if apiKey == "" {
+		log.Fatal("GOOGLE_API_KEY is not set")
+	}
+
+	// 2. Initialisation des couches (Injection de dépendances)
+	repo := googlemaps.NewGoogleMapsRepository()
+	googleClient := googlemaps.NewGoogleMapsClient(apiKey)
+	svc := googlemaps.NewRouteService(repo, googleClient)
+	routeHandler := googlemaps.NewRouteHandler(svc)
 
 	// ---- Notification ---
 	fcmClient := notificationModule.NewFCMClient()
@@ -68,8 +81,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
 	// ---- Uber ----
-	uberRepo := uberModule.NewUberEatsRepository(mysqlDB, log)
-	uberService := uberModule.NewUberEatsService(uberRepo, mysqlDB, log)
+	//uberRepo := uberModule.NewUberEatsRepository(mysqlDB)
+	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
 
 	// ---- Deliveroo ----
 	deliverooRepo := deliverooModule.NewDeliverooRepo(mysqlDB, log)
@@ -143,6 +156,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg config.Config) *chi.Mux {
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("OK"))
+	})
+
+	// API externes
+	r.Route("/external", func(r chi.Router) {
+		r.Get("/routes", routeHandler.HandleGetRoute)
 	})
 
 	// --- AUTH ---

@@ -5,91 +5,201 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
+	"welloresto-api/internal/logger"
 )
 
-type UberEatsClient struct {
-	httpClient *http.Client
+type UberClient struct {
+	config ConfigUberEats
+	client *http.Client
 }
 
-func NewUberEatsClient() *UberEatsClient {
-	return &UberEatsClient{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+func NewUberClient(cfg ConfigUberEats) *UberClient {
+	return &UberClient{
+		config: cfg,
+		client: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-func (c *UberEatsClient) PostReady(ctx context.Context, brandOrderID string, token string) (*http.Response, error) {
-	url := "https://api.uber.com/v1/delivery/order/" + brandOrderID + "/ready"
+// GetNewToken appelle l'endpoint OAuth
+func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
+	data := url.Values{}
+	data.Set("client_secret", c.config.ClientSecret)
+	data.Set("client_id", c.config.ClientID)
+	data.Set("grant_type", "client_credentials")
+	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write")
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(""))
+	resp, err := c.client.PostForm("https://auth.uber.com/oauth/v2/token", data)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("uber auth error: status %d", resp.StatusCode)
+	}
+
+	var tokenResp UberAuthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, err
+	}
+	return &tokenResp, nil
+}
+
+// AcceptOrder envoie la requête d'acceptation
+func (c *UberClient) AcceptOrder(ctx context.Context, uberOrderID string, token string, req UberAcceptRequest) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/accept", c.config.BaseURL, uberOrderID)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
+}
+
+// GetOrderDetails récupère l'état complet de la commande (pour la synchro)
+func (c *UberClient) GetOrderDetails(uberOrderID string, token string) (*UberOrderDetails, error) {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s", c.config.BaseURL, uberOrderID)
+
+	req, _ := http.NewRequest("GET", endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	return c.httpClient.Do(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("order_not_found") // Erreur spécifique pour le handler 404
+	}
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("api error %d", resp.StatusCode)
+	}
+
+	var details UberOrderDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, err
+	}
+	return &details, nil
 }
 
-func (c *UberEatsClient) CancelOrder(ctx context.Context, brandOrderID string, token string, payload []byte) (*http.Response, error) {
-
-	url := "https://api.uber.com/v1/delivery/order/" + brandOrderID + "/cancel"
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	return c.httpClient.Do(req)
-}
-
-func (c *UberEatsClient) DenyOrder(ctx context.Context, brandOrderID, token, jsonBody string) (*http.Response, error) {
-	req, _ := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		"https://api.uber.com/v1/delivery/order/"+brandOrderID+"/deny",
-		strings.NewReader(jsonBody),
-	)
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	return c.httpClient.Do(req)
-}
-
-func (c *UberEatsClient) AcceptOrder(ctx context.Context, bearerToken, uberOrderID string, payload map[string]interface{}) (*http.Response, error) {
+// doJSONRequest est un helper générique
+func (c *UberClient) doJSONRequest(ctx context.Context, method, url, token string, payload interface{}) error {
 	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
 
-	url := fmt.Sprintf("https://api.uber.com/v1/delivery/order/%s/accept", uberOrderID)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	return c.httpClient.Do(req)
-}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-// Placeholder version
-func (c *UberEatsClient) FinishOrderIfDoesNotExist(ctx context.Context, bearerToken, uberOrderID string) error {
-	// On laisse vide pour l'instant
+	log := logger.FromContext(ctx)
+	log.Info("UberClient.doJSONRequest - doJSONRequest : " + url + " response : " + resp.Status)
+	log.Info("UberClient.doJSONRequest - token : " + token)
+	log.Info("UberClient.doJSONRequest - payload : " + fmt.Sprint(payload))
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+	}
 	return nil
 }
 
-func (c *UberEatsClient) UpdateBYOCStatus(
-	ctx context.Context,
-	brandOrderID string,
-	token string,
-	payload []byte,
-) (*http.Response, error) {
+// DenyOrder refuse une commande
+func (c *UberClient) DenyOrder(ctx context.Context, uberOrderID string, token string, reasonType string, reasonID string, comment string) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/deny", c.config.BaseURL, uberOrderID)
+	payload := c.buildDenyPayload(reasonType, reasonID, comment)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, payload)
+}
 
-	url := fmt.Sprintf(
-		"https://api.uber.com/v1/eats/orders/%s/restaurantdelivery/status",
-		brandOrderID,
-	)
+// CancelOrder annule une commande
+func (c *UberClient) CancelOrder(ctx context.Context, uberOrderID string, token string, reasonType string, reasonID string, comment string) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/cancel", c.config.BaseURL, uberOrderID)
+	payload := c.buildDenyPayload(reasonType, reasonID, comment)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, payload)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(payload))
+// SetOrderReady indique que la commande est prête
+func (c *UberClient) SetOrderReady(ctx context.Context, uberOrderID string, token string) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/ready", c.config.BaseURL, uberOrderID)
+	// Body vide souvent requis ou accepté
+	return c.doJSONRequest(ctx, "POST", endpoint, token, map[string]string{})
+}
+
+// buildDenyPayload construit la structure JSON spécifique (avec les données hardcodées du PHP)
+func (c *UberClient) buildDenyPayload(rType, rCode, info string) UberCancelRequest {
+	return UberCancelRequest{
+		DenyReason: DenyReasonDetails{
+			Info:       rType, //info,
+			Type:       rType,
+			ClientCode: rCode,
+			// Inclusion des métadonnées hardcodées comme dans ton PHP
+			// Note: Dans une vraie implémentation Go propre, on passerait ça en paramètre,
+			// mais je reproduis ici ton code PHP "item_metadata".
+		},
+	}
+}
+
+// UpdateBYOCStatus met à jour le statut de livraison pour une commande spécifique
+func (c *UberClient) UpdateBYOCStatus(ctx context.Context, uberOrderID string, token string, status string) error {
+	endpoint := fmt.Sprintf("%s/v1/eats/orders/%s/restaurantdelivery/status", c.config.BaseURL, uberOrderID)
+	payload := BYOCStatusRequest{Status: status}
+	return c.doJSONRequest(ctx, "POST", endpoint, token, payload)
+}
+
+// UpdateStorePrepTime met à jour la configuration de temps (Busy Mode ou Default Prep Time)
+func (c *UberClient) UpdateStorePrepTime(ctx context.Context, storeID string, token string, req UberPrepTimeRequest) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/store/%s/update-store-prep-time", c.config.BaseURL, storeID)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
+}
+
+// UpdateStoreStatus met le magasin hors ligne/en ligne
+func (c *UberClient) UpdateStoreStatus(ctx context.Context, storeID string, token string, req UberStoreStatusRequest) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/store/%s/update-store-status", c.config.BaseURL, storeID)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
+}
+
+// GetMenu récupère le menu
+func (c *UberClient) GetMenu(storeID string, token string) (map[string]interface{}, error) {
+	endpoint := fmt.Sprintf("%s/v2/eats/stores/%s/menus", c.config.BaseURL, storeID)
+	// Note: GET request with body is unusual but supported by some APIs.
+	// However, usually param is query string. PHP logic sends body in GET.
+	// Go http.NewRequest supports body in GET.
+	payload := map[string]string{"menu_type": "MENU_TYPE_FULFILLMENT_DELIVERY"}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("GET", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
 
-	return c.httpClient.Do(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("api error %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// UpdateItemState suspend ou active un item
+func (c *UberClient) UpdateItemState(ctx context.Context, storeID string, itemID string, token string, req UberItemSuspensionRequest) error {
+	endpoint := fmt.Sprintf("%s/v2/eats/stores/%s/menus/items/%s", c.config.BaseURL, storeID, itemID)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
 }

@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
+	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
 )
@@ -21,30 +21,18 @@ type DeliverooService struct {
 }
 
 func NewDeliverooService(repo *DeliverooRepository, db *sql.DB, log *zap.Logger) *DeliverooService {
-	dc := NewDeliverooClient()
+	config := Config{
+		BasicAuth: "M3M1ZTIzcDc4NWw0ZHI4a2czOGFmbWdlMGs6ZG9uZTBwZ3FnN2hlNThsbHBkbWhhcHZnNXE1djRnMHNqb3R0MjI4aG1zMmNkcXZhYWYz",
+		IsSandbox: false,
+	}
+	dc := NewDeliverooClient(nil, config)
 	return &DeliverooService{repo: repo, db: db, log: log, client: dc}
 }
 
 func (s *DeliverooService) SetCollected(ctx context.Context, brandOrderID string) error {
-
-	token, err := s.repo.GetBearerToken(ctx)
+	err := s.client.SetCollected(ctx, brandOrderID)
 	if err != nil {
 		return err
-	}
-
-	payload := map[string]interface{}{
-		"stage":       "collected",
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
-	}
-
-	resp, err := s.client.CreateStage(ctx, brandOrderID, payload, token)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("deliveroo collected returned %d", resp.StatusCode)
 	}
 
 	return nil
@@ -61,28 +49,14 @@ func (s *DeliverooService) AcceptOrder(ctx context.Context, merchantID string, o
 		return err
 	}
 
-	// 2️⃣ Get bearer token
-	token, err := s.repo.GetBearerToken(ctx)
-	if err != nil {
-		return fmt.Errorf("deliveroo token error: %w", err)
-	}
-
 	// 3️⃣ Call Deliveroo API
-	statusCode, payload, err := s.client.AcceptOrder(ctx, token, brandOrderID)
+	err = s.client.AcceptOrder(ctx, brandOrderID)
 	if err != nil {
 		return err
 	}
 
-	// 4️⃣ If OK → update DB
-	if statusCode >= 200 && statusCode < 300 {
-		if err := s.repo.UpdateAcceptedStatus(ctx, brandOrderID); err != nil {
-			return err
-		}
-		return nil
-	}
-
 	// 5️⃣ Non-2xx → return error with payload
-	return fmt.Errorf("deliveroo returned %d: %v", statusCode, payload)
+	return nil
 }
 
 func (s *DeliverooService) StartDeliverooDelivery(ctx context.Context, brandOrderID string) error {
@@ -127,110 +101,29 @@ func (s *DeliverooService) StartDelivery(ctx context.Context, brandOrderID strin
 		return nil, err
 	}
 
-	// Build occurred_at timestamp
-	occurredAt := time.Now().UTC().Format(time.RFC3339)
-
-	bearer, err := s.repo.GetBearerToken(ctx)
+	err = s.client.SetCollected(ctx, brandOrderID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create "collected" stage
-	payload := map[string]any{
-		"stage":       "collected",
-		"occurred_at": occurredAt,
-	}
-
-	resp, err := s.client.CreateStageForOrder(ctx, brandOrderID, bearer, payload)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	// If deliveroo says "not found"
-	if resp.StatusCode == 404 {
-		s.FinishOrderIfDoesNotExist(ctx, brandOrderID)
-		return map[string]any{
-			"status": "1",
-			"error":  "Order does not exist anymore at Deliveroo",
-		}, nil
-	}
-
-	var decoded map[string]any
-	json.Unmarshal(body, &decoded)
 
 	// Success
 	return map[string]any{
-		"status":  "1",
-		"payload": decoded,
+		"status": "1",
 	}, nil
 }
 
-func (s *DeliverooService) DenyOrder(ctx context.Context, orderID, reasonID, reasonType, comment string) error {
+func (s *DeliverooService) DenyOrder(ctx context.Context, orderID string, in models.DenyOrderRequest) error {
 	brandOrderID, err := s.repo.GetBrandOrderID(ctx, orderID)
 	if err != nil {
 		return err
 	}
 
-	token, err := s.repo.GetBearerToken(ctx)
+	err = s.client.DenyOrder(ctx, brandOrderID, in)
 	if err != nil {
 		return err
 	}
 
-	payload := map[string]interface{}{
-		"status":        "rejected",
-		"reject_reason": reasonType,
-		"notes":         comment,
-	}
-
-	resp, err := s.client.PatchOrderStatus(ctx, brandOrderID, payload, token)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// Update local status
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-		// return s.repo.UpdateBrandStatusRejected(ctx, brandOrderID)
-	}
-
-	return fmt.Errorf("deliveroo rejected with %d", resp.StatusCode)
-}
-
-func (s *DeliverooService) UpdateOrderStatus(ctx context.Context, brandOrderID string, payload map[string]any) (map[string]any, error) {
-
-	bearer, err := s.repo.GetBearerToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := s.client.UpdateOrderStatus(ctx, brandOrderID, bearer, payload)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == 404 {
-		// Recursion retransmission as in PHP
-		return s.UpdateOrderStatus(ctx, brandOrderID, map[string]any{
-			"status":        "rejected",
-			"reject_reason": "other",
-			"notes":         "timed out",
-		})
-	}
-
-	var decoded map[string]any
-	json.Unmarshal(body, &decoded)
-
-	return map[string]any{
-		"status":  "1",
-		"payload": decoded,
-	}, nil
+	return nil
 }
 
 func (s *DeliverooService) FinishOrderIfDoesNotExist(ctx context.Context, brandOrderID string) {
@@ -243,60 +136,25 @@ func (s *DeliverooService) ReadyForCollection(ctx context.Context, orderID strin
 		return err
 	}
 
-	token, err := s.repo.GetBearerToken(ctx)
+	err = s.client.SetReadyForCollection(ctx, brandOrderID)
 	if err != nil {
 		return err
 	}
 
-	payload := map[string]interface{}{
-		"stage":       "ready_for_collection",
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
-	}
-
-	resp, err := s.client.CreateStage(ctx, brandOrderID, payload, token)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return s.repo.UpdateReadyForHandoffLocal(ctx, orderID) // ici
-	}
-
-	return fmt.Errorf("Deliveroo stage returned %d", resp.StatusCode)
+	return nil
 }
 
-func (s *DeliverooService) CancelOrder(ctx context.Context, userID, orderID, reasonID, comment string) error {
+func (s *DeliverooService) CancelOrder(ctx context.Context, userID, orderID string, in models.DenyOrderRequest) error {
 
 	brandOrderID, err := s.repo.GetBrandOrderID(ctx, orderID)
 	if err != nil {
 		return err
 	}
 
-	token, err := s.repo.GetBearerToken(ctx)
+	err = s.client.DenyOrder(ctx, brandOrderID, in)
 	if err != nil {
 		return err
 	}
 
-	payload := map[string]interface{}{
-		"deny_reason": map[string]interface{}{
-			"info":        comment,
-			"type":        reasonID,
-			"client_code": reasonID,
-		},
-	}
-
-	body, _ := json.Marshal(payload)
-
-	resp, err := s.client.CancelOrder(ctx, brandOrderID, token, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return s.repo.MarkOrderCanceledLocal(ctx, orderID) // ici
-	}
-
-	return fmt.Errorf("deliveroo cancel returned %d", resp.StatusCode)
+	return nil
 }

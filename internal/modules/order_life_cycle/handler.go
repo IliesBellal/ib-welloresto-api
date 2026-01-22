@@ -254,14 +254,14 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
+	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(res)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {

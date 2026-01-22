@@ -20,7 +20,7 @@ func main() {
 	zap.ReplaceGlobals(zlog)
 
 	// MySQL
-	mysqlDB, err := database.NewMySQL(cfg.MySQLURL)
+	mysqlDB, err := database.NewMySQL(cfg.Database)
 	if err != nil {
 		zlog.Fatal("Failed to connect to MySQL", zap.Error(err))
 	}
@@ -29,6 +29,6 @@ func main() {
 	// Router
 	r := SetupRoutes(zlog, mysqlDB, cfg)
 
-	zlog.Info("Server running", zap.String("port", cfg.Port))
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))
+	zlog.Info("Server running", zap.String("port", cfg.App.Port))
+	log.Fatal(http.ListenAndServe(":"+cfg.App.Port, r))
 }

@@ -1,7 +1,6 @@
 package models
 
 import (
-	"database/sql"
 	"time"
 )
 
@@ -22,22 +21,22 @@ type OrderComment struct {
 }
 
 type Location struct {
-	LocationID   string         `json:"location_id"`
-	OrderID      *string        `json:"order_id"`
-	BookingID    *string        `json:"booking_id"`
-	LocationName string         `json:"location_name"`
-	LocationDesc *string        `json:"location_desc"`
-	Seats        int            `json:"seats"`
-	Order        int            `json:"order"`
-	FloorID      string         `json:"floor_id"`
-	Shape        sql.NullString `json:"location_desc"`
-	X            sql.NullString `json:"location_desc"`
-	Y            sql.NullString `json:"location_desc"`
-	W            sql.NullString `json:"location_desc"`
-	H            sql.NullString `json:"location_desc"`
-	Angle        sql.NullString `json:"location_desc"`
-	OpenOrderID  sql.NullString `json:"open_order_id"`
-	Available    string         `json:"available"`
+	LocationID   string  `json:"location_id"`
+	OrderID      *string `json:"order_id"`
+	BookingID    *string `json:"booking_id"`
+	LocationName string  `json:"location_name"`
+	LocationDesc *string `json:"location_desc"`
+	Seats        int     `json:"seats"`
+	Order        int     `json:"order"`
+	FloorID      string  `json:"floor_id"`
+	Shape        string  `json:"location_desc"`
+	X            string  `json:"location_desc"`
+	Y            string  `json:"location_desc"`
+	W            string  `json:"location_desc"`
+	H            string  `json:"location_desc"`
+	Angle        string  `json:"location_desc"`
+	OpenOrderID  string  `json:"open_order_id"`
+	Available    string  `json:"available"`
 }
 
 type SeatingPlan struct {
