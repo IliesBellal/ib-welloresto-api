@@ -81,7 +81,7 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 	log.Info("DeliverooClient.refreshToken - refreshing")
 
 	//url := "https://auth-sandbox.developers.deliveroo.com/oauth2/token"
-	url := fmt.Sprintf("%s/oauth2/token", c.config.BaseURL)
+	url := fmt.Sprintf("%s/oauth2/token", c.config.AuthBaseURL)
 	payload := "grant_type=client_credentials"
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(payload))
