@@ -197,8 +197,13 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	delivery_start := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: res,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(res)
+	json.NewEncoder(w).Encode(delivery_start)
 }
 
 func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {

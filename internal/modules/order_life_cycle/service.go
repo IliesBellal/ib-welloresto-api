@@ -205,24 +205,24 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, or
 	}, nil
 }
 
-func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (map[string]string, error) {
+func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (string, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
-		return nil, err
+		return "error", err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return "error", errors.New("invalid token")
 	}
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, orderID)
 	if err != nil {
-		return nil, err
+		return "error", err
 	}
 
 	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP)
 	if err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
-		return nil, err
+		return "error", err
 	}
 
 	// 3) If brand is external, call integration ASYNC
@@ -255,7 +255,7 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 	}
 
-	return map[string]string{"status": "1"}, nil
+	return "succes", nil
 }
 
 func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string, orderID string, userID string) (map[string]interface{}, error) {
