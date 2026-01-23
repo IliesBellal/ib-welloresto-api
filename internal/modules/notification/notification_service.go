@@ -198,7 +198,7 @@ func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 		s.log("Error in getFCMToken after generation : " + err.Error())
 		return "", err
 	}
-	s.log("New Token generated : " + token)
+	s.log("New BasicAuth generated : " + token)
 
 	_ = s.repo.StoreFCMToken(ctx, token)
 

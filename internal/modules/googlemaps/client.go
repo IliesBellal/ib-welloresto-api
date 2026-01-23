@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"welloresto-api/internal/config"
 )
 
 type GoogleMapsClient interface {
@@ -16,9 +17,9 @@ type googleMapsClient struct {
 	client *http.Client
 }
 
-func NewGoogleMapsClient(apiKey string) GoogleMapsClient {
+func NewGoogleMapsClient(cfg config.Google) GoogleMapsClient {
 	return &googleMapsClient{
-		apiKey: apiKey,
+		apiKey: cfg.APIKey,
 		client: &http.Client{},
 	}
 }

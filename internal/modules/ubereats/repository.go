@@ -225,7 +225,7 @@ func (r *UberRepository) UpdateStoreClosure(tx *sql.Tx, storeID string, closedUn
 	return err
 }
 
-// GetStoreInfoForMenu récupère ID, Token et Timezone (utilisé pour toggle item)
+// GetStoreInfoForMenu récupère ID, BasicAuth et Timezone (utilisé pour toggle item)
 func (r *UberRepository) GetStoreInfoForMenu(tx *sql.Tx, merchantID string) (*Store, error) {
 	// Similaire à GetStoreData mais s'assure que le token n'est pas null
 	query := `

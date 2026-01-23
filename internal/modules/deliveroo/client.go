@@ -10,20 +10,15 @@ import (
 	"net/url"
 	"sync"
 	"time"
+	"welloresto-api/internal/config"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
 
-// Config contient les identifiants nécessaires
-type Config struct {
-	BasicAuth string // La chaîne Base64 (ClientID:Secret)
-	IsSandbox bool
-}
-
 // DeliverooClient gère la communication avec l'API
 type DeliverooClient struct {
 	httpClient *http.Client
-	config     Config
+	config     config.Deliveroo
 
 	// Gestion du token en cache
 	tokenMu     sync.RWMutex
@@ -44,7 +39,7 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func NewDeliverooClient(httpClient *http.Client, config Config) *DeliverooClient {
+func NewDeliverooClient(httpClient *http.Client, config config.Deliveroo) *DeliverooClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -85,7 +80,8 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 	log := logger.FromContext(ctx)
 	log.Info("DeliverooClient.refreshToken - refreshing")
 
-	url := "https://auth-sandbox.developers.deliveroo.com/oauth2/token"
+	//url := "https://auth-sandbox.developers.deliveroo.com/oauth2/token"
+	url := fmt.Sprintf("%s/oauth2/token", c.config.BaseURL)
 	payload := "grant_type=client_credentials"
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(payload))
@@ -163,7 +159,8 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 
 // AcceptOrder correspond à $this->updateOrderStatus(..., ["status" => "accepted"])
 func (c *DeliverooClient) AcceptOrder(ctx context.Context, brandOrderID string) error {
-	url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", url.PathEscape(brandOrderID))
+	//url := fmt.Sprintf("%shttps://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", url.PathEscape(brandOrderID))
+	url := fmt.Sprintf("%s/order/v1/orders/%s", c.config.BaseURL, url.PathEscape(brandOrderID))
 	payload := map[string]string{"status": "accepted"}
 
 	log := logger.FromContext(ctx)
@@ -184,7 +181,8 @@ func (c *DeliverooClient) AcceptOrder(ctx context.Context, brandOrderID string) 
 
 // ConfirmOrder correspond à $this->updateOrderStatus(..., ["status" => "confirmed"])
 func (c *DeliverooClient) ConfirmOrder(ctx context.Context, brandOrderID string) error {
-	url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", brandOrderID)
+	//url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", brandOrderID)
+	url := fmt.Sprintf("%s/order/v1/orders/%s", c.config.BaseURL, url.PathEscape(brandOrderID))
 	payload := map[string]string{"status": "confirmed"}
 
 	resp, err := c.doRequest(ctx, "PATCH", url, payload)
@@ -202,7 +200,8 @@ func (c *DeliverooClient) ConfirmOrder(ctx context.Context, brandOrderID string)
 // DenyOrder correspond à setDeliverooOrderDenied.
 // NOTE: Deliveroo utilise "rejected" comme status, pas "denied".
 func (c *DeliverooClient) DenyOrder(ctx context.Context, brandOrderID string, in models.DenyOrderRequest) error {
-	url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", url.PathEscape(brandOrderID))
+	//url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", url.PathEscape(brandOrderID))
+	url := fmt.Sprintf("%s/order/v1/orders/%s", c.config.BaseURL, url.PathEscape(brandOrderID))
 
 	payload := map[string]string{
 		"status":        "rejected",
@@ -238,7 +237,8 @@ func (c *DeliverooClient) SetCollected(ctx context.Context, brandOrderID string)
 
 // createStage est la méthode générique interne
 func (c *DeliverooClient) createStage(ctx context.Context, brandOrderID, stage string) error {
-	url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s/prep_stage", brandOrderID)
+	//url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s/prep_stage", brandOrderID)
+	url := fmt.Sprintf("%s/order/v1/orders/%s/prep_stage", c.config.BaseURL, url.PathEscape(brandOrderID))
 
 	// Format de date ISO 8601 UTC requis par Deliveroo
 	occurredAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")

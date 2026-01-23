@@ -5,39 +5,29 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
-	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
 )
 
 type OrdersFetcher struct {
-	db  *sql.DB
-	log *zap.Logger
+	db *sql.DB
 }
 
-func NewOrdersFetcher(db *sql.DB, log *zap.Logger) *OrdersFetcher {
+func NewOrdersFetcher(db *sql.DB) *OrdersFetcher {
 	return &OrdersFetcher{
-		db:  db,
-		log: log}
+		db: db}
 }
 
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, orderByFilter, limitsFilters string) ([]models.Order, error) {
-	startTotal := time.Now()
-	r.log.Info("fetchAndBuildOrders START with filters "+whereFilters, zap.String("merchant_id", merchantID))
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
 	if ctx.Err() != nil {
-		r.log.Error("CTX ALREADY CANCELED", zap.Error(ctx.Err()))
+		return nil, ctx.Err()
 	}
 
-	r.log.Info("Beginning tx")
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	r.log.Info("tx open")
 	if err != nil {
-		r.log.Error("BeginTx failed", zap.Error(err))
 		return nil, fmt.Errorf("BeginTx failed: %w", err)
 	}
 
@@ -48,30 +38,17 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			_ = tx.Rollback()
 		}
 	}()
-	r.log.Info("first query")
 
 	// --- HELPER FUNCTIONS CORRIGÉES ---
 	// Helper to run a query with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
-		r.log.Info("Query START", zap.String("step", step))
 
-		t0 := time.Now()
 		rows, err := tx.QueryContext(ctx, query, args...)
-		elapsed := time.Since(t0)
 
 		if err != nil {
-			r.log.Error(
-				"Query ERROR",
-				zap.String("step", step),
-				zap.Duration("elapsed", elapsed),
-				zap.String("sql", query),
-				zap.Any("args", args),
-				zap.Error(err),
-			)
 			return nil, fmt.Errorf("%s query error: %w", step, err)
 		}
 
-		r.log.Info("Query DONE", zap.String("step", step), zap.Duration("elapsed", elapsed))
 		return rows, nil
 	}
 
@@ -101,7 +78,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				OrderID: &orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: helpers.NullStringToPtr(locationDesc),
 			})
 		}
-		r.log.Info("locations loaded")
 	}
 
 	// --- 3. COMPONENTS (Optimisation possible: filtrer par orderID si liste courte, sinon global) ---
@@ -139,7 +115,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Status:        int(status.Int64),
 			})
 		}
-		r.log.Info("components loaded")
 	}
 
 	// --- 4. EXTRAS ---
@@ -177,7 +152,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Price:       price.Float64,
 			})
 		}
-		r.log.Info("extras loaded")
 	}
 
 	// --- 5. WITHOUTS ---
@@ -214,7 +188,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Price:       0,
 			})
 		}
-		r.log.Info("withouts loaded")
 	}
 
 	// --- 7. CLIENTS SNO ---
@@ -245,7 +218,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			clientObj := map[string]interface{}{"user_code": userCode.String, "user_name": userName.String, "quantity": quantity.Int64}
 			snoClientsMap[orderItemID.String] = append(snoClientsMap[orderItemID.String], clientObj)
 		}
-		r.log.Info("clientSNO loaded")
 	}
 
 	// --- 11. CONFIG OPTIONS ---
@@ -296,7 +268,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Selected:          int(selected.Int64),
 			})
 		}
-		r.log.Info("configuration_attributes_options loaded")
 	}
 
 	// --- 10. CONFIG ATTRIBUTES ---
@@ -340,7 +311,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Options:       opts,
 			})
 		}
-		r.log.Info("configuration_attribute loaded")
 	}
 
 	// --- 8. ORDER COMMENTS ---
@@ -366,24 +336,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var content, userName, orderID, userID sql.NullString
 			var creationDate sql.NullTime
 			if err := rows.Scan(&id, &userID, &content, &creationDate, &orderID, &userName); err != nil {
-				// LOG BRUT : row complet, colonnes, valeurs reçues
-				cols, _ := rows.Columns()
-				raw := helpers.DumpRawRow(rows)
-
-				r.log.Error("SCAN ERROR",
-					zap.String("step", step),
-					zap.Strings("columns", cols),
-					zap.Any("raw_row", raw),
-					zap.Error(err),
-				)
-
 				return nil, err
 			}
 			commentsByOrderID[orderID.String] = append(commentsByOrderID[orderID.String], models.OrderComment{
 				OrderID: orderID.String, UserName: helpers.NullStringToPtr(userName), Content: content.String, CreationDate: helpers.NullTimePtr(creationDate),
 			})
 		}
-		r.log.Info("order_comment loaded")
 	}
 
 	// --- 6. PAYMENTS ---
@@ -410,24 +368,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var paymentDate sql.NullTime
 
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
-				// LOG BRUT : row complet, colonnes, valeurs reçues
-				cols, _ := rows.Columns()
-				raw := helpers.DumpRawRow(rows)
-
-				r.log.Error("SCAN ERROR",
-					zap.String("step", step),
-					zap.Strings("columns", cols),
-					zap.Any("raw_row", raw),
-					zap.Error(err),
-				)
-
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
 				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate), Enabled: int(enabled.Int64),
 			})
 		}
-		r.log.Info("payments loaded")
 	}
 
 	// --- 2. PRODUCTS ---
@@ -573,7 +519,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
 		}
-		r.log.Info("products loaded")
 	}
 
 	// =====================================================
@@ -810,15 +755,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			orders = append(orders, ord)
 		}
-
-		r.log.Info("header loaded")
 	}
-
-	r.log.Info(
-		"fetchAndBuildOrders END",
-		zap.Int("orders_count", len(orders)),
-		zap.Duration("total_duration", time.Since(startTotal)),
-	)
 
 	return orders, nil
 }

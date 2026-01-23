@@ -26,7 +26,7 @@ type OrderIntegrationInfo struct {
 }
 
 func NewOrdersLifeCycleRepository(db *sql.DB, log *zap.Logger) *OrdersLifeCycleRepository {
-	temp := orders.NewOrdersFetcher(db, log)
+	temp := orders.NewOrdersFetcher(db)
 	return &OrdersLifeCycleRepository{
 		db:            db,
 		ordersFetcher: temp,

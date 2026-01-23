@@ -9,19 +9,16 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 type DeliverooRepository struct {
 	db         *sql.DB
-	log        *zap.Logger
 	httpClient *http.Client
 	basicAuth  string
 }
 
-func NewDeliverooRepo(db *sql.DB, log *zap.Logger) *DeliverooRepository {
-	return &DeliverooRepository{db: db, log: log, httpClient: &http.Client{Timeout: 15 * time.Second}, basicAuth: os.Getenv("DELIVEROO_BASE64_BASIC_AUTH")}
+func NewDeliverooRepo(db *sql.DB) *DeliverooRepository {
+	return &DeliverooRepository{db: db, httpClient: &http.Client{Timeout: 15 * time.Second}, basicAuth: os.Getenv("DELIVEROO_BASE64_BASIC_AUTH")}
 }
 
 func (r *DeliverooRepository) GetBearerToken(ctx context.Context) (string, error) {

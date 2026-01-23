@@ -7,20 +7,17 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
-
-	"go.uber.org/zap"
 )
 
 // LegacyOrdersRepository implements the PHP-style (legacy) data retrieval for pending orders
 type DeliverySessionsRepository struct {
 	db            *sql.DB
-	log           *zap.Logger
 	ordersFetcher *orders.OrdersFetcher
 }
 
-func NewDeliverySessionsRepository(db *sql.DB, log *zap.Logger) *DeliverySessionsRepository {
-	temp := orders.NewOrdersFetcher(db, log)
-	return &DeliverySessionsRepository{db: db, log: log, ordersFetcher: temp}
+func NewDeliverySessionsRepository(db *sql.DB) *DeliverySessionsRepository {
+	temp := orders.NewOrdersFetcher(db)
+	return &DeliverySessionsRepository{db: db, ordersFetcher: temp}
 }
 
 func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]DeliverySession, error) {

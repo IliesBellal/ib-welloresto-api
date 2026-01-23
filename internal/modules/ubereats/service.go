@@ -181,7 +181,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 		// Dans une prod réelle, il faudrait logger l'erreur 'err' ici.
 
 		// On lance la synchro qui gère sa propre transaction
-		// Note: Il faut récupérer le BrandOrderID et Token hors de la transaction échouée idéalement
+		// Note: Il faut récupérer le BrandOrderID et BasicAuth hors de la transaction échouée idéalement
 		// Je simplifie l'appel ici :
 		s.RecoverOrderState(merchantID, orderID)
 		return err
@@ -519,7 +519,7 @@ func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID
 	}
 	defer tx.Rollback()
 
-	// Récup Store ID, Token et Timezone
+	// Récup Store ID, BasicAuth et Timezone
 	store, err := s.repo.GetStoreInfoForMenu(tx, merchantID)
 	if err != nil {
 		return err

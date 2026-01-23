@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"net/http"
-	"os"
 	"welloresto-api/internal/modules/googlemaps"
 
 	"github.com/go-chi/chi/v5"
@@ -45,14 +44,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	//  MODULE INITIALIZATION
 	// =============================
 
-	apiKey := os.Getenv("GOOGLE_API_KEY")
-	if apiKey == "" {
-		log.Fatal("GOOGLE_API_KEY is not set")
-	}
-
 	// 2. Initialisation des couches (Injection de dépendances)
 	repo := googlemaps.NewGoogleMapsRepository()
-	googleClient := googlemaps.NewGoogleMapsClient(apiKey)
+	googleClient := googlemaps.NewGoogleMapsClient(cfg.Google)
 	svc := googlemaps.NewRouteService(repo, googleClient)
 	routeHandler := googlemaps.NewRouteHandler(svc)
 
@@ -77,7 +71,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Orders ----
 	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, log)
-	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, log)
+	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
 	// ---- Uber ----
@@ -85,8 +79,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
 
 	// ---- Deliveroo ----
-	deliverooRepo := deliverooModule.NewDeliverooRepo(mysqlDB, log)
-	deliverooService := deliverooModule.NewDeliverooService(deliverooRepo, mysqlDB, log)
+	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB, log)

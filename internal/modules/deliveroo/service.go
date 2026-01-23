@@ -8,25 +8,21 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"welloresto-api/internal/config"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
 )
 
 type DeliverooService struct {
 	repo   *DeliverooRepository
 	db     *sql.DB
-	log    *zap.Logger
 	client *DeliverooClient
+	cfg    config.Deliveroo
 }
 
-func NewDeliverooService(repo *DeliverooRepository, db *sql.DB, log *zap.Logger) *DeliverooService {
-	config := Config{
-		BasicAuth: "M3M1ZTIzcDc4NWw0ZHI4a2czOGFmbWdlMGs6ZG9uZTBwZ3FnN2hlNThsbHBkbWhhcHZnNXE1djRnMHNqb3R0MjI4aG1zMmNkcXZhYWYz",
-		IsSandbox: false,
-	}
-	dc := NewDeliverooClient(nil, config)
-	return &DeliverooService{repo: repo, db: db, log: log, client: dc}
+func NewDeliverooService(db *sql.DB, cfg config.Deliveroo) *DeliverooService {
+	dc := NewDeliverooClient(nil, cfg)
+	repo := NewDeliverooRepo(db)
+	return &DeliverooService{repo: repo, db: db, client: dc, cfg: cfg}
 }
 
 func (s *DeliverooService) SetCollected(ctx context.Context, brandOrderID string) error {

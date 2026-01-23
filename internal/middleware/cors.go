@@ -8,7 +8,7 @@ func CORSMiddleware() *cors.Cors {
 			// Prod
 			"https://mywelloresto.welloresto.fr",
 			"https://wello-back-office.onrender.com",
-			
+
 			// Lovable
 			"https://d97a501b-ebd7-46a4-9288-bca03030e30f.lovableproject.com",
 
@@ -32,7 +32,7 @@ func CORSMiddleware() *cors.Cors {
 			"Accept",
 			"Authorization",
 			"Content-Type",
-			"X-CSRF-Token",
+			"X-CSRF-BasicAuth",
 		},
 
 		ExposedHeaders: []string{

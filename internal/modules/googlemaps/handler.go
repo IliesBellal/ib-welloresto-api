@@ -17,7 +17,7 @@ func (h *RouteHandler) HandleGetRoute(w http.ResponseWriter, r *http.Request) {
 	origin := r.URL.Query().Get("origin")
 	destination := r.URL.Query().Get("destination")
 
-	// Simulation d'un UserID (peut venir d'un Token JWT dans le header Authorization)
+	// Simulation d'un UserID (peut venir d'un BasicAuth JWT dans le header Authorization)
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
 		userID = "anonymous"

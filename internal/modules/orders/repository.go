@@ -23,7 +23,7 @@ type OrdersRepository struct {
 func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
 	return &OrdersRepository{
 		db:            db,
-		ordersFetcher: NewOrdersFetcher(db, log),
+		ordersFetcher: NewOrdersFetcher(db),
 		log:           log}
 }
 
