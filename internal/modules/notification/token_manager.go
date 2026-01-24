@@ -38,6 +38,32 @@ func NewGoogleFCMTokenManager(serviceAccountPath string) *GoogleFCMTokenManager 
 	}
 }
 
+//
+// Lecture du fichier JSON
+//
+
+func (m *GoogleFCMTokenManager) readServiceAccount() (*ServiceAccountInfo, error) {
+
+	data, err := os.ReadFile(m.ServiceAccountPath)
+	if err != nil {
+		m.log("Error: cannot read service account file")
+		return nil, err
+	}
+
+	var info ServiceAccountInfo
+
+	if err := json.Unmarshal(data, &info); err != nil {
+		m.log("Error: invalid JSON service account")
+		return nil, err
+	}
+
+	if info.PrivateKey == "" || info.ClientEmail == "" {
+		return nil, errors.New("invalid service account: missing private_key or client_email")
+	}
+
+	return &info, nil
+}
+
 /*
 STRUCTURE DU FICHIER JSON :
 {
@@ -80,32 +106,6 @@ func (m *GoogleFCMTokenManager) GenerateToken(ctx context.Context) (string, erro
 	m.log("New FCM token generated successfully")
 
 	return token, nil
-}
-
-//
-// Lecture du fichier JSON
-//
-
-func (m *GoogleFCMTokenManager) readServiceAccount() (*ServiceAccountInfo, error) {
-
-	data, err := os.ReadFile(m.ServiceAccountPath)
-	if err != nil {
-		m.log("Error: cannot read service account file")
-		return nil, err
-	}
-
-	var info ServiceAccountInfo
-
-	if err := json.Unmarshal(data, &info); err != nil {
-		m.log("Error: invalid JSON service account")
-		return nil, err
-	}
-
-	if info.PrivateKey == "" || info.ClientEmail == "" {
-		return nil, errors.New("invalid service account: missing private_key or client_email")
-	}
-
-	return &info, nil
 }
 
 //

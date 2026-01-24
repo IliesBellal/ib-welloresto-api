@@ -27,11 +27,7 @@ func (s *NotificationService) log(msg string) {
 	log.Printf("[NOTIFICATION] %s\n", msg)
 }
 
-func (s *NotificationService) SendNotificationAsync(
-	merchantID string,
-	orderID string,
-	nType string,
-) error {
+func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType string) error {
 	ctx := context.Background()
 
 	tokens, err := s.repo.GetDeviceTokens(ctx, merchantID)
@@ -74,9 +70,9 @@ func (s *NotificationService) SendNotificationAsyncWithPayload(
 
 func (s *NotificationService) sendWithoutPayload(
 	ctx context.Context,
-	merchantID string,
-	orderID string,
-	token string,
+	merchantID,
+	orderID,
+	token,
 	nType string,
 ) {
 
