@@ -5,12 +5,12 @@ import (
 )
 
 type Payment struct {
-	OrderID     string     `json:"order_id"`
-	PaymentID   int64      `json:"payment_id"`
-	MOP         string     `json:"mop"`
-	Amount      float64    `json:"amount"`
-	PaymentDate *time.Time `json:"payment_date"`
-	Enabled     int        `json:"enabled"`
+	OrderID     string  `json:"order_id"`
+	PaymentID   int64   `json:"payment_id"`
+	MOP         string  `json:"mop"`
+	Amount      float64 `json:"amount"`
+	PaymentDate int64   `json:"payment_date"`
+	Enabled     int     `json:"enabled"`
 }
 
 type OrderComment struct {

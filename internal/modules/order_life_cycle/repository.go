@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
 
@@ -271,7 +272,7 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 		}
 
 		if paymentDate.Valid {
-			p.PaymentDate = &paymentDate.Time
+			p.PaymentDate = helpers.NullTimePtr(paymentDate).UTC().Unix()
 		}
 
 		payments = append(payments, p)

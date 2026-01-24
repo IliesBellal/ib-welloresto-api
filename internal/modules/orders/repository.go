@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
@@ -33,8 +34,6 @@ func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
 
 // GetPendingOrders : Récupère toutes les commandes en cours (Optimisé)
 func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
-	r.log.Info("GetPendingOrders START", zap.String("merchant_id", merchantID))
-
 	// On a besoin du repo session pour récupérer les sessions à la fin
 	//deliverySessionRepo := delivery_sessions.NewDeliverySessionsRepository(r.db, r.log)
 
@@ -557,7 +556,7 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 		}
 
 		if paymentDate.Valid {
-			p.PaymentDate = &paymentDate.Time
+			p.PaymentDate = helpers.NullTimePtr(paymentDate).UTC().Unix()
 		}
 
 		payments = append(payments, p)
