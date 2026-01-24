@@ -50,7 +50,15 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{"status": "1"})
+	delivered := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.HandlerDefaultResponseModelSet{
+			Status: "success",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delivered)
 }
 
 func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +88,15 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "1"})
+	delivered := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.HandlerDefaultResponseModelSet{
+			Status: "success",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delivered)
 }
 
 func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +137,15 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "1"})
+	delivered := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.HandlerDefaultResponseModelSet{
+			Status: "success",
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(delivered)
 }
 
 func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r *http.Request) {
@@ -197,13 +221,13 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	delivery_start := models.HandlerDefaultResponse{
+	accept_order := models.HandlerDefaultResponse{
 		ID:   "10",
 		Data: res,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivery_start)
+	json.NewEncoder(w).Encode(accept_order)
 }
 
 func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {
@@ -300,8 +324,10 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 	}
 
 	ready_for_distribution := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: `{"status":"1"}`,
+		ID: "10",
+		Data: models.CashRegisterHistoryResponse{
+			Status: "success",
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -363,8 +389,10 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 	}
 
 	delivered := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: `{"status":"1"}`,
+		ID: "10",
+		Data: models.HandlerDefaultResponseModelSet{
+			Status: "success",
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

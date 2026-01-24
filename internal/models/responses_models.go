@@ -12,3 +12,8 @@ type HandlerDefaultResponse struct {
 	ID   string      `json:"id"`
 	Data interface{} `json:"data"`
 }
+
+type HandlerDefaultResponseModelSet struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
