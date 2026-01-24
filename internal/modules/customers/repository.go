@@ -7,17 +7,14 @@ import (
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
 )
 
 type CustomersRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	db *sql.DB
 }
 
-func NewCustomerRepository(db *sql.DB, log *zap.Logger) *CustomersRepository {
-	return &CustomersRepository{db: db, log: log}
+func NewCustomerRepository(db *sql.DB) *CustomersRepository {
+	return &CustomersRepository{db: db}
 }
 
 func normalizePhoneNumber(phone string) string {
@@ -36,8 +33,6 @@ func ucfirst(s string) string {
 }
 
 func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (*string, error) {
-
-	r.log.Info("Start function UpdateOrCreateCustomer")
 
 	// Liste des colonnes vraiment existantes et autorisées
 	allowed := map[string]bool{
@@ -90,7 +85,6 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
         `
 		args = append(args, *c.CustomerID, c.MerchantID)
 
-		helpers.DebugSQL(r.log, query, args)
 		_, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return nil, err

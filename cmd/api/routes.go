@@ -70,7 +70,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
 
 	// ---- Orders ----
-	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, log)
+	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB)
 	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
@@ -82,7 +82,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
 
 	// ---- Customers ----
-	customersRepo := customersModule.NewCustomerRepository(mysqlDB, log)
+	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
 	// ---- Orders Lifecycle ----

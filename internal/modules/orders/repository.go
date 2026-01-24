@@ -11,21 +11,17 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
-
-	"go.uber.org/zap"
 )
 
 type OrdersRepository struct {
 	db            *sql.DB
-	log           *zap.Logger
 	ordersFetcher *OrdersFetcher
 }
 
-func NewOrdersRepository(db *sql.DB, log *zap.Logger) *OrdersRepository {
+func NewOrdersRepository(db *sql.DB) *OrdersRepository {
 	return &OrdersRepository{
 		db:            db,
-		ordersFetcher: NewOrdersFetcher(db),
-		log:           log}
+		ordersFetcher: NewOrdersFetcher(db)}
 }
 
 // ==================================================================================
@@ -127,8 +123,6 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 }
 
 func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.Order, error) {
-	r.log.Info("GetOrder START", zap.String("order_id", orderID))
-
 	// Filtre strict sur l'MerchantID
 	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
 
@@ -144,8 +138,6 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 }
 
 func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req *models.OrderRequest) ([]models.Order, error) {
-	r.log.Info("GetOrder START", zap.String("merchant_id", merchantID))
-
 	// Filtre strict sur l'MerchantID
 	ids, err := r.GetOrdersBasic(ctx, merchantID, req)
 	if err != nil {
@@ -222,8 +214,6 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
 }
 
 func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	r.log.Info("ReopenClosedOrder START", zap.String("order_id", orderID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -275,13 +265,6 @@ func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, or
 
 	// ---- 4. Log si changement
 	if beforeState != afterState {
-		r.log.Info("Order state changed",
-			zap.String("order_id", orderID),
-			zap.String("old", beforeState),
-			zap.String("new", afterState),
-			zap.String("user_id", userID),
-		)
-
 		// TODO : appeler équivalent Go de logOrderChange(...)
 	}
 
@@ -299,8 +282,6 @@ func (r *OrdersRepository) GetHistory(
 	merchantID string,
 	req models.OrderHistoryRequest,
 ) ([]models.Order, error) {
-
-	r.log.Info("GetHistory START", zap.String("merchant_id", merchantID))
 
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS
@@ -392,8 +373,6 @@ func (r *OrdersRepository) GetHistory(
 }
 
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
-	r.log.Info("AddPayment START", zap.String("order_id", req.OrderID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)
@@ -522,14 +501,10 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 	if err != nil {
 		return rollback(err)
 	}
-
-	r.log.Info("AddPayment DONE", zap.String("order_id", req.OrderID))
 	return nil
 }
 
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
-	r.log.Info("GetPaymentsForOrder START", zap.String("order_id", orderID))
-
 	q := `
 		SELECT order_id, payment_id, mop, amount, payment_date, enabled
 		FROM payments
@@ -539,7 +514,6 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 
 	rows, err := r.db.QueryContext(ctx, q, orderID)
 	if err != nil {
-		r.log.Error("GetPaymentsForOrder ERROR", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -566,8 +540,6 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 }
 
 func (r *OrdersRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	r.log.Info("DisablePayment START", zap.String("payment_id", paymentID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -680,13 +652,7 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 		}
 
 		// ----- Log order change (replicates PHP) -----
-		r.log.Info("Order change logged",
-			zap.String("order_id", orderID),
-			zap.String("changed_by_user_id", userID),
-			zap.String("field", "isDistributed"),
-			zap.String("old_value", strconv.Itoa(int(beforeIsDistributed.Int64))),
-			zap.String("new_value", "1"),
-		)
+		// TODO : appeler équivalent Go de logOrderChange(...)
 	}
 
 	// ------ Get brand ------
@@ -708,11 +674,14 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 
 	// ------ Notifications / Integrations ------
 	if brand.String == "UBER_EATS" {
-		r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
 	} else if brand.String == "DELIVEROO" {
-		r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
 	} else {
-		r.log.Info("Sending update order notification", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Sending update order notification", zap.String("order_id", orderID))
 		// r.sendOrderUpdateNotification(merchantID, orderID)
 	}
 
@@ -721,9 +690,7 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 
 func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-
-	log := logger.FromContext(ctx)
-	log.Info("Orders.Create - request received")
+	//log := logger.FromContext(ctx)
 
 	defer cancel()
 
@@ -754,7 +721,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	if estimatedReady == "" {
 		est, err := s.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
 		if err != nil {
-			s.log.Warn("ComputeEstimatedReady warning", zap.Error(err))
+			//s.log.Warn("ComputeEstimatedReady warning", zap.Error(err))
 		}
 		if est != "" {
 			estimatedReady = est
@@ -971,7 +938,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns MerchantID as string.
-	custoRepo := customers.NewCustomerRepository(s.db, s.log)
+	custoRepo := customers.NewCustomerRepository(s.db)
 	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
@@ -1026,7 +993,8 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 	rows, err := tx.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
 	if err != nil {
 		// do not fail hard on missing proc; log and continue
-		r.log.Debug("GET_AVERAGE_DISTRIBUTION_TIME call failed", zap.Error(err))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Debug("GET_AVERAGE_DISTRIBUTION_TIME call failed", zap.Error(err))
 		return "", nil
 	}
 	defer rows.Close()
@@ -1034,7 +1002,8 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 	var seconds sql.NullInt64
 	if rows.Next() {
 		if err := rows.Scan(&seconds); err != nil {
-			r.log.Debug("scan GET_AVERAGE_DISTRIBUTION_TIME failed", zap.Error(err))
+			// TODO : appeler équivalent Go de logOrderChange(...)
+			//r.log.Debug("scan GET_AVERAGE_DISTRIBUTION_TIME failed", zap.Error(err))
 			return "", nil
 		}
 	}

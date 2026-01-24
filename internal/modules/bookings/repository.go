@@ -24,7 +24,7 @@ func NewBookingsRepository(db *sql.DB, log *zap.Logger) *BookingsRepository {
 		db:              db,
 		log:             log,
 		builder:         NewBookingFetcher(db, log),
-		customerUpdater: customers.NewCustomerRepository(db, log),
+		customerUpdater: customers.NewCustomerRepository(db),
 	}
 }
 

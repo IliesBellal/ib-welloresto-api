@@ -214,8 +214,7 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	log := logger.FromContext(ctx)
-	log.Info("Orders.Pricing - request received")
+	//log := logger.FromContext(ctx)
 
 	var req models.PricingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
