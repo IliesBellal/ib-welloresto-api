@@ -55,8 +55,6 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 		return errors.New("invalid user token")
 	}
 
-	merchantID := user.MerchantID
-
 	// 2) Mettre la commande en Delivered (local DB updates)
 	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
 	if err != nil {
@@ -64,7 +62,9 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 	}
 
 	// 3) Notify app
-	_ = s.notificationsService.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
+	log := logger.FromContext(ctx)
+	log.Info("Orders.SetDelivered - SendNotificationAsync merchant_id: " + user.MerchantID + " order_id: " + orderID)
+	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
 	// 4) Handle integration
 	switch order.Brand {
