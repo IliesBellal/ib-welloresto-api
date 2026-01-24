@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"welloresto-api/internal/logger"
 )
 
 type NotificationService struct {
@@ -23,19 +23,16 @@ func NewNotificationService(repo *NotificationRepository, client *FCMClient, tok
 	}
 }
 
-func (s *NotificationService) log(msg string) {
-	log.Printf("[NOTIFICATION] %s\n", msg)
-}
-
 func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType string) error {
 	ctx := context.Background()
 
 	tokens, err := s.repo.GetDeviceTokens(ctx, merchantID)
+	log := logger.FromContext(ctx)
 	if err != nil {
 		return err
 	}
 	if len(tokens) == 0 {
-		s.log(fmt.Sprintf("No tokens for merchant %d", merchantID))
+		log.Info("No tokens for merchant " + merchantID)
 		return nil
 	}
 
@@ -77,8 +74,9 @@ func (s *NotificationService) sendWithoutPayload(
 ) {
 
 	accessToken, err := s.getFCMToken(ctx)
+	log := logger.FromContext(ctx)
 	if err != nil || accessToken == "" {
-		s.log("Missing FCM access token")
+		log.Info("Missing FCM access token")
 		return
 	}
 
@@ -112,12 +110,11 @@ func (s *NotificationService) sendWithoutPayload(
 
 	resp, err := s.client.SendFCMMessage(ctx, token, accessToken, message)
 	if err != nil {
-		s.log(fmt.Sprintf("sendWithoutPayload error: %s", err))
+		log.Info("sendWithoutPayload error: " + err.Error())
 		return
 	}
 	defer resp.Body.Close()
-
-	s.log(fmt.Sprintf("FCM result code=%d", resp.StatusCode))
+	log.Info("FCM result code=" + resp.Status)
 }
 
 func (s *NotificationService) sendWithPayload(
@@ -130,8 +127,9 @@ func (s *NotificationService) sendWithPayload(
 ) {
 
 	accessToken, err := s.getFCMToken(ctx)
+	log := logger.FromContext(ctx)
 	if err != nil || accessToken == "" {
-		s.log("Missing FCM token")
+		log.Error("Missing FCM Token")
 		return
 	}
 
@@ -161,40 +159,41 @@ func (s *NotificationService) sendWithPayload(
 	bodyBytes, _ := json.Marshal(msg)
 	if len(bodyBytes) > 4000 {
 		delete(data, "payload")
-		s.log("Payload removed: message too large")
+		log.Warn("Payload removed: message too large")
 		bodyBytes, _ = json.Marshal(msg)
 	}
 
 	resp, err := s.client.SendFCMMessage(ctx, token, accessToken, msg)
 	if err != nil {
-		s.log("sendWithPayload error: " + err.Error())
+		log.Error("sendWithPayload error: " + err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
-	s.log(fmt.Sprintf("FCM payload code=%d", resp.StatusCode))
+	log.Info("FCM result code=" + resp.Status)
 }
 
 func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 
+	log := logger.FromContext(ctx)
 	token, err := s.repo.GetValidFCMToken(ctx)
 	if err != nil {
-		s.log("Error in getFCMToken : " + err.Error())
+		log.Error("Error in getFCMToken : " + err.Error())
 		return "", err
 	}
 
 	if token != "" {
-		s.log("token found : " + token)
+		//log.Info("Token found : " + token)
 		return token, nil
 	}
 
 	// Generate new token via FCM token manager
 	token, err = s.tokenm.GenerateToken(ctx)
 	if err != nil {
-		s.log("Error in getFCMToken after generation : " + err.Error())
+		log.Error("Error in getFCMToken after generation : " + err.Error())
 		return "", err
 	}
-	s.log("New BasicAuth generated : " + token)
+	log.Info("New BasicAuth generated")
 
 	_ = s.repo.StoreFCMToken(ctx, token)
 
