@@ -24,6 +24,9 @@ func RequestID(ctx context.Context) string {
 	}
 	return ""
 }
+func WithLogger(ctx context.Context, log *zap.Logger) context.Context {
+	return context.WithValue(ctx, RequestIDKey, log)
+}
 func FromContext(ctx context.Context) *zap.Logger {
 	if log, ok := ctx.Value(RequestIDKey).(*zap.Logger); ok {
 		return log

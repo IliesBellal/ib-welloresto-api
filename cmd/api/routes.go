@@ -66,7 +66,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	posService := posModule.NewPOSService(authService, posRepo)
 
 	// ---- Menu ----
-	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB, log)
+	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
 	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
 
 	// ---- Orders ----

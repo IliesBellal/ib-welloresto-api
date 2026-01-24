@@ -8,17 +8,14 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
 )
 
 type MenuRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	db *sql.DB
 }
 
-func NewMenuRepository(db *sql.DB, log *zap.Logger) *MenuRepository {
-	return &MenuRepository{db: db, log: log}
+func NewMenuRepository(db *sql.DB) *MenuRepository {
+	return &MenuRepository{db: db}
 }
 
 func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID string) ([]Unit, error) {
@@ -60,14 +57,11 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 }
 
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
-	startTotal := time.Now()
-	r.log.Info("GetMenu START", zap.String("merchant_id", merchantID), zap.Time("start_at", startTotal))
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		r.log.Error("BeginTx failed", zap.Error(err))
 		return nil, fmt.Errorf("BeginTx failed: %w", err)
 	}
 
@@ -84,30 +78,19 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 	// Helper to run a query with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
-		r.log.Info("Query START", zap.String("step", step))
-		t0 := time.Now()
-
 		// Utilisation directe du ctx parent. Le timeout est géré par le client/serveur HTTP global.
 		rows, err := tx.QueryContext(ctx, query, args...)
 
-		elapsed := time.Since(t0)
 		if err != nil {
-			r.log.Error("Query ERROR", zap.String("step", step), zap.Duration("elapsed", elapsed), zap.Error(err))
 			return nil, fmt.Errorf("%s query error: %w", step, err)
 		}
-		r.log.Info("Query DONE", zap.String("step", step), zap.Duration("elapsed", elapsed))
 		return rows, nil
 	}
 
 	// Helper to run QueryRow with logging
 	runQueryRow := func(step string, query string, args ...interface{}) *sql.Row {
-		r.log.Info("QueryRow START", zap.String("step", step))
-		t0 := time.Now()
-
 		// Utilisation directe du ctx parent
 		row := tx.QueryRowContext(ctx, query, args...)
-
-		r.log.Info("QueryRow queued", zap.String("step", step), zap.Duration("elapsed_since_start", time.Since(t0)))
 		return row
 	}
 
@@ -120,20 +103,16 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		// Ici, le Scan va fonctionner car le contexte n'est plus annulé par le helper
 		row := runQueryRow(step, q, merchantID)
 		if err := row.Scan(&dbLastMenu); err != nil && err != sql.ErrNoRows {
-			r.log.Error("Scan last_menu_update failed", zap.Error(err))
 			return nil, fmt.Errorf("scan last_menu_update failed: %w", err)
 		}
-		r.log.Info("last_menu_update fetched", zap.String("merchant_id", merchantID), zap.Bool("valid", dbLastMenu.Valid))
 
 		// quick equality check
 		if lastMenu != nil && dbLastMenu.Valid {
 			if dbLastMenu.Time.Format("2006-01-02 15:04:05") == lastMenu.Format("2006-01-02 15:04:05") {
 				if err := tx.Commit(); err != nil {
-					r.log.Error("tx.Commit error (no_update_required)", zap.Error(err))
 					return nil, err
 				}
 				committed = true
-				r.log.Info("GetMenu END - no_update_required", zap.Duration("total_elapsed", time.Since(startTotal)))
 				return &models.MenuResponse{Status: "no_update_required"}, nil
 			}
 		}
@@ -168,13 +147,11 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				Bg    sql.NullString
 			}
 			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg); err != nil {
-				r.log.Error("categories scan failed", zap.Error(err))
 				return nil, err
 			}
 			cats = append(cats, c)
 			count++
 		}
-		r.log.Info("categories loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 3: products (roots) ---
@@ -218,7 +195,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
 				&availIn, &availTake, &availDel, &hasImage,
 			); err != nil {
-				r.log.Error("products_roots scan failed", zap.Error(err))
 				return nil, err
 			}
 			if tvaIn.Valid {
@@ -256,7 +232,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			productOrder = append(productOrder, p.ProductID)
 			count++
 		}
-		r.log.Info("products_roots loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 4: sub-products ---
@@ -285,7 +260,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var bg sql.NullString
 			var desc sql.NullString
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
-				r.log.Error("sub_products scan failed", zap.Error(err))
 				return nil, err
 			}
 			if by.Valid {
@@ -309,7 +283,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			subProducts[p.ProductID] = &p
 			count++
 		}
-		r.log.Info("sub_products loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 5: components (requires) ---
@@ -335,7 +308,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var c models.ComponentUsage
 			var uom sql.NullString
 			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
-				r.log.Error("components_requires scan failed", zap.Error(err))
 				return nil, err
 			}
 			if uom.Valid {
@@ -344,7 +316,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			compMap[productID] = append(compMap[productID], c)
 			count++
 		}
-		r.log.Info("components_requires loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 6: configurable attributes + options (we load options then attrs like PHP) ---
@@ -369,13 +340,11 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var cfgID string
 			var o models.ConfigurableOption
 			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
-				r.log.Error("configurable_options scan failed", zap.Error(err))
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)
 			count++
 		}
-		r.log.Info("configurable_options loaded", zap.Int("rows", count))
 	}
 
 	attrMap := make(map[string][]models.ConfigurableAttribute)
@@ -398,14 +367,12 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var a models.ConfigurableAttribute
 			if err := rows.Scan(&a.ID, &a.ProductID, &a.Title, &a.MaxOptions, &a.AttributeType, &a.MinOptions); err != nil {
-				r.log.Error("configurable_attributes scan failed", zap.Error(err))
 				return nil, err
 			}
 			a.Options = optMap[a.ID]
 			attrMap[a.ProductID] = append(attrMap[a.ProductID], a)
 			count++
 		}
-		r.log.Info("configurable_attributes loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 7: delays ---
@@ -422,13 +389,11 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var d models.DelayEntry
 			if err := rows.Scan(&d.DelayID, &d.ShortDescription, &d.Duration); err != nil {
-				r.log.Error("delays scan failed", zap.Error(err))
 				return nil, err
 			}
 			delays = append(delays, d)
 			count++
 		}
-		r.log.Info("delays loaded", zap.Int("rows", count))
 	}
 
 	// --- STEP 8: component categories + all components ---
@@ -450,13 +415,11 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var c compCatTmp
 			if err := rows.Scan(&c.ID, &c.Name, &c.Order); err != nil {
-				r.log.Error("component_categories scan failed", zap.Error(err))
 				return nil, err
 			}
 			compCats = append(compCats, c)
 			count++
 		}
-		r.log.Info("component_categories loaded", zap.Int("rows", count))
 	}
 
 	type compBasicTmp struct {
@@ -479,17 +442,14 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var cb compBasicTmp
 			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price); err != nil {
-				r.log.Error("all_components scan failed", zap.Error(err))
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
 			count++
 		}
-		r.log.Info("all_components loaded", zap.Int("rows", count))
 	}
 
 	// --- BUILD: attach sub-products to parents & attach components & configuration like PHP ---
-	buildStart := time.Now()
 	// attach subproducts
 	for _, sp := range subProducts {
 		if sp.ByProductOf != nil {
@@ -509,7 +469,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
 		}
 	}
-	r.log.Info("build phase done", zap.Duration("elapsed", time.Since(buildStart)))
 
 	// --- build categories -> products (respect categ_order + productOrder) ---
 	productTypes := []models.ProductCategory{}
@@ -558,7 +517,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 	// commit transaction
 	if err := tx.Commit(); err != nil {
-		r.log.Error("tx.Commit failed", zap.Error(err))
 		return nil, err
 	}
 	committed = true
@@ -572,7 +530,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		Delays:          delays,
 	}
 
-	r.log.Info("GetMenu END", zap.Duration("total_elapsed", time.Since(startTotal)), zap.Int("categories", len(cats)), zap.Int("products", len(productOrder)))
 	return resp, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
@@ -14,7 +15,7 @@ import (
 func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 	env := os.Getenv("ENV")
 
-	logPayload := os.Getenv("LOG_PAYLOAD") != "none"
+	logPayload := os.Getenv("LOG_PAYLOAD") != "false"
 
 	slowThreshold := 500 * time.Millisecond
 	verySlowThreshold := 2 * time.Second
@@ -23,6 +24,23 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			requestID := uuid.NewString()
+
+			// Récupère le pattern chi
+			routePattern := chi.RouteContext(r.Context()).RoutePattern()
+			if routePattern == "" {
+				routePattern = r.URL.Path // fallback
+			}
+
+			endpoint := r.Method + " " + routePattern
+
+			// Logger enrichi UNE FOIS ICI
+			log := log.With(
+				zap.String("request_id", requestID),
+				zap.String("endpoint", endpoint),
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
+				zap.String("ip", r.RemoteAddr),
+			)
 
 			ctx := logger.WithRequestID(r.Context(), requestID)
 			r = r.WithContext(ctx)
@@ -37,11 +55,11 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 			}
 
 			log.Debug("request started",
-				zap.String("request_id", requestID),
-				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
+				//zap.String("request_id", requestID),
+				//zap.String("method", r.Method),
+				//zap.String("path", r.URL.Path),
 				zap.String("query", r.URL.RawQuery),
-				zap.String("ip", r.RemoteAddr),
+				//zap.String("ip", r.RemoteAddr),
 				zap.String("user_agent", r.UserAgent()),
 				zap.String("body", body),
 			)

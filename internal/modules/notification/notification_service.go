@@ -114,7 +114,10 @@ func (s *NotificationService) sendWithoutPayload(
 		return
 	}
 	defer resp.Body.Close()
-	log.Info("FCM result code=" + resp.Status)
+
+	if resp.StatusCode != 200 {
+		log.Warn("FCM result code=" + resp.Status)
+	}
 }
 
 func (s *NotificationService) sendWithPayload(
@@ -170,7 +173,9 @@ func (s *NotificationService) sendWithPayload(
 	}
 	defer resp.Body.Close()
 
-	log.Info("FCM result code=" + resp.Status)
+	if resp.StatusCode != 200 {
+		log.Warn("FCM result code=" + resp.Status)
+	}
 }
 
 func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
