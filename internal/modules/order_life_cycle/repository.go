@@ -4,19 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
-
-	"go.uber.org/zap"
 )
 
 type OrdersLifeCycleRepository struct {
 	db            *sql.DB
-	log           *zap.Logger
 	ordersFetcher *orders.OrdersFetcher
 }
 
@@ -26,17 +22,14 @@ type OrderIntegrationInfo struct {
 	BrandOrderID string
 }
 
-func NewOrdersLifeCycleRepository(db *sql.DB, log *zap.Logger) *OrdersLifeCycleRepository {
+func NewOrdersLifeCycleRepository(db *sql.DB) *OrdersLifeCycleRepository {
 	temp := orders.NewOrdersFetcher(db)
 	return &OrdersLifeCycleRepository{
 		db:            db,
-		ordersFetcher: temp,
-		log:           log}
+		ordersFetcher: temp}
 }
 
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	r.log.Info("ReopenClosedOrder START", zap.String("order_id", orderID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -88,13 +81,6 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 
 	// ---- 4. Log si changement
 	if beforeState != afterState {
-		r.log.Info("Order state changed",
-			zap.String("order_id", orderID),
-			zap.String("old", beforeState),
-			zap.String("new", afterState),
-			zap.String("user_id", userID),
-		)
-
 		// TODO : appeler équivalent Go de logOrderChange(...)
 	}
 
@@ -108,8 +94,6 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 }
 
 func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
-	r.log.Info("AddPayment START", zap.String("order_id", req.OrderID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)
@@ -238,14 +222,10 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	if err != nil {
 		return rollback(err)
 	}
-
-	r.log.Info("AddPayment DONE", zap.String("order_id", req.OrderID))
 	return nil
 }
 
 func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
-	r.log.Info("GetPaymentsForOrder START", zap.String("order_id", orderID))
-
 	q := `
 		SELECT order_id, payment_id, mop, amount, payment_date, enabled
 		FROM payments
@@ -255,7 +235,6 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 
 	rows, err := r.db.QueryContext(ctx, q, orderID)
 	if err != nil {
-		r.log.Error("GetPaymentsForOrder ERROR", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -282,8 +261,6 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 }
 
 func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	r.log.Info("DisablePayment START", zap.String("payment_id", paymentID))
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -352,9 +329,6 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 		if err != nil {
 			return err
 		}
-
-		// Log (Zap)
-		r.log.Info("Order item updated", zap.String("order_item_id", p.OrderItemID))
 	}
 
 	// 3. Calcul de l'état global (Optimisé : hors de la boucle précédente)
@@ -519,13 +493,7 @@ func (r *OrdersLifeCycleRepository) SetDistributedProductsOld(ctx context.Contex
 		}
 
 		// ----- Log order change (replicates PHP) -----
-		r.log.Info("Order change logged",
-			zap.String("order_id", orderID),
-			zap.String("changed_by_user_id", userID),
-			zap.String("field", "isDistributed"),
-			zap.String("old_value", strconv.Itoa(int(beforeIsDistributed.Int64))),
-			zap.String("new_value", "1"),
-		)
+		// TODO : appeler équivalent Go de logOrderChange(...)
 	}
 
 	// ------ Get brand ------
@@ -547,11 +515,14 @@ func (r *OrdersLifeCycleRepository) SetDistributedProductsOld(ctx context.Contex
 
 	// ------ Notifications / Integrations ------
 	if brand.String == "UBER_EATS" {
-		r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
 	} else if brand.String == "DELIVEROO" {
-		r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
 	} else {
-		r.log.Info("Sending update order notification", zap.String("order_id", orderID))
+		// TODO : appeler équivalent Go de logOrderChange(...)
+		//r.log.Info("Sending update order notification", zap.String("order_id", orderID))
 		// r.sendOrderUpdateNotification(merchantID, orderID)
 	}
 

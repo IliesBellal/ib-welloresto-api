@@ -86,7 +86,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
 	// ---- Orders Lifecycle ----
-	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, log)
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
 		uberService,

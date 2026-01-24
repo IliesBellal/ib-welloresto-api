@@ -45,6 +45,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *u
 }
 
 func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderID string) error {
+	//log := logger.FromContext(ctx)
 
 	// 1) Auth
 	user, err := s.userRepo.GetUserByToken(ctx, token)
@@ -62,8 +63,6 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 	}
 
 	// 3) Notify app
-	log := logger.FromContext(ctx)
-	log.Info("Orders.SetDelivered - SendNotificationAsync merchant_id: " + user.MerchantID + " order_id: " + orderID)
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
 	// 4) Handle integration

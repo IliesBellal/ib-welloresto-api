@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 )
@@ -688,18 +687,18 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 	return nil
 }
 
-func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	//log := logger.FromContext(ctx)
 
 	defer cancel()
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	unavailable, err := s.validateProductAvailability(ctx, tx, req)
+	unavailable, err := r.validateProductAvailability(ctx, tx, req)
 
 	if err != nil {
 		tx.Rollback()
@@ -710,7 +709,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
 	}
 
-	customerID, err := s.upsertCustomer(ctx, tx, req)
+	customerID, err := r.upsertCustomer(ctx, tx, req)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -719,7 +718,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	// compute estimated ready if not provided
 	estimatedReady := req.Order.EstimatedReady // string or empty
 	if estimatedReady == "" {
-		est, err := s.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
+		est, err := r.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
 		if err != nil {
 			//s.log.Warn("ComputeEstimatedReady warning", zap.Error(err))
 		}
@@ -730,7 +729,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	req.Order.EstimatedReady = estimatedReady
 
 	// get next order number
-	orderNum, err := s.GetNextOrderNum(ctx, tx, req.MerchantID)
+	orderNum, err := r.GetNextOrderNum(ctx, tx, req.MerchantID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -739,7 +738,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	cashRegisterID := "0"
 	if req.DeviceID != nil && *req.DeviceID != "" {
-		id, found, err := s.GetActiveCashRegisterID(ctx, tx, *req.DeviceID, req.MerchantID)
+		id, found, err := r.GetActiveCashRegisterID(ctx, tx, *req.DeviceID, req.MerchantID)
 		if err != nil {
 			tx.Rollback()
 			return nil, err
@@ -748,7 +747,7 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 			cashRegisterID = id
 		} else {
 			// if no cash register found, check merchant parameter
-			required, err := s.IsCashRegisterRequiredForOrdering(ctx, tx, req.MerchantID)
+			required, err := r.IsCashRegisterRequiredForOrdering(ctx, tx, req.MerchantID)
 			if err != nil {
 				tx.Rollback()
 				return nil, err
@@ -762,26 +761,26 @@ func (s *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	req.Order.CashRegisterId = &cashRegisterID
 
-	s.setOrderDefaults(ctx, req)
+	r.setOrderDefaults(ctx, req)
 
-	orderID, err := s.insertOrderBase(ctx, tx, req, customerID)
+	orderID, err := r.insertOrderBase(ctx, tx, req, customerID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	usedItems, err := s.insertOrderItems(ctx, tx, req, orderID)
+	usedItems, err := r.insertOrderItems(ctx, tx, req, orderID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	if err := s.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
+	if err := r.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	if err := s.insertPayments(ctx, tx, req, orderID); err != nil {
+	if err := r.insertPayments(ctx, tx, req, orderID); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -852,7 +851,7 @@ func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context
 	return false, nil
 }
 
-func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]int64, error) {
+func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]int64, error) {
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -906,7 +905,7 @@ func (s *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric MerchantID (nil if none)
-func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
+func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
 	if req.Order.Customer == nil {
 		return nil, nil
 	}
@@ -938,7 +937,7 @@ func (s *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns MerchantID as string.
-	custoRepo := customers.NewCustomerRepository(s.db)
+	custoRepo := customers.NewCustomerRepository(r.db)
 	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
@@ -1018,7 +1017,8 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 }
 
 // setOrderDefaults applique les règles métier par défaut (équivalent du bloc PHP)
-func (s *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.RequestObject) {
+func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.RequestObject) {
+	//log := logger.FromContext(ctx)
 	/*
 		AJOUTER LES VALEURS PAR DEFAUT ICI
 
@@ -1032,12 +1032,9 @@ func (s *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 	*/
 
 	// PHP: $merchant_approval = ... ?? "ACCEPTED";
-	log := logger.FromContext(ctx)
-	log.Info("Orders.Create - Merchant Approval default : " + req.Order.MerchantApproval)
 	if req.Order.MerchantApproval == "" {
 		req.Order.MerchantApproval = "ACCEPTED"
 	}
-	log.Info("Orders.Create - Merchant Approval defined : " + req.Order.MerchantApproval)
 
 	// PHP: $brand_status = ... ?? (($online_payment) ? "ONLINE_PAYMENT_PENDING" : "PENDING");
 	if req.Order.BrandStatus == "" {
@@ -1061,7 +1058,7 @@ func (s *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 }
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
-func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject, customerID *string) (orderID string, err error) {
+func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject, customerID *string) (orderID string, err error) {
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `
@@ -1085,7 +1082,7 @@ func (s *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) ([]models.UsedItem, error) {
+func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) ([]models.UsedItem, error) {
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		if p.Quantity == 0 {
@@ -1100,7 +1097,7 @@ func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 			Price:      p.Price,
 			DelayID:    p.DelayID,
 		}
-		oid, err := s.InsertOrderItem(ctx, tx, item)
+		oid, err := r.InsertOrderItem(ctx, tx, item)
 		if err != nil {
 			return nil, err
 		}
@@ -1110,7 +1107,7 @@ func (s *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
-func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.RequestObject, items []models.UsedItem) error {
+func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.RequestObject, items []models.UsedItem) error {
 	// Build maps from product iteration to order_item ids; we used ordering to match the order of products to items
 	// Simpler approach: while inserting items we could have returned corresponding mapping; for now assume order preserved.
 	extras := []ExtraInsert{}
@@ -1164,17 +1161,17 @@ func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 	}
 
 	if len(extras) > 0 {
-		if err := s.BulkInsertExtras(ctx, tx, extras); err != nil {
+		if err := r.BulkInsertExtras(ctx, tx, extras); err != nil {
 			return err
 		}
 	}
 	if len(withouts) > 0 {
-		if err := s.BulkInsertWithouts(ctx, tx, withouts); err != nil {
+		if err := r.BulkInsertWithouts(ctx, tx, withouts); err != nil {
 			return err
 		}
 	}
 	if len(configs) > 0 {
-		if err := s.BulkInsertConfigs(ctx, tx, configs); err != nil {
+		if err := r.BulkInsertConfigs(ctx, tx, configs); err != nil {
 			return err
 		}
 	}
@@ -1182,7 +1179,7 @@ func (s *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 }
 
 // insertPayments inserts payments
-func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) error {
+func (r *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) error {
 	for _, p := range req.Order.Payments {
 		pi := &PaymentInsert{
 			MerchantID:     req.MerchantID,
@@ -1192,7 +1189,7 @@ func (s *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *
 			MOP:            p.MOP,
 			UserID:         req.Order.CreatedBy,
 		}
-		if err := s.InsertPayment(ctx, tx, pi); err != nil {
+		if err := r.InsertPayment(ctx, tx, pi); err != nil {
 			return err
 		}
 	}
