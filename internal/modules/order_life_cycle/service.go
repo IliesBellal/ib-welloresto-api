@@ -67,14 +67,14 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 
 	// 4) Handle integration
 	switch order.Brand {
-	case "UBER_EATS":
+	case models.BrandUberEats:
 		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
 			//TODO Check API Uber Eats pour ajouter le endpoint correspondant (ne semble pas exister)
 			//return s.uberSvc.SetDelivered(ctx, merchantID, *order.BrandOrderID)
 		}
 		return nil
 
-	case "DELIVEROO":
+	case models.BrandDeliveroo:
 		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
 			// Not coded in PHP -> return simple OK or your logic
 			return fmt.Errorf("not implemented for Deliveroo BYR")
@@ -174,10 +174,10 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 	}
 
 	switch brand {
-	case "UBER_EATS":
+	case models.BrandUberEats:
 		go s.uberSvc.SetOrderReady(ctx, user.UserID, user.MerchantID, req.OrderID, false)
 
-	case "DELIVEROO":
+	case models.BrandDeliveroo:
 		go s.deliverooSvc.ReadyForCollection(ctx, req.OrderID)
 	}
 
@@ -276,7 +276,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string
 
 	// 3) Branch Uber Eats / Deliveroo asynchronously
 	switch integrationInfo.Brand {
-	case "UBER_EATS":
+	case models.BrandUberEats:
 		go func() {
 			//TODO recherche le bon endpoint chez Uber Eats
 			//err := s.uberSvc.SetOrderStarted(ctx, integrationInfo.MerchantID, integrationInfo.BrandOrderID)
@@ -285,7 +285,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string
 			}
 		}()
 
-	case "DELIVEROO":
+	case models.BrandDeliveroo:
 		go func() {
 			err := s.deliverooSvc.StartDeliverooDelivery(ctx, integrationInfo.BrandOrderID)
 			if err != nil {
@@ -377,10 +377,10 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	}
 
 	switch brand {
-	case "UBER_EATS":
+	case models.BrandUberEats:
 		go s.uberSvc.SetOrderReady(ctx, in.UserID, in.MerchantID, in.OrderID, false)
 
-	case "DELIVEROO":
+	case models.BrandDeliveroo:
 		go s.deliverooSvc.ReadyForCollection(ctx, in.OrderID)
 	}
 
@@ -437,10 +437,10 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, token string, 
 	}
 
 	switch brand {
-	case "UBER_EATS":
+	case models.BrandUberEats:
 		go s.uberSvc.CancelOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
 
-	case "DELIVEROO":
+	case models.BrandDeliveroo:
 		in_changed := models.DenyOrderRequest{
 			DeletionComment:    in.DeletionComment,
 			DeletionReasonType: in.DeletionReasonType,
