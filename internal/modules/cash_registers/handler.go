@@ -102,12 +102,18 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 		return
 	}
 
-	resp, err := h.cashRegisterService.GetCashRegisterSummary(ctx, token, cashRegisterID)
+	summary, err := h.cashRegisterService.GetCashRegisterSummary(ctx, token, cashRegisterID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: summary,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 

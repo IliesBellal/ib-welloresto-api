@@ -70,7 +70,7 @@ func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, tok
 	return s.cashRegisterRepo.GetCashRegisterTVADetails(ctx, user.MerchantID, cashRegisterID)
 }
 
-func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req *models.AddCustomItemRequest) (map[string]interface{}, error) {
+func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req *models.AddCustomItemRequest) (interface{}, error) {
 	itemID, err := s.cashRegisterRepo.AddCustomItem(ctx, id, req.Label, req.Value)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
@@ -79,9 +79,9 @@ func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req 
 		return nil, err
 	}
 
-	return map[string]interface{}{
-		"status": "success",
-		"data1":  itemID,
+	return models.HandlerDefaultResponseModelSet{
+		Status: "success",
+		Data1:  itemID,
 	}, nil
 }
 

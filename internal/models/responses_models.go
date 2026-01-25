@@ -15,5 +15,6 @@ type HandlerDefaultResponse struct {
 
 type HandlerDefaultResponseModelSet struct {
 	Status string `json:"status"`
-	Error  string `json:"error"`
+	Error  string `json:"error,omitempty"`
+	Data1  string `json:"data1"`
 }

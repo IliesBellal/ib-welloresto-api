@@ -36,8 +36,8 @@ type CashRegisterSummaryResponse struct {
 
 type CashRegisterSummary struct {
 	CashRegisterID string         `json:"cash_register_id"`
-	StartDate      string         `json:"start_date"`
-	EndDate        *string        `json:"end_date"`
+	StartDate      int64          `json:"start_date"`
+	EndDate        *int           `json:"end_date"`
 	CashDesk       CashDeskInfo   `json:"cash_desk"`
 	CashFund       float64        `json:"cash_fund"`
 	Currency       string         `json:"currency"`

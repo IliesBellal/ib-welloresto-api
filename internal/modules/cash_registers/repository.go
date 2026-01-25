@@ -500,10 +500,6 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 
 func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cashRegisterID string, merchantID string) (*models.CashRegisterSummaryResponse, error) {
 
-	r.log.Info("GetCashRegisterSummary START",
-		zap.String("cash_register_id", cashRegisterID),
-	)
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -532,11 +528,12 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	`, cashRegisterID)
 
 	var cr models.CashRegisterSummary
+	var start_date_temp, end_date_temp sql.NullTime
 
 	err = row.Scan(
 		&cr.CashRegisterID,
-		&cr.StartDate,
-		&cr.EndDate,
+		&start_date_temp,
+		&end_date_temp,
 		&cr.CashDesk.CashDeskID,
 		&cr.CashDesk.CashDeskName,
 		&cr.CashFund,
@@ -554,6 +551,8 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		return nil, err
 	}
 
+	cr.StartDate = helpers.NullTimePtr(start_date_temp).UTC().Unix()
+	cr.EndDate = helpers.NullTimeToNullUnixInt(end_date_temp)
 	// ----------------------------------------------------------------
 	// 2) ITEMS
 	// ----------------------------------------------------------------
