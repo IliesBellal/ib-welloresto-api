@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 )
 
 type AuthHandler struct {
@@ -75,8 +76,13 @@ func (h *AuthHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	version_check_result := models.HandlerDefaultResponse{
+		ID:   "app.version.check",
+		Data: resp,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(version_check_result)
 }
 
 func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
