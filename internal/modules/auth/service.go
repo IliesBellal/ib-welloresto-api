@@ -148,7 +148,6 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"open_cash_drawer":      user.OpenCashDrawer,
 		"terms_of_use_accepted": user.TermsOfUseAccepted,
 		"admin":                 user.Admin,
-		"merchant_web_site":     user.WebSite,
 
 		"merchantId":                          user.MerchantID,
 		"merchant_id":                         user.MerchantID,
@@ -203,12 +202,12 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"safety_stock_active":           user.DisableSafetyStock,
 		"warning_new_order_not_paid":    user.WarningNewOrderNotPaid,
 
-		"currency":        user.Currency,
-		"is_open":         user.IsOpen,
-		"pin_code":        user.PinCode.String,
-		"web_site":        user.WebSite.String,
-		"token":           user.RightsToken,
-		"profile_picture": user.ProfilePicture.String,
+		"currency":          user.Currency,
+		"is_open":           user.IsOpen,
+		"pin_code":          user.PinCode.String,
+		"merchant_web_site": user.WebSite.String,
+		"token":             user.RightsToken,
+		"profile_picture":   user.ProfilePicture.String,
 
 		"merchants": merchants,
 	}, nil
