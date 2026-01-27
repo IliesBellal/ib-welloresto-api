@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
@@ -181,16 +182,18 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	//log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx)
 
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error("CreateOrder bad request : " + err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	result, err := h.ordersService.CreateOrder(ctx, token, &req)
 	if err != nil {
+		log.Error("CreateOrder error : " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

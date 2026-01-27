@@ -86,7 +86,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		encrypted, err = encryptPHP(payload.Password)
 		if err != nil {
 			log := logger.FromContext(ctx)
-			log.Error("EncryptPHP Error: " + err.Error())
+			log.Error("Error: " + err.Error())
 			return nil, err
 		}
 	}
