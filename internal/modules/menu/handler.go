@@ -41,7 +41,7 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	//log.Info("GetMenu - lastMenu: " + lastMenu.String())
+	log.Info("GetMenu - lastMenu: " + lastMenuParam)
 
 	menu, err := h.service.GetMenu(ctx, token, lastMenu)
 	if err != nil {
