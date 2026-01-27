@@ -2,11 +2,11 @@ package menu
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
@@ -28,6 +28,7 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	log := logger.FromContext(ctx)
 
 	// last_menu_update
 	lastMenuParam := r.URL.Query().Get("last_menu_update")
@@ -40,10 +41,12 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	log.Info("GetMenu - lastMenu: " + lastMenu.String())
+
 	menu, err := h.service.GetMenu(ctx, token, lastMenu)
 	if err != nil {
 		// LOG SERVER SIDE
-		log.Printf("[ERROR] GetMenu token=%s last_menu=%v err=%+v", token, lastMenu, err)
+		log.Error("[ERROR] GetMenu error " + err.Error())
 
 		// RETURN CLEAN ERROR TO CLIENT
 		http.Error(
