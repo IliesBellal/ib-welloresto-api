@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/logger"
 )
 
 type AuthService struct {
@@ -84,6 +85,8 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	if (payload.Username != "" || payload.Email != "") && payload.Password != "" {
 		encrypted, err = encryptPHP(payload.Password)
 		if err != nil {
+			log := logger.FromContext(ctx)
+			log.Error("EncryptPHP Error: " + err.Error())
 			return nil, err
 		}
 	}
