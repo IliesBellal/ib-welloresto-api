@@ -108,7 +108,10 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 		// quick equality check
 		if lastMenu != nil && dbLastMenu.Valid {
-			if dbLastMenu.Time.Format("2006-01-02 15:04:05") == lastMenu.Format("2006-01-02 15:04:05") {
+			dbTime := dbLastMenu.Time.UTC().Truncate(time.Second)
+			clientTime := lastMenu.UTC().Truncate(time.Second)
+
+			if dbTime.Equal(clientTime) {
 				if err := tx.Commit(); err != nil {
 					return nil, err
 				}

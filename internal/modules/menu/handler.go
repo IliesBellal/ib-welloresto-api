@@ -3,6 +3,7 @@ package menu
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
@@ -33,11 +34,13 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	// last_menu_update
 	lastMenuParam := r.URL.Query().Get("last_menu_update")
 	var lastMenu *time.Time
+
 	if lastMenuParam != "" {
-		layout := "2006-01-02 15:04:05"
-		t, err := time.ParseInLocation(layout, lastMenuParam, time.UTC)
-		if err == nil {
+		if unix, err := strconv.ParseInt(lastMenuParam, 10, 64); err == nil {
+			t := time.Unix(unix, 0).UTC()
 			lastMenu = &t
+		} else {
+			log.Warn("Invalid last_menu_update param: " + lastMenuParam)
 		}
 	}
 
