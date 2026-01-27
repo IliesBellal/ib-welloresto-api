@@ -614,7 +614,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	// ORDERS
 	// ----------------------------------------------------------------
 	ordersRows, err := tx.QueryContext(ctx, `
-		SELECT o.order_id, o.order_num, o.creation_date, o.price, o.isDelivery, o.status,
+		SELECT o.order_id, o.order_num, o.creation_date, o.price, /*o.isDelivery,*/ o.status,
 		       u.first_name, u.last_name
 		FROM orders o
 		INNER JOIN users u ON u.user_id = o.created_by
@@ -633,7 +633,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 			&o.OrderNum,
 			&o.CreationDate,
 			&o.Price,
-			&o.IsDelivery,
+			//&o.IsDelivery,
 			&o.Status,
 			&o.OrderedBy.FirstName,
 			&o.OrderedBy.LastName,
