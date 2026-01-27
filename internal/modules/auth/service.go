@@ -148,6 +148,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"open_cash_drawer":      user.OpenCashDrawer,
 		"terms_of_use_accepted": user.TermsOfUseAccepted,
 		"admin":                 user.Admin,
+		"merchant_web_site":     user.WebSite,
 
 		"merchantId":                          user.MerchantID,
 		"merchant_id":                         user.MerchantID,
