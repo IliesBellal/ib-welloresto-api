@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
@@ -168,10 +169,16 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
+	log := logger.FromContext(ctx)
+
 	result, err := s.ordersRepo.CreateOrder(ctx, req)
 
-	s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
-
+	if err != nil {
+		log.Error(err.Error())
+	} else {
+		log.Warn("New order created : " + result.OrderID)
+		s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
+	}
 	return result, err
 }
 

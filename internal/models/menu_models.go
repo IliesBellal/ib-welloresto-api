@@ -3,10 +3,10 @@ package models
 // Top-level response
 type MenuResponse struct {
 	Status          string              `json:"status"`
-	LastMenuUpdate  *int                `json:"last_menu_update"` // will be marshalled like "2006-01-02 15:04:05"
-	ProductsTypes   []ProductCategory   `json:"products_types"`   // same as products_types in old API
-	ComponentsTypes []ComponentCategory `json:"components_types"`
-	Delays          []DelayEntry        `json:"delays"`
+	LastMenuUpdate  *int                `json:"last_menu_update"`
+	ProductsTypes   []ProductCategory   `json:"products_types,omitempty"`
+	ComponentsTypes []ComponentCategory `json:"components_types,omitempty"`
+	Delays          []DelayEntry        `json:"delays,omitempty"`
 }
 
 // product category (type)
