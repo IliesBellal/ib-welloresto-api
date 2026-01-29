@@ -505,7 +505,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	for _, cc := range compCats {
 		actual := []models.ComponentBasic{}
 		for _, cb := range allComponents {
-			if cb.CatID == cc.ID {
+			if cb.CatID != nil && cc.ID != nil && *cb.CatID == *cc.ID {
 				actual = append(actual, models.ComponentBasic{
 					ComponentID: cb.ID,
 					Name:        cb.Name,
