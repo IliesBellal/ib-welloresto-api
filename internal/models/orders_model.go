@@ -28,15 +28,15 @@ type Location struct {
 	LocationDesc *string `json:"location_desc"`
 	Seats        int     `json:"seats"`
 	Order        int     `json:"order"`
-	FloorID      string  `json:"floor_id"`
-	Shape        string  `json:"location_desc"`
-	X            string  `json:"location_desc"`
-	Y            string  `json:"location_desc"`
-	W            string  `json:"location_desc"`
-	H            string  `json:"location_desc"`
-	Angle        string  `json:"location_desc"`
-	OpenOrderID  string  `json:"open_order_id"`
-	Available    string  `json:"available"`
+	FloorID      string  `json:"floor_id,omitempty"`
+	Shape        string  `json:"shape,omitempty"`
+	X            string  `json:"x,omitempty"`
+	Y            string  `json:"y,omitempty"`
+	W            string  `json:"w,omitempty"`
+	H            string  `json:"h,omitempty"`
+	Angle        string  `json:"angle,omitempty"`
+	OpenOrderID  string  `json:"open_order_id,omitempty"`
+	Available    string  `json:"available,omitempty"`
 }
 
 type SeatingPlan struct {
