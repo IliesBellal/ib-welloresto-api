@@ -1,0 +1,396 @@
+package scannorder
+
+import (
+	"context"
+	"database/sql"
+	"time"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/modules/customers"
+)
+
+type Repository struct {
+	db *sql.DB
+}
+
+func NewRepository(db *sql.DB) *Repository {
+	return &Repository{db: db}
+}
+
+type merchantRow struct {
+	MerchantID        int64
+	FullName          string
+	Address           string
+	Lat               float64
+	Lng               float64
+	Timezone          string
+	Currency          string
+	PrimaryColor      string
+	TextColor         string
+	DeliveryFees      float64
+	DeliveryFeesLimit float64
+	MenuOnly          bool
+	UserID            sql.NullInt64
+	LastWaiterCall    sql.NullString
+	OrderID           sql.NullInt64
+	LocationID        sql.NullInt64
+	LocationName      sql.NullString
+	CreationDate      sql.NullTime
+}
+
+func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*merchantRow, error) {
+	query := `
+	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
+	       mp.currency, mp.primary_color, mp.text_color_on_primary_color,
+	       mp.delivery_fees, mp.delivery_fees_limit,
+	       qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
+	       o.order_id, l.location_id, l.location_name
+	FROM qrcodes qr
+	INNER JOIN merchant m ON m.id = qr.merchant_id
+	INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+	LEFT JOIN locations l ON l.location_id = qr.location_id
+	LEFT JOIN orders o ON o.location_id = l.location_id AND o.state='OPEN'
+	WHERE qr.code = ?`
+
+	row := merchantRow{}
+	err := r.db.QueryRowContext(ctx, query, qr).Scan(
+		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
+		&row.Currency, &row.PrimaryColor, &row.TextColor,
+		&row.DeliveryFees, &row.DeliveryFeesLimit,
+		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
+		&row.OrderID, &row.LocationID, &row.LocationName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *Repository) GetMerchantIDAndTZ(ctx context.Context, qr string) (string, string, error) {
+	query := `
+	SELECT qr.merchant_id, m.timezone
+	FROM qrcodes qr
+	INNER JOIN merchant m ON m.id = qr.merchant_id
+	WHERE qr.code = ?`
+
+	var merchantID string
+	var tz string
+	err := r.db.QueryRowContext(ctx, query, qr).Scan(&merchantID, &tz)
+	if err != nil {
+		return "", "", err
+	}
+	return merchantID, tz, nil
+}
+
+func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]map[string]interface{}, error) {
+	query := `
+	SELECT id, name, description
+	FROM customer_loyalty_programs
+	WHERE merchant_id = ?
+	AND target_order_type LIKE ?
+	AND enabled = true`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID, "%"+orderType+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []map[string]interface{}
+	for rows.Next() {
+		var id int64
+		var name, desc string
+		rows.Scan(&id, &name, &desc)
+		result = append(result, map[string]interface{}{
+			"id": id, "name": name, "description": desc,
+		})
+	}
+	return result, nil
+}
+
+func (r *Repository) GetDiscounts(ctx context.Context, merchantID, orderType string, dow int) ([]map[string]interface{}, error) {
+	query := `
+	SELECT d.discount_id, d.discount_order_type, d.discount_code, d.discount_desc, d.discount_name,
+	       d.discount_value, d.discount_unit, d.min_order_value, d.min_order_unit,
+	       d.max_discount_value, d.max_discount_unit, d.discounted_quantity,
+	       d.is_cumulative, d.available
+	FROM discounts d
+	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
+	WHERE merchant_id= ?
+	AND d.discount_order_type LIKE ?
+	AND (d.valid_from < UTC_TIMESTAMP() AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
+	AND ((ds.available_from < UTC_TIMESTAMP() AND ds.available_to > UTC_TIMESTAMP() AND ds.day_of_week = ?) OR (NOT d.is_time_limited))
+	AND d.available = true`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		values := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		rows.Scan(ptrs...)
+
+		rowMap := make(map[string]interface{})
+		for i, col := range cols {
+			rowMap[col] = values[i]
+		}
+		results = append(results, rowMap)
+	}
+
+	return results, nil
+}
+
+func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantOpenStatus, error) {
+
+	status := &MerchantOpenStatus{}
+
+	// 1️⃣ Merchant global open status
+	query1 := `
+	SELECT 1
+	FROM merchant_parameters mp
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = mp.merchant_id
+	WHERE mp.is_open = true
+	AND snos.activated = true
+	AND mp.merchant_id = ?
+	LIMIT 1`
+
+	var tmp int
+	err := r.db.QueryRowContext(ctx, query1, merchantID).Scan(&tmp)
+	if err == nil {
+		status.OpenStatus = true
+	}
+
+	// 2️⃣ Check opening hours window
+	query2 := `
+	SELECT 1
+	FROM hours_of_operation hoo
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
+	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
+	WHERE hoo.merchant_id = ?
+	AND day_of_week_from <= ?
+	AND day_of_week_to >= ?
+	AND hour_from < ?
+	AND hour_to > ?
+	LIMIT 1`
+
+	err = r.db.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp)
+	if err == nil {
+		status.OpenHours = true
+	}
+
+	// 3️⃣ Stored procedure GET_POS_STATUS
+	var timezone string
+	err = r.db.QueryRowContext(ctx, "SELECT timezone FROM merchant WHERE id = ?", merchantID).Scan(&timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	loc, _ := time.LoadLocation(timezone)
+	now := time.Now().In(loc).Format("2006-01-02 15:04:05")
+
+	_, err = r.db.ExecContext(ctx,
+		"CALL GET_POS_STATUS(?, ?, @p_is_open, @p_last_start, @p_last_end, @p_current_start, @p_current_end, @p_next_start, @p_next_end)",
+		merchantID, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	row := r.db.QueryRowContext(ctx, "SELECT @p_is_open, @p_next_start")
+	var isOpen int
+	var nextStart sql.NullString
+	err = row.Scan(&isOpen, &nextStart)
+	if err != nil {
+		return nil, err
+	}
+
+	status.OpenHours = isOpen == 1 // ⚠️ écrase avec valeur POS comme en PHP
+	if nextStart.Valid {
+		status.NextStart = nextStart.String
+	}
+
+	return status, nil
+}
+
+func (r *Repository) GetUnavailableProducts(
+	ctx context.Context,
+	merchantID string,
+	dow int,
+	currentTime string,
+) (map[int64]string, error) {
+
+	query := `
+	SELECT DISTINCT p.product_id, p.name
+	FROM availabilities a
+	INNER JOIN availabilities_products ap ON ap.availability_id = a.availability_id
+	INNER JOIN availabilities_schedules asch ON asch.availability_id = a.availability_id
+	INNER JOIN products p ON ap.product_id = p.product_id
+	WHERE a.merchant_id = ?
+	AND ((asch.day_of_week = ? AND asch.available_from > ?) OR asch.available_to < ?)
+	AND asch.enabled = true
+	AND a.enabled = true
+	AND a.available = true
+	AND ap.enabled = true`
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID, dow, currentTime, currentTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int64]string)
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		result[id] = name
+	}
+	return result, nil
+}
+
+func (r *Repository) GetDeliverySessionByOrderID(
+	ctx context.Context,
+	orderID int64,
+) (merchantID *string, deliverySessionID *string, err error) {
+
+	query := `
+	SELECT dso.order_id, dso.delivery_session_id, o.merchant_id
+	FROM delivery_session ds
+	INNER JOIN delivery_session_order dso ON ds.id = dso.delivery_session_id
+	INNER JOIN orders o ON o.order_id = dso.order_id
+	WHERE o.order_id = ?`
+
+	row := r.db.QueryRowContext(ctx, query, orderID)
+
+	var mID, dsID string
+
+	err = row.Scan(&orderID, &dsID, &mID)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &mID, &dsID, nil
+}
+
+func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string, error) {
+	query := `SELECT merchant_id FROM qrcodes WHERE code = ?`
+	var merchantID string
+
+	err := r.db.QueryRowContext(ctx, query, qr).Scan(&merchantID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &merchantID, nil
+}
+
+func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (map[string]interface{}, error) {
+
+	query := `
+        SELECT b.customer_id
+        FROM qrcodes qr
+        INNER JOIN booked_location bc ON bc.location_id = qr.location_id
+        INNER JOIN bookings b ON b.booking_id = bc.booking_id
+        WHERE qr.code = $1
+        AND NOW() BETWEEN b.booking_date_from AND b.booking_date_to
+        LIMIT 1;
+    `
+
+	var customerID int64
+	err := s.db.QueryRowContext(ctx, query, qrCode).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"customer_id": customerID,
+	}, nil
+}
+
+func (s *Repository) GetCustomerByPhone(ctx context.Context, customer customers.Customer) (customers.Customer, error) {
+
+	phone := helpers.NormalizePhoneNumber(customer.CustomerTel)
+
+	query := `
+        SELECT c.customer_id, mp.automatically_add_customer_rewards
+        FROM customer c
+        INNER JOIN merchant_parameters mp ON mp.merchant_id = c.merchant_id
+        WHERE c.customer_tel = $1
+        AND c.enabled = true
+        AND c.merchant_id = $2
+        LIMIT 1;
+    `
+
+	var customerID string
+	var autoRewards bool
+
+	err := s.db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
+	if err == sql.ErrNoRows {
+		return customer, nil
+	}
+	if err != nil {
+		return customer, err
+	}
+
+	customer.CustomerID = &customerID
+
+	// 🎁 Récupération rewards si activé
+	if autoRewards {
+		rewardsQuery := `
+            SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date,
+                   p.reward_type, p.reward_value
+            FROM customer_rewards cr
+            INNER JOIN customer_loyalty_programs p ON cr.loyalty_program_id = p.id
+            WHERE cr.customer_id = $1
+            AND cr.usage_date IS NULL;
+        `
+
+		rows, err := s.db.QueryContext(ctx, rewardsQuery, customerID)
+		if err != nil {
+			return customer, nil // comme PHP → fail silencieux
+		}
+		defer rows.Close()
+
+		rewards := []map[string]interface{}{}
+		for rows.Next() {
+			var rewardID, loyaltyID int64
+			var creationDate time.Time
+			var rewardType string
+			var rewardValue float64
+
+			if err := rows.Scan(&rewardID, &loyaltyID, &creationDate, &rewardType, &rewardValue); err != nil {
+				continue
+			}
+
+			rewards = append(rewards, map[string]interface{}{
+				"reward_id":          rewardID,
+				"loyalty_program_id": loyaltyID,
+				"creation_date":      creationDate,
+				"reward_type":        rewardType,
+				"reward_value":       rewardValue,
+			})
+		}
+
+		customer["available_rewards"] = rewards
+	}
+
+	return customer, nil
+}

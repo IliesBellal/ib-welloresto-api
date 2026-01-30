@@ -116,7 +116,7 @@ func (s *NotificationService) sendWithoutPayload(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Warn("FCM result code=" + resp.Status)
+		log.Warn("FCM result code=" + resp.Status + " for token " + token)
 	}
 }
 

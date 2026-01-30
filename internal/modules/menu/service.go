@@ -34,6 +34,10 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
+func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id string, lastMenu *time.Time) (*models.MenuResponse, error) {
+	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
+}
+
 func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*ProductEntry, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
 
@@ -58,8 +57,6 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 }
 
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
-	log := logger.FromContext(ctx)
-
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -425,7 +422,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			compCats = append(compCats, c)
 			count++
 		}
-		log.Info("Retrieved " + strconv.Itoa(count) + " compCats")
 	}
 
 	type compBasicTmp struct {
@@ -453,7 +449,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			allComponents = append(allComponents, cb)
 			count++
 		}
-		log.Info("Retrieved " + strconv.Itoa(count) + " all_components")
 	}
 
 	// --- BUILD: attach sub-products to parents & attach components & configuration like PHP ---

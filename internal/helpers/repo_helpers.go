@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -166,4 +167,18 @@ func DebugSQL(log *zap.Logger, query string, args []interface{}) {
 		zap.String("query", query),
 		zap.Any("args", args),
 	)
+}
+
+func NormalizePhoneNumber(phone string) string {
+	phone = strings.ReplaceAll(phone, " ", "")
+	phone = strings.ReplaceAll(phone, "-", "")
+	phone = strings.ReplaceAll(phone, ".", "")
+
+	if strings.HasPrefix(phone, "00") {
+		phone = "+" + phone[2:]
+	}
+	if !strings.HasPrefix(phone, "+") {
+		phone = "+33" + phone[1:] // adapte si multi-pays
+	}
+	return phone
 }

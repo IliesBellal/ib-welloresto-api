@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"welloresto-api/internal/modules/googlemaps"
+	"welloresto-api/internal/modules/scannorder"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -84,6 +85,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
+
+	// ---- ScanNOrder ----
+	scannRepo := scannorder.NewRepository(mysqlDB)
+	scannService := scannorder.NewService(scannRepo, menuService)
+	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB)
@@ -187,6 +193,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		})
 
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
+	})
+
+	// --- SCANNORDER ---
+	r.Route("/scannorder", func(r chi.Router) {
+		r.Get("/{qr_code}", scannHandler.GetMerchant)
+		r.Get("/{qr_code}/menu", scannHandler.GetMenu)
+		r.Post("/pricing", scannHandler.GetPricingSNO)
+		r.Get("/scannorder/order/{order_id}", scannHandler.GetOrderSNO)
+		r.Post("/scannorder/{qr}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
 	})
 
 	// --- STOCKS ---
