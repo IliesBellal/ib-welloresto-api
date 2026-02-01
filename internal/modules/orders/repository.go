@@ -690,7 +690,7 @@ func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID st
 
 func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	//log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx)
 
 	defer cancel()
 
@@ -702,16 +702,19 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	unavailable, err := r.validateProductAvailability(ctx, tx, req)
 
 	if err != nil {
+		log.Info("CreateOrder - validateProductAvailability : " + err.Error())
 		tx.Rollback()
 		return nil, err
 	}
 	if len(unavailable) > 0 {
+		log.Info("CreateOrder - validateProductAvailability products unavailable : " + err.Error())
 		tx.Rollback()
 		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
 	}
 
 	customerID, err := r.upsertCustomer(ctx, tx, req)
 	if err != nil {
+		log.Info("CreateOrder - upsertCustomer : " + err.Error())
 		tx.Rollback()
 		return nil, err
 	}
@@ -733,6 +736,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	orderNum, err := r.GetNextOrderNum(ctx, tx, req.MerchantID)
 	if err != nil {
 		tx.Rollback()
+		log.Info("CreateOrder - GetNextOrderNum : " + err.Error())
 		return nil, err
 	}
 	req.Order.OrderNum = &orderNum
@@ -742,6 +746,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		id, found, err := r.GetActiveCashRegisterID(ctx, tx, *req.DeviceID, req.MerchantID)
 		if err != nil {
 			tx.Rollback()
+			log.Info("CreateOrder - GetActiveCashRegisterID : " + err.Error())
 			return nil, err
 		}
 		if found {
@@ -751,16 +756,17 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 			required, err := r.IsCashRegisterRequiredForOrdering(ctx, tx, req.MerchantID)
 			if err != nil {
 				tx.Rollback()
+				log.Info("CreateOrder - IsCashRegisterRequiredForOrdering : " + err.Error())
 				return nil, err
 			}
 			if required {
 				tx.Rollback()
+				log.Info("CreateOrder - IsCashRegisterRequiredForOrdering required : " + err.Error())
 				return &models.CreateOrderResult{Status: "no_cash_register_opened"}, nil
 			}
 		}
 	}
 
-	log := logger.FromContext(ctx)
 	log.Info("CreateOrder - cashRegisterID : " + cashRegisterID)
 
 	req.Order.CashRegisterId = &cashRegisterID
