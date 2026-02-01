@@ -3,8 +3,8 @@ package menu
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -22,15 +22,16 @@ func NewMenuService(legacy *MenuRepository, userRepo auth.AuthService) *MenuServ
 }
 
 func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.Time) (*models.MenuResponse, error) {
+	log := logger.FromContext(ctx)
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	if user == nil {
 		return nil, errors.New("invalid token")
 	}
 
-	log.Printf("MenuRepository: using LEGACY mode")
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
