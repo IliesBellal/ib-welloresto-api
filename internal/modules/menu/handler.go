@@ -169,7 +169,7 @@ func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Re
 	ctx := r.Context()
 	componentID := chi.URLParam(r, "component_id")
 
-	var req models.AvailabilityRequest
+	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.errorJSON(w, err)
 		return
@@ -197,7 +197,7 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	productID := chi.URLParam(r, "product_id")
 
-	var req models.AvailabilityRequest
+	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.errorJSON(w, err)
 		return

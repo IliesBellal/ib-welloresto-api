@@ -147,7 +147,7 @@ type DelayEntry struct {
 	Duration         int    `json:"duration"`
 }
 
-type AvailabilityRequest struct {
+type StatusRequest struct {
 	Status string `json:"status"` // "1" or "0"
 }
 

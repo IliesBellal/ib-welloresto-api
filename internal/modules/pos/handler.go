@@ -106,7 +106,7 @@ func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	var req models.AvailabilityRequest
+	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.errorJSON(w, err)
@@ -133,7 +133,7 @@ func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Req
 	}
 
 	ctx := r.Context()
-	var req models.AvailabilityRequest
+	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.errorJSON(w, err)
@@ -178,7 +178,7 @@ func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	var req models.AvailabilityRequest
+	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.errorJSON(w, err)
