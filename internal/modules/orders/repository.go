@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -779,7 +780,15 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return nil, err
 	}
 
-	usedItems, err := r.insertOrderItems(ctx, tx, req, orderID)
+	req.Order.OrderID = &orderID
+
+	err = r.insertOrderComment(ctx, tx, req)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	usedItems, err := r.insertOrderItems(ctx, tx, req)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -1091,27 +1100,75 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	return strconv.FormatInt(lastID, 10), nil
 }
 
+// insertOrderComment inserts the orders comments rows and returns error
+func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (err error) {
+
+	if req.Order.Comment == nil {
+		return nil
+	}
+	if helpers.SafeString(req.Order.Comment) == "" {
+		return nil
+	}
+
+	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO order_comments (order_id, order_item_id, user_id, content, creation_date)
+    					VALUES(?, null, ?, ?, UTC_TIMESTAMP)
+    					ON DUPLICATE KEY UPDATE content=?, user_id = ?, creation_date = UTC_TIMESTAMP;`,
+		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment, req.Order.Comment, req.Order.CreatedBy,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject, orderID string) ([]models.UsedItem, error) {
+func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]models.UsedItem, error) {
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		if p.Quantity == 0 {
 			continue
 		}
+
+		if req.Order.OrderID == nil {
+			return nil, errors.New("order_id is nil in request")
+		}
+
+		var createdBy string
+		if req.Order.CreatedBy != nil {
+			createdBy = *req.Order.CreatedBy
+		}
+
+		var comment *models.OrderItemCommentPayload
+		if p.Comment != nil {
+			comment = &models.OrderItemCommentPayload{
+				UserID:  createdBy,
+				Content: p.Comment.Content,
+			}
+		}
+
 		item := &OrderItemInsert{
-			OrderID:    orderID,
+			OrderID:    *req.Order.OrderID,
 			ProductID:  p.ProductID,
 			MerchantID: req.MerchantID,
 			Quantity:   p.Quantity,
 			DiscountID: p.DiscountID,
 			Price:      p.Price,
 			DelayID:    p.DelayID,
+			Comment:    comment,
 		}
+
 		oid, err := r.InsertOrderItem(ctx, tx, item)
 		if err != nil {
 			return nil, err
 		}
-		used = append(used, models.UsedItem{OrderItemID: strconv.FormatInt(oid, 10), Quantity: p.Quantity})
+
+		used = append(used, models.UsedItem{
+			OrderItemID: strconv.FormatInt(oid, 10),
+			Quantity:    p.Quantity,
+		})
 	}
 	return used, nil
 }
@@ -1281,6 +1338,7 @@ type OrderItemInsert struct {
 	DiscountID *string
 	Price      int
 	DelayID    *string
+	Comment    *models.OrderItemCommentPayload
 }
 
 // InsertOrderItem inserts a single orderitem and returns its id
@@ -1292,7 +1350,28 @@ func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+
+	OrderItemID, err := res.LastInsertId()
+
+	if item.Comment == nil {
+		return OrderItemID, nil
+	}
+	if item.Comment.Content == "" {
+		return OrderItemID, nil
+	}
+
+	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO order_comments (order_id, order_item_id, user_id, content, creation_date)
+    					VALUES(?, ?, ?, ?, UTC_TIMESTAMP)
+    					ON DUPLICATE KEY UPDATE content=?, user_id = ?, creation_date = UTC_TIMESTAMP;`,
+		item.OrderID, OrderItemID, item.Comment.UserID, item.Comment.Content, item.Comment.Content, item.Comment.UserID,
+	)
+	if err != nil {
+		return OrderItemID, err
+	}
+
+	return OrderItemID, err
 }
 
 type ExtraInsert struct {
