@@ -186,14 +186,14 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Error("CreateOrder bad request : " + err.Error())
+		log.Error("PrepareCreateOrder bad request : " + err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	result, err := h.ordersService.CreateOrder(ctx, token, &req)
+	result, err := h.ordersService.PrepareCreateOrder(ctx, token, &req)
 	if err != nil {
-		log.Error("CreateOrder error : " + err.Error())
+		log.Error("PrepareCreateOrder error : " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -15,7 +15,7 @@ type ConfigUberEats struct {
 
 // Store représente les données du magasin (table integration_uber_eats + merchant)
 type Store struct {
-	MerchantID                   int    `db:"merchant_id"`
+	MerchantID                   string `db:"merchant_id"`
 	StoreID                      string `db:"store_id"`
 	Timezone                     string `db:"timezone"`
 	RefreshToken                 string `db:"refresh_token"`

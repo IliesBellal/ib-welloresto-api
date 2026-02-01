@@ -761,7 +761,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	}
 
 	log := logger.FromContext(ctx)
-	log.Info("CreateOrder - cashRegisterID : " + cashRegisterID)
+	log.Info("PrepareCreateOrder - cashRegisterID : " + cashRegisterID)
 
 	req.Order.CashRegisterId = &cashRegisterID
 

@@ -11,6 +11,8 @@ type RequestObject struct {
 
 type OrderRequest struct {
 	OrderID                     *string               `json:"order_id"`
+	BrandOrderID                *string               `json:"brand_order_id"`
+	ParentOrderID               *string               `json:"parent_order_id,omitempty"`
 	OrderNum                    *string               `json:"order_num"`
 	CashRegisterId              *string               `json:"cash_register_id"`
 	TTC                         int                   `json:"TTC"`

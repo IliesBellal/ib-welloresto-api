@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
+	"welloresto-api/internal/modules/webhook/ubereats/handler"
+	"welloresto-api/internal/modules/webhook/ubereats/repository"
+	"welloresto-api/internal/modules/webhook/ubereats/service"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -78,9 +81,32 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Uber ----
 	//uberRepo := uberModule.NewUberEatsRepository(mysqlDB)
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
+	uberWebhookService := service.NewService(
+		mysqlDB,
+		cfg.UberEats.WebhookSecret,
+		storeRepo,
+		uberClient,
+		googleClient,
+		ordersService,
+		customersService,
+		productMappingRepo,
+		attributeMappingRepo,
+		catalogService,
+		repository.NewOrdersRepository(mysqlDB),
+		orderLifeCycleService,
+		cfg.SystemToken,
+	)
+
+	uberWebhookHandler := handler.NewHandler(uberWebhookService)
+
+	r.Route("/webhooks", func(r chi.Router) {
+		r.Post("/ubereats", uberWebhookHandler.Handle)
+	})
 
 	// ---- Deliveroo ----
 	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
+	deliverooWhService := deliveroo.NewService(mysqlDB, cfg.Deliveroo.BasicAuth)
+	deliverooHandler := deliverooHandler.NewHandler(deliverooWhService)
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)

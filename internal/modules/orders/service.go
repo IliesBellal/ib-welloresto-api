@@ -22,6 +22,10 @@ type OrdersService struct {
 	notificationsService *notification.NotificationService
 }
 
+type OrdersServiceInterface interface {
+	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
+}
+
 func NewOrdersService(ordersRepo *OrdersRepository,
 	userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
 	return &OrdersService{
@@ -157,7 +161,22 @@ func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
+func (s *OrdersService) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	log := logger.FromContext(ctx)
+
+	result, err := s.ordersRepo.CreateOrder(ctx, req)
+
+	if err != nil {
+		log.Error(err.Error())
+	} else {
+		log.Warn("New order created : " + result.OrderID)
+		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, "NEW_ORDER")
+	}
+
+	return result, err
+}
+
+func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -169,17 +188,7 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
-	log := logger.FromContext(ctx)
-
-	result, err := s.ordersRepo.CreateOrder(ctx, req)
-
-	if err != nil {
-		log.Error(err.Error())
-	} else {
-		log.Warn("New order created : " + result.OrderID)
-		s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
-	}
-	return result, err
+	return s.CreateOrder(ctx, req)
 }
 
 func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {

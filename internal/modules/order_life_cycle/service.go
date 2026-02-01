@@ -44,17 +44,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *u
 	}
 }
 
-func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderID string) error {
-	//log := logger.FromContext(ctx)
-
-	// 1) Auth
-	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil {
-		return err
-	}
-	if user == nil {
-		return errors.New("invalid user token")
-	}
+func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
 
 	// 2) Mettre la commande en Delivered (local DB updates)
 	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
@@ -63,7 +53,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 	}
 
 	// 3) Notify app
-	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 
 	// 4) Handle integration
 	switch order.Brand {
@@ -84,6 +74,21 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 	default:
 		return nil
 	}
+}
+
+func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderID string) error {
+	//log := logger.FromContext(ctx)
+
+	// 1) Auth
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid user token")
+	}
+
+	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
 }
 
 func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, orderID string) error {
@@ -204,17 +209,8 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, or
 	}, nil
 }
 
-func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (models.HandlerDefaultResponseModelSet, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, MerchantID, orderID string) (models.HandlerDefaultResponseModelSet, error) {
 	accept_order := models.HandlerDefaultResponseModelSet{}
-	if err != nil {
-		accept_order.Status = "error"
-		return accept_order, err
-	}
-	if user == nil {
-		accept_order.Status = "error"
-		return accept_order, errors.New("invalid token")
-	}
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, orderID)
@@ -231,7 +227,6 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 
 	// 3) If brand is external, call integration ASYNC
 	brand := orderMeta.Brand
-	merchantID := orderMeta.MerchantID
 	switch brand {
 	case models.BrandUberEats:
 		// call Uber Eats integration async
@@ -242,25 +237,40 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
-		}(merchantID, orderID)
+			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
 		go func(mID, oID string) {
 			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := s.deliverooSvc.AcceptOrder(ctxTimeout, merchantID, orderID); err != nil {
+			if err := s.deliverooSvc.AcceptOrder(ctxTimeout, MerchantID, orderID); err != nil {
 				s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
-		}(merchantID, orderID)
+			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+		}(MerchantID, orderID)
 	default:
 		// Internal order — nothing else to do
-		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 	}
 
 	accept_order.Status = "success"
 	return accept_order, err
+}
+
+func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	accept_order := models.HandlerDefaultResponseModelSet{}
+	if err != nil {
+		accept_order.Status = "error"
+		return accept_order, err
+	}
+	if user == nil {
+		accept_order.Status = "error"
+		return accept_order, errors.New("invalid token")
+	}
+
+	return s.SetOrderAccepted(ctx, user.UserID, user.MerchantID, orderID)
 }
 
 func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string, orderID string, userID string) (map[string]interface{}, error) {
