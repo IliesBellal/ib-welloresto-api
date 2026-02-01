@@ -1250,7 +1250,7 @@ func (r *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *
 	for _, p := range req.Order.Payments {
 		pi := &PaymentInsert{
 			MerchantID:     req.MerchantID,
-			CashRegisterID: req.DeviceID,
+			CashRegisterID: req.Order.CashRegisterId,
 			OrderID:        orderID,
 			Amount:         p.Amount,
 			MOP:            p.MOP,

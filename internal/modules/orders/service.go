@@ -176,8 +176,10 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	if err != nil {
 		log.Error(err.Error())
 	} else {
-		log.Warn("New order created : " + result.OrderID)
-		s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
+		if result.Status != "no_cash_register_opened" {
+			log.Warn("New order created : " + result.OrderID)
+			s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
+		}
 	}
 	return result, err
 }
