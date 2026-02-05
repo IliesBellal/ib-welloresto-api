@@ -2,9 +2,6 @@ package scannorder
 
 import (
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/customers"
-	"welloresto-api/internal/modules/orders"
-	stripeclient "welloresto-api/internal/modules/stripe"
 )
 
 type MerchantResponse struct {
@@ -14,7 +11,7 @@ type MerchantResponse struct {
 }
 
 type MerchantData struct {
-	MerchantID   int64               `json:"merchant_id"`
+	MerchantID   string              `json:"merchant_id"`
 	BusinessName string              `json:"business_name"`
 	Phone        string              `json:"phone"`
 	Currency     string              `json:"currency"`
@@ -37,7 +34,7 @@ type MerchantData struct {
 	} `json:"fees"`
 
 	QRCode struct {
-		LocationID     *int64  `json:"location_id"`
+		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`
 		MenuOnly       bool    `json:"menu_only"`
 		UserID         *int64  `json:"user_id"`
@@ -70,49 +67,13 @@ type MerchantOpenStatus struct {
 	NextStart  string `json:"next_start"`
 }
 
-type PricingSNORequest struct {
-	QRCode string    `json:"qr_code"`
-	Order  *SNOOrder `json:"order"`
-
-	// Champs enrichis par le service
-	MerchantID       string
-	IsSNO            bool
-	DayOfWeek        int
-	Time             string
-	IsInDeliveryZone bool
-}
-
-type SNOOrder struct {
-	OrderType string              `json:"order_type"` // DELIVERY / IN / TAKE_AWAY
-	Customer  *customers.Customer `json:"customer,omitempty"`
-	Products  []SNOProduct        `json:"products"`
-}
-
-type SNOCustomer struct {
-	CustomerLat float64 `json:"customer_lat"`
-	CustomerLng float64 `json:"customer_lng"`
-	Phone       string  `json:"phone"`
-	MerchantID  int64   `json:"-"`
-}
-
 type SNOProduct struct {
 	ProductID int64 `json:"product_id"`
 }
 
-type Dependencies struct {
-	Repo            *Repository
-	OrderingService orders.OrdersService // ton module Ordering
-	StripeClient    *stripeclient.Client
-}
-
-type CreateOrderRequest struct {
-	QRCode              string                 `json:"qr_code"`
-	CheckoutSessionType string                 `json:"checkout_session_type,omitempty"`
-	Order               map[string]interface{} `json:"order"`
-	Merchant            map[string]interface{} `json:"merchant,omitempty"`
-
-	MerchantID int64  `json:"-"`
-	DayOfWeek  int    `json:"-"`
-	Time       string `json:"-"`
-	IsSNO      bool   `json:"-"`
+type DeliveryZoneResult struct {
+	InZone         bool
+	DistanceMeters float64
+	DistanceKm     float64
+	EstimatedFee   int
 }

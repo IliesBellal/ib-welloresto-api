@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/models"
 )
 
 type Repository struct {
@@ -16,28 +16,7 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-type merchantRow struct {
-	MerchantID        int64
-	FullName          string
-	Address           string
-	Lat               float64
-	Lng               float64
-	Timezone          string
-	Currency          string
-	PrimaryColor      string
-	TextColor         string
-	DeliveryFees      float64
-	DeliveryFeesLimit float64
-	MenuOnly          bool
-	UserID            sql.NullInt64
-	LastWaiterCall    sql.NullString
-	OrderID           sql.NullInt64
-	LocationID        sql.NullInt64
-	LocationName      sql.NullString
-	CreationDate      sql.NullTime
-}
-
-func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*merchantRow, error) {
+func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
 	query := `
 	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
 	       mp.currency, mp.primary_color, mp.text_color_on_primary_color,
@@ -51,7 +30,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*merchantR
 	LEFT JOIN orders o ON o.location_id = l.location_id AND o.state='OPEN'
 	WHERE qr.code = ?`
 
-	row := merchantRow{}
+	row := models.MerchantRow{}
 	err := r.db.QueryRowContext(ctx, query, qr).Scan(
 		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
@@ -220,12 +199,7 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	return status, nil
 }
 
-func (r *Repository) GetUnavailableProducts(
-	ctx context.Context,
-	merchantID string,
-	dow int,
-	currentTime string,
-) (map[int64]string, error) {
+func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID string, dow int, currentTime string) (map[int64]string, error) {
 
 	query := `
 	SELECT DISTINCT p.product_id, p.name
@@ -258,13 +232,10 @@ func (r *Repository) GetUnavailableProducts(
 	return result, nil
 }
 
-func (r *Repository) GetDeliverySessionByOrderID(
-	ctx context.Context,
-	orderID int64,
-) (merchantID *string, deliverySessionID *string, err error) {
+func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID string) (deliverySessionID *string, err error) {
 
 	query := `
-	SELECT dso.order_id, dso.delivery_session_id, o.merchant_id
+	SELECT dso.order_id, dso.delivery_session_id
 	FROM delivery_session ds
 	INNER JOIN delivery_session_order dso ON ds.id = dso.delivery_session_id
 	INNER JOIN orders o ON o.order_id = dso.order_id
@@ -272,17 +243,17 @@ func (r *Repository) GetDeliverySessionByOrderID(
 
 	row := r.db.QueryRowContext(ctx, query, orderID)
 
-	var mID, dsID string
+	var dsID string
 
-	err = row.Scan(&orderID, &dsID, &mID)
+	err = row.Scan(&orderID, &dsID)
 	if err == sql.ErrNoRows {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return &mID, &dsID, nil
+	return &dsID, nil
 }
 
 func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string, error) {
@@ -299,7 +270,7 @@ func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string,
 	return &merchantID, nil
 }
 
-func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (map[string]interface{}, error) {
+func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
 
 	query := `
         SELECT b.customer_id
@@ -311,7 +282,7 @@ func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (map[
         LIMIT 1;
     `
 
-	var customerID int64
+	var customerID string
 	err := s.db.QueryRowContext(ctx, query, qrCode).Scan(&customerID)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -320,14 +291,14 @@ func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (map[
 		return nil, err
 	}
 
-	return map[string]interface{}{
-		"customer_id": customerID,
+	return &models.CustomerRequest{
+		CustomerID: &customerID,
 	}, nil
 }
 
-func (s *Repository) GetCustomerByPhone(ctx context.Context, customer customers.Customer) (customers.Customer, error) {
+func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
 
-	phone := helpers.NormalizePhoneNumber(customer.CustomerTel)
+	phone := helpers.NormalizePhoneNumber(*customer.Tel)
 
 	query := `
         SELECT c.customer_id, mp.automatically_add_customer_rewards
@@ -344,10 +315,10 @@ func (s *Repository) GetCustomerByPhone(ctx context.Context, customer customers.
 
 	err := s.db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
 	if err == sql.ErrNoRows {
-		return customer, nil
+		return &customer, nil
 	}
 	if err != nil {
-		return customer, err
+		return &customer, err
 	}
 
 	customer.CustomerID = &customerID
@@ -365,32 +336,34 @@ func (s *Repository) GetCustomerByPhone(ctx context.Context, customer customers.
 
 		rows, err := s.db.QueryContext(ctx, rewardsQuery, customerID)
 		if err != nil {
-			return customer, nil // comme PHP → fail silencieux
+			return &customer, nil // comme PHP → fail silencieux
 		}
 		defer rows.Close()
 
-		rewards := []map[string]interface{}{}
+		rewards := []models.DBReward{}
 		for rows.Next() {
-			var rewardID, loyaltyID int64
-			var creationDate time.Time
-			var rewardType string
-			var rewardValue float64
+			var rewardID, loyaltyID, creationDate, rewardType string
+			var rewardValue int
 
 			if err := rows.Scan(&rewardID, &loyaltyID, &creationDate, &rewardType, &rewardValue); err != nil {
 				continue
 			}
 
-			rewards = append(rewards, map[string]interface{}{
-				"reward_id":          rewardID,
-				"loyalty_program_id": loyaltyID,
-				"creation_date":      creationDate,
-				"reward_type":        rewardType,
-				"reward_value":       rewardValue,
+			rewards = append(rewards, models.DBReward{
+				RewardID:         rewardID,
+				LoyaltyProgramID: loyaltyID,
+				CreationDate:     &creationDate,
+				RewardType:       rewardType,
+				RewardValue:      &rewardValue,
 			})
 		}
 
-		customer["available_rewards"] = rewards
+		customer.AvailableRewards = rewards
 	}
 
-	return customer, nil
+	return &customer, nil
+}
+
+func (s *Repository) GetBooking(ctx context.Context, qrCode string) (*models.Booking, error) {
+	return nil, nil
 }

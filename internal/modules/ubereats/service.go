@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 	"welloresto-api/internal/logger"
+	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
 type UberEatsService struct {
@@ -59,6 +60,40 @@ func (s *UberEatsService) GetValidToken(tx *sql.Tx) (string, error) {
 	}
 
 	return tokenData.AccessToken, nil
+}
+
+func (s *UberEatsService) GetOrderByURL(ctx context.Context, url, token string) (ueModels.UberOrder, error) {
+	order, err := s.client.GetOrderByURL(ctx, url, token)
+	if err != nil {
+		return ueModels.UberOrder{}, err
+	}
+
+	return *order, nil
+}
+
+func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*Store, error) {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() // Rollback automatique si pas de commit
+
+	// 1. Récupérer le store et le token
+	merchantID, err := s.repo.GetMerchantIDFromStoreID(tx, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("store error: %v", err)
+	}
+	if merchantID == nil {
+		return nil, fmt.Errorf("No store " + storeID)
+	}
+
+	// 2. Récupérer le store
+	store, err := s.repo.GetStoreData(tx, *merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("store error: %v", err)
+	}
+
+	return store, nil
 }
 
 // AcceptOrder réplique setUberEatsOrderAccepted

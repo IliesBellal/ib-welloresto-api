@@ -3,11 +3,13 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"strconv"
+	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
-	"welloresto-api/internal/modules/webhook/ubereats/handler"
-	"welloresto-api/internal/modules/webhook/ubereats/repository"
-	"welloresto-api/internal/modules/webhook/ubereats/service"
+	"welloresto-api/internal/webhook/deliveroo"
+	stripe2 "welloresto-api/internal/webhook/stripe"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -32,6 +34,8 @@ import (
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
+	webhook_uber_heandler "welloresto-api/internal/webhook/ubereats/handler"
+	webhook_uber_service "welloresto-api/internal/webhook/ubereats/service"
 )
 
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
@@ -47,6 +51,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 	//  MODULE INITIALIZATION
 	// =============================
+
+	// ---- MAILER ----
+	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT")) // ex: 587
+	mailConfig := mailer.Config{
+		Host:     os.Getenv("SMTP_HOST"), // smtp.hostinger.com
+		Port:     smtpPort,
+		Username: os.Getenv("SMTP_USER"),     // invoice@welloresto.fr
+		Password: os.Getenv("SMTP_PASSWORD"), // Ton mot de passe
+		From:     os.Getenv("SMTP_FROM"),     // invoice@welloresto.fr
+	}
+
+	// Initialisation du service
+	mailService := mailer.NewMailer(mailConfig)
+	// Ensuite, tu injectes 'mailService' dans tes handlers/services
+	// ex: webhookService := webhook.NewStripeWebhookService(repo, mailService)
 
 	// 2. Initialisation des couches (Injection de dépendances)
 	repo := googlemaps.NewGoogleMapsRepository()
@@ -78,35 +97,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
-	// ---- Uber ----
-	//uberRepo := uberModule.NewUberEatsRepository(mysqlDB)
-	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
-	uberWebhookService := service.NewService(
-		mysqlDB,
-		cfg.UberEats.WebhookSecret,
-		storeRepo,
-		uberClient,
-		googleClient,
-		ordersService,
-		customersService,
-		productMappingRepo,
-		attributeMappingRepo,
-		catalogService,
-		repository.NewOrdersRepository(mysqlDB),
-		orderLifeCycleService,
-		cfg.SystemToken,
-	)
+	// ---- WEBHOOK STRIPE
+	// Dans main.go
 
-	uberWebhookHandler := handler.NewHandler(uberWebhookService)
+	// 1. Initialiser le Repo
+	stripeRepo := stripe2.NewRepository(mysqlDB) // db est ta connexion *sql.DB
 
-	r.Route("/webhooks", func(r chi.Router) {
-		r.Post("/ubereats", uberWebhookHandler.Handle)
-	})
+	// 2. Initialiser les dépendances (Mocks ou implémentations réelles)
+	// mailerService vient de l'étape précédente
+	// Tu devras créer des struct simples qui implémentent MobileClient et OrderLifeCycleClient pour faire le lien avec ton code existant
+
+	// 4. Utiliser stripeService dans ton Handler HTTP
+	// ex: webhookHandler.HandleWebhook(w, r) -> switch event.Type -> stripeService.HandleCheckoutSessionCompleted(...)
 
 	// ---- Deliveroo ----
 	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
-	deliverooWhService := deliveroo.NewService(mysqlDB, cfg.Deliveroo.BasicAuth)
-	deliverooHandler := deliverooHandler.NewHandler(deliverooWhService)
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
@@ -116,6 +121,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	scannRepo := scannorder.NewRepository(mysqlDB)
 	scannService := scannorder.NewService(scannRepo, menuService)
 	scannHandler := scannorder.NewHandler(scannService)
+
+	// ---- Uber ----
+	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
 
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB)
@@ -129,6 +137,34 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		notificationService,
 		customersRepo,
 	)
+
+	// 3. Initialiser le StripeWebhookService Stripe
+	stripeWebhookService := stripe2.NewStripeWebhookService(
+		stripeRepo,
+		os.Getenv("STRIPE_SECRET_KEY"),
+		mailService,
+		ordersLifeCycleService,
+		notificationService,
+	)
+
+	// WH
+	deliverooWebhookRepo := deliveroo.NewRepository(mysqlDB)
+	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService)
+	deliverooWebhookHandler := deliveroo.NewDeliverooHandler(deliverooWebhookService)
+
+	uberWebhookService := webhook_uber_service.NewService(
+		mysqlDB,
+		"",
+		"",
+		uberService,
+		&googleClient,
+		ordersService,
+		menuService,
+		ordersLifeCycleService,
+		notificationService,
+	)
+
+	uberWebhookHandler := webhook_uber_heandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
@@ -176,11 +212,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	servicesH := servicesModule.NewServicesHandler(servicesService)
 
 	// ============================================================
+	//                      CRON JOBS
+	// ============================================================
+
+	SetupTasks(log, &mailService, ordersLifeCycleService, stripeWebhookService, bookingsService, mysqlDB)
+
+	// ============================================================
 	//                      ROUTING
 	// ============================================================
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("OK"))
+	})
+
+	// Webhooks
+	r.Route("/webhooks", func(r chi.Router) {
+		r.Post("/ubereats", uberWebhookHandler.HandleWebhook)
+		r.Post("/deliveroo", deliverooWebhookHandler.HandleWebhook)
 	})
 
 	// API externes
@@ -226,8 +274,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{qr_code}", scannHandler.GetMerchant)
 		r.Get("/{qr_code}/menu", scannHandler.GetMenu)
 		r.Post("/pricing", scannHandler.GetPricingSNO)
-		r.Get("/scannorder/order/{order_id}", scannHandler.GetOrderSNO)
-		r.Post("/scannorder/{qr}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
+		r.Get("/scannorder/{qr_code}/order/{order_id}", scannHandler.GetOrderSNO)
+		r.Post("/scannorder/{qr_code}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
 	})
 
 	// --- STOCKS ---

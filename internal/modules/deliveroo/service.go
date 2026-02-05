@@ -16,10 +16,10 @@ type DeliverooService struct {
 	repo   *DeliverooRepository
 	db     *sql.DB
 	client *DeliverooClient
-	cfg    config.Deliveroo
+	cfg    config.DeliverooConfig
 }
 
-func NewDeliverooService(db *sql.DB, cfg config.Deliveroo) *DeliverooService {
+func NewDeliverooService(db *sql.DB, cfg config.DeliverooConfig) *DeliverooService {
 	dc := NewDeliverooClient(nil, cfg)
 	repo := NewDeliverooRepo(db)
 	return &DeliverooService{repo: repo, db: db, client: dc, cfg: cfg}

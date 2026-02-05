@@ -5,10 +5,10 @@ import (
 	"welloresto-api/internal/modules/ubereats"
 )
 
-type UberEats = ubereats.ConfigUberEats
+type UberEatsConfig = ubereats.ConfigUberEats
 
-func loadUberEats() UberEats {
-	return UberEats{
+func loadUberEats() UberEatsConfig {
+	return UberEatsConfig{
 		BaseURL:      os.Getenv("UBER_EATS_BASE_URL"),
 		ClientID:     os.Getenv("UBER_EATS_CLIENT_ID"),
 		ClientSecret: os.Getenv("UBER_EATS_CLIENT_SECRET"),

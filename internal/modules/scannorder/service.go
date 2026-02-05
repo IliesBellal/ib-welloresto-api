@@ -6,16 +6,26 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"welloresto-api/internal/config"
+	"welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/menu"
+	"welloresto-api/internal/modules/order_life_cycle"
+	"welloresto-api/internal/modules/orders"
 
 	"go.uber.org/zap"
 )
 
 type Service struct {
-	repo *Repository
-	menu *menu.MenuService
+	repo                   *Repository
+	menu                   *menu.MenuService
+	orderingService        orders.OrdersService
+	orderLifeCycleSvc      order_life_cycle.OrdersLifeCycleService
+	deliverySessionService delivery_sessions.DeliverySessionsService
+	StripeClient           stripeclient.StripeManager
+	cfg                    config.ScanNOrderConfig
 }
 
 func NewService(r *Repository, m *menu.MenuService) *Service {
@@ -38,7 +48,7 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 		}
 	}
 
-	openStatus, err := s.IsMerchantOpen(ctx, data.MerchantID)
+	openStatus, err := s.IsMerchantOpen(ctx, row.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +86,7 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	resp.Merchant.QRCode.UserID = nullableInt64(row.UserID)
 	resp.Merchant.QRCode.LastWaiterCall = nullableString(row.LastWaiterCall)
 	resp.Merchant.QRCode.OrderID = nullableInt64(row.OrderID)
-	resp.Merchant.QRCode.LocationID = nullableInt64(row.LocationID)
+	resp.Merchant.QRCode.LocationID = &row.LocationID
 	resp.Merchant.QRCode.LocationName = nullableString(row.LocationName)
 
 	return resp, nil
@@ -125,7 +135,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	for _, pt := range menu.ProductTypes {
 		products := pt.Products
 		finalProducts := []models.ProductEntry{}
-		var toAdd []interface{}
+		var toAdd []models.ProductEntry
 
 		for _, p := range products {
 			product := p
@@ -147,8 +157,8 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 			*/
 
 			if product.IsProductGroup || !product.IsAvailableOnSNO {
-				if subs, ok := product["sub_products"].([]interface{}); ok {
-					toAdd = append(toAdd, subs...)
+				if len(product.SubProducts) > 0 {
+					toAdd = append(toAdd, product.SubProducts...)
 				}
 				continue
 			}
@@ -156,8 +166,8 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 		}
 
 		for _, sp := range toAdd {
-			sub := sp.(map[string]interface{})
-			if sub["is_available_on_sno"] == float64(1) {
+			sub := sp
+			if sub.IsAvailableOnSNO {
 				finalProducts = append(finalProducts, sub)
 			}
 		}
@@ -200,17 +210,15 @@ func (s *Service) IsMerchantOpen(ctx context.Context, merchantID string) (*Merch
 	return s.repo.GetMerchantOpenStatus(ctx, merchantID, dow, currentTime)
 }
 
-func (s *Service) GetPricingSNO(ctx context.Context, req *PricingSNORequest) (interface{}, error) {
+func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
 
 	log := logger.FromContext(ctx)
 
 	// 🔹 1. Récupérer merchant via QR
 	merchant, err := s.repo.GetMerchantByQR(ctx, req.QRCode) // déjà fait dans endpoint précédent
 	if err != nil || merchant == nil {
-		return map[string]interface{}{
-			"status":   "-1",
-			"error":    "QR Code expired",
-			"merchant": merchant,
+		return &models.PricingResponse{
+			Status: "qr_code_expired",
 		}, nil
 	}
 
@@ -218,14 +226,14 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *PricingSNORequest) (in
 	if req.Order.OrderType == "DELIVERY" &&
 		req.Order.Customer != nil {
 
-		inZone := s.customerInDeliveryZone(merchant, req.Order.Customer) // placeholder
-		req.IsInDeliveryZone = inZone
+		inZone := s.CustomerInDeliveryZone(*merchant, *req.Order.Customer) // placeholder
+		req.IsInDeliveryZone = inZone.InZone
 	}
 
 	// 🔹 3. Enrich customer
 	if req.Order.Customer != nil {
-		req.Order.Customer.MerchantID = merchant.ID
-		customer, _ := s.repo.GetCustomerByPhone(ctx, req.Order.Customer) // placeholder
+		req.Order.Customer.MerchantID = &merchant.MerchantID
+		customer, _ := s.repo.GetCustomerByPhone(ctx, *req.Order.Customer) // placeholder
 		req.Order.Customer = customer
 	}
 
@@ -233,7 +241,7 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *PricingSNORequest) (in
 	loc, _ := time.LoadLocation(merchant.Timezone)
 	now := time.Now().In(loc)
 
-	req.MerchantID = merchant.ID
+	req.MerchantID = merchant.MerchantID
 	req.IsSNO = true
 	req.DayOfWeek = int(now.Weekday())
 	if req.DayOfWeek == 0 {
@@ -242,71 +250,54 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *PricingSNORequest) (in
 	req.Time = now.Format("2006-01-02 15:04:05")
 
 	log.Info("SNO pricing context prepared",
-		zap.Int64("merchant_id", req.MerchantID),
+		zap.String("merchant_id", req.MerchantID),
 		zap.Int("dow", req.DayOfWeek),
 	)
 
-	// 🔹 5. Vérifier produits indisponibles
-	unavailableMap, err := s.repo.GetUnavailableProducts(ctx, req.MerchantID, req.DayOfWeek, now.Format("15:04:05"))
-	if err != nil {
+	// 🔹 6. Appel module ORDERING (comme PHP require_once)
+	return s.orderingService.ComputePricing(ctx, req)
+}
+
+func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.Order, error) {
+	log := logger.FromContext(ctx)
+
+	// 🔹 1. Récupérer merchant via QR
+	merchant, err := s.repo.GetMerchantByQR(ctx, qr) // déjà fait dans endpoint précédent
+	if err != nil || merchant == nil {
 		return nil, err
 	}
 
-	var notAvailable []map[string]interface{}
-	for _, p := range req.Order.Products {
-		if name, ok := unavailableMap[p.ProductID]; ok {
-			notAvailable = append(notAvailable, map[string]interface{}{
-				"product_id": p.ProductID,
-				"name":       name,
-			})
-		}
-	}
-
-	if len(notAvailable) > 0 {
-		return map[string]interface{}{
-			"status":                 "not_available_products",
-			"not_available_products": notAvailable,
-		}, nil
-	}
-
-	// 🔹 6. Appel module ORDERING (comme PHP require_once)
-	return s.orderingService.GetPricing(ctx, req)
-}
-
-func (s *Service) GetOrderSNO(ctx context.Context, orderID int64) (map[string]interface{}, error) {
-	log := logger.FromContext(ctx)
-
 	// 🔹 1. Appel OrderLifeCycle (comme PHP require_once)
-	response, err := s.orderLifeCycleSvc.GetOrder(ctx, orderID)
+	response, err := s.orderingService.ComputeGetOrder(ctx, merchant.MerchantID, orderID)
 	if err != nil {
 		return nil, err
 	}
 
 	// 🔹 2. Chercher delivery session
-	merchantID, deliverySessionID, err := s.repo.GetDeliverySessionByOrderID(ctx, orderID)
+	deliverySessionID, err := s.repo.GetDeliverySessionByOrderID(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
 
 	// 🔹 3. Si session trouvée → enrichir
-	if deliverySessionID != nil && merchantID != nil {
+	if deliverySessionID != nil {
 		log.Info("Order linked to delivery session",
-			zap.Int64("order_id", orderID),
-			zap.Int64("delivery_session_id", *deliverySessionID),
+			zap.String("order_id", orderID),
+			zap.String("delivery_session_id", *deliverySessionID),
 		)
 
-		session, err := s.managementSvc.GetDeliverySession(ctx, *merchantID, *deliverySessionID)
+		session, err := s.deliverySessionService.GetDeliverySession(ctx, merchant.MerchantID, *deliverySessionID)
 		if err != nil {
 			return nil, err
 		}
 
-		response["delivery_session"] = session
+		response.DeliverySession = session
 	}
 
 	return response, nil
 }
 
-func (s *Service) CancelOrderSNO(ctx context.Context, qr string, orderID int64) (map[string]interface{}, error) {
+func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {
 	log := logger.FromContext(ctx)
 
 	// 1️⃣ Merchant depuis QR
@@ -319,29 +310,31 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr string, orderID int64) 
 	}
 
 	// 2️⃣ Récupérer commande (via module déjà fait)
-	orderResp, err := s.GetOrderSNO(ctx, orderID)
+	orderResp, err := s.GetOrderSNO(ctx, qr, orderID)
 	if err != nil {
 		return nil, err
 	}
 
-	orderRaw, ok := orderResp["order"].(map[string]interface{})
-	if !ok || orderRaw == nil {
+	if orderResp == nil {
 		return map[string]interface{}{
 			"status": "cannot_retrieve_order",
-			"order":  orderRaw,
+			"order":  orderID,
 		}, nil
 	}
 
 	// 3️⃣ Vérifier état
-	state := fmt.Sprintf("%v", orderRaw["state"])
+	state := fmt.Sprintf("%v", orderResp.State)
 	if state == "CLOSED" || state == "DONE" {
-		return map[string]interface{}{"status": "order_closed"}, nil
+		return map[string]interface{}{
+			"status": "order_closed",
+		}, nil
 	}
 
 	// 4️⃣ Vérifier délai 150 sec
-	creationStr := fmt.Sprintf("%v", orderRaw["creation_date"])
+	creationStr := fmt.Sprintf("%v", orderResp.CreationDate)
 	creationTime, err := time.Parse("2006-01-02 15:04:05", creationStr)
 	if err != nil {
+		log.Error("Failed to parse creation date", zap.String("creation_date", creationStr), zap.Error(err))
 		return nil, err
 	}
 
@@ -374,26 +367,29 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr string, orderID int64) 
 	*/
 }
 
-func (s *Service) CreateOrderSNO(ctx context.Context, req *CreateOrderRequest) (map[string]interface{}, error) {
+func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest) (models.CreateOrderResult, error) {
+	log := logger.FromContext(ctx)
 
 	// 1️⃣ Merchant via QR
 	merchant, err := s.repo.GetMerchantByQR(ctx, req.QRCode)
 	if err != nil {
-		return map[string]interface{}{"status": "-2", "error": err.Error()}, nil
+		log.Error("GetMerchantByQR", zap.Error(err))
+		return models.CreateOrderResult{Status: "error_001"}, err
 	}
 	if merchant == nil {
-		return map[string]interface{}{"status": "-1", "error": "QR Code expired"}, nil
+		log.Error("GetMerchantByQR - no merchant found for qr " + req.QRCode)
+		return models.CreateOrderResult{Status: "qr_code_expired"}, nil
 	}
 
 	req.Merchant = merchant
-	req.MerchantID = int64(merchant["id"].(int64))
+	req.MerchantID = merchant.MerchantID
 
 	order := req.Order
-	orderType := order["order_type"].(string)
+	orderType := order.OrderType
 
 	// 2️⃣ Vérif POS ouvert (sauf IN)
-	if order["estimated_ready"] == nil && orderType != "IN" {
-		tz, _ := time.LoadLocation(merchant["timezone"].(string))
+	if order.EstimatedReady == "" && orderType != "IN" {
+		tz, _ := time.LoadLocation(merchant.Timezone)
 		now := time.Now().In(tz)
 
 		req.DayOfWeek = int(now.Weekday())
@@ -404,10 +400,11 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *CreateOrderRequest) (
 
 		openStatus, err := s.repo.GetMerchantOpenStatus(ctx, req.MerchantID, req.DayOfWeek, req.Time)
 		if err != nil {
-			return nil, err
+			log.Error("GetMerchantOpenStatus", zap.Error(err))
+			return models.CreateOrderResult{Status: "error_002"}, err
 		}
 		if !openStatus.OpenHours || !openStatus.OpenStatus {
-			return map[string]interface{}{"status": "pos_closed", "object": req}, nil
+			return models.CreateOrderResult{Status: "pos_closed"}, nil
 		}
 	}
 
@@ -416,86 +413,95 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *CreateOrderRequest) (
 	switch orderType {
 
 	case "IN":
-		customer, _ := s.OrderingService.GetCustomer(ctx, order)
-		order["customer"] = customer
+		customer, _ := s.repo.GetCustomerFromQR(ctx, req.QRCode)
+		order.Customer = customer
 
-		booking, _ := s.OrderingService.GetBooking(ctx, order)
+		booking, _ := s.repo.GetBooking(ctx, req.QRCode)
 		if booking != nil {
-			order["booking_id"] = booking["booking_id"]
+			order.BookingID = &booking.BookingID
 		}
 
-		order["merchant_approval"] = "ACCEPTED"
-		order["brand_status"] = "PENDING"
+		order.MerchantApproval = "ACCEPTED"
+		order.BrandStatus = "PENDING"
 
-		if merchant["location"] != nil {
-			order["locations"] = []map[string]interface{}{
-				{"location_id": merchant["location"]},
+		/*
+			if merchant.LocationID != "" {
+				append(order.Locations, models.OrderLocation{
+					LocationID: merchant.LocationID,
+				})
 			}
-		}
+
+		*/
 
 	case "DELIVERY":
-		ok, _ := s.OrderingService.CustomerInDeliveryZone(ctx, merchant, order["customer"])
-		if !ok {
-			return map[string]interface{}{"status": "address_too_far"}, nil
+		zone_result := s.CustomerInDeliveryZone(*merchant, *order.Customer)
+		if !zone_result.InZone {
+			return models.CreateOrderResult{Status: "address_too_far"}, nil
 		}
 
-		order["online_payment"] = true
-		customer := order["customer"].(map[string]interface{})
+		order.OnlinePayment = true
 
 		// 🔥 Nettoyage EXACT PHP
-		delete(customer, "customer_id")
-		delete(customer, "customer_door_number")
-		delete(customer, "customer_floor_number")
-		delete(customer, "customer_additional_address")
-		delete(customer, "customer_business_name")
-		delete(customer, "customer_birthdate")
-		delete(customer, "customer_additional_info")
-		delete(customer, "customer_temporary_address")
-		delete(customer, "customer_temporary_lat")
-		delete(customer, "customer_temporary_lng")
-		delete(customer, "customer_temporary_door_number")
-		delete(customer, "customer_temporary_floor_number")
-		delete(customer, "customer_temporary_additional_address")
+		/*
+			customer := order.Customer
+			delete(customer, "customer_id")
+			delete(customer, "customer_door_number")
+			delete(customer, "customer_floor_number")
+			delete(customer, "customer_additional_address")
+			delete(customer, "customer_business_name")
+			delete(customer, "customer_birthdate")
+			delete(customer, "customer_additional_info")
+			delete(customer, "customer_temporary_address")
+			delete(customer, "customer_temporary_lat")
+			delete(customer, "customer_temporary_lng")
+			delete(customer, "customer_temporary_door_number")
+			delete(customer, "customer_temporary_floor_number")
+			delete(customer, "customer_temporary_additional_address")
+		*/
 
 		fallthrough
 
 	case "TAKE_AWAY":
-		if c, ok := order["customer"].(map[string]interface{}); ok {
-			if c["customer_tel"] != nil {
-				c["merchant_id"] = merchant["id"]
-				customer, _ := s.OrderingService.GetCustomerByPhone(ctx, c)
-				order["customer"] = customer
-			}
+		if order.Customer.Tel != nil {
+			order.Customer.MerchantID = &merchant.MerchantID
+			customer, _ := s.repo.GetCustomerByPhone(ctx, *order.Customer)
+			order.Customer = customer
 		}
 	}
 
 	// 4️⃣ PRICING
 	pricingResp, err := s.GetPricingSNO(ctx, req)
 	if err != nil {
-		return nil, err
+		log.Error("GetPricingSNO", zap.Error(err))
+		return models.CreateOrderResult{Status: "error_003"}, err
 	}
 
-	if pricingResp["status"] != "1" {
-		return pricingResp, nil
+	if pricingResp.Status != "success" {
+		return models.CreateOrderResult{Status: pricingResp.Status}, nil
 	}
 
-	orderReq := pricingResp["order_request"].(map[string]interface{})
-	order = orderReq["order"].(map[string]interface{})
+	orderReq := pricingResp.OrderRequest
+	order = orderReq.Order
 
 	// 5️⃣ Champs internes
-	order["created_by"] = "SCANNORDER"
-	order["is_sno"] = true
-	order["payments"] = []interface{}{}
+	var ScannorderOwner = "SCANNORDER"
+	order.CreatedBy = &ScannorderOwner
+	order.IsSNO = true
+	order.Payments = []models.PaymentPayload{}
 
 	// 6️⃣ Création commande BDD
-	newOrder, err := s.OrderingService.AddNewOrder(ctx, orderReq)
+	newOrder, err := s.orderingService.CreateOrder(ctx, &models.RequestObject{
+		MerchantID: orderReq.Merchant.MerchantID,
+		Order:      *orderReq.Order,
+	})
 	if err != nil {
-		return nil, err
+		log.Error("CreateOrder", zap.Error(err))
+		return models.CreateOrderResult{Status: "error_003"}, err
 	}
 
-	if newOrder["status"] == "1" && newOrder["action"] == "payment" {
+	if (newOrder.Status == "1" || newOrder.Status == "success") && newOrder.Action == "payment" {
 
-		order["order_id"] = newOrder["order_id"]
+		order.OrderID = &newOrder.OrderID
 		req.CheckoutSessionType = "full_order"
 
 		checkout, err := s.StripeClient.CreateCheckoutSession(map[string]interface{}{
@@ -506,25 +512,31 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *CreateOrderRequest) (
 			"redirect_base_url":     s.cfg.SNORedirectBaseURL,
 		})
 		if err != nil {
-			return map[string]interface{}{"status": "-4", "error": err.Error()}, nil
+			log.Error("CreateOrder", zap.Error(err))
+			return models.CreateOrderResult{Status: "error_004"}, err
 		}
 
-		newOrder["checkout_session"] = map[string]interface{}{
-			"status": "1",
-			"url":    checkout.URL,
+		newOrder.CheckoutSession = models.WRCheckoutSession{
+			Status: "success",
+			URL:    checkout.URL,
 		}
 	}
 
-	return newOrder, nil
+	return *newOrder, nil
 }
 
-func (s *Service) CustomerInDeliveryZone(merchant Merchant, customer CustomerLocation) DeliveryZoneResult {
+func (s *Service) CustomerInDeliveryZone(merchant models.MerchantRow, customer models.CustomerRequest) DeliveryZoneResult {
+	if customer.Lat == nil || customer.Lng == nil {
+		return DeliveryZoneResult{
+			InZone: false,
+		}
+	}
 	const earthRadius = 6371000.0 // mètres
 
 	lat1 := merchant.Lat * math.Pi / 180
 	lon1 := merchant.Lng * math.Pi / 180
-	lat2 := customer.CustomerLat * math.Pi / 180
-	lon2 := customer.CustomerLng * math.Pi / 180
+	lat2 := *customer.Lat * math.Pi / 180
+	lon2 := *customer.Lng * math.Pi / 180
 
 	dLat := lat2 - lat1
 	dLon := lon2 - lon1

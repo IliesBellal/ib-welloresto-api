@@ -589,6 +589,48 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	return strconv.FormatInt(id, 10), nil
 }
 
+func (r *MenuRepository) CreateExternalProductTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	merchantID string,
+	name string,
+	description string,
+	price int,
+) (int64, error) {
+
+	query := `
+		INSERT INTO products (
+			merchant_id,
+			name,
+			product_desc,
+			category,
+			price,
+			is_available_on_sno,
+			tva_in_id,
+			tva_delivery_id,
+			tva_take_away_id
+		)
+		VALUES (?, ?, ?, 'UBER_EATS_TEMP', ?, 0, 5, 9, 3)
+	`
+
+	res, err := tx.ExecContext(ctx, query,
+		merchantID,
+		name,
+		description,
+		price,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	newID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	return newID, nil
+}
+
 func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*ProductEntry, error) {
 	query := `
 		SELECT

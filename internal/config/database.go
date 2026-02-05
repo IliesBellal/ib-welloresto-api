@@ -2,12 +2,12 @@ package config
 
 import "os"
 
-type Database struct {
+type DatabaseConfig struct {
 	MySQLURL string
 }
 
-func loadDatabase() Database {
-	return Database{
+func loadDatabase() DatabaseConfig {
+	return DatabaseConfig{
 		MySQLURL: os.Getenv("MYSQL_URL"),
 	}
 }

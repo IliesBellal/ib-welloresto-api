@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Notification de Virement</title>
+</head>
+<body style="font-family:Tahoma, Arial, sans-serif; font-size:14px; color:#333;">
+<h1>Nouveau virement ScanNOrder</h1>
+
+<p>Bonjour,</p>
+<p>Un virement de <strong>{{ .Amount }}</strong> a été effectué.</p>
+
+<ul>
+    <li>Référence : {{ .PayoutID }}</li>
+    <li>Date : {{ .ArrivalDate }}</li>
+    <li>Destination : {{ .Destination }}</li>
+    <li>Statut : {{ .Status }}</li>
+</ul>
+
+<p>L'équipe Wello Resto</p>
+</body>
+</html>

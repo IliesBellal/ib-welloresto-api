@@ -18,7 +18,7 @@ import (
 // DeliverooClient gère la communication avec l'API
 type DeliverooClient struct {
 	httpClient *http.Client
-	config     config.Deliveroo
+	config     config.DeliverooConfig
 
 	// Gestion du token en cache
 	tokenMu     sync.RWMutex
@@ -39,7 +39,7 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func NewDeliverooClient(httpClient *http.Client, config config.Deliveroo) *DeliverooClient {
+func NewDeliverooClient(httpClient *http.Client, config config.DeliverooConfig) *DeliverooClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}

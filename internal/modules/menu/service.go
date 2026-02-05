@@ -2,9 +2,11 @@ package menu
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -114,4 +116,45 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 	}
 
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
+}
+
+func (s *MenuService) CreateProductFromExternal(
+	ctx context.Context,
+	merchantID string,
+	title string,
+	description string,
+	amount int,
+) (*string, error) {
+
+	tx, err := s.legacy.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	productID, err := s.legacy.CreateExternalProductTx(
+		ctx,
+		tx,
+		merchantID,
+		title,
+		description,
+		amount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	// Tu peux adapter le retour selon ton modèle API
+	return helpers.Int64ToStringPtr(productID), nil
 }

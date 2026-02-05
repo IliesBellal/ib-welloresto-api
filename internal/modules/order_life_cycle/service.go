@@ -55,7 +55,7 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	// 3) Notify app
 	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 
-	// 4) Handle integration
+	// 4) HandleWebhook integration
 	switch order.Brand {
 	case models.BrandUberEats:
 		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
@@ -170,7 +170,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 	}
 
 	// Notify
-	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, "ORDER_UPDATE")
+	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, "UPDATE_ORDER")
 
 	// 3 → Async integrations
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, req.OrderID)
