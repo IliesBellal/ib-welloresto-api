@@ -144,10 +144,18 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 
 			switch deliveryType {
 			case "DELIVERY":
-				product.Price = product.PriceDelivery
+				product.Price = *product.PriceDelivery
 			case "TAKE_AWAY":
-				product.Price = product.PriceTakeAway
+				product.Price = *product.PriceTakeAway
 			}
+
+			product.BgColor = nil
+			product.Category = nil
+			product.TVAIn = nil
+			product.TVADelivery = nil
+			product.TVATakeAway = nil
+			product.PriceDelivery = nil
+			product.PriceTakeAway = nil
 			/*
 				delete(product, "bg_color")
 				delete(product, "category")
@@ -156,6 +164,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 				delete(product, "tva_rate_take_away")
 				delete(product, "price_delivery")
 				delete(product, "price_take_away")
+
 			*/
 
 			if product.IsProductGroup || !product.IsAvailableOnSNO {

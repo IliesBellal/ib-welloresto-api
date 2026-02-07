@@ -200,13 +200,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				return nil, err
 			}
 			if tvaIn.Valid {
-				p.TVAIn = tvaIn.Float64
+				p.TVAIn = &tvaIn.Float64
 			}
 			if tvaDel.Valid {
-				p.TVADelivery = tvaDel.Float64
+				p.TVADelivery = &tvaDel.Float64
 			}
 			if tvaTake.Valid {
-				p.TVATakeAway = tvaTake.Float64
+				p.TVATakeAway = &tvaTake.Float64
 			}
 			if bg.Valid {
 				p.BgColor = &bg.String
@@ -268,13 +268,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				p.ByProductOf = &by.String
 			}
 			if tvaIn.Valid {
-				p.TVAIn = tvaIn.Float64
+				p.TVAIn = &tvaIn.Float64
 			}
 			if tvaDel.Valid {
-				p.TVADelivery = tvaDel.Float64
+				p.TVADelivery = &tvaDel.Float64
 			}
 			if tvaTake.Valid {
-				p.TVATakeAway = tvaTake.Float64
+				p.TVATakeAway = &tvaTake.Float64
 			}
 			if bg.Valid {
 				p.BgColor = &bg.String
