@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"welloresto-api/internal/infrastructure/mailer"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
 	"welloresto-api/internal/webhook/deliveroo"
@@ -93,8 +94,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
 
 	// ---- Orders ----
-	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB)
-	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB)
+	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
+	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, ordersFetcher)
+	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, ordersFetcher)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
 	// ---- WEBHOOK STRIPE
@@ -117,16 +119,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
+	// ---- Stripe ----
+	stripeManager := stripeclient.NewStripeManager(cfg.Stripe.APIKey, nil)
+
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
-	scannService := scannorder.NewService(scannRepo, menuService)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, *stripeManager)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Uber ----
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
 
 	// ---- Orders Lifecycle ----
-	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB)
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
 		uberService,
@@ -273,9 +278,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/{qr_code}", scannHandler.GetMerchant)
 		r.Get("/{qr_code}/menu", scannHandler.GetMenu)
-		r.Post("/pricing", scannHandler.GetPricingSNO)
-		r.Get("/scannorder/{qr_code}/order/{order_id}", scannHandler.GetOrderSNO)
-		r.Post("/scannorder/{qr_code}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
+		r.Post("/{qr_code}/pricing", scannHandler.GetPricingSNO)
+		r.Post("/{qr_code}/create", scannHandler.CreateOrderSNO)
+		r.Get("/{qr_code}/order/{order_id}", scannHandler.GetOrderSNO)
+		r.Post("/{qr_code}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
 	})
 
 	// --- STOCKS ---

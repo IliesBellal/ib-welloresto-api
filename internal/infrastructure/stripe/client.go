@@ -3,7 +3,6 @@ package stripeclient
 import (
 	"log/slog"
 
-	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/client"
 )
 
@@ -17,10 +16,6 @@ type StripeManager struct {
 // apiKey : La clé secrète Stripe (sk_test_...)
 // logger : Ton instance de log (pour tracer les erreurs)
 func NewStripeManager(apiKey string, logger *slog.Logger) *StripeManager {
-	// Initialisation de la configuration globale Stripe (si besoin)
-	stripe.Key = apiKey
-
-	// Initialisation du client scoper (meilleure pratique que le global)
 	sc := &client.API{}
 	sc.Init(apiKey, nil)
 

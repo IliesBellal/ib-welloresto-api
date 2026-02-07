@@ -25,11 +25,16 @@ func (h *Handler) GetMerchant(w http.ResponseWriter, r *http.Request) {
 	qr := chi.URLParam(r, "qr_code")
 	log.Info("ScannOrder.GetMerchant called - " + "qr_code: " + qr)
 
-	resp, err := h.service.GetMerchant(ctx, qr)
+	merchantData, err := h.service.GetMerchant(ctx, qr)
 	if err != nil {
 		log.Error("service error" + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	resp := models.HandlerDefaultResponse{
+		ID:   "scannorder.merchant",
+		Data: merchantData,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -66,6 +71,8 @@ func (h *Handler) GetPricingSNO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	qr := chi.URLParam(r, "qr_code")
+	req.QRCode = qr
 	resp, err := h.service.GetPricingSNO(ctx, &req)
 	if err != nil {
 		log.Error("SNO pricing failed", zap.Error(err))
@@ -83,13 +90,19 @@ func (h *Handler) GetOrderSNO(w http.ResponseWriter, r *http.Request) {
 	orderIDStr := chi.URLParam(r, "order_id")
 	qrCode := chi.URLParam(r, "qr_code")
 
-	resp, err := h.service.GetOrderSNO(ctx, qrCode, orderIDStr)
+	orders, err := h.service.GetOrderSNO(ctx, qrCode, orderIDStr)
 	if err != nil {
 		log.Error("GetOrderSNO failed", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	resp := models.HandlerDefaultResponse{
+		ID:   "scannorder.order",
+		Data: orders,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -97,7 +110,7 @@ func (h *Handler) CancelOrderSNO(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr")
+	qr := chi.URLParam(r, "qr_code")
 	orderIDStr := chi.URLParam(r, "order_id")
 
 	resp, err := h.service.CancelOrderSNO(ctx, qr, orderIDStr)
@@ -117,10 +130,18 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.CreateOrderSNO(r.Context(), &req)
+	qr := chi.URLParam(r, "qr_code")
+	req.QRCode = qr
+
+	create_order, err := h.service.CreateOrderSNO(r.Context(), &req)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
+	}
+
+	resp := models.HandlerDefaultResponse{
+		ID:   "scannorder.order.create",
+		Data: create_order,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

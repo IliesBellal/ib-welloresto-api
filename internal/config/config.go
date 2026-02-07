@@ -12,6 +12,7 @@ type AppConfig struct {
 	UberEats   UberEatsConfig
 	Deliveroo  DeliverooConfig
 	ScanNOrder ScanNOrderConfig
+	Stripe     StripeConfig
 }
 
 type App struct {
@@ -28,6 +29,7 @@ func Load() *AppConfig {
 		UberEats:   loadUberEats(),
 		Deliveroo:  loadDeliveroo(),
 		ScanNOrder: loadScanNOrderConfig(),
+		Stripe:     loadStripeConfig(),
 	}
 
 	cfg.validate()

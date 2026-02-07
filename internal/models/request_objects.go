@@ -1,7 +1,6 @@
 package models
 
 import (
-	"database/sql"
 	"time"
 )
 
@@ -226,12 +225,15 @@ type MerchantRow struct {
 	DeliveryFees          float64
 	DeliveryFeesLimit     float64
 	MenuOnly              bool
-	UserID                sql.NullInt64
-	LastWaiterCall        sql.NullString
-	OrderID               sql.NullInt64
-	LocationID            string
-	LocationName          sql.NullString
-	CreationDate          sql.NullTime
+	UserID                *string
+	LastWaiterCall        *int
+	OrderID               *string
+	LocationID            *string
+	LocationName          *string
+	CreationDate          *int64
+	VariableFees          *float64
+	FixedFees             *int
+	AccountID             *string
 }
 
 type PricingResult struct {

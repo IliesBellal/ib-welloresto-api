@@ -10,11 +10,11 @@ type RequestObject struct {
 }
 
 type OrderRequest struct {
-	OrderID                     *string               `json:"order_id"`
-	BrandOrderID                *string               `json:"brand_order_id"`
+	OrderID                     *string               `json:"order_id,omitempty"`
+	BrandOrderID                *string               `json:"brand_order_id,omitempty"`
 	ParentOrderID               *string               `json:"parent_order_id,omitempty"`
-	OrderNum                    *string               `json:"order_num"`
-	CashRegisterId              *string               `json:"cash_register_id"`
+	OrderNum                    *string               `json:"order_num,omitempty"`
+	CashRegisterId              *string               `json:"cash_register_id,omitempty"`
 	TTC                         int                   `json:"TTC"`
 	TVA                         int                   `json:"TVA"`
 	HT                          int                   `json:"HT"`
@@ -120,12 +120,12 @@ type PaymentPayload struct {
 }
 
 type CreateOrderResult struct {
-	Status          string            `json:"status"`
-	OrderID         string            `json:"order_id"`
-	OrderNum        *string           `json:"order_num"`
-	Action          string            `json:"action"`
-	OrderItems      []UsedItem        `json:"order_items"`
-	CheckoutSession WRCheckoutSession `json:"checkout_session"`
+	Status          string             `json:"status"`
+	OrderID         string             `json:"order_id,omitempty"`
+	OrderNum        *string            `json:"order_num,omitempty"`
+	Action          string             `json:"action,omitempty"`
+	OrderItems      []UsedItem         `json:"order_items,omitempty"`
+	CheckoutSession *WRCheckoutSession `json:"checkout_session,omitempty"`
 }
 
 type WRCheckoutSession struct {

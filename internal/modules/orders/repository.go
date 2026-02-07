@@ -18,10 +18,10 @@ type OrdersRepository struct {
 	ordersFetcher *OrdersFetcher
 }
 
-func NewOrdersRepository(db *sql.DB) *OrdersRepository {
+func NewOrdersRepository(db *sql.DB, ordersF *OrdersFetcher) *OrdersRepository {
 	return &OrdersRepository{
 		db:            db,
-		ordersFetcher: NewOrdersFetcher(db)}
+		ordersFetcher: ordersF}
 }
 
 // ==================================================================================
@@ -793,12 +793,22 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		return nil, err
 	}
 
+	var action string
+
+	if req.Order.OnlinePayment && (req.Order.Locations == nil || len(req.Order.Locations) == 0) {
+		action = "payment"
+	} else if req.Order.Locations == nil || len(req.Order.Locations) == 0 {
+		action = "waiting"
+	} else {
+		action = "get_order"
+	}
+
 	return &models.CreateOrderResult{
 		Status:     "success",
 		OrderID:    orderID,
 		OrderNum:   &orderNum,
 		OrderItems: usedItems,
-		Action:     "waiting",
+		Action:     action,
 	}, nil
 }
 

@@ -21,15 +21,15 @@ import (
 type Service struct {
 	repo                   *Repository
 	menu                   *menu.MenuService
-	orderingService        orders.OrdersService
+	orderingService        *orders.OrdersService
 	orderLifeCycleSvc      order_life_cycle.OrdersLifeCycleService
 	deliverySessionService delivery_sessions.DeliverySessionsService
-	StripeClient           stripeclient.StripeManager
+	StripeManager          stripeclient.StripeManager
 	cfg                    config.ScanNOrderConfig
 }
 
-func NewService(r *Repository, m *menu.MenuService) *Service {
-	return &Service{repo: r, menu: m}
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager stripeclient.StripeManager) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager}
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
@@ -39,8 +39,10 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	}
 
 	// 🔥 Expiration QR (2h)
-	if row.CreationDate.Valid {
-		if time.Since(row.CreationDate.Time) > 2*time.Hour {
+	if row.CreationDate != nil {
+		creationTime := time.Unix(*row.CreationDate, 0)
+
+		if time.Since(creationTime) > 2*time.Hour {
 			return &MerchantResponse{
 				Status: "qr_code_expired",
 				Error:  "Qr Code expired",
@@ -83,11 +85,11 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	resp.Merchant.Fee.DeliveryFeesLimit = row.DeliveryFeesLimit
 
 	resp.Merchant.QRCode.MenuOnly = row.MenuOnly
-	resp.Merchant.QRCode.UserID = nullableInt64(row.UserID)
-	resp.Merchant.QRCode.LastWaiterCall = nullableString(row.LastWaiterCall)
-	resp.Merchant.QRCode.OrderID = nullableInt64(row.OrderID)
-	resp.Merchant.QRCode.LocationID = &row.LocationID
-	resp.Merchant.QRCode.LocationName = nullableString(row.LocationName)
+	resp.Merchant.QRCode.UserID = row.UserID
+	resp.Merchant.QRCode.LastWaiterCall = row.LastWaiterCall
+	resp.Merchant.QRCode.OrderID = row.OrderID
+	resp.Merchant.QRCode.LocationID = row.LocationID
+	resp.Merchant.QRCode.LocationName = row.LocationName
 
 	return resp, nil
 }
@@ -108,7 +110,7 @@ func nullableString(s sql.NullString) *string {
 
 func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
 
-	merchantID, tz, err := s.repo.GetMerchantIDAndTZ(ctx, qr)
+	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
 	if err != nil || merchantID == "" {
 		return &MenuResponse{Status: "-1", Error: "Merchant not found"}, nil
 	}
@@ -192,7 +194,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 func (s *Service) IsMerchantOpen(ctx context.Context, merchantID string) (*MerchantOpenStatus, error) {
 
 	// On récupère timezone pour reproduire PHP
-	_, tz, err := s.repo.GetMerchantIDAndTZ(ctx, merchantID)
+	_, tz, err := s.repo.GetMerchantIDAndTZFromMerchantID(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +469,8 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 			customer, _ := s.repo.GetCustomerByPhone(ctx, *order.Customer)
 			order.Customer = customer
 		}
+
+		order.OnlinePayment = true
 	}
 
 	// 4️⃣ PRICING
@@ -504,19 +508,20 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		order.OrderID = &newOrder.OrderID
 		req.CheckoutSessionType = "full_order"
 
-		checkout, err := s.StripeClient.CreateCheckoutSession(map[string]interface{}{
-			"order":                 order,
-			"merchant":              merchant,
-			"qr_code":               req.QRCode,
-			"checkout_session_type": req.CheckoutSessionType,
-			"redirect_base_url":     s.cfg.SNORedirectBaseURL,
+		checkout, err := s.StripeManager.CreateCheckoutSession(stripeclient.CheckoutSessionRequestObject{
+			Order:               order,
+			Merchant:            merchant,
+			QRCode:              req.QRCode,
+			CheckoutSessionType: req.CheckoutSessionType,
+			BaseURL:             s.cfg.SNORedirectBaseURL,
 		})
+
 		if err != nil {
 			log.Error("CreateOrder", zap.Error(err))
 			return models.CreateOrderResult{Status: "error_004"}, err
 		}
 
-		newOrder.CheckoutSession = models.WRCheckoutSession{
+		newOrder.CheckoutSession = &models.WRCheckoutSession{
 			Status: "success",
 			URL:    checkout.URL,
 		}

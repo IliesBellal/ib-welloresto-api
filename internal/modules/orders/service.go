@@ -26,8 +26,7 @@ type OrdersServiceInterface interface {
 	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
 }
 
-func NewOrdersService(ordersRepo *OrdersRepository,
-	userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
+func NewOrdersService(ordersRepo *OrdersRepository, userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
 		userRepo:             userRepo,

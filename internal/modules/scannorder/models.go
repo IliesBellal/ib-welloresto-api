@@ -37,9 +37,9 @@ type MerchantData struct {
 		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`
 		MenuOnly       bool    `json:"menu_only"`
-		UserID         *int64  `json:"user_id"`
-		LastWaiterCall *string `json:"last_waiter_call"`
-		OrderID        *int64  `json:"order_id"`
+		UserID         *string `json:"user_id"`
+		LastWaiterCall *int    `json:"last_waiter_call"`
+		OrderID        *string `json:"order_id"`
 	} `json:"qr_code"`
 
 	AdvanceOrder struct {
@@ -58,7 +58,7 @@ type MenuData struct {
 	OrderType       string                   `json:"order_type"`
 	ProductTypes    []models.ProductCategory `json:"products_types"`
 	LoyaltyPrograms []map[string]interface{} `json:"loyalty_programs,omitempty"`
-	Discounts       []map[string]interface{} `json:"discounts,omitempty"`
+	Discounts       []Discount               `json:"discounts,omitempty"`
 }
 
 type MerchantOpenStatus struct {
@@ -76,4 +76,21 @@ type DeliveryZoneResult struct {
 	DistanceMeters float64
 	DistanceKm     float64
 	EstimatedFee   int
+}
+
+type Discount struct {
+	DiscountID         int     `json:"discount_id"`
+	DiscountOrderType  string  `json:"discount_order_type"`
+	DiscountCode       *string `json:"discount_code"`
+	DiscountDesc       string  `json:"discount_desc"`
+	DiscountName       string  `json:"discount_name"`
+	DiscountValue      int     `json:"discount_value"`
+	DiscountUnit       string  `json:"discount_unit"`
+	MinOrderValue      int     `json:"min_order_value"`
+	MinOrderUnit       string  `json:"min_order_unit"`
+	MaxDiscountValue   *int    `json:"max_discount_value"`
+	MaxDiscountUnit    *string `json:"max_discount_unit"`
+	DiscountedQuantity int     `json:"discounted_quantity"`
+	IsCumulative       bool    `json:"is_cumulative"`
+	Available          bool    `json:"available"`
 }

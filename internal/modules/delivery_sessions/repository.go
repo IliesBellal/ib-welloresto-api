@@ -15,9 +15,8 @@ type DeliverySessionsRepository struct {
 	ordersFetcher *orders.OrdersFetcher
 }
 
-func NewDeliverySessionsRepository(db *sql.DB) *DeliverySessionsRepository {
-	temp := orders.NewOrdersFetcher(db)
-	return &DeliverySessionsRepository{db: db, ordersFetcher: temp}
+func NewDeliverySessionsRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *DeliverySessionsRepository {
+	return &DeliverySessionsRepository{db: db, ordersFetcher: ordersF}
 }
 
 func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]DeliverySession, error) {

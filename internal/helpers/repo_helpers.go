@@ -182,3 +182,16 @@ func NormalizePhoneNumber(phone string) string {
 	}
 	return phone
 }
+
+func IntToInt64Ptr(v int) *int64 {
+	i := int64(v)
+	return &i
+}
+
+func IntPtrToInt64Ptr(v *int) *int64 {
+	if v == nil {
+		return nil
+	}
+	i := int64(*v)
+	return &i
+}

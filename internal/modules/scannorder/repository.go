@@ -22,12 +22,16 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	       mp.currency, mp.primary_color, mp.text_color_on_primary_color,
 	       mp.delivery_fees, mp.delivery_fees_limit,
 	       qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
-	       o.order_id, l.location_id, l.location_name
-	FROM qrcodes qr
-	INNER JOIN merchant m ON m.id = qr.merchant_id
-	INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
-	LEFT JOIN locations l ON l.location_id = qr.location_id
-	LEFT JOIN orders o ON o.location_id = l.location_id AND o.state='OPEN'
+	       o.order_id, l.location_id, l.location_name, snos.variable_fees, snos.fixed_fees, sa.account_id
+	
+	FROM 	qrcodes qr
+			INNER JOIN merchant m on m.id = qr.merchant_id
+			LEFT JOIN stripe_accounts sa on sa.merchant_id = m.id
+			INNER JOIN scannorder_settings snos on snos.merchant_id = m.id
+			INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
+			LEFT JOIN bookings_settings bs on bs.merchant_id = m.id
+			LEFT JOIN locations l on l.location_id = qr.location_id
+			LEFT JOIN (SELECT o.order_id, ol.location_id FROM orders o INNER JOIN order_location ol on ol.order_id = o.order_id WHERE o.state = 'OPEN') o on o.location_id = l.location_id
 	WHERE qr.code = ?`
 
 	row := models.MerchantRow{}
@@ -36,7 +40,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
 		&row.DeliveryFees, &row.DeliveryFeesLimit,
 		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
-		&row.OrderID, &row.LocationID, &row.LocationName,
+		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
 	)
 	if err != nil {
 		return nil, err
@@ -44,7 +48,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	return &row, nil
 }
 
-func (r *Repository) GetMerchantIDAndTZ(ctx context.Context, qr string) (string, string, error) {
+func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (string, string, error) {
 	query := `
 	SELECT qr.merchant_id, m.timezone
 	FROM qrcodes qr
@@ -54,6 +58,20 @@ func (r *Repository) GetMerchantIDAndTZ(ctx context.Context, qr string) (string,
 	var merchantID string
 	var tz string
 	err := r.db.QueryRowContext(ctx, query, qr).Scan(&merchantID, &tz)
+	if err != nil {
+		return "", "", err
+	}
+	return merchantID, tz, nil
+}
+
+func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merchantID string) (string, string, error) {
+	query := `
+	SELECT m.id, m.timezone
+	FROM merchant m
+	WHERE m.id = ?`
+
+	var tz string
+	err := r.db.QueryRowContext(ctx, query, merchantID).Scan(&merchantID, &tz)
 	if err != nil {
 		return "", "", err
 	}
@@ -86,19 +104,43 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 	return result, nil
 }
 
-func (r *Repository) GetDiscounts(ctx context.Context, merchantID, orderType string, dow int) ([]map[string]interface{}, error) {
+func (r *Repository) GetDiscounts(
+	ctx context.Context,
+	merchantID string,
+	orderType string,
+	dow int,
+) ([]Discount, error) {
+
 	query := `
-	SELECT d.discount_id, d.discount_order_type, d.discount_code, d.discount_desc, d.discount_name,
-	       d.discount_value, d.discount_unit, d.min_order_value, d.min_order_unit,
-	       d.max_discount_value, d.max_discount_unit, d.discounted_quantity,
-	       d.is_cumulative, d.available
+	SELECT
+		d.discount_id,
+		d.discount_order_type,
+		d.discount_code,
+		d.discount_desc,
+		d.discount_name,
+		d.discount_value,
+		d.discount_unit,
+		d.min_order_value,
+		d.min_order_unit,
+		d.max_discount_value,
+		d.max_discount_unit,
+		d.discounted_quantity,
+		d.is_cumulative,
+		d.available
 	FROM discounts d
 	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
-	WHERE merchant_id= ?
+	WHERE d.merchant_id = ?
 	AND d.discount_order_type LIKE ?
-	AND (d.valid_from < UTC_TIMESTAMP() AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
-	AND ((ds.available_from < UTC_TIMESTAMP() AND ds.available_to > UTC_TIMESTAMP() AND ds.day_of_week = ?) OR (NOT d.is_time_limited))
-	AND d.available = true`
+	AND (d.valid_from < UTC_TIMESTAMP()
+		AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
+	AND (
+		(ds.available_from < UTC_TIMESTAMP()
+		 AND ds.available_to > UTC_TIMESTAMP()
+		 AND ds.day_of_week = ?)
+		OR NOT d.is_time_limited
+	)
+	AND d.available = true
+	`
 
 	rows, err := r.db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
 	if err != nil {
@@ -106,32 +148,58 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID, orderType str
 	}
 	defer rows.Close()
 
-	cols, _ := rows.Columns()
-	var results []map[string]interface{}
+	discounts := []Discount{}
 
 	for rows.Next() {
-		values := make([]interface{}, len(cols))
-		ptrs := make([]interface{}, len(cols))
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		rows.Scan(ptrs...)
+		var d Discount
+		var isCumulative int
+		var available int
 
-		rowMap := make(map[string]interface{})
-		for i, col := range cols {
-			rowMap[col] = values[i]
+		err := rows.Scan(
+			&d.DiscountID,
+			&d.DiscountOrderType,
+			&d.DiscountCode,
+			&d.DiscountDesc,
+			&d.DiscountName,
+			&d.DiscountValue,
+			&d.DiscountUnit,
+			&d.MinOrderValue,
+			&d.MinOrderUnit,
+			&d.MaxDiscountValue,
+			&d.MaxDiscountUnit,
+			&d.DiscountedQuantity,
+			&isCumulative,
+			&available,
+		)
+		if err != nil {
+			return nil, err
 		}
-		results = append(results, rowMap)
+
+		d.IsCumulative = isCumulative == 1
+		d.Available = available == 1
+
+		discounts = append(discounts, d)
 	}
 
-	return results, nil
+	return discounts, nil
 }
 
-func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantOpenStatus, error) {
+func (r *Repository) GetMerchantOpenStatus(
+	ctx context.Context,
+	merchantID string,
+	dow int,
+	currentTime string,
+) (*MerchantOpenStatus, error) {
 
 	status := &MerchantOpenStatus{}
 
-	// 1️⃣ Merchant global open status
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// 1️⃣ Global open status
 	query1 := `
 	SELECT 1
 	FROM merchant_parameters mp
@@ -142,12 +210,11 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	LIMIT 1`
 
 	var tmp int
-	err := r.db.QueryRowContext(ctx, query1, merchantID).Scan(&tmp)
-	if err == nil {
+	if err := conn.QueryRowContext(ctx, query1, merchantID).Scan(&tmp); err == nil {
 		status.OpenStatus = true
 	}
 
-	// 2️⃣ Check opening hours window
+	// 2️⃣ Opening hours
 	query2 := `
 	SELECT 1
 	FROM hours_of_operation hoo
@@ -160,38 +227,51 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	AND hour_to > ?
 	LIMIT 1`
 
-	err = r.db.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp)
-	if err == nil {
+	if err := conn.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp); err == nil {
 		status.OpenHours = true
 	}
 
-	// 3️⃣ Stored procedure GET_POS_STATUS
+	// 3️⃣ Timezone
 	var timezone string
-	err = r.db.QueryRowContext(ctx, "SELECT timezone FROM merchant WHERE id = ?", merchantID).Scan(&timezone)
-	if err != nil {
+	if err := conn.QueryRowContext(ctx,
+		"SELECT timezone FROM merchant WHERE id = ?",
+		merchantID,
+	).Scan(&timezone); err != nil {
 		return nil, err
 	}
 
 	loc, _ := time.LoadLocation(timezone)
 	now := time.Now().In(loc).Format("2006-01-02 15:04:05")
 
-	_, err = r.db.ExecContext(ctx,
-		"CALL GET_POS_STATUS(?, ?, @p_is_open, @p_last_start, @p_last_end, @p_current_start, @p_current_end, @p_next_start, @p_next_end)",
-		merchantID, now,
-	)
-	if err != nil {
+	// 4️⃣ Stored procedure
+	if _, err := conn.ExecContext(ctx,
+		`CALL GET_POS_STATUS(
+			?, ?, 
+			@p_is_open, 
+			@p_last_start, 
+			@p_last_end, 
+			@p_current_start, 
+			@p_current_end, 
+			@p_next_start, 
+			@p_next_end
+		)`,
+		merchantID,
+		now,
+	); err != nil {
 		return nil, err
 	}
 
-	row := r.db.QueryRowContext(ctx, "SELECT @p_is_open, @p_next_start")
-	var isOpen int
+	// 5️⃣ Read output vars (SAME CONN)
+	var isOpen sql.NullInt64
 	var nextStart sql.NullString
-	err = row.Scan(&isOpen, &nextStart)
-	if err != nil {
+
+	if err := conn.QueryRowContext(ctx,
+		"SELECT @p_is_open, @p_next_start",
+	).Scan(&isOpen, &nextStart); err != nil {
 		return nil, err
 	}
 
-	status.OpenHours = isOpen == 1 // ⚠️ écrase avec valeur POS comme en PHP
+	status.OpenHours = isOpen.Valid && isOpen.Int64 == 1
 	if nextStart.Valid {
 		status.NextStart = nextStart.String
 	}

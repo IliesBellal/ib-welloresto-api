@@ -22,11 +22,10 @@ type OrderIntegrationInfo struct {
 	BrandOrderID string
 }
 
-func NewOrdersLifeCycleRepository(db *sql.DB) *OrdersLifeCycleRepository {
-	temp := orders.NewOrdersFetcher(db)
+func NewOrdersLifeCycleRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *OrdersLifeCycleRepository {
 	return &OrdersLifeCycleRepository{
 		db:            db,
-		ordersFetcher: temp}
+		ordersFetcher: ordersF}
 }
 
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {

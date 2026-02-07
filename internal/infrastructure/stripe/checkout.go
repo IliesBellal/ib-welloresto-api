@@ -3,7 +3,9 @@ package stripeclient
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
+	"welloresto-api/internal/helpers"
 
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/checkout/session"
@@ -13,7 +15,137 @@ type CreateCheckoutParams struct {
 	OrderRequest map[string]interface{}
 }
 
-func (c *StripeManager) CreateCheckoutSession(req map[string]interface{}) (*stripe.CheckoutSession, error) {
+func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) (*stripe.CheckoutSession, error) {
+
+	order := req.Order
+	merchant := req.Merchant
+
+	variableFees := *merchant.VariableFees
+	fixedFees := *merchant.FixedFees
+
+	ttc := order.TTC
+
+	fees := int64(math.Floor(
+		float64(ttc)*variableFees + float64(fixedFees) + 0.5,
+	))
+
+	lineItems := []*stripe.CheckoutSessionLineItemParams{}
+	//orderItems := []CheckoutOrderItem{}
+
+	products := order.Products
+
+	for _, p := range products {
+		product := p
+
+		description := product.ProductName
+		var configurationPrice int = 0
+
+		if product.Config != nil {
+			if product.Config.Attributes != nil {
+				for _, a := range product.Config.Attributes {
+					attr := a
+					for _, o := range attr.Options {
+						option := o
+
+						if !option.Selected {
+							continue
+						}
+
+						description += *option.Label
+
+						if option.ExtraPrice > 0 {
+							description += fmt.Sprintf("(+%.2f EUR)", option.ExtraPrice/100)
+							configurationPrice += option.ExtraPrice
+						}
+						description += ", "
+					}
+				}
+			}
+		}
+
+		var unitAmount int
+		if product.DiscountedPrice != nil {
+			unitAmount = *product.DiscountedPrice
+		} else {
+			unitAmount = product.Price
+		}
+
+		qty := product.Quantity
+
+		lineItems = append(lineItems, &stripe.CheckoutSessionLineItemParams{
+			Quantity: helpers.IntToInt64Ptr(qty),
+			PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+				Currency: stripe.String(string(stripe.CurrencyEUR)),
+				ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+					Name:        &product.ProductName,
+					Description: &description,
+				},
+				UnitAmount: stripe.Int64(int64(unitAmount + (configurationPrice * qty))),
+			},
+		})
+		/*
+			orderItems = append(orderItems, CheckoutOrderItem{
+				OrderItemID: toInt64Ptr(product["order_item_id"]),
+				Quantity:    &qty,
+			})
+
+		*/
+	}
+
+	// Delivery fees
+	if order.DeliveryFees > 0 {
+		lineItems = append(lineItems, &stripe.CheckoutSessionLineItemParams{
+			Quantity: stripe.Int64(1),
+			PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+				Currency: stripe.String(string(stripe.CurrencyEUR)),
+				ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+					Name: stripe.String("Frais de livraison"),
+				},
+				UnitAmount: stripe.Int64(int64(order.DeliveryFees)),
+			},
+		})
+	}
+
+	//orderItemsJSON, _ := json.Marshal(orderItems)
+
+	qrCode := req.QRCode
+	orderID := *order.OrderID
+	baseURL := req.BaseURL
+	sessionType := req.CheckoutSessionType
+
+	successURL := baseURL + "/restaurant/" + qrCode + "/" + orderID
+	cancelURL := successURL
+	captureMethod := stripe.PaymentIntentCaptureMethodManual
+
+	if sessionType == "partial_order" {
+		successURL = baseURL + "restaurant/" + qrCode
+		cancelURL = successURL
+		captureMethod = stripe.PaymentIntentCaptureMethodAutomatic
+	}
+
+	params := &stripe.CheckoutSessionParams{
+		LineItems:  lineItems,
+		Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
+		SuccessURL: stripe.String(successURL),
+		CancelURL:  stripe.String(cancelURL),
+		ExpiresAt:  stripe.Int64(time.Now().Add(30 * time.Minute).Unix()),
+		Metadata: map[string]string{
+			"order_id":              orderID,
+			"merchant_id":           fmt.Sprintf("%v", merchant.MerchantID),
+			"checkout_session_type": sessionType,
+		},
+		PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
+			ApplicationFeeAmount: stripe.Int64(fees),
+			CaptureMethod:        stripe.String(string(captureMethod)),
+		},
+	}
+
+	params.SetStripeAccount(*merchant.AccountID)
+
+	return c.client.CheckoutSessions.New(params)
+}
+
+func (c *StripeManager) CreateCheckoutSessionOld(req map[string]interface{}) (*stripe.CheckoutSession, error) {
 
 	order := req["order"].(map[string]interface{})
 	merchant := req["merchant"].(map[string]interface{})
