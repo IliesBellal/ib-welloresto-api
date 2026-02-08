@@ -27,7 +27,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	h.service.VerifySignature(r.Context(), r.Header, body)
 
-	var event models.WebhookEvent
+	var event models.UberWebhookEvent
 	if err := json.Unmarshal(body, &event); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return

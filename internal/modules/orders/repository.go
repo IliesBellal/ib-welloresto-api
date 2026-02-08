@@ -1050,6 +1050,10 @@ func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 		req.Order.MerchantApproval = "ACCEPTED"
 	}
 
+	if req.Order.Brand == "" {
+		req.Order.Brand = models.BrandWelloResto
+	}
+
 	// PHP: $brand_status = ... ?? (($online_payment) ? "ONLINE_PAYMENT_PENDING" : "PENDING");
 	if req.Order.BrandStatus == "" {
 		// Note : Assure-toi que le champ OnlinePayment existe bien dans ton modèle Go
@@ -1076,11 +1080,11 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO orders(cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
+		INSERT INTO orders(brand, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Order.CashRegisterId, req.MerchantID, customerID, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Order.Brand, req.Order.CashRegisterId, req.MerchantID, customerID, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, req.Order.IsScheduled,
 		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, req.Order.EstimatedReady,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber,

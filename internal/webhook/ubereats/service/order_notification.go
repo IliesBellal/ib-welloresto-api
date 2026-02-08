@@ -2,29 +2,20 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
-func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.WebhookEvent) error {
-	var payload struct {
-		ResourceHref string `json:"resource_href"`
-		StoreID      string `json:"store_id"`
-	}
+func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.UberWebhookEvent) error {
 
-	if err := json.Unmarshal(event.Resource, &payload); err != nil {
-		return err
-	}
-
-	store, err := s.uberClient.GetByStoreID(ctx, payload.StoreID)
+	store, err := s.uberClient.GetByStoreID(ctx, event.Meta.UserID)
 	if err != nil {
 		return err
 	}
 
-	var order ueModels.UberOrder
-	order, err = s.uberClient.GetOrderByURL(ctx, payload.ResourceHref, store.BearerToken)
+	var order *ueModels.UberOrder
+	order, err = s.uberClient.GetOrderByURL(ctx, event.ResourceHref)
 	if err != nil {
 		return err
 	}
@@ -34,7 +25,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.We
 		return err
 	}
 
-	req := MapUberOrderToRequest(&order, store.MerchantID)
+	req := MapUberOrderToRequest(order, store.MerchantID)
 	req.Order.Products = products
 
 	_, err = s.ordersService.PrepareCreateOrder(ctx, s.systemToken, req)

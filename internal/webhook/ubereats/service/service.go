@@ -86,7 +86,7 @@ func NewService(
 	}
 }
 
-func (s *Service) ProcessEvent(ctx context.Context, event models.WebhookEvent) error {
+func (s *Service) ProcessEvent(ctx context.Context, event models.UberWebhookEvent) error {
 
 	log := logger.FromContext(ctx)
 

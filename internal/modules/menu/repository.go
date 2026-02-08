@@ -219,6 +219,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			}
 			if isPopular.Valid {
 				p.IsPopular = isPopular.Bool
+			} else {
+				p.IsPopular = false
 			}
 			if availIn.Valid {
 				p.AvailableIn = availIn.Bool

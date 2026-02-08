@@ -123,7 +123,8 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
 	}
 
 	id, _ := res.LastInsertId()
-	tx.Commit()
+	// DO NOT COMMIT OTHERWISE ORDER CREATION WILL NOT WORK
+	// tx.Commit()
 
 	return helpers.Int64ToStringPtr(id), nil
 }

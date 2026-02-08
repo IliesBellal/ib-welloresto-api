@@ -14,7 +14,7 @@ func NewDeliverooHandler(service *DeliverooService) *DeliverooHandler {
 }
 
 func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
-	var payload DeliverooPayload
+	var payload DeliverooWebhookPayload
 
 	// 1. Decode
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -28,15 +28,16 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 	// ou la structure (Deliveroo met event_name dans le JSON racine).
 
 	var err error
-	switch payload.EventName {
-	case "order.new_order": // Ou la string exacte envoyée par Deliveroo
+	switch payload.Event {
+	case "order.new_order":
+	case "order.new": // Ou la string exacte envoyée par Deliveroo
 		err = h.service.ProcessNewOrder(r.Context(), payload)
 	case "order.status_update":
 		err = h.service.ProcessStatusUpdate(r.Context(), payload)
 	default:
 		// Si le PHP gérait d'autres cas, les ajouter ici
 		// Sinon on ignore ou on traite comme update si le payload match
-		if payload.EventName == "" && payload.Order.Status != "" {
+		if payload.Event == "" && payload.Body.Order.Status != "" {
 			// Fallback si event_name vide mais status présent
 			err = h.service.ProcessStatusUpdate(r.Context(), payload)
 		}

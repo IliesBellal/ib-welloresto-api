@@ -609,8 +609,9 @@ type UpdatePasswordRequest struct {
 }
 
 const (
-	BrandUberEats  = "UBER_EATS"
-	BrandDeliveroo = "DELIVEROO"
+	BrandUberEats   = "UBER_EATS"
+	BrandDeliveroo  = "DELIVEROO"
+	BrandWelloResto = "WELLO_RESTO"
 )
 
 type OrderMeta struct {

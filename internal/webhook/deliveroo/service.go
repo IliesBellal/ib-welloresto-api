@@ -29,8 +29,8 @@ func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *
 	}
 }
 
-func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload DeliverooPayload) error {
-	ord := payload.Order
+func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload DeliverooWebhookPayload) error {
+	ord := payload.Body.Order
 
 	// 1. Récupérer le Merchant ID via le Location ID
 	merchantData, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
@@ -158,7 +158,7 @@ func (s *DeliverooService) buildCustomerRequest(merchantID string, ord Deliveroo
 	if isRestaurantFulfillment && ord.Delivery != nil {
 		name = ord.Delivery.CustomerName
 		phone = ord.Delivery.ContactNumber
-		address = fmt.Sprintf("%s, %s, %s", ord.Delivery.Line1, ord.Delivery.PostalCode, ord.Delivery.City)
+		address = fmt.Sprintf("%s, %s, %s", ord.Delivery.Line1, ord.Delivery.Postcode, ord.Delivery.City)
 		lat = ord.Delivery.Location.Latitude
 		lng = ord.Delivery.Location.Longitude
 	} else if ord.Customer != nil {
@@ -228,6 +228,7 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 		DeviceID:   &deviceID,
 		Order: models.OrderRequest{
 			OrderNum:         &orderNum,
+			Brand:            models.BrandDeliveroo,
 			OrderID:          nil, // Sera généré
 			CashRegisterId:   &deviceID,
 			TTC:              ord.TotalPrice.Fractional,
@@ -257,8 +258,8 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 
 // --- Status Update Logic ---
 
-func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooPayload) error {
-	ord := payload.Order
+func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooWebhookPayload) error {
+	ord := payload.Body.Order
 
 	// 1. Récupérer le marchand (pour le contexte et vérifs, utilisé aussi pour l'API)
 	// Le PHP fait getMerchantData au début de la transaction
