@@ -212,6 +212,7 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, or
 }
 
 func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, MerchantID, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+	log := logger.FromContext(ctx)
 	accept_order := models.HandlerDefaultResponseModelSet{}
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
@@ -220,6 +221,8 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		accept_order.Status = "error"
 		return accept_order, err
 	}
+
+	log.Info("OrderFileCycle.SetOrderAccepted - GetOrderBrandAndMerchant " + orderMeta.BrandOrderID + " FROM " + orderMeta.Brand + " (" + orderMeta.MerchantID + ")")
 
 	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP)
 	if err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
@@ -232,6 +235,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 	switch brand {
 	case models.BrandUberEats:
 		// call Uber Eats integration async
+		log.Info("Async Call Uber Eats")
 		go func(mID, oID string) {
 			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -242,6 +246,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
+		log.Info("Async Call Deliveroo")
 		go func(mID, oID string) {
 			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
