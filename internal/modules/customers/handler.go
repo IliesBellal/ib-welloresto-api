@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -75,22 +76,22 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 	token := helpers.ExtractToken(r)
 
-	params := CustomerSearchRequest{
-		Name:    r.URL.Query().Get("name"),
-		Tel:     r.URL.Query().Get("tel"),
-		Address: r.URL.Query().Get("address"),
-		Code:    r.URL.Query().Get("code"),
-	}
+	search_term := r.URL.Query().Get("term")
 
-	customers, err := h.svc.SearchCustomers(ctx, token, &params)
+	customers, err := h.svc.SearchCustomers(ctx, token, search_term)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "1",
-		"exist":  len(customers) > 0,
-		"result": customers,
-	})
+	resp := models.HandlerDefaultResponse{
+		ID: "customer.search",
+		Data: map[string]interface{}{
+			"status": "success",
+			"result": customers,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

@@ -137,7 +137,7 @@ type ConfigurableOption struct {
 	ConfigAttributeID string `json:"configurable_attribute_id"`
 	OrderItemID       string `json:"order_item_id"`
 	Quantity          int    `json:"quantity"`
-	Selected          int    `json:"selected"`
+	Selected          bool   `json:"selected"`
 }
 
 // delays

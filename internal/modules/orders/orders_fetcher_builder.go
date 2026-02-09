@@ -251,7 +251,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		for rows.Next() {
 			var attrID, orderItemID, id, title sql.NullString
 			var extraPrice int
-			var selected, quantity, maxQuantity sql.NullInt64
+			var quantity, maxQuantity sql.NullInt64
+			var selected sql.NullBool
 			if err := rows.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity); err != nil {
 				return nil, err
 			}
@@ -265,7 +266,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ExtraPrice:        extraPrice,
 				Quantity:          int(quantity.Int64),
 				MaxQuantity:       int(maxQuantity.Int64),
-				Selected:          int(selected.Int64),
+				Selected:          selected.Bool,
 			})
 		}
 	}

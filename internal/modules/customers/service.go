@@ -61,13 +61,13 @@ func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *CustomersService) SearchCustomers(ctx context.Context, token string, p *CustomerSearchRequest) ([]CustomerSearchResult, error) {
+func (s *CustomersService) SearchCustomers(ctx context.Context, token, term string) ([]CustomerSearchResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
 		return nil, errors.New("invalid token")
 	}
 
-	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, p)
+	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, term)
 }
 
 func (s *CustomersService) ReactivateRewards(ctx context.Context, orderID string) error {

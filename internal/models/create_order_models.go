@@ -81,6 +81,7 @@ type OrderProductPayload struct {
 	Without         []*OrderWithoutPayload   `json:"without"`
 	Config          *ProductConfiguration    `json:"configuration"`
 	Comment         *OrderItemCommentPayload `json:"comment"`
+	OrderItemID     *string                  `json:"order_item_id"`
 }
 
 type OrderExtraPayload struct {

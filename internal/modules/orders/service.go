@@ -178,6 +178,7 @@ func (s *OrdersService) CreateOrder(ctx context.Context, req *models.RequestObje
 	return result, err
 }
 
+// This function will add Merchant ID and User ID to the payload
 func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
@@ -191,6 +192,36 @@ func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, re
 	req.Order.CreatedBy = &user.UserID
 
 	return s.CreateOrder(ctx, req)
+}
+
+func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
+	log := logger.FromContext(ctx)
+
+	err := s.ordersRepo.UpdateOrder(ctx, req)
+
+	if err != nil {
+		log.Error(err.Error())
+	} else {
+		s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, "UPDATE_ORDER")
+	}
+
+	return nil
+}
+
+// This function will add Merchant_Id to the payload
+func (s *OrdersService) PrepareUpdateOrder(ctx context.Context, token string, req *models.RequestObject) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	req.MerchantID = user.MerchantID
+	req.Order.CreatedBy = &user.UserID
+
+	return s.UpdateOrder(ctx, req)
 }
 
 func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {

@@ -371,47 +371,37 @@ func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *Loya
 	return err
 }
 
-func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID string, p *CustomerSearchRequest) ([]CustomerSearchResult, error) {
+func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term string) ([]CustomerSearchResult, error) {
 
-	name := normalizeStr(p.Name)
-	tel := normalizeStr(p.Tel)
-	address := normalizeStr(p.Address)
-	code := normalizeStr(p.Code)
-
-	likeName := "%" + name + "%"
-	likeTel := "%" + tel + "%"
-	likeAddress := "%" + address + "%"
+	likeTerm := "%" + term + "%"
+	var results []CustomerSearchResult
 
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT 
-            customer_id,
-            customer_name,
-            customer_tel,
-            customer_address,
-            customer_email,
-            customer_nb_orders,
-            customer_total_spent,
-            creation_date,
-            customer_code
-        FROM customer
-        WHERE merchant_id = ?
-          AND enabled = 1
-          AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
-          AND (
-                customer_code = ?
-             OR customer_tel LIKE ?
-             OR customer_name LIKE ?
-             OR customer_address LIKE ?
-          )
-        LIMIT 50
-    `, merchantID, code, likeTel, likeName, likeAddress)
+    SELECT 
+        customer_id,
+        customer_name,
+        customer_tel,
+        customer_address,
+        customer_email,
+        customer_nb_orders,
+        customer_total_spent,
+        creation_date,
+        customer_code
+    FROM customer
+    WHERE merchant_id = ?
+      AND enabled = true
+      AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+      AND (
+            customer_code = ?
+         OR UPPER(customer_tel) LIKE UPPER(?)
+         OR UPPER(customer_name) LIKE UPPER(?)
+      )
+`, merchantID, term, likeTerm, likeTerm)
 
 	if err != nil {
-		return nil, err
+		return results, err
 	}
 	defer rows.Close()
-
-	var results []CustomerSearchResult
 
 	for rows.Next() {
 		var c CustomerSearchResult
@@ -428,7 +418,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID st
 		)
 
 		// 🔥 Match scoring ultra rapide
-		c.MatchScore = computeScore(name, tel, address, code, &c)
+		c.MatchScore = computeScore(term, &c)
 
 		results = append(results, c)
 	}
@@ -446,30 +436,48 @@ func normalizeStr(s string) string {
 	return s
 }
 
-func computeScore(name, tel, address, code string, c *CustomerSearchResult) int {
+func computeScore(term string, c *CustomerSearchResult) int {
 	score := 0
+	term = normalizeStr(term)
 
-	// Correspondance exacte → priorité
-	if normalizeStr(c.CustomerCode) == code {
+	code := normalizeStr(c.CustomerCode)
+	tel := normalizeStr(c.CustomerTel)
+	name := normalizeStr(c.CustomerName)
+
+	// Correspondances exactes
+	if code == term {
 		score += 500
 	}
-	if normalizeStr(c.CustomerTel) == tel {
+	if tel == term {
 		score += 300
 	}
-	if normalizeStr(c.CustomerName) == name {
+	if name == term {
 		score += 200
 	}
 
-	// Similarité simple
-	if strings.Contains(normalizeStr(c.CustomerName), name) {
+	// Correspondances partielles
+	if strings.Contains(name, term) {
 		score += 80
 	}
-	if strings.Contains(normalizeStr(c.CustomerTel), tel) {
+	if strings.Contains(tel, term) {
 		score += 120
 	}
-	if strings.Contains(normalizeStr(c.CustomerAddress), address) {
+
+	// Bonus complétude profil
+	if c.CustomerEmail != "" {
 		score += 40
 	}
+	if c.CustomerTel != "" {
+		score += 40
+	}
+	if c.CustomerName != "" {
+		score += 40
+	}
+	if c.CustomerAddress != "" {
+		score += 40
+	}
+
+	score += c.CustomerNbOrders
 
 	return score
 }
