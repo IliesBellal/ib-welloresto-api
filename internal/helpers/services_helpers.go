@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"crypto/aes"
 	"strconv"
+	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func IntPtrToString(v *int) string {
@@ -17,6 +20,13 @@ func IntToString(v int) string {
 	return strconv.Itoa(v)
 }
 
+// New version of crypting
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
+}
+
+// Old version of crypting
 func EncryptPHP(password string) (string, error) {
 	// CORRECTION 1 : Utiliser la clé directement si elle fait 16 chars (AES-128)
 	// Si votre clé PHP est vraiment du base64, gardez le DecodeString,
@@ -55,4 +65,25 @@ func pkcs7Padding(ciphertext []byte, blockSize int) []byte {
 	padding := blockSize - len(ciphertext)%blockSize
 	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
 	return append(ciphertext, padtext...)
+}
+
+func PasswordMatches(input string, stored string) bool {
+
+	// 1. bcrypt (système final)
+	if strings.HasPrefix(stored, "$2") {
+		return bcrypt.CompareHashAndPassword(
+			[]byte(stored),
+			[]byte(input),
+		) == nil
+	}
+
+	// 2. legacy AES-128-ECB (PHP)
+	if encrypted, err := EncryptPHP(input); err == nil {
+		if encrypted == stored {
+			return true
+		}
+	}
+
+	// 3. plain text legacy (dernier filet de sécurité)
+	return input == stored
 }

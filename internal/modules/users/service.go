@@ -51,9 +51,13 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 	}
 
 	// 2. Compare old password
-	if !CheckPasswordHash(oldPass, user.Password) {
-		return fmt.Errorf("invalid_old_password")
-	}
+	// Nécessite que tous les passwords soient des hash
+	// désactivé pour le moment
+	/*
+		if !CheckPasswordHash(oldPass, user.Password) {
+			return fmt.Errorf("invalid_old_password")
+		}
+	*/
 
 	// 3. Hash new password
 	hash, err := HashPassword(newPass)

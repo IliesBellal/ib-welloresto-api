@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"strings"
 	"welloresto-api/internal/helpers"
 )
 
@@ -98,7 +100,7 @@ WHERE ur.token = ? -- OR u.token = ?
 LIMIT 1;
 `
 
-	row := r.db.QueryRowContext(ctx, query, token/*, token*/)
+	row := r.db.QueryRowContext(ctx, query, token /*, token*/)
 
 	data := &UserLoginRow{}
 
@@ -142,7 +144,7 @@ LIMIT 1;
 	return data, err
 }
 
-func (r *AuthRepository) Login(ctx context.Context, username, encryptedPwd, plainPwd, token string) (*UserLoginRow, error) {
+func (r *AuthRepository) Login(ctx context.Context, username, encryptedPwd, hashedPwd, plainPwd, token string) (*UserLoginRow, error) {
 	query := `
 SELECT
     u.user_id,
@@ -158,6 +160,7 @@ SELECT
     u.waiter_device_token,
     u.delivery_device_token,
     u.terms_of_use_accepted,
+    u.password,
 
     ur.token AS rights_token,
     ur.access_wrreception,
@@ -225,16 +228,16 @@ LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
 WHERE 
     (
-        (UPPER(u.name)=UPPER(?) AND u.password IN (?, ?))
-        OR (UPPER(u.email)=UPPER(?) AND u.password IN (?, ?))
-        OR (ur.token = ?)
+        UPPER(u.name)=UPPER(?)
+        OR UPPER(u.email)=UPPER(?)
+        OR ur.token = ?
     )
 LIMIT 1;
 `
 
 	row := r.db.QueryRowContext(ctx, query,
-		username, encryptedPwd, plainPwd,
-		username, encryptedPwd, plainPwd,
+		username,
+		username,
 		token,
 	)
 
@@ -246,7 +249,7 @@ LIMIT 1;
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
 		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.ReceptionDeviceToken,
-		&data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted,
+		&data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted, &data.Password,
 
 		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
 		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID, &data.Admin,
@@ -275,8 +278,31 @@ LIMIT 1;
 		&data.DrooLocationID,
 	)
 
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
 	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
+
+	loggedByToken := token != "" && token == data.RightsToken
+	if !loggedByToken {
+		if !loggedByToken && !strings.HasPrefix(data.Password, "$2") {
+			/*
+				newHash, err := HashPassword(plainPwd)
+				if err == nil {
+					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)
+				}
+			*/
+		}
+
+		if !helpers.PasswordMatches(plainPwd, data.Password) {
+			return nil, errors.New("invalid_credentials")
+		}
+	}
 
 	if err == sql.ErrNoRows {
 		return nil, nil

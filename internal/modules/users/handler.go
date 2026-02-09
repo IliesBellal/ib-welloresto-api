@@ -2,7 +2,6 @@ package users
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -59,7 +58,14 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.UpdatePassword(ctx, token, req.OldPassword, req.NewPassword); err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"-3","error":"%s"}`, err.Error()), 400)
+
+		version_check_result := models.HandlerDefaultResponse{
+			ID:   "user.update_password",
+			Data: models.HandlerDefaultResponseModelSet{Status: err.Error()},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(version_check_result)
 		return
 	}
 
