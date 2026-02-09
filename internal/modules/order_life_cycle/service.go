@@ -261,7 +261,10 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 }
 
 func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+	log := logger.FromContext(ctx)
+	log.Info("AcceptOrder - Start")
 	user, err := s.userRepo.GetUserByToken(ctx, token)
+	log.Info("AcceptOrder - User Loaded")
 	accept_order := models.HandlerDefaultResponseModelSet{}
 	if err != nil {
 		accept_order.Status = "error"
