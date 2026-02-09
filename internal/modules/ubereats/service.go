@@ -26,8 +26,57 @@ func NewUberEatsService(db *sql.DB, config ConfigUberEats) *UberEatsService {
 	}
 }
 
+func (s *UberEatsService) GetValidToken(ctx context.Context) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+
+	shouldRefresh := false
+	if err == sql.ErrNoRows {
+		shouldRefresh = true
+	} else {
+		refreshThreshold := tokenData.ExpiresAt.AddDate(0, 0, -5)
+		if time.Now().UTC().After(refreshThreshold) {
+			shouldRefresh = true
+		}
+	}
+
+	if shouldRefresh {
+		newToken, err := s.client.GetNewToken()
+		if err != nil {
+			return "", err
+		}
+
+		if err := s.repo.SaveNewToken(
+			tx,
+			s.config.TokenType,
+			newToken.AccessToken,
+			newToken.ExpiresIn,
+		); err != nil {
+			return "", err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		return newToken.AccessToken, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return tokenData.AccessToken, nil
+}
+
 // GetValidToken gère la logique de rafraichissement (-5 jours)
-func (s *UberEatsService) GetValidToken() (string, error) {
+func (s *UberEatsService) GetValidTokenOld() (string, error) {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 
 	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
@@ -69,7 +118,7 @@ func (s *UberEatsService) GetValidToken() (string, error) {
 }
 
 func (s *UberEatsService) GetOrderByURL(ctx context.Context, url string) (*ueModels.UberOrder, error) {
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("token error: %v", err)
 	}
@@ -109,7 +158,7 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 
 // AcceptOrder réplique setUberEatsOrderAccepted
 func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID string) error {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -121,7 +170,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 		return fmt.Errorf("store error: %v", err)
 	}
 
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return fmt.Errorf("token error: %v", err)
 	}
@@ -193,7 +242,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	// et permettre l'appel à finishOrderIfDoesNotExist APRES le rollback si nécessaire
 	err = func() error {
 		// Récupérer données (similaire PHP)
-		token, err := s.GetValidToken()
+		token, err := s.GetValidToken(ctx)
 		if err != nil {
 			return err
 		}
@@ -229,7 +278,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 		// On lance la synchro qui gère sa propre transaction
 		// Note: Il faut récupérer le BrandOrderID et BasicAuth hors de la transaction échouée idéalement
 		// Je simplifie l'appel ici :
-		s.RecoverOrderState(merchantID, orderID)
+		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
@@ -244,7 +293,7 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 	}
 
 	err = func() error {
-		token, err := s.GetValidToken()
+		token, err := s.GetValidToken(ctx)
 		if err != nil {
 			return err
 		}
@@ -266,7 +315,7 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 
 	if err != nil {
 		tx.Rollback()
-		s.RecoverOrderState(merchantID, orderID)
+		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
@@ -281,7 +330,7 @@ func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID,
 	}
 
 	err = func() error {
-		token, err := s.GetValidToken()
+		token, err := s.GetValidToken(ctx)
 		if err != nil {
 			return err
 		}
@@ -313,7 +362,7 @@ func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID,
 
 	if err != nil {
 		tx.Rollback()
-		s.RecoverOrderState(merchantID, orderID)
+		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
@@ -321,14 +370,14 @@ func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID,
 }
 
 // RecoverOrderState est un wrapper helper pour appeler FinishOrderIfDoesNotExist avec les bons params
-func (s *UberEatsService) RecoverOrderState(merchantID, orderID string) {
+func (s *UberEatsService) RecoverOrderState(ctx context.Context, merchantID, orderID string) {
 	// Cette fonction ouvre une nouvelle connexion pour récupérer les infos
 	// nécessaires à finishOrderIfDoesNotExist sans dépendre de la transaction précédente échouée
 	// Implémentation simplifiée :
 	tx, _ := s.db.Begin()
 	defer tx.Commit()
 
-	token, _ := s.GetValidToken()
+	token, _ := s.GetValidToken(ctx)
 	meta, _ := s.repo.GetOrderMetadata(tx, orderID)
 
 	if token != "" && meta != nil {
@@ -410,7 +459,7 @@ func (s *UberEatsService) UberEatsBYOCStatusUpdate(ctx context.Context, merchant
 	}
 	defer tx.Rollback()
 
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -442,7 +491,7 @@ func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID str
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken() // Ou utiliser store.BearerToken via un refresh check
+	token, err := s.GetValidToken(ctx) // Ou utiliser store.BearerToken via un refresh check
 
 	// Calcul des dates (Timezone Aware)
 	loc, err := time.LoadLocation(store.Timezone)
@@ -498,7 +547,7 @@ func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchant
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 
 	prepTimeSeconds := timeVal * 60
 	req := UberPrepTimeRequest{
@@ -529,7 +578,7 @@ func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID st
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 
 	// Time calculation
 	loc, err := time.LoadLocation(store.Timezone)
@@ -615,7 +664,7 @@ func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID
 }
 
 // GetMenu wrapper simple
-func (s *UberEatsService) GetMenu(merchantID string) (map[string]interface{}, error) {
+func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[string]interface{}, error) {
 	// Lecture seule, pas de transaction obligatoire mais recommandé pour GetValidToken
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -627,7 +676,7 @@ func (s *UberEatsService) GetMenu(merchantID string) (map[string]interface{}, er
 	if err != nil {
 		return nil, err
 	}
-	token, err := s.GetValidToken()
+	token, err := s.GetValidToken(ctx)
 
 	return s.client.GetMenu(store.StoreID, token)
 }
