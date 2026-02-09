@@ -31,6 +31,56 @@ func (s *UberEatsService) GetValidToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// INDISPENSABLE : Ferme la connexion en cas de plantage ou d'erreur non gérée
+	defer tx.Rollback()
+
+	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+
+	shouldRefresh := false
+	if err == sql.ErrNoRows {
+		shouldRefresh = true
+	} else {
+		refreshThreshold := tokenData.ExpiresAt.AddDate(0, 0, -5)
+		if time.Now().UTC().After(refreshThreshold) {
+			shouldRefresh = true
+		}
+	}
+
+	if shouldRefresh {
+		newToken, err := s.client.GetNewToken()
+		if err != nil {
+			return "", err
+		}
+
+		if err := s.repo.SaveNewToken(
+			tx,
+			s.config.TokenType,
+			newToken.AccessToken,
+			newToken.ExpiresIn,
+		); err != nil {
+			return "", err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		return newToken.AccessToken, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return tokenData.AccessToken, nil
+}
+
+func (s *UberEatsService) GetValidTokenOldOld(ctx context.Context) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
 	defer tx.Rollback()
 
 	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
@@ -156,8 +206,116 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 	return store, nil
 }
 
-// AcceptOrder réplique setUberEatsOrderAccepted
+// AcceptOrder réplique setUberEatsOrderAccepted de manière optimisée pour éviter les Deadlocks
 func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID string) error {
+	// ---------------------------------------------------------
+	// ÉTAPE 1 : Récupérer le Token
+	// ---------------------------------------------------------
+	// Cette fonction gère sa propre transaction interne et la ferme proprement.
+	token, err := s.GetValidToken(ctx)
+	if err != nil {
+		return fmt.Errorf("token error: %v", err)
+	}
+
+	// ---------------------------------------------------------
+	// ÉTAPE 2 : Récupérer les infos (Lecture Seule)
+	// ---------------------------------------------------------
+	// On déclare les variables ici pour les utiliser après la fermeture de la transaction de lecture
+	var store *Store // Assure-toi que le type Store est bien accessible ici (sinon models.Store)
+	var orderMeta *UberOrderMetadata
+	var autoPrepTime int
+
+	// On utilise une fonction anonyme pour isoler la transaction de lecture
+	// Cela garantit que la connexion est relâchée AVANT l'appel API
+	err = func() error {
+		txRead, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		defer txRead.Rollback() // Sécurité : libère la connexion quoi qu'il arrive
+
+		// 2.a Récupérer le store
+		store, err = s.repo.GetStoreData(txRead, merchantID)
+		if err != nil {
+			return fmt.Errorf("store error: %v", err)
+		}
+
+		// 2.b Récupérer les métadonnées de la commande
+		orderMeta, err = s.repo.GetOrderMetadata(txRead, orderID)
+		if err != nil {
+			return fmt.Errorf("metadata error: %v", err)
+		}
+
+		// 2.c Calculer le temps auto si nécessaire
+		if store.EstimatedPreparationTime == 0 {
+			// On ignore l'erreur ici car on a une valeur par défaut, ou tu peux gérer l'erreur si critique
+			calcTime, errCalc := s.repo.CalculateAutoPrepTime(txRead, merchantID, orderID)
+			if errCalc == nil {
+				autoPrepTime = calcTime
+			}
+		}
+
+		return txRead.Commit() // On ferme la transaction de lecture ICI
+	}()
+
+	if err != nil {
+		return err
+	}
+
+	// ---------------------------------------------------------
+	// ÉTAPE 3 : Logique Métier (Pur Go, pas de DB)
+	// ---------------------------------------------------------
+	prepTime := store.EstimatedPreparationTime
+
+	// Si le temps du store est 0 (Auto), on prend le calculé, sinon on garde le fixe
+	if prepTime == 0 && autoPrepTime > 0 {
+		prepTime = autoPrepTime
+	}
+
+	// Logique de clamp PHP : max(5, min($time, 59))
+	prepTime = int(math.Max(5, math.Min(float64(prepTime), 59)))
+
+	// Calcul date et Timezone
+	loc, err := time.LoadLocation(store.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	pickupAt := time.Now().In(loc).Add(time.Duration(prepTime) * time.Minute)
+	readyForPickupTime := pickupAt.Format(time.RFC3339) // Format attendu par Uber
+
+	// ---------------------------------------------------------
+	// ÉTAPE 4 : Appel API Uber (LENT - HORS Transaction DB)
+	// ---------------------------------------------------------
+	req := UberAcceptRequest{
+		ReadyForPickupTime: readyForPickupTime,
+		ExternalID:         fmt.Sprintf("%v", orderID),    // Utilise %v pour gérer string ou int
+		AcceptedBy:         fmt.Sprintf("%v", merchantID), // Utilise %v pour gérer string ou int
+	}
+
+	// C'est ici que ça bloquait avant. Maintenant, aucune connexion DB n'est active ici.
+	if err := s.client.AcceptOrder(ctx, orderMeta.BrandOrderID, token, req); err != nil {
+		return fmt.Errorf("uber api error: %v", err)
+	}
+
+	// ---------------------------------------------------------
+	// ÉTAPE 5 : Mise à jour finale (Transaction d'écriture courte)
+	// ---------------------------------------------------------
+	txUpdate, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer txUpdate.Rollback()
+
+	if err := s.repo.UpdateOrderAccepted(txUpdate, orderID, prepTime); err != nil {
+		return err
+	}
+
+	// Commit final rapide
+	return txUpdate.Commit()
+}
+
+// AcceptOrder réplique setUberEatsOrderAccepted
+func (s *UberEatsService) AcceptOrderOld(ctx context.Context, merchantID, orderID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
