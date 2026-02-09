@@ -36,19 +36,26 @@ func MapUberOrderToRequest(
 		})
 	}
 
+	customerName := order.Eater.FirstName + " " + order.Eater.LastName
+	cashRegisterID := "UBER_EATS"
+
 	return &ordersModels.RequestObject{
 		MerchantID: merchantID,
 		Order: ordersModels.OrderRequest{
-			OrderID:     &order.ID,
-			OrderNum:    &order.DisplayID,
-			TTC:         total,
-			Products:    products,
-			OrderType:   orderType,
-			BrandStatus: order.CurrentState,
+			BrandOrderID:    &order.ID,
+			BrandOrderNum:   &order.DisplayID,
+			Brand:           "UBER_EATS",
+			TTC:             total,
+			Products:        products,
+			OrderType:       orderType,
+			BrandStatus:     order.CurrentState,
+			FulfillmentType: &order.Type,
+			CashRegisterId:  &cashRegisterID,
 			Customer: &ordersModels.CustomerRequest{
 				BrandCustomerID:    &order.Eaters[0].ID,
 				FirstName:          &order.Eater.FirstName,
 				LastName:           &order.Eater.LastName,
+				Name:               &customerName,
 				TemporaryPhone:     &order.Eater.Phone,
 				TemporaryPhoneCode: &order.Eater.PhoneCode,
 				Lat:                order.Eater.Delivery.Location.Lat,

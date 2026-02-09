@@ -98,6 +98,8 @@ func (s *Service) ProcessEvent(ctx context.Context, event models.UberWebhookEven
 	case "orders.cancel":
 		return s.HandleOrderCanceled(ctx, event.Meta.ResourceID)
 
+	case "delivery.state_changed":
+		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
 	case "delivery.status":
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
 

@@ -219,9 +219,13 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 
 	// Helpers pour les pointeurs
 	deviceID := "DELIVEROO"
-	createdBy := "DELIVEROO_WH"
+	createdBy := "WEBHOOK_DELIVEROO"
 	brandStatus := ord.Status
 	merchantApproval := "PENDING_APPROVAL"
+	fulfillmentType := "DELIVERY_BY_RESTAURANT"
+	if ord.FulfillmentType != "RESTAURANT" {
+		fulfillmentType = "DELIVEROO"
+	}
 
 	req := &models.RequestObject{
 		MerchantID: merchantID,
@@ -229,8 +233,11 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 		Order: models.OrderRequest{
 			OrderNum:         &orderNum,
 			Brand:            models.BrandDeliveroo,
-			OrderID:          nil, // Sera généré
+			BrandOrderNum:    &ord.DisplayID,
+			BrandOrderID:     &ord.ID,
+			ParentOrderID:    parentOrderID,
 			CashRegisterId:   &deviceID,
+			FulfillmentType:  &fulfillmentType,
 			TTC:              ord.TotalPrice.Fractional,
 			HT:               0, // Calculé par le service généralement
 			TVA:              0, // Calculé par le service généralement
@@ -248,10 +255,6 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 			Currency:         nil,       // Défaut
 		},
 	}
-
-	req.Order.BrandOrderID = &ord.ID
-	req.Order.OrderNum = &ord.DisplayID
-	req.Order.ParentOrderID = parentOrderID
 
 	return req
 }

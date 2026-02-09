@@ -49,26 +49,46 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, tx *sql.Tx, brandOrd
 
 // --- DELIVERY STATUS UPDATES ---
 func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, tx *sql.Tx, brandOrderID string) error {
-	_, err := tx.ExecContext(ctx, `
-		UPDATE orders
-		SET brand_status = 'EN_ROUTE_TO_DROPOFF',
-		    delivery_start = UTC_TIMESTAMP()
+	var orderID string
+
+	// 1. Lock explicite de la commande (FOR UPDATE)
+	err := tx.QueryRowContext(ctx, `
+		SELECT order_id
+		FROM orders
 		WHERE brand_order_id = ?
-		AND state = 'OPEN'
-	`, brandOrderID)
+		FOR UPDATE
+	`, brandOrderID).Scan(&orderID)
+
+	if err == sql.ErrNoRows {
+		return nil // ou une erreur métier si tu préfères
+	}
 	if err != nil {
 		return err
 	}
 
+	// 2. Update de la commande
 	_, err = tx.ExecContext(ctx, `
-		UPDATE orderitems oi
-		INNER JOIN orders o ON o.order_id = oi.order_id
-		SET oi.distributed_on = UTC_TIMESTAMP(),
-		    oi.isDistributed = 1
-		WHERE o.brand_order_id = ?
-	`, brandOrderID)
+		UPDATE orders
+		SET brand_status = 'EN_ROUTE_TO_DROPOFF',
+		    delivery_start = UTC_TIMESTAMP()
+		WHERE order_id = ?
+	`, orderID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// 3. Update des items (sans JOIN)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE orderitems
+		SET distributed_on = UTC_TIMESTAMP(),
+		    isDistributed = 1
+		WHERE order_id = ?
+	`, orderID)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *OrdersRepository) MarkFailed(ctx context.Context, tx *sql.Tx, brandOrderID string) error {

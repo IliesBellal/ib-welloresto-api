@@ -292,6 +292,7 @@ LIMIT 1;
 	if !loggedByToken {
 		if !loggedByToken && !strings.HasPrefix(data.Password, "$2") {
 			/*
+				conversion automatique en hash
 				newHash, err := HashPassword(plainPwd)
 				if err == nil {
 					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)

@@ -28,10 +28,10 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 			tx.Rollback()
 			return err
 		}
-		s.notificationsService.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		s.notificationsService.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
 
 	case "ARRIVED_AT_DROPOFF":
 		return nil

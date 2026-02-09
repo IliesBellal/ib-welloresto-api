@@ -45,6 +45,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *u
 }
 
 func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
+	log := logger.FromContext(ctx)
 
 	// 2) Mettre la commande en Delivered (local DB updates)
 	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
@@ -66,8 +67,9 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 
 	case models.BrandDeliveroo:
 		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
+			log.Warn("Delivery by restaurant - No BYOC implemented for DELIVEROO")
 			// Not coded in PHP -> return simple OK or your logic
-			return fmt.Errorf("not implemented for Deliveroo BYR")
+			return nil
 		}
 		return s.deliverooSvc.SetCollected(ctx, *order.BrandOrderID)
 

@@ -35,7 +35,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.service.ProcessEvent(r.Context(), event); err != nil {
 		log.Println("[UBER EATS] processing error:", err)
-		http.Error(w, "processing error", http.StatusInternalServerError)
+		http.Error(w, "processing error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

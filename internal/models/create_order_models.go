@@ -13,9 +13,11 @@ type OrderRequest struct {
 	OrderID                     *string               `json:"order_id,omitempty"`
 	Brand                       string                `json:"brand,omitempty"`
 	BrandOrderID                *string               `json:"brand_order_id,omitempty"`
+	BrandOrderNum               *string               `json:"brand_order_num,omitempty"`
 	ParentOrderID               *string               `json:"parent_order_id,omitempty"`
 	OrderNum                    *string               `json:"order_num,omitempty"`
 	CashRegisterId              *string               `json:"cash_register_id,omitempty"`
+	FulfillmentType             *string               `json:"fulfillment_type,omitempty"`
 	TTC                         int                   `json:"TTC"`
 	TVA                         int                   `json:"TVA"`
 	HT                          int                   `json:"HT"`
