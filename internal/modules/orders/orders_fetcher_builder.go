@@ -363,16 +363,17 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var paymentID, enabled sql.NullInt64
+			var paymentID sql.NullInt64
 			var mop, orderID sql.NullString
 			var amount sql.NullFloat64
 			var paymentDate sql.NullTime
+			var enabled sql.NullBool
 
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), Enabled: int(enabled.Int64),
+				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), Enabled: enabled.Bool,
 			})
 		}
 	}
@@ -624,7 +625,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var ord models.Order
 
 			var customerNbOrders, isDelivery, useCustomerTemporaryAddress,
-				price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
+				price, TVA, HT, deliveryFees, placesSettings, estimatedReady sql.NullInt64
 
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
@@ -634,7 +635,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var customerLat, customerLng, customerTemporaryLat,
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
-			var lastUpdate, creationDate, estimatedReady sql.NullTime
+			var lastUpdate, creationDate sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
 
 			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
@@ -685,7 +686,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "-1"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
-			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
+			ord.EstimatedReady = &estimatedReady.Int64
 			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)

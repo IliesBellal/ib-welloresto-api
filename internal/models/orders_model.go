@@ -10,7 +10,7 @@ type Payment struct {
 	MOP         string  `json:"mop"`
 	Amount      float64 `json:"amount"`
 	PaymentDate int64   `json:"payment_date"`
-	Enabled     int     `json:"enabled"`
+	Enabled     bool    `json:"enabled"`
 }
 
 type OrderComment struct {
@@ -111,7 +111,7 @@ type Order struct {
 	IsDistributed     bool             `json:"isDistributed"`
 	IsSNO             bool             `json:"isSNO"`
 	CallHour          *string          `json:"callHour"`
-	EstimatedReady    *int             `json:"estimated_ready"`
+	EstimatedReady    *int64           `json:"estimated_ready"`
 	IsDelivery        int              `json:"isDelivery"`
 	MerchantApproval  string           `json:"merchant_approval"`
 	DeliveryFees      *int64           `json:"delivery_fees"`
