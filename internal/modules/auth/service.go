@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/logger"
 )
 
 type AuthService struct {
@@ -38,24 +36,25 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 
 	appID, _ := convertApp(payload.App)
 
-	var encrypted, username, hashed string
+	var username string
 	var err error
+	/*
+		if (payload.Username != "" || payload.Email != "") && payload.Password != "" {
+			encrypted, err = helpers.EncryptPHP(payload.Password)
+			if err != nil {
+				log := logger.FromContext(ctx)
+				log.Error("Error encrypting: " + err.Error())
+				return nil, err
+			}
 
-	if (payload.Username != "" || payload.Email != "") && payload.Password != "" {
-		encrypted, err = helpers.EncryptPHP(payload.Password)
-		if err != nil {
-			log := logger.FromContext(ctx)
-			log.Error("Error encrypting: " + err.Error())
-			return nil, err
+			hashed, err = helpers.HashPassword(payload.Password)
+			if err != nil {
+				log := logger.FromContext(ctx)
+				log.Error("Error hashing: " + err.Error())
+				return nil, err
+			}
 		}
-
-		hashed, err = helpers.HashPassword(payload.Password)
-		if err != nil {
-			log := logger.FromContext(ctx)
-			log.Error("Error hashing: " + err.Error())
-			return nil, err
-		}
-	}
+	*/
 	username = payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, payload.Password, token)
