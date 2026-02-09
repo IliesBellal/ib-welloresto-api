@@ -81,7 +81,9 @@ func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.svc.UpdateUserSettings(r.Context(), token, &req); err != nil {
+	userID := chi.URLParam(r, "user_id")
+
+	if err := h.svc.UpdateUserSettings(r.Context(), userID, token, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

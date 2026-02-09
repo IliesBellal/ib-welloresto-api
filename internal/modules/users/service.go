@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"welloresto-api/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -66,15 +65,12 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 	return s.userRepo.UpdatePassword(ctx, user.UserID, hash)
 }
 
-func (s *UsersService) UpdateUserSettings(ctx context.Context, userID string, req *models.UserSettingsRequest) error {
+func (s *UsersService) UpdateUserSettings(ctx context.Context, userID, token string, req *models.UserSettingsRequest) error {
 
+	// TODO
 	// Optional validation
-	if req.Email != nil && !strings.Contains(*req.Email, "@") {
-		return errors.New("invalid email")
-	}
-
-	// You can forbid certain fields if needed:
-	// if req.Admin != nil { return errors.New("cannot update admin flag") }
+	// Valider qu'il s'agit du même user (user_id = token -> User.UserID)
+	// Sinon, vérifier que token -> User.UserID est Admin de l'établissement
 
 	return s.userRepo.UpdateUserSettings(ctx, userID, req)
 }

@@ -250,6 +250,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
+		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
 	})
 
 	// --- POS ---
