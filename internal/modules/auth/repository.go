@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 )
 
 type AuthRepository struct {
@@ -17,9 +18,12 @@ func NewAuthRepository(db *sql.DB) AuthRepository {
 }
 
 func (r *AuthRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
-	if token == "" {
-		return nil, nil
+	log := logger.FromContext(ctx)
+	log.Info("Get User By Token")
+	if strings.TrimSpace(token) == "" {
+		return nil, nil // ou une erreur métier type ErrUnauthorized
 	}
+	log.Info("Get User By Token - token ok")
 
 	query := `
 SELECT
@@ -96,16 +100,19 @@ LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_tok
 LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
 LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
-WHERE ur.token = ? -- OR u.token = ?
+WHERE ur.token = ? 
 LIMIT 1;
 `
+	log.Info("Get User By Token - query : " + query)
 
-	row := r.db.QueryRowContext(ctx, query, token /*, token*/)
+	row := r.db.QueryRowContext(ctx, query, token)
 
 	data := &UserLoginRow{}
 
 	var ueDelayUntil sql.NullTime
 	var ueClosedUntil sql.NullTime
+
+	log.Info("Get User By Token - query executed ")
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
@@ -135,16 +142,20 @@ LIMIT 1;
 		&data.DrooLocationID,
 	)
 
+	log.Info("Get User By Token - scanned")
+
 	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
 	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
 
+	log.Info("Get User By Token - dates converted")
+
 	if err == sql.ErrNoRows {
-		return nil, err
+		return nil, nil
 	}
 	return data, err
 }
 
-func (r *AuthRepository) Login(ctx context.Context, username, encryptedPwd, hashedPwd, plainPwd, token string) (*UserLoginRow, error) {
+func (r *AuthRepository) Login(ctx context.Context, username, plainPwd, token string) (*UserLoginRow, error) {
 	query := `
 SELECT
     u.user_id,

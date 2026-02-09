@@ -58,7 +58,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 	username = payload.Username + payload.Email
 
-	user, err := s.repo.Login(ctx, username, encrypted, hashed, payload.Password, token)
+	user, err := s.repo.Login(ctx, username, payload.Password, token)
 	if err != nil {
 		return nil, err
 	}
