@@ -72,11 +72,11 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
 }
-func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID string) (*models.Order, error) {
+func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID string) (*models.PendingOrdersResponse, error) {
 	return s.ordersRepo.GetOrder(ctx, merchantID, orderID)
 }
 
-func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*models.Order, error) {
+func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*models.PendingOrdersResponse, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

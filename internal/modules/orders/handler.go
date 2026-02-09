@@ -79,7 +79,13 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(order)
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: order,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {

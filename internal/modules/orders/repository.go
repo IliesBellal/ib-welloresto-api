@@ -124,7 +124,7 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 	}, nil
 }
 
-func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.Order, error) {
+func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.PendingOrdersResponse, error) {
 	// Filtre strict sur l'MerchantID
 	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
 
@@ -136,7 +136,7 @@ func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orde
 		return nil, sql.ErrNoRows
 	}
 
-	return &orders[0], nil
+	return &models.PendingOrdersResponse{Orders: orders}, nil
 }
 
 func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req *models.OrderRequest) ([]models.Order, error) {

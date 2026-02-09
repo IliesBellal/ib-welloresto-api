@@ -302,10 +302,10 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 			return nil, err
 		}
 
-		response.DeliverySession = session
+		response.Orders[0].DeliverySession = session
 	}
 
-	return response, nil
+	return &response.Orders[0], nil
 }
 
 func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {
