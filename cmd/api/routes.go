@@ -232,7 +232,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// Webhooks
 	r.Route("/webhooks", func(r chi.Router) {
-		r.Post("/ubereats", uberWebhookHandler.HandleWebhook)
+		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
 		r.Post("/deliveroo", deliverooWebhookHandler.HandleWebhook)
 	})
 
