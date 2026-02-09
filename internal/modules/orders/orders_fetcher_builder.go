@@ -625,7 +625,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var ord models.Order
 
 			var customerNbOrders, isDelivery, useCustomerTemporaryAddress,
-				price, TVA, HT, deliveryFees, placesSettings, estimatedReady sql.NullInt64
+				price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
 
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
@@ -635,7 +635,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var customerLat, customerLng, customerTemporaryLat,
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
-			var lastUpdate, creationDate sql.NullTime
+			var lastUpdate, creationDate, estimatedReady sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
 
 			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
@@ -686,7 +686,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "-1"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
-			ord.EstimatedReady = &estimatedReady.Int64
+			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
 			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
