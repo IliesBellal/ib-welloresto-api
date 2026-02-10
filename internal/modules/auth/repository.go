@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/logger"
 )
 
 type AuthRepository struct {
@@ -18,12 +17,9 @@ func NewAuthRepository(db *sql.DB) AuthRepository {
 }
 
 func (r *AuthRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
-	log := logger.FromContext(ctx)
-	log.Info("Get User By Token")
 	if strings.TrimSpace(token) == "" {
 		return nil, nil // ou une erreur métier type ErrUnauthorized
 	}
-	log.Info("Get User By Token - token ok")
 
 	query := `
 SELECT
@@ -103,7 +99,6 @@ LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 WHERE ur.token = ? 
 LIMIT 1;
 `
-	log.Info("Get User By Token - query : " + query)
 
 	row := r.db.QueryRowContext(ctx, query, token)
 
@@ -111,8 +106,6 @@ LIMIT 1;
 
 	var ueDelayUntil sql.NullTime
 	var ueClosedUntil sql.NullTime
-
-	log.Info("Get User By Token - query executed ")
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
@@ -142,12 +135,8 @@ LIMIT 1;
 		&data.DrooLocationID,
 	)
 
-	log.Info("Get User By Token - scanned")
-
 	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
 	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
-
-	log.Info("Get User By Token - dates converted")
 
 	if err == sql.ErrNoRows {
 		return nil, nil

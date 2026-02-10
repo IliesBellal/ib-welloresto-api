@@ -8,6 +8,8 @@ import (
 	"time"
 	"welloresto-api/internal/logger"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
+
+	"go.uber.org/zap"
 )
 
 type UberEatsService struct {
@@ -314,82 +316,81 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	return txUpdate.Commit()
 }
 
-// AcceptOrder réplique setUberEatsOrderAccepted
-func (s *UberEatsService) AcceptOrderOld(ctx context.Context, merchantID, orderID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() // Rollback automatique si pas de commit
-
-	// 1. Récupérer le store et le token
-	store, err := s.repo.GetStoreData(tx, merchantID)
-	if err != nil {
-		return fmt.Errorf("store error: %v", err)
-	}
-
+// DenyOrder refuse une commande de manière optimisée (sans bloquer la DB)
+func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, reasonID, reasonType, comment string) error {
+	log := logger.FromContext(ctx)
+	// ---------------------------------------------------------
+	// ÉTAPE 1 : Récupérer le Token (Gère sa propre Tx)
+	// ---------------------------------------------------------
 	token, err := s.GetValidToken(ctx)
 	if err != nil {
-		return fmt.Errorf("token error: %v", err)
-	}
-
-	// 2. Récupérer les infos commande
-	orderMeta, err := s.repo.GetOrderMetadata(tx, orderID)
-	if err != nil {
 		return err
 	}
 
-	// 3. Calcul du temps de préparation
-	prepTime := store.EstimatedPreparationTime
+	// ---------------------------------------------------------
+	// ÉTAPE 2 : Récupérer les métadonnées (Lecture courte)
+	// ---------------------------------------------------------
+	var brandOrderID string
 
-	// Si AUTO ou null (en Go 0 pour int)
-	if prepTime == 0 {
-		calcTime, err := s.repo.CalculateAutoPrepTime(tx, merchantID, orderID)
-		if err == nil {
-			prepTime = calcTime
-			// Ici tu avais une logique updateReadyForPickupTime complexe en PHP
-			// Je la simplifie pour l'exemple, mais elle devrait être ici.
+	// On utilise une fonction anonyme pour la lecture seule
+	err = func() error {
+		txRead, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return err
 		}
-	}
+		defer txRead.Rollback()
 
-	// Logique de clamp PHP : max(5, min($time, 59))
-	prepTime = int(math.Max(5, math.Min(float64(prepTime), 59)))
+		meta, err := s.repo.GetOrderMetadata(txRead, orderID)
+		if err != nil {
+			return err
+		}
+		brandOrderID = meta.BrandOrderID
+		return txRead.Commit()
+	}()
 
-	// 4. Calcul du Timestamp RFC3339
-	// Attention aux Timezones. En PHP tu chargeais la Timezone du merchant.
-	loc, err := time.LoadLocation(store.Timezone)
 	if err != nil {
-		loc = time.UTC
-	}
-	pickupAt := time.Now().In(loc).Add(time.Duration(prepTime) * time.Minute)
-	readyForPickupTime := pickupAt.Format(time.RFC3339) // Format attendu par Uber
-
-	// 5. Appel API
-	req := UberAcceptRequest{
-		ReadyForPickupTime: readyForPickupTime,
-		ExternalID:         fmt.Sprintf("%d", orderID),
-		AcceptedBy:         fmt.Sprintf("%d", merchantID),
-	}
-
-	if err := s.client.AcceptOrder(ctx, orderMeta.BrandOrderID, token, req); err != nil {
-		// Logique d'erreur PHP : finishOrderIfDoesNotExist si échec
-		// Ici on retourne l'erreur, le handler HTTP peut décider d'appeler une méthode de sync
-		return fmt.Errorf("uber api error: %v", err)
-	}
-
-	// 6. Succès : Mise à jour locale
-	if err := s.repo.UpdateOrderAccepted(tx, orderID, prepTime); err != nil {
 		return err
 	}
 
-	// Notifier (Placeholder pour sendUpdateOrderNotification)
-	// s.sendUpdateOrderNotification(merchantID, orderID)
+	// ---------------------------------------------------------
+	// ÉTAPE 3 : Appel API (HORS TRANSACTION DB)
+	// ---------------------------------------------------------
+	// Si l'appel échoue, on ne rollback rien car rien n'a été écrit
+	apiErr := s.client.DenyOrder(ctx, brandOrderID, token, reasonType, reasonID, comment)
 
-	return tx.Commit()
+	if apiErr != nil {
+		// Logique de fallback PHP : Sync state si erreur API
+		// On le fait de manière asynchrone ou synchrone selon ton besoin,
+		// mais IMPORTANT : s.RecoverOrderState doit gérer ses propres transactions.
+		log.Error("Uber deny failed, trying to recover state", zap.Error(apiErr))
+
+		// Attention : RecoverOrderState ne doit pas être appelé dans une Tx existante
+		s.RecoverOrderState(ctx, merchantID, orderID)
+
+		return apiErr
+	}
+
+	// ---------------------------------------------------------
+	// ÉTAPE 4 : Succès API -> Mise à jour DB (Ecriture courte)
+	// ---------------------------------------------------------
+	txUpdate, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer txUpdate.Rollback()
+
+	if err := s.repo.SetOrderStatusDenied(txUpdate, orderID); err != nil {
+		return err
+	}
+
+	// Notification (peut être faite après le commit ou via un bus d'event)
+	// s.notifications.Send(...)
+
+	return txUpdate.Commit()
 }
 
 // DenyOrder logique métier
-func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, reasonID, reasonType, comment string) error {
+func (s *UberEatsService) DenyOrderOld(ctx context.Context, merchantID, orderID, reasonID, reasonType, comment string) error {
 	// 1. Transaction Initiale
 	tx, err := s.db.Begin()
 	if err != nil {
