@@ -3,6 +3,7 @@ package deliveroo
 import (
 	"encoding/json"
 	"net/http"
+	"welloresto-api/internal/logger"
 )
 
 type DeliverooHandler struct {
@@ -14,6 +15,7 @@ func NewDeliverooHandler(service *DeliverooService) *DeliverooHandler {
 }
 
 func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	log := logger.FromContext(r.Context())
 	var payload DeliverooWebhookPayload
 
 	// 1. Decode
@@ -45,6 +47,7 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 
 	if err != nil {
 		// Log l'erreur
+		log.Error("WEBHOOK DELIVEROO - 500 - " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
