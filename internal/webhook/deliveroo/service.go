@@ -320,6 +320,8 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 		s.lifecycleService.DeleteOrder(ctx, reason)
 
+		return nil
+
 	case "accepted":
 		now := time.Now()
 
