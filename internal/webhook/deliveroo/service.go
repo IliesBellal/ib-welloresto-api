@@ -271,7 +271,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 1. Récupérer le marchand (pour le contexte et vérifs, utilisé aussi pour l'API)
 	// Le PHP fait getMerchantData au début de la transaction
 	// Note: On peut optimiser en récupérant le token ici si besoin.
-	_, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
+	merchant, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
 	if err != nil {
 		return err
 	}
@@ -314,6 +314,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 
 		reason := models.DenyOrderInput{
 			OrderID:          internalOrderID,
+			MerchantID:       merchant.MerchantID,
 			DeletionReasonID: "43",
 			UserID:           "WEBHOOK_DELIVEROO",
 		}
@@ -334,14 +335,13 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 			return err
 		}
 
-		// Envoi succès à Deliveroo (uniquement pour Accepted dans le PHP)
-		go s.setSyncStatus(ord.ID, "succeeded", "")
-
 	case "confirmed":
 		if err := s.repo.UpdateOrderConfirmed(ctx, tx, ord.ID); err != nil {
 			processErr = err
 			return err
 		}
+
+		s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID)
 
 	default:
 		// Do nothing
@@ -353,13 +353,8 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		return err
 	}
 
-	// 6. Notification (Hors transaction)
-	// Equivalent de $Deliveroo->sendUpdateOrderNotification($merchant->merchant_id, $order_id);
-	// On utilise le lifecycle ou un service de notif ici.
-	// Je suppose une méthode sur le lifecycle service pour notifier une mise à jour.
-	// Si elle n'existe pas, il faut l'ajouter ou adapter.
-	// Exemple: s.lifecycleService.NotifyOrderStatusUpdate(ctx, internalOrderID)
-	fmt.Printf("TODO: Notify Update for Order %s (Internal: %s)\n", ord.ID, internalOrderID)
+	// Envoi succès à Deliveroo (uniquement pour Accepted dans le PHP)
+	go s.setSyncStatus(ord.ID, "succeeded", "")
 
 	return nil
 }

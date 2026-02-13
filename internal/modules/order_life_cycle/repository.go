@@ -827,7 +827,7 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 	return tx.Commit()
 }
 
-func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, ) error {
+func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
 
 	_, err := r.db.ExecContext(ctx, `
         UPDATE orders
