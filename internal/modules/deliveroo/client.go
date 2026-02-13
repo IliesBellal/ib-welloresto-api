@@ -124,7 +124,6 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 
 func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, payload interface{}) (*http.Response, error) {
 	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.doRequest - " + url)
 
 	var bodyReader io.Reader
 	if payload != nil {
@@ -150,7 +149,15 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
+
+	return resp, err
 }
 
 // ==========================================
