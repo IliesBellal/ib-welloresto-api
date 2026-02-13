@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"welloresto-api/internal/logger"
 
 	"welloresto-api/internal/models"                   // Assurez-vous que le chemin est correct
 	"welloresto-api/internal/modules/order_life_cycle" // Chemin vers OrderLifeCycle
@@ -262,7 +263,10 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 // --- Status Update Logic ---
 
 func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooWebhookPayload) error {
+	log := logger.FromContext(ctx)
+
 	ord := payload.Body.Order
+	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status)
 
 	// 1. Récupérer le marchand (pour le contexte et vérifs, utilisé aussi pour l'API)
 	// Le PHP fait getMerchantData au début de la transaction
