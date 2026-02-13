@@ -294,14 +294,27 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 3. Switch sur le statut
 	switch ord.Status {
 	case "rejected", "canceled":
-		if err := s.repo.UpdateOrderRejected(ctx, tx, ord.ID, ord.Status); err != nil {
+		/*
+			if err := s.repo.UpdateOrderRejected(ctx, tx, ord.ID, ord.Status); err != nil {
+				processErr = err
+				return err
+			}
+			if err := s.repo.DisablePayments(ctx, tx, ord.ID); err != nil {
+				processErr = err
+				return err
+			}
+		*/
+		OrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
+		if err != nil {
 			processErr = err
 			return err
 		}
-		if err := s.repo.DisablePayments(ctx, tx, ord.ID); err != nil {
-			processErr = err
-			return err
+		reason := models.DenyOrderInput{
+			OrderID:          OrderID,
+			DeletionReasonID: "43",
+			UserID:           "WEBHOOK_DELIVEROO",
 		}
+		s.lifecycleService.DeleteOrder(ctx, reason)
 
 	case "accepted":
 		now := time.Now()
