@@ -288,6 +288,13 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 
 	// Gestion d'erreur globale pour appeler setSyncStatus("failed") comme en PHP
 	var processErr error
+
+	// 4. Récupérer l'ID interne pour la notification
+	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
+	if err != nil {
+		processErr = err
+		return err
+	}
 	defer func() {
 		if processErr != nil {
 			// Le PHP envoie "webhook_failed" en cas d'exception
@@ -298,23 +305,15 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 3. Switch sur le statut
 	switch ord.Status {
 	case "rejected", "canceled":
-		/*
-			if err := s.repo.UpdateOrderRejected(ctx, tx, ord.ID, ord.Status); err != nil {
-				processErr = err
-				return err
-			}
-			if err := s.repo.DisablePayments(ctx, tx, ord.ID); err != nil {
-				processErr = err
-				return err
-			}
-		*/
-		OrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
-		if err != nil {
+
+		// Commit Transaction
+		if err := tx.Commit(); err != nil {
 			processErr = err
 			return err
 		}
+
 		reason := models.DenyOrderInput{
-			OrderID:          OrderID,
+			OrderID:          internalOrderID,
 			DeletionReasonID: "43",
 			UserID:           "WEBHOOK_DELIVEROO",
 		}
@@ -346,13 +345,6 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 
 	default:
 		// Do nothing
-	}
-
-	// 4. Récupérer l'ID interne pour la notification
-	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
-	if err != nil {
-		processErr = err
-		return err
 	}
 
 	// 5. Commit Transaction
