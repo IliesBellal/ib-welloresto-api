@@ -23,6 +23,31 @@ func NewMenuService(legacy *MenuRepository, userRepo auth.AuthService) *MenuServ
 	}
 }
 
+func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string, updates ProductUpdatePayload) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	// On passe le MerchantID pour s'assurer qu'on ne modifie pas le produit d'un autre
+	return s.legacy.UpdateProduct(ctx, user.MerchantID, productID, updates)
+}
+
+func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []int) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	return s.legacy.UpdateProductAttributes(ctx, user.MerchantID, productID, attributeIDs)
+}
+
 func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

@@ -265,6 +265,10 @@ func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentI
 		return err
 	}
 
+	// TODO
+	// Vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo qui ne sont pas anulables
+	// Le client s'en occupe déjà, mais une double vérification côté serveur est nécessaire
+
 	// Disable payment
 	_, err = tx.ExecContext(ctx, `
 		UPDATE payments SET enabled = 0 WHERE payment_id = ?

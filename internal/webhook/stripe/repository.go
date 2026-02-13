@@ -33,6 +33,8 @@ type Repository interface {
 	// Subscription (Simplified placeholders based on your PHP)
 	CreateInvoice(ctx context.Context, tx *sql.Tx, merchantID, invoiceID string, amount int64, created int64, customerID string) error
 	PayInvoice(ctx context.Context, tx *sql.Tx, invoiceID string, paidAt int64) error
+
+	GetMerchantByStripeAccountID(ctx context.Context, tx *sql.Tx, accountID string) (*PayoutMerchant, error)
 }
 
 type mysqlRepo struct {
@@ -56,9 +58,34 @@ func (r *mysqlRepo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error
 	return tx.Commit()
 }
 
+// Implémentations
+
+func (r *mysqlRepo) GetMerchantByStripeAccountID(ctx context.Context, tx *sql.Tx, accountID string) (*PayoutMerchant, error) {
+	var pm PayoutMerchant
+
+	// Ta requête PHP traduite :
+	query := `
+        SELECT m.email, m.fullName
+        FROM stripe_accounts sa
+        INNER JOIN merchant m on sa.merchant_id = m.id
+        WHERE sa.account_id = ?
+        AND m.email IS NOT NULL
+    `
+
+	err := tx.QueryRowContext(ctx, query, accountID).Scan(&pm.Email, &pm.BusinessName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Pas d'erreur, juste pas de résultat
+		}
+		return nil, err
+	}
+
+	return &pm, nil
+}
+
 func (r *mysqlRepo) InsertPayment(ctx context.Context, tx *sql.Tx, p Payment) (int64, error) {
 	query := `INSERT INTO payments(merchant_id, order_id, user_id, amount, mop, payment_date) 
-	          VALUES(?, ?, '0', ?, 'STRIPE', UTC_TIMESTAMP())`
+	          VALUES(?, ?, '0', ?, 'STRIPE_WEB_HOOK', UTC_TIMESTAMP())`
 	res, err := tx.ExecContext(ctx, query, p.MerchantID, p.OrderID, p.Amount)
 	if err != nil {
 		return 0, err
@@ -123,7 +150,7 @@ func (r *mysqlRepo) GetOrder(ctx context.Context, tx *sql.Tx, orderID string) (*
 func (r *mysqlRepo) GetMerchant(ctx context.Context, tx *sql.Tx, merchantID string) (*Merchant, error) {
 	var m Merchant
 	var logo sql.NullString
-	query := `SELECT m.id, m.fullName, m.timezone, mp.currency, IFNULL(qr.code, ''), m.logo_url
+	query := `SELECT m.id, m.fullName, m.timezone, mp.currency, qr.code, m.logo_url
 	          FROM merchant m
 	          INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
 	          LEFT JOIN qrcodes qr on qr.merchant_id = m.id

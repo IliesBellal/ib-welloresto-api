@@ -3,16 +3,16 @@ package main
 import (
 	"database/sql"
 	"welloresto-api/internal/infrastructure/mailer"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/bookings"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/tasks"
-	"welloresto-api/internal/webhook/stripe"
 
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
-func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *order_life_cycle.OrdersLifeCycleService, stripeService *stripe.StripeWebhookService, bookingService *bookings.BookingsService, mysqlDB *sql.DB) {
+func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *order_life_cycle.OrdersLifeCycleService, stripeService *stripeclient.StripeManager, bookingService *bookings.BookingsService, mysqlDB *sql.DB) {
 
 	// 2. Initialisation du Gestionnaire de Tâches
 	taskManager := tasks.NewTasksManager(mysqlDB, emailService, orderService, stripeService, bookingService)
@@ -39,7 +39,10 @@ func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *ord
 		taskManager.CloseOrders()
 		taskManager.DenyOrders()
 		taskManager.SendLoyaltyProgrammReminder()
-		// Je rajoute celui-ci ici (probablement mensuel ou hebdo en réalité, à vérifier)
+	})
+
+	// Toutes les heures
+	c.AddFunc("@monthly", func() {
 		taskManager.UpdatePopularProducts()
 	})
 

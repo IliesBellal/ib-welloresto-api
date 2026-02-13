@@ -3,9 +3,9 @@ package tasks
 import (
 	"database/sql"
 	"welloresto-api/internal/infrastructure/mailer"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/bookings"
 	"welloresto-api/internal/modules/order_life_cycle"
-	"welloresto-api/internal/webhook/stripe"
 )
 
 // TasksManager centralise toutes les dépendances nécessaires aux tâches CRON
@@ -13,7 +13,7 @@ type TasksManager struct {
 	DB             *sql.DB
 	EmailService   *mailer.Service
 	OrderService   *order_life_cycle.OrdersLifeCycleService
-	StripeService  *stripe.StripeWebhookService
+	StripeService  *stripeclient.StripeManager
 	BookingService *bookings.BookingsService
 }
 
@@ -22,7 +22,7 @@ func NewTasksManager(
 	db *sql.DB,
 	email *mailer.Service,
 	order *order_life_cycle.OrdersLifeCycleService,
-	stripe *stripe.StripeWebhookService,
+	stripe *stripeclient.StripeManager,
 	booking *bookings.BookingsService,
 ) *TasksManager {
 	return &TasksManager{

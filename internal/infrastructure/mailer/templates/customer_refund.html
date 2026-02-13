@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Virement en cours</title>
+    <title>Remboursement effectué</title>
 </head>
 <body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
 
@@ -13,7 +13,7 @@
             <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border:none;border-collapse:collapse;width:100%">
                 <tbody>
                 <tr>
-                    <td bgcolor="#E6F9E9" style="padding: 0;"> <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                    <td bgcolor="#E2F2F9" style="padding: 0;"> <table width="100%" border="0" cellpadding="0" cellspacing="0">
                         <tbody>
                         <tr>
                             <td width="14"> </td>
@@ -24,8 +24,8 @@
                                             <img src="{{ .MerchantLogo }}" alt="{{ .MerchantName }}" width="167" style="display:block;height:auto;border:0;">
                                         </td>
                                         <td align="right" valign="middle" style="font-size:12px; line-height:18px; color:#000000;">
-                                            <div>Virement de <span style="font-weight:bold; font-size:14px; color:#008a00;">{{ .Amount }}</span></div>
-                                            <div style="color:#555;">{{ .PayoutDate }}</div>
+                                            <div>Remboursement <span style="font-weight:bold;">{{ .Amount }}</span></div>
+                                            <div style="color:#555;">{{ .Date }}</div>
                                         </td>
                                     </tr>
                                 </table>
@@ -42,7 +42,7 @@
             <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border:none;border-collapse:collapse;width:100%">
                 <tbody>
                 <tr>
-                    <td bgcolor="#FAFAFA" valign="top" style="padding: 20px 0;">
+                    <td bgcolor="#F5E6C7" valign="top" style="padding: 20px 0;">
                         <table width="100%" border="0" cellpadding="0" cellspacing="0">
                             <tr>
                                 <td width="14"></td>
@@ -50,33 +50,36 @@
                                     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:616px;">
                                         <tr>
                                             <td align="left">
-                                                <h1 style="font-size:34px; line-height:38px; color:#000; margin:0 0 13px 0; font-family: 'UberMoveMedium', Helvetica, Arial, sans-serif;">Fonds envoyés</h1>
-
+                                                <h1 style="font-size:34px; line-height:38px; color:#000; margin:0 0 13px 0; font-family: 'UberMoveMedium', Helvetica, Arial, sans-serif;">Remboursement confirmé</h1>
+<!--
                                                 <p style="font-size:16px; line-height:26px; color:#000; margin:0 0 20px 0;">
-                                                    Bonjour l'équipe {{ .MerchantName }},<br>
-                                                    Un virement de <strong>{{ .Amount }}</strong> a été initié vers votre compte bancaire.
+                                                    Bonjour {{ .CustomerName }},<br>
+                                                    Votre commande chez <strong>{{ .MerchantName }}</strong> a été remboursée.
                                                 </p>
+                                                -->
 
-                                                <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 25px;">
+                                                <table width="100%" style="background-color: rgba(255,255,255,0.5); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                                                     <tr>
-                                                        <td style="padding: 15px; border-bottom: 1px solid #eee;">
-                                                            <div style="font-size:12px; color:#666; margin-bottom:4px;">Date d'arrivée estimée</div>
-                                                            <div style="font-size:16px; color:#000;">{{ .ArrivalDate }}</div>
-                                                        </td>
+                                                        <td style="font-size:14px; color:#333; padding: 5px 0;"><strong>Moyen de paiement :</strong></td>
+                                                        <td style="font-size:14px; color:#333; text-align:right;">{{ .CardBrand }} •••• {{ .CardLast4 }}</td>
                                                     </tr>
                                                     <tr>
-                                                        <td style="padding: 15px;">
-                                                            <div style="font-size:12px; color:#666; margin-bottom:4px;">Référence</div>
-                                                            <div style="font-size:14px; color:#333; font-family: monospace;">{{ .PayoutID }}</div>
-                                                        </td>
+                                                        <td style="font-size:14px; color:#333; padding: 5px 0;"><strong>Motif :</strong></td>
+                                                        <td style="font-size:14px; color:#333; text-align:right;">{{ .RefundReason }}</td>
                                                     </tr>
                                                 </table>
 
+                                                {{ if .ReceiptURL }}
                                                 <div style="padding: 10px 0 25px 0;">
-                                                    <a href="{{ .DashboardURL }}" target="_blank" style="background-color:#000000; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px;">
-                                                        Voir mes virements
+                                                    <a href="{{ .ReceiptURL }}" target="_blank" style="background-color:#0c569d; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px;">
+                                                        Voir le reçu
                                                     </a>
                                                 </div>
+                                                {{ end }}
+
+                                                <p style="font-size:12px; color:#666;">
+                                                    Le remboursement apparaîtra sur votre relevé bancaire sous 5 à 10 jours ouvrés selon votre banque.
+                                                </p>
                                             </td>
                                         </tr>
                                     </table>
@@ -100,6 +103,9 @@
                                         Wello Resto SAS<br>
                                         9 rue de la forêt, 57140<br>
                                         Woippy, France
+                                    </div>
+                                    <div style="padding-top: 10px;">
+                                        <a href="mailto:{{ .SupportEmail }}" style="color:#000; text-decoration:none; font-size:12px;">Contacter le support</a>
                                     </div>
                                 </td>
                             </tr>

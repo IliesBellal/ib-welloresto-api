@@ -762,8 +762,6 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 		}
 	}
 
-	log.Info("PrepareCreateOrder - cashRegisterID : " + *req.Order.CashRegisterId)
-
 	r.setOrderDefaults(ctx, req)
 
 	orderID, err := r.insertOrderBase(ctx, tx, req)

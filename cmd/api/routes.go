@@ -6,11 +6,10 @@ import (
 	"os"
 	"strconv"
 	"welloresto-api/internal/infrastructure/mailer"
-	stripeclient "welloresto-api/internal/infrastructure/stripe"
+	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
 	"welloresto-api/internal/webhook/deliveroo"
-	stripe2 "welloresto-api/internal/webhook/stripe"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -35,8 +34,11 @@ import (
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
-	webhook_uber_heandler "welloresto-api/internal/webhook/ubereats/handler"
-	webhook_uber_service "welloresto-api/internal/webhook/ubereats/service"
+
+	// ---- WEBHOOKS ----
+	webhookstripe "welloresto-api/internal/webhook/stripe"
+	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
+	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
 )
 
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
@@ -103,7 +105,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// Dans main.go
 
 	// 1. Initialiser le Repo
-	stripeRepo := stripe2.NewRepository(mysqlDB) // db est ta connexion *sql.DB
+	stripeRepo := webhookstripe.NewRepository(mysqlDB) // db est ta connexion *sql.DB
 
 	// 2. Initialiser les dépendances (Mocks ou implémentations réelles)
 	// mailerService vient de l'étape précédente
@@ -120,7 +122,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
 	// ---- Stripe ----
-	stripeManager := stripeclient.NewStripeManager(cfg.Stripe.APIKey, nil)
+	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey, nil)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
@@ -144,20 +146,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	)
 
 	// 3. Initialiser le StripeWebhookService Stripe
-	stripeWebhookService := stripe2.NewStripeWebhookService(
+	stripeWebhookService := webhookstripe.NewStripeWebhookService(
 		stripeRepo,
 		os.Getenv("STRIPE_SECRET_KEY"),
 		mailService,
 		ordersLifeCycleService,
 		notificationService,
 	)
+	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
 	deliverooWebhookRepo := deliveroo.NewRepository(mysqlDB)
 	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService)
 	deliverooWebhookHandler := deliveroo.NewDeliverooHandler(deliverooWebhookService)
 
-	uberWebhookService := webhook_uber_service.NewService(
+	uberWebhookService := webhookuberservice.NewService(
 		mysqlDB,
 		"",
 		"",
@@ -169,7 +172,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		notificationService,
 	)
 
-	uberWebhookHandler := webhook_uber_heandler.NewHandler(uberWebhookService)
+	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
@@ -220,7 +223,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	//                      CRON JOBS
 	// ============================================================
 
-	SetupTasks(log, &mailService, ordersLifeCycleService, stripeWebhookService, bookingsService, mysqlDB)
+	SetupTasks(log, &mailService, ordersLifeCycleService, stripeManager, bookingsService, mysqlDB)
 
 	// ============================================================
 	//                      ROUTING
@@ -229,11 +232,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("OK"))
 	})
+	r.Route("/test", func(r chi.Router) {
+		r.Get("/test-mailer", mailService.TriggerTestEmail)
+	})
 
 	// Webhooks
 	r.Route("/webhooks", func(r chi.Router) {
 		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
 		r.Post("/deliveroo", deliverooWebhookHandler.HandleWebhook)
+		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
 	})
 
 	// API externes

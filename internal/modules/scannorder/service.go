@@ -452,6 +452,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 
 		order.OnlinePayment = true
 
+		// TODO nettoyage client
 		// 🔥 Nettoyage EXACT PHP
 		/*
 			customer := order.Customer

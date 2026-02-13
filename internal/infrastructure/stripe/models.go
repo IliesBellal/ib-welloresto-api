@@ -13,11 +13,15 @@ type PaymentRequest struct {
 	Amount        int64  // En centimes (ex: 1000 = 10.00€)
 	Currency      string // ex: "eur"
 	PaymentMethod string
+	AccountID     string
+	IntentID      string
 }
 
 // RefundRequest représente une demande de remboursement.
 type RefundRequest struct {
-	ChargeID string
-	Amount   int64
-	Reason   string
+	AccountID string
+	IntentID  string
+	ChargeID  string
+	Amount    int64
+	Reason    string
 }

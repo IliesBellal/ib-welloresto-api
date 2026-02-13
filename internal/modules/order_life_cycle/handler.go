@@ -290,7 +290,13 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	json.NewEncoder(w).Encode(res)
+	deny_order := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: res,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(deny_order)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
@@ -353,7 +359,7 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err := h.ordersLifeCycleService.DeleteOrder(r.Context(), token, models.DenyOrderInput{
+	err := h.ordersLifeCycleService.SetOrderDeleted(r.Context(), token, models.DenyOrderInput{
 		OrderID:          orderID,
 		MerchantID:       req.MerchantID,
 		UserID:           req.UserID,

@@ -146,6 +146,10 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orde
 		return errors.New("invalid token")
 	}
 
+	// TODO
+	// Créer un GetPayment pour récupérer les meta data du paiement et vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo non annulable
+	// S'il s'agit d'un paiement Stripe, procéder à son annulation via l'API
+
 	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
@@ -317,14 +321,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, errors.New("invalid token")
-	}
+func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, OrderID)
@@ -361,7 +358,7 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID s
 				s.log.Error("uber deny failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
 		}(merchantID, OrderID)
 	case models.BrandDeliveroo:
 		go func(mID, oID string) {
@@ -371,14 +368,29 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID s
 				s.log.Error("deliveroo deny failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
 		}(merchantID, OrderID)
 	default:
 		// Internal order — nothing else to do
-		s.notificationsService.SendNotificationAsync(user.MerchantID, OrderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
 	}
 
 	return map[string]string{"status": "1"}, nil
+}
+
+func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	in.UserID = user.UserID
+	in.MerchantID = user.MerchantID
+
+	return s.SetOrderDenied(ctx, OrderID, in)
 }
 
 func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in models.ReadyForDistributionInput) error {
@@ -407,15 +419,7 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	return nil
 }
 
-func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, token string, in models.DenyOrderInput) error {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil {
-		return err
-	}
-	if user == nil {
-		return errors.New("invalid token")
-	}
+func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
 
 	// 1 — Local DB operations
 	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
@@ -448,7 +452,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, token string, 
 	}
 
 	// Send notif
-	s.notificationsService.SendNotificationAsync(user.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
 
 	// Integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
@@ -470,4 +474,20 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, token string, 
 	}
 
 	return nil
+}
+
+func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token string, in models.DenyOrderInput) error {
+
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	in.MerchantID = user.MerchantID
+	in.UserID = user.UserID
+
+	return s.DeleteOrder(ctx, in)
 }
