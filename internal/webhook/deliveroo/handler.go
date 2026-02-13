@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 type DeliverooHandler struct {
@@ -51,6 +52,14 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: "OK",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 
 	w.WriteHeader(http.StatusOK)
 }
