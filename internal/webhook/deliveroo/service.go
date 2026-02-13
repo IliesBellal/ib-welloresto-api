@@ -335,6 +335,9 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 			return err
 		}
 
+		// Envoi succès à Deliveroo (uniquement pour Accepted dans le PHP)
+		go s.setSyncStatus(ord.ID, "succeeded", "")
+
 	case "confirmed":
 		if err := s.repo.UpdateOrderConfirmed(ctx, tx, ord.ID); err != nil {
 			processErr = err
@@ -352,9 +355,6 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		processErr = err
 		return err
 	}
-
-	// Envoi succès à Deliveroo (uniquement pour Accepted dans le PHP)
-	go s.setSyncStatus(ord.ID, "succeeded", "")
 
 	return nil
 }
