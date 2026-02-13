@@ -465,12 +465,15 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 		go s.uberSvc.CancelOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
 
 	case models.BrandDeliveroo:
-		in_changed := models.DenyOrderRequest{
-			DeletionComment:    in.DeletionComment,
-			DeletionReasonType: in.DeletionReasonType,
-			DeletionReasonID:   in.DeletionReasonID,
+		// Eviter de rappeler l'api quand c'est une suppression par webhook
+		if in.UserID != "WEBHOOK_DELIVEROO" {
+			in_changed := models.DenyOrderRequest{
+				DeletionComment:    in.DeletionComment,
+				DeletionReasonType: in.DeletionReasonType,
+				DeletionReasonID:   in.DeletionReasonID,
+			}
+			go s.deliverooSvc.CancelOrder(ctx, in.UserID, in.OrderID, in_changed)
 		}
-		go s.deliverooSvc.CancelOrder(ctx, in.UserID, in.OrderID, in_changed)
 	}
 
 	return nil
