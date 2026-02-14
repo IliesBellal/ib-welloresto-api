@@ -323,6 +323,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		return nil
 
 	case "accepted":
+		/* TODO manage this time
 		now := time.Now()
 
 		prepareFor, _ := time.Parse(time.RFC3339, ord.PrepareFor)
@@ -331,8 +332,9 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		if !ord.ASAP && prepareFor.After(now) {
 			isScheduledToggle = true
 		}
+		*/
 
-		if err := s.repo.UpdateOrderAccepted(ctx, tx, ord.ID, isScheduledToggle); err != nil {
+		if _, err := s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
 			processErr = err
 			return err
 		}
