@@ -51,7 +51,7 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Error("WEBHOOK DELIVEROO - 200")
+	log.Info("WEBHOOK DELIVEROO - 200")
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
