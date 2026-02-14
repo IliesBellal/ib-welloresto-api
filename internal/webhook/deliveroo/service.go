@@ -267,13 +267,13 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooWebhookPayload) (err error) {
 	log := logger.FromContext(ctx)
 	ord := payload.Body.Order
-	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status)
 
 	// 1. Récupérer le marchand
 	merchant, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
 	if err != nil {
 		return err
 	}
+	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status + " (Merchant :" + merchant.MerchantID + ")")
 
 	// 2. Gestion d'erreur globale automatique :
 	// Si la fonction retourne une erreur (err != nil), on alerte Deliveroo
