@@ -262,6 +262,8 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 				s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 			}(MerchantID, orderID)
 
+		} else {
+			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 		}
 	default:
 		// Internal order — nothing else to do
