@@ -73,7 +73,7 @@ func (c *DeliverooClient) getToken(ctx context.Context) (string, error) {
 		return c.accessToken, nil
 	}
 
-	return c.refreshToken(ctx)
+	return c.refreshToken(context.Background())
 }
 
 func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
@@ -134,7 +134,7 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 		bodyReader = bytes.NewBuffer(jsonBytes)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -151,12 +151,12 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 
 	resp, err := c.httpClient.Do(req)
 
-	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
-
 	if err != nil {
 		log.Error("DeliverooClient.doRequest - error : " + err.Error())
 		return nil, err
 	}
+
+	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
 
 	return resp, err
 }

@@ -19,7 +19,7 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 	var payload DeliverooWebhookPayload
 
 	// 1. Decode
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+à	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
