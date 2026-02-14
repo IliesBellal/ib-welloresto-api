@@ -312,6 +312,9 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 
 		// Attention: Assure-toi que DeleteOrder retourne une erreur pour que le defer la capte si ça casse
 		err = s.lifecycleService.DeleteOrder(ctx, reason)
+
+		// Envoi succès à Deliveroo en asynchrone
+		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 		return err
 
 	case "accepted":
@@ -338,9 +341,16 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
 			return err
 		}
+
+		// Envoi succès à Deliveroo en asynchrone
+		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+
 		return nil
 
 	default:
+
+		// Envoi succès à Deliveroo en asynchrone
+		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 		// Do nothing
 		return nil
 	}
