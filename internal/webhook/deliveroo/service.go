@@ -314,7 +314,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		err = s.lifecycleService.DeleteOrder(ctx, reason)
 
 		// Envoi succès à Deliveroo en asynchrone
-		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+		//go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 		return err
 
 	case "accepted":
