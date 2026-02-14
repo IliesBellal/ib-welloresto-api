@@ -269,6 +269,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 1. Récupérer le marchand
 	merchant, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
 	if err != nil {
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
 	}
 	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status + " (Merchant :" + merchant.MerchantID + ")")
@@ -285,6 +286,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 3. Initialiser la transaction
 	tx, err := s.repo.db.BeginTx(ctx, nil)
 	if err != nil {
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
 	}
 	defer tx.Rollback()
@@ -292,11 +294,13 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 4. Récupérer l'ID interne
 	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
 	if err != nil {
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
 	}
 
 	// 5. COMMIT de la transaction AVANT les appels lifecycle
 	if err = tx.Commit(); err != nil {
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
 	}
 
@@ -311,7 +315,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 
 		// Attention: Assure-toi que DeleteOrder retourne une erreur pour que le defer la capte si ça casse
-		err = s.lifecycleService.DeleteOrder(ctx, reason)
+		err = s.lifecycleService.DeleteOrder(context.Background(), reason)
 
 		// Envoi succès à Deliveroo en asynchrone
 		//go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
@@ -330,6 +334,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		*/
 
 		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
+			log.Error("WEBHOOK DELIVEROO - " + err.Error())
 			return err
 		}
 
@@ -339,6 +344,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 
 	case "confirmed":
 		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
+			log.Error("WEBHOOK DELIVEROO - " + err.Error())
 			return err
 		}
 

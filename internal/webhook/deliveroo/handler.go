@@ -31,8 +31,7 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 
 	var err error
 	switch payload.Event {
-	case "order.new_order":
-	case "order.new": // Ou la string exacte envoyée par Deliveroo
+	case "order.new", "order.new_order": // Ou la string exacte envoyée par Deliveroo
 		err = h.service.ProcessNewOrder(r.Context(), payload)
 	case "order.status_update":
 		err = h.service.ProcessStatusUpdate(r.Context(), payload)
@@ -46,7 +45,7 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err != nil {
-		log.Error("WEBHOOK DELIVEROO - 500 - " + err.Error())
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

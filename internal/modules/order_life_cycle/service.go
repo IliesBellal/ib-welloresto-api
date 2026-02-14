@@ -222,6 +222,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, orderID)
 	if err != nil {
+		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		accept_order.Status = "error"
 		return accept_order, err
 	}
