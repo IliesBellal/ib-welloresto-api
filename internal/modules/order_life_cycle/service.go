@@ -226,7 +226,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		return accept_order, err
 	}
 
-	log.Info("OrderFileCycle.SetOrderAccepted - GetOrderBrandAndMerchant " + orderMeta.BrandOrderID + " FROM " + orderMeta.Brand + " (" + orderMeta.MerchantID + ")")
+	log.Info("OrderLifeCycle.SetOrderAccepted - GetOrderBrandAndMerchant : " + orderMeta.BrandOrderID + " - " + orderMeta.Brand + " (merchant: " + orderMeta.MerchantID + ")")
 
 	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP)
 	if err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
@@ -251,7 +251,6 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
 		if UserID != "WEBHOOK_DELIVEROO" {
-			log.Info("Async Call Deliveroo")
 			go func(mID, oID string) {
 				ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
@@ -275,10 +274,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 }
 
 func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (models.HandlerDefaultResponseModelSet, error) {
-	log := logger.FromContext(ctx)
-	log.Info("AcceptOrder - Start")
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	log.Info("AcceptOrder - User Loaded")
 	accept_order := models.HandlerDefaultResponseModelSet{}
 	if err != nil {
 		accept_order.Status = "error"

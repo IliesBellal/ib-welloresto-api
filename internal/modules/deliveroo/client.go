@@ -77,8 +77,6 @@ func (c *DeliverooClient) getToken(ctx context.Context) (string, error) {
 }
 
 func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
-	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.refreshToken - refreshing")
 
 	//url := "https://auth-sandbox.developers.deliveroo.com/oauth2/token"
 	url := fmt.Sprintf("%s/oauth2/token", c.config.AuthBaseURL)
@@ -112,8 +110,6 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 	c.accessToken = tokenResp.AccessToken
 	// Le token expire dans X secondes, on calcule la date absolue
 	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-
-	log.Info("DeliverooClient.refreshToken - new token : " + c.accessToken)
 
 	return c.accessToken, nil
 }
@@ -152,7 +148,7 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 	resp, err := c.httpClient.Do(req)
 
 	if err != nil {
-		log.Error("DeliverooClient.doRequest - error : " + err.Error())
+		log.Info("DeliverooClient.doRequest - calling " + url + " | error " + err.Error())
 		return nil, err
 	}
 
@@ -171,12 +167,8 @@ func (c *DeliverooClient) AcceptOrder(ctx context.Context, brandOrderID string) 
 	url := fmt.Sprintf("%s/order/v1/orders/%s", c.config.BaseURL, url.PathEscape(brandOrderID))
 	payload := map[string]string{"status": "accepted"}
 
-	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.AcceptOrder - doRequest for order " + brandOrderID)
-
 	resp, err := c.doRequest(ctx, "PATCH", url, payload)
 	if err != nil {
-		log.Info("DeliverooClient.AcceptOrder - error doing request")
 		return err
 	}
 	defer resp.Body.Close()
