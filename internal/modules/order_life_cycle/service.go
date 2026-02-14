@@ -250,16 +250,19 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
-		log.Info("Async Call Deliveroo")
-		go func(mID, oID string) {
-			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := s.deliverooSvc.AcceptOrder(ctxTimeout, MerchantID, orderID); err != nil {
-				s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
-			}
+		if UserID != "WEBHOOK_DELIVEROO" {
+			log.Info("Async Call Deliveroo")
+			go func(mID, oID string) {
+				ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := s.deliverooSvc.AcceptOrder(ctxTimeout, MerchantID, orderID); err != nil {
+					s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
+				}
 
-			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
-		}(MerchantID, orderID)
+				s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+			}(MerchantID, orderID)
+
+		}
 	default:
 		// Internal order — nothing else to do
 		s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
