@@ -46,11 +46,13 @@ func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err != nil {
-		// Log l'erreur
 		log.Error("WEBHOOK DELIVEROO - 500 - " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// CORRECTION ICI : Renvoyer un JSON vide explicite
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{}"))
 }
