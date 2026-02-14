@@ -12,6 +12,8 @@ import (
 	"welloresto-api/internal/models"                   // Assurez-vous que le chemin est correct
 	"welloresto-api/internal/modules/order_life_cycle" // Chemin vers OrderLifeCycle
 	"welloresto-api/internal/modules/orders"           // Chemin vers votre OrdersService
+
+	"go.uber.org/zap"
 )
 
 type DeliverooService struct {
@@ -261,66 +263,58 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 }
 
 // --- Status Update Logic ---
-
-func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooWebhookPayload) error {
+// Ajout de (err error) en retour nommé pour simplifier le defer
+func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload DeliverooWebhookPayload) (err error) {
 	log := logger.FromContext(ctx)
-
 	ord := payload.Body.Order
 	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status)
 
-	// 1. Récupérer le marchand (pour le contexte et vérifs, utilisé aussi pour l'API)
-	// Le PHP fait getMerchantData au début de la transaction
-	// Note: On peut optimiser en récupérant le token ici si besoin.
+	// 1. Récupérer le marchand
 	merchant, err := s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Initialiser la transaction
-	tx, err := s.repo.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	// Defer rollback : si on return err avant le commit, ça rollback.
-	// Si on commit, le rollback ne fait rien.
-	defer tx.Rollback()
-
-	// Gestion d'erreur globale pour appeler setSyncStatus("failed") comme en PHP
-	var processErr error
-
-	// 4. Récupérer l'ID interne pour la notification
-	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
-	if err != nil {
-		processErr = err
-		return err
-	}
+	// 2. Gestion d'erreur globale automatique :
+	// Si la fonction retourne une erreur (err != nil), on alerte Deliveroo
 	defer func() {
-		if processErr != nil {
-			// Le PHP envoie "webhook_failed" en cas d'exception
+		if err != nil {
+			log.Error("Webhook processing failed", zap.Error(err))
 			s.setSyncStatus(ord.ID, "failed", "webhook_failed")
 		}
 	}()
 
-	// 3. Switch sur le statut
+	// 3. Initialiser la transaction
+	tx, err := s.repo.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 4. Récupérer l'ID interne
+	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
+	if err != nil {
+		return err
+	}
+
+	// 5. COMMIT de la transaction AVANT les appels lifecycle
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	// 6. Actions métier (Lifecycle) hors transaction
 	switch ord.Status {
 	case "rejected", "canceled":
-
-		// Commit Transaction
-		if err := tx.Commit(); err != nil {
-			processErr = err
-			return err
-		}
-
 		reason := models.DenyOrderInput{
 			OrderID:          internalOrderID,
 			MerchantID:       merchant.MerchantID,
 			DeletionReasonID: "43",
 			UserID:           "WEBHOOK_DELIVEROO",
 		}
-		s.lifecycleService.DeleteOrder(ctx, reason)
 
-		return nil
+		// Attention: Assure-toi que DeleteOrder retourne une erreur pour que le defer la capte si ça casse
+		err = s.lifecycleService.DeleteOrder(ctx, reason)
+		return err
 
 	case "accepted":
 		/* TODO manage this time
@@ -334,33 +328,24 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 		*/
 
-		if _, err := s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
-			processErr = err
+		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
 			return err
 		}
 
-		// Envoi succès à Deliveroo (uniquement pour Accepted dans le PHP)
+		// Envoi succès à Deliveroo en asynchrone
 		go s.setSyncStatus(ord.ID, "succeeded", "")
+		return nil
 
 	case "confirmed":
-		if err := s.repo.UpdateOrderConfirmed(ctx, tx, ord.ID); err != nil {
-			processErr = err
+		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
 			return err
 		}
-
-		s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID)
+		return nil
 
 	default:
 		// Do nothing
+		return nil
 	}
-
-	// 5. Commit Transaction
-	if err := tx.Commit(); err != nil {
-		processErr = err
-		return err
-	}
-
-	return nil
 }
 
 // --- Helpers API ---
