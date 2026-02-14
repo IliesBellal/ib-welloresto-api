@@ -151,11 +151,12 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 
 	resp, err := c.httpClient.Do(req)
 
+	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
+
 	if err != nil {
+		log.Error("DeliverooClient.doRequest - error : " + err.Error())
 		return nil, err
 	}
-
-	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
 
 	return resp, err
 }
