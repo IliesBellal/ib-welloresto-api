@@ -9,7 +9,10 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/config"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+
+	"go.uber.org/zap"
 )
 
 type DeliverooService struct {
@@ -149,6 +152,27 @@ func (s *DeliverooService) CancelOrder(ctx context.Context, userID, orderID stri
 
 	err = s.client.DenyOrder(ctx, brandOrderID, in)
 	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Dans deliveroo_service.go
+
+// SetSyncStatus informe Deliveroo de l'issue du traitement du webhook
+func (s *DeliverooService) SetSyncStatus(ctx context.Context, brandOrderID string, status string, reason string) error {
+	notes := ""
+	if status == "failed" {
+		notes = "Failed to process webhook internally"
+	}
+
+	err := s.client.SendSyncStatus(ctx, brandOrderID, status, reason, notes)
+	if err != nil {
+		// On logue l'erreur métier ici
+		logger.FromContext(ctx).Error("Failed to send sync_status to Deliveroo",
+			zap.String("brand_order_id", brandOrderID),
+			zap.Error(err))
 		return err
 	}
 

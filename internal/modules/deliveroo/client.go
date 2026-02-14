@@ -267,6 +267,38 @@ func (c *DeliverooClient) createStage(ctx context.Context, brandOrderID, stage s
 	return nil
 }
 
+// Dans deliveroo_client.go
+
+// SendSyncStatus envoie le statut de synchronisation à Deliveroo suite à un Webhook
+func (c *DeliverooClient) SendSyncStatus(ctx context.Context, brandOrderID string, status string, reason string, notes string) error {
+	// ATTENTION: Vérifie l'URL exacte dans la doc Deliveroo pour le sync_status
+	// C'est souvent /order/v1/orders/{id}/sync_status
+	urlPath := fmt.Sprintf("%s/order/v1/orders/%s/sync_status", c.config.BaseURL, url.PathEscape(brandOrderID))
+
+	occurredAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	payload := map[string]string{
+		"status":      status, // "succeeded" ou "failed"
+		"occurred_at": occurredAt,
+		"reason":      reason,
+		"notes":       notes,
+	}
+
+	log := logger.FromContext(ctx)
+	log.Info(fmt.Sprintf("DeliverooClient.SendSyncStatus - sending %s for order %s", status, brandOrderID))
+
+	resp, err := c.doRequest(ctx, "POST", urlPath, payload)
+	if err != nil {
+		return fmt.Errorf("network error on sync_status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	return nil
+}
+
 // handleError parse le body pour donner une erreur Go propre
 func (c *DeliverooClient) handleError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)

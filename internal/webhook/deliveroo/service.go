@@ -1,13 +1,11 @@
 package deliveroo
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/modules/deliveroo"
 
 	"welloresto-api/internal/models"                   // Assurez-vous que le chemin est correct
 	"welloresto-api/internal/modules/order_life_cycle" // Chemin vers OrderLifeCycle
@@ -20,15 +18,15 @@ type DeliverooService struct {
 	repo             *Repository
 	ordersService    *orders.OrdersService
 	lifecycleService *order_life_cycle.OrdersLifeCycleService
-	httpClient       *http.Client
+	httpClient       *deliveroo.DeliverooService
 }
 
-func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *order_life_cycle.OrdersLifeCycleService) *DeliverooService {
+func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *order_life_cycle.OrdersLifeCycleService, deliverooInternalService *deliveroo.DeliverooService) *DeliverooService {
 	return &DeliverooService{
 		repo:             repo,
 		ordersService:    ordSvc,
 		lifecycleService: lcSvc,
-		httpClient:       &http.Client{Timeout: 30 * time.Second},
+		httpClient:       deliverooInternalService,
 	}
 }
 
@@ -280,7 +278,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	defer func() {
 		if err != nil {
 			log.Error("Webhook processing failed", zap.Error(err))
-			s.setSyncStatus(ord.ID, "failed", "webhook_failed")
+			s.setSyncStatus(ctx, ord.ID, "failed", "webhook_failed")
 		}
 	}()
 
@@ -333,7 +331,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 
 		// Envoi succès à Deliveroo en asynchrone
-		go s.setSyncStatus(ord.ID, "succeeded", "")
+		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 		return nil
 
 	case "confirmed":
@@ -356,28 +354,6 @@ func (s *DeliverooService) getToken() string {
 	return "YOUR_ACCESS_TOKEN"
 }
 
-func (s *DeliverooService) setSyncStatus(orderID, status, reason string) {
-	url := fmt.Sprintf("https://api.developers.deliveroo.com/order/v1/orders/%s/sync_status", orderID)
-
-	bodyReq := SyncStatusRequest{
-		Status:     status,
-		OccurredAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-	if reason != "" {
-		bodyReq.Reason = reason
-	}
-
-	jsonBody, _ := json.Marshal(bodyReq)
-
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.getToken())
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		fmt.Printf("Error calling sync_status: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-	// On ignore le body de réponse comme en PHP (ou on log)
+func (s *DeliverooService) setSyncStatus(ctx context.Context, brandOrderID, status, reason string) {
+	s.httpClient.SetSyncStatus(ctx, brandOrderID, status, reason)
 }

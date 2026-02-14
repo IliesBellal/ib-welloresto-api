@@ -157,7 +157,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// WH
 	deliverooWebhookRepo := deliveroo.NewRepository(mysqlDB)
-	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService)
+	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService)
 	deliverooWebhookHandler := deliveroo.NewDeliverooHandler(deliverooWebhookService)
 
 	uberWebhookService := webhookuberservice.NewService(
