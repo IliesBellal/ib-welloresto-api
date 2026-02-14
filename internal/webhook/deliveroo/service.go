@@ -272,6 +272,14 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
 	}
+
+	if err := s.ValidateOrderItems(ctx, merchant.MerchantID, ord.Items, ord.ID); err != nil {
+		// Si erreur, on a déjà envoyé le syncStatus failed dans la fonction.
+		// On retourne nil pour dire à Deliveroo "J'ai bien reçu et traité (en échec)"
+		// et éviter qu'il re-tente indéfiniment.
+		return nil
+	}
+
 	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status + " (Merchant :" + merchant.MerchantID + ")")
 
 	// 2. Gestion d'erreur globale automatique :
@@ -372,4 +380,34 @@ func (s *DeliverooService) getToken() string {
 
 func (s *DeliverooService) setSyncStatus(ctx context.Context, brandOrderID, status, reason string) {
 	s.httpClient.SetSyncStatus(ctx, brandOrderID, status, reason)
+}
+
+// ValidateOrderItems vérifie que tous les items de la commande existent et sont mappés correctement
+func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID string, items []DeliverooItem, deliverooOrderID string) error {
+	for _, item := range items {
+		// 1. Vérif ID vide
+		if item.PosItemID == "" {
+			// Logique PHP : setSyncStatus failed + reason "pos_item_id_not_found"
+			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
+			return fmt.Errorf("pos_item_id_not_found for item %s", item.Name)
+		}
+
+		// 2. Vérif Mapping en Base
+		// Tu as besoin d'une méthode repo pour ça : GetProductMapping(merchantID, posItemID)
+		mappedItem, err := s.repo.GetProductMapping(ctx, merchantID, item.PosItemID)
+		if err != nil {
+			// Non trouvé en base
+			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
+			return fmt.Errorf("pos_item_id_not_found in DB for item %s (id: %s)", item.Name, item.PosItemID)
+		}
+
+		// 3. Vérif Nom (Mismatched)
+		// Le PHP vérifie : if($data['item_name'] != $itm->name)
+		// Attention : mappedItem.ItemName est le nom dans TA base, item.Name est le nom envoyé par Deliveroo
+		if mappedItem.ItemName != item.Name {
+			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_mismatched")
+			return fmt.Errorf("pos_item_id_mismatched: expected '%s', got '%s'", mappedItem.ItemName, item.Name)
+		}
+	}
+	return nil
 }

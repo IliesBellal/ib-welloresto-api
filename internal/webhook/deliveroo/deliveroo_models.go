@@ -198,3 +198,9 @@ type SyncStatusRequest struct {
 	Reason     string `json:"reason,omitempty"`
 	OccurredAt string `json:"occurred_at"`
 }
+
+// DeliverooProductMapping représente une ligne de la table de mapping
+type DeliverooProductMapping struct {
+	ItemName string `db:"item_name" json:"item_name"`
+	ItemID   string `db:"item_id"   json:"item_id"` // L'ID Deliveroo (pos_item_id)
+}

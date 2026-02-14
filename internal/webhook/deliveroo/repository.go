@@ -279,3 +279,36 @@ func (r *Repository) GetOrderIDByBrandID(ctx context.Context, tx *sql.Tx, brandO
 	}
 	return orderID, nil
 }
+
+// GetProductMapping récupère le mapping d'un produit Deliveroo pour un marchand donné
+func (r *Repository) GetProductMapping(ctx context.Context, merchantID string, deliverooItemID string) (*DeliverooProductMapping, error) {
+	// La requête SQL issue de ton code PHP
+	// J'utilise ? comme placeholder (standard MySQL/MariaDB).
+	// Si tu es sur PostgreSQL, remplace par $1, $2
+	query := `
+        SELECT map.item_name, map.item_id
+        FROM integration_deliveroo_products_mapping map
+        INNER JOIN products p ON p.product_id = map.product_id
+        WHERE map.item_id = ?
+        AND map.merchant_id = ?
+    `
+
+	var mapping DeliverooProductMapping
+
+	// Exécution de la requête
+	err := r.db.QueryRowContext(ctx, query, deliverooItemID, merchantID).Scan(
+		&mapping.ItemName,
+		&mapping.ItemID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Aucun mapping trouvé => C'est le cas "pos_item_id_not_found" du PHP
+			return nil, nil
+		}
+		// Erreur technique (DB down, syntaxe, etc.)
+		return nil, fmt.Errorf("error fetching product mapping: %w", err)
+	}
+
+	return &mapping, nil
+}

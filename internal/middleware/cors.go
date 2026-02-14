@@ -9,9 +9,6 @@ func CORSMiddleware() *cors.Cors {
 			"https://mywelloresto.welloresto.fr",
 			"https://wello-back-office.onrender.com",
 
-			// Deliveroo
-			"https://*.deliveroo.com",
-
 			// Lovable
 			"https://d97a501b-ebd7-46a4-9288-bca03030e30f.lovableproject.com",
 
