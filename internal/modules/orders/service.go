@@ -171,7 +171,7 @@ func (s *OrdersService) CreateOrder(ctx context.Context, req *models.RequestObje
 	if err != nil {
 		log.Error(err.Error())
 	} else {
-		log.Warn("New order created : " + result.OrderID)
+		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
 		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, "NEW_ORDER")
 	}
 

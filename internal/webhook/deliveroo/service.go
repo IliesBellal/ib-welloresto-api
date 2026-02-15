@@ -76,7 +76,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	// 6. CREATION DE LA COMMANDE via le Service existant
 	result, err := s.ordersService.CreateOrder(ctx, reqObject)
 	if err != nil {
-		return fmt.Errorf("failed to create order in service: %w", err)
+		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
 	}
 
 	// 7. Post-traitement (Auto-accept ou Notification)
@@ -84,14 +84,11 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	// Ici, on utilise le lifecycle comme demandé.
 	if merchantData.AutoAcceptOrders {
 		// Logique d'acceptation
-		_, err := s.lifecycleService.SetOrderAccepted(ctx, "DELIVEROO_WEBHOOK", merchantData.MerchantID, result.OrderID)
+		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), "DELIVEROO_WEBHOOK", merchantData.MerchantID, result.OrderID)
 		if err != nil {
 			// On log l'erreur mais on ne bloque pas forcément le flux car la commande est créée
 			fmt.Printf("Error auto-accepting order: %v\n", err)
 		}
-	} else {
-		// Logique de notification manuelle (à implémenter si hors du lifecycle)
-		// ex: s.notificationService.Notify(...)
 	}
 
 	return nil
