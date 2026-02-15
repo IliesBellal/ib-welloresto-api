@@ -258,6 +258,7 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 			ParentOrderID:    parentOrderID,
 			CashRegisterId:   &deviceID,
 			FulfillmentType:  &fulfillmentType,
+			IsScheduled:      !ord.ASAP,
 			TTC:              ord.TotalPrice.Fractional,
 			HT:               0, // Calculé par le service généralement
 			TVA:              0, // Calculé par le service généralement
@@ -330,7 +331,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	// 4. Récupérer l'ID interne
 	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, ord.ID)
 	if err != nil {
-		log.Error("WEBHOOK DELIVEROO - " + err.Error())
+		log.Error("WEBHOOK DELIVEROO - order " + ord.ID + " - " + err.Error())
 		return err
 	}
 
