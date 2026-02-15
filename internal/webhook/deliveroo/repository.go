@@ -270,13 +270,25 @@ func (r *Repository) UpdateOrderConfirmed(ctx context.Context, tx *sql.Tx, brand
 }
 
 // GetOrderIDByBrandID récupère l'ID interne (order_id) via l'ID Deliveroo
-func (r *Repository) GetOrderIDByBrandID(ctx context.Context, tx *sql.Tx, brandOrderID string) (string, error) {
+func (r *Repository) GetOrderIDByBrandIDTx(ctx context.Context, tx *sql.Tx, brandOrderID string) (string, error) {
 	query := `SELECT order_id FROM orders WHERE brand_order_id = ?`
 	var orderID string
 	err := tx.QueryRowContext(ctx, query, brandOrderID).Scan(&orderID)
 	if err != nil {
 		return "", err
 	}
+	return orderID, nil
+}
+
+func (r *Repository) GetOrderIDByBrandID(ctx context.Context, brandOrderID string) (string, error) {
+	query := `SELECT order_id FROM orders WHERE brand_order_id = ?`
+
+	var orderID string
+	err := r.db.QueryRowContext(ctx, query, brandOrderID).Scan(&orderID)
+	if err != nil {
+		return "", err
+	}
+
 	return orderID, nil
 }
 

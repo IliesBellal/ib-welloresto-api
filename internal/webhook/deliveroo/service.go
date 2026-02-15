@@ -60,6 +60,19 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	// 5. Mapping Global de la commande
 	reqObject := s.buildOrderRequestObject(merchantData.MerchantID, orderNum, ord, productsPayload, customerReq)
 
+	if ord.RemakeDetails != nil {
+		childOrderID, err := s.repo.GetOrderIDByBrandID(ctx, ord.RemakeDetails.ParentOrderID)
+		if err == nil {
+			s.lifecycleService.DeleteOrder(ctx, models.DenyOrderInput{
+				OrderID:          childOrderID,
+				DeletionComment:  "Remade by Deliveroo",
+				MerchantID:       merchantData.MerchantID,
+				DeletionReasonID: "43",
+				UserID:           "WEBHOOK_DELIVEROO",
+			})
+		}
+	}
+
 	// 6. CREATION DE LA COMMANDE via le Service existant
 	result, err := s.ordersService.CreateOrder(ctx, reqObject)
 	if err != nil {
@@ -205,7 +218,6 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	}
 
 	// Remake logic
-	var parentOrderID *string
 	// Attention: Le RequestObject n'a pas de champ explicite 'ParentOrderID' au premier niveau dans ta struct OrderRequest fournie,
 	// mais le PHP fait un UPDATE direct.
 	// Je le passe dans "BookingID" ou "Comment" si le modèle Go ne le supporte pas, ou il faut l'ajouter au modèle Go.
@@ -224,6 +236,13 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	brandStatus := ord.Status
 	merchantApproval := "PENDING_APPROVAL"
 	fulfillmentType := "DELIVERY_BY_RESTAURANT"
+
+	var parentOrderID *string
+
+	if ord.RemakeDetails != nil {
+		parentOrderID = &ord.RemakeDetails.ParentOrderID
+	}
+
 	if ord.FulfillmentType != "RESTAURANT" {
 		fulfillmentType = "DELIVEROO"
 	}
@@ -300,7 +319,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	defer tx.Rollback()
 
 	// 4. Récupérer l'ID interne
-	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, tx, ord.ID)
+	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, ord.ID)
 	if err != nil {
 		log.Error("WEBHOOK DELIVEROO - " + err.Error())
 		return err
