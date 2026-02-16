@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -57,7 +56,6 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 		return nil, errors.New("invalid token")
 	}
 
-	log.Printf("MenuRepository: using LEGACY mode")
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 

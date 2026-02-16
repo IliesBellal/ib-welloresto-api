@@ -231,6 +231,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			if availDel.Valid {
 				p.AvailableDelivery = availDel.Bool
 			}
+			defaultOrder := 0
+			p.DisplayOrder = &defaultOrder
 
 			products[p.ProductID] = &p
 			productOrder = append(productOrder, p.ProductID)
@@ -284,6 +286,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			if desc.Valid {
 				p.Description = &desc.String
 			}
+			defaultOrder := 0
+			p.DisplayOrder = &defaultOrder
 			subProducts[p.ProductID] = &p
 			count++
 		}

@@ -65,6 +65,7 @@ type ProductEntry struct {
 	Without                      []OrderProductWithout `json:"without"`
 	Customers                    []interface{}         `json:"customers"` // keep generic as original
 	Comment                      OrderComment          `json:"comment"`
+	DisplayOrder                 *int                  `json:"display_order"`
 }
 
 type OrderProductExtra struct {
