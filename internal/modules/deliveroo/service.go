@@ -178,3 +178,8 @@ func (s *DeliverooService) SetSyncStatus(ctx context.Context, brandOrderID strin
 
 	return nil
 }
+
+func (s *DeliverooService) ConfirmOrder(ctx context.Context, id string) error {
+	return s.client.ConfirmOrder(ctx, id)
+
+}

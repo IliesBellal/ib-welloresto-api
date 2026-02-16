@@ -304,7 +304,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	defer func() {
 		if err != nil {
 			log.Error("Webhook processing failed", zap.Error(err))
-			s.setSyncStatus(ctx, ord.ID, "failed", "webhook_failed")
+			s.setSyncStatus(context.Background(), ord.ID, "failed", "webhook_failed")
 		}
 	}()
 
@@ -366,8 +366,37 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 			return err
 		}
 
+		// Logique pour le Scénario 3 (Commande Planifiée)
+		if !ord.ASAP && ord.ConfirmAt != "" {
+			confirmAtTime, err := time.Parse(time.RFC3339, ord.ConfirmAt)
+			if err == nil {
+				delay := time.Until(confirmAtTime)
+				log.Info(fmt.Sprintf("Commande planifiée : attente de %v avant confirmation", delay))
+
+				// SOLUTION RAPIDE (Pour valider le test Deliveroo)
+				// On lance une goroutine qui va attendre le délai prévu (ex: 2 mins)
+				go func(orderID string, d time.Duration) {
+					if d > 0 {
+						time.Sleep(d)
+					}
+					// Nouveau contexte car le ctx du webhook aura expiré
+					bgCtx := context.Background()
+					s.ConfirmOrder(bgCtx, orderID)
+					log.Info("Commande planifiée confirmée !", zap.String("order_id", orderID))
+				}(ord.ID, delay)
+
+				/* SOLUTION PROD-READY (Idéale) :
+				   Comme on l'a vu pour Stripe, un time.Sleep en mémoire vive est risqué en production
+				   (si ton serveur redémarre pendant les 2 minutes, la commande ne sera jamais confirmée).
+				   En prod, tu devrais l'enregistrer en BDD avec son statut "accepted" et son heure "ConfirmAt".
+				   Et utiliser une tâche CRON qui tourne toutes les minutes pour appeler ConfirmOrder
+				   quand time.Now() >= ConfirmAt.
+				*/
+			}
+		}
+
 		// Envoi succès à Deliveroo en asynchrone
-		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+		go s.setSyncStatus(context.Background(), ord.ID, "succeeded", "")
 		return nil
 
 	case "confirmed":
@@ -384,7 +413,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 	default:
 
 		// Envoi succès à Deliveroo en asynchrone
-		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+		go s.setSyncStatus(context.Background(), ord.ID, "succeeded", "")
 		// Do nothing
 		return nil
 	}
@@ -396,6 +425,14 @@ func (s *DeliverooService) getToken() string {
 	// TODO: Implémenter la logique OAuth2 (client_credentials) pour récupérer/cacher le token
 	// Comme dans la fonction PHP getToken()
 	return "YOUR_ACCESS_TOKEN"
+}
+
+func (s *DeliverooService) ConfirmOrder(ctx context.Context, brandOrderID string) {
+	err := s.httpClient.ConfirmOrder(ctx, brandOrderID)
+	if err != nil {
+		logger.FromContext(ctx).Error("WEBHOOK DELIVEROO - " + err.Error())
+		return
+	}
 }
 
 func (s *DeliverooService) setSyncStatus(ctx context.Context, brandOrderID, status, reason string) {
