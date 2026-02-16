@@ -377,7 +377,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 
 		// Envoi succès à Deliveroo en asynchrone
-		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+		//go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 
 		return nil
 

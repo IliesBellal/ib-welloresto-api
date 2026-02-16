@@ -122,7 +122,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
 	// ---- Stripe ----
-	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey, nil)
+	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)

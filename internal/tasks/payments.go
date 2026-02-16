@@ -5,7 +5,8 @@ import (
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 )
 
-const autoCaptureDelay = 720 // 12 heures en minutes
+// const autoCaptureDelay = 720 // 12 heures en minutes
+const autoCaptureDelay = 20 // 20 minutes pour du test
 
 // CapturePayments : Valide les paiements Stripe différés
 func (tm *TasksManager) CapturePayments() {
@@ -60,25 +61,36 @@ func (tm *TasksManager) processStripePayments(query string, action string) {
 
 	for rows.Next() {
 		var intentID, accountID string
+		// On scanne les colonnes retournées par ta requête SQL
 		if err := rows.Scan(&intentID, &accountID); err != nil {
+			log.Printf("[CRON] Erreur Scan: %v", err)
 			continue
 		}
 
 		if action == "CAPTURE" {
+			// On prépare la requête pour la capture
 			req := stripeclient.PaymentRequest{
 				IntentID:  intentID,
 				AccountID: accountID,
+				// Note: Amount, Currency, CustomerID ne sont plus nécessaires ici
+				// car le PI existe déjà chez Stripe.
 			}
-			log.Printf("[CRON] Capturing " + intentID)
-			// Adapter selon la signature réelle de ton StripeService
-			tm.StripeService.ProcessPaymentAsync(req)
+			log.Printf("[CRON] Attempting Capture for " + intentID)
+
+			// Appel de la nouvelle fonction adaptée
+			tm.StripeService.CaptureExistingPaymentAsync(req)
+
 		} else {
+			// ACTION == CANCEL
+			// On utilise la logique RefundRequest qui contient aussi l'ID du compte
 			req := stripeclient.RefundRequest{
 				IntentID:  intentID,
 				AccountID: accountID,
 			}
-			log.Printf("[CRON] Refunding " + intentID)
-			tm.StripeService.RefundAsync(req)
+			log.Printf("[CRON] Attempting Refund/Cancel for " + intentID)
+
+			// Appel de la nouvelle fonction "Intelligente" (Refund ou Cancel selon statut)
+			tm.StripeService.RefundOrCancelAsync(req)
 		}
 	}
 }
