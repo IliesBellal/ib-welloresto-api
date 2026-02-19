@@ -3,6 +3,7 @@ package order_life_cycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -290,7 +291,13 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	json.NewEncoder(w).Encode(res)
+	deny_order := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: res,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(deny_order)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
@@ -353,7 +360,7 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err := h.ordersLifeCycleService.DeleteOrder(r.Context(), token, models.DenyOrderInput{
+	err := h.ordersLifeCycleService.SetOrderDeleted(r.Context(), token, models.DenyOrderInput{
 		OrderID:          orderID,
 		MerchantID:       req.MerchantID,
 		UserID:           req.UserID,
@@ -384,6 +391,28 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 
 	err := h.ordersLifeCycleService.SetDelivered(ctx, token, orderID)
 	if err != nil {
+
+		var notPaidErr *models.OrderNotFullyPaidError
+		if errors.As(err, &notPaidErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+
+			delivered := models.HandlerDefaultResponse{
+				ID: "10",
+				Data: map[string]interface{}{
+					"error": "order_not_fully_paid",
+					"details": map[string]interface{}{
+						"order_id":    notPaidErr.OrderID,
+						"paid_amount": notPaidErr.PaidAmount,
+						"price":       notPaidErr.Price,
+					},
+				},
+			}
+
+			json.NewEncoder(w).Encode(delivered)
+			return
+		}
+
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -2,9 +2,10 @@ package menu
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
-	"welloresto-api/internal/logger"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -21,11 +22,34 @@ func NewMenuService(legacy *MenuRepository, userRepo auth.AuthService) *MenuServ
 	}
 }
 
-func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.Time) (*models.MenuResponse, error) {
-	log := logger.FromContext(ctx)
+func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string, updates ProductUpdatePayload) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
-		log.Error(err.Error())
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	// On passe le MerchantID pour s'assurer qu'on ne modifie pas le produit d'un autre
+	return s.legacy.UpdateProduct(ctx, user.MerchantID, productID, updates)
+}
+
+func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("invalid token")
+	}
+
+	return s.legacy.UpdateProductAttributes(ctx, user.MerchantID, productID, attributeIDs)
+}
+
+func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.Time) (*models.MenuResponse, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -33,6 +57,10 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	}
 
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
+}
+
+func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id string, lastMenu *time.Time) (*models.MenuResponse, error) {
+	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
 }
 
 func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*ProductEntry, error) {
@@ -111,4 +139,45 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 	}
 
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
+}
+
+func (s *MenuService) CreateProductFromExternal(
+	ctx context.Context,
+	merchantID string,
+	title string,
+	description string,
+	amount int,
+) (*string, error) {
+
+	tx, err := s.legacy.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	productID, err := s.legacy.CreateExternalProductTx(
+		ctx,
+		tx,
+		merchantID,
+		title,
+		description,
+		amount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	// Tu peux adapter le retour selon ton modèle API
+	return helpers.Int64ToStringPtr(productID), nil
 }

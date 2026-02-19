@@ -22,8 +22,11 @@ type OrdersService struct {
 	notificationsService *notification.NotificationService
 }
 
-func NewOrdersService(ordersRepo *OrdersRepository,
-	userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
+type OrdersServiceInterface interface {
+	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
+}
+
+func NewOrdersService(ordersRepo *OrdersRepository, userRepo auth.AuthService, notificationsService *notification.NotificationService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
 		userRepo:             userRepo,
@@ -69,8 +72,11 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
 }
+func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID string) (*models.PendingOrdersResponse, error) {
+	return s.ordersRepo.GetOrder(ctx, merchantID, orderID)
+}
 
-func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*models.Order, error) {
+func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*models.PendingOrdersResponse, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
@@ -80,7 +86,7 @@ func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*m
 		return nil, errors.New("invalid token")
 	}
 
-	return s.ordersRepo.GetOrder(ctx, user.MerchantID, orderID)
+	return s.ComputeGetOrder(ctx, user.MerchantID, orderID)
 }
 
 func (s *OrdersService) GetOrders(ctx context.Context, token string, req *models.OrderRequest) ([]models.Order, error) {
@@ -157,7 +163,23 @@ func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
+func (s *OrdersService) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	log := logger.FromContext(ctx)
+
+	result, err := s.ordersRepo.CreateOrder(ctx, req)
+
+	if err != nil {
+		log.Error(err.Error())
+	} else {
+		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
+		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, "NEW_ORDER")
+	}
+
+	return result, err
+}
+
+// This function will add Merchant ID and User ID to the payload
+func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -169,32 +191,40 @@ func (s *OrdersService) CreateOrder(ctx context.Context, token string, req *mode
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
+	return s.CreateOrder(ctx, req)
+}
+
+func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
 	log := logger.FromContext(ctx)
 
-	result, err := s.ordersRepo.CreateOrder(ctx, req)
+	err := s.ordersRepo.UpdateOrder(ctx, req)
 
 	if err != nil {
 		log.Error(err.Error())
 	} else {
-		if result.Status != "no_cash_register_opened" {
-			log.Warn("New order created : " + result.OrderID)
-			s.notificationsService.SendNotificationAsync(user.MerchantID, result.OrderID, "NEW_ORDER")
-		}
+		s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, "UPDATE_ORDER")
 	}
-	return result, err
+
+	return nil
 }
 
-func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {
+// This function will add Merchant_Id to the payload
+func (s *OrdersService) PrepareUpdateOrder(ctx context.Context, token string, req *models.RequestObject) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return errors.New("invalid token")
 	}
 
 	req.MerchantID = user.MerchantID
+	req.Order.CreatedBy = &user.UserID
 
+	return s.UpdateOrder(ctx, req)
+}
+
+func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
 	// --- Step 0: Init totals ---
 	req.Order.TTC = 0
 	req.Order.TVA = 0
@@ -221,7 +251,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	// --- Step 1bis: If no products ---
 	if len(req.Order.Products) == 0 {
 		return &models.PricingResponse{
-			Status:       1,
+			Status:       "success",
 			OrderRequest: req,
 		}, nil
 	}
@@ -233,7 +263,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	}
 	if len(unavailable) > 0 {
 		return &models.PricingResponse{
-			Status:             1,
+			Status:             "success",
 			OrderRequest:       req,
 			UnavailableProduct: unavailable,
 		}, nil
@@ -287,11 +317,25 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 
 	// --- Final response ---
 	return &models.PricingResponse{
-		Status:                    1,
+		Status:                    "success",
 		OrderRequest:              req,
 		EstimatedDistributionTime: estimatedTime,
 		AppliedDiscounts:          appliedDiscounts,
 	}, nil
+}
+
+func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("invalid token")
+	}
+
+	req.MerchantID = user.MerchantID
+
+	return s.ComputePricing(ctx, req)
 }
 
 func (s *OrdersService) buildSelectedProducts(req *models.PricingRequest, dbProducts []models.DBProduct) ([]models.OrderProductPayload, int, int) {

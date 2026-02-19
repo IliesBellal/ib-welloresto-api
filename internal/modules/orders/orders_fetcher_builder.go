@@ -251,7 +251,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		for rows.Next() {
 			var attrID, orderItemID, id, title sql.NullString
 			var extraPrice int
-			var selected, quantity, maxQuantity sql.NullInt64
+			var quantity, maxQuantity sql.NullInt64
+			var selected sql.NullBool
 			if err := rows.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity); err != nil {
 				return nil, err
 			}
@@ -265,7 +266,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ExtraPrice:        extraPrice,
 				Quantity:          int(quantity.Int64),
 				MaxQuantity:       int(maxQuantity.Int64),
-				Selected:          int(selected.Int64),
+				Selected:          selected.Bool,
 			})
 		}
 	}
@@ -362,16 +363,17 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var paymentID, enabled sql.NullInt64
+			var paymentID sql.NullInt64
 			var mop, orderID sql.NullString
 			var amount sql.NullFloat64
 			var paymentDate sql.NullTime
+			var enabled sql.NullBool
 
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), Enabled: int(enabled.Int64),
+				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), Enabled: enabled.Bool,
 			})
 		}
 	}
@@ -480,14 +482,14 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				IsPaid:                       int(isPaid.Int64),
 				IsDistributed:                int(isDistributed.Int64),
 				Price:                        price.Int64,
-				PriceTakeAway:                priceTakeAway.Int64,
-				PriceDelivery:                priceDelivery.Int64,
+				PriceTakeAway:                &priceTakeAway.Int64,
+				PriceDelivery:                &priceDelivery.Int64,
 				DiscountID:                   helpers.NullInt64ToPtr(discountID),
 				DiscountName:                 helpers.NullStringToPtr(discountName),
 				DiscountedPrice:              helpers.NilIfNullInt64Discount(discountID, price.Int64),
-				TVAIn:                        tvaIn.Float64,
-				TVADelivery:                  tvaDelivery.Float64,
-				TVATakeAway:                  tvaTakeAway.Float64,
+				TVAIn:                        &tvaIn.Float64,
+				TVADelivery:                  &tvaDelivery.Float64,
+				TVATakeAway:                  &tvaTakeAway.Float64,
 				AvailableIn:                  availableIn.Bool,
 				AvailableTakeAway:            availableTakeAway.Bool,
 				AvailableDelivery:            availableDelivery.Bool,

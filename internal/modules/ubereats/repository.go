@@ -14,6 +14,24 @@ func NewUberEatsRepository(db *sql.DB) *UberRepository {
 	return &UberRepository{db: db}
 }
 
+// GetMerchantIDFromStoreID récupère le merchant_id du store
+func (r *UberRepository) GetMerchantIDFromStoreID(tx *sql.Tx, storeID string) (*string, error) {
+	query := `
+		SELECT iue.merchant_id
+		FROM integration_uber_eats iue
+		INNER JOIN merchant m on m.id = iue.merchant_id
+		WHERE iue.store_id = ?`
+
+	var MerchantID string
+	// Gestion des NULLs potentiels avec sql.NullInt64 si nécessaire, ici simplifié
+	row := tx.QueryRow(query, storeID)
+	err := row.Scan(&MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	return &MerchantID, nil
+}
+
 // GetStoreData récupère les infos du magasin
 func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, error) {
 	query := `

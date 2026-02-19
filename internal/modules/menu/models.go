@@ -195,3 +195,28 @@ type CreateProductPayload struct {
 	Category       int64   `json:"category"`
 	IsProductGroup bool    `json:"is_product_group"`
 }
+
+// ProductUpdatePayload correspond aux champs de la table 'products'
+type ProductUpdatePayload struct {
+	Name              *string `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
+	Description       *string `json:"product_desc"`
+	BgColor           *string `json:"bg_color"`
+	Category          *string `json:"category"`
+	Price             *int    `json:"price"`
+	PriceTakeAway     *int    `json:"price_take_away"`
+	PriceDelivery     *int    `json:"price_delivery"`
+	ByProductOf       *string `json:"by_product_of"`       // Peut être null
+	IsAvailableOnSno  *bool   `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
+	ImageBase64       *string `json:"base_64"`
+	Enabled           *bool   `json:"enabled"`
+	Available         *bool   `json:"available"`
+	Status            *string `json:"status"`
+	AvailableIn       *bool   `json:"available_in"`
+	AvailableTakeAway *bool   `json:"available_take_away"`
+	AvailableDelivery *bool   `json:"available_delivery"`
+}
+
+// ProductAttributesPayload pour la configuration des attributs
+type ProductAttributesPayload struct {
+	Configuration []string `json:"configuration"` // Liste des ID d'attributs
+}

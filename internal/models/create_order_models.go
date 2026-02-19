@@ -10,9 +10,14 @@ type RequestObject struct {
 }
 
 type OrderRequest struct {
-	OrderID                     *string               `json:"order_id"`
-	OrderNum                    *string               `json:"order_num"`
-	CashRegisterId              *string               `json:"cash_register_id"`
+	OrderID                     *string               `json:"order_id,omitempty"`
+	Brand                       string                `json:"brand,omitempty"`
+	BrandOrderID                *string               `json:"brand_order_id,omitempty"`
+	BrandOrderNum               *string               `json:"brand_order_num,omitempty"`
+	ParentOrderID               *string               `json:"parent_order_id,omitempty"`
+	OrderNum                    *string               `json:"order_num,omitempty"`
+	CashRegisterId              *string               `json:"cash_register_id,omitempty"`
+	FulfillmentType             *string               `json:"fulfillment_type,omitempty"`
 	TTC                         int                   `json:"TTC"`
 	TVA                         int                   `json:"TVA"`
 	HT                          int                   `json:"HT"`
@@ -34,6 +39,7 @@ type OrderRequest struct {
 	DelayID                     *string               `json:"delay_id"`
 	PagerNumber                 *string               `json:"pager_number"`
 	OnlinePayment               bool                  `json:"online_payment"`
+	IsSNO                       bool                  `json:"is_sno"`
 	BookingID                   *string               `json:"booking_id"`
 	Currency                    *string               `json:"currency"`
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
@@ -41,9 +47,12 @@ type OrderRequest struct {
 
 type CustomerRequest struct {
 	CustomerID       *string    `json:"customer_id"`
+	BrandCustomerID  *string    `json:"brand_customer_id"`
 	MerchantID       *string    `json:"merchant_id"`
 	Name             *string    `json:"customer_name"`
 	Tel              *string    `json:"customer_tel"`
+	FirstName        *string    `json:"first_name"`
+	LastName         *string    `json:"last_name"`
 	Address          *string    `json:"customer_address"`
 	Lat              *float64   `json:"customer_lat"`
 	Lng              *float64   `json:"customer_lng"`
@@ -53,6 +62,10 @@ type CustomerRequest struct {
 	BusinessName     *string    `json:"customer_business_name"`
 	Birthdate        *string    `json:"customer_birthdate"`
 	AvailableRewards []DBReward `json:"available_rewards"`
+
+	TemporaryPhone     *string `json:"temporary_phone"`
+	TemporaryPhoneCode *string `json:"temporary_phone_code"`
+	GooglePlaceID      *string `json:"google_place_id"`
 }
 
 type OrderProductPayload struct {
@@ -70,16 +83,7 @@ type OrderProductPayload struct {
 	Without         []*OrderWithoutPayload   `json:"without"`
 	Config          *ProductConfiguration    `json:"configuration"`
 	Comment         *OrderItemCommentPayload `json:"comment"`
-}
-
-type MultipleProductsRequest struct {
-	Products []UpdateProductStatusPayload `json:"products"`
-}
-
-type UpdateProductStatusPayload struct {
-	OrderID          string `json:"order_id"`
-	OrderItemID      string `json:"order_item_id"`
-	ProductionStatus string `json:"production_status"`
+	OrderItemID     *string                  `json:"order_item_id"`
 }
 
 type OrderExtraPayload struct {
@@ -120,11 +124,17 @@ type PaymentPayload struct {
 }
 
 type CreateOrderResult struct {
-	Status     string     `json:"status"`
-	OrderID    string     `json:"order_id"`
-	OrderNum   *string    `json:"order_num"`
-	Action     string     `json:"action"`
-	OrderItems []UsedItem `json:"order_items"`
+	Status          string             `json:"status"`
+	OrderID         string             `json:"order_id,omitempty"`
+	OrderNum        *string            `json:"order_num,omitempty"`
+	Action          string             `json:"action,omitempty"`
+	OrderItems      []UsedItem         `json:"order_items,omitempty"`
+	CheckoutSession *WRCheckoutSession `json:"checkout_session,omitempty"`
+}
+
+type WRCheckoutSession struct {
+	Status string `json:"status"`
+	URL    string `json:"url"`
 }
 
 type UsedItem struct {
@@ -159,4 +169,14 @@ type OpenedByInfo struct {
 	FirstName *string `json:"first_name"`
 	LastName  *string `json:"last_name"`
 	UserID    *string `json:"user_id"`
+}
+
+type MultipleProductsRequest struct {
+	Products []UpdateProductStatusPayload `json:"products"`
+}
+
+type UpdateProductStatusPayload struct {
+	OrderID          string `json:"order_id"`
+	OrderItemID      string `json:"order_item_id"`
+	ProductionStatus string `json:"production_status"`
 }

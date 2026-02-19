@@ -1,6 +1,7 @@
 package googlemaps
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +18,7 @@ type googleMapsClient struct {
 	client *http.Client
 }
 
-func NewGoogleMapsClient(cfg config.Google) GoogleMapsClient {
+func NewGoogleMapsClient(cfg config.GoogleConfig) GoogleMapsClient {
 	return &googleMapsClient{
 		apiKey: cfg.APIKey,
 		client: &http.Client{},
@@ -51,4 +52,34 @@ func (c *googleMapsClient) FetchRoute(origin, destination string) ([]byte, error
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+type PlaceDetailsResponse struct {
+	Status string `json:"status"`
+	Result struct {
+		FormattedAddress string `json:"formatted_address"`
+		Geometry         struct {
+			Location struct {
+				Lat float64 `json:"lat"`
+				Lng float64 `json:"lng"`
+			} `json:"location"`
+		} `json:"geometry"`
+	} `json:"result"`
+}
+
+func (c *googleMapsClient) GetAddressFromPlaceID(placeID string) (*PlaceDetailsResponse, error) {
+	url := fmt.Sprintf(
+		"https://maps.googleapis.com/maps/api/place/details/json?place_id=%s&fields=formatted_address,geometry&key=%s",
+		placeID, c.apiKey,
+	)
+
+	resp, err := c.client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var data PlaceDetailsResponse
+	err = json.NewDecoder(resp.Body).Decode(&data)
+	return &data, err
 }

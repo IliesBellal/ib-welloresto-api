@@ -36,11 +36,11 @@ type ProductEntry struct {
 	Components                   []ComponentUsage      `json:"components,omitempty"`
 	Description                  *string               `json:"description,omitempty"`
 	Price                        int64                 `json:"price"`
-	PriceTakeAway                int64                 `json:"price_take_away"`
-	PriceDelivery                int64                 `json:"price_delivery"`
-	TVAIn                        float64               `json:"tva_rate_in,omitempty"`
-	TVADelivery                  float64               `json:"tva_rate_delivery,omitempty"`
-	TVATakeAway                  float64               `json:"tva_rate_take_away,omitempty"`
+	PriceTakeAway                *int64                `json:"price_take_away"`
+	PriceDelivery                *int64                `json:"price_delivery"`
+	TVAIn                        *float64              `json:"tva_rate_in,omitempty"`
+	TVADelivery                  *float64              `json:"tva_rate_delivery,omitempty"`
+	TVATakeAway                  *float64              `json:"tva_rate_take_away,omitempty"`
 	AvailableIn                  bool                  `json:"available_in,omitempty"`
 	AvailableTakeAway            bool                  `json:"available_take_away,omitempty"`
 	AvailableDelivery            bool                  `json:"available_delivery,omitempty"`
@@ -65,6 +65,7 @@ type ProductEntry struct {
 	Without                      []OrderProductWithout `json:"without"`
 	Customers                    []interface{}         `json:"customers"` // keep generic as original
 	Comment                      OrderComment          `json:"comment"`
+	DisplayOrder                 *int                  `json:"display_order"`
 }
 
 type OrderProductExtra struct {
@@ -137,7 +138,7 @@ type ConfigurableOption struct {
 	ConfigAttributeID string `json:"configurable_attribute_id"`
 	OrderItemID       string `json:"order_item_id"`
 	Quantity          int    `json:"quantity"`
-	Selected          int    `json:"selected"`
+	Selected          bool   `json:"selected"`
 }
 
 // delays

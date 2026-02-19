@@ -3,7 +3,13 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"strconv"
+	"welloresto-api/internal/infrastructure/mailer"
+	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
+	"welloresto-api/internal/modules/scannorder"
+	"welloresto-api/internal/webhook/deliveroo"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -28,6 +34,11 @@ import (
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
+
+	// ---- WEBHOOKS ----
+	webhookstripe "welloresto-api/internal/webhook/stripe"
+	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
+	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
 )
 
 func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
@@ -43,6 +54,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 	//  MODULE INITIALIZATION
 	// =============================
+
+	// ---- MAILER ----
+	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT")) // ex: 587
+	mailConfig := mailer.Config{
+		Host:     os.Getenv("SMTP_HOST"), // smtp.hostinger.com
+		Port:     smtpPort,
+		Username: os.Getenv("SMTP_USER"),     // invoice@welloresto.fr
+		Password: os.Getenv("SMTP_PASSWORD"), // Ton mot de passe
+		From:     os.Getenv("SMTP_FROM"),     // invoice@welloresto.fr
+	}
+
+	// Initialisation du service
+	mailService := mailer.NewMailer(mailConfig)
+	// Ensuite, tu injectes 'mailService' dans tes handlers/services
+	// ex: webhookService := webhook.NewStripeWebhookService(repo, mailService)
 
 	// 2. Initialisation des couches (Injection de dépendances)
 	repo := googlemaps.NewGoogleMapsRepository()
@@ -70,13 +96,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
 
 	// ---- Orders ----
-	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB)
-	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB)
+	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
+	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, ordersFetcher)
+	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, ordersFetcher)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
 
-	// ---- Uber ----
-	//uberRepo := uberModule.NewUberEatsRepository(mysqlDB)
-	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
+	// ---- WEBHOOK STRIPE
+	// Dans main.go
+
+	// 1. Initialiser le Repo
+	stripeRepo := webhookstripe.NewRepository(mysqlDB) // db est ta connexion *sql.DB
+
+	// 2. Initialiser les dépendances (Mocks ou implémentations réelles)
+	// mailerService vient de l'étape précédente
+	// Tu devras créer des struct simples qui implémentent MobileClient et OrderLifeCycleClient pour faire le lien avec ton code existant
+
+	// 4. Utiliser stripeService dans ton Handler HTTP
+	// ex: webhookHandler.HandleWebhook(w, r) -> switch event.Type -> stripeService.HandleCheckoutSessionCompleted(...)
 
 	// ---- Deliveroo ----
 	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
@@ -85,8 +121,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
 	customersService := customersModule.NewCustomersService(customersRepo, authService)
 
+	// ---- Stripe ----
+	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
+
+	// ---- ScanNOrder ----
+	scannRepo := scannorder.NewRepository(mysqlDB)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, *stripeManager)
+	scannHandler := scannorder.NewHandler(scannService)
+
+	// ---- Uber ----
+	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
+
 	// ---- Orders Lifecycle ----
-	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB)
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
 		uberService,
@@ -97,6 +144,35 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		notificationService,
 		customersRepo,
 	)
+
+	// 3. Initialiser le StripeWebhookService Stripe
+	stripeWebhookService := webhookstripe.NewStripeWebhookService(
+		stripeRepo,
+		os.Getenv("STRIPE_SECRET_KEY"),
+		mailService,
+		ordersLifeCycleService,
+		notificationService,
+	)
+	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
+
+	// WH
+	deliverooWebhookRepo := deliveroo.NewRepository(mysqlDB)
+	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService)
+	deliverooWebhookHandler := deliveroo.NewDeliverooHandler(deliverooWebhookService)
+
+	uberWebhookService := webhookuberservice.NewService(
+		mysqlDB,
+		"",
+		"",
+		uberService,
+		&googleClient,
+		ordersService,
+		menuService,
+		ordersLifeCycleService,
+		notificationService,
+	)
+
+	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
@@ -144,11 +220,27 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	servicesH := servicesModule.NewServicesHandler(servicesService)
 
 	// ============================================================
+	//                      CRON JOBS
+	// ============================================================
+
+	SetupTasks(log, &mailService, ordersLifeCycleService, stripeManager, bookingsService, mysqlDB)
+
+	// ============================================================
 	//                      ROUTING
 	// ============================================================
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("OK"))
+	})
+	r.Route("/test", func(r chi.Router) {
+		r.Get("/test-mailer", mailService.TriggerTestEmail)
+	})
+
+	// Webhooks
+	r.Route("/webhooks", func(r chi.Router) {
+		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
+		r.Post("/deliveroo", deliverooWebhookHandler.HandleWebhook)
+		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
 	})
 
 	// API externes
@@ -165,6 +257,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
+		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
+		r.Patch("/{user_id}/reset-password", usersH.UpdatePassword)
 	})
 
 	// --- POS ---
@@ -187,6 +281,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		})
 
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
+	})
+
+	// --- SCANNORDER ---
+	r.Route("/scannorder", func(r chi.Router) {
+		r.Get("/{qr_code}", scannHandler.GetMerchant)
+		r.Get("/{qr_code}/menu", scannHandler.GetMenu)
+		r.Post("/{qr_code}/pricing", scannHandler.GetPricingSNO)
+		r.Post("/{qr_code}/create", scannHandler.CreateOrderSNO)
+		r.Get("/{qr_code}/order/{order_id}", scannHandler.GetOrderSNO)
+		r.Post("/{qr_code}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
 	})
 
 	// --- STOCKS ---
@@ -215,6 +319,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/", menuH.GetMenu)
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
+		r.Post("/product", menuH.CreateProduct)
+		r.Patch("/product/{product_id}", menuH.UpdateProduct)
+		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
@@ -237,6 +344,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/orders", func(r chi.Router) {
 
 		r.Post("/create", ordersH.CreateOrder)
+		r.Post("/update", ordersH.UpdateOrder)
 		r.Post("/pricing", ordersH.GetPricing)
 		r.Post("/list", ordersH.GetOrders)
 
@@ -245,12 +353,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{order_id}", ordersH.GetOrder)
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+
 		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
 		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+
 		r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+
 		r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
-		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
+
+		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {
@@ -277,6 +389,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- CUSTOMERS ---
 	r.Route("/customer", func(r chi.Router) {
+		r.Get("/search", customersH.SearchCustomers)
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
 		r.Patch("/{customer_id}/loyalty/progress", customersH.UpdateLoyaltyProgress)
 		r.Patch("/{customer_id}/loyalty/reward", customersH.UpdateLoyaltyReward)

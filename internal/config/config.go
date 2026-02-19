@@ -6,11 +6,13 @@ import (
 )
 
 type AppConfig struct {
-	App       App
-	Database  Database
-	Google    Google
-	UberEats  UberEats
-	Deliveroo Deliveroo
+	App        App
+	Database   DatabaseConfig
+	Google     GoogleConfig
+	UberEats   UberEatsConfig
+	Deliveroo  DeliverooConfig
+	ScanNOrder ScanNOrderConfig
+	Stripe     StripeConfig
 }
 
 type App struct {
@@ -22,10 +24,12 @@ func Load() *AppConfig {
 		App: App{
 			Port: getEnv("PORT", "8080"),
 		},
-		Database:  loadDatabase(),
-		Google:    loadGoogle(),
-		UberEats:  loadUberEats(),
-		Deliveroo: loadDeliveroo(),
+		Database:   loadDatabase(),
+		Google:     loadGoogle(),
+		UberEats:   loadUberEats(),
+		Deliveroo:  loadDeliveroo(),
+		ScanNOrder: loadScanNOrderConfig(),
+		Stripe:     loadStripeConfig(),
 	}
 
 	cfg.validate()

@@ -110,13 +110,13 @@ func (s *NotificationService) sendWithoutPayload(
 
 	resp, err := s.client.SendFCMMessage(ctx, token, accessToken, message)
 	if err != nil {
-		log.Info("sendWithoutPayload error: " + err.Error())
+		//log.Info("sendWithoutPayload error: " + err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Warn("FCM result code=" + resp.Status)
+		//log.Warn("FCM result code=" + resp.Status + " for token " + token)
 	}
 }
 

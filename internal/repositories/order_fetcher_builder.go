@@ -101,7 +101,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, err
 			}
 			locationsByOrderID[orderID.String] = append(locationsByOrderID[orderID.String], models.Location{
-				OrderID: orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: nullStringToPtr(locationDesc),
+				OrderID: &orderID.String, LocationID: locationID.String, LocationName: locationName.String, LocationDesc: nullStringToPtr(locationDesc),
 			})
 		}
 		r.log.Info("locations loaded")
@@ -282,7 +282,8 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		for rows.Next() {
 			var attrID, orderItemID, id, title sql.NullString
 			var extraPrice int
-			var selected, quantity, maxQuantity sql.NullInt64
+			var quantity, maxQuantity sql.NullInt64
+			var selected sql.NullBool
 			if err := rows.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity); err != nil {
 				return nil, err
 			}
@@ -296,7 +297,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 				ExtraPrice:        extraPrice,
 				Quantity:          int(quantity.Int64),
 				MaxQuantity:       int(maxQuantity.Int64),
-				Selected:          int(selected.Int64),
+				Selected:          selected.Bool,
 			})
 		}
 		r.log.Info("configuration_attributes_options loaded")
@@ -407,10 +408,10 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var paymentID, enabled sql.NullInt64
+			var paymentID, paymentDate sql.NullInt64
 			var mop, orderID sql.NullString
 			var amount sql.NullFloat64
-			var paymentDate sql.NullTime
+			var enabled sql.NullBool
 
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
 				// LOG BRUT : row complet, colonnes, valeurs reçues
@@ -427,7 +428,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: nullTimePtr(paymentDate), Enabled: int(enabled.Int64),
+				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: paymentDate.Int64, Enabled: enabled.Bool,
 			})
 		}
 		r.log.Info("payments loaded")
@@ -463,10 +464,10 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty sql.NullInt64
+			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, orderedOn sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
 			var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
-			var orderedOn, commentCreation sql.NullTime
+			var commentCreation sql.NullTime
 			var availableIn, availableTakeAway, availableDelivery sql.NullBool
 
 			scanErr := rows.Scan(
@@ -521,7 +522,7 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 			op := models.ProductEntry{
 				OrderID:                      orderID.String,
 				OrderItemID:                  orderItemID.String,
-				OrderedOn:                    nullTimePtr(orderedOn),
+				OrderedOn:                    orderedOn.Int64,
 				ProductID:                    productID.String,
 				ProductionStatus:             productionStatus.String,
 				ProductionStatusDoneQuantity: int(productionDoneQty.Int64),
@@ -537,14 +538,14 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 				IsPaid:                       int(isPaid.Int64),
 				IsDistributed:                int(isDistributed.Int64),
 				Price:                        price.Int64,
-				PriceTakeAway:                priceTakeAway.Int64,
-				PriceDelivery:                priceDelivery.Int64,
+				PriceTakeAway:                &priceTakeAway.Int64,
+				PriceDelivery:                &priceDelivery.Int64,
 				DiscountID:                   nullInt64ToPtr(discountID),
 				DiscountName:                 nullStringToPtr(discountName),
 				DiscountedPrice:              nilIfNullInt64Discount(discountID, price.Int64),
-				TVAIn:                        tvaIn.Float64,
-				TVADelivery:                  tvaDelivery.Float64,
-				TVATakeAway:                  tvaTakeAway.Float64,
+				TVAIn:                        &tvaIn.Float64,
+				TVADelivery:                  &tvaDelivery.Float64,
+				TVATakeAway:                  &tvaTakeAway.Float64,
 				AvailableIn:                  availableIn.Bool,
 				AvailableTakeAway:            availableTakeAway.Bool,
 				AvailableDelivery:            availableDelivery.Bool,
@@ -606,10 +607,9 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var ord models.Order
-			var customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
-			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, estimatedReady, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
+			var customerNbOrders, priority, isDelivery, useCustomerTemporaryAddress, price, TVA, HT, deliveryFees, placesSettings, estimatedReady, creationDate, lastUpdate sql.NullInt64
+			var customerID, orderID, orderNum, orderType, state, brand, brandStatus, brandOrderID, brandOrderNum, meansOfPayment, monnaie, cutleryNotes, dateCall, fulfillmentType, pagerNumber, merchantApproval, deliverySessionID, userID sql.NullString
 			var customerLat, customerLng, customerTemporaryLat, customerTemporaryLng, userLat, userLng sql.NullFloat64
-			var lastUpdate, creationDate sql.NullTime
 			var scheduled, isPaid, isDistributed sql.NullBool
 			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode, cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth, cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 			var delTel, delUserName sql.NullString
@@ -645,13 +645,13 @@ func (r *OrdersFetcher) fetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "-1"
 			ord.CallHour = nullStringToPtr(dateCall)
-			ord.EstimatedReady = nullStringToPtr(estimatedReady)
+			ord.EstimatedReady = &estimatedReady.Int64
 			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = nullInt64ToPtr(deliveryFees)
-			ord.CreationDate = nullTimePtr(creationDate)
+			ord.CreationDate = creationDate.Int64
 			ord.FulfillmentType = nullStringToPtr(fulfillmentType)
-			ord.LastUpdate = nullTimePtr(lastUpdate)
+			ord.LastUpdate = lastUpdate.Int64
 
 			// --- Customer ---
 			if customerID.Valid {

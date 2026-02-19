@@ -10,7 +10,7 @@ type Payment struct {
 	MOP         string  `json:"mop"`
 	Amount      float64 `json:"amount"`
 	PaymentDate int64   `json:"payment_date"`
-	Enabled     int     `json:"enabled"`
+	Enabled     bool    `json:"enabled"`
 }
 
 type OrderComment struct {
@@ -90,41 +90,42 @@ type Customer struct {
 }
 
 type Order struct {
-	OrderID           string         `json:"order_id"`
-	OrderNum          *string        `json:"order_num"`
-	DeliverySessionID *string        `json:"delivery_session_id"`
-	DeliveryPriority  *int           `json:"delivery_priority"`
-	Brand             *string        `json:"brand"`
-	BrandOrderID      *string        `json:"brand_order_id"`
-	BrandOrderNum     *string        `json:"brand_order_num"`
-	BrandStatus       *string        `json:"brand_status"`
-	OrderType         *string        `json:"order_type"`
-	CutleryNotes      *string        `json:"cutlery_notes"`
-	State             *string        `json:"state"`
-	Scheduled         bool           `json:"scheduled"`
-	TTC               int64          `json:"TTC"`
-	TVA               *int64         `json:"TVA"`
-	HT                *int64         `json:"HT"`
-	PlacesSettings    *int64         `json:"places_settings"`
-	PagerNumber       *string        `json:"pager_number"`
-	IsPaid            bool           `json:"isPaid"`
-	IsDistributed     bool           `json:"isDistributed"`
-	IsSNO             bool           `json:"isSNO"`
-	CallHour          *string        `json:"callHour"`
-	EstimatedReady    *int           `json:"estimated_ready"`
-	IsDelivery        int            `json:"isDelivery"`
-	MerchantApproval  string         `json:"merchant_approval"`
-	DeliveryFees      *int64         `json:"delivery_fees"`
-	Customer          *Customer      `json:"customer"`
-	Comments          []OrderComment `json:"comments"`
-	Payments          []Payment      `json:"payments"`
-	Responsible       *OrderUser     `json:"responsible"`
-	Location          []Location     `json:"location"`
-	Products          []ProductEntry `json:"products"`
-	Priority          *int           `json:"priority"`
-	CreationDate      int64          `json:"creation_date"`
-	FulfillmentType   *string        `json:"fulfillment_type"`
-	LastUpdate        int64          `json:"last_update"`
+	OrderID           string           `json:"order_id"`
+	OrderNum          *string          `json:"order_num"`
+	DeliverySessionID *string          `json:"delivery_session_id"`
+	DeliveryPriority  *int             `json:"delivery_priority"`
+	Brand             *string          `json:"brand"`
+	BrandOrderID      *string          `json:"brand_order_id"`
+	BrandOrderNum     *string          `json:"brand_order_num"`
+	BrandStatus       *string          `json:"brand_status"`
+	OrderType         *string          `json:"order_type"`
+	CutleryNotes      *string          `json:"cutlery_notes"`
+	State             *string          `json:"state"`
+	Scheduled         bool             `json:"scheduled"`
+	TTC               int64            `json:"TTC"`
+	TVA               *int64           `json:"TVA"`
+	HT                *int64           `json:"HT"`
+	PlacesSettings    *int64           `json:"places_settings"`
+	PagerNumber       *string          `json:"pager_number"`
+	IsPaid            bool             `json:"isPaid"`
+	IsDistributed     bool             `json:"isDistributed"`
+	IsSNO             bool             `json:"isSNO"`
+	CallHour          *string          `json:"callHour"`
+	EstimatedReady    *int             `json:"estimated_ready"`
+	IsDelivery        int              `json:"isDelivery"`
+	MerchantApproval  string           `json:"merchant_approval"`
+	DeliveryFees      *int64           `json:"delivery_fees"`
+	Customer          *Customer        `json:"customer"`
+	Comments          []OrderComment   `json:"comments"`
+	Payments          []Payment        `json:"payments"`
+	Responsible       *OrderUser       `json:"responsible"`
+	Location          []Location       `json:"location"`
+	Products          []ProductEntry   `json:"products"`
+	Priority          *int             `json:"priority"`
+	CreationDate      int64            `json:"creation_date"`
+	FulfillmentType   *string          `json:"fulfillment_type"`
+	LastUpdate        int64            `json:"last_update"`
+	DeliverySession   *DeliverySession `json:"delivery_session"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

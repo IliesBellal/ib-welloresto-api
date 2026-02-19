@@ -22,11 +22,10 @@ type OrderIntegrationInfo struct {
 	BrandOrderID string
 }
 
-func NewOrdersLifeCycleRepository(db *sql.DB) *OrdersLifeCycleRepository {
-	temp := orders.NewOrdersFetcher(db)
+func NewOrdersLifeCycleRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *OrdersLifeCycleRepository {
 	return &OrdersLifeCycleRepository{
 		db:            db,
-		ordersFetcher: temp}
+		ordersFetcher: ordersF}
 }
 
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
@@ -265,6 +264,10 @@ func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentI
 	if err != nil {
 		return err
 	}
+
+	// TODO
+	// Vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo qui ne sont pas anulables
+	// Le client s'en occupe déjà, mais une double vérification côté serveur est nécessaire
 
 	// Disable payment
 	_, err = tx.ExecContext(ctx, `
@@ -824,12 +827,7 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 	return tx.Commit()
 }
 
-func (r *OrdersLifeCycleRepository) DeleteOrderLocal(
-	ctx context.Context,
-	orderID string,
-	reasonID string,
-	comment string,
-) error {
+func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
 
 	_, err := r.db.ExecContext(ctx, `
         UPDATE orders
@@ -850,6 +848,43 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// 0.1 Lock order row
+	const qLockOrder = `
+		SELECT price
+		FROM orders
+		WHERE order_id = ?
+		FOR UPDATE
+		`
+
+	var price int64
+	if err := tx.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	const qSumPayments = `
+SELECT COALESCE(SUM(amount), 0)
+FROM payments
+WHERE order_id = ?
+  AND enabled = 1
+`
+
+	var paidAmount int64
+	if err := tx.QueryRowContext(ctx, qSumPayments, orderID).
+		Scan(&paidAmount); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if paidAmount != price {
+		tx.Rollback()
+		return nil, &models.OrderNotFullyPaidError{
+			OrderID:    orderID,
+			PaidAmount: paidAmount,
+			Price:      price,
+		}
 	}
 
 	// 1) Get brand, brand_order_id, fulfillment_type

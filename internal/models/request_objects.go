@@ -1,6 +1,8 @@
 package models
 
-import "time"
+import (
+	"time"
+)
 
 type PaymentRequest struct {
 	DeviceID        string        `json:"device_id"`
@@ -201,6 +203,37 @@ type PricingRequest struct {
 	IsOrderable                 bool
 	IsSNO                       bool
 	NotOrderableReason          string
+
+	QRCode           string `json:"qr_code,omitempty"`
+	IsInDeliveryZone bool   `json:"is_in_delivery_zone,omitempty"`
+
+	CheckoutSessionType string       `json:"checkout_session_type,omitempty"`
+	Merchant            *MerchantRow `json:"merchant,omitempty"`
+}
+
+type MerchantRow struct {
+	MerchantID            string
+	FullName              string
+	Address               string
+	Lat                   float64
+	Lng                   float64
+	DeliveryDistanceLimit float64 // EN MÈTRES (comme en DB)
+	Timezone              string
+	Currency              string
+	PrimaryColor          string
+	TextColor             string
+	DeliveryFees          float64
+	DeliveryFeesLimit     float64
+	MenuOnly              bool
+	UserID                *string
+	LastWaiterCall        *int
+	OrderID               *string
+	LocationID            *string
+	LocationName          *string
+	CreationDate          *int64
+	VariableFees          *float64
+	FixedFees             *int
+	AccountID             *string
 }
 
 type PricingResult struct {
@@ -313,7 +346,7 @@ type DiscountOptionInfo struct {
 // DBReward représente une reward utilisateur (customer reward) et les produits liés.
 type DBReward struct {
 	RewardID         string   `json:"reward_id"`
-	LoyaltyProgramID int64    `json:"loyalty_program_id"`
+	LoyaltyProgramID string   `json:"loyalty_program_id"`
 	RewardType       string   `json:"reward_type,omitempty"`       // e.g. "free_product", "fixed_discount"
 	RewardOrderType  string   `json:"reward_order_type,omitempty"` // order type constraint
 	RewardValue      *int     `json:"reward_value,omitempty"`
@@ -352,7 +385,7 @@ type PricingOrderProduct struct {
 }
 
 type PricingResponse struct {
-	Status       int             `json:"status"`
+	Status       string          `json:"status"`
 	OrderRequest *PricingRequest `json:"order_request"`
 
 	UnavailableProduct []UnavailableProductInfo `json:"unavailable_products"`
@@ -576,8 +609,9 @@ type UpdatePasswordRequest struct {
 }
 
 const (
-	BrandUberEats  = "UBER_EATS"
-	BrandDeliveroo = "DELIVEROO"
+	BrandUberEats   = "UBER_EATS"
+	BrandDeliveroo  = "DELIVEROO"
+	BrandWelloResto = "WELLO_RESTO"
 )
 
 type OrderMeta struct {

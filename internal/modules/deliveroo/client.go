@@ -18,7 +18,7 @@ import (
 // DeliverooClient gère la communication avec l'API
 type DeliverooClient struct {
 	httpClient *http.Client
-	config     config.Deliveroo
+	config     config.DeliverooConfig
 
 	// Gestion du token en cache
 	tokenMu     sync.RWMutex
@@ -39,7 +39,7 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func NewDeliverooClient(httpClient *http.Client, config config.Deliveroo) *DeliverooClient {
+func NewDeliverooClient(httpClient *http.Client, config config.DeliverooConfig) *DeliverooClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -73,12 +73,10 @@ func (c *DeliverooClient) getToken(ctx context.Context) (string, error) {
 		return c.accessToken, nil
 	}
 
-	return c.refreshToken(ctx)
+	return c.refreshToken(context.Background())
 }
 
 func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
-	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.refreshToken - refreshing")
 
 	//url := "https://auth-sandbox.developers.deliveroo.com/oauth2/token"
 	url := fmt.Sprintf("%s/oauth2/token", c.config.AuthBaseURL)
@@ -113,8 +111,6 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 	// Le token expire dans X secondes, on calcule la date absolue
 	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-	log.Info("DeliverooClient.refreshToken - new token : " + c.accessToken)
-
 	return c.accessToken, nil
 }
 
@@ -124,7 +120,6 @@ func (c *DeliverooClient) refreshToken(ctx context.Context) (string, error) {
 
 func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, payload interface{}) (*http.Response, error) {
 	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.doRequest - " + url)
 
 	var bodyReader io.Reader
 	if payload != nil {
@@ -135,7 +130,7 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 		bodyReader = bytes.NewBuffer(jsonBytes)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +145,16 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+
+	if err != nil {
+		log.Info("DeliverooClient.doRequest - calling " + url + " | error " + err.Error())
+		return nil, err
+	}
+
+	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
+
+	return resp, err
 }
 
 // ==========================================
@@ -163,12 +167,8 @@ func (c *DeliverooClient) AcceptOrder(ctx context.Context, brandOrderID string) 
 	url := fmt.Sprintf("%s/order/v1/orders/%s", c.config.BaseURL, url.PathEscape(brandOrderID))
 	payload := map[string]string{"status": "accepted"}
 
-	log := logger.FromContext(ctx)
-	log.Info("DeliverooClient.AcceptOrder - doRequest for order " + brandOrderID)
-
 	resp, err := c.doRequest(ctx, "PATCH", url, payload)
 	if err != nil {
-		log.Info("DeliverooClient.AcceptOrder - error doing request")
 		return err
 	}
 	defer resp.Body.Close()
@@ -251,6 +251,38 @@ func (c *DeliverooClient) createStage(ctx context.Context, brandOrderID, stage s
 	resp, err := c.doRequest(ctx, "POST", url, payload)
 	if err != nil {
 		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	return nil
+}
+
+// Dans deliveroo_client.go
+
+// SendSyncStatus envoie le statut de synchronisation à Deliveroo suite à un Webhook
+func (c *DeliverooClient) SendSyncStatus(ctx context.Context, brandOrderID string, status string, reason string, notes string) error {
+	// ATTENTION: Vérifie l'URL exacte dans la doc Deliveroo pour le sync_status
+	// C'est souvent /order/v1/orders/{id}/sync_status
+	urlPath := fmt.Sprintf("%s/order/v1/orders/%s/sync_status", c.config.BaseURL, url.PathEscape(brandOrderID))
+
+	occurredAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	payload := map[string]string{
+		"status":      status, // "succeeded" ou "failed"
+		"occurred_at": occurredAt,
+		"reason":      reason,
+		"notes":       notes,
+	}
+
+	log := logger.FromContext(ctx)
+	log.Info(fmt.Sprintf("DeliverooClient.SendSyncStatus - sending %s for order %s", status, brandOrderID))
+
+	resp, err := c.doRequest(ctx, "POST", urlPath, payload)
+	if err != nil {
+		return fmt.Errorf("network error on sync_status: %w", err)
 	}
 	defer resp.Body.Close()
 

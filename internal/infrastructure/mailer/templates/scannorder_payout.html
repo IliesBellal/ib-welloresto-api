@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Confirmation de commande</title>
+</head>
+<body style="margin:0; padding:0; background-color:#ffffff; font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif;">
+
+<table width="100%" style="max-width: 712px; margin: auto;">
+    <tbody>
+    <tr>
+        <td>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border:none;border-collapse:collapse;width:100%">
+                <tbody>
+                <tr>
+                    <td bgcolor="#E2F2F9" style="padding: 0;"> <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                        <tbody>
+                        <tr>
+                            <td width="14"> </td>
+                            <td align="center">
+                                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:616px; margin-top: 45px; margin-bottom: 40px;"> <tr>
+                                    <td align="left" valign="middle">
+                                        <img src="{{ .MerchantLogo }}" alt="{{ .MerchantName }}" width="167" style="display:block;height:auto;border:0;"> </td>
+                                    <td align="right" valign="middle" style="font-size:12px; line-height:18px; color:#000000;"> <div>Total
+                                        <span style="font-weight:bold;">{{ .OrderTotal }} {{ .MerchantCurrency }}</span> </div>
+                                        <div style="color:#000;">{{ .OrderDate }}</div> </td>
+                                </tr>
+                                </table>
+                            </td>
+                            <td width="14"> </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border:none;border-collapse:collapse;width:100%">
+                <tbody>
+                <tr>
+                    <td bgcolor="#F5E6C7" valign="top" style="padding: 20px 0;"> <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                        <tr>
+                            <td width="14"></td>
+                            <td align="center">
+                                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:616px;">
+                                    <tr>
+                                        <td align="left">
+                                            <h1 style="font-size:34px; line-height:38px; color:#000; margin:0 0 13px 0; font-family: Helvetica, Arial, sans-serif;">Merci d'avoir passé commande</h1> <p style="font-size:20px; line-height:26px; color:#000; margin:0 0 20px 0;">
+                                            Suivez votre commande chez <br>
+                                            <span>{{ .MerchantName }}</span> </p>
+
+                                            <div style="padding: 7px 0 12px 0;">
+                                                <a href="{{ .TrackingURL }}" target="_blank" style="background-color:#0c569d; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px; min-width:100px; text-align:center;"> Suivre ma commande
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                            <td width="14"></td>
+                        </tr>
+                    </table>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color:#fff;"> <tr>
+                <td align="center" style="padding: 40px 26px;">
+                    <table width="100%" style="max-width: 700px;"> <tr>
+                        <td align="left" style="padding-top:40px">
+                            <img src="http://storage.welloresto.fr/img/defaults/wr_logo_invoice.png" width="69" height="69" alt="" style="display:block;border:0;"> </td>
+                    </tr>
+                        <tr>
+                            <td style="padding:40px 0 0">
+                                <div style="height:1px; background:#072440; line-height:1px; font-size:0;">&nbsp;</div> </td>
+                        </tr>
+                        <tr>
+                            <td valign="top" style="padding-top:30px;">
+                                <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td valign="top" width="50%" align="left">
+                                            <div style="padding-top:6px;"><a href="{{ .PrivacyURL }}" style="color:#000;text-decoration:none;font-size:12px;">Confidentialité</a></div> <div style="padding-top:6px;"><a href="{{ .TermsURL }}" style="color:#000;text-decoration:none;font-size:12px;">Conditions générales</a></div> </td>
+                                        <td valign="top" width="50%" align="left">
+                                            <div style="color:#9d9da3;font-size:12px;line-height:18px;padding-top:30px;">
+                                                {{ .SupportEmail }} </div>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+            </table>
+
+        </td>
+    </tr>
+    </tbody>
+</table>
+</body>
+</html>

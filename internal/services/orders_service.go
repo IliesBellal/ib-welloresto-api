@@ -212,7 +212,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	// --- Step 1bis: If no products ---
 	if len(req.Order.Products) == 0 {
 		return &models.PricingResponse{
-			Status:       1,
+			Status:       "1",
 			OrderRequest: req,
 		}, nil
 	}
@@ -224,7 +224,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 	}
 	if len(unavailable) > 0 {
 		return &models.PricingResponse{
-			Status:             1,
+			Status:             "1",
 			OrderRequest:       req,
 			UnavailableProduct: unavailable,
 		}, nil
@@ -279,7 +279,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 
 	// --- Final response ---
 	return &models.PricingResponse{
-		Status:                    1,
+		Status:                    "1",
 		OrderRequest:              req,
 		EstimatedDistributionTime: estimatedTime,
 		AppliedDiscounts:          appliedDiscounts,

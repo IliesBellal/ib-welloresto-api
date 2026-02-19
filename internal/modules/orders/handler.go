@@ -79,7 +79,13 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(order)
+	resp := models.HandlerDefaultResponse{
+		ID:   "10",
+		Data: order,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
@@ -186,14 +192,14 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Error("CreateOrder bad request : " + err.Error())
+		log.Error("PrepareCreateOrder bad request : " + err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	result, err := h.ordersService.CreateOrder(ctx, token, &req)
+	result, err := h.ordersService.PrepareCreateOrder(ctx, token, &req)
 	if err != nil {
-		log.Error("CreateOrder error : " + err.Error())
+		log.Error("PrepareCreateOrder error : " + err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -201,6 +207,41 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	resp := models.HandlerDefaultResponse{
 		ID:   "10",
 		Data: result,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req models.RequestObject
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error("PrepareCreateOrder bad request : " + err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := h.ordersService.PrepareUpdateOrder(ctx, token, &req)
+	if err != nil {
+		log.Error("PrepareCreateOrder error : " + err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := models.HandlerDefaultResponse{
+		ID: "10",
+		Data: models.HandlerDefaultResponseModelSet{
+			Status: "success",
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -1,0 +1,44 @@
+package mailer
+
+// RefundData pour charge.refunded
+type RefundData struct {
+	MerchantName  string // ex: "Burger King"
+	MerchantLogo  string // URL du logo
+	MerchantColor string // ex: "#E2F2F9" (Optionnel, pour le header)
+	Amount        string // ex: "15.50 €"
+	Date          string // ex: "12/02/2024"
+	CustomerName  string // Nom du client
+	RefundReason  string // ex: "requested_by_customer" (traduire en FR)
+	CardBrand     string // ex: "Visa"
+	CardLast4     string // ex: "4242"
+	ReceiptURL    string // URL du reçu Stripe
+	SupportEmail  string // Email support
+}
+
+// PayoutData pour payout.paid
+type PayoutData struct {
+	MerchantName string
+	MerchantLogo string
+	Destination  string
+	Status       string
+	Amount       string // ex: "1450.00 €"
+	PayoutDate   string // Date du virement
+	ArrivalDate  string // Date estimée sur le compte (arrival_date)
+	BankName     string // ex: "BNP Paribas" ou "Stripe Balance"
+	AccountLast4 string // ex: "6789"
+	PayoutID     string // ex: "po_1Mn..."
+	DashboardURL string // Lien vers le dashboard Stripe/Wello
+}
+
+// Used when sending an order confirmation
+type ScanNOrderConfirmationData struct {
+	MerchantName     string // $merchant->business_name
+	MerchantLogo     string // $merchant->logo_url
+	MerchantCurrency string // $merchant->currency
+	OrderTotal       string // Formaté: "15.50" (déjà divisé par 100)
+	OrderDate        string // Formaté: "12/02/2024"
+	TrackingURL      string // L'URL complète de suivi
+	PrivacyURL       string // Lien politique de confidentialité
+	TermsURL         string // Lien conditions générales
+	SupportEmail     string // "Wello Resto SAS..."
+}

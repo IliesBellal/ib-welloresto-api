@@ -78,14 +78,3 @@ type UserLoginRow struct {
 	// Deliveroo
 	DrooLocationID sql.NullString
 }
-
-type MerchantRow struct {
-	ID       int64
-	FullName string
-	Lat      float64
-	Lng      float64
-	Address  string
-	City     string
-	Country  string
-	ZipCode  string
-}

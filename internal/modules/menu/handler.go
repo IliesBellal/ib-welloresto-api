@@ -44,8 +44,6 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Info("GetMenu - lastMenu: " + lastMenuParam)
-
 	menu, err := h.service.GetMenu(ctx, token, lastMenu)
 	if err != nil {
 		// LOG SERVER SIDE
@@ -213,6 +211,71 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 		Status:  "1",
 		Updated: updated,
 	}, 200)
+}
+
+func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
+	// 1. Auth & Validation basique
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		http.Error(w, "missing product_id", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Parsing du Body
+	var payload ProductUpdatePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Appel Service
+	err := h.service.UpdateProduct(r.Context(), token, productID, payload)
+	if err != nil {
+		// Tu peux affiner les codes d'erreur selon le type d'erreur retourné
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Réponse
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "1", "message": "product updated"})
+}
+
+func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		http.Error(w, "missing product_id", http.StatusBadRequest)
+		return
+	}
+
+	var payload ProductAttributesPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	err := h.service.UpdateProductAttributes(r.Context(), token, productID, payload.Configuration)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "1", "message": "attributes updated"})
 }
 
 func (h *MenuHandler) json(w http.ResponseWriter, data interface{}, status int) {

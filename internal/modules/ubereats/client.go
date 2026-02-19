@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 	"welloresto-api/internal/logger"
+	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
 type UberClient struct {
@@ -53,6 +54,42 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 func (c *UberClient) AcceptOrder(ctx context.Context, uberOrderID string, token string, req UberAcceptRequest) error {
 	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/accept", c.config.BaseURL, uberOrderID)
 	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
+}
+
+func (c *UberClient) GetOrderByURLUsingOrderID(ctx context.Context, uberOrderID string, token string, req UberAcceptRequest) error {
+	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/accept", c.config.BaseURL, uberOrderID)
+	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
+}
+
+func (c *UberClient) GetOrderByURL(ctx context.Context, url string, token string) (*ueModels.UberOrder, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("order_not_found")
+	}
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("uber api error %d", resp.StatusCode)
+	}
+
+	var order ueModels.UberOrder
+	if err := json.NewDecoder(resp.Body).Decode(&order); err != nil {
+		return nil, err
+	}
+
+	return &order, nil
 }
 
 // GetOrderDetails récupère l'état complet de la commande (pour la synchro)
