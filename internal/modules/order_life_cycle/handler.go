@@ -396,14 +396,20 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 		if errors.As(err, &notPaidErr) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "order_not_fully_paid",
-				"details": map[string]interface{}{
-					"order_id":    notPaidErr.OrderID,
-					"paid_amount": notPaidErr.PaidAmount,
-					"price":       notPaidErr.Price,
+
+			delivered := models.HandlerDefaultResponse{
+				ID: "10",
+				Data: map[string]interface{}{
+					"error": "order_not_fully_paid",
+					"details": map[string]interface{}{
+						"order_id":    notPaidErr.OrderID,
+						"paid_amount": notPaidErr.PaidAmount,
+						"price":       notPaidErr.Price,
+					},
 				},
-			})
+			}
+
+			json.NewEncoder(w).Encode(delivered)
 			return
 		}
 
