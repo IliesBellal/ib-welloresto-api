@@ -319,6 +319,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/", menuH.GetMenu)
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
+		r.Post("/product", menuH.CreateProduct)
+		r.Patch("/product/{product_id}", menuH.UpdateProduct)
+		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
@@ -350,12 +353,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{order_id}", ordersH.GetOrder)
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+
 		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
 		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+
 		r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+
 		r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
-		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
+
+		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {

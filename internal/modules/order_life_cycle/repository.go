@@ -850,6 +850,43 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 		return nil, err
 	}
 
+	// 0.1 Lock order row
+	const qLockOrder = `
+		SELECT price
+		FROM orders
+		WHERE order_id = ?
+		FOR UPDATE
+		`
+
+	var price int64
+	if err := tx.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	const qSumPayments = `
+SELECT COALESCE(SUM(amount), 0)
+FROM payments
+WHERE order_id = ?
+  AND enabled = 1
+`
+
+	var paidAmount int64
+	if err := tx.QueryRowContext(ctx, qSumPayments, orderID).
+		Scan(&paidAmount); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if paidAmount != price {
+		tx.Rollback()
+		return nil, &models.OrderNotFullyPaidError{
+			OrderID:    orderID,
+			PaidAmount: paidAmount,
+			Price:      price,
+		}
+	}
+
 	// 1) Get brand, brand_order_id, fulfillment_type
 	qOrder := `
 	SELECT brand, brand_order_id, merchant_id, fulfillment_type

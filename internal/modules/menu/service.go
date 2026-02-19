@@ -35,7 +35,7 @@ func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string
 	return s.legacy.UpdateProduct(ctx, user.MerchantID, productID, updates)
 }
 
-func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []int) error {
+func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []string) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return err

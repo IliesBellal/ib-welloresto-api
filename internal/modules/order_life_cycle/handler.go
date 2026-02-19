@@ -3,6 +3,7 @@ package order_life_cycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -390,6 +391,22 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 
 	err := h.ordersLifeCycleService.SetDelivered(ctx, token, orderID)
 	if err != nil {
+
+		var notPaidErr *models.OrderNotFullyPaidError
+		if errors.As(err, &notPaidErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "order_not_fully_paid",
+				"details": map[string]interface{}{
+					"order_id":    notPaidErr.OrderID,
+					"paid_amount": notPaidErr.PaidAmount,
+					"price":       notPaidErr.Price,
+				},
+			})
+			return
+		}
+
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

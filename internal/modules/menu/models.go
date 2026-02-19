@@ -198,25 +198,25 @@ type CreateProductPayload struct {
 
 // ProductUpdatePayload correspond aux champs de la table 'products'
 type ProductUpdatePayload struct {
-	Name              *string  `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
-	Description       *string  `json:"product_desc"`
-	BgColor           *string  `json:"bg_color"`
-	Category          *string  `json:"category"`
-	Price             *float64 `json:"price"`
-	PriceTakeAway     *float64 `json:"price_take_away"`
-	PriceDelivery     *float64 `json:"price_delivery"`
-	ByProductOf       *string  `json:"by_product_of"`       // Peut être null
-	IsAvailableOnSno  *int     `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
-	ImageBase64       *string  `json:"base_64"`
-	Enabled           *int     `json:"enabled"`
-	Available         *int     `json:"available"`
-	Status            *string  `json:"status"`
-	AvailableIn       *int     `json:"available_in"`
-	AvailableTakeAway *int     `json:"available_take_away"`
-	AvailableDelivery *int     `json:"available_delivery"`
+	Name              *string `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
+	Description       *string `json:"product_desc"`
+	BgColor           *string `json:"bg_color"`
+	Category          *string `json:"category"`
+	Price             *int    `json:"price"`
+	PriceTakeAway     *int    `json:"price_take_away"`
+	PriceDelivery     *int    `json:"price_delivery"`
+	ByProductOf       *string `json:"by_product_of"`       // Peut être null
+	IsAvailableOnSno  *bool   `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
+	ImageBase64       *string `json:"base_64"`
+	Enabled           *bool   `json:"enabled"`
+	Available         *bool   `json:"available"`
+	Status            *string `json:"status"`
+	AvailableIn       *bool   `json:"available_in"`
+	AvailableTakeAway *bool   `json:"available_take_away"`
+	AvailableDelivery *bool   `json:"available_delivery"`
 }
 
 // ProductAttributesPayload pour la configuration des attributs
 type ProductAttributesPayload struct {
-	Configuration []int `json:"configuration"` // Liste des ID d'attributs
+	Configuration []string `json:"configuration"` // Liste des ID d'attributs
 }
