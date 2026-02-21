@@ -698,6 +698,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
+		log.Error("Cannot open transaction")
 		return nil, err
 	}
 
@@ -705,6 +706,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	if err != nil {
 		tx.Rollback()
+		log.Error("Error validating products availability - " + err.Error())
 		return nil, err
 	}
 	if len(unavailable) > 0 {
@@ -737,8 +739,11 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	// get next order number
 	orderNum, err := r.GetNextOrderNum(ctx, tx, req.MerchantID)
 	if err != nil {
-		tx.Rollback()
-		return nil, err
+		/*
+			tx.Rollback()
+			return nil, err*/
+		log.Error("GetNextOrderNum failure", zap.Error(err))
+		orderNum = "0"
 	}
 	req.Order.OrderNum = &orderNum
 
@@ -769,6 +774,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	orderID, err := r.insertOrderBase(ctx, tx, req)
 	if err != nil {
 		tx.Rollback()
+		log.Error("insertOrderBase failure", zap.Error(err))
 		return nil, err
 	}
 	req.Order.OrderID = &orderID
@@ -776,16 +782,19 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	usedItems, err := r.insertOrderItems(ctx, tx, req)
 	if err != nil {
 		tx.Rollback()
+		log.Error("insertOrderItems failure", zap.Error(err))
 		return nil, err
 	}
 
 	if err := r.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
 		tx.Rollback()
+		log.Error("insertExtrasWithoutsConfigs failure", zap.Error(err))
 		return nil, err
 	}
 
 	if err := r.insertPayments(ctx, tx, req); err != nil {
 		tx.Rollback()
+		log.Error("insertPayments failure", zap.Error(err))
 		return nil, err
 	}
 
@@ -1039,6 +1048,8 @@ func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, tx *sql.
 		if err == sql.ErrNoRows {
 			return "0", false, nil
 		}
+		log := logger.FromContext(ctx)
+		log.Error("GetActiveCashRegisterID query failed", zap.Error(err))
 		return "0", false, err
 	}
 	if !id.Valid {
@@ -1059,6 +1070,8 @@ func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context
 		if err == sql.ErrNoRows {
 			return false, nil
 		}
+		log := logger.FromContext(ctx)
+		log.Error("IsCashRegisterRequiredForOrdering query failed", zap.Error(err))
 		return false, err
 	}
 	// DB may store '1' as string or tinyint -> be permissive
@@ -1068,7 +1081,7 @@ func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context
 	return false, nil
 }
 
-func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]int64, error) {
+func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]string, error) {
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -1109,9 +1122,9 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 	}
 	defer rows.Close()
 
-	var blocked []int64
+	var blocked []string
 	for rows.Next() {
-		var productID int64
+		var productID string
 		if err := rows.Scan(&productID); err != nil {
 			return nil, err
 		}
@@ -1123,7 +1136,9 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric MerchantID (nil if none)
 func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
+	log := logger.FromContext(ctx)
 	if req.Order.Customer == nil {
+		log.Warn("customer is required")
 		return nil, nil
 	}
 
@@ -1157,17 +1172,12 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	custoRepo := customers.NewCustomerRepository(r.db)
 	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
 	if err != nil {
+		log.Error("Failed to create - update customer - " + err.Error())
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
 	}
 	if newIDStr == nil {
 		return nil, nil
 	}
-	/*
-		newIDInt, err := strconv.ParseInt(newIDStr, 10, 64)
-		if err != nil {
-			// return the string wrapped if parse fails
-			return nil, fmt.Errorf("customer id parse error: %w", err)
-		}*/
 	return newIDStr, nil
 }
 
