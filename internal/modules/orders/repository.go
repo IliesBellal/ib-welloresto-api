@@ -1322,7 +1322,51 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	if err != nil {
 		return "no_order_created", err
 	}
+	req.Order.OrderID = helpers.Int64ToStringPtr(lastID)
+
+	err = r.insertOrderComment(ctx, tx, req)
+
+	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
+	}
+
 	return strconv.FormatInt(lastID, 10), nil
+}
+
+// insertOrderCommentinsertOrderItemComment inserts the order items comments
+func (r *OrdersRepository) insertOrderItemComment(ctx context.Context, tx *sql.Tx, item *OrderItemInsert) (err error) {
+
+	if item.Comment == nil {
+		return nil
+	}
+	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO order_comments(order_id, order_item_id, user_id, content, creation_date)
+				    						VALUES (?,?, ?,?,UTC_TIMESTAMP)`,
+		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment,
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// insertOrderComment inserts the orders comments
+func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (err error) {
+
+	if req.Order.Comment == nil {
+		return nil
+	}
+	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO order_comments(order_id, user_id, content, creation_date)
+				    						VALUES (?,?,?,UTC_TIMESTAMP)`,
+		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment,
+	)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // updateOrderBase inserts the orders row and returns orderID and orderNum
@@ -1379,11 +1423,17 @@ func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 			DiscountID: p.DiscountID,
 			Price:      p.Price,
 			DelayID:    p.DelayID,
+			CreatedBy:  *req.Order.CreatedBy,
+		}
+		if p.Comment != nil && p.Comment.Content != "" {
+			item.Comment = &p.Comment.Content
 		}
 		oid, err := r.InsertOrderItem(ctx, tx, item)
+
 		if err != nil {
 			return nil, err
 		}
+
 		used = append(used, models.UsedItem{OrderItemID: strconv.FormatInt(oid, 10), Quantity: p.Quantity})
 	}
 	return used, nil
@@ -1547,13 +1597,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP)
 
 // OrderItemInsert represents an order item insert
 type OrderItemInsert struct {
-	OrderID    string
-	ProductID  string
-	MerchantID string
-	Quantity   int
-	DiscountID *string
-	Price      int
-	DelayID    *string
+	OrderID     string
+	OrderItemID *string
+	ProductID   string
+	MerchantID  string
+	Quantity    int
+	DiscountID  *string
+	Price       int
+	DelayID     *string
+	Comment     *string
+	CreatedBy   string
 }
 
 // InsertOrderItem inserts a single orderitem and returns its id
@@ -1565,6 +1618,16 @@ func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item
 	if err != nil {
 		return 0, err
 	}
+
+	lastID, err := res.LastInsertId()
+	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
+		return 0, nil
+	}
+	item.OrderItemID = helpers.Int64ToStringPtr(lastID)
+
+	r.insertOrderItemComment(ctx, tx, item)
+
 	return res.LastInsertId()
 }
 
