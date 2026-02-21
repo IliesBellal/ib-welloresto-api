@@ -30,16 +30,18 @@ func (h *UsersHandler) GetUserLocation(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.GetUserLocation(ctx, token, userID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "user", "location_error", map[string]string{"error": err.Error()})
 		return
 	}
 
 	if result == nil {
-		http.Error(w, "user not found", 404)
+		w.WriteHeader(404)
+		models.SendJSON(w, "user", "location_error", map[string]string{"error": "user not found"})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "user", "location", result)
 }
 
 func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
@@ -58,20 +60,11 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.UpdatePassword(ctx, token, req.OldPassword, req.NewPassword); err != nil {
-
-		version_check_result := models.HandlerDefaultResponse{
-			ID:   "user.update_password",
-			Data: models.HandlerDefaultResponseModelSet{Status: err.Error()},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(version_check_result)
+		models.SendJSON(w, "user", "update_password_error", map[string]string{"status": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-	})
+	models.SendJSON(w, "user", "update_password", map[string]string{"status": "ok"})
 }
 
 func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request) {
@@ -90,11 +83,10 @@ func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request
 	userID := chi.URLParam(r, "user_id")
 
 	if err := h.svc.UpdateUserSettings(r.Context(), userID, token, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		models.SendJSON(w, "user", "update_settings_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-	})
+	models.SendJSON(w, "user", "update_settings", map[string]string{"status": "success"})
 }

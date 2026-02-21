@@ -2,7 +2,6 @@ package pos
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -28,17 +27,11 @@ func (h *POSHandler) GetPOSStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetPOSStatus(r.Context(), token)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":   10,
-			"data": map[string]string{"error": err.Error()},
-		})
+		models.SendJSON(w, "pos", "get_status_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":   10,
-		"data": map[string]interface{}{"pos_status": resp},
-	})
+	models.SendJSON(w, "pos", "get_status", map[string]interface{}{"pos_status": resp})
 }
 
 func (h *POSHandler) UpdatePOSStatus(w http.ResponseWriter, r *http.Request) {
@@ -56,18 +49,12 @@ func (h *POSHandler) UpdatePOSStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.UpdatePOSStatus(r.Context(), token, body.Status)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":   10,
-			"data": map[string]string{"error": err.Error()},
-		})
+		models.SendJSON(w, "pos", "update_status_error", map[string]string{"error": err.Error()})
 		return
 	}
 
 	// Return same as GET
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":   10,
-		"data": map[string]interface{}{"pos_status": resp},
-	})
+	models.SendJSON(w, "pos", "update_status", map[string]interface{}{"pos_status": resp})
 }
 
 func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) {
@@ -82,20 +69,14 @@ func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) 
 
 	reasons, err := h.service.GetDeletionReasons(ctx, obj)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "get_deletion_reasons_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	search_result := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.DeletionReasonResponse{
-			Status:          "1",
-			DeletionReasons: reasons,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(search_result)
+	models.SendJSON(w, "pos", "get_deletion_reasons", models.DeletionReasonResponse{
+		Status:          "1",
+		DeletionReasons: reasons,
+	})
 }
 
 func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
@@ -115,14 +96,14 @@ func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.ToggleScanNOrder(ctx, token, req.Status)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "toggle_scannorder_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, models.AvailabilityResponse{
+	models.SendJSON(w, "pos", "toggle_scannorder", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
-	}, 200)
+	})
 }
 
 func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Request) {
@@ -142,14 +123,14 @@ func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Req
 
 	updated, err := h.service.ToggleProductionPaidOnly(ctx, token, req.Status)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "toggle_production_paid_only_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, models.AvailabilityResponse{
+	models.SendJSON(w, "pos", "toggle_production_paid_only", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
-	}, 200)
+	})
 }
 
 func (h *POSHandler) GetTVARates(w http.ResponseWriter, r *http.Request) {
@@ -163,11 +144,11 @@ func (h *POSHandler) GetTVARates(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.GetTVARates(ctx, token)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "get_tva_rates_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, updated, 200)
+	models.SendJSON(w, "pos", "get_tva_rates", updated)
 }
 
 func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Request) {
@@ -187,14 +168,14 @@ func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Requ
 
 	updated, err := h.service.ToggleSafetyStock(ctx, token, req.Status)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "toggle_safety_stock_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, models.AvailabilityResponse{
+	models.SendJSON(w, "pos", "toggle_safety_stock", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
-	}, 200)
+	})
 }
 
 func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
@@ -213,19 +194,13 @@ func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.service.GetDeliveryMen(ctx, token)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "pos", "get_delivery_men_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	delivery_men := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.DeliveryMenResponse{
-			Users: users,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivery_men)
+	models.SendJSON(w, "pos", "get_delivery_men", models.DeliveryMenResponse{
+		Users: users,
+	})
 }
 
 func (h *POSHandler) json(w http.ResponseWriter, data interface{}, status int) {
@@ -256,11 +231,12 @@ func (h *POSHandler) CheckTR(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.CheckTR(ctx, token, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "pos", "check_tr_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "pos", "check_tr", resp)
 }
 
 func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Request) {
@@ -278,13 +254,12 @@ func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.service.UpdateMerchantSettings(r.Context(), token, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "pos", "update_merchant_settings_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-	})
+	models.SendJSON(w, "pos", "update_merchant_settings", map[string]string{"status": "ok"})
 }
 
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -298,9 +273,10 @@ func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMerchantSettings(ctx, token)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"-2","error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "pos", "get_settings_error", map[string]string{"status": "-2", "error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "pos", "get_settings", resp)
 }

@@ -50,21 +50,11 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		log.Error("[ERROR] GetMenu error " + err.Error())
 
 		// RETURN CLEAN ERROR TO CLIENT
-		http.Error(
-			w,
-			`{"status":"-2","error":"internal error"}`,
-			http.StatusInternalServerError,
-		)
+		models.SendJSON(w, "menu", "GetMenu_error", map[string]string{"error": "internal error"})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: menu,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "menu", "GetMenu", menu)
 }
 
 func (h *MenuHandler) GetUnitsOfMeasures(w http.ResponseWriter, r *http.Request) {
@@ -78,11 +68,11 @@ func (h *MenuHandler) GetUnitsOfMeasures(w http.ResponseWriter, r *http.Request)
 
 	updated, err := h.service.GetUnitsOfMeasures(ctx, token)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "GetUnitsOfMeasures_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	h.json(w, updated, 200)
+	models.SendJSON(w, "menu", "GetUnitsOfMeasures", updated)
 }
 
 func (h *MenuHandler) GetAttributes(w http.ResponseWriter, r *http.Request) {
@@ -96,11 +86,11 @@ func (h *MenuHandler) GetAttributes(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.GetAttributes(ctx, token)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "GetAttributes_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	h.json(w, updated, 200)
+	models.SendJSON(w, "menu", "GetAttributes", updated)
 }
 
 func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
@@ -118,14 +108,11 @@ func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 	product, err := h.service.CreateProduct(r.Context(), token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "menu", "CreateProduct_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "menu", "CreateProduct", map[string]interface{}{
 		"product": product,
 	})
 }
@@ -145,14 +132,11 @@ func (h *MenuHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 
 	product, err := h.service.GetProduct(r.Context(), token, product_id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "menu", "GetProduct_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "menu", "GetProduct", map[string]interface{}{
 		"product": product,
 	})
 }
@@ -169,20 +153,20 @@ func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Re
 
 	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "SetComponentAvailability_error", map[string]string{"error": err.Error()})
 		return
 	}
 
 	updated, err := h.service.SetComponentAvailability(ctx, token, componentID, req.Status)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "SetComponentAvailability_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	h.json(w, models.AvailabilityResponse{
+	models.SendJSON(w, "menu", "SetComponentAvailability", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
-	}, 200)
+	})
 }
 
 func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Request) {
@@ -197,20 +181,20 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 
 	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "SetProductAvailability_error", map[string]string{"error": err.Error()})
 		return
 	}
 
 	updated, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "menu", "SetProductAvailability_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	h.json(w, models.AvailabilityResponse{
+	models.SendJSON(w, "menu", "SetProductAvailability", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
-	}, 200)
+	})
 }
 
 func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
@@ -238,14 +222,12 @@ func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	err := h.service.UpdateProduct(r.Context(), token, productID, payload)
 	if err != nil {
 		// Tu peux affiner les codes d'erreur selon le type d'erreur retourné
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "menu", "UpdateProduct_error", map[string]string{"error": err.Error()})
 		return
 	}
 
 	// 4. Réponse
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "1", "message": "product updated"})
+	models.SendJSON(w, "menu", "UpdateProduct", map[string]string{"status": "1", "message": "product updated"})
 }
 
 func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Request) {
@@ -269,27 +251,9 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 
 	err := h.service.UpdateProductAttributes(r.Context(), token, productID, payload.Configuration)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "menu", "UpdateProductAttributes_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "1", "message": "attributes updated"})
-}
-
-func (h *MenuHandler) json(w http.ResponseWriter, data interface{}, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-func (h *MenuHandler) errorJSON(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "0",
-		"error":  err.Error(),
-	})
+	models.SendJSON(w, "menu", "UpdateProductAttributes", map[string]string{"status": "1", "message": "attributes updated"})
 }

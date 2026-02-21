@@ -34,11 +34,11 @@ func (h *StocksHandler) GetBarcodeInfo(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.stockSvc.GetBarcodeInfo(ctx, token, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "stocks", "GetBarcodeInfo_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "stocks", "GetBarcodeInfo", resp)
 }
 
 // DELETE /stock/barcode/{code}
@@ -54,11 +54,11 @@ func (h *StocksHandler) DeleteBarcode(w http.ResponseWriter, r *http.Request) {
 
 	err := h.stockSvc.DeleteBarcode(ctx, token, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "stocks", "DeleteBarcode_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "stocks", "DeleteBarcode", map[string]interface{}{
 		"status": "ok",
 	})
 }
@@ -80,11 +80,11 @@ func (h *StocksHandler) CreateBarcode(w http.ResponseWriter, r *http.Request) {
 
 	err := h.stockSvc.CreateBarcode(ctx, token, p.Barcode, p.ComponentID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "stocks", "CreateBarcode_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "stocks", "CreateBarcode", map[string]interface{}{
 		"status": 1,
 	})
 }
@@ -112,12 +112,11 @@ func (h *StocksHandler) AddStockBarcode(w http.ResponseWriter, r *http.Request) 
 	// call service
 	if err := h.stockSvc.AddStockBarcode(ctx, token, payload.Barcode, payload.Specs); err != nil {
 		// h.log.Error("AddStockBarcode failed", zap.Error(err))
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "stocks", "AddStockBarcode_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "1"})
+	models.SendJSON(w, "stocks", "AddStockBarcode", map[string]interface{}{"status": "1"})
 }
 
 func (h *StocksHandler) SetStockLoss(w http.ResponseWriter, r *http.Request) {
@@ -134,11 +133,11 @@ func (h *StocksHandler) SetStockLoss(w http.ResponseWriter, r *http.Request) {
 
 	err := h.stockSvc.SetStockLoss(ctx, token, req)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		models.SendJSON(w, "stocks", "SetStockLoss_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{"status": 1})
+	models.SendJSON(w, "stocks", "SetStockLoss", map[string]any{"status": 1})
 }
 
 func (h *StocksHandler) GetStockProducts(w http.ResponseWriter, r *http.Request) {
@@ -153,9 +152,9 @@ func (h *StocksHandler) GetStockProducts(w http.ResponseWriter, r *http.Request)
 	objectType := r.URL.Query().Get("type")
 	res, err := h.stockSvc.GetStockProducts(ctx, token, objectType)
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		models.SendJSON(w, "stocks", "GetStockProducts_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(res)
+	models.SendJSON(w, "stocks", "GetStockProducts", res)
 }

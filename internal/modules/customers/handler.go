@@ -24,11 +24,12 @@ func (h *CustomersHandler) GetCustomerLoyalty(w http.ResponseWriter, r *http.Req
 
 	result, err := h.svc.GetCustomerLoyalty(ctx, token, customerID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "customers", "get_loyalty_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "customers", "get_loyalty", map[string]interface{}{
 		"status":  "1",
 		"loyalty": result,
 	})
@@ -46,11 +47,12 @@ func (h *CustomersHandler) UpdateLoyaltyProgress(w http.ResponseWriter, r *http.
 
 	result, err := h.svc.UpdateLoyaltyProgress(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "customers", "update_loyalty_progress_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "customers", "update_loyalty_progress", result)
 }
 
 func (h *CustomersHandler) UpdateLoyaltyReward(w http.ResponseWriter, r *http.Request) {
@@ -65,11 +67,12 @@ func (h *CustomersHandler) UpdateLoyaltyReward(w http.ResponseWriter, r *http.Re
 
 	result, err := h.svc.UpdateLoyaltyReward(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "customers", "update_loyalty_reward_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "customers", "update_loyalty_reward", result)
 }
 
 func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Request) {
@@ -80,18 +83,13 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 
 	customers, err := h.svc.SearchCustomers(ctx, token, search_term)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "customers", "search_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID: "customer.search",
-		Data: map[string]interface{}{
-			"status": "success",
-			"result": customers,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "customers", "search", map[string]interface{}{
+		"status": "success",
+		"result": customers,
+	})
 }

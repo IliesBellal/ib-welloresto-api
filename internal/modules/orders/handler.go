@@ -39,19 +39,13 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 
 	orders, err := h.ordersService.GetPendingOrders(ctx, token, app)
 	if err != nil {
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "GetPendingOrders_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.PendingOrdersData{
-			Orders: orders.Orders,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "GetPendingOrders", models.PendingOrdersData{
+		Orders: orders.Orders,
+	})
 }
 
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
@@ -72,20 +66,14 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	order, err := h.ordersService.GetOrder(ctx, token, orderID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "order not found", http.StatusNotFound)
+			models.SendJSON(w, "orders", "GetOrder_error", map[string]string{"error": "order not found"})
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "GetOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: order,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "GetOrder", order)
 }
 
 func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
@@ -104,19 +92,13 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	orders, err := h.ordersService.GetOrders(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "GetOrders_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.PendingOrdersData{
-			Orders: orders,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "GetOrders", models.PendingOrdersData{
+		Orders: orders,
+	})
 }
 
 func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *http.Request) {
@@ -134,11 +116,11 @@ func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *h
 	}
 
 	if err := h.ordersService.UpdateMultipleProductsStatus(ctx, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "UpdateMultipleProductsStatus_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	http.Error(w, `{"status":"ok"}`, http.StatusOK)
+	models.SendJSON(w, "orders", "UpdateMultipleProductsStatus", map[string]string{"status": "ok"})
 }
 
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
@@ -165,19 +147,13 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.ordersService.GetHistory(ctx, token, req)
 
 	if err != nil {
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "GetHistory_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	order_history := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.PendingOrdersData{
-			Orders: orders,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(order_history)
+	models.SendJSON(w, "orders", "GetHistory", models.PendingOrdersData{
+		Orders: orders,
+	})
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
@@ -200,17 +176,11 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	result, err := h.ordersService.PrepareCreateOrder(ctx, token, &req)
 	if err != nil {
 		log.Error("PrepareCreateOrder error : " + err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "CreateOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: result,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "CreateOrder", result)
 }
 
 func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
@@ -233,19 +203,13 @@ func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 	err := h.ordersService.PrepareUpdateOrder(ctx, token, &req)
 	if err != nil {
 		log.Error("PrepareCreateOrder error : " + err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "UpdateOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.HandlerDefaultResponseModelSet{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "UpdateOrder", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
 }
 
 func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
@@ -266,15 +230,9 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.ordersService.GetPricing(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "orders", "GetPricing_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: result,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "orders", "GetPricing", result)
 }

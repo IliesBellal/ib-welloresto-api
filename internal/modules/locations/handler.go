@@ -30,11 +30,12 @@ func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := h.locationsService.GetLocations(r.Context(), token)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "locations", "get_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "locations", "get", resp)
 }
 
 func (h *LocationsHandler) UpdateLocationCoordinates(w http.ResponseWriter, r *http.Request) {
@@ -55,9 +56,10 @@ func (h *LocationsHandler) UpdateLocationCoordinates(w http.ResponseWriter, r *h
 
 	result, err := h.locationsService.UpdateLocationCoordinates(ctx, token, locationID, payload.X, payload.Y)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "locations", "update_coordinates_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "locations", "update_coordinates", result)
 }

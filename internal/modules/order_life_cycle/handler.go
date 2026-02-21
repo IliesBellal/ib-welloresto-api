@@ -47,19 +47,13 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 
 	err := h.ordersLifeCycleService.ReopenClosedOrder(ctx, token, orderID)
 	if err != nil {
-		http.Error(w, "error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "ReopenClosedOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivered := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.HandlerDefaultResponseModelSet{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivered)
+	models.SendJSON(w, "order_life_cycle", "ReopenClosedOrder", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
 }
 
 func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
@@ -85,19 +79,13 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 
 	err := h.ordersLifeCycleService.AddPayment(ctx, token, orderID, &req)
 	if err != nil {
-		http.Error(w, "error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "AddPayment_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivered := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.HandlerDefaultResponseModelSet{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivered)
+	models.SendJSON(w, "order_life_cycle", "AddPayment", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
 }
 
 func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
@@ -111,11 +99,11 @@ func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Requ
 
 	payments, err := h.ordersLifeCycleService.GetPayments(r.Context(), token, orderID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "GetPayments_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	models.SendJSON(w, "order_life_cycle", "GetPayments", map[string]interface{}{
 		"payments": payments,
 	})
 }
@@ -134,19 +122,13 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 
 	err := h.ordersLifeCycleService.DisablePayment(ctx, token, orderID, paymentID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "DeletePayment_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivered := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.HandlerDefaultResponseModelSet{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivered)
+	models.SendJSON(w, "order_life_cycle", "DeletePayment", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
 }
 
 func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r *http.Request) {
@@ -167,11 +149,11 @@ func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r
 
 	resp, err := h.ordersLifeCycleService.SetDistributedProducts(ctx, token, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "SetDistributedProducts_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "order_life_cycle", "SetDistributedProducts", resp)
 }
 
 func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http.Request) {
@@ -191,11 +173,11 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 
 	result, err := h.ordersLifeCycleService.BackToProduction(ctx, token, orderID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "BackToProduction_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "order_life_cycle", "BackToProduction", result)
 }
 
 func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Request) {
@@ -218,17 +200,11 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 
 	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, token, orderID)
 	if err != nil {
-		http.Error(w, `{"status":"-2","error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "AcceptOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	accept_order := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: res,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(accept_order)
+	models.SendJSON(w, "order_life_cycle", "AcceptOrder", res)
 }
 
 func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {
@@ -252,17 +228,11 @@ func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Re
 
 	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), token, orderID, userID)
 	if err != nil {
-		http.Error(w, `{"status":"0","error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "StartDelivery_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivery_start := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivery_start)
+	models.SendJSON(w, "order_life_cycle", "StartDelivery", resp)
 }
 
 func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Request) {
@@ -287,17 +257,11 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "DenyOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	deny_order := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: res,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(deny_order)
+	models.SendJSON(w, "order_life_cycle", "DenyOrder", res)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
@@ -326,19 +290,13 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 	})
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "SetReadyForDistribution_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	ready_for_distribution := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.CashRegisterHistoryResponse{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ready_for_distribution)
+	models.SendJSON(w, "order_life_cycle", "SetReadyForDistribution", models.CashRegisterHistoryResponse{
+		Status: "success",
+	})
 }
 
 func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Request) {
@@ -369,19 +327,13 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 	})
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "DeleteOrder_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delete_order := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.CashRegisterHistoryResponse{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delete_order)
+	models.SendJSON(w, "order_life_cycle", "DeleteOrder", models.CashRegisterHistoryResponse{
+		Status: "success",
+	})
 }
 
 func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Request) {
@@ -394,36 +346,22 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 
 		var notPaidErr *models.OrderNotFullyPaidError
 		if errors.As(err, &notPaidErr) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-
-			delivered := models.HandlerDefaultResponse{
-				ID: "10",
-				Data: map[string]interface{}{
-					"error": "order_not_fully_paid",
-					"details": map[string]interface{}{
-						"order_id":    notPaidErr.OrderID,
-						"paid_amount": notPaidErr.PaidAmount,
-						"price":       notPaidErr.Price,
-					},
+			models.SendJSON(w, "order_life_cycle", "SetDelivered_error", map[string]interface{}{
+				"error": "order_not_fully_paid",
+				"details": map[string]interface{}{
+					"order_id":    notPaidErr.OrderID,
+					"paid_amount": notPaidErr.PaidAmount,
+					"price":       notPaidErr.Price,
 				},
-			}
-
-			json.NewEncoder(w).Encode(delivered)
+			})
 			return
 		}
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "order_life_cycle", "SetDelivered_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivered := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.HandlerDefaultResponseModelSet{
-			Status: "success",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivered)
+	models.SendJSON(w, "order_life_cycle", "SetDelivered", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
 }

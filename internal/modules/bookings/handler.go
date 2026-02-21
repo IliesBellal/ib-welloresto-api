@@ -36,20 +36,14 @@ func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request)
 
 	bookings, err := h.svc.GetBookings(ctx, token, &req)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "bookings", "search_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	search_result := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":   "1",
-			"bookings": bookings,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(search_result)
+	models.SendJSON(w, "bookings", "search", map[string]interface{}{
+		"status":   "1",
+		"bookings": bookings,
+	})
 }
 
 func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
@@ -64,14 +58,14 @@ func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	booking, err := h.svc.GetBookingByID(ctx, token, id)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "bookings", "get_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, map[string]interface{}{
+	models.SendJSON(w, "bookings", "get", map[string]interface{}{
 		"status":  "1",
 		"booking": booking,
-	}, 200)
+	})
 }
 
 func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
@@ -90,20 +84,14 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 
 	booking, err := h.svc.CreateBooking(ctx, token, &req)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "bookings", "create_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	search_result := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":  "1",
-			"booking": booking,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(search_result)
+	models.SendJSON(w, "bookings", "create", map[string]interface{}{
+		"status":  "1",
+		"booking": booking,
+	})
 }
 
 func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) {
@@ -119,11 +107,12 @@ func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) 
 	result, err := h.svc.AcceptBooking(ctx, token, bookingID)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "bookings", "accept_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "bookings", "accept", result)
 }
 
 func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
@@ -139,11 +128,12 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.DenyBooking(ctx, token, bookingID)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "bookings", "deny_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	models.SendJSON(w, "bookings", "deny", result)
 }
 
 func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.Request) {
@@ -158,14 +148,14 @@ func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.
 
 	avail, err := h.svc.GetBookingAvailability(ctx, token, date)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "bookings", "get_availability_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	h.json(w, map[string]interface{}{
+	models.SendJSON(w, "bookings", "get_availability", map[string]interface{}{
 		"status": "1",
 		"data":   avail,
-	}, http.StatusOK)
+	})
 }
 
 func (h *BookingsHandler) json(w http.ResponseWriter, data interface{}, status int) {

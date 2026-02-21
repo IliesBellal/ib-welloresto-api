@@ -30,20 +30,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.svc.Login(r.Context(), req, token)
 	if err != nil {
 		w.WriteHeader(500)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id": 99,
-			"data": map[string]interface{}{
-				"status": "error",
-				"error":  err.Error(),
-			},
-		})
+		errorData := map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		}
+		models.SendJSON(w, "auth", "login_error", errorData)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":   99,
-		"data": resp,
-	})
+	models.SendJSON(w, "auth", "login", resp)
 }
 
 func (h *AuthHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
@@ -72,17 +67,12 @@ func (h *AuthHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.CheckAppVersion(ctx, token, version, appName)
 	if err != nil {
-		http.Error(w, `{"status":"-3","error":"`+err.Error()+`"}`, 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "app", "version_check_error", map[string]string{"status": "-3", "error": err.Error()})
 		return
 	}
 
-	version_check_result := models.HandlerDefaultResponse{
-		ID:   "app.version.check",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(version_check_result)
+	models.SendJSON(w, "app", "version_check", resp)
 }
 
 func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
@@ -101,10 +91,10 @@ func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.SaveDeviceToken(ctx, token, req.DeviceToken, req.DeviceID, req.App)
 	if err != nil {
-		http.Error(w, `{"status":"-3","error":"`+err.Error()+`"}`, 500)
+		w.WriteHeader(500)
+		models.SendJSON(w, "device", "save_token_error", map[string]string{"status": "-3", "error": err.Error()})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "device", "save_token", resp)
 }

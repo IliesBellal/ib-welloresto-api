@@ -38,17 +38,12 @@ func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Re
 
 	open_call, err := h.cashRegisterService.OpenCashRegister(ctx, token, &req)
 	if err != nil {
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "open_error", map[string]string{"error": "internal error: " + err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: open_call,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "cash_register", "open", open_call)
 }
 
 func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.Request) {
@@ -74,17 +69,12 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 
 	resp, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "close_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	current_service := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(current_service)
+	models.SendJSON(w, "cash_register", "close", resp)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {
@@ -104,17 +94,12 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 
 	summary, err := h.cashRegisterService.GetCashRegisterSummary(ctx, token, cashRegisterID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "get_summary_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	resp := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: summary,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, "cash_register", "get_summary", summary)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r *http.Request) {
@@ -134,17 +119,12 @@ func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r
 
 	resp, err := h.cashRegisterService.GetCashRegisterTVADetails(ctx, token, cashRegisterID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "get_tva_details_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	tva_details := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tva_details)
+	models.SendJSON(w, "cash_register", "get_tva_details", resp)
 }
 
 func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Request) {
@@ -156,17 +136,12 @@ func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Reque
 	resp, err := h.cashRegisterService.AddCustomItem(r.Context(), id, &req)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "add_custom_item_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	current_service := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(current_service)
+	models.SendJSON(w, "cash_register", "add_custom_item", resp)
 }
 
 func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Request) {
@@ -176,17 +151,12 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 	resp, err := h.cashRegisterService.DeleteCustomItem(r.Context(), id, itemID)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "delete_custom_item_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delete_item := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delete_item)
+	models.SendJSON(w, "cash_register", "delete_custom_item", resp)
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
@@ -205,17 +175,12 @@ func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http
 	resp, err := h.cashRegisterService.EncloseCashRegister(ctx, id, token, req.Comment)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "cash_register", "enclose_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	enclose_cash_register := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(enclose_cash_register)
+	models.SendJSON(w, "cash_register", "enclose", resp)
 }
 
 func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
@@ -229,20 +194,14 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, token)
 	if err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, "cash_register", "get_history_error", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	enclose_cash_register := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: models.CashRegisterHistoryResponse{
-			Status:        "1",
-			CashRegisters: result,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(enclose_cash_register)
+	models.SendJSON(w, "cash_register", "get_history", models.CashRegisterHistoryResponse{
+		Status:        "1",
+		CashRegisters: result,
+	})
 }
 
 func (h *CashRegisterHandler) json(w http.ResponseWriter, data interface{}, status int) {
@@ -262,13 +221,5 @@ func (h *CashRegisterHandler) errorJSON(w http.ResponseWriter, err error) {
 }
 
 func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Request) {
-	open_cash_drawer := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status": "1",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(open_cash_drawer)
+	models.SendJSON(w, "cash_drawer", "open", map[string]string{"status": "1"})
 }

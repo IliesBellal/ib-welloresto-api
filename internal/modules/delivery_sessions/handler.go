@@ -34,20 +34,14 @@ func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWrit
 
 	sessions, err := h.deliverySessionsService.GetPendingDeliverySessions(ctx, token)
 	if err != nil {
-		http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "delivery_sessions", "GetPendingDeliverySessions_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivery_sessions := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":            "success",
-			"delivery_sessions": sessions,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivery_sessions)
+	models.SendJSON(w, "delivery_sessions", "GetPendingDeliverySessions", map[string]interface{}{
+		"status":            "success",
+		"delivery_sessions": sessions,
+	})
 }
 
 func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -67,36 +61,28 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 
 	resp, err := h.deliverySessionsService.StartDeliverySession(ctx, token, &req)
 
-	start_delivery_session := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":           "success",
-			"delivery_session": resp,
-		},
-	}
 	if err != nil {
-
 		switch {
 		case errors.Is(err, models.ErrInvalidToken):
-			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			models.SendJSON(w, "delivery_sessions", "StartDeliverySession_error", map[string]string{"error": "invalid_token"})
 			return
 
 		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
-			start_delivery_session = models.HandlerDefaultResponse{
-				ID: "10",
-				Data: map[string]interface{}{
-					"status": "delivery_session_already_active",
-				},
-			}
+			models.SendJSON(w, "delivery_sessions", "StartDeliverySession", map[string]interface{}{
+				"status": "delivery_session_already_active",
+			})
+			return
 
 		default:
-			http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
+			models.SendJSON(w, "delivery_sessions", "StartDeliverySession_error", map[string]string{"error": "internal_error"})
 			return
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(start_delivery_session)
+	models.SendJSON(w, "delivery_sessions", "StartDeliverySession", map[string]interface{}{
+		"status":           "success",
+		"delivery_session": resp,
+	})
 }
 
 func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -111,20 +97,14 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 
 	resp, err := h.deliverySessionsService.CancelDeliverySession(ctx, token, id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "delivery_sessions", "CancelDeliverySession_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	cancel_delivery_session := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":           "success",
-			"delivery_session": resp,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cancel_delivery_session)
+	models.SendJSON(w, "delivery_sessions", "CancelDeliverySession", map[string]interface{}{
+		"status":           "success",
+		"delivery_session": resp,
+	})
 }
 
 func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -139,20 +119,14 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 
 	resp, err := h.deliverySessionsService.CloseDeliverySession(ctx, token, id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "delivery_sessions", "CloseDeliverySession_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	close_delivery_session := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":           "success",
-			"delivery_session": resp,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(close_delivery_session)
+	models.SendJSON(w, "delivery_sessions", "CloseDeliverySession", map[string]interface{}{
+		"status":           "success",
+		"delivery_session": resp,
+	})
 }
 
 func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *http.Request) {
@@ -167,18 +141,12 @@ func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *h
 
 	resp, err := h.deliverySessionsService.GetDeliverySession(ctx, token, id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendJSON(w, "delivery_sessions", "GetDeliverySession_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	delivery_session := models.HandlerDefaultResponse{
-		ID: "10",
-		Data: map[string]interface{}{
-			"status":           "success",
-			"delivery_session": resp,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(delivery_session)
+	models.SendJSON(w, "delivery_sessions", "GetDeliverySession", map[string]interface{}{
+		"status":           "success",
+		"delivery_session": resp,
+	})
 }

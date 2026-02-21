@@ -1,7 +1,6 @@
 package user_services
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -33,15 +32,10 @@ func (h *ServicesHandler) GetCurrentService(w http.ResponseWriter, r *http.Reque
 
 	resp, err := h.servicesService.GetCurrentService(r.Context(), token, deviceID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		models.SendJSON(w, "services", "get_current_error", map[string]string{"error": err.Error()})
 		return
 	}
 
-	current_service := models.HandlerDefaultResponse{
-		ID:   "10",
-		Data: resp,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(current_service)
+	models.SendJSON(w, "services", "get_current", resp)
 }
