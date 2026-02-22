@@ -21,23 +21,23 @@ func NewPOSHandler(s *POSService) *POSHandler {
 func (h *POSHandler) GetPOSStatus(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_pos_status", map[string]string{"error": "missing_token"})
 		return
 	}
 
 	resp, err := h.service.GetPOSStatus(r.Context(), token)
 	if err != nil {
-		models.SendJSON(w, "pos", "get_status_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_status", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "get_status", map[string]interface{}{"pos_status": resp})
+	models.SendJSON(w, http.StatusOK, "pos", "get_status", map[string]interface{}{"pos_status": resp})
 }
 
 func (h *POSHandler) UpdatePOSStatus(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "update_pos_status", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -49,18 +49,18 @@ func (h *POSHandler) UpdatePOSStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.UpdatePOSStatus(r.Context(), token, body.Status)
 	if err != nil {
-		models.SendJSON(w, "pos", "update_status_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "update_status", map[string]string{"error": err.Error()})
 		return
 	}
 
 	// Return same as GET
-	models.SendJSON(w, "pos", "update_status", map[string]interface{}{"pos_status": resp})
+	models.SendJSON(w, http.StatusOK, "pos", "update_status", map[string]interface{}{"pos_status": resp})
 }
 
 func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_deletion_reasons", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -69,11 +69,11 @@ func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) 
 
 	reasons, err := h.service.GetDeletionReasons(ctx, obj)
 	if err != nil {
-		models.SendJSON(w, "pos", "get_deletion_reasons_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_deletion_reasons", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "get_deletion_reasons", models.DeletionReasonResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "get_deletion_reasons", models.DeletionReasonResponse{
 		Status:          "1",
 		DeletionReasons: reasons,
 	})
@@ -82,7 +82,7 @@ func (h *POSHandler) GetDeletionReasons(w http.ResponseWriter, r *http.Request) 
 func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "toggle_scannorder", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -90,17 +90,17 @@ func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
 	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, http.StatusBadRequest, "pos", "toggle_scannorder", map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	updated, err := h.service.ToggleScanNOrder(ctx, token, req.Status)
 	if err != nil {
-		models.SendJSON(w, "pos", "toggle_scannorder_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "toggle_scannorder", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "toggle_scannorder", models.AvailabilityResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "toggle_scannorder", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
 	})
@@ -109,7 +109,7 @@ func (h *POSHandler) ToggleScanNOrder(w http.ResponseWriter, r *http.Request) {
 func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "toggle_production_paid_only", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -117,17 +117,17 @@ func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Req
 	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, http.StatusBadRequest, "pos", "toggle_production_paid_only", map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	updated, err := h.service.ToggleProductionPaidOnly(ctx, token, req.Status)
 	if err != nil {
-		models.SendJSON(w, "pos", "toggle_production_paid_only_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "toggle_production_paid_only", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "toggle_production_paid_only", models.AvailabilityResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "toggle_production_paid_only", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
 	})
@@ -136,7 +136,7 @@ func (h *POSHandler) ToggleProductionPaidOnly(w http.ResponseWriter, r *http.Req
 func (h *POSHandler) GetTVARates(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_tva_rates", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -144,17 +144,17 @@ func (h *POSHandler) GetTVARates(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.GetTVARates(ctx, token)
 	if err != nil {
-		models.SendJSON(w, "pos", "get_tva_rates_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_tva_rates", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "get_tva_rates", updated)
+	models.SendJSON(w, http.StatusOK, "pos", "get_tva_rates", updated)
 }
 
 func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "toggle_safety_stock", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -162,17 +162,17 @@ func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Requ
 	var req models.StatusRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, http.StatusBadRequest, "pos", "toggle_safety_stock", map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	updated, err := h.service.ToggleSafetyStock(ctx, token, req.Status)
 	if err != nil {
-		models.SendJSON(w, "pos", "toggle_safety_stock_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "toggle_safety_stock", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "toggle_safety_stock", models.AvailabilityResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "toggle_safety_stock", models.AvailabilityResponse{
 		Status:  "1",
 		Updated: updated,
 	})
@@ -181,12 +181,7 @@ func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Requ
 func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_delivery_men", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -194,35 +189,19 @@ func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.service.GetDeliveryMen(ctx, token)
 	if err != nil {
-		models.SendJSON(w, "pos", "get_delivery_men_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_delivery_men", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "get_delivery_men", models.DeliveryMenResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "get_delivery_men", models.DeliveryMenResponse{
 		Users: users,
-	})
-}
-
-func (h *POSHandler) json(w http.ResponseWriter, data interface{}, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-func (h *POSHandler) errorJSON(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "0",
-		"error":  err.Error(),
 	})
 }
 
 func (h *POSHandler) CheckTR(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "check_tr", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -231,41 +210,39 @@ func (h *POSHandler) CheckTR(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.CheckTR(ctx, token, code)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "pos", "check_tr_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "check_tr", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "check_tr", resp)
+	models.SendJSON(w, http.StatusOK, "pos", "check_tr", resp)
 }
 
 func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "update_merchant_settings", map[string]string{"error": "missing_token"})
 		return
 	}
 
 	var req models.UpdateMerchantSettingsRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.errorJSON(w, err)
+		models.SendJSON(w, http.StatusBadRequest, "pos", "update_merchant_settings", map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	if err := h.service.UpdateMerchantSettings(r.Context(), token, &req); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "pos", "update_merchant_settings_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "update_merchant_settings", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "update_merchant_settings", map[string]string{"status": "ok"})
+	models.SendJSON(w, http.StatusOK, "pos", "update_merchant_settings", map[string]string{"status": "ok"})
 }
 
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_settings", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -273,10 +250,9 @@ func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMerchantSettings(ctx, token)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "pos", "get_settings_error", map[string]string{"status": "-2", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_settings", map[string]string{"status": "-2", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "pos", "get_settings", resp)
+	models.SendJSON(w, http.StatusOK, "pos", "get_settings", resp)
 }

@@ -26,7 +26,7 @@ func NewDeliverySessionsHandler(deliverySessionsService *DeliverySessionsService
 func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "pending", map[string]string{"error": "invalid_token"})
 		return
 	}
 
@@ -34,11 +34,11 @@ func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWrit
 
 	sessions, err := h.deliverySessionsService.GetPendingDeliverySessions(ctx, token)
 	if err != nil {
-		models.SendJSON(w, "delivery_sessions", "GetPendingDeliverySessions_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "delivery_sessions", "pending", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "delivery_sessions", "GetPendingDeliverySessions", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "delivery_sessions", "pending", map[string]interface{}{
 		"status":            "success",
 		"delivery_sessions": sessions,
 	})
@@ -47,7 +47,7 @@ func (h *DeliverySessionsHandler) GetPendingDeliverySessions(w http.ResponseWrit
 func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "start", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -55,7 +55,7 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 
 	var req models.DeliverySessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "delivery_sessions", "start", map[string]string{"error": "invalid_body"})
 		return
 	}
 
@@ -64,22 +64,22 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 	if err != nil {
 		switch {
 		case errors.Is(err, models.ErrInvalidToken):
-			models.SendJSON(w, "delivery_sessions", "StartDeliverySession_error", map[string]string{"error": "invalid_token"})
+			models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "start", map[string]string{"error": "invalid_token"})
 			return
 
 		case errors.Is(err, models.ErrDeliverySessionAlreadyActive):
-			models.SendJSON(w, "delivery_sessions", "StartDeliverySession", map[string]interface{}{
+			models.SendJSON(w, http.StatusOK, "delivery_sessions", "start", map[string]interface{}{
 				"status": "delivery_session_already_active",
 			})
 			return
 
 		default:
-			models.SendJSON(w, "delivery_sessions", "StartDeliverySession_error", map[string]string{"error": "internal_error"})
+			models.SendJSON(w, http.StatusInternalServerError, "delivery_sessions", "start", map[string]string{"error": "internal_error"})
 			return
 		}
 	}
 
-	models.SendJSON(w, "delivery_sessions", "StartDeliverySession", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "delivery_sessions", "start", map[string]interface{}{
 		"status":           "success",
 		"delivery_session": resp,
 	})
@@ -88,7 +88,7 @@ func (h *DeliverySessionsHandler) StartDeliverySession(w http.ResponseWriter, r 
 func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "cancel", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -97,11 +97,11 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 
 	resp, err := h.deliverySessionsService.CancelDeliverySession(ctx, token, id)
 	if err != nil {
-		models.SendJSON(w, "delivery_sessions", "CancelDeliverySession_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "delivery_sessions", "cancel", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "delivery_sessions", "CancelDeliverySession", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "delivery_sessions", "cancel", map[string]interface{}{
 		"status":           "success",
 		"delivery_session": resp,
 	})
@@ -110,7 +110,7 @@ func (h *DeliverySessionsHandler) CancelDeliverySession(w http.ResponseWriter, r
 func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "close", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -119,11 +119,11 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 
 	resp, err := h.deliverySessionsService.CloseDeliverySession(ctx, token, id)
 	if err != nil {
-		models.SendJSON(w, "delivery_sessions", "CloseDeliverySession_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "delivery_sessions", "close", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "delivery_sessions", "CloseDeliverySession", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "delivery_sessions", "close", map[string]interface{}{
 		"status":           "success",
 		"delivery_session": resp,
 	})
@@ -132,7 +132,7 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "delivery_sessions", "get", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -141,11 +141,11 @@ func (h *DeliverySessionsHandler) GetDeliverySession(w http.ResponseWriter, r *h
 
 	resp, err := h.deliverySessionsService.GetDeliverySession(ctx, token, id)
 	if err != nil {
-		models.SendJSON(w, "delivery_sessions", "GetDeliverySession_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "delivery_sessions", "get", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "delivery_sessions", "GetDeliverySession", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "delivery_sessions", "get", map[string]interface{}{
 		"status":           "success",
 		"delivery_session": resp,
 	})

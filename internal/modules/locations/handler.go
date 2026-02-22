@@ -24,24 +24,23 @@ func NewLocationsHandler(locationsService *LocationsService) *LocationsHandler {
 func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "locations", "get", map[string]string{"error": "missing_token"})
 		return
 	}
 
 	resp, err := h.locationsService.GetLocations(r.Context(), token)
 	if err != nil {
-		w.WriteHeader(500)
-		models.SendJSON(w, "locations", "get_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "locations", "get", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "locations", "get", resp)
+	models.SendJSON(w, http.StatusOK, "locations", "get", resp)
 }
 
 func (h *LocationsHandler) UpdateLocationCoordinates(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "locations", "update_coordinates", map[string]string{"error": "missing_token"})
 		return
 	}
 	ctx := r.Context()
@@ -50,16 +49,15 @@ func (h *LocationsHandler) UpdateLocationCoordinates(w http.ResponseWriter, r *h
 
 	var payload models.UpdateLocationCoordinatesRequest
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "invalid payload", 400)
+		models.SendJSON(w, http.StatusBadRequest, "locations", "update_coordinates", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	result, err := h.locationsService.UpdateLocationCoordinates(ctx, token, locationID, payload.X, payload.Y)
 	if err != nil {
-		w.WriteHeader(500)
-		models.SendJSON(w, "locations", "update_coordinates_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "locations", "update_coordinates", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "locations", "update_coordinates", result)
+	models.SendJSON(w, http.StatusOK, "locations", "update_coordinates", result)
 }

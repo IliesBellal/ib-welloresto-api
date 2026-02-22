@@ -27,14 +27,17 @@ type HandlerDefaultResponseModelSet struct {
 // SendJSON envoie une réponse JSON standardisée avec la structure HandlerDefaultResponse
 // Params:
 //   - w: http.ResponseWriter
-//   - module: nom du module (ex: "auth", "users", "pos")
-//   - fnName: nom de la fonction handler (ex: "login", "get_profile")
+//   - statusCode: Code HTTP (ex: http.StatusOK, http.StatusUnauthorized)
+//   - module: nom du module (ex: "auth")
+//   - fnName: nom de la fonction handler (ex: "login")
 //   - data: données à retourner (peut être nil)
-func SendJSON(w http.ResponseWriter, module string, fnName string, data interface{}) {
+func SendJSON(w http.ResponseWriter, statusCode int, module string, fnName string, data interface{}) {
 	result := HandlerDefaultResponse{
 		ID:   module + "." + fnName,
 		Data: data,
 	}
+
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode) // Très important : doit être appelé APRÈS le header mais AVANT l'encode
 	json.NewEncoder(w).Encode(result)
 }

@@ -20,22 +20,21 @@ func NewServicesHandler(s *ServicesService) *ServicesHandler {
 func (h *ServicesHandler) GetCurrentService(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
+		models.SendJSON(w, http.StatusUnauthorized, "services", "get_current", map[string]string{"error": "missing_token"})
 		return
 	}
 
 	deviceID := chi.URLParam(r, "device_id")
 	if deviceID == "" {
-		http.Error(w, "missing device_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "services", "get_current", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	resp, err := h.servicesService.GetCurrentService(r.Context(), token, deviceID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "services", "get_current_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "services", "get_current", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "services", "get_current", resp)
+	models.SendJSON(w, http.StatusOK, "services", "get_current", resp)
 }

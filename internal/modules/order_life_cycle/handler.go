@@ -41,17 +41,17 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, "missing order_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "reopen_closed_order", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	err := h.ordersLifeCycleService.ReopenClosedOrder(ctx, token, orderID)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "ReopenClosedOrder_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "reopen_closed_order", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "ReopenClosedOrder", models.HandlerDefaultResponseModelSet{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "reopen_closed_order", models.HandlerDefaultResponseModelSet{
 		Status: "success",
 	})
 }
@@ -67,23 +67,23 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, "missing order_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "add_payment", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	var req models.PaymentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "add_payment", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	err := h.ordersLifeCycleService.AddPayment(ctx, token, orderID, &req)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "AddPayment_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "add_payment", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "AddPayment", models.HandlerDefaultResponseModelSet{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "add_payment", models.HandlerDefaultResponseModelSet{
 		Status: "success",
 	})
 }
@@ -99,11 +99,11 @@ func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Requ
 
 	payments, err := h.ordersLifeCycleService.GetPayments(r.Context(), token, orderID)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "GetPayments_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "get_payments", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "GetPayments", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "get_payments", map[string]interface{}{
 		"payments": payments,
 	})
 }
@@ -122,11 +122,11 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 
 	err := h.ordersLifeCycleService.DisablePayment(ctx, token, orderID, paymentID)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "DeletePayment_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "delete_payment", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "DeletePayment", models.HandlerDefaultResponseModelSet{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "delete_payment", models.HandlerDefaultResponseModelSet{
 		Status: "success",
 	})
 }
@@ -149,11 +149,11 @@ func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r
 
 	resp, err := h.ordersLifeCycleService.SetDistributedProducts(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "SetDistributedProducts_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_distributed_products", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "SetDistributedProducts", resp)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "set_distributed_products", resp)
 }
 
 func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http.Request) {
@@ -167,17 +167,17 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 
 	var req models.SetDistributedProductsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "back_to_production", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	result, err := h.ordersLifeCycleService.BackToProduction(ctx, token, orderID, &req)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "BackToProduction_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "back_to_production", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "BackToProduction", result)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "back_to_production", result)
 }
 
 func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,7 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, `{"status":"-1","error":"missing order_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "accept_order", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
@@ -200,11 +200,11 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 
 	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, token, orderID)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "AcceptOrder_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "accept_order", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "AcceptOrder", res)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "accept_order", res)
 }
 
 func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {
@@ -216,23 +216,23 @@ func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Re
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, `{"status":"-1","error":"missing order_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "start_delivery", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	userID := r.URL.Query().Get("user_id") // nécessaire, identique au PHP
 	if userID == "" {
-		http.Error(w, `{"status":"-1","error":"missing user_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "start_delivery", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), token, orderID, userID)
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "StartDelivery_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "start_delivery", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "StartDelivery", resp)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "start_delivery", resp)
 }
 
 func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Request) {
@@ -244,24 +244,24 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "deny_order", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	var req models.DenyOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "deny_order", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
 
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "DenyOrder_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "deny_order", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "DenyOrder", res)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "deny_order", res)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
@@ -273,13 +273,13 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "set_ready_for_distribution", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	var req models.ReadyForDistributionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "set_ready_for_distribution", map[string]string{"error": "invalid_body"})
 		return
 	}
 
@@ -290,11 +290,11 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 	})
 
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "SetReadyForDistribution_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_ready_for_distribution", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "SetReadyForDistribution", models.CashRegisterHistoryResponse{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "set_ready_for_distribution", models.CashRegisterHistoryResponse{
 		Status: "success",
 	})
 }
@@ -308,13 +308,13 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
-		http.Error(w, `{"status":"-1","error":"invalid order_id"}`, http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "delete_order", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	var req models.DenyOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "delete_order", map[string]string{"error": "invalid_body"})
 		return
 	}
 
@@ -327,11 +327,11 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 	})
 
 	if err != nil {
-		models.SendJSON(w, "order_life_cycle", "DeleteOrder_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "delete_order", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "DeleteOrder", models.CashRegisterHistoryResponse{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "delete_order", models.CashRegisterHistoryResponse{
 		Status: "success",
 	})
 }
@@ -346,7 +346,7 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 
 		var notPaidErr *models.OrderNotFullyPaidError
 		if errors.As(err, &notPaidErr) {
-			models.SendJSON(w, "order_life_cycle", "SetDelivered_error", map[string]interface{}{
+			models.SendJSON(w, http.StatusNotAcceptable, "order_life_cycle", "set_delivered", map[string]interface{}{
 				"error": "order_not_fully_paid",
 				"details": map[string]interface{}{
 					"order_id":    notPaidErr.OrderID,
@@ -357,11 +357,11 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		models.SendJSON(w, "order_life_cycle", "SetDelivered_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_delivered", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "order_life_cycle", "SetDelivered", models.HandlerDefaultResponseModelSet{
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "set_delivered", models.HandlerDefaultResponseModelSet{
 		Status: "success",
 	})
 }

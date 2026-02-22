@@ -23,16 +23,15 @@ func (h *Handler) GetMerchant(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(ctx)
 
 	qr := chi.URLParam(r, "qr_code")
-	log.Info("ScannOrder.GetMerchant called - " + "qr_code: " + qr)
 
 	merchantData, err := h.service.GetMerchant(ctx, qr)
 	if err != nil {
 		log.Error("service error" + err.Error())
-		models.SendJSON(w, "scannorder", "GetMerchant_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_merchant", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "GetMerchant", merchantData)
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_merchant", merchantData)
 }
 
 func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
@@ -47,11 +46,11 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.service.GetMenu(ctx, qr, deliveryType)
 	if err != nil {
 		log.Error("GetMenu error " + err.Error())
-		models.SendJSON(w, "scannorder", "GetMenu_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_menu", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "GetMenu", resp)
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_menu", resp)
 }
 
 func (h *Handler) GetPricingSNO(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +59,7 @@ func (h *Handler) GetPricingSNO(w http.ResponseWriter, r *http.Request) {
 
 	var req models.PricingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "scannorder", "get_pricing_sno", map[string]string{"error": "invalid_body"})
 		return
 	}
 
@@ -69,11 +68,11 @@ func (h *Handler) GetPricingSNO(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.service.GetPricingSNO(ctx, &req)
 	if err != nil {
 		log.Error("SNO pricing failed", zap.Error(err))
-		models.SendJSON(w, "scannorder", "GetPricingSNO_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_pricing_sno", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "GetPricingSNO", resp)
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_pricing_sno", resp)
 }
 
 func (h *Handler) GetOrderSNO(w http.ResponseWriter, r *http.Request) {
@@ -86,11 +85,11 @@ func (h *Handler) GetOrderSNO(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.service.GetOrderSNO(ctx, qrCode, orderIDStr)
 	if err != nil {
 		log.Error("GetOrderSNO failed", zap.Error(err))
-		models.SendJSON(w, "scannorder", "GetOrderSNO_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_order_sno", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "GetOrderSNO", orders)
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_order_sno", orders)
 }
 
 func (h *Handler) CancelOrderSNO(w http.ResponseWriter, r *http.Request) {
@@ -103,17 +102,17 @@ func (h *Handler) CancelOrderSNO(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.service.CancelOrderSNO(ctx, qr, orderIDStr)
 	if err != nil {
 		log.Error("CancelOrderSNO failed", zap.Error(err))
-		models.SendJSON(w, "scannorder", "CancelOrderSNO_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "cancel_order_sno", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "CancelOrderSNO", resp)
+	models.SendJSON(w, http.StatusOK, "scannorder", "cancel_order_sno", resp)
 }
 
 func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 	var req models.PricingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), 400)
+		models.SendJSON(w, http.StatusBadRequest, "scannorder", "create_order_sno", map[string]string{"error": "invalid_body"})
 		return
 	}
 
@@ -122,9 +121,9 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 
 	create_order, err := h.service.CreateOrderSNO(r.Context(), &req)
 	if err != nil {
-		models.SendJSON(w, "scannorder", "CreateOrderSNO_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "create_order_sno", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "scannorder", "CreateOrderSNO", create_order)
+	models.SendJSON(w, http.StatusOK, "scannorder", "create_order_sno", create_order)
 }

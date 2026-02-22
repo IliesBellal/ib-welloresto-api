@@ -33,6 +33,9 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 	if user == nil {
 		return nil, errors.New("invalid token")
 	}
+	if !user.ManageDelivery {
+		return nil, errors.New("user not authorized to manage delivery sessions")
+	}
 	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }
 

@@ -24,7 +24,7 @@ func NewCashRegisterHandler(cashRegisterService *CashRegisterService) *CashRegis
 func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "open", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -32,24 +32,23 @@ func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Re
 
 	var req models.OpenCashRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "open", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	open_call, err := h.cashRegisterService.OpenCashRegister(ctx, token, &req)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "open_error", map[string]string{"error": "internal error: " + err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "open", map[string]string{"error": "internal error: " + err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "open", open_call)
+	models.SendJSON(w, http.StatusOK, "cash_register", "open", open_call)
 }
 
 func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "close", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -57,30 +56,29 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
-		http.Error(w, "missing cash_register_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "close", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	var req models.CloseCashRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "close", map[string]string{"error": "invalid_body"})
 		return
 	}
 
 	resp, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "close_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "close", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "close", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "close", resp)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_summary", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -88,24 +86,23 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
-		http.Error(w, "missing cash_register_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_summary", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	summary, err := h.cashRegisterService.GetCashRegisterSummary(ctx, token, cashRegisterID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "get_summary_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_summary", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "get_summary", summary)
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_summary", summary)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_tva_details", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -113,21 +110,26 @@ func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
-		http.Error(w, "missing cash_register_id", http.StatusBadRequest)
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_tva_details", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
 	resp, err := h.cashRegisterService.GetCashRegisterTVADetails(ctx, token, cashRegisterID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "get_tva_details_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_tva_details", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "get_tva_details", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_tva_details", resp)
 }
 
 func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "add_custom_item", map[string]string{"error": "missing_token"})
+		return
+	}
+
 	id := chi.URLParam(r, "cash_register_id")
 
 	var req models.AddCustomItemRequest
@@ -136,33 +138,37 @@ func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Reque
 	resp, err := h.cashRegisterService.AddCustomItem(r.Context(), id, &req)
 
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "add_custom_item_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "add_custom_item", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "add_custom_item", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "add_custom_item", resp)
 }
 
 func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "delete_custom_item", map[string]string{"error": "missing_token"})
+		return
+	}
+
 	id := chi.URLParam(r, "cash_register_id")
 	itemID := chi.URLParam(r, "item_id")
 
 	resp, err := h.cashRegisterService.DeleteCustomItem(r.Context(), id, itemID)
 
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "delete_custom_item_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "delete_custom_item", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "delete_custom_item", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "delete_custom_item", resp)
 }
 
 func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "enclose", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -175,18 +181,17 @@ func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http
 	resp, err := h.cashRegisterService.EncloseCashRegister(ctx, id, token, req.Comment)
 
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		models.SendJSON(w, "cash_register", "enclose_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "enclose", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "enclose", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "enclose", resp)
 }
 
 func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, 401)
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_history", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -194,11 +199,11 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, token)
 	if err != nil {
-		models.SendJSON(w, "cash_register", "get_history_error", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_history", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, "cash_register", "get_history", models.CashRegisterHistoryResponse{
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_history", models.CashRegisterHistoryResponse{
 		Status:        "1",
 		CashRegisters: result,
 	})
@@ -221,5 +226,11 @@ func (h *CashRegisterHandler) errorJSON(w http.ResponseWriter, err error) {
 }
 
 func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Request) {
-	models.SendJSON(w, "cash_drawer", "open", map[string]string{"status": "1"})
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "cash_drawer", "open", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cash_drawer", "open", map[string]string{"status": "1"})
 }
