@@ -3,7 +3,6 @@ package menu
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -28,7 +27,7 @@ func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	// On passe le MerchantID pour s'assurer qu'on ne modifie pas le produit d'un autre
@@ -41,7 +40,7 @@ func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, produc
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.legacy.UpdateProductAttributes(ctx, user.MerchantID, productID, attributeIDs)
@@ -53,7 +52,7 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
@@ -69,7 +68,7 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
@@ -87,7 +86,7 @@ func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) 
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.legacy.GetProduct(ctx, user.MerchantID, product_id)
@@ -99,7 +98,7 @@ func (s *MenuService) GetUnitsOfMeasures(ctx context.Context, token string) (int
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.legacy.GetUnitsOfMeasures(ctx, user.MerchantID)
@@ -111,7 +110,7 @@ func (s *MenuService) GetAttributes(ctx context.Context, token string) (interfac
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.legacy.GetAttributes(ctx, user.MerchantID)
@@ -123,7 +122,7 @@ func (s *MenuService) SetComponentAvailability(ctx context.Context, token, cid, 
 		return 0, err
 	}
 	if user == nil {
-		return 0, errors.New("invalid token")
+		return 0, models.ErrUnauthorized
 	}
 
 	return s.legacy.SetComponentAvailability(ctx, user.MerchantID, cid, status)
@@ -135,20 +134,13 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 		return 0, err
 	}
 	if user == nil {
-		return 0, errors.New("invalid token")
+		return 0, models.ErrUnauthorized
 	}
 
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
 }
 
-func (s *MenuService) CreateProductFromExternal(
-	ctx context.Context,
-	merchantID string,
-	title string,
-	description string,
-	amount int,
-) (*string, error) {
-
+func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int) (*string, error) {
 	tx, err := s.legacy.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, err
@@ -161,14 +153,7 @@ func (s *MenuService) CreateProductFromExternal(
 		}
 	}()
 
-	productID, err := s.legacy.CreateExternalProductTx(
-		ctx,
-		tx,
-		merchantID,
-		title,
-		description,
-		amount,
-	)
+	productID, err := s.legacy.CreateExternalProductTx(ctx, tx, merchantID, title, description, amount)
 	if err != nil {
 		return nil, err
 	}

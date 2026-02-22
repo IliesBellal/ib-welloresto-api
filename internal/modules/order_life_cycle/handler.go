@@ -47,7 +47,7 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 
 	err := h.ordersLifeCycleService.ReopenClosedOrder(ctx, token, orderID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "reopen_closed_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "reopen_closed_order", err)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 
 	err := h.ordersLifeCycleService.AddPayment(ctx, token, orderID, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "add_payment", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "add_payment", err)
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Requ
 
 	payments, err := h.ordersLifeCycleService.GetPayments(r.Context(), token, orderID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "get_payments", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "get_payments", err)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 
 	err := h.ordersLifeCycleService.DisablePayment(ctx, token, orderID, paymentID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "delete_payment", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "delete_payment", err)
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r
 
 	resp, err := h.ordersLifeCycleService.SetDistributedProducts(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_distributed_products", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "set_distributed_products", err)
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 
 	result, err := h.ordersLifeCycleService.BackToProduction(ctx, token, orderID, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "back_to_production", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "back_to_production", err)
 		return
 	}
 
@@ -200,7 +200,7 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 
 	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, token, orderID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "accept_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "accept_order", err)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Re
 
 	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), token, orderID, userID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "start_delivery", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "start_delivery", err)
 		return
 	}
 
@@ -257,7 +257,7 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "deny_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "deny_order", err)
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 	})
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_ready_for_distribution", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "set_ready_for_distribution", err)
 		return
 	}
 
@@ -327,7 +327,7 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 	})
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "delete_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "delete_order", err)
 		return
 	}
 
@@ -357,7 +357,7 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		models.SendJSON(w, http.StatusInternalServerError, "order_life_cycle", "set_delivered", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "order_life_cycle", "set_delivered", err)
 		return
 	}
 

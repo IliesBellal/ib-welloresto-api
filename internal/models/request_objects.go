@@ -482,7 +482,6 @@ type ScannorderSettings struct {
 	InfoPopupTitle         *string `json:"info_popup_title,omitempty"`
 	InfoPopupContent       *string `json:"info_popup_content,omitempty"`
 	InfoPopupButtonContent *string `json:"info_popup_button_content,omitempty"`
-	ProductBGColor         *string `json:"product_bg_color,omitempty"`
 	NavBGColor             *string `json:"nav_bg_color,omitempty"`
 	BGColor                *string `json:"bg_color,omitempty"`
 	ProductCategBGColor    *string `json:"product_categ_bg_color,omitempty"`
@@ -581,7 +580,6 @@ type MerchantSettings struct {
 	LogoURL        *string  `json:"logo_url,omitempty"`
 	HandicapAccess *bool    `json:"handicap_access,omitempty"`
 	SIRET          *string  `json:"SIRET,omitempty"`
-	Website        *string  `json:"web_site,omitempty"`
 	Email          *string  `json:"email,omitempty"`
 	Phone          *string  `json:"phone,omitempty"`
 	MerchantTel    *string  `json:"merchant_tel,omitempty"`

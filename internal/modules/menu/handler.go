@@ -50,7 +50,7 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		log.Error("[ERROR] GetMenu error " + err.Error())
 
 		// RETURN CLEAN ERROR TO CLIENT
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "get", map[string]string{"error": "internal error"})
+		models.SendErrorJSON(w, "menu", "get", err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *MenuHandler) GetUnitsOfMeasures(w http.ResponseWriter, r *http.Request)
 
 	updated, err := h.service.GetUnitsOfMeasures(ctx, token)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "get_units_of_measures", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "get_units_of_measures", err)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *MenuHandler) GetAttributes(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.GetAttributes(ctx, token)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "get_attributes", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "get_attributes", err)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 	product, err := h.service.CreateProduct(r.Context(), token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "create_product", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "create_product", err)
 		return
 	}
 
@@ -132,7 +132,7 @@ func (h *MenuHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 
 	product, err := h.service.GetProduct(r.Context(), token, product_id)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "get_product", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "get_product", err)
 		return
 	}
 
@@ -159,7 +159,7 @@ func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Re
 
 	updated, err := h.service.SetComponentAvailability(ctx, token, componentID, req.Status)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "set_component_availability", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "set_component_availability", err)
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 
 	updated, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "set_product_availability", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "set_product_availability", err)
 		return
 	}
 
@@ -222,7 +222,7 @@ func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	err := h.service.UpdateProduct(r.Context(), token, productID, payload)
 	if err != nil {
 		// Tu peux affiner les codes d'erreur selon le type d'erreur retourné
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "update_product", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "update_product", err)
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 
 	err := h.service.UpdateProductAttributes(r.Context(), token, productID, payload.Configuration)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "menu", "update_product_attributes", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "menu", "update_product_attributes", err)
 		return
 	}
 

@@ -1,13 +1,7 @@
 package models
 
 import (
-	"errors"
 	"fmt"
-)
-
-var (
-	ErrDeliverySessionAlreadyActive = errors.New("delivery_session_already_active")
-	ErrInvalidToken                 = errors.New("invalid_token")
 )
 
 type OrderNotFullyPaidError struct {

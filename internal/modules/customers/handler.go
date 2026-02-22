@@ -30,7 +30,7 @@ func (h *CustomersHandler) GetCustomerLoyalty(w http.ResponseWriter, r *http.Req
 
 	result, err := h.svc.GetCustomerLoyalty(ctx, token, customerID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "customers", "get_loyalty", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "customers", "get_loyalty", err)
 		return
 	}
 
@@ -56,7 +56,7 @@ func (h *CustomersHandler) UpdateLoyaltyProgress(w http.ResponseWriter, r *http.
 
 	result, err := h.svc.UpdateLoyaltyProgress(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "customers", "update_loyalty_progress", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "customers", "update_loyalty_progress", err)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *CustomersHandler) UpdateLoyaltyReward(w http.ResponseWriter, r *http.Re
 
 	result, err := h.svc.UpdateLoyaltyReward(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "customers", "update_loyalty_reward", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "customers", "update_loyalty_reward", err)
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 
 	customers, err := h.svc.SearchCustomers(ctx, token, search_term)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "customers", "search", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "customers", "search", err)
 		return
 	}
 

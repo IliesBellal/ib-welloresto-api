@@ -2,7 +2,6 @@ package cash_registers
 
 import (
 	"context"
-	"errors"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -26,7 +25,7 @@ func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	// merchantID via user
@@ -43,7 +42,7 @@ func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token strin
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	// userID fourni dans la requête → OK (comme PHP)
@@ -53,8 +52,11 @@ func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token strin
 func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterSummaryResponse, error) {
 
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.cashRegisterRepo.GetCashRegisterSummary(ctx, cashRegisterID, user.MerchantID)
@@ -63,14 +65,25 @@ func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token 
 func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterDetails, error) {
 
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.cashRegisterRepo.GetCashRegisterTVADetails(ctx, user.MerchantID, cashRegisterID)
 }
 
-func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req *models.AddCustomItemRequest) (interface{}, error) {
+func (s *CashRegisterService) AddCustomItem(ctx context.Context, token string, id string, req *models.AddCustomItemRequest) (interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+
 	itemID, err := s.cashRegisterRepo.AddCustomItem(ctx, id, req.Label, req.Value)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
@@ -85,8 +98,16 @@ func (s *CashRegisterService) AddCustomItem(ctx context.Context, id string, req 
 	}, nil
 }
 
-func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, id string, itemID string) (map[string]interface{}, error) {
-	err := s.cashRegisterRepo.DeleteCustomItem(ctx, id, itemID)
+func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, token string, id string, itemID string) (map[string]interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	err = s.cashRegisterRepo.DeleteCustomItem(ctx, id, itemID)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
 			return map[string]interface{}{"status": "-1", "error": "Cash register " + id + " closed."}, nil
@@ -98,8 +119,11 @@ func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, id string, i
 
 func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token, comment string) (map[string]interface{}, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	err = s.cashRegisterRepo.EncloseCashRegister(ctx, user.UserID, id, comment)
@@ -115,8 +139,11 @@ func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token
 
 func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, token string) ([]models.CashRegisterHistoryItem, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.cashRegisterRepo.GetCashRegisterHistory(ctx, user.MerchantID, user.UserID)

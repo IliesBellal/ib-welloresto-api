@@ -29,10 +29,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.Login(r.Context(), req, token)
 	if err != nil {
-		errorData := map[string]interface{}{
-			"error": err.Error(),
-		}
-		models.SendJSON(w, http.StatusInternalServerError, "auth", "login", errorData)
+		models.SendErrorJSON(w, "auth", "login", err)
 		return
 	}
 
@@ -65,7 +62,7 @@ func (h *AuthHandler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.CheckAppVersion(ctx, token, version, appName)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "app", "version_check", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "app", "version_check", err)
 		return
 	}
 
@@ -88,7 +85,7 @@ func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.SaveDeviceToken(ctx, token, req.DeviceToken, req.DeviceID, req.App)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "device", "save_token", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "device", "save_token", err)
 		return
 	}
 

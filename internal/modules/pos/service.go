@@ -20,8 +20,11 @@ func NewPOSService(u auth.AuthService, p *POSRepository) *POSService {
 
 func (s *POSService) GetPOSStatus(ctx context.Context, token string) (*models.POSStatus, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid_token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.posRepo.GetPOSStatus(ctx, user.MerchantID)
@@ -29,12 +32,15 @@ func (s *POSService) GetPOSStatus(ctx context.Context, token string) (*models.PO
 
 func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status bool) (*models.POSStatus, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid_token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	if !user.AccessReception {
-		return nil, errors.New("not_allowed")
+		return nil, models.ErrForbidden
 	}
 
 	err = s.posRepo.UpdatePOSStatus(ctx, user.UserID, status)
@@ -51,8 +57,11 @@ func (s *POSService) GetDeletionReasons(ctx context.Context, object string) ([]m
 
 func (s *POSService) ToggleScanNOrder(ctx context.Context, token, status string) (int64, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return 0, errors.New("invalid_token")
+	if err != nil {
+		return 0, err
+	}
+	if user == nil {
+		return 0, models.ErrUnauthorized
 	}
 
 	return s.posRepo.ToggleScanNOrder(ctx, user.MerchantID, status)
@@ -60,8 +69,11 @@ func (s *POSService) ToggleScanNOrder(ctx context.Context, token, status string)
 
 func (s *POSService) ToggleProductionPaidOnly(ctx context.Context, token, status string) (int64, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return 0, errors.New("invalid_token")
+	if err != nil {
+		return 0, err
+	}
+	if user == nil {
+		return 0, models.ErrUnauthorized
 	}
 
 	return s.posRepo.ToggleProductionPaidOnly(ctx, user.MerchantID, status)
@@ -69,8 +81,11 @@ func (s *POSService) ToggleProductionPaidOnly(ctx context.Context, token, status
 
 func (s *POSService) GetTVARates(ctx context.Context, token string) ([]ConsumptionType, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid_token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.posRepo.GetTVARates(ctx, user.MerchantID)
@@ -78,8 +93,11 @@ func (s *POSService) GetTVARates(ctx context.Context, token string) ([]Consumpti
 
 func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string) (int64, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return 0, errors.New("invalid_token")
+	if err != nil {
+		return 0, err
+	}
+	if user == nil {
+		return 0, models.ErrUnauthorized
 	}
 
 	return s.posRepo.ToggleSafetyStock(ctx, user.MerchantID, status)
@@ -87,8 +105,11 @@ func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string
 
 func (s *POSService) GetDeliveryMen(ctx context.Context, token string) ([]models.DeliveryMan, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid_token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.posRepo.GetDeliveryMen(ctx, user.MerchantID)
@@ -102,7 +123,7 @@ func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.T
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	// --- Parse code ---
@@ -191,7 +212,7 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req)
@@ -205,7 +226,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	m, params, marketing, scann, err := s.posRepo.GetMerchantSettings(ctx, user.MerchantID)

@@ -92,7 +92,7 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	orders, err := h.ordersService.GetOrders(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_orders_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_orders", map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -147,7 +147,7 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.ordersService.GetHistory(ctx, token, req)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_history_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_history", map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -175,8 +175,7 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.ordersService.PrepareCreateOrder(ctx, token, &req)
 	if err != nil {
-		log.Error("PrepareCreateOrder error : " + err.Error())
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "create_order_error", map[string]string{"error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "orders", "create_order", map[string]string{"error": err.Error()})
 		return
 	}
 

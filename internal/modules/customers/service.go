@@ -2,7 +2,7 @@ package customers
 
 import (
 	"context"
-	"errors"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
 
@@ -28,16 +28,23 @@ func (s *CustomersService) UpdateOrCreateCustomer(ctx context.Context, params ma
 
 func (s *CustomersService) GetCustomerLoyalty(ctx context.Context, token, customerID string) (*CustomerLoyalty, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
 	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+
 	return s.customerRepo.GetCustomerLoyalty(ctx, customerID)
 }
 
 func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token string, req *LoyaltyProgressUpdateRequest) (map[string]interface{}, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	n, err := s.customerRepo.UpdateLoyaltyProgress(ctx, req)
@@ -50,8 +57,11 @@ func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token stri
 
 func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string, req *LoyaltyRewardUpdateRequest) (map[string]interface{}, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	if err := s.customerRepo.UpdateLoyaltyReward(ctx, req); err != nil {
@@ -63,8 +73,11 @@ func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string
 
 func (s *CustomersService) SearchCustomers(ctx context.Context, token, term string) ([]CustomerSearchResult, error) {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return nil, errors.New("invalid token")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, term)

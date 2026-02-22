@@ -2,7 +2,6 @@ package order_life_cycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -87,7 +86,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderI
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid user token")
+		return models.ErrUnauthorized
 	}
 
 	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
@@ -99,7 +98,7 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, o
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
@@ -109,8 +108,11 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, o
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return fmt.Errorf("invalid token")
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
 	}
 
 	// sécurité : orderID dans l’URL > orderID dans req
@@ -130,7 +132,7 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, token string, 
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
@@ -143,7 +145,7 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orde
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	// TODO
@@ -160,8 +162,11 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orde
 func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
 
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return map[string]interface{}{"status": "-1", "error": "Invalid token"}, nil
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	log := logger.FromContext(ctx)
@@ -202,7 +207,7 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, or
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	err = s.ordersLifeCycleRepo.MarkProductsBackToProduction(ctx, user.UserID, user.MerchantID, orderID, req.Products)
@@ -283,7 +288,7 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID
 	}
 	if user == nil {
 		accept_order.Status = "error"
-		return accept_order, errors.New("invalid token")
+		return accept_order, models.ErrUnauthorized
 	}
 
 	return s.SetOrderAccepted(ctx, user.UserID, user.MerchantID, orderID)
@@ -386,7 +391,7 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID s
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	in.UserID = user.UserID
@@ -488,7 +493,7 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token stri
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	in.MerchantID = user.MerchantID

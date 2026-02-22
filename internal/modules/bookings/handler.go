@@ -36,7 +36,7 @@ func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request)
 
 	bookings, err := h.svc.GetBookings(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "search", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "search", err)
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 
 	booking, err := h.svc.GetBookingByID(ctx, token, id)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "get", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "get", err)
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 
 	booking, err := h.svc.CreateBooking(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "create", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "create", err)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *BookingsHandler) AcceptBooking(w http.ResponseWriter, r *http.Request) 
 	result, err := h.svc.AcceptBooking(ctx, token, bookingID)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "accept", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "accept", err)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.DenyBooking(ctx, token, bookingID)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "deny", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "deny", err)
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.
 
 	avail, err := h.svc.GetBookingAvailability(ctx, token, date)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "bookings", "get_availability", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendErrorJSON(w, "bookings", "get_availability", err)
 		return
 	}
 

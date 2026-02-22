@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -40,7 +39,7 @@ func (s *OrdersService) ReopenClosedOrder(ctx context.Context, token, orderID st
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
@@ -50,8 +49,11 @@ func (s *OrdersService) ReopenClosedOrder(ctx context.Context, token, orderID st
 
 func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return fmt.Errorf("invalid token")
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
 	}
 
 	// sécurité : orderID dans l’URL > orderID dans req
@@ -67,7 +69,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app 
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
@@ -83,7 +85,7 @@ func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*m
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.ComputeGetOrder(ctx, user.MerchantID, orderID)
@@ -96,7 +98,7 @@ func (s *OrdersService) GetOrders(ctx context.Context, token string, req *models
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
@@ -114,7 +116,7 @@ func (s *OrdersService) GetHistory(ctx context.Context, token string, req models
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
@@ -127,8 +129,9 @@ func (s *OrdersService) GetPayments(ctx context.Context, token string, orderID s
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
+
 	return s.ordersRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
@@ -139,7 +142,7 @@ func (s *OrdersService) DisablePayment(ctx context.Context, token string, paymen
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.DisablePayment(ctx, paymentID)
@@ -148,8 +151,11 @@ func (s *OrdersService) DisablePayment(ctx context.Context, token string, paymen
 func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
 
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return map[string]interface{}{"status": "-1", "error": "Invalid token"}, nil
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
 	}
 
 	err = s.ordersRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
@@ -185,7 +191,7 @@ func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, re
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
@@ -215,7 +221,7 @@ func (s *OrdersService) PrepareUpdateOrder(ctx context.Context, token string, re
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
@@ -330,7 +336,7 @@ func (s *OrdersService) GetPricing(ctx context.Context, token string, req *model
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID

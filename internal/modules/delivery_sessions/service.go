@@ -2,7 +2,6 @@ package delivery_sessions
 
 import (
 	"context"
-	"errors"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
@@ -31,11 +30,12 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
-		return nil, errors.New("user not authorized to manage delivery sessions")
+		return nil, models.ErrForbidden
 	}
+
 	return s.deliverySessionsRepo.GetPendingDeliverySessions(ctx, user.MerchantID)
 }
 
@@ -43,8 +43,14 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 
 	// 1. Check token → get user + merchant
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return map[string]string{"status": "invalid_token"}, nil
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	if !user.ManageDelivery {
+		return nil, models.ErrForbidden
 	}
 
 	// 2. Delegate to repo
@@ -62,8 +68,14 @@ func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, toke
 
 	// 1. Check token → get user + merchant
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return map[string]string{"status": "invalid_token"}, nil
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	if !user.ManageDelivery {
+		return nil, models.ErrForbidden
 	}
 
 	session, err := s.deliverySessionsRepo.CloseDeliverySession(ctx, sessionID)
@@ -82,7 +94,10 @@ func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token,
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
+	}
+	if !user.ManageDelivery {
+		return nil, models.ErrForbidden
 	}
 	return s.deliverySessionsRepo.GetDeliverySession(ctx, user.MerchantID, delivery_session_id)
 }
@@ -91,8 +106,14 @@ func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, tok
 
 	// 1. Check token → get user + merchant
 	user, err := s.userRepo.GetUserByToken(ctx, token)
-	if err != nil || user == nil {
-		return map[string]string{"status": "invalid_token"}, nil
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	if !user.ManageDelivery {
+		return nil, models.ErrForbidden
 	}
 
 	// repo returns DeliverySession struct

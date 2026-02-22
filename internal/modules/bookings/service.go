@@ -2,7 +2,7 @@ package bookings
 
 import (
 	"context"
-	"errors"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
 
@@ -21,7 +21,7 @@ func (s *BookingsService) GetBookings(ctx context.Context, token string, req *Bo
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 	req.MerchantID = user.MerchantID
 
@@ -34,7 +34,7 @@ func (s *BookingsService) GetBookingByID(ctx context.Context, token, bookingID s
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 	return s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
 }
@@ -45,8 +45,9 @@ func (s *BookingsService) CreateBooking(ctx context.Context, token string, req *
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
+
 	req.MerchantID = user.MerchantID
 
 	// 2️⃣ Create booking
@@ -71,7 +72,7 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	// 1️⃣ Update booking state
@@ -100,7 +101,7 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	err = s.repo.SetBookingState(ctx, bookingID, "DENIED")
@@ -125,7 +126,7 @@ func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, dat
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.repo.GetBookingAvailability(ctx, user.MerchantID, date)

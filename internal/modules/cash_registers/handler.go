@@ -38,7 +38,7 @@ func (h *CashRegisterHandler) OpenCashRegister(w http.ResponseWriter, r *http.Re
 
 	open_call, err := h.cashRegisterService.OpenCashRegister(ctx, token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "open", map[string]string{"error": "internal error: " + err.Error()})
+		models.SendErrorJSON(w, "cash_register", "open", err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 
 	resp, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "close", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "close", err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 
 	summary, err := h.cashRegisterService.GetCashRegisterSummary(ctx, token, cashRegisterID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_summary", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "get_summary", err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r
 
 	resp, err := h.cashRegisterService.GetCashRegisterTVADetails(ctx, token, cashRegisterID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_tva_details", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "get_tva_details", err)
 		return
 	}
 
@@ -135,10 +135,10 @@ func (h *CashRegisterHandler) AddCustomItem(w http.ResponseWriter, r *http.Reque
 	var req models.AddCustomItemRequest
 	json.NewDecoder(r.Body).Decode(&req)
 
-	resp, err := h.cashRegisterService.AddCustomItem(r.Context(), id, &req)
+	resp, err := h.cashRegisterService.AddCustomItem(r.Context(), token, id, &req)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "add_custom_item", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "add_custom_item", err)
 		return
 	}
 
@@ -155,10 +155,9 @@ func (h *CashRegisterHandler) DeleteCustomItem(w http.ResponseWriter, r *http.Re
 	id := chi.URLParam(r, "cash_register_id")
 	itemID := chi.URLParam(r, "item_id")
 
-	resp, err := h.cashRegisterService.DeleteCustomItem(r.Context(), id, itemID)
-
+	resp, err := h.cashRegisterService.DeleteCustomItem(r.Context(), token, id, itemID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "delete_custom_item", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "delete_custom_item", err)
 		return
 	}
 
@@ -181,7 +180,7 @@ func (h *CashRegisterHandler) EncloseCashRegister(w http.ResponseWriter, r *http
 	resp, err := h.cashRegisterService.EncloseCashRegister(ctx, id, token, req.Comment)
 
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "enclose", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "enclose", err)
 		return
 	}
 
@@ -199,7 +198,7 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, token)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "cash_register", "get_history", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendErrorJSON(w, "cash_register", "get_history", err)
 		return
 	}
 

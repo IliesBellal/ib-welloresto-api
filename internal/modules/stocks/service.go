@@ -2,7 +2,6 @@ package stocks
 
 import (
 	"context"
-	"errors"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -25,7 +24,7 @@ func (s *StocksService) GetBarcodeInfo(ctx context.Context, token, code string) 
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	info, uoms, err := s.stocksRepo.GetBarcodeInfo(ctx, user.MerchantID, code)
@@ -51,7 +50,7 @@ func (s *StocksService) DeleteBarcode(ctx context.Context, token, code string) e
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.stocksRepo.DeleteBarcode(ctx, user.MerchantID, code)
@@ -63,7 +62,7 @@ func (s *StocksService) CreateBarcode(ctx context.Context, token, code, componen
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.stocksRepo.CreateBarcode(ctx, user.MerchantID, code, componentID)
@@ -76,7 +75,7 @@ func (s *StocksService) AddStockBarcode(ctx context.Context, token, barcode stri
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.stocksRepo.AddStockBarcode(ctx, user.MerchantID, user.UserID, barcode, specs)
@@ -88,7 +87,7 @@ func (s *StocksService) SetStockLoss(ctx context.Context, token string, req mode
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
 	}
 
 	return s.stocksRepo.SetStockLoss(ctx, user.MerchantID, user.UserID, req)
@@ -100,7 +99,7 @@ func (s *StocksService) GetStockProducts(ctx context.Context, token, t string) (
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.stocksRepo.GetStockProducts(ctx, user.MerchantID, t)

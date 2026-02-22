@@ -2,7 +2,6 @@ package locations
 
 import (
 	"context"
-	"errors"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -26,7 +25,7 @@ func (s *LocationsService) GetLocations(ctx context.Context, token string) ([]mo
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.locationsRepo.GetLocations(ctx, user.MerchantID)
@@ -39,7 +38,7 @@ func (s *LocationsService) UpdateLocationCoordinates(ctx context.Context, token,
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	err = s.locationsRepo.UpdateLocationCoordinates(ctx, user.MerchantID, locationID, x, y)

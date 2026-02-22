@@ -433,9 +433,9 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, tx *sql.Tx, merchant
 		updates = append(updates, "SIRET = ?")
 		args = append(args, *req.SIRET)
 	}
-	if req.Website != nil {
+	if req.WebSite != nil {
 		updates = append(updates, "web_site = ?")
-		args = append(args, *req.Website)
+		args = append(args, *req.WebSite)
 	}
 	if req.MerchantTel != nil {
 		updates = append(updates, "merchantTel = ?")
@@ -918,7 +918,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&scann.InfoPopupTitle,
 		&scann.InfoPopupContent,
 		&scann.InfoPopupButtonContent,
-		&scann.ProductBGColor,
+		&scann.ProductBgColor,
 		&scann.NavBGColor,
 		&scann.BGColor,
 		&scann.BtnColor,

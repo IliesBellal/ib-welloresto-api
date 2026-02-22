@@ -2,7 +2,6 @@ package user_services
 
 import (
 	"context"
-	"errors"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -22,7 +21,7 @@ func (s *ServicesService) GetCurrentService(ctx context.Context, token string, d
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrUnauthorized
 	}
 
 	return s.servicesRepo.GetCurrentService(ctx, user.UserID, deviceID)
