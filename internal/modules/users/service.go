@@ -3,7 +3,6 @@ package users
 import (
 	"context"
 	"errors"
-	"fmt"
 	"welloresto-api/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -31,12 +30,23 @@ func (s *UsersService) GetUserLocation(ctx context.Context, token, targetUserID 
 }
 
 func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
+	if password == "" {
+		return "", models.ErrInvalidInput
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return "", err
+	}
+
+	return string(hash), nil
 }
 
-func CheckPasswordHash(password, hash string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+func validateNewPassword(password string) error {
+	if len(password) < 8 {
+		return models.ErrInvalidInputPasswordTooShort
+	}
+	return nil
 }
 
 func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass string, newPass string) error {
@@ -47,7 +57,18 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 		return err
 	}
 	if user == nil {
-		return errors.New("invalid token")
+		return models.ErrUnauthorized
+	}
+
+	// 2. Validate new password
+	if err := validateNewPassword(newPass); err != nil {
+		return err
+	}
+
+	// 3. Hash password
+	hash, err := HashPassword(newPass)
+	if err != nil {
+		return err
 	}
 
 	// 2. Compare old password
@@ -59,14 +80,8 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 		}
 	*/
 
-	// 3. Hash new password
-	hash, err := HashPassword(newPass)
-	if err != nil {
-		return fmt.Errorf("hash_error")
-	}
-
 	// 4. Save
-	return s.userRepo.UpdatePassword(ctx, user.UserID, hash)
+	return s.userRepo.UpdatePassword(ctx, user.UserID, user.MerchantID, hash)
 }
 
 func (s *UsersService) UpdateUserSettings(ctx context.Context, userID, token string, req *models.UserSettingsRequest) error {

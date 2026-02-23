@@ -2,7 +2,9 @@ package users
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"welloresto-api/internal/models"
@@ -133,7 +135,7 @@ LIMIT 1;
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, err
+		return nil, models.ErrInvalidToken
 	}
 	return data, err
 }
@@ -265,11 +267,98 @@ func (r *UsersRepository) UpdateUserSettings(ctx context.Context, userID string,
 	return err
 }
 
-func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, hash string) error {
-	_, err := r.db.ExecContext(ctx, `
+func (r *UsersRepository) UpdatePassword(
+	ctx context.Context,
+	userID string,
+	merchantID string,
+	hash string,
+) error {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// Sécurité : rollback par défaut
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// 1. Update password
+	res, err := tx.ExecContext(ctx, `
 		UPDATE users
 		SET password = ?
 		WHERE user_id = ?
 	`, hash, userID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return models.ErrNotFound
+	}
+
+	// 2. Load all users_rights for this user
+	rowsUR, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM users_rights
+		WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return err
+	}
+	defer rowsUR.Close()
+
+	type ur struct {
+		id int64
+	}
+
+	var rights []ur
+	for rowsUR.Next() {
+		var r ur
+		if err := rowsUR.Scan(&r.id); err != nil {
+			return err
+		}
+		rights = append(rights, r)
+	}
+
+	if err := rowsUR.Err(); err != nil {
+		return err
+	}
+
+	// 3. Reset token for each merchant
+	for _, rgt := range rights {
+		newToken, err := generateToken()
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE users_rights
+			SET token = ?
+			WHERE id = ?
+		`, newToken, rgt.id)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 4. Commit
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func generateToken() (string, error) {
+	b := make([]byte, 64)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

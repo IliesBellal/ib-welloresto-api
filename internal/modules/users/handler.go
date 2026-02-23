@@ -62,7 +62,7 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "user", "update_password", map[string]string{"status": "ok"})
+	models.SendJSON(w, http.StatusOK, "user", "update_password", map[string]string{"status": "success"})
 }
 
 func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request) {

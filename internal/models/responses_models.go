@@ -57,9 +57,13 @@ var (
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInput = errors.New("invalid input")
 
+	// ErrInvalidInput indique que les données fournies sont invalides (400)
+	ErrInvalidInputPasswordTooShort = errors.New("le mot de passe doit faire au minimum 8 charactères")
+
 	// Erreurs spécifiques métier
 	ErrDeliverySessionAlreadyActive = errors.New("delivery_session_already_active")
-	ErrInvalidToken                 = errors.New("invalid_token")
+
+	ErrInvalidToken = errors.New("invalid_token")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée

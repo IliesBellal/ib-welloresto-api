@@ -21,9 +21,7 @@ func NewMySQL(dsn config.DatabaseConfig) (*sql.DB, error) {
 	db.SetMaxOpenConns(1)                  // Maximum 1 connexion ouverte en même temps
 	db.SetMaxIdleConns(1)                  // Maximum 1 connexion en attente
 	db.SetConnMaxLifetime(time.Minute * 5) // Renouveler la connexion régulièrement
-
-	// Limite basse pour éviter les connexions zombie
-	db.SetConnMaxLifetime(2 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		return nil, err
