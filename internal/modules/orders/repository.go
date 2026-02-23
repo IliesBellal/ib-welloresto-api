@@ -871,6 +871,30 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 			return fmt.Errorf("product upsert failed: %w", err)
 		}
 
+		if p.OrderItemID == nil {
+			newOrderItemID, err := res.LastInsertId()
+			if err == nil {
+				p.OrderItemID = helpers.Int64ToStringPtr(newOrderItemID)
+			}
+		}
+
+		item := &OrderItemInsert{
+			OrderID:     *req.Order.OrderID,
+			OrderItemID: p.OrderItemID,
+			ProductID:   p.ProductID,
+			MerchantID:  req.MerchantID,
+			Quantity:    p.Quantity,
+			DiscountID:  p.DiscountID,
+			Price:       p.Price,
+			DelayID:     p.DelayID,
+			CreatedBy:   *req.Order.CreatedBy,
+		}
+		if p.Comment != nil && p.Comment.Content != "" {
+			item.Comment = &p.Comment.Content
+		}
+
+		r.insertOrderItemComment(ctx, tx, item)
+
 		// Si c'est un nouvel item, on récupère son ID généré
 		if p.OrderItemID == nil {
 			newID, err := res.LastInsertId()
@@ -962,6 +986,15 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 		}
 	}
 	req.Order.EstimatedReady = estimatedReady
+
+	if req.Order.Customer != nil {
+		customerID, err := r.upsertCustomer(ctx, tx, req)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		req.Order.Customer.CustomerID = customerID
+	}
 
 	if err := r.updateOrderBase(ctx, tx, req); err != nil {
 		return err
@@ -1342,8 +1375,9 @@ func (r *OrdersRepository) insertOrderItemComment(ctx context.Context, tx *sql.T
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, order_item_id, user_id, content, creation_date)
-				    						VALUES (?,?, ?,?,UTC_TIMESTAMP)`,
-		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment,
+		VALUES (?,?, ?,?,UTC_TIMESTAMP)
+		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP`,
+		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment, item.Comment,
 	)
 	if err != nil {
 		return err
@@ -1360,8 +1394,9 @@ func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, r
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, user_id, content, creation_date)
-				    						VALUES (?,?,?,UTC_TIMESTAMP)`,
-		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment,
+		VALUES (?,?,?,UTC_TIMESTAMP)
+		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP`,
+		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment, req.Order.Comment,
 	)
 	if err != nil {
 		return err
@@ -1372,9 +1407,14 @@ func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, r
 // updateOrderBase inserts the orders row and returns orderID and orderNum
 func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (err error) {
 
+	var customerID *string
+	if req.Order.Customer != nil {
+		customerID = req.Order.Customer.CustomerID
+	}
+
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = tx.ExecContext(ctx, `
-		UPDATE orders
+		UPDATE orders o
 			SET
 			    o.price = ?,
 			    o.tva = ?,
@@ -1399,12 +1439,15 @@ func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req 
 		req.Order.IsScheduled,
 		req.Order.EstimatedReady,
 		req.Order.PlacesSettings,
-		req.Order.Customer.CustomerID,
+		customerID,
 		req.Order.OrderID,
 	)
 	if err != nil {
 		return err
 	}
+
+	err = r.insertOrderComment(ctx, tx, req)
+
 	return nil
 }
 

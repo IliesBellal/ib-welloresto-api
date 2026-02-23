@@ -344,13 +344,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/orders", func(r chi.Router) {
 
 		r.Post("/create", ordersH.CreateOrder)
-		r.Post("/update", ordersH.UpdateOrder)
 		r.Post("/pricing", ordersH.GetPricing)
 		r.Post("/list", ordersH.GetOrders)
 
 		r.Get("/pending", ordersH.GetPendingOrders)
 		r.Post("/history", ordersH.GetHistory)
 		r.Get("/{order_id}", ordersH.GetOrder)
+
+		r.Post("/{order_id}/update", ordersH.UpdateOrder)
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 

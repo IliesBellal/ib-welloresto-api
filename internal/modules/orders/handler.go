@@ -199,6 +199,9 @@ func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orderID := chi.URLParam(r, "order_id")
+	req.Order.OrderID = &orderID
+
 	err := h.ordersService.PrepareUpdateOrder(ctx, token, &req)
 	if err != nil {
 		log.Error("PrepareCreateOrder error : " + err.Error())
