@@ -835,99 +835,127 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 		return fmt.Errorf("cart_is_empty")
 	}
 
-	// 2. Reset global des quantités (Gestion des articles supprimés du panier)
-	if err := r.ResetOrderItems(ctx, tx, req); err != nil {
-		return fmt.Errorf("reset items failed: %w", err)
+	// 2. Suppression des items retirés du panier et de tous leurs sous-éléments.
+	//
+	// STRATÉGIE : On calcule l'ensemble des order_item_id EXISTANTS envoyés dans le payload
+	// (les nouveaux produits n'ont pas d'order_item_id). Tous les orderitems de cette commande
+	// qui NE sont PAS dans cette liste sont considérés comme supprimés et doivent être retirés
+	// de la DB, y compris leurs extras / withouts / configurations associés.
+	if err := r.deleteRemovedOrderItems(ctx, tx, req); err != nil {
+		return fmt.Errorf("delete removed items failed: %w", err)
 	}
 
-	// Préparation des slices pour les Batch Inserts (pour éviter les requêtes dans les boucles)
+	// Préparation des slices pour les Batch Inserts (évite les requêtes individuelles dans la boucle)
 	var (
 		extrasArgs    []interface{}
 		withoutsArgs  []interface{}
 		configsArgs   []interface{}
-		_             []interface{} // Pour simplifier, on traite les commentaires un par un ou batch si structure adaptée
 		customersArgs []interface{}
 	)
 
-	// 3. Traitement des Produits (Boucle principale)
-	// On doit boucler sur les produits car on a besoin de récupérer/vérifier l'OrderItemID pour chaque ligne
+	// 3. Traitement des produits (boucle principale)
+	//
+	// Pour chaque produit du payload :
+	//   - S'il a un order_item_id  → produit EXISTANT : on met à jour la quantité/prix (UPSERT)
+	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
+	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
 	stmtItem, err := tx.PrepareContext(ctx, `
 		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, price, delay_id, ordered_on)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
-		ON DUPLICATE KEY UPDATE 
-			isDistributed = case when distributed_quantity=VALUES(quantity) then isDistributed else 0 end, 
-			quantity=VALUES(quantity), price = VALUES(price), discount_id = VALUES(discount_id), delay_id = VALUES(delay_id), ordered_on = VALUES(ordered_on)`)
+		ON DUPLICATE KEY UPDATE
+			-- Remet isDistributed à 0 seulement si la quantité distribuée ne correspond plus
+			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
+			quantity      = VALUES(quantity),
+			price         = VALUES(price),
+			discount_id   = VALUES(discount_id),
+			delay_id      = VALUES(delay_id),
+			ordered_on    = VALUES(ordered_on)`)
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare orderitem upsert failed: %w", err)
 	}
 	defer stmtItem.Close()
 
 	for i := range req.Order.Products {
 		p := &req.Order.Products[i]
 
-		// A. Upsert de l'item principal
-		res, err := stmtItem.ExecContext(ctx, p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID, p.Quantity, p.DiscountID, p.Price, p.DelayID)
+		// ── A. Upsert de l'item principal ─────────────────────────────────────────
+		res, err := stmtItem.ExecContext(ctx,
+			p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
+			p.Quantity, p.DiscountID, p.Price, p.DelayID)
 		if err != nil {
-			return fmt.Errorf("product upsert failed: %w", err)
+			return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 		}
 
-		if p.OrderItemID == nil {
-			newOrderItemID, err := res.LastInsertId()
-			if err == nil {
-				p.OrderItemID = helpers.Int64ToStringPtr(newOrderItemID)
-			}
-		}
-
-		item := &OrderItemInsert{
-			OrderID:     *req.Order.OrderID,
-			OrderItemID: p.OrderItemID,
-			ProductID:   p.ProductID,
-			MerchantID:  req.MerchantID,
-			Quantity:    p.Quantity,
-			DiscountID:  p.DiscountID,
-			Price:       p.Price,
-			DelayID:     p.DelayID,
-			CreatedBy:   *req.Order.CreatedBy,
-		}
-		if p.Comment != nil && p.Comment.Content != "" {
-			item.Comment = &p.Comment.Content
-		}
-
-		r.insertOrderItemComment(ctx, tx, item)
-
-		// Si c'est un nouvel item, on récupère son ID généré
+		// ── B. Récupération de l'ID généré pour les nouveaux produits ─────────────
+		// On ne fait ce bloc QU'UNE SEULE FOIS, immédiatement après l'exécution,
+		// et on retourne une erreur si on ne parvient pas à obtenir l'ID car toute
+		// la suite (extras, withouts, configs, commentaire) en dépend.
 		if p.OrderItemID == nil {
 			newID, err := res.LastInsertId()
-			if err == nil {
-				p.OrderItemID = helpers.Int64ToStringPtr(newID)
+			if err != nil {
+				return fmt.Errorf("failed to retrieve new order_item_id for product_id=%s: %w", p.ProductID, err)
 			}
+			if newID == 0 {
+				// LastInsertId renvoie 0 si aucune ligne n'a été insérée (ne devrait pas arriver)
+				return fmt.Errorf("unexpected: LastInsertId returned 0 for product_id=%s", p.ProductID)
+			}
+			p.OrderItemID = helpers.Int64ToStringPtr(newID)
 		}
 
-		// B. Nettoyage des sous-éléments (Optimisation: DELETE au lieu de IDs négatifs)
-		// On supprime les extras/withouts liés à cet item pour les réinsérer proprement juste après.
-		cleanQueries := []string{
+		// ── C. Nettoyage des sous-éléments de cet item ───────────────────────────
+		// On supprime systématiquement extras / withouts / configs ET le commentaire
+		// produit avant de les réinsérer selon l'état exact du payload.
+		// Cela garantit qu'aucun résidu ne subsiste en base.
+		for _, q := range []string{
 			"DELETE FROM extra WHERE order_item_id = ?",
 			"DELETE FROM without WHERE order_item_id = ?",
 			"DELETE FROM order_item_configuration WHERE order_item_id = ?",
-			"DELETE FROM session_orderitem WHERE order_item_id = ?",
-		}
-		for _, q := range cleanQueries {
+			// Supprime le commentaire lié à cet item (s'il existe) pour le réinsérer
+			// proprement ci-dessous — ou le laisser absent si le payload n'en fournit pas.
+			"DELETE FROM order_comments WHERE order_item_id = ?",
+		} {
 			if _, err := tx.ExecContext(ctx, q, p.OrderItemID); err != nil {
-				return fmt.Errorf("cleaning sub-items failed: %w", err)
+				return fmt.Errorf("cleaning sub-items failed for order_item_id=%s: %w", *p.OrderItemID, err)
 			}
 		}
 
-		// C. Accumulation des données pour Batch Insert (On n'exécute PAS SQL ici)
+		// ── D. Commentaire de l'item ─────────────────────────────────────────────
+		// Le DELETE ci-dessus a déjà nettoyé l'éventuel ancien commentaire.
+		// On réinsère uniquement si le payload en fournit un.
+		if p.Comment != nil && p.Comment.Content != "" {
+			item := &OrderItemInsert{
+				OrderID:     *req.Order.OrderID,
+				OrderItemID: p.OrderItemID, // garanti non-nil à ce stade
+				ProductID:   p.ProductID,
+				MerchantID:  req.MerchantID,
+				Quantity:    p.Quantity,
+				DiscountID:  p.DiscountID,
+				Price:       p.Price,
+				DelayID:     p.DelayID,
+				CreatedBy:   *req.Order.CreatedBy,
+				Comment:     &p.Comment.Content,
+			}
+			if err := r.insertOrderItemComment(ctx, tx, item); err != nil {
+				// Non bloquant : on logue mais on ne fait pas échouer la transaction
+				log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *p.OrderItemID), zap.Error(err))
+			}
+		}
 
-		// Extras
+		// ── E. Accumulation des sous-éléments pour Batch Insert ──────────────────
+		// On accumule TOUTES les valeurs dans des slices plates :
+		// chaque groupe de N valeurs correspond à une ligne INSERT.
+
+		// Extras (suppléments payants)
 		for _, e := range p.Extra {
 			extrasArgs = append(extrasArgs, p.OrderItemID, req.Order.OrderID, e.ComponentID, p.ProductID, req.MerchantID, e.Price)
 		}
-		// Withouts
+
+		// Withouts (exclusions d'ingrédients)
 		for _, w := range p.Without {
 			withoutsArgs = append(withoutsArgs, p.OrderItemID, req.Order.OrderID, w.ComponentID, p.ProductID, req.MerchantID)
 		}
-		// Configs
+
+		// Configurations (options de personnalisation)
 		if p.Config != nil {
 			for _, attr := range p.Config.Attributes {
 				for _, opt := range attr.Options {
@@ -935,50 +963,54 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 				}
 			}
 		}
-		// Customers (Session)
-		/*
-			for _, c := range p.Customers {
-				customersArgs = append(customersArgs, c.UserCode, p.OrderItemID, c.Quantity)
-			}
 
-		*/
+		// Customers (session partagée) — décommentez si la fonctionnalité est activée
+		// for _, c := range p.Customers {
+		// 	customersArgs = append(customersArgs, c.UserCode, p.OrderItemID, c.Quantity)
+		// }
 	}
 
-	// 4. Exécution des Batch Inserts (Massive Performance Boost)
+	// 4. Batch Inserts des sous-éléments
+	//
+	// On génère une seule requête multi-valeurs par table, ce qui est significativement
+	// plus rapide que N requêtes individuelles (1 aller-retour réseau au lieu de N).
+
 	if len(extrasArgs) > 0 {
-		err = r.bulkInsert(ctx, tx, "INSERT INTO extra (order_item_id, order_id, component_id, product_id, merchant_id, price) VALUES", 6, extrasArgs)
-		if err != nil {
-			return err
+		if err := r.bulkInsert(ctx, tx,
+			"INSERT INTO extra (order_item_id, order_id, component_id, product_id, merchant_id, price) VALUES",
+			6, extrasArgs); err != nil {
+			return fmt.Errorf("bulk insert extras failed: %w", err)
 		}
 	}
 	if len(withoutsArgs) > 0 {
-		err = r.bulkInsert(ctx, tx, "INSERT INTO without (order_item_id, order_id, component_id, product_id, merchant_id) VALUES", 5, withoutsArgs)
-		if err != nil {
-			return err
+		if err := r.bulkInsert(ctx, tx,
+			"INSERT INTO without (order_item_id, order_id, component_id, product_id, merchant_id) VALUES",
+			5, withoutsArgs); err != nil {
+			return fmt.Errorf("bulk insert withouts failed: %w", err)
 		}
 	}
 	if len(configsArgs) > 0 {
-		err = r.bulkInsert(ctx, tx, "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES", 4, configsArgs)
-		if err != nil {
-			return err
+		if err := r.bulkInsert(ctx, tx,
+			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES",
+			4, configsArgs); err != nil {
+			return fmt.Errorf("bulk insert configs failed: %w", err)
 		}
 	}
 	if len(customersArgs) > 0 {
-		// Note: ON DUPLICATE KEY UPDATE pour session_orderitem
-		q := "INSERT INTO session_orderitem (user_code, order_item_id, quantity) VALUES"
-		suffix := " ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)"
-		err = r.bulkInsertWithSuffix(ctx, tx, q, suffix, 3, customersArgs)
-		if err != nil {
-			return err
+		if err := r.bulkInsertWithSuffix(ctx, tx,
+			"INSERT INTO session_orderitem (user_code, order_item_id, quantity) VALUES",
+			" ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)",
+			3, customersArgs); err != nil {
+			return fmt.Errorf("bulk insert session_orderitem failed: %w", err)
 		}
 	}
 
-	// 5. Calcul Temps & Update Global (inchangé car logique complexe SQL)
-	// compute estimated ready if not provided
-	estimatedReady := req.Order.EstimatedReady // string or empty
+	// 5. Calcul du temps estimé de préparation (si non fourni dans le payload)
+	estimatedReady := req.Order.EstimatedReady
 	if estimatedReady == "" {
 		est, err := r.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
 		if err != nil {
+			// Non bloquant : la commande peut être sauvegardée sans temps estimé
 			log.Warn("ComputeEstimatedReady warning", zap.Error(err))
 		}
 		if est != "" {
@@ -987,35 +1019,36 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	}
 	req.Order.EstimatedReady = estimatedReady
 
+	// 6. Upsert du client (si fourni)
 	if req.Order.Customer != nil {
 		customerID, err := r.upsertCustomer(ctx, tx, req)
 		if err != nil {
-			tx.Rollback()
-			return err
+			return fmt.Errorf("upsert customer failed: %w", err)
 		}
 		req.Order.Customer.CustomerID = customerID
 	}
 
+	// 7. Mise à jour de la commande principale (prix, type, etc.)
 	if err := r.updateOrderBase(ctx, tx, req); err != nil {
-		return err
+		return fmt.Errorf("update order base failed: %w", err)
 	}
 
-	// 6. Gestion Locations (Batch)
+	// 8. Gestion des emplacements (table, salle…)
+	// On supprime et réinsère entièrement pour refléter fidèlement le payload.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM order_location WHERE order_id = ?", req.Order.OrderID); err != nil {
-		return err
+		return fmt.Errorf("delete order_location failed: %w", err)
 	}
-
 	if len(req.Order.Locations) > 0 {
 		var locArgs []interface{}
 		for _, loc := range req.Order.Locations {
 			locArgs = append(locArgs, req.Order.OrderID, loc.LocationID)
 		}
 		if err := r.bulkInsert(ctx, tx, "INSERT INTO order_location(order_id, location_id) VALUES", 2, locArgs); err != nil {
-			return err
+			return fmt.Errorf("bulk insert order_location failed: %w", err)
 		}
 	}
 
-	// 7. Commit
+	// 9. Commit
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit failed: %w", err)
 	}
@@ -1444,7 +1477,19 @@ func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req 
 		return err
 	}
 
-	err = r.insertOrderComment(ctx, tx, req)
+	// Commentaire de commande : on supprime systématiquement l'ancien puis on réinsère
+	// uniquement si le payload en fournit un. Cela permet de supprimer un commentaire
+	// existant lorsque le client l'efface (payload avec comment = nil ou vide).
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM order_comments WHERE order_id = ? AND order_item_id IS NULL",
+		req.Order.OrderID); err != nil {
+		return fmt.Errorf("delete order comment failed: %w", err)
+	}
+	if req.Order.Comment != nil && *req.Order.Comment != "" {
+		if err := r.insertOrderComment(ctx, tx, req); err != nil {
+			return fmt.Errorf("insert order comment failed: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -1672,6 +1717,103 @@ func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item
 	return res.LastInsertId()
 }
 
+// deleteRemovedOrderItems supprime de la base les orderitems qui ne figurent plus dans le
+// payload (produits retirés du panier), ainsi que tous leurs sous-éléments associés
+// (extras, withouts, configurations).
+//
+// Stratégie :
+//   - On collecte les order_item_id EXISTANTS présents dans le payload (les nouveaux produits
+//     n'en ont pas).
+//   - On supprime dans `orderitems` tous les items de cette commande dont l'ID n'est PAS
+//     dans cette liste. La suppression en cascade (via les DELETEs explicites ci-dessous)
+//     nettoie aussi extra / without / order_item_configuration.
+//
+// Note : si le payload ne contient AUCUN item existant (mise à jour ne conservant aucun
+// ancien produit), on supprime tous les anciens items.
+func (r *OrdersRepository) deleteRemovedOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
+	// Collecte des order_item_id existants fournis dans le payload
+	keptIDs := make([]interface{}, 0, len(req.Order.Products))
+	for _, p := range req.Order.Products {
+		if p.OrderItemID != nil && *p.OrderItemID != "" {
+			keptIDs = append(keptIDs, *p.OrderItemID)
+		}
+	}
+
+	// Requête de suppression des orderitems retirés, avec nettoyage en cascade des sous-tables.
+	//
+	// On utilise une sous-requête pour identifier les IDs à supprimer, puis on supprime
+	// dans chaque sous-table avant de supprimer dans orderitems (contraintes de clé étrangère).
+	var (
+		whereClause string
+		args        []interface{}
+	)
+
+	args = append(args, req.Order.OrderID)
+
+	if len(keptIDs) == 0 {
+		// Aucun item conservé → on supprime tous les anciens items de cette commande
+		whereClause = "WHERE oi.order_id = ?"
+	} else {
+		// On supprime uniquement les items absents du payload
+		placeholders := strings.Repeat(",?", len(keptIDs))[1:] // "?,?,?"
+		whereClause = "WHERE oi.order_id = ? AND oi.order_item_id NOT IN (" + placeholders + ")"
+		args = append(args, keptIDs...)
+	}
+
+	// 1. Récupère les IDs des items à supprimer pour nettoyer les sous-tables.
+	//    On le fait en une seule requête SELECT pour éviter de répéter la condition.
+	rows, err := tx.QueryContext(ctx,
+		"SELECT oi.order_item_id FROM orderitems oi "+whereClause,
+		args...)
+	if err != nil {
+		return fmt.Errorf("select removed order_item_ids failed: %w", err)
+	}
+
+	var removedIDs []interface{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan removed order_item_id failed: %w", err)
+		}
+		removedIDs = append(removedIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate removed order_item_ids failed: %w", err)
+	}
+
+	// Rien à supprimer → on sort immédiatement
+	if len(removedIDs) == 0 {
+		return nil
+	}
+
+	// 2. Nettoyage des sous-tables dans l'ordre (sous-éléments avant l'item parent)
+	idPlaceholders := strings.Repeat(",?", len(removedIDs))[1:] // "?,?,?"
+	subTables := []string{
+		"DELETE FROM extra WHERE order_item_id IN (" + idPlaceholders + ")",
+		"DELETE FROM without WHERE order_item_id IN (" + idPlaceholders + ")",
+		"DELETE FROM order_item_configuration WHERE order_item_id IN (" + idPlaceholders + ")",
+		"DELETE FROM session_orderitem WHERE order_item_id IN (" + idPlaceholders + ")",
+		"DELETE FROM order_comments WHERE order_item_id IN (" + idPlaceholders + ")",
+	}
+	for _, q := range subTables {
+		if _, err := tx.ExecContext(ctx, q, removedIDs...); err != nil {
+			return fmt.Errorf("delete sub-items for removed orderitems failed: %w", err)
+		}
+	}
+
+	// 3. Suppression des items eux-mêmes
+	delItemsQuery := "DELETE FROM orderitems WHERE order_item_id IN (" + idPlaceholders + ")"
+	if _, err := tx.ExecContext(ctx, delItemsQuery, removedIDs...); err != nil {
+		return fmt.Errorf("delete removed orderitems failed: %w", err)
+	}
+
+	return nil
+}
+
+// ResetOrderItems conservé pour compatibilité ascendante (utilisé éventuellement ailleurs).
+// Préférer deleteRemovedOrderItems dans UpdateOrder.
 func (r *OrdersRepository) ResetOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE orderitems
