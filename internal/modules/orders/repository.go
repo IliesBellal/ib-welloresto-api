@@ -1321,13 +1321,11 @@ func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 	// PHP: places_settings = ... ?? 0;
 	// En Go, un int est par défaut à 0. Cette ligne est implicite,
 	// mais on peut la garder si places_settings est un pointeur (*int).
-	// Si c'est un int simple, rien à faire, c'est déjà 0 si absent du JSON.
 
 	//TODO
 	// PHP: is_scheduled = ... ? "1" : "0";
 	// En Go, le booléen est "false" par défaut.
 	// Le driver SQL convertira automatiquement le bool true/false en 1/0 (TINYINT) pour MySQL.
-	// Pas besoin de conversion manuelle en string sauf si ta colonne DB est un VARCHAR.
 }
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
