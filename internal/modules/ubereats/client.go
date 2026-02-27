@@ -240,3 +240,32 @@ func (c *UberClient) UpdateItemState(ctx context.Context, storeID string, itemID
 	endpoint := fmt.Sprintf("%s/v2/eats/stores/%s/menus/items/%s", c.config.BaseURL, storeID, itemID)
 	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
 }
+
+// SyncMenu pousse un menu vers l'API Uber Eats (PUT /v2/eats/stores/{storeID}/menus)
+func (c *UberClient) SyncMenu(ctx context.Context, storeID string, token string, menu interface{}) error {
+	endpoint := fmt.Sprintf("%s/v2/eats/stores/%s/menus", c.config.BaseURL, storeID)
+
+	body, err := json.Marshal(menu)
+	if err != nil {
+		return fmt.Errorf("failed to marshal menu: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("uber api error %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}

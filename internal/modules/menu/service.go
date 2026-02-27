@@ -3,21 +3,28 @@ package menu
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/modules/ubereats"
 )
 
 type MenuService struct {
-	userRepo auth.AuthService // uses your existing interface
-	legacy   *MenuRepository
+	userRepo  auth.AuthService // uses your existing interface
+	legacy    *MenuRepository
+	deliveroo *deliveroo.DeliverooService
+	uber      *ubereats.UberEatsService
 }
 
-func NewMenuService(legacy *MenuRepository, userRepo auth.AuthService) *MenuService {
+func NewMenuService(legacy *MenuRepository, userRepo auth.AuthService, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService) *MenuService {
 	return &MenuService{
-		userRepo: userRepo,
-		legacy:   legacy,
+		userRepo:  userRepo,
+		legacy:    legacy,
+		deliveroo: deliverooSvc,
+		uber:      uberSvc,
 	}
 }
 
@@ -138,6 +145,76 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 	}
 
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
+}
+
+// GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo
+func (s *MenuService) GetDeliverooMenu(ctx context.Context, token string) (map[string]interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	return s.deliveroo.GetMenu(ctx, user.MerchantID)
+}
+
+// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo
+func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+
+	internalMenu, err := s.legacy.GetMenu(ctx, user.MerchantID, nil)
+	if err != nil {
+		return err
+	}
+
+	deliverooMenu, err := ToDeliverooFormat(internalMenu)
+	if err != nil {
+		return fmt.Errorf("menu sync deliveroo: mapping failed: %w", err)
+	}
+
+	return s.deliveroo.SyncMenu(ctx, user.MerchantID, deliverooMenu)
+}
+
+// GetUberEatsMenu récupère le menu du restaurant depuis l'API Uber Eats
+func (s *MenuService) GetUberEatsMenu(ctx context.Context, token string) (map[string]interface{}, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	return s.uber.GetMenu(ctx, user.MerchantID)
+}
+
+// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats
+func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+
+	internalMenu, err := s.legacy.GetMenu(ctx, user.MerchantID, nil)
+	if err != nil {
+		return err
+	}
+
+	uberMenu, err := ToUberEatsFormat(internalMenu)
+	if err != nil {
+		return fmt.Errorf("menu sync ubereats: mapping failed: %w", err)
+	}
+
+	return s.uber.SyncMenu(ctx, user.MerchantID, uberMenu)
 }
 
 func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int) (*string, error) {

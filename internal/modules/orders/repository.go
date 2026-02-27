@@ -1368,6 +1368,7 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	if req.Order.Customer != nil {
 		customer_id = req.Order.Customer.CustomerID
 	}
+	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO orders(brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
@@ -1376,7 +1377,7 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, req.Order.IsScheduled,
-		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, req.Order.EstimatedReady,
+		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType,
 	)
 	if err != nil {
@@ -1395,6 +1396,21 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	}
 
 	return strconv.FormatInt(lastID, 10), nil
+}
+
+func normalizeEstimatedReady(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+
+	// unix timestamp ?
+	if unix, err := strconv.ParseInt(value, 10, 64); err == nil && unix > 1_000_000_000 {
+		// MySQL : conversion unix -> timestamp
+		return time.Unix(unix, 0).UTC()
+	}
+
+	// sinon on considère que c'est déjà un timestamp valide
+	return value
 }
 
 // insertOrderCommentinsertOrderItemComment inserts the order items comments

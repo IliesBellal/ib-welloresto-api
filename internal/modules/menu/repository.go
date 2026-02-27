@@ -168,7 +168,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
-                   CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image
+                   CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
+                   p.sync_uber_eats, p.sync_deliveroo
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -189,13 +190,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var desc sql.NullString
 			var imageURL sql.NullString
 			var availIn, availTake, availDel sql.NullBool
-			var isPopular sql.NullBool
+			var isPopular, syncUberEats, syncDeliveroo sql.NullBool
 			var hasImage bool
 
 			if err := rows.Scan(
 				&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
-				&availIn, &availTake, &availDel, &hasImage,
+				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo,
 			); err != nil {
 				return nil, err
 			}
@@ -230,6 +231,12 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			}
 			if availDel.Valid {
 				p.AvailableDelivery = availDel.Bool
+			}
+			if syncDeliveroo.Valid {
+				p.SyncDeliveroo = syncDeliveroo.Bool
+			}
+			if syncUberEats.Valid {
+				p.SyncUberEats = syncUberEats.Bool
 			}
 			defaultOrder := 0
 			p.DisplayOrder = &defaultOrder
@@ -434,7 +441,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		ID     int64
 		Name   string
 		CatID  *string
-		Status int
+		Status string
 		Price  int
 	}
 	var allComponents []compBasicTmp

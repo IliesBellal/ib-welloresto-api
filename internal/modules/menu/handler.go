@@ -157,15 +157,14 @@ func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	updated, err := h.service.SetComponentAvailability(ctx, token, componentID, req.Status)
+	_, err := h.service.SetComponentAvailability(ctx, token, componentID, req.Status)
 	if err != nil {
 		models.SendErrorJSON(w, "menu", "set_component_availability", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_component_availability", models.AvailabilityResponse{
-		Status:  "1",
-		Updated: updated,
+		Status: "success",
 	})
 }
 
@@ -185,15 +184,14 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	updated, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
+	_, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
 	if err != nil {
 		models.SendErrorJSON(w, "menu", "set_product_availability", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_product_availability", models.AvailabilityResponse{
-		Status:  "1",
-		Updated: updated,
+		Status: "1",
 	})
 }
 
@@ -256,4 +254,86 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "1", "message": "attributes updated"})
+}
+
+// GetDeliverooMenu récupère le menu depuis l'API Deliveroo
+func (h *MenuHandler) GetDeliverooMenu(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_deliveroo_menu", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	menu, err := h.service.GetDeliverooMenu(ctx, token)
+	if err != nil {
+		log.Error("[ERROR] GetDeliverooMenu error " + err.Error())
+		models.SendErrorJSON(w, "menu", "get_deliveroo_menu", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_deliveroo_menu", menu)
+}
+
+// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo
+func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "sync_deliveroo_menu", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.SyncDeliverooMenu(ctx, token); err != nil {
+		log.Error("[ERROR] SyncDeliverooMenu error " + err.Error())
+		models.SendErrorJSON(w, "menu", "sync_deliveroo_menu", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "sync_deliveroo_menu", map[string]string{"status": "1", "message": "menu synced to deliveroo"})
+}
+
+// GetUberEatsMenu récupère le menu depuis l'API Uber Eats
+func (h *MenuHandler) GetUberEatsMenu(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_ubereats_menu", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	menu, err := h.service.GetUberEatsMenu(ctx, token)
+	if err != nil {
+		log.Error("[ERROR] GetUberEatsMenu error " + err.Error())
+		models.SendErrorJSON(w, "menu", "get_ubereats_menu", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_ubereats_menu", menu)
+}
+
+// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats
+func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "sync_ubereats_menu", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.SyncUberEatsMenu(ctx, token); err != nil {
+		log.Error("[ERROR] SyncUberEatsMenu error " + err.Error())
+		models.SendErrorJSON(w, "menu", "sync_ubereats_menu", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]string{"status": "1", "message": "menu synced to uber eats"})
 }

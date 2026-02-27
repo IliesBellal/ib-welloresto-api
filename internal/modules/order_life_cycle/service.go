@@ -169,9 +169,6 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 		return nil, models.ErrUnauthorized
 	}
 
-	log := logger.FromContext(ctx)
-	log.Info("OrderFileCycle.SetDistributedProducts - doRequest for order " + req.OrderID)
-
 	err = s.ordersLifeCycleRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
 	if err != nil {
 		return map[string]interface{}{
@@ -191,10 +188,10 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(ctx, user.UserID, user.MerchantID, req.OrderID, false)
+		go s.uberSvc.SetOrderReady(user.UserID, user.MerchantID, req.OrderID, false)
 
 	case models.BrandDeliveroo:
-		go s.deliverooSvc.ReadyForCollection(ctx, req.OrderID)
+		go s.deliverooSvc.ReadyForCollection(req.OrderID)
 	}
 
 	return map[string]interface{}{"status": "1"}, nil
@@ -417,10 +414,10 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(ctx, in.UserID, in.MerchantID, in.OrderID, false)
+		go s.uberSvc.SetOrderReady(in.UserID, in.MerchantID, in.OrderID, false)
 
 	case models.BrandDeliveroo:
-		go s.deliverooSvc.ReadyForCollection(ctx, in.OrderID)
+		go s.deliverooSvc.ReadyForCollection(in.OrderID)
 	}
 
 	return nil

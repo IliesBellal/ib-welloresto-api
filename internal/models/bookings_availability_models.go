@@ -16,7 +16,7 @@ type BookingAvailabilityResponse struct {
 // ----------------------------------------------------
 
 type MerchantBookingParams struct {
-	MerchantID                 int                     `json:"merchant_id"`
+	MerchantID                 string                  `json:"merchant_id"`
 	Timezone                   string                  `json:"timezone"`
 	LogoURL                    string                  `json:"logo_url"`
 	BusinessName               string                  `json:"business_name"`

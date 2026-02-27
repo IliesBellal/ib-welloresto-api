@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -21,35 +22,46 @@ type OrderComment struct {
 }
 
 type Location struct {
-	LocationID   string  `json:"location_id"`
-	OrderID      *string `json:"order_id"`
-	BookingID    *string `json:"booking_id"`
-	LocationName string  `json:"location_name"`
-	LocationDesc *string `json:"location_desc"`
-	Seats        int     `json:"seats"`
-	Order        int     `json:"order"`
-	FloorID      string  `json:"floor_id,omitempty"`
-	Shape        string  `json:"shape,omitempty"`
-	X            string  `json:"x,omitempty"`
-	Y            string  `json:"y,omitempty"`
-	W            string  `json:"w,omitempty"`
-	H            string  `json:"h,omitempty"`
-	Angle        string  `json:"angle,omitempty"`
-	OpenOrderID  string  `json:"open_order_id,omitempty"`
-	Available    string  `json:"available,omitempty"`
+	LocationID   string    `json:"location_id"`
+	OrderID      *string   `json:"order_id"`
+	BookingID    *string   `json:"booking_id"`
+	LocationName string    `json:"location_name"`
+	LocationDesc *string   `json:"location_desc"`
+	Seats        int       `json:"seats"`
+	Order        int       `json:"order"`
+	FloorID      string    `json:"floor_id,omitempty"`
+	Shape        string    `json:"shape,omitempty"`
+	X            float64   `json:"x,omitempty"`
+	Y            float64   `json:"y,omitempty"`
+	W            float64   `json:"w,omitempty"`
+	H            float64   `json:"h,omitempty"`
+	Angle        float64   `json:"angle,omitempty"`
+	OpenOrderID  *string   `json:"open_order_id,omitempty"`
+	Available    bool      `json:"available,omitempty"`
+	Bookings     []Booking `json:"bookings"`
 }
 
-type SeatingPlan struct {
+type LocationResponse struct {
 	Locations []Location `json:"locations"`
 	Floors    []Floor    `json:"floors"`
 	Areas     []Area     `json:"areas"`
-	Bookings  []Booking  `json:"bookings"`
-}
-
-type Area struct {
 }
 
 type Floor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Area struct {
+	ID          string          `json:"id"`
+	FloorID     string          `json:"floor_id"`
+	Name        string          `json:"name"`
+	Points      json.RawMessage `json:"points"` // Utilisation de RawMessage pour le JSON brut
+	X           float64         `json:"x"`
+	Y           float64         `json:"y"`
+	Angle       float64         `json:"angle"`
+	StrokeColor string          `json:"stroke_color"`
+	Color       string          `json:"color"`
 }
 
 type PaymentItem struct {

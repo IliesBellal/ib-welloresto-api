@@ -170,7 +170,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 					MerchantLogo: merchant.LogoURL,
 					MerchantName: merchant.BusinessName,
 					OrderDate:    order.CreationDate.String(),
-					TrackingURL:  "https://scannorder.welloresto.fr/restaurant/" + merchant.Code,
+					TrackingURL:  "https://scannorder.welloresto.fr/restaurant/" + merchant.Code + "/" + order.OrderID,
 					SupportEmail: "contact@welloresto.fr",
 				}
 				go s.email.SendOrderConfirmationToCustomer(session.CustomerDetails.Email, emailPayload)

@@ -93,7 +93,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Menu ----
 	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
-	menuService := menuModule.NewMenuService(menuRepoLegacy, authService)
+	// NOTE: deliverooService and uberService are initialized below; we forward-declare menuService
+	// and re-assign after their initialization using a late-binding approach via a pointer.
+	// To keep initialization order clean, menuService is assigned after deliveroo/uber init.
 
 	// ---- Orders ----
 	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
@@ -116,6 +118,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Deliveroo ----
 	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
+	deliverooHandler := deliverooModule.NewDeliverooHandler(deliverooService)
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
@@ -124,13 +127,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Stripe ----
 	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
 
+	// ---- Uber ----
+	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
+
+	// ---- Menu (initialized after deliveroo + uber) ----
+	menuService := menuModule.NewMenuService(menuRepoLegacy, authService, deliverooService, uberService)
+
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
 	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, *stripeManager)
 	scannHandler := scannorder.NewHandler(scannService)
-
-	// ---- Uber ----
-	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
 
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
@@ -234,6 +240,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 	r.Route("/test", func(r chi.Router) {
 		r.Get("/test-mailer", mailService.TriggerTestEmail)
+
+		r.Post("/deliveroo/brandID", deliverooHandler.SyncSiteBrandID)
+		r.Post("/deliveroo/upload-menu", deliverooHandler.UploadTestMenu)
 	})
 
 	// Webhooks
@@ -327,6 +336,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Post("/product/create", menuH.CreateProduct)
 		r.Get("/product/{product_id}", menuH.GetProduct)
+
+		// --- Plateformes externes ---
+		r.Get("/deliveroo", menuH.GetDeliverooMenu)
+		r.Patch("/deliveroo/sync", menuH.SyncDeliverooMenu)
+		r.Get("/uber-eats", menuH.GetUberEatsMenu)
+		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
 	})
 
 	// --- LOCATIONS ---

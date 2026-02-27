@@ -200,7 +200,7 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 	}
 
 	// 2. Récupérer le store
-	store, err := s.repo.GetStoreData(tx, *merchantID)
+	store, err := s.repo.GetStoreData(*merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
 	}
@@ -237,7 +237,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 		defer txRead.Rollback() // Sécurité : libère la connexion quoi qu'il arrive
 
 		// 2.a Récupérer le store
-		store, err = s.repo.GetStoreData(txRead, merchantID)
+		store, err = s.repo.GetStoreData(merchantID)
 		if err != nil {
 			return fmt.Errorf("store error: %v", err)
 		}
@@ -482,7 +482,9 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 }
 
 // SetOrderReady logique métier
-func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID, orderID string, updateStock bool) error {
+func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, updateStock bool) error {
+	ctx := context.Background()
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -646,7 +648,7 @@ func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID str
 	}
 	defer tx.Rollback()
 
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(merchantID)
 	if err != nil {
 		return err
 	}
@@ -702,7 +704,7 @@ func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchant
 	}
 
 	// Sinon, appel API
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(merchantID)
 	if err != nil {
 		return err
 	}
@@ -733,7 +735,7 @@ func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID st
 	}
 	defer tx.Rollback()
 
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(merchantID)
 	if err != nil {
 		return err
 	}
@@ -831,11 +833,29 @@ func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[s
 	}
 	defer tx.Commit()
 
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(merchantID)
 	if err != nil {
 		return nil, err
 	}
 	token, err := s.GetValidToken(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return s.client.GetMenu(store.StoreID, token)
+}
+
+// SyncMenu pousse un menu interne vers l'API Uber Eats
+func (s *UberEatsService) SyncMenu(ctx context.Context, merchantID string, menu interface{}) error {
+	store, err := s.repo.GetStoreData(merchantID)
+	if err != nil {
+		return err
+	}
+
+	token, err := s.GetValidToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.client.SyncMenu(ctx, store.StoreID, token, menu)
 }

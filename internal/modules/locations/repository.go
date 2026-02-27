@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
@@ -19,15 +18,22 @@ func NewLocationsRepository(db *sql.DB, log *zap.Logger) *LocationsRepository {
 	return &LocationsRepository{db: db, log: log}
 }
 
-func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) ([]models.Location, error) {
+func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) (*models.LocationResponse, error) {
 	r.log.Info("GetLocations START", zap.String("merchant_id", merchantID))
 
-	// ---------------------------------------------
-	// 1) LOCATIONS + TABLES OUVERTES
-	// ---------------------------------------------
-	queryLocations := fmt.Sprintf(`
-		SELECT DISTINCT 
-			l.location_id, l.location_name, l.location_desc, l.seats, 
+	res := &models.LocationResponse{
+		Locations: []models.Location{},
+		Floors:    []models.Floor{},
+		Areas:     []models.Area{},
+	}
+
+	// 1. CHARGEMENT DES TABLES (LOCATIONS)
+	// On crée une map pour un accès rapide par ID plus tard
+	locMap := make(map[string]*models.Location)
+
+	queryLocs := `
+		SELECT 
+			l.location_id, l.location_name, COALESCE(l.location_desc, ''), l.seats, 
 			l.location_order, l.floor_id, l.shape, l.current_x, l.current_y,
 			l.current_width, l.current_height, l.angle, ol.order_id,
 			CASE WHEN ol.order_id IS NULL THEN '1' ELSE '0' END as available 
@@ -37,210 +43,129 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 			FROM order_location ol
 			INNER JOIN orders o ON o.order_id = ol.order_id
 			WHERE o.state NOT IN ('DELETED','DONE','CANCELED','CLOSED')
-			AND o.merchant_id = %s
+			AND o.merchant_id = ?
 		) ol ON l.location_id = ol.location_id
-		WHERE l.merchant_id = %s
-		AND l.enabled IS TRUE
-		ORDER BY l.location_order ASC;
-	`, merchantID, merchantID)
+		WHERE l.merchant_id = ? AND l.enabled IS TRUE
+		ORDER BY l.location_order ASC;`
 
-	rowsLoc, err := r.db.QueryContext(ctx, queryLocations)
+	rowsLoc, err := r.db.QueryContext(ctx, queryLocs, merchantID, merchantID)
 	if err != nil {
-		r.log.Error("locations query error", zap.Error(err))
 		return nil, err
 	}
 	defer rowsLoc.Close()
 
-	locations := []models.Location{}
-
 	for rowsLoc.Next() {
 		var l models.Location
-		err := rowsLoc.Scan(
+		if err := rowsLoc.Scan(
 			&l.LocationID, &l.LocationName, &l.LocationDesc, &l.Seats, &l.Order, &l.FloorID,
 			&l.Shape, &l.X, &l.Y, &l.W, &l.H, &l.Angle, &l.OpenOrderID, &l.Available,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, err
 		}
-		locations = append(locations, l)
+		l.Bookings = []models.Booking{}
+		locMap[l.LocationID] = &l
 	}
 
-	// ---------------------------------------------
-	// 2) BOOKINGS
-	// ---------------------------------------------
-	queryBookings := fmt.Sprintf(`
+	// 2. CHARGEMENT DES RÉSERVATIONS (BOOKINGS)
+	// On gère le fait qu'une résa peut avoir plusieurs tables
+	queryBookings := `
 		SELECT 
-			b.booking_id, b.booking_number, b.comment, b.party_size, 
-			bl.location_id, b.booking_date_from, b.booking_date_to, 
-			b.booking_duration,
-			c.customer_id, c.customer_name, c.customer_tel
+			b.booking_id, b.booking_number, b.status, 
+			b.sequence_number, b.booking_date_from, b.booking_date_to, b.party_size,
+			b.creation_date, b.created_by, b.comment, b.booking_date_from, b.booking_date_to,
+			bl.location_id, c.customer_id, c.customer_name, COALESCE(c.customer_tel, '')
 		FROM bookings b
 		INNER JOIN booked_location bl ON bl.booking_id = b.booking_id
-		INNER JOIN locations l ON l.location_id = bl.location_id
 		INNER JOIN customer c ON c.customer_id = b.customer_id
-		WHERE b.merchant_id = %s
-		AND b.status IN ('ACCEPTED')
-		AND b.booking_date_to > UTC_TIMESTAMP - INTERVAL 5 HOUR;
-	`, merchantID)
+		WHERE b.merchant_id = ? AND b.status = 'ACCEPTED'
+		AND b.booking_date_to > UTC_TIMESTAMP - INTERVAL 5 HOUR;`
 
-	rowsBook, err := r.db.QueryContext(ctx, queryBookings)
+	rowsBook, err := r.db.QueryContext(ctx, queryBookings, merchantID)
 	if err != nil {
-		r.log.Error("bookings query error", zap.Error(err))
 		return nil, err
 	}
 	defer rowsBook.Close()
 
-	bookings := []map[string]interface{}{}
+	uniqueBookings := make(map[string]*models.Booking)
 
 	for rowsBook.Next() {
-		var (
-			bookingID, bookingNumber, comment, locationID string
-			partySize                                     int
-			dateFrom, dateTo                              sql.NullString
-			duration                                      sql.NullString
-			customerID, customerName, customerTel         string
-		)
+		var bID, bNum, bStatus, bFrom, bTo, bCreated, bBy, bLocID string
+		var bSeq, bSize int
+		var bComment, bStart, bEnd, cID, cName, cTel *string
 
 		err := rowsBook.Scan(
-			&bookingID, &bookingNumber, &comment, &partySize,
-			&locationID, &dateFrom, &dateTo, &duration,
-			&customerID, &customerName, &customerTel,
+			&bID, &bNum, &bStatus, &bSeq, &bFrom, &bTo, &bSize,
+			&bCreated, &bBy, &bComment, &bStart, &bEnd,
+			&bLocID, &cID, &cName, &cTel,
 		)
 		if err != nil {
 			return nil, err
 		}
 
-		bookings = append(bookings, map[string]interface{}{
-			"booking_id":        bookingID,
-			"booking_number":    bookingNumber,
-			"comment":           comment,
-			"party_size":        partySize,
-			"location_id":       locationID,
-			"booking_date_from": dateFrom.String,
-			"booking_date_to":   dateTo.String,
-			"customer": map[string]interface{}{
-				"customer_id":   customerID,
-				"customer_name": customerName,
-				"customer_tel":  customerTel,
-			},
-		})
+		// Si c'est la première fois qu'on voit cette réservation
+		if _, exists := uniqueBookings[bID]; !exists {
+			uniqueBookings[bID] = &models.Booking{
+				BookingID:       bID,
+				BookingNumber:   bNum,
+				Status:          bStatus,
+				SequenceNumber:  bSeq,
+				BookingDateFrom: bFrom,
+				BookingDateTo:   bTo,
+				PartySize:       bSize,
+				CreationDate:    bCreated,
+				CreatedBy:       bBy,
+				Comment:         bComment,
+				StartDate:       bStart,
+				EndDate:         bEnd,
+				Customer:        models.Customer{CustomerID: cID, CustomerName: cName, CustomerTel: cTel},
+				Merchant:        models.MerchantBookingParams{MerchantID: merchantID},
+				Locations:       []models.Location{},
+			}
+		}
+
+		// On ajoute la table (si elle existe dans locMap) à la réservation
+		if loc, ok := locMap[bLocID]; ok {
+			// On ajoute la table à la réservation
+			uniqueBookings[bID].Locations = append(uniqueBookings[bID].Locations, *loc)
+			// Et on ajoute la réservation à la table (pour la vue par table)
+			loc.Bookings = append(loc.Bookings, *uniqueBookings[bID])
+		}
 	}
 
-	// ---------------------------------------------
 	// 3) FLOORS
-	// ---------------------------------------------
-	rowsFloors, err := r.db.QueryContext(ctx, `
-		SELECT id, name
-		FROM floors
-		WHERE merchant_id = ?
-		AND enabled IS TRUE;
-	`, merchantID)
-
-	if err != nil {
-		r.log.Error("floors query error", zap.Error(err))
-		return nil, err
-	}
-	defer rowsFloors.Close()
-
-	floors := []map[string]interface{}{}
-	for rowsFloors.Next() {
-		var id string
-		var name string
-		rowsFloors.Scan(&id, &name)
-
-		floors = append(floors, map[string]interface{}{
-			"id":   id,
-			"name": name,
-		})
+	rowsFloors, err := r.db.QueryContext(ctx, "SELECT id, name FROM floors WHERE merchant_id = ? AND enabled IS TRUE", merchantID)
+	if err == nil {
+		defer rowsFloors.Close()
+		for rowsFloors.Next() {
+			var f models.Floor
+			rowsFloors.Scan(&f.ID, &f.Name)
+			res.Floors = append(res.Floors, f)
+		}
 	}
 
-	// ---------------------------------------------
 	// 4) AREAS
-	// ---------------------------------------------
 	rowsAreas, err := r.db.QueryContext(ctx, `
 		SELECT fa.id, fa.floor_id, fa.name, fa.points, fa.x, fa.y, fa.angle, fa.stroke_color, fa.color
 		FROM floor_areas fa
 		INNER JOIN floors f ON f.id = fa.floor_id
-		WHERE f.merchant_id = ?
-		AND fa.enabled IS TRUE
-		AND f.enabled IS TRUE;
-	`, merchantID)
-
-	if err != nil {
-		r.log.Error("areas query error", zap.Error(err))
-		return nil, err
-	}
-	defer rowsAreas.Close()
-
-	areas := []map[string]interface{}{}
-	for rowsAreas.Next() {
-		var id, floorID, name, points, x, y, angle, strokeColor, color sql.NullString
-
-		rowsAreas.Scan(&id, &floorID, &name, &points, &x, &y, &angle, &strokeColor, &color)
-
-		var pointsParsed interface{}
-		json.Unmarshal([]byte(points.String), &pointsParsed)
-
-		areas = append(areas, map[string]interface{}{
-			"id":           id.String,
-			"floor_id":     floorID.String,
-			"name":         name.String,
-			"points":       pointsParsed,
-			"x":            x.String,
-			"y":            y.String,
-			"angle":        angle.String,
-			"stroke_color": strokeColor.String,
-			"color":        color.String,
-		})
-	}
-
-	// ---------------------------------------------
-	// FINAL MERGE : locations + bookings associés
-	// ---------------------------------------------
-	finalLocations := []map[string]interface{}{}
-
-	for _, l := range locations {
-		locBookings := []map[string]interface{}{}
-		for _, b := range bookings {
-			if b["location_id"] == l.LocationID {
-				locBookings = append(locBookings, b)
-			}
+		WHERE f.merchant_id = ? AND fa.enabled IS TRUE AND f.enabled IS TRUE`, merchantID)
+	if err == nil {
+		defer rowsAreas.Close()
+		for rowsAreas.Next() {
+			var a models.Area
+			var pts []byte
+			rowsAreas.Scan(&a.ID, &a.FloorID, &a.Name, &pts, &a.X, &a.Y, &a.Angle, &a.StrokeColor, &a.Color)
+			a.Points = json.RawMessage(pts)
+			res.Areas = append(res.Areas, a)
 		}
-
-		finalLocations = append(finalLocations, map[string]interface{}{
-			"location_id":    l.LocationID,
-			"location_name":  l.LocationName,
-			"location_desc":  l.LocationDesc,
-			"seats":          l.Seats,
-			"available":      l.Available,
-			"location_order": l.Order,
-			"floor_id":       l.FloorID,
-			"shape":          l.Shape,
-			"current_x":      l.X,
-			"current_y":      l.Y,
-			"current_width":  l.W,
-			"current_height": l.H,
-			"angle":          l.Angle,
-			"open_order_id":  l.OpenOrderID,
-			"bookings":       locBookings,
-		})
 	}
 
-	// ---------------------------------------------
-	// RETURN JSON IDENTIQUE À PHP
-	// ---------------------------------------------
+	// FINAL MERGE : Injecter les bookings dans les locations
+	for _, loc := range locMap {
+		res.Locations = append(res.Locations, *loc)
+	}
 
-	/*
-		return map[string]interface{}{
-			"locations": finalLocations,
-			"floors":    floors,
-			"areas":     areas,
-			"bookings":  bookings,
-		}, nil
-
-	*/
-
-	return nil, nil
+	return res, nil
 }
 
 func (r *LocationsRepository) UpdateLocationCoordinates(ctx context.Context, merchantID, locationID string, x, y float64) error {

@@ -160,3 +160,39 @@ func (r *DeliverooRepository) MarkOrderCanceledLocal(ctx context.Context, orderI
 	_, err := r.db.ExecContext(ctx, q, orderID)
 	return err
 }
+
+// GetBrandIDByMerchant récupère le brand_id Deliveroo associé à un merchant
+func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchantID string) (string, error) {
+	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? LIMIT 1`
+
+	var brandID sql.NullString
+	if err := r.db.QueryRowContext(ctx, q, merchantID).Scan(&brandID); err != nil {
+		return "", err
+	}
+	if !brandID.Valid || brandID.String == "" {
+		return "", fmt.Errorf("deliveroo: brand_id not configured for merchant %s", merchantID)
+	}
+	return brandID.String, nil
+}
+
+// UpdateMerchantBrandID met à jour le brand_id Deliveroo pour un restaurant donné
+func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchantID string, brandID string) error {
+	const q = `UPDATE integration_deliveroo SET brand_id = ? WHERE merchant_id = ?`
+
+	_, err := r.db.ExecContext(ctx, q, brandID, merchantID)
+	return err
+}
+
+// GetSiteIDByMerchant récupère le site_id (unique par site) stocké en base
+func (r *DeliverooRepository) GetSiteIDByMerchant(ctx context.Context, merchantID string) (string, error) {
+	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? LIMIT 1`
+
+	var siteID sql.NullString
+	if err := r.db.QueryRowContext(ctx, q, merchantID).Scan(&siteID); err != nil {
+		return "", err
+	}
+	if !siteID.Valid {
+		return "", fmt.Errorf("deliveroo_site_id not set for merchant %s", merchantID)
+	}
+	return siteID.String, nil
+}

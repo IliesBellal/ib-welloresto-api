@@ -33,21 +33,35 @@ func (r *UberRepository) GetMerchantIDFromStoreID(tx *sql.Tx, storeID string) (*
 }
 
 // GetStoreData récupère les infos du magasin
-func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, error) {
+// GetStoreData récupère les infos du magasin
+func (r *UberRepository) GetStoreData(merchantID string) (*Store, error) {
 	query := `
-		SELECT iue.merchant_id, iue.store_id, m.timezone, 
-		       iue.estimated_preparation_time, iue.last_estimated_preparation_time
-		FROM integration_uber_eats iue
-		INNER JOIN merchant m on m.id = iue.merchant_id
-		WHERE iue.merchant_id = ?`
+       SELECT iue.merchant_id, iue.store_id, m.timezone, 
+              iue.estimated_preparation_time, iue.last_estimated_preparation_time
+       FROM integration_uber_eats iue
+       INNER JOIN merchant m on m.id = iue.merchant_id
+       WHERE iue.merchant_id = ?`
 
 	var store Store
-	// Gestion des NULLs potentiels avec sql.NullInt64 si nécessaire, ici simplifié
-	row := tx.QueryRow(query, merchantID)
-	err := row.Scan(&store.MerchantID, &store.StoreID, &store.Timezone, &store.EstimatedPreparationTime, &store.LastEstimatedPreparationTime)
+
+	// On utilise directement r.db au lieu de tx
+	row := r.db.QueryRow(query, merchantID)
+
+	err := row.Scan(
+		&store.MerchantID,
+		&store.StoreID,
+		&store.Timezone,
+		&store.EstimatedPreparationTime,
+		&store.LastEstimatedPreparationTime,
+	)
+
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Ou une erreur personnalisée si le store est obligatoire
+		}
 		return nil, err
 	}
+
 	return &store, nil
 }
 

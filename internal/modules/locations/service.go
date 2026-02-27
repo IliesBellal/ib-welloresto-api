@@ -18,7 +18,7 @@ func NewLocationsService(locationsRepo *LocationsRepository, userRepo auth.AuthS
 	}
 }
 
-func (s *LocationsService) GetLocations(ctx context.Context, token string) ([]models.Location, error) {
+func (s *LocationsService) GetLocations(ctx context.Context, token string) (*models.LocationResponse, error) {
 	// Resolve user by token to get merchant id
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {

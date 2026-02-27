@@ -41,14 +41,14 @@ type ProductEntry struct {
 	TVAIn                        *float64              `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64              `json:"tva_rate_delivery,omitempty"`
 	TVATakeAway                  *float64              `json:"tva_rate_take_away,omitempty"`
-	AvailableIn                  bool                  `json:"available_in,omitempty"`
-	AvailableTakeAway            bool                  `json:"available_take_away,omitempty"`
-	AvailableDelivery            bool                  `json:"available_delivery,omitempty"`
+	AvailableIn                  bool                  `json:"available_in"`
+	AvailableTakeAway            bool                  `json:"available_take_away"`
+	AvailableDelivery            bool                  `json:"available_delivery"`
 	Category                     *string               `json:"category"` // To Be Deleted
 	CategoryID                   *string               `json:"category_id"`
 	IsProductGroup               bool                  `json:"is_product_group"`
 	BgColor                      *string               `json:"bg_color,omitempty"`
-	Status                       int                   `json:"status"`
+	Status                       string                `json:"status"`
 	SubProducts                  []ProductEntry        `json:"sub_products"`
 	Configuration                ConfigurableResponse  `json:"configuration"`
 	Quantity                     int                   `json:"quantity"`
@@ -64,8 +64,10 @@ type ProductEntry struct {
 	Extra                        []OrderProductExtra   `json:"extra"`
 	Without                      []OrderProductWithout `json:"without"`
 	Customers                    []interface{}         `json:"customers"` // keep generic as original
-	Comment                      OrderComment          `json:"comment"`
+	Comment                      OrderComment          `json:"comment,omitempty"`
 	DisplayOrder                 *int                  `json:"display_order"`
+	SyncDeliveroo                bool                  `json:"sync_deliveroo,omitempty"`
+	SyncUberEats                 bool                  `json:"sync_ubereats,omitempty"`
 }
 
 type OrderProductExtra struct {
@@ -111,7 +113,7 @@ type ComponentBasic struct {
 	Name        string  `json:"name"`
 	Category    *string `json:"category"`
 	Price       int     `json:"price"`
-	Status      int     `json:"status"`
+	Status      string  `json:"status"`
 }
 
 // configurable attributes

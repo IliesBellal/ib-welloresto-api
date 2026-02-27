@@ -262,6 +262,43 @@ func (c *DeliverooClient) createStage(ctx context.Context, brandOrderID, stage s
 
 // Dans deliveroo_client.go
 
+// GetMenu récupère le menu d'un restaurant depuis l'API Deliveroo
+func (c *DeliverooClient) GetMenu(ctx context.Context, brandID string) (map[string]interface{}, error) {
+	urlPath := fmt.Sprintf("%s/menu/v1/brands/%s/menus", c.config.BaseURL, url.PathEscape(brandID))
+
+	resp, err := c.doRequest(ctx, "GET", urlPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, c.handleError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode menu response: %w", err)
+	}
+	return result, nil
+}
+
+// SyncMenu pousse un menu vers l'API Deliveroo
+func (c *DeliverooClient) SyncMenu(ctx context.Context, brandID string, menu interface{}) error {
+	urlPath := fmt.Sprintf("%s/menu/v1/brands/%s/menus", c.config.BaseURL, url.PathEscape(brandID))
+
+	resp, err := c.doRequest(ctx, "PUT", urlPath, menu)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	return nil
+}
+
 // SendSyncStatus envoie le statut de synchronisation à Deliveroo suite à un Webhook
 func (c *DeliverooClient) SendSyncStatus(ctx context.Context, brandOrderID string, status string, reason string, notes string) error {
 	// ATTENTION: Vérifie l'URL exacte dans la doc Deliveroo pour le sync_status
@@ -303,4 +340,49 @@ func (c *DeliverooClient) handleError(resp *http.Response) error {
 	}
 
 	return fmt.Errorf("deliveroo api error (%d): %s", resp.StatusCode, string(body))
+}
+
+// GetBrandIDBySiteID récupère le brand_id à partir d'un site_id externe
+// Endpoint: GET /site/v1/restaurant_locations/{site_id}
+func (c *DeliverooClient) GetBrandIDBySiteID(ctx context.Context, siteID string) (string, error) {
+	url := fmt.Sprintf("%s/site/v1/restaurant_locations/%s", c.config.BaseURL, url.PathEscape(siteID))
+
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", c.handleError(resp)
+	}
+
+	var result SiteBrandResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode site brand response: %w", err)
+	}
+
+	// On vérifie que le tableau n'est pas vide avant d'accéder à l'index 0
+	if len(result.BrandID) == 0 {
+		return "", fmt.Errorf("no brand_id found for site_id: %s", siteID)
+	}
+
+	// On retourne le premier brand_id trouvé
+	return result.BrandID[0], nil
+}
+
+// UploadMenu envoie le payload complet du menu à Deliveroo
+func (c *DeliverooClient) UploadMenu(ctx context.Context, brandID string, menuID string, payload interface{}) error {
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s", c.config.BaseURL, brandID, menuID)
+
+	resp, err := c.doRequest(ctx, "PUT", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	return nil
 }
