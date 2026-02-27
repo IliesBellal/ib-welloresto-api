@@ -33,8 +33,8 @@ type Location struct {
 	Shape        string    `json:"shape,omitempty"`
 	X            float64   `json:"x,omitempty"`
 	Y            float64   `json:"y,omitempty"`
-	W            float64   `json:"w,omitempty"`
-	H            float64   `json:"h,omitempty"`
+	W            float64   `json:"width,omitempty"`
+	H            float64   `json:"height,omitempty"`
 	Angle        float64   `json:"angle,omitempty"`
 	OpenOrderID  *string   `json:"open_order_id,omitempty"`
 	Available    bool      `json:"available,omitempty"`
