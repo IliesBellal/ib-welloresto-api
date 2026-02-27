@@ -8,14 +8,19 @@ import (
 )
 
 func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.UberWebhookEvent) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // Rollback automatique si pas de commit
 
-	store, err := s.uberClient.GetByStoreID(ctx, event.Meta.UserID)
+	store, err := s.uberClient.GetByStoreID(tx, event.Meta.UserID)
 	if err != nil {
 		return err
 	}
 
 	var order *ueModels.UberOrder
-	order, err = s.uberClient.GetOrderByURL(ctx, event.ResourceHref)
+	order, err = s.uberClient.GetOrderByURL(tx, event.ResourceHref)
 	if err != nil {
 		return err
 	}
@@ -32,7 +37,12 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	createdBy := "WEBHOOK_UBER_EATS"
 	req.Order.CreatedBy = &createdBy
 
-	_, err = s.ordersService.CreateOrder(ctx, req)
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.ordersService.CreateOrder(context.Background(), req)
 	if err != nil {
 		return err
 	}
