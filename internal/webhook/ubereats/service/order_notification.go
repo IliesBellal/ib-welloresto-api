@@ -25,7 +25,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 		return err
 	}
 
-	products, err := s.mapUberItemsToOrderProducts(ctx, store.MerchantID, order.Cart.Items)
+	products, err := s.mapUberItemsToOrderProducts(ctx, tx, store.MerchantID, order.Cart.Items)
 	if err != nil {
 		return err
 	}

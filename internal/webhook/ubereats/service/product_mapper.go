@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	ordersModels "welloresto-api/internal/models"
@@ -10,6 +11,7 @@ import (
 
 func (s *Service) mapUberItemsToOrderProducts(
 	ctx context.Context,
+	tx *sql.Tx, // <-- Ajout de la transaction
 	merchantID string,
 	items []ueModels.UberCartItem,
 ) ([]ordersModels.OrderProductPayload, error) {
@@ -18,7 +20,7 @@ func (s *Service) mapUberItemsToOrderProducts(
 
 	for _, item := range items {
 
-		productID, err := s.productMappingRepo.FindProductIDByUberItemID(ctx, merchantID, item.ID)
+		productID, err := s.productMappingRepo.FindProductIDByUberItemID(ctx, tx, merchantID, item.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -27,6 +29,7 @@ func (s *Service) mapUberItemsToOrderProducts(
 		if productID == nil {
 			newID, err := s.menuService.CreateProductFromExternal(
 				ctx,
+				tx,
 				merchantID,
 				item.Title,
 				"UBER IMPORT",
@@ -36,7 +39,7 @@ func (s *Service) mapUberItemsToOrderProducts(
 				return nil, err
 			}
 
-			err = s.productMappingRepo.CreateProductMapping(ctx, merchantID, *newID, item.ID)
+			err = s.productMappingRepo.CreateProductMapping(ctx, tx, merchantID, *newID, item.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -51,7 +54,7 @@ func (s *Service) mapUberItemsToOrderProducts(
 			OrderedDate: time.Now().Format(time.RFC3339),
 		}
 
-		config, err := s.mapModifiers(ctx, merchantID, item)
+		config, err := s.mapModifiers(ctx, tx, merchantID, item) // <-- Passage de la transaction
 		if err != nil {
 			return nil, err
 		}

@@ -35,22 +35,22 @@ type Service struct {
 }
 
 type ProductMappingRepository interface {
-	FindProductIDByUberItemID(ctx context.Context, merchantID, uberItemID string) (*string, error)
-	CreateProductMapping(ctx context.Context, merchantID, productID, uberItemID string) error
+	FindProductIDByUberItemID(ctx context.Context, tx *sql.Tx, merchantID, uberItemID string) (*string, error)
+	CreateProductMapping(ctx context.Context, tx *sql.Tx, merchantID, productID, uberItemID string) error
 }
 
 type CatalogService interface {
-	CreateProductFromExternal(ctx context.Context, merchantID, name, desc string, price int) (string, error)
+	CreateProductFromExternal(ctx context.Context, tx *sql.Tx, merchantID, name, desc string, price int) (string, error)
 }
 
 type AttributeMappingRepository interface {
-	GetAttributeIDByModifierGroupID(ctx context.Context, merchantID, groupID string) (*string, error)
-	CreateAttributeFromUberGroup(ctx context.Context, merchantID, name string) (string, error)
-	CreateAttributeMapping(ctx context.Context, merchantID, attrID, groupID string) error
+	GetAttributeIDByModifierGroupID(ctx context.Context, tx *sql.Tx, merchantID, groupID string) (*string, error)
+	CreateAttributeFromUberGroup(ctx context.Context, tx *sql.Tx, merchantID, name string) (string, error)
+	CreateAttributeMapping(ctx context.Context, tx *sql.Tx, merchantID, attrID, groupID string) error
 
-	GetOptionIDByUberItemID(ctx context.Context, attributeID, uberItemID string) (*string, error)
-	CreateOptionFromUber(ctx context.Context, attributeID, title string, price int) (string, error)
-	CreateOptionMapping(ctx context.Context, merchantID, optionID, uberItemID string) error
+	GetOptionIDByUberItemID(ctx context.Context, tx *sql.Tx, attributeID, uberItemID string) (*string, error)
+	CreateOptionFromUber(ctx context.Context, tx *sql.Tx, attributeID, title string, price int) (string, error)
+	CreateOptionMapping(ctx context.Context, tx *sql.Tx, merchantID, optionID, uberItemID string) error
 }
 
 type OrderLifeCycleService interface {
