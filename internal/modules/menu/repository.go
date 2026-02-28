@@ -253,6 +253,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		step := "sub_products"
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+                   p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
@@ -272,7 +273,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var tvaIn, tvaDel, tvaTake sql.NullFloat64
 			var bg sql.NullString
 			var desc sql.NullString
-			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
+			var availIn, availTake, availDel sql.NullBool
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
 				return nil, err
 			}
 			if by.Valid {
@@ -292,6 +294,15 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			}
 			if desc.Valid {
 				p.Description = &desc.String
+			}
+			if availIn.Valid {
+				p.AvailableIn = availIn.Bool
+			}
+			if availTake.Valid {
+				p.AvailableTakeAway = availTake.Bool
+			}
+			if availDel.Valid {
+				p.AvailableDelivery = availDel.Bool
 			}
 			defaultOrder := 0
 			p.DisplayOrder = &defaultOrder
