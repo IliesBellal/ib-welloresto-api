@@ -9,7 +9,8 @@ import (
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
-	"welloresto-api/internal/webhook/deliveroo"
+	"welloresto-api/internal/webhook/deliveroo_menu"
+	"welloresto-api/internal/webhook/deliveroo_orders"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -162,9 +163,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
-	deliverooWebhookRepo := deliveroo.NewRepository(mysqlDB)
-	deliverooWebhookService := deliveroo.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService)
-	deliverooWebhookHandler := deliveroo.NewDeliverooHandler(deliverooWebhookService)
+	deliverooWebhookRepo := deliveroo_orders.NewRepository(mysqlDB)
+	deliverooWebhookService := deliveroo_orders.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService)
+	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService)
+
+	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(mysqlDB)
+	deliverooMenuWebhookService := deliveroo_menu.NewMenuWebhookService(deliverooMenuWebhookRepo, deliverooService)
+	deliverooMenuWebhookHandler := deliveroo_menu.NewMenuWebhookHandler(deliverooMenuWebhookService)
 
 	uberWebhookService := webhookuberservice.NewService(
 		mysqlDB,
@@ -243,12 +248,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Post("/deliveroo/brandID", deliverooHandler.SyncSiteBrandID)
 		r.Post("/deliveroo/upload-menu", deliverooHandler.UploadTestMenu)
+		r.Post("/deliveroo/unavailabilities", deliverooHandler.RunUnavailabilitiesScenario)
+		r.Post("/deliveroo/9", deliverooHandler.HandleScenario9)
+		r.Post("/deliveroo/10", deliverooHandler.HandleScenario10)
+		r.Post("/deliveroo/11", deliverooHandler.HandleScenario11)
+		r.Post("/deliveroo/12", deliverooHandler.HandleScenario12)
+		r.Post("/deliveroo/13", deliverooHandler.HandleTriggerScenario13)
 	})
 
 	// Webhooks
 	r.Route("/webhooks", func(r chi.Router) {
 		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
-		r.Post("/deliveroo", deliverooWebhookHandler.HandleWebhook)
+		r.Post("/deliveroo/orders", deliverooWebhookHandler.HandleOrdersWebhook)
+		r.Post("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
 	})
 

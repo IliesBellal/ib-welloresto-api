@@ -179,6 +179,59 @@ func (c *DeliverooClient) AcceptOrder(ctx context.Context, brandOrderID string) 
 	return nil
 }
 
+func (c *DeliverooClient) UpdateUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload any) error {
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s/item_unavailabilities/%s", c.config.BaseURL, brandID, menuID, siteID)
+
+	resp, err := c.doRequest(ctx, "POST", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	return nil
+}
+
+func (c *DeliverooClient) GetUnavailabilities(ctx context.Context, brandID, menuID, siteID string) (*UnavailabilitiesResponse, error) {
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s/item_unavailabilities/%s", c.config.BaseURL, brandID, menuID, siteID)
+
+	// On utilise ton helper (payload est nil car c'est un GET)
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // Très important de fermer ici !
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("deliveroo api error (%d)", resp.StatusCode)
+	}
+
+	var result UnavailabilitiesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *DeliverooClient) ReplaceUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload UnavailabilitiesRequest) error {
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s/item_unavailabilities/%s", c.config.BaseURL, brandID, menuID, siteID)
+
+	// On utilise ton helper pour le PUT
+	resp, err := c.doRequest(ctx, "PUT", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Deliveroo renvoie souvent 204 (No Content) ou 200 pour un PUT réussi
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("deliveroo api error (%d)", resp.StatusCode)
+	}
+	return nil
+}
+
 // ConfirmOrder correspond à $this->updateOrderStatus(..., ["status" => "confirmed"])
 func (c *DeliverooClient) ConfirmOrder(ctx context.Context, brandOrderID string) error {
 	//url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", brandOrderID)
@@ -383,6 +436,21 @@ func (c *DeliverooClient) UploadMenu(ctx context.Context, brandID string, menuID
 
 	if resp.StatusCode >= 400 {
 		return c.handleError(resp)
+	}
+	return nil
+}
+
+func (c *DeliverooClient) UpdateIndividualUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload any) error {
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s/item_unavailabilities/%s", c.config.BaseURL, brandID, menuID, siteID)
+
+	resp, err := c.doRequest(ctx, "POST", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("deliveroo api error (%d)", resp.StatusCode)
 	}
 	return nil
 }

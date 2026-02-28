@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -272,6 +273,9 @@ func (s *DeliverooService) RunMenuScenario(ctx context.Context, merchantID strin
 					"operational_name": "op-burger",
 					"plu":              "PLU1",
 					"type":             "ITEM",
+					"image": map[string]any{
+						"url": "https://storage.welloresto.fr/merchants/2_brasserie_du_midi/products/default.jpg",
+					},
 					"price_info": map[string]any{
 						"price": 1000,
 						"overrides": []map[string]any{
@@ -379,6 +383,40 @@ func (s *DeliverooService) RunMenuScenario(ctx context.Context, merchantID strin
 	return s.client.UploadMenu(ctx, brandID, menuID, payload)
 }
 
+func (s *DeliverooService) RunUnavailabilitiesScenario(ctx context.Context, merchantID string, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
+	// --- ÉTAPE 1 : Orange Juice & Granola indisponibles ---
+	payload1 := map[string]any{
+		"item_unavailabilities": []map[string]string{
+			{"item_id": "orange_juice", "status": "unavailable"},
+			{"item_id": "granola", "status": "unavailable"},
+		},
+	}
+
+	if err := s.client.UpdateUnavailabilities(ctx, brandID, menuID, siteID, payload1); err != nil {
+		return fmt.Errorf("step 1 failed: %w", err)
+	}
+
+	// Respect du rate limit (100ms)
+	time.Sleep(1000 * time.Millisecond)
+
+	// --- ÉTAPE 2 : Orange Juice redevient dispo, Whole Milk devient indispo ---
+	// Note : Granola reste "unavailable" car on ne l' उल्लेख (mentionne) pas ici !
+	payload2 := map[string]any{
+		"item_unavailabilities": []map[string]string{
+			{"item_id": "orange_juice", "status": "available"},
+			{"item_id": "whole_milk", "status": "unavailable"},
+		},
+	}
+
+	return s.client.UpdateUnavailabilities(ctx, brandID, menuID, siteID, payload2)
+}
+
 // Helper pour éviter les erreurs de structure dans le planning
 func (s *DeliverooService) generateFullWeekSchedule() []map[string]any {
 	var schedule []map[string]any
@@ -405,4 +443,160 @@ func (s *DeliverooService) generateSchedule(start, end string) []map[string]any 
 		})
 	}
 	return schedule
+}
+
+func (s *DeliverooService) RunScenario9(ctx context.Context, merchantID string, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
+	// ÉTAPE 1 : Récupérer l'état actuel (contient déjà orange_juice et granola)
+	current, err := s.client.GetUnavailabilities(ctx, brandID, menuID, siteID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch current state: %w", err)
+	}
+
+	// ÉTAPE 2 : On prépare la mise à jour
+	// On garde tout ce qu'on a reçu (immutabilité de l'état tablette)
+	// et on ajoute notre "whole_milk"
+	newUnavailabilities := UnavailabilitiesRequest{
+		UnavailableIDs: append(current.UnavailableIDs, "whole_milk"),
+		HiddenIDs:      current.HiddenIDs, // On conserve Granola qui était caché
+	}
+
+	// ÉTAPE 3 : On écrase tout avec le PUT
+	log.Printf("Sending PUT update: %v", newUnavailabilities)
+	return s.client.ReplaceUnavailabilities(ctx, brandID, menuID, siteID, newUnavailabilities)
+}
+
+func (s *DeliverooService) RunScenario10(ctx context.Context, merchantID string, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
+	// On prépare des listes strictement vides
+	resetPayload := UnavailabilitiesRequest{
+		UnavailableIDs: []string{}, // Force le JSON []
+		HiddenIDs:      []string{}, // Force le JSON []
+	}
+
+	log.Printf("Resetting all unavailabilities for site %s", siteID)
+
+	// On réutilise la méthode Replace (PUT) créée pour le scénario 9
+	return s.client.ReplaceUnavailabilities(ctx, brandID, menuID, siteID, resetPayload)
+}
+
+func (s *DeliverooService) RunScenario11(ctx context.Context, merchantID string, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
+	// État initial demandé par le scénario
+	payload := map[string]any{
+		"item_unavailabilities": []map[string]any{
+			{
+				"item_id": "granola",
+				"status":  "unavailable", // Sera réinitialisé par Deliveroo
+			},
+			{
+				"item_id": "orange_juice",
+				"status":  "hidden", // Restera caché
+			},
+		},
+	}
+
+	log.Printf("Setting initial stock state for Scenario 11 on site %s", siteID)
+	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
+}
+
+func (s *DeliverooService) UpdateIndividualUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload any) error {
+	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
+}
+
+func (s *DeliverooService) RunScenario12(ctx context.Context, merchantID string, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
+	// Dans ce scénario, orange_juice est DÉJÀ indisponible (fait par le système).
+	// On ajoute simplement whole_milk à la liste des indisponibles.
+	payload := map[string]any{
+		"item_unavailabilities": []map[string]any{
+			{
+				"item_id": "whole_milk",
+				"status":  "unavailable",
+			},
+		},
+	}
+
+	log.Printf("Scenario 12: Marking whole_milk as unavailable after midnight for site %s", siteID)
+
+	// On réutilise la méthode POST (UpdateIndividualUnavailabilities)
+	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
+}
+
+func (s *DeliverooService) RunScenario13(ctx context.Context, merchantID, menuID string) error {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+
+	// 1. Génération du payload de 100 items
+	menuPayload := s.generateScenario13Menu(menuID)
+
+	// 2. Envoi du menu via PUT
+	// On utilise l'URL officielle de l'API Menu
+	url := fmt.Sprintf("https://api.developers.deliveroo.com/menu/v1/brands/%s/menus/%s", brandID, menuID)
+
+	// On utilise ton helper doRequest via le client
+	// Note: Assure-toi que ton client expose doRequest ou une méthode PutMenu
+	resp, err := s.client.doRequest(ctx, "PUT", url, menuPayload)
+	if err != nil {
+		return fmt.Errorf("error uploading large menu: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return nil
+}
+
+// generateScenario13Menu crée la structure requise par Deliveroo pour ce test
+func (s *DeliverooService) generateScenario13Menu(menuID string) map[string]any {
+	var items []map[string]any
+	var itemIDs []string
+
+	for i := 1; i <= 100; i++ {
+		id := fmt.Sprintf("item_%d", i)
+		itemIDs = append(itemIDs, id)
+		items = append(items, map[string]any{
+			"id":   id,
+			"name": map[string]string{"en": fmt.Sprintf("Test Item %d", i)},
+			"price_info": map[string]any{
+				"price": 1000, // 10.00€
+			},
+			"tax_rate": "20",
+			"type":     "ITEM",
+		})
+	}
+
+	return map[string]any{
+		"name": "Scenario 13 Menu",
+		"menu": map[string]any{
+			"categories": []map[string]any{
+				{
+					"id":       "cat_scenario_13",
+					"name":     map[string]string{"en": "Main Category"},
+					"item_ids": itemIDs,
+				},
+			},
+			"items": items,
+		},
+	}
 }

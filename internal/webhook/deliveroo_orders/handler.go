@@ -1,4 +1,4 @@
-package deliveroo
+package deliveroo_orders
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ func NewDeliverooHandler(service *DeliverooService) *DeliverooHandler {
 	return &DeliverooHandler{service: service}
 }
 
-func (h *DeliverooHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+func (h *DeliverooHandler) HandleOrdersWebhook(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(r.Context())
 
 	// Lecture du body une seule fois

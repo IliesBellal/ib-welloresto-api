@@ -1,4 +1,4 @@
-package deliveroo
+package deliveroo_orders
 
 import (
 	"context"
