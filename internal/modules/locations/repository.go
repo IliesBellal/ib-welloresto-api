@@ -5,22 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
 )
 
 type LocationsRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	db *sql.DB
 }
 
-func NewLocationsRepository(db *sql.DB, log *zap.Logger) *LocationsRepository {
-	return &LocationsRepository{db: db, log: log}
+func NewLocationsRepository(db *sql.DB) *LocationsRepository {
+	return &LocationsRepository{db: db}
 }
 
 func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) (*models.LocationResponse, error) {
-	r.log.Info("GetLocations START", zap.String("merchant_id", merchantID))
-
 	res := &models.LocationResponse{
 		Locations: []models.Location{},
 		Floors:    []models.Floor{},

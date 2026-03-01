@@ -189,7 +189,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
 
 	// ---- Locations ----
-	locationsRepo := locModule.NewLocationsRepository(mysqlDB, log)
+	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
 	locationsService := locModule.NewLocationsService(locationsRepo, authService)
 
 	// ---- Cash Register ----
