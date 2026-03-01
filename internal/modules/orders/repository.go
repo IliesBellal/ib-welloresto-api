@@ -1179,7 +1179,7 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
                   AND rq.enabled = TRUE
         ) a ON a.product_id = p.product_id
         WHERE p.product_id IN (%s)
-          AND (CASE WHEN a.product_id IS NOT NULL THEN 'out_of_stock' ELSE p.status END) = 0
+          AND (CASE WHEN a.product_id IS NOT NULL THEN 'out_of_stock' ELSE p.status END) = 'out_of_stock'
     `, inClause)
 
 	rows, err := tx.QueryContext(ctx, query, ids...)
@@ -2089,6 +2089,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 			d.discount_id,
 			d.discount_order_type,
 			d.discount_code,
+			d.discount_name,
 			d.discount_desc,
 			d.discount_value,
 			d.discount_unit,
@@ -2124,6 +2125,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 			&d.DiscountID,
 			&d.DiscountOrderType,
 			&d.DiscountCode,
+			&d.DiscountName,
 			&d.DiscountDesc,
 			&d.DiscountValue,
 			&d.DiscountUnit,

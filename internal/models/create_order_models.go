@@ -74,6 +74,7 @@ type OrderProductPayload struct {
 	Price           int                      `json:"price"`
 	Description     *string                  `json:"description,omitempty"`
 	DiscountID      *string                  `json:"discount_id"`
+	DiscountName    *string                  `json:"discount_name"`
 	DelayID         *string                  `json:"delay_id"`
 	ProductName     string                   `json:"product_name"`
 	TvaRate         float64                  `json:"tva_rate"`

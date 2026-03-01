@@ -313,6 +313,7 @@ type DBDiscount struct {
 	DiscountID         string   `json:"discount_id"`
 	DiscountOrderType  string   `json:"discount_order_type,omitempty"` // e.g. "DELIVERY", "TAKE_AWAY", ...
 	DiscountCode       *string  `json:"discount_code,omitempty"`
+	DiscountName       *string  `json:"discount_name,omitempty"`
 	DiscountDesc       *string  `json:"discount_desc,omitempty"`
 	DiscountValue      int      `json:"discount_value"`
 	DiscountUnit       string   `json:"discount_unit,omitempty"` // e.g. "PERCENTAGE", "CURRENCY", "NEWPRICE"

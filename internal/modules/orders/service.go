@@ -580,9 +580,11 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 					// pour que chaque produit ait sa propre instance de prix et d'ID
 					finalPrice := calculatedPrice
 					finalID := d.DiscountID
+					finalName := d.DiscountName
 
 					sp.DiscountedPrice = &finalPrice
 					sp.DiscountID = &finalID
+					sp.DiscountName = finalName
 
 					applied = append(applied, d.DiscountID)
 					discountAlreadyApplied = true
