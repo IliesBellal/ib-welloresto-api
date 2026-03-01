@@ -2054,6 +2054,7 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -2073,6 +2074,7 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 			&p.TVARateTakeAway,
 		)
 		if err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return nil, err
 		}
 		out = append(out, p)
@@ -2271,6 +2273,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -2289,6 +2292,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 			&rw.IsUsed,
 		)
 		if err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return nil, err
 		}
 
@@ -2318,6 +2322,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 
 	rows2, err := r.db.QueryContext(ctx, query2, args2...)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
 	}
 	defer rows2.Close()
@@ -2325,6 +2330,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 	for rows2.Next() {
 		var rewardID, productID string
 		if err := rows2.Scan(&rewardID, &productID); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return nil, err
 		}
 
@@ -2343,6 +2349,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req *models.PricingRequest, count int) (int, error) {
 	rows, err := r.db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", req.MerchantID, count)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return 0, err
 	}
 	defer rows.Close()
@@ -2350,6 +2357,7 @@ func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req
 	var sec int
 	if rows.Next() {
 		if err := rows.Scan(&sec); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return 0, err
 		}
 	}

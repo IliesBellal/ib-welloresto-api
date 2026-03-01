@@ -437,6 +437,7 @@ func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, prod
 	// Repo fetch
 	priceMap, err := s.ordersRepo.GetConfigurationOptionPrices(ctx, ids)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return err
 	}
 
@@ -464,16 +465,19 @@ func (s *OrdersService) loadDiscountStructures(ctx context.Context, req *models.
 
 	discounts, err := s.ordersRepo.GetDiscounts(ctx, req)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, nil, nil, err
 	}
 
 	dp, err := s.ordersRepo.GetDiscountProducts(ctx, req.MerchantID)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, nil, nil, err
 	}
 
 	do, err := s.ordersRepo.GetDiscountProductOptions(ctx, req.MerchantID)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return nil, nil, nil, err
 	}
 
