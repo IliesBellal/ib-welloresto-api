@@ -1175,11 +1175,11 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
             INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
             INNER JOIN components c 
                    ON rq.component_id = c.component_id
-                  AND c.status = 0
+                  AND c.status IN ('0','out_of_stock')
                   AND rq.enabled = TRUE
         ) a ON a.product_id = p.product_id
         WHERE p.product_id IN (%s)
-          AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+          AND (CASE WHEN a.product_id IS NOT NULL THEN 'out_of_stock' ELSE p.status END) = 0
     `, inClause)
 
 	rows, err := tx.QueryContext(ctx, query, ids...)
@@ -1968,7 +1968,7 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
            p.product_id, 
            p.name,
            CASE
-               WHEN a.product_id IS NOT NULL THEN 0 -- Composant manquant = Indisponible (0)
+               WHEN a.product_id IS NOT NULL THEN 'out_of_stock' -- Composant manquant = Indisponible (changer par "missing_component")
                ELSE p.status                        -- Sinon statut du produit
            END as status
        FROM products p
@@ -1977,12 +1977,12 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
            FROM requires rq
            INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
            INNER JOIN components c ON rq.component_id = c.component_id 
-               AND c.status = 0      -- Composant inactif/épuisé
+               AND c.status IN ('0','out_of_stock')      -- Composant inactif/épuisé
                AND rq.enabled = TRUE -- Recette active
        ) a ON a.product_id = p.product_id
        WHERE p.merchant_id = ?
        AND p.product_id IN (%s)
-       HAVING status = 0
+       HAVING status IN ('0','out_of_stock')
     `, placeholders)
 
 	// 3. Préparation des arguments (MerchantID + Liste des ProductIDs)
