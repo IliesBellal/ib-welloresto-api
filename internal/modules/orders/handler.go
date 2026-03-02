@@ -69,6 +69,7 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 			models.SendJSON(w, http.StatusNotFound, "orders", "get_order", map[string]string{"error": "order not found"})
 			return
 		}
+		logger.FromContext(ctx).Error(err.Error())
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_order", map[string]string{"error": err.Error()})
 		return
 	}

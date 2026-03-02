@@ -130,14 +130,29 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	}
 
 	// 2. Paiement total déjà effectué ?
-	var totalPrice, alreadyPaid float64
-	_ = tx.QueryRowContext(ctx, `
-		SELECT o.price, COALESCE(SUM(p.amount),0)
-		FROM orders o
-		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
-		WHERE o.order_id = ?
-		GROUP BY o.order_id
-	`, req.OrderID).Scan(&totalPrice, &alreadyPaid)
+	var totalPrice, alreadyPaid int64
+	err = tx.QueryRowContext(ctx, `
+       SELECT o.price, COALESCE(SUM(p.amount),0)
+       FROM orders o
+       LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
+       WHERE o.order_id = ?
+       GROUP BY o.order_id
+    `, req.OrderID).Scan(&totalPrice, &alreadyPaid)
+
+	if err != nil {
+		// Gérer le cas où la commande n'existe pas ou autre erreur SQL
+		return rollback(fmt.Errorf("failed to check order payment status: %w", err))
+	}
+
+	// 👉 LA VÉRIFICATION MÉTIER EST ICI :
+	if alreadyPaid != totalPrice {
+		tx.Rollback()
+		return &models.OrderNotFullyPaidError{
+			OrderID:    req.OrderID,
+			PaidAmount: alreadyPaid,
+			Price:      totalPrice,
+		}
+	}
 
 	// 3. Si MOP != CURRENCY/PERCENTAGE ⇒ gérer les orderitems
 	if req.MOP != "CURRENCY" && req.MOP != "PERCENTAGE" {

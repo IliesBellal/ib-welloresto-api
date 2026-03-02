@@ -644,7 +644,7 @@ func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID
 	}
 
 	uniqueID := fmt.Sprintf("%d", time.Now().Unix())
-	menuData := s.generateV3Menu(uniqueID)
+	menuData := s.generateV3Menu(uniqueID, siteID)
 
 	// 1. Upload vers S3
 	err = s.client.UploadToS3(ctx, uploadURL, menuData)
@@ -656,7 +656,8 @@ func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID
 	jobID, err := s.client.CreateMenuJob(ctx, brandID, JobRequest{
 		Action: "publish_menu_to_live",
 		Params: JobParams{
-			MenuID:  menuID,
+			MenuID: menuID,
+			//Version: uniqueID,
 			SiteIDs: []string{siteID}, // OBLIGATOIRE
 		},
 	})
@@ -664,35 +665,40 @@ func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID
 	return jobID, err
 }
 
-func (s *DeliverooService) generateV3Menu(uniqueID string) map[string]any {
+func (s *DeliverooService) generateV3Menu(uniqueID string, siteID string) map[string]any {
 	return map[string]any{
-		"mealtimes": []map[string]any{
-			{
-				"id":              "meal_" + uniqueID,
-				"name":            map[string]string{"en": "Main Menu " + uniqueID},
-				"description":     map[string]string{"en": "Delicious selection updated at " + uniqueID},
-				"cover_photo_url": "https://images.deliveroo.com/placeholder.jpg", // Obligatoire pour S15
-			},
-		},
-		"categories": []map[string]any{
-			{
-				"id":       "cat_" + uniqueID,
-				"name":     map[string]string{"en": "Burgers " + uniqueID},
-				"item_ids": []string{"item_" + uniqueID},
-			},
-		},
-		"items": []map[string]any{
-			{
-				"id":               "item_" + uniqueID,
-				"name":             map[string]string{"en": "V3 Burger " + uniqueID},
-				"operational_name": "V3-BURGER-OP-" + uniqueID, // Obligatoire pour S15
-				"description":      map[string]string{"en": "A premium burger for V3 testing purposes."},
-				"plu":              "PLU-" + uniqueID, // Obligatoire pour S15
-				"tax_rate":         "10",
-				"price_info": map[string]any{
-					"price": 1500, // 15.00€
+		// C'EST ICI QUE LE ROBOT DELIVEROO CHERCHE LES SITES !
+		"site_ids": []string{siteID},
+		// Tout le reste doit être encapsulé dans "menu"
+		"menu": map[string]any{
+			"mealtimes": []map[string]any{
+				{
+					"id":          "meal_" + uniqueID,
+					"name":        map[string]string{"en": "Main Menu " + uniqueID},
+					"description": map[string]string{"en": "Delicious selection updated at " + uniqueID},
+					"image":       "https://images.deliveroo.com/placeholder.jpg",
 				},
-				"type": "ITEM",
+			},
+			"categories": []map[string]any{
+				{
+					"id":       "cat_" + uniqueID,
+					"name":     map[string]string{"en": "Burgers " + uniqueID},
+					"item_ids": []string{"item_" + uniqueID},
+				},
+			},
+			"items": []map[string]any{
+				{
+					"id":               "item_" + uniqueID,
+					"name":             map[string]string{"en": "V3 Burger " + uniqueID},
+					"operational_name": "V3-BURGER-OP-" + uniqueID,
+					"description":      map[string]string{"en": "A premium burger for V3 testing purposes."},
+					"plu":              "PLU-" + uniqueID,
+					"tax_rate":         "10",
+					"price_info": map[string]any{
+						"price": 1500, // 15.00€
+					},
+					"type": "ITEM",
+				},
 			},
 		},
 	}

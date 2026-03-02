@@ -226,8 +226,6 @@ func (h *DeliverooHandler) HandleScenario15(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// Route: r.Get("/deliveroo/16/{jobID}", deliverooHandler.HandleScenario16)
-
 func (h *DeliverooHandler) HandleScenario16(w http.ResponseWriter, r *http.Request) {
 	// Si tu utilises Chi ou un autre routeur :
 	jobID := chi.URLParam(r, "job_id")
