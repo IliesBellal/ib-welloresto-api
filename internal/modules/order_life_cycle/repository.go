@@ -145,7 +145,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	}
 
 	// 👉 LA VÉRIFICATION MÉTIER EST ICI :
-	if alreadyPaid != totalPrice {
+	if alreadyPaid >= totalPrice {
 		tx.Rollback()
 		return &models.OrderNotFullyPaidError{
 			OrderID:    req.OrderID,
