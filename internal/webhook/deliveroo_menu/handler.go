@@ -25,6 +25,7 @@ func (h *MenuWebhookHandler) HandleMenuWebhook(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
+	log.Info("WEBHOOK BODY RECEIVED: " + string(bodyBytes))
 
 	// 2. Décodage dans la structure spécifique au Menu
 	var payload MenuWebhookPayload

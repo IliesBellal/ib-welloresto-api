@@ -501,11 +501,11 @@ func (s *DeliverooService) RunScenario11(ctx context.Context, merchantID string,
 	payload := map[string]any{
 		"item_unavailabilities": []map[string]any{
 			{
-				"item_id": "granola",
+				"item_id": "item_1",
 				"status":  "unavailable", // Sera réinitialisé par Deliveroo
 			},
 			{
-				"item_id": "orange_juice",
+				"item_id": "item_2",
 				"status":  "hidden", // Restera caché
 			},
 		},
@@ -543,32 +543,36 @@ func (s *DeliverooService) RunScenario12(ctx context.Context, merchantID string,
 	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
 }
 
-func (s *DeliverooService) RunScenario13(ctx context.Context, merchantID, menuID string) error {
+func (s *DeliverooService) RunScenario13(ctx context.Context, merchantID, menuID string) (map[string]any, error) {
 	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	siteID, err := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 1. Génération du payload de 100 items
-	menuPayload := s.generateScenario13Menu(menuID)
+	menuPayload := s.generateScenario13Menu(menuID, siteID)
 
 	// 2. Envoi du menu via PUT
 	// On utilise l'URL officielle de l'API Menu
-	url := fmt.Sprintf("https://api.developers.deliveroo.com/menu/v1/brands/%s/menus/%s", brandID, menuID)
+	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s", s.client.config.BaseURL, brandID, menuID)
 
 	// On utilise ton helper doRequest via le client
 	// Note: Assure-toi que ton client expose doRequest ou une méthode PutMenu
 	resp, err := s.client.doRequest(ctx, "PUT", url, menuPayload)
 	if err != nil {
-		return fmt.Errorf("error uploading large menu: %w", err)
+		return nil, fmt.Errorf("error uploading large menu: %w", err)
 	}
 	defer resp.Body.Close()
 
-	return nil
+	return menuPayload, nil
 }
 
 // generateScenario13Menu crée la structure requise par Deliveroo pour ce test
-func (s *DeliverooService) generateScenario13Menu(menuID string) map[string]any {
+func (s *DeliverooService) generateScenario13Menu(menuID, siteID string) map[string]any {
 	var items []map[string]any
 	var itemIDs []string
 
@@ -579,15 +583,17 @@ func (s *DeliverooService) generateScenario13Menu(menuID string) map[string]any 
 			"id":   id,
 			"name": map[string]string{"en": fmt.Sprintf("Test Item %d", i)},
 			"price_info": map[string]any{
-				"price": 1000, // 10.00€
+				"price": 1000,
 			},
+			"plu":      "plu_" + id,
 			"tax_rate": "20",
 			"type":     "ITEM",
 		})
 	}
 
 	return map[string]any{
-		"name": "Scenario 13 Menu",
+		"name":     "Scenario 13 Menu",
+		"site_ids": []string{siteID},
 		"menu": map[string]any{
 			"categories": []map[string]any{
 				{
@@ -596,7 +602,113 @@ func (s *DeliverooService) generateScenario13Menu(menuID string) map[string]any 
 					"item_ids": itemIDs,
 				},
 			},
+			"mealtimes": []map[string]any{
+				{
+					"id":           "morning-time",
+					"name":         map[string]string{"en": "Morning"},
+					"description":  map[string]string{"en": "Morning Selection"},
+					"image":        map[string]any{"url": "https://picsum.photos/seed/morning/800/600"},
+					"category_ids": []string{"cat_scenario_13"}, // Inclus la catégorie bundle
+					"schedule":     s.generateSchedule("00:00:00", "11:00:00"),
+				},
+			},
 			"items": items,
 		},
 	}
+}
+
+func (s *DeliverooService) RunScenario14(ctx context.Context, merchantID, menuID string) (string, error) {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Generating V3 S3 Upload URL for Menu %s (Brand %s)", menuID, brandID)
+
+	url, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
+	if err != nil {
+		return "", err
+	}
+
+	return url, nil
+}
+
+func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID string) (string, error) {
+	brandID, _ := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	uploadURL, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
+	if err != nil {
+		return "", err
+	}
+
+	// On crée une chaîne dynamique avec le timestamp actuel
+	// pour forcer Deliveroo à voir un changement.
+	uniqueSuffix := time.Now().Format("15:04:05")
+
+	fullMenu := map[string]any{
+		"mealtimes": []map[string]any{{
+			"id":              "day_time",
+			"name":            map[string]string{"en": "All Day"},
+			"description":     map[string]string{"en": "Menu updated at " + uniqueSuffix}, // Changement ici
+			"cover_photo_url": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/1c/d2/5e/1cd25efb-89d8-b36f-11ec-8b59f4b7df2a/Placeholder.mill/1200x630wa.jpg",
+		}},
+		"categories": []map[string]any{{
+			"id":       "cat_main",
+			"name":     map[string]string{"en": "Mains"},
+			"item_ids": []string{"item_v3_1"},
+		}},
+		"items": []map[string]any{{
+			"id":               "item_v3_1",
+			"name":             map[string]string{"en": "V3 Burger"},
+			"operational_name": "Burger V3 " + uniqueSuffix, // Changement ici
+			"plu":              "BURGER-V3-101",
+			"description":      map[string]string{"en": "Delicious burger updated at " + uniqueSuffix}, // Changement ici
+			"price_info":       map[string]any{"price": 1500},
+			"tax_rate":         "10",
+			"type":             "ITEM",
+		}},
+	}
+
+	// 3. On upload sur S3 IMMÉDIATEMENT
+	err = s.client.UploadToS3(ctx, uploadURL, fullMenu)
+	if err != nil {
+		return "", fmt.Errorf("S3 error: %w", err)
+	}
+
+	// 4. On déclenche le Job de publication
+	jobID, err := s.client.CreateMenuJob(ctx, brandID, JobRequest{
+		Action: "publish_menu_to_live",
+		Params: JobParams{
+			MenuID: menuID,
+		},
+	})
+
+	return jobID, err
+}
+
+func (s *DeliverooService) RunScenario16(ctx context.Context, merchantID, jobID string) (*JobStatusResponse, error) {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Checking status for Job %s (Brand %s)", jobID, brandID)
+
+	return s.client.GetJobStatus(ctx, brandID, jobID)
+}
+
+func (s *DeliverooService) RunScenario17(ctx context.Context, merchantID, menuID string) (string, error) {
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Fetching Menu V3 Download URL for Menu %s", menuID)
+
+	// On récupère l'URL de téléchargement
+	downloadURL, err := s.client.GetMenuDownloadURL(ctx, brandID, menuID)
+	if err != nil {
+		return "", err
+	}
+
+	return downloadURL, nil
 }

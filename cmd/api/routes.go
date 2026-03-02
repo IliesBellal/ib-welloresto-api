@@ -254,6 +254,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/deliveroo/11", deliverooHandler.HandleScenario11)
 		r.Post("/deliveroo/12", deliverooHandler.HandleScenario12)
 		r.Post("/deliveroo/13", deliverooHandler.HandleTriggerScenario13)
+		r.Post("/deliveroo/14", deliverooHandler.HandleScenario14)
+		r.Post("/deliveroo/15", deliverooHandler.HandleScenario15)
+		r.Post("/deliveroo/16/{job_id}", deliverooHandler.HandleScenario16)
+		r.Post("/deliveroo/17", deliverooHandler.HandleScenario17)
 	})
 
 	// Webhooks

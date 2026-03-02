@@ -152,7 +152,7 @@ func (c *DeliverooClient) doRequest(ctx context.Context, method, url string, pay
 		return nil, err
 	}
 
-	log.Info("DeliverooClient.doRequest - calling " + url + " | answered " + resp.Status)
+	log.Info("DeliverooClient.doRequest - calling " + method + " " + url + " | answered " + resp.Status)
 
 	return resp, err
 }
@@ -453,4 +453,109 @@ func (c *DeliverooClient) UpdateIndividualUnavailabilities(ctx context.Context, 
 		return fmt.Errorf("deliveroo api error (%d)", resp.StatusCode)
 	}
 	return nil
+}
+
+func (c *DeliverooClient) GenerateUploadURL(ctx context.Context, brandID, menuID string) (string, error) {
+	// Note le "/v3/" dans l'URL
+	url := fmt.Sprintf("%s/menu/v3/brands/%s/menus/%s", c.config.BaseURL, brandID, menuID)
+
+	// On utilise ton doRequest. payload est nil car l'endpoint n'attend pas de body.
+	resp, err := c.doRequest(ctx, "PUT", url, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("deliveroo v3 error (%d)", resp.StatusCode)
+	}
+
+	var result S3UploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.UploadURL, nil
+}
+
+func (c *DeliverooClient) UploadToS3(ctx context.Context, s3URL string, menuData any) error {
+	// On transforme le menu en JSON
+	payload, err := json.Marshal(menuData)
+	if err != nil {
+		return err
+	}
+
+	// On fait un PUT directement vers Amazon S3
+	// Note : On n'utilise PAS nos headers d'authentification Deliveroo ici,
+	// l'URL S3 est déjà "pré-signée".
+	req, err := http.NewRequestWithContext(ctx, "PUT", s3URL, bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("S3 upload failed with status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *DeliverooClient) CreateMenuJob(ctx context.Context, brandID string, jobReq JobRequest) (string, error) {
+	url := fmt.Sprintf("%s/menu/v3/brands/%s/jobs", c.config.BaseURL, brandID)
+
+	resp, err := c.doRequest(ctx, "POST", url, jobReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var res JobResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", err
+	}
+
+	return res.JobID, nil
+}
+
+func (c *DeliverooClient) GetJobStatus(ctx context.Context, brandID, jobID string) (*JobStatusResponse, error) {
+	url := fmt.Sprintf("%s/menu/v3/brands/%s/jobs/%s", c.config.BaseURL, brandID, jobID)
+
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result JobStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *DeliverooClient) GetMenuDownloadURL(ctx context.Context, brandID, menuID string) (string, error) {
+	// Note : C'est un GET sur la V3
+	url := fmt.Sprintf("%s/menu/v3/brands/%s/menus/%s", c.config.BaseURL, brandID, menuID)
+
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result FetchMenuV3Response
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.URL, nil
 }

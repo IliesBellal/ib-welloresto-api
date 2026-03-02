@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type DeliverooHandler struct {
@@ -178,7 +180,7 @@ func (h *DeliverooHandler) HandleTriggerScenario13(w http.ResponseWriter, r *htt
 	}
 
 	// On lance le processus d'upload du gros menu
-	err := h.service.RunScenario13(r.Context(), merchantID, menuID)
+	payload, err := h.service.RunScenario13(r.Context(), merchantID, menuID)
 	if err != nil {
 		http.Error(w, "Failed to trigger Scenario 13: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -186,4 +188,76 @@ func (h *DeliverooHandler) HandleTriggerScenario13(w http.ResponseWriter, r *htt
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Scenario 13 triggered: Large menu uploaded. Now wait for the webhook to finalize the test!"))
+	json.NewEncoder(w).Encode(payload)
+}
+
+func (h *DeliverooHandler) HandleScenario14(w http.ResponseWriter, r *http.Request) {
+	merchantID := "2"
+	menuID := "3"
+
+	uploadURL, err := h.service.RunScenario14(r.Context(), merchantID, menuID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// On renvoie l'URL au client (ou on la loggue) pour vérifier que ça marche
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message":    "Scenario 14: URL generated successfully",
+		"upload_url": uploadURL,
+	})
+}
+
+func (h *DeliverooHandler) HandleScenario15(w http.ResponseWriter, r *http.Request) {
+	merchantID := "2"
+	menuID := "10"
+
+	jobID, err := h.service.RunScenario15(r.Context(), merchantID, menuID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// TRÈS IMPORTANT : Note bien ce jobID, on en aura besoin pour le Scénario 16
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "Job Created",
+		"job_id": jobID,
+	})
+}
+
+// Route: r.Get("/deliveroo/16/{jobID}", deliverooHandler.HandleScenario16)
+
+func (h *DeliverooHandler) HandleScenario16(w http.ResponseWriter, r *http.Request) {
+	// Si tu utilises Chi ou un autre routeur :
+	jobID := chi.URLParam(r, "job_id")
+	merchantID := "2" // Ton merchant de test
+
+	status, err := h.service.RunScenario16(r.Context(), merchantID, jobID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+// Route: r.Get("/deliveroo/17", deliverooHandler.HandleScenario17)
+
+func (h *DeliverooHandler) HandleScenario17(w http.ResponseWriter, r *http.Request) {
+	merchantID := "2"
+	menuID := "3"
+
+	downloadURL, err := h.service.RunScenario17(r.Context(), merchantID, menuID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":       "Success",
+		"download_url": downloadURL,
+	})
 }
