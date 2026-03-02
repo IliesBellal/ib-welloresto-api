@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"welloresto-api/internal/logger"
 )
 
@@ -13,6 +14,7 @@ type NotificationService struct {
 	repo   *NotificationRepository
 	client *FCMClient
 	tokenm FCMTokenManager // interface (voir plus bas)
+	mu     sync.Mutex
 }
 
 func NewNotificationService(repo *NotificationRepository, client *FCMClient, tokenm FCMTokenManager) *NotificationService {
@@ -36,9 +38,17 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 		return nil
 	}
 
+	// 👉 RÉCUPÉRATION DU TOKEN ICI (Une seule fois pour toute la volée)
+	accessToken, err := s.getFCMToken(ctx)
+	if err != nil || accessToken == "" {
+		log.Error("Impossible de récupérer le token FCM access: " + err.Error())
+		return err // On arrête tout si on ne peut pas s'authentifier
+	}
+
 	for _, t := range tokens {
 		token := t
-		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType)
+		// 👉 ON PASSE L'ACCESS TOKEN EN PARAMÈTRE
+		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken)
 	}
 
 	return nil
@@ -65,17 +75,10 @@ func (s *NotificationService) SendNotificationAsyncWithPayload(
 	return nil
 }
 
-func (s *NotificationService) sendWithoutPayload(
-	ctx context.Context,
-	merchantID,
-	orderID,
-	token,
-	nType string,
-) {
+func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID, orderID, token, nType, accessToken string) {
 
-	accessToken, err := s.getFCMToken(ctx)
 	log := logger.FromContext(ctx)
-	if err != nil || accessToken == "" {
+	if accessToken == "" {
 		log.Info("Missing FCM access token")
 		return
 	}
@@ -179,8 +182,14 @@ func (s *NotificationService) sendWithPayload(
 }
 
 func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
-
 	log := logger.FromContext(ctx)
+
+	// 👉 ON VERROUILLE. Si une autre goroutine arrive, elle mettra l'exécution en pause ici
+	// jusqu'à ce que la première ait fini (Unlock).
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. On vérifie en base (la goroutine en attente verra le token fraîchement créé par la 1ère)
 	token, err := s.repo.GetValidFCMToken(ctx)
 	if err != nil {
 		log.Error("Error in getFCMToken : " + err.Error())
@@ -188,11 +197,10 @@ func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 	}
 
 	if token != "" {
-		//log.Info("Token found : " + token)
 		return token, nil
 	}
 
-	// Generate new token via FCM token manager
+	// 2. Si vraiment aucun token, on en génère un
 	token, err = s.tokenm.GenerateToken(ctx)
 	if err != nil {
 		log.Error("Error in getFCMToken after generation : " + err.Error())

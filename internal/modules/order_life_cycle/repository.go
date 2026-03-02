@@ -130,7 +130,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	}
 
 	// 2. Paiement total déjà effectué ?
-	var totalPrice, alreadyPaid int64
+	var totalPrice, alreadyPaid int
 	err = tx.QueryRowContext(ctx, `
        SELECT o.price, COALESCE(SUM(p.amount),0)
        FROM orders o
@@ -145,7 +145,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	}
 
 	// 👉 LA VÉRIFICATION MÉTIER EST ICI :
-	if alreadyPaid >= totalPrice {
+	if alreadyPaid >= totalPrice || alreadyPaid+req.Amount > totalPrice {
 		tx.Rollback()
 		return &models.OrderNotFullyPaidError{
 			OrderID:    req.OrderID,
@@ -873,7 +873,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 		FOR UPDATE
 		`
 
-	var price int64
+	var price int
 	if err := tx.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
 		tx.Rollback()
 		return nil, err
@@ -886,7 +886,7 @@ WHERE order_id = ?
   AND enabled = 1
 `
 
-	var paidAmount int64
+	var paidAmount int
 	if err := tx.QueryRowContext(ctx, qSumPayments, orderID).
 		Scan(&paidAmount); err != nil {
 		tx.Rollback()

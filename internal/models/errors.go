@@ -6,8 +6,8 @@ import (
 
 type OrderNotFullyPaidError struct {
 	OrderID    string
-	PaidAmount int64
-	Price      int64
+	PaidAmount int
+	Price      int
 }
 
 func (e *OrderNotFullyPaidError) Error() string {
