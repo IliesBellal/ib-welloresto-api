@@ -635,54 +635,67 @@ func (s *DeliverooService) RunScenario14(ctx context.Context, merchantID, menuID
 
 func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID string) (string, error) {
 	brandID, _ := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	// IMPORTANT: Récupère ton site_id de test (ex: "site-1")
+	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+
 	uploadURL, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
 	if err != nil {
 		return "", err
 	}
 
-	// On crée une chaîne dynamique avec le timestamp actuel
-	// pour forcer Deliveroo à voir un changement.
-	uniqueSuffix := time.Now().Format("15:04:05")
+	uniqueID := fmt.Sprintf("%d", time.Now().Unix())
+	menuData := s.generateV3Menu(uniqueID)
 
-	fullMenu := map[string]any{
-		"mealtimes": []map[string]any{{
-			"id":              "day_time",
-			"name":            map[string]string{"en": "All Day"},
-			"description":     map[string]string{"en": "Menu updated at " + uniqueSuffix}, // Changement ici
-			"cover_photo_url": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/1c/d2/5e/1cd25efb-89d8-b36f-11ec-8b59f4b7df2a/Placeholder.mill/1200x630wa.jpg",
-		}},
-		"categories": []map[string]any{{
-			"id":       "cat_main",
-			"name":     map[string]string{"en": "Mains"},
-			"item_ids": []string{"item_v3_1"},
-		}},
-		"items": []map[string]any{{
-			"id":               "item_v3_1",
-			"name":             map[string]string{"en": "V3 Burger"},
-			"operational_name": "Burger V3 " + uniqueSuffix, // Changement ici
-			"plu":              "BURGER-V3-101",
-			"description":      map[string]string{"en": "Delicious burger updated at " + uniqueSuffix}, // Changement ici
-			"price_info":       map[string]any{"price": 1500},
-			"tax_rate":         "10",
-			"type":             "ITEM",
-		}},
-	}
-
-	// 3. On upload sur S3 IMMÉDIATEMENT
-	err = s.client.UploadToS3(ctx, uploadURL, fullMenu)
+	// 1. Upload vers S3
+	err = s.client.UploadToS3(ctx, uploadURL, menuData)
 	if err != nil {
-		return "", fmt.Errorf("S3 error: %w", err)
+		return "", err
 	}
 
-	// 4. On déclenche le Job de publication
+	// 2. Publication du Job
 	jobID, err := s.client.CreateMenuJob(ctx, brandID, JobRequest{
 		Action: "publish_menu_to_live",
 		Params: JobParams{
-			MenuID: menuID,
+			MenuID:  menuID,
+			SiteIDs: []string{siteID}, // OBLIGATOIRE
 		},
 	})
 
 	return jobID, err
+}
+
+func (s *DeliverooService) generateV3Menu(uniqueID string) map[string]any {
+	return map[string]any{
+		"mealtimes": []map[string]any{
+			{
+				"id":              "meal_" + uniqueID,
+				"name":            map[string]string{"en": "Main Menu " + uniqueID},
+				"description":     map[string]string{"en": "Delicious selection updated at " + uniqueID},
+				"cover_photo_url": "https://images.deliveroo.com/placeholder.jpg", // Obligatoire pour S15
+			},
+		},
+		"categories": []map[string]any{
+			{
+				"id":       "cat_" + uniqueID,
+				"name":     map[string]string{"en": "Burgers " + uniqueID},
+				"item_ids": []string{"item_" + uniqueID},
+			},
+		},
+		"items": []map[string]any{
+			{
+				"id":               "item_" + uniqueID,
+				"name":             map[string]string{"en": "V3 Burger " + uniqueID},
+				"operational_name": "V3-BURGER-OP-" + uniqueID, // Obligatoire pour S15
+				"description":      map[string]string{"en": "A premium burger for V3 testing purposes."},
+				"plu":              "PLU-" + uniqueID, // Obligatoire pour S15
+				"tax_rate":         "10",
+				"price_info": map[string]any{
+					"price": 1500, // 15.00€
+				},
+				"type": "ITEM",
+			},
+		},
+	}
 }
 
 func (s *DeliverooService) RunScenario16(ctx context.Context, merchantID, jobID string) (*JobStatusResponse, error) {

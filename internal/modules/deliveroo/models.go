@@ -26,8 +26,9 @@ type JobRequest struct {
 }
 
 type JobParams struct {
-	MenuID  string `json:"menu_id"`
-	Version string `json:"version"` // Optionnel, souvent "1.0"
+	MenuID  string   `json:"menu_id"`
+	Version string   `json:"version,omitempty"`
+	SiteIDs []string `json:"site_ids"` // <--- Ajout crucial ici
 }
 
 type JobResponse struct {

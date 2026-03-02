@@ -211,7 +211,7 @@ func (h *DeliverooHandler) HandleScenario14(w http.ResponseWriter, r *http.Reque
 
 func (h *DeliverooHandler) HandleScenario15(w http.ResponseWriter, r *http.Request) {
 	merchantID := "2"
-	menuID := "10"
+	menuID := "3"
 
 	jobID, err := h.service.RunScenario15(r.Context(), merchantID, menuID)
 	if err != nil {
