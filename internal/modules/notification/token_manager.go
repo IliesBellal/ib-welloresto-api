@@ -103,7 +103,7 @@ func (m *GoogleFCMTokenManager) GenerateToken(ctx context.Context) (string, erro
 		return "", fmt.Errorf("oauth request failed: %w", err)
 	}
 
-	m.log("New FCM token generated successfully")
+	m.log("🔔 New FCM token generated successfully")
 
 	return token, nil
 }

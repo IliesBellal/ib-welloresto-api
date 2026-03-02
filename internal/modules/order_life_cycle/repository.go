@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
 )
@@ -204,6 +205,8 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	}
 
 	paymentID, _ := res.LastInsertId()
+
+	logger.FromContext(ctx).Info("💵 New payment " + *helpers.Int64ToStringPtr(paymentID) + " created for merchant " + merchantID)
 
 	// 5. Ticket restaurant (TR)
 	if req.MOP == "TR" && req.Code != "" {
