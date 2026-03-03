@@ -16,3 +16,10 @@ func (e *OrderNotFullyPaidError) Error() string {
 		e.OrderID, e.PaidAmount, e.Price,
 	)
 }
+
+type contextKey string
+
+const (
+	ContextUserID     contextKey = "user_id"
+	ContextMerchantID contextKey = "merchant_id"
+)

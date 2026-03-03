@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/models"
 )
 
 type AuthService struct {
@@ -16,7 +17,13 @@ func NewAuthService(r AuthRepository) AuthService {
 }
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
-	return s.repo.GetUserByToken(ctx, token)
+	loggedUser, err := s.repo.GetUserByToken(ctx, token)
+	if err == nil {
+		context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
+		context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
+	}
+	
+	return loggedUser, err
 }
 
 func convertApp(app string) (int, error) {
