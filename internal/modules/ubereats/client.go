@@ -167,7 +167,7 @@ func (c *UberClient) CancelOrder(ctx context.Context, uberOrderID string, token 
 func (c *UberClient) SetOrderReady(ctx context.Context, uberOrderID string, token string) error {
 	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/ready", c.config.BaseURL, uberOrderID)
 	// Body vide souvent requis ou accepté
-	return c.doJSONRequest(ctx, "POST", endpoint, token, map[string]string{})
+	return c.doJSONRequest(ctx, "POST", endpoint, token, nil)
 }
 
 // buildDenyPayload construit la structure JSON spécifique (avec les données hardcodées du PHP)

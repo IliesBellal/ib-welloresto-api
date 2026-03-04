@@ -459,51 +459,57 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 
 // SetOrderReady logique métier
 func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, updateStock bool) error {
-	ctx := context.Background()
+	// 1. Contexte indépendant avec timeout pour éviter de bloquer la goroutine
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
+	var token string
+	var meta *UberOrderMetadata
 
-	err = func() error {
-		token, err := s.GetValidToken(tx)
+	// 2. On isole les appels Base de données dans une fonction anonyme rapide
+	err := func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() // Rollback automatique si on ne commit pas
+
+		token, err = s.GetValidToken(tx)
 		if err != nil {
 			return err
 		}
 
-		meta, err := s.repo.GetOrderMetadata(tx, orderID)
+		meta, err = s.repo.GetOrderMetadata(tx, orderID)
 		if err != nil {
 			return err
 		}
 
-		// PHP Logic: Update DB BEFORE API Call
-		if err := s.repo.SetOrderStatusReady(tx, orderID); err != nil {
-			return err
-		}
+		// On a retiré le s.repo.SetOrderStatusReady(tx, orderID) ici
+		// car la mise à jour est DÉJÀ faite par OrdersLifeCycleRepository.
 
-		// API Call
-		log := logger.FromContext(ctx)
-		log.Info("OrderFileCycle.SetDistributedProducts - doRequest for order " + meta.BrandOrderID)
-		if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
-			return err
-		}
-
-		// Gestion du stock (si stock == '1')
-		if updateStock {
-			// s.orderLifeCycle.RemoveStock(userID, merchantID, orderID)
-		}
-
-		return nil
+		return tx.Commit() // On valide la lecture et on libère la connexion DB !
 	}()
 
 	if err != nil {
-		tx.Rollback()
 		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
-	return tx.Commit()
+	// 3. Appel de l'API Uber (La DB n'est plus verrouillée !)
+	log := logger.FromContext(ctx)
+	log.Info("OrderFileCycle.SetDistributedProducts - doRequest for order " + meta.BrandOrderID)
+
+	if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
+		s.RecoverOrderState(ctx, merchantID, orderID)
+		return err
+	}
+
+	// 4. Gestion du stock
+	if updateStock {
+		// s.orderLifeCycle.RemoveStock(userID, merchantID, orderID)
+	}
+
+	return nil
 }
 
 // RecoverOrderState est un wrapper helper pour appeler FinishOrderIfDoesNotExist avec les bons params
