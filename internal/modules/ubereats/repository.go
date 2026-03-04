@@ -66,31 +66,49 @@ func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, er
 func (r *UberRepository) GetCurrentToken(tx *sql.Tx, tokenType string) (*UberToken, error) {
 	query := `SELECT access_token, expires_at FROM external_tokens WHERE token_type = ?`
 	var token UberToken
-	// Note: MySQL datetime -> Go time.Time nécessite parseTime=true dans le driver DSN
-	err := tx.QueryRow(query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
+	var err error
+
+	if tx != nil {
+		err = tx.QueryRow(query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
+	} else {
+		err = r.db.QueryRow(query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
+	}
 	return &token, err
 }
 
 // SaveNewToken met à jour le token
 func (r *UberRepository) SaveNewToken(tx *sql.Tx, tokenType, accessToken string, expiresIn int) error {
 	query := `
-		INSERT INTO external_tokens (token_type, access_token, expires_at)
-		VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND))
-		ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND), access_token = ?`
-	_, err := tx.Exec(query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
+       INSERT INTO external_tokens (token_type, access_token, expires_at)
+       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND))
+       ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND), access_token = ?`
+
+	var err error
+	if tx != nil {
+		_, err = tx.Exec(query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
+	} else {
+		_, err = r.db.Exec(query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
+	}
 	return err
 }
 
 // GetOrderMetadata récupère les IDs pour la requête
 func (r *UberRepository) GetOrderMetadata(tx *sql.Tx, localOrderID string) (*UberOrderMetadata, error) {
 	query := `
-		SELECT o.order_id, o.brand_order_id, o.creation_date
-		FROM orders o
-		INNER JOIN integration_uber_eats iue on iue.merchant_id = o.merchant_id
-		WHERE o.order_id = ?`
+       SELECT o.order_id, o.brand_order_id, o.creation_date
+       FROM orders o
+       INNER JOIN integration_uber_eats iue on iue.merchant_id = o.merchant_id
+       WHERE o.order_id = ?`
 
 	var meta UberOrderMetadata
-	err := tx.QueryRow(query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
+	var err error
+
+	if tx != nil {
+		err = tx.QueryRow(query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
+	} else {
+		err = r.db.QueryRow(query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve uber order id: %v", err)
 	}

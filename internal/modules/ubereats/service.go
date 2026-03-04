@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"time"
 	"welloresto-api/internal/logger"
@@ -459,52 +460,28 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 
 // SetOrderReady logique métier
 func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, updateStock bool) error {
-	// 1. Contexte indépendant avec timeout pour éviter de bloquer la goroutine
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	var token string
-	var meta *UberOrderMetadata
-
-	// 2. On isole les appels Base de données dans une fonction anonyme rapide
-	err := func() error {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback() // Rollback automatique si on ne commit pas
-
-		token, err = s.GetValidToken(tx)
-		if err != nil {
-			return err
-		}
-
-		meta, err = s.repo.GetOrderMetadata(tx, orderID)
-		if err != nil {
-			return err
-		}
-
-		// On a retiré le s.repo.SetOrderStatusReady(tx, orderID) ici
-		// car la mise à jour est DÉJÀ faite par OrdersLifeCycleRepository.
-
-		return tx.Commit() // On valide la lecture et on libère la connexion DB !
-	}()
-
+	// 1. On récupère les infos SANS transaction pour libérer la DB au plus vite
+	token, err := s.GetValidToken(nil)
 	if err != nil {
-		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
-	// 3. Appel de l'API Uber (La DB n'est plus verrouillée !)
-	log := logger.FromContext(ctx)
-	log.Info("OrderFileCycle.SetDistributedProducts - doRequest for order " + meta.BrandOrderID)
+	meta, err := s.repo.GetOrderMetadata(nil, orderID)
+	if err != nil {
+		return err
+	}
 
+	// 2. Appel API Uber (Zéro connexion DB ouverte ici !)
 	if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
+		// Log l'erreur mais ne bloque pas la DB
+		log.Printf("[Uber] Erreur API pour %s: %v", meta.BrandOrderID, err)
 		s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
-	// 4. Gestion du stock
 	if updateStock {
 		// s.orderLifeCycle.RemoveStock(userID, merchantID, orderID)
 	}
