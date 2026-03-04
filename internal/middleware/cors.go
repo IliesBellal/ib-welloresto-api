@@ -11,6 +11,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// Lovable
 			"*.lovableproject.com",
+			"https://id-preview--4cbec765-6bdb-4c2c-8fe8-bbe5ee8d316a.lovable.app",
 
 			// Postman
 			"https://wello-resto.postman.co",
