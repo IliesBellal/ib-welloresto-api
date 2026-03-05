@@ -397,7 +397,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 		log.Error("Uber deny failed, trying to recover state", zap.Error(apiErr))
 
 		// Attention : RecoverOrderState ne doit pas être appelé dans une Tx existante
-		s.RecoverOrderState(ctx, merchantID, orderID)
+		s.RecoverOrderState(orderID)
 
 		return apiErr
 	}
@@ -451,7 +451,7 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 
 	if err != nil {
 		tx.Rollback()
-		s.RecoverOrderState(ctx, merchantID, orderID)
+		s.RecoverOrderState(orderID)
 		return err
 	}
 
@@ -478,7 +478,7 @@ func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, upda
 	if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
 		// Log l'erreur mais ne bloque pas la DB
 		log.Printf("[Uber] Erreur API pour %s: %v", meta.BrandOrderID, err)
-		// s.RecoverOrderState(ctx, merchantID, orderID)
+		s.RecoverOrderState(orderID)
 		return err
 	}
 
@@ -490,15 +490,10 @@ func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, upda
 }
 
 // RecoverOrderState est un wrapper helper pour appeler FinishOrderIfDoesNotExist avec les bons params
-func (s *UberEatsService) RecoverOrderState(ctx context.Context, merchantID, orderID string) {
-	// Cette fonction ouvre une nouvelle connexion pour récupérer les infos
-	// nécessaires à finishOrderIfDoesNotExist sans dépendre de la transaction précédente échouée
-	// Implémentation simplifiée :
-	tx, _ := s.db.Begin()
-	defer tx.Commit()
+func (s *UberEatsService) RecoverOrderState(orderID string) {
 
-	token, _ := s.GetValidToken(tx)
-	meta, _ := s.repo.GetOrderMetadata(tx, orderID)
+	token, _ := s.GetValidToken(nil)
+	meta, _ := s.repo.GetOrderMetadata(nil, orderID)
 
 	if token != "" && meta != nil {
 		s.FinishOrderIfDoesNotExist(token, meta.BrandOrderID)
