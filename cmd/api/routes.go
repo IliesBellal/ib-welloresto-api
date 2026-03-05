@@ -17,8 +17,6 @@ import (
 
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/middleware"
-	"welloresto-api/internal/middleware/request_logger"
-
 	// ---- MODULES ----
 	authModule "welloresto-api/internal/modules/auth"
 	bookingsModule "welloresto-api/internal/modules/bookings"
@@ -52,7 +50,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
 	r.Use(middleware.LoggingMiddleware(log))
-	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, 1000)))
+	// r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, 1000)))
 
 	// =============================
 	//  MODULE INITIALIZATION
