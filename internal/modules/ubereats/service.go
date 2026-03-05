@@ -478,7 +478,7 @@ func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, upda
 	if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
 		// Log l'erreur mais ne bloque pas la DB
 		log.Printf("[Uber] Erreur API pour %s: %v", meta.BrandOrderID, err)
-		s.RecoverOrderState(ctx, merchantID, orderID)
+		// s.RecoverOrderState(ctx, merchantID, orderID)
 		return err
 	}
 
