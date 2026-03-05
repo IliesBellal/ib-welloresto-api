@@ -50,6 +50,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
 	r.Use(middleware.LoggingMiddleware(log))
+	// Il semblerait que ce middleware cause des timeout lors d'appels d'API uber eats, désactivé temporairement
 	// r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, 1000)))
 
 	// =============================
@@ -265,6 +266,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
 		r.Post("/deliveroo/orders", deliverooWebhookHandler.HandleOrdersWebhook)
 		r.Post("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
+		r.Get("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
 	})
 

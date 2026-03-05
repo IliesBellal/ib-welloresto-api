@@ -231,8 +231,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		step := "configuration_attributes_options"
 		q := `
 		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price, 
-		case when oic.id is null then 0 else 1 end as selected,
-		case when oic.quantity is null then 0 else oic.quantity end as quantity, cao.max_quantity
+		case when oic.id is null then false else true end as selected,
+		COALESCE(oic.quantity, 0) as quantity, cao.max_quantity
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
