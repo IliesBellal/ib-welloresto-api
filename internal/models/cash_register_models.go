@@ -1,21 +1,21 @@
 package models
 
-type CashRegisterHistoryItem struct {
-	CashRegisterID string              `json:"cash_register_id"`
-	StartDate      *int                `json:"start_date"`
-	EndDate        *int                `json:"end_date"`
-	Closed         bool                `json:"closed"`
-	CashDesk       CashRegisterDeskRef `json:"cash_desk"`
+type CashRegister struct {
+	CashRegisterID string   `json:"cash_register_id"`
+	StartDate      *int     `json:"start_date"`
+	EndDate        *int     `json:"end_date"`
+	Closed         bool     `json:"closed"`
+	CashDesk       CashDesk `json:"cash_desk"`
 }
 
-type CashRegisterDeskRef struct {
+type CashDesk struct {
 	CashDeskID   string `json:"cash_desk_id"`
 	CashDeskName string `json:"cash_desk_name"`
 }
 
 type CashRegisterHistoryResponse struct {
-	Status        string                    `json:"status"`
-	CashRegisters []CashRegisterHistoryItem `json:"cash_registers"`
+	Status        string         `json:"status"`
+	CashRegisters []CashRegister `json:"cash_registers"`
 }
 
 type CashRegisterDetails struct {

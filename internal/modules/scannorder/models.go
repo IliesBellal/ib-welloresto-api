@@ -10,30 +10,48 @@ type MerchantResponse struct {
 	Error    string        `json:"error,omitempty"`
 }
 
+type Address struct {
+	Address string  `json:"address"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+}
+
+type MerchantDesign struct {
+	PrimaryColor string `json:"primary_color"`
+	TextColor    string `json:"text_color_on_primary_color"`
+}
+
+type MerchantFees struct {
+	DeliveryFees      float64 `json:"delivery_fees"`
+	DeliveryFeesLimit float64 `json:"delivery_fees_limit"`
+}
+
+type TimeSlot struct {
+	Time      string `json:"time"`
+	Available bool   `json:"available"`
+}
+
+type AdvanceOrder struct {
+	EnableAdvanceOrders bool                  `json:"enable_advance_orders"`
+	AvailableSlots      map[string][]TimeSlot `json:"available_slots"` // On change le type ici
+}
+
+// Ta structure MerchantData mise à jour
 type MerchantData struct {
-	MerchantID   string              `json:"merchant_id"`
-	BusinessName string              `json:"business_name"`
-	Phone        string              `json:"phone"`
-	Currency     string              `json:"currency"`
-	IsOpen       bool                `json:"is_open"`
-	Status       *MerchantOpenStatus `json:"status"`
-	Address      struct {
-		Address string  `json:"address"`
-		Lat     float64 `json:"lat"`
-		Lng     float64 `json:"lng"`
-	} `json:"address"`
-
-	Design struct {
-		PrimaryColor string `json:"primary_color"`
-		TextColor    string `json:"text_color_on_primary_color"`
-	} `json:"design"`
-
-	Fee struct {
-		DeliveryFees      float64 `json:"delivery_fees"`
-		DeliveryFeesLimit float64 `json:"delivery_fees_limit"`
-	} `json:"fees"`
-
-	QRCode struct {
+	MerchantID        string              `json:"merchant_id"`
+	BusinessName      string              `json:"business_name"`
+	Phone             string              `json:"phone"`
+	Currency          string              `json:"currency"`
+	IsOpen            bool                `json:"is_open"`
+	Status            *MerchantOpenStatus `json:"status"`
+	TakeawayEnabled   bool                `json:"takeaway_enabled"`
+	TakeawayAvailable bool                `json:"takeaway_available"`
+	DeliveryEnabled   bool                `json:"delivery_enabled"`
+	DeliveryAvailable bool                `json:"delivery_available"`
+	Address           Address             `json:"address"`
+	Design            MerchantDesign      `json:"design"`
+	Fee               MerchantFees        `json:"fees"`
+	QRCode            struct {            // On peut laisser celle-ci si elle est unique au QR
 		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`
 		MenuOnly       bool    `json:"menu_only"`
@@ -41,11 +59,7 @@ type MerchantData struct {
 		LastWaiterCall *int    `json:"last_waiter_call"`
 		OrderID        *string `json:"order_id"`
 	} `json:"qr_code"`
-
-	AdvanceOrder struct {
-		EnableAdvanceOrders bool                `json:"enable_advance_orders"`
-		AvailableSlots      map[string][]string `json:"available_slots"`
-	} `json:"advance_order"`
+	AdvanceOrder AdvanceOrder `json:"advance_order"`
 }
 
 type MenuResponse struct {

@@ -103,7 +103,11 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, o
 
 	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
 
-	return s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
+	err = s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
+
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+
+	return err
 }
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {

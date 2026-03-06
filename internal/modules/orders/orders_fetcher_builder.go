@@ -608,11 +608,14 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		c.customer_temporary_door_number,
 		c.customer_temporary_additional_address,
 
-		u.user_id, u.lat, u.lng, u.tel AS deliveryTel, u.userName
+		u.user_id, u.lat, u.lng, u.tel AS deliveryTel, u.userName,
+	
+		cr.cash_register_id, case when cr.end_date is null AND cr.cash_register_id is not null then false else true end as closed
+	
 	FROM orders o
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
-	LEFT JOIN users u ON o.responsible = u.user_id
-		AND o.merchant_id = u.merchant_id
+	LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
+    LEFT JOIN cash_registers cr on cr.cash_register_id = o.cash_register_id
 	WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, merchantID)
@@ -636,13 +639,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
 			var lastUpdate, creationDate, estimatedReady sql.NullTime
-			var scheduled, isPaid, isDistributed sql.NullBool
+			var scheduled, isPaid, isDistributed, cashRegisterClosed sql.NullBool
 
 			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
 				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
 				cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 
-			var delTel, delUserName sql.NullString
+			var delTel, delUserName, cashRegisterID sql.NullString
 
 			if err := rows.Scan(
 				&orderID, &orderNum, &orderType, &state, &scheduled,
@@ -662,6 +665,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&cTempFloor, &cTempDoor, &cTempAddAddr,
 
 				&userID, &userLat, &userLng, &delTel, &delUserName,
+
+				&cashRegisterID, &cashRegisterClosed,
 			); err != nil {
 				return nil, err
 			}
@@ -731,6 +736,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 					cust.CustomerAdditionalAddress = helpers.NullStringToPtr(cAddAddr)
 				}
 				ord.Customer = &cust
+			}
+
+			if cashRegisterID.Valid {
+				ord.CashRegister = &models.CashRegister{
+					CashRegisterID: cashRegisterID.String,
+					Closed:         cashRegisterClosed.Bool,
+				}
 			}
 
 			// --- Attach Children ---

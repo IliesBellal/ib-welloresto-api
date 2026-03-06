@@ -51,6 +51,8 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken)
 	}
 
+	log.Info("Successfully sent notification for merchant " + merchantID + " order " + orderID)
+
 	return nil
 }
 

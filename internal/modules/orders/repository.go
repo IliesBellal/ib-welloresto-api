@@ -1281,12 +1281,21 @@ func (r *OrdersRepository) GetNextOrderNum(ctx context.Context, tx *sql.Tx, merc
 }
 
 func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx, merchantID string, productsCount int) (string, error) {
-	// call stored proc; adapt if your DB driver requires different handling
-	rows, err := tx.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
+	// 1. Détermination de la source de données (Transaction ou DB standard)
+	var queryer interface {
+		QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	}
+
+	if tx != nil {
+		queryer = tx
+	} else {
+		queryer = r.db // r.db doit être ton instance *sql.DB
+	}
+
+	// 2. Appel de la procédure via le queryer sélectionné
+	rows, err := queryer.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
 	if err != nil {
-		// do not fail hard on missing proc; log and continue
-		// TODO : appeler équivalent Go de logOrderChange(...)
-		//r.log.Debug("GET_AVERAGE_DISTRIBUTION_TIME call failed", zap.Error(err))
+		// Log d'erreur ici si nécessaire
 		return "", nil
 	}
 	defer rows.Close()
@@ -1294,8 +1303,6 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 	var seconds sql.NullInt64
 	if rows.Next() {
 		if err := rows.Scan(&seconds); err != nil {
-			// TODO : appeler équivalent Go de logOrderChange(...)
-			//r.log.Debug("scan GET_AVERAGE_DISTRIBUTION_TIME failed", zap.Error(err))
 			return "", nil
 		}
 	}
@@ -1304,7 +1311,7 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 		return "", nil
 	}
 
-	// compute estimated ready as now UTC + seconds
+	// 3. Calcul du temps estimé
 	t := time.Now().UTC().Add(time.Duration(seconds.Int64) * time.Second)
 	return t.Format("2006-01-02 15:04:05"), nil
 }

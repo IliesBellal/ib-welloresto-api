@@ -138,6 +138,7 @@ type Order struct {
 	FulfillmentType   *string          `json:"fulfillment_type"`
 	LastUpdate        int64            `json:"last_update"`
 	DeliverySession   *DeliverySession `json:"delivery_session"`
+	CashRegister      *CashRegister    `json:"cash_register"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

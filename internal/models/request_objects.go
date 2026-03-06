@@ -234,6 +234,14 @@ type MerchantRow struct {
 	VariableFees          *float64
 	FixedFees             *int
 	AccountID             *string
+
+	TakeawayEnabled   bool `json:"takeaway_enabled"`
+	TakeawayAvailable bool `json:"takeaway_available"`
+	DeliveryEnabled   bool `json:"delivery_enabled"`
+	DeliveryAvailable bool `json:"delivery_available"`
+
+	PrepTimeMode string `json:"prep_time_mode"` // AUTO | MANUAL
+	PrepTime     int    `json:"prep_time"`      // en minutes
 }
 
 type PricingResult struct {

@@ -256,10 +256,13 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 
 	// --- Step 1bis: If no products ---
 	if len(req.Order.Products) == 0 {
-		return &models.PricingResponse{
-			Status:       "success",
-			OrderRequest: req,
-		}, nil
+		/*
+			return &models.PricingResponse{
+				Status:       "success",
+				OrderRequest: req,
+			}, nil
+
+		*/
 	}
 
 	// --- Step 2: Check product availability ---
@@ -902,4 +905,8 @@ func (s *OrdersService) applyDeliveryRules(req *models.PricingRequest, merchant 
 	} else {
 		req.Order.DeliveryFees = 0
 	}
+}
+
+func (s *OrdersService) ComputeEstimatedReady(ctx context.Context, id string) (string, error) {
+	return s.ordersRepo.ComputeEstimatedReady(ctx, nil, id, 3)
 }

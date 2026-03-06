@@ -35,7 +35,7 @@ func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuServi
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
 	row, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil {
-		return &MerchantResponse{Status: "0"}, nil
+		return &MerchantResponse{Status: "no_merchant_found"}, err
 	}
 
 	// 🔥 Expiration QR (2h)
@@ -54,35 +54,54 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	if err != nil {
 		return nil, err
 	}
+	// 1. Calculer le temps de préparation effectif
+	prepMinutes := s.GetEffectivePrepMinutes(ctx, row)
+
+	// 2. Récupérer les slots en passant ce délai
+	availableSlots, err := s.repo.GetAvailableSlots(ctx, row.MerchantID, prepMinutes)
+	if err != nil {
+		// Optionnel : on log l'erreur mais on continue avec un map vide
+		// pour ne pas bloquer tout l'affichage du marchand
+		availableSlots = make(map[string][]TimeSlot)
+	}
 
 	resp := &MerchantResponse{
 		Status: "1",
 		Merchant: &MerchantData{
 			MerchantID:   row.MerchantID,
 			BusinessName: row.FullName,
-			Phone:        "",
 			Currency:     row.Currency,
 			IsOpen:       openStatus.OpenHours && openStatus.OpenStatus,
 			Status:       openStatus,
-			AdvanceOrder: struct {
-				EnableAdvanceOrders bool                `json:"enable_advance_orders"`
-				AvailableSlots      map[string][]string `json:"available_slots"`
-			}{
-				EnableAdvanceOrders: true,
-				AvailableSlots:      map[string][]string{},
+
+			// Nouveaux champs de mode de commande
+			TakeawayEnabled:   row.TakeawayEnabled,
+			TakeawayAvailable: row.TakeawayAvailable,
+			DeliveryEnabled:   row.DeliveryEnabled,
+			DeliveryAvailable: row.DeliveryAvailable,
+
+			AdvanceOrder: AdvanceOrder{
+				EnableAdvanceOrders: true, // Ou row.EnableAdvanceOrders si tu l'as en base
+				AvailableSlots:      availableSlots,
 			},
 		},
 	}
+	// Mapping des sous-structures refactorisées
+	resp.Merchant.Address = Address{
+		Address: row.Address,
+		Lat:     row.Lat,
+		Lng:     row.Lng,
+	}
 
-	resp.Merchant.Address.Address = row.Address
-	resp.Merchant.Address.Lat = row.Lat
-	resp.Merchant.Address.Lng = row.Lng
+	resp.Merchant.Design = MerchantDesign{
+		PrimaryColor: row.PrimaryColor,
+		TextColor:    row.TextColor,
+	}
 
-	resp.Merchant.Design.PrimaryColor = row.PrimaryColor
-	resp.Merchant.Design.TextColor = row.TextColor
-
-	resp.Merchant.Fee.DeliveryFees = row.DeliveryFees
-	resp.Merchant.Fee.DeliveryFeesLimit = row.DeliveryFeesLimit
+	resp.Merchant.Fee = MerchantFees{
+		DeliveryFees:      row.DeliveryFees,
+		DeliveryFeesLimit: row.DeliveryFeesLimit,
+	}
 
 	resp.Merchant.QRCode.MenuOnly = row.MenuOnly
 	resp.Merchant.QRCode.UserID = row.UserID

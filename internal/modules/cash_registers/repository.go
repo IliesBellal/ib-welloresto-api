@@ -810,7 +810,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	return nil
 }
 
-func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string) ([]models.CashRegisterHistoryItem, error) {
+func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string) ([]models.CashRegister, error) {
 
 	query := `
 		SELECT cr.cash_register_id,
@@ -845,10 +845,10 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	}
 	defer rows.Close()
 
-	var history []models.CashRegisterHistoryItem
+	var history []models.CashRegister
 
 	for rows.Next() {
-		var h models.CashRegisterHistoryItem
+		var h models.CashRegister
 		var rawStartDate, rawEndDate sql.NullTime
 
 		err := rows.Scan(

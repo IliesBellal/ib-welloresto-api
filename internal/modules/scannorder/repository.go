@@ -3,6 +3,7 @@ package scannorder
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -18,34 +19,132 @@ func NewRepository(db *sql.DB) *Repository {
 
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
 	query := `
-	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
-	       mp.currency, mp.primary_color, mp.text_color_on_primary_color,
-	       mp.delivery_fees, mp.delivery_fees_limit,
-	       qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
-	       o.order_id, l.location_id, l.location_name, snos.variable_fees, snos.fixed_fees, sa.account_id
-	
-	FROM 	qrcodes qr
-			INNER JOIN merchant m on m.id = qr.merchant_id
-			LEFT JOIN stripe_accounts sa on sa.merchant_id = m.id
-			INNER JOIN scannorder_settings snos on snos.merchant_id = m.id
-			INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
-			LEFT JOIN bookings_settings bs on bs.merchant_id = m.id
-			LEFT JOIN locations l on l.location_id = qr.location_id
-			LEFT JOIN (SELECT o.order_id, ol.location_id FROM orders o INNER JOIN order_location ol on ol.order_id = o.order_id WHERE o.state = 'OPEN') o on o.location_id = l.location_id
-	WHERE qr.code = ?`
+    SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
+           mp.currency, mp.primary_color, mp.text_color_on_primary_color,
+           mp.delivery_fees, mp.delivery_fees_limit, mp.preparation_time_mode, mp.preparation_time,
+           
+           qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
+           
+           o.order_id, l.location_id, l.location_name, snos.variable_fees, snos.fixed_fees, sa.account_id,
+           
+           snos.take_away_enabled, snos.take_away_available, 
+           snos.delivery_enabled, snos.delivery_available
+    
+    FROM   qrcodes qr
+          INNER JOIN merchant m on m.id = qr.merchant_id
+          LEFT JOIN stripe_accounts sa on sa.merchant_id = m.id
+          INNER JOIN scannorder_settings snos on snos.merchant_id = m.id
+          INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
+          LEFT JOIN bookings_settings bs on bs.merchant_id = m.id
+          LEFT JOIN locations l on l.location_id = qr.location_id
+          LEFT JOIN (SELECT o.order_id, ol.location_id FROM orders o INNER JOIN order_location ol on ol.order_id = o.order_id WHERE o.state = 'OPEN') o on o.location_id = l.location_id
+    WHERE qr.code = ?`
 
 	row := models.MerchantRow{}
 	err := r.db.QueryRowContext(ctx, query, qr).Scan(
 		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
-		&row.DeliveryFees, &row.DeliveryFeesLimit,
+		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.PrepTimeMode, &row.PrepTime,
 		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
 		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
+		&row.TakeawayEnabled, &row.TakeawayAvailable,
+		&row.DeliveryEnabled, &row.DeliveryAvailable,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return &row, nil
+}
+
+func (s *Service) GetEffectivePrepMinutes(ctx context.Context, row *models.MerchantRow) int {
+	if row.PrepTimeMode == "MANUAL" {
+		return row.PrepTime
+	}
+
+	// Mode AUTO : on utilise ta logique de procédure stockée
+	// Note : On adapte ComputeEstimatedReady pour obtenir juste le délai
+	estimatedReadyStr, err := s.orderingService.ComputeEstimatedReady(ctx, row.MerchantID)
+	if err != nil || estimatedReadyStr == "" {
+		return row.PrepTime // Fallback sur le temps manuel si l'auto échoue
+	}
+
+	// Calcul de la différence entre "maintenant" et "EstimatedReady"
+	readyTime, err := time.Parse("2006-01-02 15:04:05", estimatedReadyStr)
+	if err != nil {
+		return row.PrepTime
+	}
+
+	diff := time.Until(readyTime)
+	if diff < 0 {
+		return 0
+	}
+
+	return int(diff.Minutes())
+}
+
+func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, prepMinutes int) (map[string][]TimeSlot, error) {
+	// On convertit les minutes en format TIME (HH:MM:SS) pour MySQL
+	prepDelay := fmt.Sprintf("%02d:%02d:00", prepMinutes/60, prepMinutes%60)
+
+	query := `
+        WITH RECURSIVE time_slots AS (
+            SELECT MAKETIME(0, 30, 0) AS time_slot
+            UNION ALL
+            SELECT ADDTIME(time_slot, '00:30:00')
+            FROM time_slots
+            WHERE time_slot < MAKETIME(23, 30, 0)
+        )
+        SELECT 
+            DATE_FORMAT(DATE_ADD(CURDATE(), INTERVAL days_to_add DAY), '%Y-%m-%d') AS open_date,
+            TIME_FORMAT(time_slots.time_slot, '%H:%i') as slot_time
+        FROM (
+            SELECT 0 AS days_to_add UNION ALL SELECT 1 UNION ALL SELECT 2
+        ) AS days
+        JOIN time_slots
+        JOIN hours_of_operation AS hoo
+            ON hoo.merchant_id = ?
+            AND hoo.enabled = 1
+            AND (DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) % 7) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
+            AND time_slots.time_slot > hoo.hour_from
+            AND time_slots.time_slot <= hoo.hour_to
+        LEFT JOIN merchant_parameters AS mp ON mp.merchant_id = hoo.merchant_id
+        WHERE (hoo.valid_from IS NULL OR hoo.valid_from <= CURDATE() + INTERVAL days_to_add DAY)
+          AND (hoo.valid_to IS NULL OR hoo.valid_to >= CURDATE() + INTERVAL days_to_add DAY)
+          AND days_to_add < COALESCE(mp.advance_order_days, 3)
+          AND (
+                DATE_ADD(CURDATE(), INTERVAL days_to_add DAY) > CURDATE() OR 
+                (DATE_ADD(CURDATE(), INTERVAL days_to_add DAY) = CURDATE() AND 
+                 -- ICI : On utilise le délai dynamique au lieu de 30 min fixe
+                 ADDTIME(CURTIME(), ?) <= time_slots.time_slot)
+          )
+        ORDER BY open_date, slot_time;
+    `
+
+	rows, err := r.db.QueryContext(ctx, query, merchantID, prepDelay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	slots := make(map[string][]TimeSlot)
+	for rows.Next() {
+		var date, timeStr string
+		if err := rows.Scan(&date, &timeStr); err != nil {
+			return nil, err
+		}
+
+		// Faire une jointure SQL pour vérifier si ce créneau est "full"
+		isAvailable := true
+
+		newSlot := TimeSlot{
+			Time:      timeStr,
+			Available: isAvailable,
+		}
+
+		slots[date] = append(slots[date], newSlot)
+	}
+
+	return slots, nil
 }
 
 func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (string, string, error) {
