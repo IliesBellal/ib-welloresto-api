@@ -1044,3 +1044,62 @@ func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID s
 	)
 	return err
 }
+
+func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, merchantID string, req *UpdateProductionStatusRequest) ([]string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx failed: %w", err)
+	}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Collect unique order IDs
+	orderIDMap := make(map[string]bool)
+	for _, product := range req.Products {
+		orderIDMap[product.OrderID] = true
+	}
+
+	// Update each product's production status
+	for _, product := range req.Products {
+		stmt, err := tx.PrepareContext(ctx, `
+			UPDATE orderitems
+			SET production_status = ?,
+			    production_status_done_quantity = CASE
+			        WHEN ? = 'DONE' THEN quantity
+			        ELSE ready_for_distribution_quantity
+			    END
+			WHERE order_item_id = ? AND order_id = ?
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("prepare statement failed: %w", err)
+		}
+		defer stmt.Close()
+
+		_, err = stmt.ExecContext(ctx,
+			product.ProductionStatus,
+			product.ProductionStatus,
+			product.OrderItemID,
+			product.OrderID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("execute update failed for order_item_id %s: %w", product.OrderItemID, err)
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit failed: %w", err)
+	}
+
+	// Convert order ID map to slice
+	affectedOrderIDs := make([]string, 0, len(orderIDMap))
+	for orderID := range orderIDMap {
+		affectedOrderIDs = append(affectedOrderIDs, orderID)
+	}
+
+	return affectedOrderIDs, nil
+}

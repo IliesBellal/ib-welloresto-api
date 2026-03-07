@@ -502,3 +502,26 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token stri
 
 	return s.DeleteOrder(ctx, in)
 }
+
+func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, token, orderID string, req *UpdateProductionStatusRequest) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+
+	// Call repository to update production status
+	affectedOrderIDs, err := s.ordersLifeCycleRepo.UpdateProductionStatus(ctx, user.MerchantID, req)
+	if err != nil {
+		return err
+	}
+
+	// Send notifications for all affected orders
+	for _, aOrderID := range affectedOrderIDs {
+		s.notificationsService.SendNotificationAsync(user.MerchantID, aOrderID, "UPDATE_ORDER")
+	}
+
+	return nil
+}

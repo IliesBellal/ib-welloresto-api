@@ -365,3 +365,34 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 		Status: "success",
 	})
 }
+
+func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "order_life_cycle", "update_production_status", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "update_production_status", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req UpdateProductionStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "update_production_status", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	err := h.ordersLifeCycleService.UpdateProductionStatus(ctx, token, orderID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "update_production_status", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "update_production_status", models.HandlerDefaultResponseModelSet{
+		Status: "success",
+	})
+}

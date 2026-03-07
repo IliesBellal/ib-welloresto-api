@@ -17,6 +17,7 @@ import (
 
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/middleware"
+
 	// ---- MODULES ----
 	authModule "welloresto-api/internal/modules/auth"
 	bookingsModule "welloresto-api/internal/modules/bookings"
@@ -398,6 +399,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 		r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
+		r.Patch("/{order_id}/production-status", ordersLifeCycleH.UpdateProductionStatus)
 
 		r.Route("/{order_id}/payments", func(r chi.Router) {
 			r.Post("/create", ordersLifeCycleH.AddPayment)
