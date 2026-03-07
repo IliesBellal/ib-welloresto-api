@@ -374,11 +374,6 @@ func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r
 	}
 
 	ctx := r.Context()
-	orderID := chi.URLParam(r, "order_id")
-	if orderID == "" {
-		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "update_production_status", map[string]string{"error": "missing_parameter"})
-		return
-	}
 
 	var req UpdateProductionStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -386,7 +381,7 @@ func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r
 		return
 	}
 
-	err := h.ordersLifeCycleService.UpdateProductionStatus(ctx, token, orderID, &req)
+	err := h.ordersLifeCycleService.UpdateProductionStatus(ctx, token, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "update_production_status", err)
 		return

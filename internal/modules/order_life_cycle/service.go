@@ -503,7 +503,7 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token stri
 	return s.DeleteOrder(ctx, in)
 }
 
-func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, token, orderID string, req *UpdateProductionStatusRequest) error {
+func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, token string, req *UpdateProductionStatusRequest) error {
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
 		return err
