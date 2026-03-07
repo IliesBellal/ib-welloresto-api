@@ -51,7 +51,7 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken)
 	}
 
-	log.Info("Successfully sent notification for merchant " + merchantID + " order " + orderID)
+	log.Info("📢 Successfully sent notification for merchant " + merchantID + " order " + orderID)
 
 	return nil
 }
@@ -121,7 +121,9 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		//log.Warn("FCM result code=" + resp.Status + " for token " + token)
+		log.Error("🔕 FCM result code=" + resp.Status + " for token " + token)
+	} else {
+		log.Info("📢 Successfully sent FCM notification to " + merchantID + " : " + token)
 	}
 }
 
@@ -180,11 +182,15 @@ func (s *NotificationService) sendWithPayload(
 
 	if resp.StatusCode != 200 {
 		log.Warn("FCM result code=" + resp.Status)
+	} else {
+		log.Info("Successfully sent FCM notification to " + merchantID + " : " + token)
 	}
 }
 
 func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 	log := logger.FromContext(ctx)
+
+	// TODO Sauvegarder le token en local afin de pouvoir le réutiliser sans avoir à Query la base de données ??
 
 	// 👉 ON VERROUILLE. Si une autre goroutine arrive, elle mettra l'exécution en pause ici
 	// jusqu'à ce que la première ait fini (Unlock).

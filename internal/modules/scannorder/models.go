@@ -51,7 +51,8 @@ type MerchantData struct {
 	Address           Address             `json:"address"`
 	Design            MerchantDesign      `json:"design"`
 	Fee               MerchantFees        `json:"fees"`
-	QRCode            struct {            // On peut laisser celle-ci si elle est unique au QR
+	PreparationTime   int                 `json:"preparation_time"`
+	QRCode            struct { // On peut laisser celle-ci si elle est unique au QR
 		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`
 		MenuOnly       bool    `json:"menu_only"`

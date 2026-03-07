@@ -30,50 +30,8 @@ func NewUberEatsService(db *sql.DB, config ConfigUberEats) *UberEatsService {
 }
 
 func (s *UberEatsService) GetValidToken(tx *sql.Tx) (string, error) {
-	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
-	}
 
-	shouldRefresh := false
-	if err == sql.ErrNoRows {
-		shouldRefresh = true
-	} else {
-		refreshThreshold := tokenData.ExpiresAt.AddDate(0, 0, -5)
-		if time.Now().UTC().After(refreshThreshold) {
-			shouldRefresh = true
-		}
-	}
-
-	if shouldRefresh {
-		newToken, err := s.client.GetNewToken()
-		if err != nil {
-			return "", err
-		}
-
-		if err := s.repo.SaveNewToken(
-			tx,
-			s.config.TokenType,
-			newToken.AccessToken,
-			newToken.ExpiresIn,
-		); err != nil {
-			return "", err
-		}
-
-		return newToken.AccessToken, nil
-	}
-
-	return tokenData.AccessToken, nil
-}
-
-/*
-func (s *UberEatsService) GetValidTokenOld(ctx context.Context) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	// INDISPENSABLE : Ferme la connexion en cas de plantage ou d'erreur non gérée
-	defer tx.Rollback()
+	// TODO Sauvegarder le token en local afin de pouvoir le réutiliser sans avoir à Query la base de données ??
 
 	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
 	if err != nil && err != sql.ErrNoRows {
@@ -105,106 +63,11 @@ func (s *UberEatsService) GetValidTokenOld(ctx context.Context) (string, error) 
 			return "", err
 		}
 
-		if err := tx.Commit(); err != nil {
-			return "", err
-		}
 		return newToken.AccessToken, nil
 	}
 
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
 	return tokenData.AccessToken, nil
 }
-func (s *UberEatsService) GetValidTokenOldOld(ctx context.Context) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
-	}
-
-	shouldRefresh := false
-	if err == sql.ErrNoRows {
-		shouldRefresh = true
-	} else {
-		refreshThreshold := tokenData.ExpiresAt.AddDate(0, 0, -5)
-		if time.Now().UTC().After(refreshThreshold) {
-			shouldRefresh = true
-		}
-	}
-
-	if shouldRefresh {
-		newToken, err := s.client.GetNewToken()
-		if err != nil {
-			return "", err
-		}
-
-		if err := s.repo.SaveNewToken(
-			tx,
-			s.config.TokenType,
-			newToken.AccessToken,
-			newToken.ExpiresIn,
-		); err != nil {
-			return "", err
-		}
-
-		if err := tx.Commit(); err != nil {
-			return "", err
-		}
-		return newToken.AccessToken, nil
-	}
-
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return tokenData.AccessToken, nil
-}
-func (s *UberEatsService) GetValidTokenOld() (string, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
-
-	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
-	}
-
-	// Logique PHP : if ($now > $expiresAt || sizeof($data) == 0) (avec le -5 jours)
-	shouldRefresh := false
-	if err == sql.ErrNoRows {
-		shouldRefresh = true
-	} else {
-		// ExpiresAt - 5 jours
-		refreshThreshold := tokenData.ExpiresAt.AddDate(0, 0, -5)
-		if time.Now().UTC().After(refreshThreshold) {
-			shouldRefresh = true
-		}
-	}
-
-	if shouldRefresh {
-		// Appel API
-		newToken, err := s.client.GetNewToken()
-		if err != nil {
-			return "", err
-		}
-		// Sauvegarde DB
-		err = s.repo.SaveNewToken(tx, s.config.TokenType, newToken.AccessToken, newToken.ExpiresIn)
-		if err != nil {
-			return "", err
-		}
-
-		tx.Commit()
-		return newToken.AccessToken, nil
-	}
-
-	tx.Commit()
-
-	return tokenData.AccessToken, nil
-}
-*/
 
 func (s *UberEatsService) GetOrderByURL(tx *sql.Tx, url string) (*ueModels.UberOrder, error) {
 

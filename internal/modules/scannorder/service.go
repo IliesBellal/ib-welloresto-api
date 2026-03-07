@@ -68,11 +68,12 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	resp := &MerchantResponse{
 		Status: "1",
 		Merchant: &MerchantData{
-			MerchantID:   row.MerchantID,
-			BusinessName: row.FullName,
-			Currency:     row.Currency,
-			IsOpen:       openStatus.OpenHours && openStatus.OpenStatus,
-			Status:       openStatus,
+			MerchantID:      row.MerchantID,
+			BusinessName:    row.FullName,
+			Currency:        row.Currency,
+			IsOpen:          openStatus.OpenHours && openStatus.OpenStatus,
+			Status:          openStatus,
+			PreparationTime: prepMinutes,
 
 			// Nouveaux champs de mode de commande
 			TakeawayEnabled:   row.TakeawayEnabled,
