@@ -18,11 +18,11 @@ func NewAuthService(r AuthRepository) AuthService {
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	loggedUser, err := s.repo.GetUserByToken(ctx, token)
-	if err == nil {
+	if err == nil && loggedUser != nil {
 		context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
 		context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
 	}
-	
+
 	return loggedUser, err
 }
 
