@@ -619,6 +619,10 @@ const (
 	BrandUberEats   = "UBER_EATS"
 	BrandDeliveroo  = "DELIVEROO"
 	BrandWelloResto = "WELLO_RESTO"
+
+	PaymentUberEats  = "UBER_EATS"
+	PaymentDeliveroo = "DELIVEROO"
+	PaymentStripe    = "STRIPE"
 )
 
 type OrderMeta struct {

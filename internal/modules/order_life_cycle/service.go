@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
@@ -25,10 +27,11 @@ type OrdersLifeCycleService struct {
 	userRepo             auth.AuthService
 	log                  *zap.Logger
 	notificationsService *notification.NotificationService
+	stripeManager        *stripeclient.StripeManager
 	customersRepo        *customers.CustomersRepository
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, userRepo auth.AuthService,
 	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
@@ -39,6 +42,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, uberSvc *u
 		deliverooSvc:         deliverooSvc,
 		log:                  log,
 		notificationsService: notificationsService,
+		stripeManager:        stripeSvc,
 		customersRepo:        customersRepo,
 	}
 }
@@ -152,10 +156,34 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orde
 		return models.ErrUnauthorized
 	}
 
-	// TODO
-	// Créer un GetPayment pour récupérer les meta data du paiement et vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo non annulable
-	// S'il s'agit d'un paiement Stripe, procéder à son annulation via l'API
+	// 1) Récupérer les informations du paiement
+	paymentIntID, err := strconv.ParseInt(paymentID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid payment_id format: %w", err)
+	}
 
+	payment, err := s.ordersLifeCycleRepo.GetPayment(ctx, orderID, paymentIntID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch payment: %w", err)
+	}
+
+	// 2) Vérifier qu'il ne s'agit pas d'un paiement DELIVEROO ou UBER_EATS (non annulable externalement)
+	if payment.MOP == models.PaymentDeliveroo || payment.MOP == models.PaymentUberEats {
+		return models.ErrCannotDisableExternalPayments
+	}
+
+	// 3) S'il s'agit d'un paiement Stripe, procéder à son annulation via l'API Stripe
+	if payment.MOP == models.PaymentStripe {
+
+		req := stripeclient.RefundRequest{
+			IntentID:  *payment.IntentID,
+			AccountID: *payment.AccountID,
+		}
+
+		go s.stripeManager.RefundOrCancelAsync(req)
+	}
+
+	// 4) Désactiver le paiement en base de données
 	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")

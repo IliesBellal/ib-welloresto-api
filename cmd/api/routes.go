@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
-	"strconv"
+	"welloresto-api/internal/infrastructure/brevo_mailer"
+	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/mailer"
+	"welloresto-api/internal/infrastructure/sms"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/scannorder"
@@ -58,20 +60,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	//  MODULE INITIALIZATION
 	// =============================
 
-	// ---- MAILER ----
-	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT")) // ex: 587
-	mailConfig := mailer.Config{
-		Host:     os.Getenv("SMTP_HOST"), // smtp.hostinger.com
-		Port:     smtpPort,
-		Username: os.Getenv("SMTP_USER"),     // invoice@welloresto.fr
-		Password: os.Getenv("SMTP_PASSWORD"), // Ton mot de passe
-		From:     os.Getenv("SMTP_FROM"),     // invoice@welloresto.fr
-	}
+	// ---- MAILER & SMS (BREVO) ----
+	// Initialize Brevo Email Service
+	brevoMailService := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{
+		APIKey: cfg.Brevo.APIKey,
+	})
 
-	// Initialisation du service
-	mailService := mailer.NewMailer(mailConfig)
-	// Ensuite, tu injectes 'mailService' dans tes handlers/services
-	// ex: webhookService := webhook.NewStripeWebhookService(repo, mailService)
+	// Initialize Brevo SMS Service
+	brevoSMSService := brevo_sms.NewBrevoSMS(brevo_sms.Config{
+		APIKey: cfg.Brevo.APIKey,
+	})
+
+	// Use as mailer.Service for dependency injection
+	var mailService mailer.Service = brevoMailService
+	var smsService sms.Service = brevoSMSService
 
 	// 2. Initialisation des couches (Injection de dépendances)
 	repo := googlemaps.NewGoogleMapsRepository()
@@ -145,6 +147,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
+		stripeManager,
 		uberService,
 		deliverooService,
 		deliverySessionsRepo,
@@ -159,6 +162,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		stripeRepo,
 		os.Getenv("STRIPE_SECRET_KEY"),
 		mailService,
+		smsService,
 		ordersLifeCycleService,
 		notificationService,
 	)
@@ -247,6 +251,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 	r.Route("/test", func(r chi.Router) {
 		r.Get("/test-mailer", mailService.TriggerTestEmail)
+		r.Get("/test-sms", smsService.TriggerTestSMS)
 
 		r.Post("/deliveroo/brandID", deliverooHandler.SyncSiteBrandID)
 		r.Post("/deliveroo/upload-menu", deliverooHandler.UploadTestMenu)

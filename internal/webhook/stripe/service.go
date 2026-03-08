@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/infrastructure/mailer"
+	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
@@ -23,16 +24,18 @@ type StripeWebhookService struct {
 	repo           Repository
 	stripeKey      string
 	email          mailer.Service
+	smsService     sms.Service
 	orderlifecycle *order_life_cycle.OrdersLifeCycleService
 	notification   *notification.NotificationService
 }
 
-func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService) *StripeWebhookService {
+func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService) *StripeWebhookService {
 	stripe.Key = stripeKey
 	return &StripeWebhookService{
 		repo:           repo,
 		stripeKey:      stripeKey,
 		email:          email,
+		smsService:     smsService,
 		orderlifecycle: lifecycle,
 		notification:   notification,
 	}
@@ -174,6 +177,17 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 					SupportEmail: "contact@welloresto.fr",
 				}
 				go s.email.SendOrderConfirmationToCustomer(session.CustomerDetails.Email, emailPayload)
+
+				// Send SMS confirmation if phone number is available
+				if session.CustomerDetails != nil && session.CustomerDetails.Phone != "" {
+					smsData := sms.OrderConfirmationSMSData{
+						MerchantName: merchant.BusinessName,
+						OrderID:      order.OrderID,
+						OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
+						TrackingURL:  "https://scannorder.welloresto.fr/restaurant/" + merchant.Code + "/" + order.OrderID,
+					}
+					go s.smsService.SendOrderConfirmationSMS("Wello", session.CustomerDetails.Phone, smsData)
+				}
 			}
 		}
 		go s.notification.SendNotificationAsync(merchantID, orderID, "ORDER_UPDATE")

@@ -277,6 +277,36 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 	return payments, nil
 }
 
+func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID string, paymentID int64) (*models.Payment, error) {
+	q := `
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled, sp.payment_intent_id, sa.account_id
+		FROM payments p
+		LEFT JOIN stripe_payments sp on sp.payment_id = p.payment_id
+		LEFT JOIN stripe_accounts sa on sa.merchant_id = p.merchant_id
+		WHERE p.order_id = ? AND p.payment_id = ?
+	`
+
+	var p models.Payment
+	var paymentDate sql.NullTime
+
+	err := r.db.QueryRowContext(ctx, q, orderID, paymentID).Scan(
+		&p.OrderID, &p.PaymentID, &p.MOP, &p.Amount, &paymentDate, &p.Enabled, &p.IntentID, &p.AccountID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("payment not found: order_id=%s, payment_id=%d", orderID, paymentID)
+		}
+		return nil, err
+	}
+
+	if paymentDate.Valid {
+		p.PaymentDate = helpers.NullTimePtr(paymentDate).UTC().Unix()
+	}
+
+	return &p, nil
+}
+
 func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentID string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

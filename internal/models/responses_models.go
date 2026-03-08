@@ -64,6 +64,8 @@ var (
 	ErrDeliverySessionAlreadyActive = errors.New("delivery_session_already_active")
 
 	ErrInvalidToken = errors.New("invalid_token")
+
+	ErrCannotDisableExternalPayments = errors.New("cannot disable external platforms payments")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -85,6 +87,9 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrInvalidInput):
 		status = http.StatusBadRequest
 		errorMsg = "invalid_input"
+	case errors.Is(err, ErrCannotDisableExternalPayments):
+		status = http.StatusUnavailableForLegalReasons
+		errorMsg = "cannot_disable_external_payments"
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
 		errorMsg = err.Error()

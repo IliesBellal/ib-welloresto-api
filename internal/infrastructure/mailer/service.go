@@ -5,10 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
-
-	"gopkg.in/gomail.v2"
 )
 
 // Content holds the email content files.
@@ -32,11 +29,12 @@ type Service interface {
 	SendAsync(from, to, subject, templateName string, data interface{})
 	SendOrderConfirmationToCustomer(to string, data ScanNOrderConfirmationData)
 	SendRefundNotification(s string, data RefundData)
+	SendPayoutPaidNotification(email string, name string, payout PayoutData)
 
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
-	SendPayoutPaidNotification(email string, name string, payout PayoutData)
 }
 
+/*
 // mailer is the implementation of Service
 type mailer struct {
 	dialer *gomail.Dialer
@@ -53,7 +51,6 @@ func NewMailer(cfg Config) Service {
 		config: cfg,
 	}
 }
-
 func (m *mailer) SendPayoutPaidNotification(email string, name string, payout PayoutData) {
 	// On lance une Goroutine pour ne pas bloquer l'API (Stripe n'attendra pas !)
 	go func() {
@@ -136,4 +133,21 @@ func (m *mailer) send(from, to, subject string, templateName string, data interf
 	}
 
 	return nil
+}
+*/
+
+// RenderTemplate is a public helper function to render templates from the embedded FS
+// This allows other services (like BrevoMailer) to reuse the same templates
+func RenderTemplate(templateName string, data interface{}) (string, error) {
+	tmpl, err := template.ParseFS(templateFS, "templates/"+templateName)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template %s: %w", templateName, err)
+	}
+
+	var body bytes.Buffer
+	if err := tmpl.Execute(&body, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return body.String(), nil
 }

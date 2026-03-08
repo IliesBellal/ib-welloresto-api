@@ -12,6 +12,8 @@ type Payment struct {
 	Amount      float64 `json:"amount"`
 	PaymentDate int64   `json:"payment_date"`
 	Enabled     bool    `json:"enabled"`
+	IntentID    *string `json:"intent_id,omitempty"`
+	AccountID   *string `json:"account_id,omitempty"`
 }
 
 type OrderComment struct {

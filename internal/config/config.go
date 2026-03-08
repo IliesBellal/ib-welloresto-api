@@ -13,6 +13,7 @@ type AppConfig struct {
 	Deliveroo  DeliverooConfig
 	ScanNOrder ScanNOrderConfig
 	Stripe     StripeConfig
+	Brevo      BrevoConfig
 }
 
 type App struct {
@@ -30,6 +31,7 @@ func Load() *AppConfig {
 		Deliveroo:  loadDeliveroo(),
 		ScanNOrder: loadScanNOrderConfig(),
 		Stripe:     loadStripeConfig(),
+		Brevo:      loadBrevoConfig(),
 	}
 
 	cfg.validate()
