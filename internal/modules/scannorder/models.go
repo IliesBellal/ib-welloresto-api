@@ -109,3 +109,49 @@ type Discount struct {
 	IsCumulative       bool    `json:"is_cumulative"`
 	Available          bool    `json:"available"`
 }
+
+// --- Brand ---
+
+type BrandResponse struct {
+	Status    string            `json:"status"`
+	Brand     *BrandData        `json:"brand,omitempty"`
+	Merchants []MerchantSummary `json:"merchants"`
+	Error     string            `json:"error,omitempty"`
+}
+
+type BrandData struct {
+	BrandID     string  `json:"brand_id"`
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	LogoURL     *string `json:"logo_url"`
+	BannerURL   *string `json:"banner_url"`
+	Description *string `json:"description"`
+}
+
+type MerchantSummary struct {
+	MerchantID      string   `json:"merchant_id"`
+	BusinessName    string   `json:"business_name"`
+	IsOpen          bool     `json:"is_open"`
+	PreparationTime int      `json:"preparation_time"`
+	DistanceKm      *float64 `json:"distance_km"`
+	Address         Address  `json:"address"`
+	TakeawayEnabled bool     `json:"takeaway_enabled"`
+	DeliveryEnabled bool     `json:"delivery_enabled"`
+}
+
+// BrandMerchantRow is used internally to scan merchant rows from the DB.
+type BrandMerchantRow struct {
+	MerchantID      string
+	FullName        string
+	Address         string
+	Lat             float64
+	Lng             float64
+	Timezone        string
+	LogoURL         *string
+	BannerURL       *string
+	TakeawayEnabled bool
+	DeliveryEnabled bool
+	PrepTimeMode    string
+	PrepTime        int
+	DistanceKm      *float64
+}

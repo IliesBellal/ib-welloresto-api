@@ -87,6 +87,9 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrInvalidInput):
 		status = http.StatusBadRequest
 		errorMsg = "invalid_input"
+	case errors.Is(err, ErrInvalidInputPasswordTooShort):
+		status = http.StatusBadRequest
+		errorMsg = "password_too_short"
 	case errors.Is(err, ErrCannotDisableExternalPayments):
 		status = http.StatusUnavailableForLegalReasons
 		errorMsg = "cannot_disable_external_payments"

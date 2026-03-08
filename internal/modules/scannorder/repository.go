@@ -546,3 +546,124 @@ func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
 func (s *Repository) GetBooking(ctx context.Context, qrCode string) (*models.Booking, error) {
 	return nil, nil
 }
+
+// GetMerchantsByBrandSlug fetches the brand and its merchants.
+// If lat and lng are non-nil, only merchants within 50 km are returned (Haversine).
+func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, lat, lng *float64) (*BrandData, []BrandMerchantRow, error) {
+	// 1. Fetch brand
+	brandQuery := `
+		SELECT brand_id, name, slug, logo_url, banner_url, description
+		FROM brands
+		WHERE slug = ?
+		LIMIT 1`
+
+	brand := &BrandData{}
+	err := r.db.QueryRowContext(ctx, brandQuery, slug).Scan(
+		&brand.BrandID, &brand.Name, &brand.Slug,
+		&brand.LogoURL, &brand.BannerURL, &brand.Description,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 2. Fetch merchants (with optional distance filter)
+	var rows *sql.Rows
+
+	if lat != nil && lng != nil {
+		merchantQuery := `
+			SELECT
+				m.id,
+				m.fullName,
+				m.address,
+				m.lat,
+				m.lng,
+				m.timezone,
+				snos.take_away_enabled,
+				snos.delivery_enabled,
+				mp.preparation_time_mode,
+				mp.preparation_time,
+				(6371 * ACOS(
+					COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
+					COS(RADIANS(m.lng) - RADIANS(?)) +
+					SIN(RADIANS(?)) * SIN(RADIANS(m.lat))
+				)) AS distance_km
+			FROM brands b
+			INNER JOIN merchant m ON m.brand_id = b.brand_id
+			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
+			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+			WHERE b.brand_id = ?
+			HAVING distance_km < 50
+			ORDER BY distance_km ASC`
+
+		rows, err = r.db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
+	} else {
+		merchantQuery := `
+			SELECT
+				m.id,
+				m.fullName,
+				m.address,
+				m.lat,
+				m.lng,
+				m.timezone,
+				m.logo_url,
+				snos.take_away_enabled,
+				snos.delivery_enabled,
+				snos.header_background,
+				mp.preparation_time_mode,
+				mp.preparation_time,
+				NULL AS distance_km
+			FROM brands b
+			INNER JOIN merchant m ON m.brand_id = b.brand_id
+			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
+			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+			WHERE b.brand_id = ?
+			ORDER BY m.fullName ASC`
+
+		rows, err = r.db.QueryContext(ctx, merchantQuery, brand.BrandID)
+	}
+
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var merchants []BrandMerchantRow
+	for rows.Next() {
+		var row BrandMerchantRow
+		var distanceKm sql.NullFloat64
+
+		if err := rows.Scan(
+			&row.MerchantID,
+			&row.FullName,
+			&row.Address,
+			&row.Lat,
+			&row.Lng,
+			&row.Timezone,
+			&row.LogoURL,
+			&row.TakeawayEnabled,
+			&row.DeliveryEnabled,
+			&row.BannerURL,
+			&row.PrepTimeMode,
+			&row.PrepTime,
+			&distanceKm,
+		); err != nil {
+			return nil, nil, err
+		}
+
+		if distanceKm.Valid {
+			v := distanceKm.Float64
+			row.DistanceKm = &v
+		}
+
+		merchants = append(merchants, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return brand, merchants, nil
+}

@@ -127,3 +127,26 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "scannorder", "create_order_sno", create_order)
 }
+
+func (h *Handler) GetBrand(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	slug := chi.URLParam(r, "slug")
+	latStr := r.URL.Query().Get("lat")
+	lngStr := r.URL.Query().Get("lng")
+
+	resp, err := h.service.GetBrand(ctx, slug, latStr, lngStr)
+	if err != nil {
+		log.Error("GetBrand failed", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_brand", map[string]string{"error": err.Error()})
+		return
+	}
+
+	if resp.Brand == nil {
+		models.SendJSON(w, http.StatusNotFound, "scannorder", "get_brand", map[string]string{"error": "brand_not_found"})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_brand", resp)
+}

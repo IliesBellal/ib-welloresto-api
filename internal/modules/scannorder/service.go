@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 	"welloresto-api/internal/config"
-	"welloresto-api/internal/infrastructure/stripe"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/delivery_sessions"
@@ -239,6 +240,65 @@ func (s *Service) IsMerchantOpen(ctx context.Context, merchantID string) (*Merch
 	currentTime := now.Format("15:04:05")
 
 	return s.repo.GetMerchantOpenStatus(ctx, merchantID, dow, currentTime)
+}
+
+func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*BrandResponse, error) {
+	var lat, lng *float64
+
+	if latStr != "" && lngStr != "" {
+		parsedLat, err1 := strconv.ParseFloat(latStr, 64)
+		parsedLng, err2 := strconv.ParseFloat(lngStr, 64)
+		if err1 == nil && err2 == nil {
+			lat = &parsedLat
+			lng = &parsedLng
+		}
+	}
+
+	brand, merchantRows, err := s.repo.GetMerchantsByBrandSlug(ctx, slug, lat, lng)
+	if err != nil {
+		return nil, err
+	}
+	if brand == nil {
+		return &BrandResponse{Status: "not_found"}, nil
+	}
+
+	summaries := make([]MerchantSummary, 0, len(merchantRows))
+	for _, row := range merchantRows {
+		openStatus, err := s.IsMerchantOpen(ctx, row.MerchantID)
+		isOpen := false
+		if err == nil {
+			isOpen = openStatus.OpenHours && openStatus.OpenStatus
+		}
+
+		merchantRow := &models.MerchantRow{
+			MerchantID:   row.MerchantID,
+			Timezone:     row.Timezone,
+			PrepTimeMode: row.PrepTimeMode,
+			PrepTime:     row.PrepTime,
+		}
+		prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
+
+		summaries = append(summaries, MerchantSummary{
+			MerchantID:      row.MerchantID,
+			BusinessName:    row.FullName,
+			IsOpen:          isOpen,
+			PreparationTime: prepMinutes,
+			DistanceKm:      row.DistanceKm,
+			Address: Address{
+				Address: row.Address,
+				Lat:     row.Lat,
+				Lng:     row.Lng,
+			},
+			TakeawayEnabled: row.TakeawayEnabled,
+			DeliveryEnabled: row.DeliveryEnabled,
+		})
+	}
+
+	return &BrandResponse{
+		Status:    "success",
+		Brand:     brand,
+		Merchants: summaries,
+	}, nil
 }
 
 func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {

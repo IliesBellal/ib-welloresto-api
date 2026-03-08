@@ -13,7 +13,6 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	// --- Validation ---
 	if strings.TrimSpace(req.FirstName) == "" ||
 		strings.TrimSpace(req.LastName) == "" ||
-		strings.TrimSpace(req.UserName) == "" ||
 		strings.TrimSpace(req.Email) == "" {
 		return "", models.ErrInvalidInput
 	}
@@ -34,13 +33,12 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 		return "", err
 	}
 
-	userToken, err := helpers.GenerateToken(15) // 30-char token for the users.token column (VARCHAR(30))
+	req.UserID = userID
+
+	userToken, err := helpers.GenerateToken(30) // 30-char token for the users.token column (VARCHAR(30))
 	if err != nil {
 		return "", err
 	}
-
-	// name column = first_name + " " + last_name (legacy field)
-	fullName := strings.TrimSpace(req.FirstName) + " " + strings.TrimSpace(req.LastName)
 
 	// --- Transaction ---
 	tx, err := s.userRepo.db.BeginTx(ctx, nil)
@@ -49,7 +47,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	}
 	defer tx.Rollback() //nolint:errcheck — superseded by explicit Commit below
 
-	if err := s.userRepo.CreateUser(ctx, tx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); err != nil {
+	if err := s.userRepo.CreateUser(ctx, tx, req, hashed, userToken); err != nil {
 		return "", err
 	}
 
