@@ -284,6 +284,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
+		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
 		r.Patch("/{user_id}/reset-password", usersH.UpdatePassword)
@@ -291,6 +292,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- POS ---
 	r.Route("/pos", func(r chi.Router) {
+		r.Post("/create", posH.CreateMerchant)
+		r.Post("/link-user", posH.LinkUser)
 		r.Get("/status", posH.GetPOSStatus)
 		r.Patch("/status", posH.UpdatePOSStatus)
 
