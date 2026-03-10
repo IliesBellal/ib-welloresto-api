@@ -239,6 +239,8 @@ type MerchantRow struct {
 	TakeawayAvailable bool `json:"takeaway_available"`
 	DeliveryEnabled   bool `json:"delivery_enabled"`
 	DeliveryAvailable bool `json:"delivery_available"`
+	InEnabled         bool `json:"in_enabled"`
+	InAvailable       bool `json:"in_available"`
 
 	PrepTimeMode string `json:"prep_time_mode"` // AUTO | MANUAL
 	PrepTime     int    `json:"prep_time"`      // en minutes

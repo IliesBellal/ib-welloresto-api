@@ -16,21 +16,19 @@ type CreateMerchantRequest struct {
 	// Optional: if set the user is linked to the new merchant in the same transaction.
 	UserID string `json:"user_id,omitempty"`
 	// Rights to grant when linking. Ignored if UserID is empty.
-	Admin  bool `json:"admin"`
-	Waiter bool `json:"waiter"`
+	Admin bool `json:"admin"`
 }
 
 // CreateMerchantResponse is returned on success (201).
 type CreateMerchantResponse struct {
-	MerchantID int `json:"merchant_id"`
+	MerchantID string `json:"merchant_id"`
 }
 
 // LinkUserRequest is the JSON payload for POST /pos/link-user.
 type LinkUserRequest struct {
 	UserID     string `json:"user_id"`
-	MerchantID int    `json:"merchant_id"`
+	MerchantID string `json:"merchant_id"`
 	Admin      bool   `json:"admin"`
-	Waiter     bool   `json:"waiter"`
 }
 
 // LinkUserResponse is returned on success (201).

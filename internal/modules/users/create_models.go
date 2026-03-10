@@ -2,12 +2,14 @@ package users
 
 // CreateUserRequest is the JSON payload for POST /users/create.
 type CreateUserRequest struct {
-	UserID    string `json:"user_id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	Tel       string `json:"tel"`
+	FirstName  string  `json:"first_name"`
+	LastName   string  `json:"last_name"`
+	UserName   string  `json:"username"`
+	Email      string  `json:"email"`
+	Password   string  `json:"password"`
+	Tel        string  `json:"tel"`
+	MerchantID *string `json:"merchant_id,omitempty"` // optional: auto-link user to merchant if provided
+	Admin      bool    `json:"admin"`                 // if MerchantID is set, whether to link as admin or regular user
 }
 
 // CreateUserResponse is the JSON body returned on success (201).

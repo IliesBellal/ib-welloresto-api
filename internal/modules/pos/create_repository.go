@@ -3,10 +3,11 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"strconv"
 )
 
 // InsertMerchant inserts a row into the merchant table and returns the auto-incremented ID.
-func (r *POSRepository) InsertMerchant(ctx context.Context, tx *sql.Tx, req CreateMerchantRequest, token string) (int, error) {
+func (r *POSRepository) InsertMerchant(ctx context.Context, tx *sql.Tx, req CreateMerchantRequest, token string) (string, error) {
 	country := req.Country
 	if country == "" {
 		country = "France"
@@ -21,15 +22,15 @@ func (r *POSRepository) InsertMerchant(ctx context.Context, tx *sql.Tx, req Crea
 		req.City, country, req.SIRET, req.Tel, req.WebSite, req.Email, token,
 	)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
 	id, err := res.LastInsertId()
-	return int(id), err
+	return strconv.FormatInt(id, 10), err
 }
 
 // InitMerchantSatellites creates the companion rows expected for every new merchant.
-func (r *POSRepository) InitMerchantSatellites(ctx context.Context, tx *sql.Tx, merchantID int) error {
+func (r *POSRepository) InitMerchantSatellites(ctx context.Context, tx *sql.Tx, merchantID string) error {
 	// 2 QR codes — one for standard menu, one for menu-only (mywelloresto flag)
 	for _, row := range []struct{ menuOnly, mywelloresto int }{{0, 0}, {1, 1}} {
 		if _, err := tx.ExecContext(ctx,
@@ -65,12 +66,11 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, tx *sql.Tx, 
 }
 
 // InsertUserRights inserts a row into users_rights and returns the auto-incremented ID.
-func (r *POSRepository) InsertUserRights(ctx context.Context, tx *sql.Tx, userID string, merchantID int, admin, waiter bool, token string) (int, error) {
+func (r *POSRepository) InsertUserRights(ctx context.Context, tx *sql.Tx, userID, merchantID string, admin bool, token string) (int, error) {
 	adminVal := 0
 	if admin {
 		adminVal = 1
 	}
-	_ = waiter // waiter rights column not present in users_rights table schema
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO users_rights

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -401,7 +402,59 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		}
 	}
 
-	// --- STEP 7: delays ---
+	// --- STEP 7: allergens per product ---
+	allergenMap := make(map[string][]models.AllergenEntry)
+	{
+		q := `
+			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			FROM product_allergens pa
+			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
+			WHERE pa.product_id IN (
+				SELECT product_id FROM products WHERE merchant_id = ? AND available = 1 AND enabled = 1
+			)
+		`
+		rows, err := runQuery("allergens_per_product", q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var productID string
+			var a models.AllergenEntry
+			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+				return nil, err
+			}
+			allergenMap[productID] = append(allergenMap[productID], a)
+		}
+	}
+
+	// --- STEP 8: tags per product ---
+	tagMap := make(map[string][]models.TagEntry)
+	{
+		q := `
+			SELECT pt.product_id, t.tag_id, t.name
+			FROM product_tags pt
+			INNER JOIN tags t ON t.tag_id = pt.tag_id
+			WHERE t.merchant_id = ? AND pt.product_id IN (
+				SELECT product_id FROM products WHERE merchant_id = ? AND available = 1 AND enabled = 1
+			)
+		`
+		rows, err := runQuery("tags_per_product", q, merchantID, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var productID string
+			var t models.TagEntry
+			if err := rows.Scan(&productID, &t.ID, &t.Name); err != nil {
+				return nil, err
+			}
+			tagMap[productID] = append(tagMap[productID], t)
+		}
+	}
+
+	// --- STEP 9: delays ---
 	var delays []models.DelayEntry
 	{
 		step := "delays"
@@ -422,7 +475,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		}
 	}
 
-	// --- STEP 8: component categories + all components ---
+	// --- STEP 10: component categories + all components ---
 	type compCatTmp struct {
 		ID    *string
 		Name  string
@@ -484,7 +537,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			}
 		}
 	}
-	// attach components & configuration
+	// attach components, configuration, allergens, tags
 	for _, p := range products {
 		if comps, ok := compMap[p.ProductID]; ok {
 			p.Components = comps
@@ -493,6 +546,12 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			p.Configuration = models.ConfigurableResponse{Attributes: attrs}
 		} else {
 			p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
+		}
+		if allergens, ok := allergenMap[p.ProductID]; ok {
+			p.Allergens = allergens
+		}
+		if tags, ok := tagMap[p.ProductID]; ok {
+			p.Tags = tags
 		}
 	}
 
@@ -820,6 +879,287 @@ func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) 
 	return err
 }
 
+// SyncProductAllergens replaces all allergen associations for a product in a single transaction.
+// It verifies that the product belongs to merchantID before modifying it.
+func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, productID string, allergenIDs []int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Ownership check
+	var count int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return models.ErrForbidden
+	}
+
+	// Delete existing associations
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM product_allergens WHERE product_id = ?`, productID,
+	); err != nil {
+		return err
+	}
+
+	// Insert new associations
+	if len(allergenIDs) > 0 {
+		stmt, err := tx.PrepareContext(ctx,
+			`INSERT INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`,
+		)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, aid := range allergenIDs {
+			if _, err := stmt.ExecContext(ctx, productID, aid); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = r.setMenuUpdated(ctx, merchantID)
+	return nil
+}
+
+// BulkAssignTag adds a tag to multiple products without removing their other tags.
+// Ownership of both the tag and every product is verified against merchantID.
+func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID string, productIDs []string) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	// 1. Dédoublonner pour éviter les erreurs de validCount
+	productIDs = uniqueStrings(productIDs)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 2. Vérifier que le tag appartient au marchand
+	var tagCount int
+	err = tx.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?",
+		tagID, merchantID,
+	).Scan(&tagCount)
+
+	if err != nil || tagCount == 0 {
+		return models.ErrForbidden
+	}
+
+	// 3. Vérifier que TOUS les produits appartiennent au marchand
+	// MySQL ne supporte pas ANY(array), on construit donc le IN (?, ?, ?)
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, len(productIDs)+1)
+	args[0] = merchantID // Premier argument pour merchant_id = ?
+
+	for i, pid := range productIDs {
+		placeholders[i] = "?"
+		args[i+1] = pid
+	}
+
+	query := fmt.Sprintf(
+		"SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+
+	var validCount int
+	if err := tx.QueryRowContext(ctx, query, args...).Scan(&validCount); err != nil {
+		return err
+	}
+
+	if validCount != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	// 4. Insertion en masse avec INSERT IGNORE (Spécifique MySQL)
+	// On réutilise les placeholders pour faire un seul INSERT groupé pour la performance
+	insertValues := make([]string, len(productIDs))
+	insertArgs := make([]interface{}, 0, len(productIDs)*2)
+
+	for i, pid := range productIDs {
+		insertValues[i] = "(?, ?)"
+		insertArgs = append(insertArgs, pid, tagID)
+	}
+
+	insertQuery := fmt.Sprintf(
+		"INSERT INTO product_tags (product_id, tag_id) VALUES %s",
+		strings.Join(insertValues, ","),
+	)
+
+	if _, err := tx.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// Helper pour éviter les doublons d'IDs dans la slice
+func uniqueStrings(input []string) []string {
+	u := make([]string, 0, len(input))
+	m := make(map[string]bool)
+	for _, val := range input {
+		if val != "" && !m[val] {
+			m[val] = true
+			u = append(u, val)
+		}
+	}
+	return u
+}
+
+// BulkAssignAllergen adds an allergen to multiple products without removing their other allergens.
+// Each product must belong to merchantID.
+func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, allergenID string, productIDs []string) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Verify allergen exists (system-wide, no merchant_id check needed)
+	var allergenCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM allergens WHERE allergen_id = ?`,
+		allergenID,
+	).Scan(&allergenCount); err != nil {
+		return err
+	}
+	if allergenCount == 0 {
+		return models.ErrNotFound
+	}
+
+	// Verify all products belong to merchant
+	placeholders := make([]interface{}, 0, len(productIDs)+1)
+	placeholders = append(placeholders, merchantID)
+	inClause := ""
+	for i, pid := range productIDs {
+		if i > 0 {
+			inClause += ","
+		}
+		inClause += "?"
+		placeholders = append(placeholders, pid)
+	}
+	var validCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (`+inClause+`)`,
+		placeholders...,
+	).Scan(&validCount); err != nil {
+		return err
+	}
+	if validCount != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	// Upsert associations
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT IGNORE INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`,
+	)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, pid := range productIDs {
+		if _, err := stmt.ExecContext(ctx, pid, allergenID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// SyncProductTags replaces all tag associations for a product in a single transaction.
+// It verifies that the product belongs to merchantID and that all supplied tag_ids also belong
+// to the same merchant before modifying anything.
+func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, productID string, tagIDs []int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Ownership check: product must belong to merchant
+	var count int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return models.ErrForbidden
+	}
+
+	// Verify all supplied tags belong to the merchant
+	if len(tagIDs) > 0 {
+		placeholders := make([]interface{}, 0, len(tagIDs)+1)
+		placeholders = append(placeholders, merchantID)
+		inClause := ""
+		for i, tid := range tagIDs {
+			if i > 0 {
+				inClause += ","
+			}
+			inClause += "?"
+			placeholders = append(placeholders, tid)
+		}
+		var validCount int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(1) FROM tags WHERE merchant_id = ? AND id IN (`+inClause+`)`,
+			placeholders...,
+		).Scan(&validCount); err != nil {
+			return err
+		}
+		if validCount != len(tagIDs) {
+			return models.ErrForbidden
+		}
+	}
+
+	// Delete existing associations
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM product_tags WHERE product_id = ?`, productID,
+	); err != nil {
+		return err
+	}
+
+	// Insert new associations
+	if len(tagIDs) > 0 {
+		stmt, err := tx.PrepareContext(ctx,
+			`INSERT INTO product_tags (product_id, tag_id) VALUES (?, ?)`,
+		)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, tid := range tagIDs {
+			if _, err := stmt.ExecContext(ctx, productID, tid); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = r.setMenuUpdated(ctx, merchantID)
+	return nil
+}
+
 func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID, productID string, configIDs []string) error {
 	// 1. Démarrer la transaction
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -870,4 +1210,29 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 	_ = r.setMenuUpdated(ctx, merchantID)
 
 	return nil
+}
+
+// ListTags returns all tags belonging to a merchant.
+func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, merchant_id, name
+		 FROM tags
+		 WHERE merchant_id = ?
+		 ORDER BY name ASC`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []models.TagEntry
+	for rows.Next() {
+		var t models.TagEntry
+		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name); err != nil {
+			return nil, err
+		}
+		result = append(result, t)
+	}
+	return result, rows.Err()
 }

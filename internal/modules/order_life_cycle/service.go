@@ -74,7 +74,10 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 			// Not coded in PHP -> return simple OK or your logic
 			return nil
 		}
-		return s.deliverooSvc.SetCollected(ctx, *order.BrandOrderID)
+		if order.BrandOrderID != nil {
+			go s.deliverooSvc.SetCollected(*order.BrandOrderID)
+		}
+		return nil
 
 	default:
 		return nil

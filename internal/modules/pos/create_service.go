@@ -41,7 +41,7 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 
 	// Step 3 — optional user linkage (within same transaction)
 	if strings.TrimSpace(req.UserID) != "" {
-		if _, _, err := s.insertUserRightsTx(ctx, tx, req.UserID, merchantID, req.Admin, req.Waiter); err != nil {
+		if _, _, err := s.insertUserRightsTx(ctx, tx, req.UserID, merchantID, req.Admin); err != nil {
 			return CreateMerchantResponse{}, err
 		}
 	}
@@ -51,7 +51,7 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 
 // LinkUser links an existing user to an existing merchant with given rights.
 func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUserResponse, error) {
-	if strings.TrimSpace(req.UserID) == "" || req.MerchantID == 0 {
+	if strings.TrimSpace(req.UserID) == "" || req.MerchantID == "" {
 		return LinkUserResponse{}, models.ErrInvalidInput
 	}
 
@@ -61,7 +61,7 @@ func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUse
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	token, id, err := s.insertUserRightsTx(ctx, tx, req.UserID, req.MerchantID, req.Admin, req.Waiter)
+	token, id, err := s.insertUserRightsTx(ctx, tx, req.UserID, req.MerchantID, req.Admin)
 	if err != nil {
 		return LinkUserResponse{}, err
 	}
@@ -71,13 +71,13 @@ func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUse
 
 // insertUserRightsTx is the shared helper that inserts a users_rights row and
 // returns (token, rowID, error). It is used both by CreateMerchant and LinkUser.
-func (s *POSService) insertUserRightsTx(ctx context.Context, tx *sql.Tx, userID string, merchantID int, admin, waiter bool) (string, int, error) {
+func (s *POSService) insertUserRightsTx(ctx context.Context, tx *sql.Tx, userID, merchantID string, admin bool) (string, int, error) {
 	rightsToken, err := helpers.GenerateToken(16) // 32-char hex token → VARCHAR(255)
 	if err != nil {
 		return "", 0, err
 	}
 
-	id, err := s.posRepo.InsertUserRights(ctx, tx, userID, merchantID, admin, waiter, rightsToken)
+	id, err := s.posRepo.InsertUserRights(ctx, tx, userID, merchantID, admin, rightsToken)
 	if err != nil {
 		return "", 0, err
 	}

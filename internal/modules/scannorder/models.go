@@ -48,11 +48,13 @@ type MerchantData struct {
 	TakeawayAvailable bool                `json:"takeaway_available"`
 	DeliveryEnabled   bool                `json:"delivery_enabled"`
 	DeliveryAvailable bool                `json:"delivery_available"`
+	InEnabled         bool                `json:"in_enabled"`
+	InAvailable       bool                `json:"in_available"`
 	Address           Address             `json:"address"`
 	Design            MerchantDesign      `json:"design"`
 	Fee               MerchantFees        `json:"fees"`
 	PreparationTime   int                 `json:"preparation_time"`
-	QRCode            struct { // On peut laisser celle-ci si elle est unique au QR
+	QRCode            struct {            // On peut laisser celle-ci si elle est unique au QR
 		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`
 		MenuOnly       bool    `json:"menu_only"`

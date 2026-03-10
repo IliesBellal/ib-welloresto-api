@@ -337,3 +337,150 @@ func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]string{"status": "1", "message": "menu synced to uber eats"})
 }
+
+// SyncProductAllergens — PUT /menu/product/:product_id/allergens
+// Full-sync: replaces all allergen associations for the given product.
+func (h *MenuHandler) SyncProductAllergens(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "sync_product_allergens", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_allergens", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var body struct {
+		AllergenIDs []int `json:"allergen_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_allergens", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.SyncProductAllergens(r.Context(), token, productID, body.AllergenIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "sync_product_allergens", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "sync_product_allergens", map[string]string{"status": "1", "message": "allergens updated"})
+}
+
+// BulkAssignTag — POST /menu/bulk/tags/assign
+// Assigns a tag to multiple products (additive, does not remove existing tags).
+func (h *MenuHandler) BulkAssignTag(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_tag", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var body struct {
+		TagID      string   `json:"tag_id"`
+		ProductIDs []string `json:"product_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_tag", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(body.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_tag", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	if err := h.service.BulkAssignTag(r.Context(), token, body.TagID, body.ProductIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_assign_tag", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_tag", map[string]interface{}{
+		"status":  "1",
+		"message": "tag assigned",
+		"updated": len(body.ProductIDs),
+	})
+}
+
+// BulkAssignAllergen — POST /menu/bulk/allergens/assign
+// Assigns an allergen to multiple products (additive, does not remove existing allergens).
+func (h *MenuHandler) BulkAssignAllergen(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_allergen", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var body struct {
+		AllergenID string   `json:"allergen_id"`
+		ProductIDs []string `json:"product_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_allergen", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(body.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_allergen", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	if err := h.service.BulkAssignAllergen(r.Context(), token, body.AllergenID, body.ProductIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_assign_allergen", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_allergen", map[string]interface{}{
+		"status":  "1",
+		"message": "allergen assigned",
+		"updated": len(body.ProductIDs),
+	})
+}
+
+// SyncProductTags — PUT /menu/product/:product_id/tags
+// Full-sync: replaces all tag associations for the given product.
+func (h *MenuHandler) SyncProductTags(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "sync_product_tags", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_tags", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var body struct {
+		TagIDs []int `json:"tag_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_tags", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.SyncProductTags(r.Context(), token, productID, body.TagIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "sync_product_tags", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "sync_product_tags", map[string]string{"status": "1", "message": "tags updated"})
+}
+
+// GET /pos/tags
+func (h *MenuHandler) ListTags(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "tags", "list", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	tagList, err := h.service.ListTags(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "tags", "list", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "tags", "list", tagList)
+}

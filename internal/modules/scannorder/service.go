@@ -81,6 +81,8 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 			TakeawayAvailable: row.TakeawayAvailable,
 			DeliveryEnabled:   row.DeliveryEnabled,
 			DeliveryAvailable: row.DeliveryAvailable,
+			InEnabled:         row.InEnabled,
+			InAvailable:       row.InAvailable,
 
 			AdvanceOrder: AdvanceOrder{
 				EnableAdvanceOrders: true, // Ou row.EnableAdvanceOrders si tu l'as en base

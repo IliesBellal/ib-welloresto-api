@@ -17,12 +17,7 @@ func (h *POSHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.CreateMerchant(r.Context(), req)
 	if err != nil {
-		switch {
-		case errors.Is(err, models.ErrInvalidInput):
-			models.SendJSON(w, http.StatusBadRequest, "pos", "create", map[string]string{"error": "invalid_input"})
-		default:
-			models.SendJSON(w, http.StatusInternalServerError, "pos", "create", map[string]string{"error": "internal_server_error"})
-		}
+		models.SendErrorJSON(w, "user", "create", err)
 		return
 	}
 
@@ -33,7 +28,7 @@ func (h *POSHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) {
 func (h *POSHandler) LinkUser(w http.ResponseWriter, r *http.Request) {
 	var req LinkUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "pos", "link_user", map[string]string{"error": "invalid_request_body"})
+		models.SendErrorJSON(w, "pos", "link_user", err)
 		return
 	}
 

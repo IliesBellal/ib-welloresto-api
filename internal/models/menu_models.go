@@ -22,7 +22,7 @@ type ProductCategory struct {
 // product
 type ProductEntry struct {
 	OrderID                      string                `json:"order_id,omitempty"`
-	OrderItemID                  string                `json:"order_item_id"`
+	OrderItemID                  string                `json:"order_item_id,omitempty"`
 	ProductID                    string                `json:"product_id"`
 	OrderedOn                    int64                 `json:"ordered_on,omitempty"`
 	ProductionStatus             string                `json:"production_status,omitempty"`
@@ -68,6 +68,23 @@ type ProductEntry struct {
 	DisplayOrder                 *int                  `json:"display_order"`
 	SyncDeliveroo                bool                  `json:"sync_deliveroo,omitempty"`
 	SyncUberEats                 bool                  `json:"sync_ubereats,omitempty"`
+	Tags                         []TagEntry            `json:"tags"`
+	Allergens                    []AllergenEntry       `json:"allergens"`
+}
+
+// AllergenEntry represents one of the 14 EU regulated allergens.
+type AllergenEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Code string `json:"code"`
+	Icon string `json:"icon,omitempty"`
+}
+
+// TagEntry represents a merchant-specific label attached to a product.
+type TagEntry struct {
+	ID         string `json:"id"`
+	MerchantID string `json:"merchant_id,omitempty"`
+	Name       string `json:"name"`
 }
 
 type OrderProductExtra struct {

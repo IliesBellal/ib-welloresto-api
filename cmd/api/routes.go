@@ -21,6 +21,7 @@ import (
 	"welloresto-api/internal/middleware"
 
 	// ---- MODULES ----
+	allergensModule "welloresto-api/internal/modules/allergens"
 	authModule "welloresto-api/internal/modules/auth"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
@@ -34,6 +35,7 @@ import (
 	ordersModule "welloresto-api/internal/modules/orders"
 	posModule "welloresto-api/internal/modules/pos"
 	stocksModule "welloresto-api/internal/modules/stocks"
+	tagsModule "welloresto-api/internal/modules/tags"
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
@@ -218,6 +220,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB, log)
 	servicesService := servicesModule.NewServicesService(servicesRepo, authService)
 
+	// ---- Allergens ----
+	allergensRepo := allergensModule.NewRepository(mysqlDB)
+	allergensService := allergensModule.NewService(allergensRepo, authService)
+
+	// ---- Tags ----
+	tagsRepo := tagsModule.NewRepository(mysqlDB)
+	tagsService := tagsModule.NewService(tagsRepo, authService)
+
 	// =============================
 	//  HANDLERS
 	// =============================
@@ -225,6 +235,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	authH := authModule.NewAuthHandler(authService)
 	posH := posModule.NewPOSHandler(posService)
 	menuH := menuModule.NewMenuHandler(menuService)
+	allergensH := allergensModule.NewHandler(allergensService)
+	tagsH := tagsModule.NewHandler(tagsService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService)
 	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
@@ -316,6 +328,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/safety_stock", posH.ToggleSafetyStockActive)
 		})
 
+		r.Route("/tags", func(r chi.Router) {
+			r.Get("/", tagsH.ListTags)
+			r.Post("/create", tagsH.CreateTag)
+			r.Delete("/{tag_id}", tagsH.DeleteTag)
+		})
+
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
 	})
 
@@ -365,11 +383,26 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/product/create", menuH.CreateProduct)
 		r.Get("/product/{product_id}", menuH.GetProduct)
 
+		// --- Bulk assign (additive) ---
+		r.Route("/bulk", func(r chi.Router) {
+			r.Post("/tags/assign", menuH.BulkAssignTag)
+			r.Post("/allergens/assign", menuH.BulkAssignAllergen)
+		})
+
+		// --- Allergens & Tags (full sync) ---
+		r.Put("/product/{product_id}/allergens", menuH.SyncProductAllergens)
+		r.Put("/product/{product_id}/tags", menuH.SyncProductTags)
+
 		// --- Plateformes externes ---
 		r.Get("/deliveroo", menuH.GetDeliverooMenu)
 		r.Patch("/deliveroo/sync", menuH.SyncDeliverooMenu)
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
+	})
+
+	// --- ALLERGENS (system-wide, read-only) ---
+	r.Route("/allergens", func(r chi.Router) {
+		r.Get("/", allergensH.ListAllergens)
 	})
 
 	// --- LOCATIONS ---

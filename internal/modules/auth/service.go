@@ -26,22 +26,22 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	return loggedUser, err
 }
 
-func convertApp(app string) (int, error) {
+func convertApp(app string) string {
 	switch strings.ToUpper(app) {
 	case "0", "WR_RECEPTION":
-		return 0, nil
+		return "WR_RECEPTION"
 	case "1", "WR_DELIVERY":
-		return 1, nil
+		return "WR_DELIVERY"
 	case "2", "WR_WAITER":
-		return 2, nil
+		return "WR_WAITER"
 	default:
-		return -1, errors.New("invalid app")
+		return "WR_RECEPTION"
 	}
 }
 
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string) (map[string]interface{}, error) {
 
-	appID, _ := convertApp(payload.App)
+	appID := convertApp(payload.App)
 
 	var username string
 	var err error
@@ -83,21 +83,21 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 
 	switch appID {
-	case 0:
+	case "WR_RECEPTION":
 		if !user.AccessReception {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",
 				"enabled": "User can't access this app",
 			}, nil
 		}
-	case 1:
+	case "WR_DELIVERY":
 		if !user.AccessDelivery || !user.AllowDeliveryAccount {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",
 				"enabled": "User can't access this app",
 			}, nil
 		}
-	case 2:
+	case "WR_WAITER":
 		if !user.AccessWaiter || !user.AllowWaiterAccount {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",

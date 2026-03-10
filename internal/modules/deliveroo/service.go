@@ -29,8 +29,8 @@ func NewDeliverooService(db *sql.DB, cfg config.DeliverooConfig) *DeliverooServi
 	return &DeliverooService{repo: repo, db: db, client: dc, cfg: cfg}
 }
 
-func (s *DeliverooService) SetCollected(ctx context.Context, brandOrderID string) error {
-	err := s.client.SetCollected(ctx, brandOrderID)
+func (s *DeliverooService) SetCollected(brandOrderID string) error {
+	err := s.client.SetCollected(context.Background(), brandOrderID)
 	if err != nil {
 		return err
 	}

@@ -28,7 +28,8 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
            o.order_id, l.location_id, l.location_name, snos.variable_fees, snos.fixed_fees, sa.account_id,
            
            snos.take_away_enabled, snos.take_away_available, 
-           snos.delivery_enabled, snos.delivery_available
+           snos.delivery_enabled, snos.delivery_available,
+		   snos.in_enabled, snos.in_available
     
     FROM   qrcodes qr
           INNER JOIN merchant m on m.id = qr.merchant_id
@@ -49,6 +50,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
 		&row.TakeawayEnabled, &row.TakeawayAvailable,
 		&row.DeliveryEnabled, &row.DeliveryAvailable,
+		&row.InEnabled, &row.InAvailable,
 	)
 	if err != nil {
 		return nil, err

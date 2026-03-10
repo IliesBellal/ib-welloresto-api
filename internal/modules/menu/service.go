@@ -226,3 +226,65 @@ func (s *MenuService) CreateProductFromExternal(ctx context.Context, tx *sql.Tx,
 
 	return helpers.Int64ToStringPtr(productID), nil
 }
+
+// SyncProductAllergens replaces all allergen associations for the given product.
+// Only the merchant that owns the product may call this.
+func (s *MenuService) SyncProductAllergens(ctx context.Context, token, productID string, allergenIDs []int) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+	return s.legacy.SyncProductAllergens(ctx, user.MerchantID, productID, allergenIDs)
+}
+
+// BulkAssignTag adds a tag to many products without removing their other tags.
+func (s *MenuService) BulkAssignTag(ctx context.Context, token, tagID string, productIDs []string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+	return s.legacy.BulkAssignTag(ctx, user.MerchantID, tagID, productIDs)
+}
+
+// BulkAssignAllergen adds an allergen to many products without removing their other allergens.
+func (s *MenuService) BulkAssignAllergen(ctx context.Context, token, allergenID string, productIDs []string) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+	return s.legacy.BulkAssignAllergen(ctx, user.MerchantID, allergenID, productIDs)
+}
+
+// SyncProductTags replaces all tag associations for the given product.
+// Only the merchant that owns the product (and the tags) may call this.
+func (s *MenuService) SyncProductTags(ctx context.Context, token, productID string, tagIDs []int) error {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrUnauthorized
+	}
+	return s.legacy.SyncProductTags(ctx, user.MerchantID, productID, tagIDs)
+}
+
+// ListTags returns all tags for the authenticated merchant.
+func (s *MenuService) ListTags(ctx context.Context, token string) ([]models.TagEntry, error) {
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrUnauthorized
+	}
+	return s.legacy.ListTags(ctx, user.MerchantID)
+}
