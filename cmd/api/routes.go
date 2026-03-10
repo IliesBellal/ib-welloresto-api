@@ -40,6 +40,8 @@ import (
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
 
+	redisclient "welloresto-api/internal/infrastructure/redis"
+
 	// ---- WEBHOOKS ----
 	webhookstripe "welloresto-api/internal/webhook/stripe"
 	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
@@ -57,6 +59,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Use(middleware.LoggingMiddleware(log))
 	// Il semblerait que ce middleware cause des timeout lors d'appels d'API uber eats, désactivé temporairement
 	// r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, 1000)))
+
+	// ============================
+	// REDIS
+	// ============================
+	redisClient, err := redisclient.New()
+	if err != nil {
+		log.Error("Erreur lors de l'initialisation du client Redis", zap.Error(err))
+	}
+	log.Info("Redis connecté avec succès")
 
 	// =============================
 	//  MODULE INITIALIZATION
@@ -91,7 +102,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 
 	// ---- Auth ----
-	authRepo := authModule.NewAuthRepository(mysqlDB)
+	authRepo := authModule.NewAuthRepository(mysqlDB, redisClient)
 	authService := authModule.NewAuthService(authRepo)
 
 	// ---- POS ----
