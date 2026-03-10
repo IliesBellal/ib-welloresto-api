@@ -2,25 +2,69 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
+	"time"
+	"welloresto-api/internal/infrastructure/redis"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
 
 type AuthService struct {
-	repo AuthRepository
+	repo  AuthRepository
+	redis *redis.Client
 }
 
-func NewAuthService(r AuthRepository) AuthService {
-	return AuthService{repo: r}
+const (
+	// Durée de vie du cache : 5 minutes
+	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
+	userCacheTTL = 5 * time.Minute
+
+	// Préfixe des clés Redis pour les users
+	// Permet d'identifier facilement les clés dans Redis
+	userCachePrefix = "user:token:"
+)
+
+func NewAuthService(r AuthRepository, redis *redis.Client) AuthService {
+	return AuthService{repo: r, redis: redis}
 }
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
+	log := logger.FromContext(ctx)
+	cacheKey := userCachePrefix + token
+
+	// --- ÉTAPE 1 : Chercher dans Redis ---
+	cached, found, err := s.redis.Get(ctx, cacheKey)
+	if err != nil {
+		// Redis est en erreur : on log mais on continue vers la BDD
+		// L'API reste fonctionnelle même si Redis a un problème
+		log.Warn("Warning Redis Get: " + err.Error())
+	}
+
+	if found {
+		// Cache hit ! On désérialise le JSON et on retourne directement
+		var user UserLoginRow
+		if err := json.Unmarshal([]byte(cached), &user); err == nil {
+			log.Info("User found in Redis cache")
+			return &user, nil // ← on n'a pas touché à la BDD
+		}
+	}
+
 	loggedUser, err := s.repo.GetUserByToken(ctx, token)
 	if err == nil && loggedUser != nil {
 		context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
 		context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
+	}
+
+	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
+	serialized, err := json.Marshal(loggedUser)
+	if err == nil {
+		if err := s.redis.Set(ctx, cacheKey, string(serialized), userCacheTTL); err != nil {
+			// Erreur de cache : on log mais on retourne quand même le user
+			log.Warn("Warning Redis Set: " + err.Error())
+		}
 	}
 
 	return loggedUser, err

@@ -102,8 +102,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 
 	// ---- Auth ----
-	authRepo := authModule.NewAuthRepository(mysqlDB, redisClient)
-	authService := authModule.NewAuthService(authRepo)
+	authRepo := authModule.NewAuthRepository(mysqlDB)
+	authService := authModule.NewAuthService(authRepo, redisClient)
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)

@@ -3,56 +3,22 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/infrastructure/redis"
-	"welloresto-api/internal/models"
 )
 
 type AuthRepository struct {
-	db    *sql.DB
-	redis *redis.Client
+	db *sql.DB
 }
 
-const (
-	// Durée de vie du cache : 5 minutes
-	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
-	userCacheTTL = 5 * time.Minute
-
-	// Préfixe des clés Redis pour les users
-	// Permet d'identifier facilement les clés dans Redis
-	userCachePrefix = "user:token:"
-)
-
-func NewAuthRepository(db *sql.DB, redis *redis.Client) AuthRepository {
-	return AuthRepository{db: db, redis: redis}
+func NewAuthRepository(db *sql.DB) AuthRepository {
+	return AuthRepository{db: db}
 }
 
 func (r *AuthRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	if strings.TrimSpace(token) == "" {
-		return nil, models.ErrUnauthorized
-	}
-
-	cacheKey := userCachePrefix + token
-
-	// --- ÉTAPE 1 : Chercher dans Redis ---
-	cached, found, err := r.redis.Get(ctx, cacheKey)
-	if err != nil {
-		// Redis est en erreur : on log mais on continue vers la BDD
-		// L'API reste fonctionnelle même si Redis a un problème
-		fmt.Printf("Warning Redis Get: %v\n", err)
-	}
-
-	if found {
-		// Cache hit ! On désérialise le JSON et on retourne directement
-		var user UserLoginRow
-		if err := json.Unmarshal([]byte(cached), &user); err == nil {
-			return &user, nil // ← on n'a pas touché à la BDD
-		}
+		return nil, nil // ou une erreur métier type ErrUnauthorized
 	}
 
 	query := `
@@ -141,7 +107,7 @@ LIMIT 1;
 	var ueDelayUntil sql.NullTime
 	var ueClosedUntil sql.NullTime
 
-	err = row.Scan(
+	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
@@ -175,16 +141,6 @@ LIMIT 1;
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-
-	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
-	serialized, err := json.Marshal(data)
-	if err == nil {
-		if err := r.redis.Set(ctx, cacheKey, string(serialized), userCacheTTL); err != nil {
-			// Erreur de cache : on log mais on retourne quand même le user
-			fmt.Printf("Warning Redis Set: %v\n", err)
-		}
-	}
-
 	return data, err
 }
 
