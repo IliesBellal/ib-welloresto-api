@@ -409,17 +409,17 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	for rows.Next() {
 		var c CustomerSearchResult
 		rows.Scan(
-			c.CustomerID,
-			c.CustomerName,
-			c.CustomerLastName,
-			c.CustomerFirstName,
-			c.CustomerTel,
-			c.CustomerAddress,
-			c.CustomerEmail,
-			c.CustomerNbOrders,
-			c.CustomerTotalSpent,
-			c.CreationDate,
-			c.CustomerCode,
+			&c.CustomerID,
+			&c.CustomerName,
+			&c.CustomerLastName,
+			&c.CustomerFirstName,
+			&c.CustomerTel,
+			&c.CustomerAddress,
+			&c.CustomerEmail,
+			&c.CustomerNbOrders,
+			&c.CustomerTotalSpent,
+			&c.CreationDate,
+			&c.CustomerCode,
 		)
 
 		// 🔥 Match scoring ultra rapide
