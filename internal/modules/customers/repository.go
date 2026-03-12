@@ -396,6 +396,8 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
             customer_code = ?
          OR UPPER(customer_tel) LIKE UPPER(?)
          OR UPPER(customer_name) LIKE UPPER(?)
+		 OR UPPER(customer_first_name) LIKE UPPER(?)
+		 OR UPPER(customer_last_name) LIKE UPPER(?)
       )
 `, merchantID, term, likeTerm, likeTerm)
 

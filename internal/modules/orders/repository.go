@@ -1219,7 +1219,7 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 	if req.Order.Customer.Name != nil {
 		cust.CustomerName = req.Order.Customer.Name
-		cust.CustomerFirstName = req.Order.Customer.Name
+		cust.CustomerLastName = req.Order.Customer.Name
 	} else if req.Order.Customer.FirstName != nil || req.Order.Customer.LastName != nil {
 		cust.CustomerFirstName = req.Order.Customer.FirstName
 		cust.CustomerLastName = req.Order.Customer.LastName
