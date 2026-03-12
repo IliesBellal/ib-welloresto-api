@@ -399,7 +399,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 		 OR UPPER(customer_first_name) LIKE UPPER(?)
 		 OR UPPER(customer_last_name) LIKE UPPER(?)
       )
-`, merchantID, term, likeTerm, likeTerm)
+`, merchantID, term, likeTerm, likeTerm, likeTerm, likeTerm)
 
 	if err != nil {
 		return results, err
