@@ -479,7 +479,7 @@ func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 
 func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
 
-	phone := helpers.NormalizePhoneNumber(*customer.Tel)
+	phone := helpers.NormalizePhoneNumber(*customer.Tel, "FR")
 
 	query := `
         SELECT c.customer_id, mp.automatically_add_customer_rewards

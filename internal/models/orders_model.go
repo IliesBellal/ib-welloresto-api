@@ -75,6 +75,8 @@ type Customer struct {
 	CustomerID                         *string  `json:"customer_id"`
 	CustomerCode                       *string  `json:"customer_code"`
 	CustomerName                       *string  `json:"customer_name"`
+	CustomerFirstName                  *string  `json:"customer_first_name"`
+	CustomerLastName                   *string  `json:"customer_last_name"`
 	CustomerTel                        *string  `json:"customer_tel"`
 	CustomerEmail                      *string  `json:"customer_email"`
 	CustomerTemporaryPhone             *string  `json:"customer_temporary_phone"`
