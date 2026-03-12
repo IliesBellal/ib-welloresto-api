@@ -397,13 +397,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/", menuH.GetMenu)
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
-		r.Post("/product", menuH.CreateProduct)
 		r.Patch("/product/{product_id}", menuH.UpdateProduct)
 		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
-		r.Post("/product/create", menuH.CreateProduct)
 		r.Get("/product/{product_id}", menuH.GetProduct)
 
 		// --- Bulk assign (additive) ---
@@ -421,6 +419,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/deliveroo/sync", menuH.SyncDeliverooMenu)
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
+
+		r.Post("/product/create", menuH.CreateProduct)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---

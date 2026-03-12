@@ -39,7 +39,7 @@ func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status b
 		return nil, models.ErrUnauthorized
 	}
 
-	if !user.AccessReception {
+	if !user.Rights.AccessReception {
 		return nil, models.ErrForbidden
 	}
 

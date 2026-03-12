@@ -125,21 +125,21 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 
 	switch appID {
 	case "WR_RECEPTION":
-		if !user.AccessReception {
+		if !user.Rights.AccessReception {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",
 				"enabled": "User can't access this app",
 			}, nil
 		}
 	case "WR_DELIVERY":
-		if !user.AccessDelivery || !user.AllowDeliveryAccount {
+		if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",
 				"enabled": "User can't access this app",
 			}, nil
 		}
 	case "WR_WAITER":
-		if !user.AccessWaiter || !user.AllowWaiterAccount {
+		if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
 			return map[string]interface{}{
 				"status":  "user_not_allowed",
 				"enabled": "User can't access this app",
@@ -162,9 +162,9 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"userId":                user.UserID,
 		"user_mail":             user.Email,
 		"user_tel":              user.Tel,
-		"open_cash_drawer":      user.OpenCashDrawer,
+		"open_cash_drawer":      user.Rights.OpenCashDrawer,
 		"terms_of_use_accepted": user.TermsOfUseAccepted,
-		"admin":                 user.Admin,
+		"admin":                 user.Rights.Admin,
 
 		"merchantId":                          user.MerchantID,
 		"merchant_id":                         user.MerchantID,
@@ -176,7 +176,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"delivery_fees_limit":                 user.DeliveryFeesLimit,
 		"kitchen_show_only_paid":              user.KitchenShowOnlyPaid,
 		"allow_waiter_account":                user.AllowWaiterAccount,
-		"print_merchant_cash_report":          user.PrintMerchantCashReport,
+		"print_merchant_cash_report":          user.Rights.PrintMerchantCashReport,
 		"merchantAd":                          user.MerchantAddress,
 		"merchant_address":                    user.MerchantAddress,
 		"merchant_lat":                        user.MerchantLat,
@@ -223,7 +223,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"is_open":           user.IsOpen,
 		"pin_code":          user.PinCode.String,
 		"merchant_web_site": user.WebSite.String,
-		"token":             user.RightsToken,
+		"token":             user.Token,
 		"profile_picture":   user.ProfilePicture.String,
 
 		"merchants": merchants,

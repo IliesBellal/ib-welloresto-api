@@ -66,6 +66,13 @@ var (
 	ErrInvalidToken = errors.New("invalid_token")
 
 	ErrCannotDisableExternalPayments = errors.New("cannot disable external platforms payments")
+
+	// Erreurs d'authentification
+	ErrUserNotFound = errors.New("user_not_found")
+
+	ErrAccountDisabled = errors.New("account_disabled")
+
+	ErrUserNotAllowed = errors.New("user_not_allowed")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -93,6 +100,15 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrCannotDisableExternalPayments):
 		status = http.StatusUnavailableForLegalReasons
 		errorMsg = "cannot_disable_external_payments"
+	case errors.Is(err, ErrUserNotFound):
+		status = http.StatusNotFound
+		errorMsg = "user_not_found"
+	case errors.Is(err, ErrAccountDisabled):
+		status = http.StatusForbidden
+		errorMsg = "account_disabled"
+	case errors.Is(err, ErrUserNotAllowed):
+		status = http.StatusForbidden
+		errorMsg = "user_not_allowed"
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
 		errorMsg = err.Error()

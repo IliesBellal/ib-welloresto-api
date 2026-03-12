@@ -112,8 +112,8 @@ LIMIT 1;
 		&data.Enabled, &data.PinCode, &data.ProfilePicture,
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
 
-		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
-		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID,
+		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
+		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
@@ -251,8 +251,8 @@ LIMIT 1;
 		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.ReceptionDeviceToken,
 		&data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted, &data.Password,
 
-		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
-		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID, &data.Admin,
+		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
+		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID, &data.Rights.Admin,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
@@ -288,7 +288,7 @@ LIMIT 1;
 	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
 	data.UEClosedUntil = helpers.NullTimeToNullUnixInt(ueClosedUntil)
 
-	loggedByToken := token != "" && token == data.RightsToken
+	loggedByToken := token != "" && token == data.Token
 	if !loggedByToken {
 		if !loggedByToken && !strings.HasPrefix(data.Password, "$2") {
 			/*
