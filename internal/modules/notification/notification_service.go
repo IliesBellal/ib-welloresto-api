@@ -25,6 +25,12 @@ func NewNotificationService(repo *NotificationRepository, client *FCMClient, tok
 	}
 }
 
+/*
+Will send notifications to all devices of a merchant for a given order and notification type, without payload.
+The notification type (nType) can be used by the client app to determine how to handle the notification.
+Will mange Go routines and FCM token retrieval to optimize performance and avoid redundant token generation.
+No need to put in Go routine here, the function itself will handle that for each token.
+*/
 func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType string) error {
 	ctx := context.Background()
 

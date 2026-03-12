@@ -1219,6 +1219,13 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 	if req.Order.Customer.Name != nil {
 		cust.CustomerName = req.Order.Customer.Name
+		cust.CustomerFirstName = req.Order.Customer.Name
+	} else if req.Order.Customer.FirstName != nil || req.Order.Customer.LastName != nil {
+		cust.CustomerFirstName = req.Order.Customer.FirstName
+		cust.CustomerLastName = req.Order.Customer.LastName
+
+		fullName := strings.TrimSpace(fmt.Sprintf("%s %s", helpers.SafeString(req.Order.Customer.FirstName), helpers.SafeString(req.Order.Customer.LastName)))
+		cust.CustomerName = &fullName
 	}
 	if req.Order.Customer.Tel != nil {
 		cust.CustomerTel = req.Order.Customer.Tel

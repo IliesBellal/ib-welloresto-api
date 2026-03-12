@@ -17,26 +17,13 @@ func NewCustomerRepository(db *sql.DB) *CustomersRepository {
 	return &CustomersRepository{db: db}
 }
 
-func normalizePhoneNumber(phone string) string {
-	phone = strings.TrimSpace(phone)
-	phone = strings.ReplaceAll(phone, " ", "")
-	phone = strings.ReplaceAll(phone, ".", "")
-	phone = strings.ReplaceAll(phone, "-", "")
-	return phone
-}
-
-func ucfirst(s string) string {
-	if s == "" {
-		return ""
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
 func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (*string, error) {
 
 	// Liste des colonnes vraiment existantes et autorisées
 	allowed := map[string]bool{
 		"customer_name":                         true,
+		"customer_first_name":                   true,
+		"customer_last_name":                    true,
 		"customer_tel":                          true,
 		"customer_address":                      true,
 		"customer_email":                        true,
@@ -135,13 +122,25 @@ func extractFieldValue(c *models.Customer, field string) interface{} {
 
 	case "customer_name":
 		if c.CustomerName != nil && *c.CustomerName != "" {
-			return ucfirst(*c.CustomerName)
+			return helpers.Ucfirst(*c.CustomerName)
+		}
+		return nil
+
+	case "customer_first_name":
+		if c.CustomerFirstName != nil && *c.CustomerFirstName != "" {
+			return helpers.Ucfirst(*c.CustomerFirstName)
+		}
+		return nil
+
+	case "customer_last_name":
+		if c.CustomerLastName != nil && *c.CustomerLastName != "" {
+			return helpers.Ucfirst(*c.CustomerLastName)
 		}
 		return nil
 
 	case "customer_tel":
 		if c.CustomerTel != nil && *c.CustomerTel != "" {
-			return normalizePhoneNumber(*c.CustomerTel)
+			return helpers.NormalizePhoneNumber(*c.CustomerTel, "FR")
 		}
 		return nil
 
