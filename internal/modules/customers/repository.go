@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
 
@@ -408,7 +409,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 
 	for rows.Next() {
 		var c CustomerSearchResult
-		rows.Scan(
+		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
 			&c.CustomerLastName,
@@ -422,9 +423,12 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerCode,
 		)
 
-		// 🔥 Match scoring ultra rapide
-		c.MatchScore = computeScore(term, &c)
+		if err != nil {
+			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
+			continue // Ou return err, selon ton besoin
+		}
 
+		c.MatchScore = computeScore(term, &c)
 		results = append(results, c)
 	}
 
@@ -435,19 +439,22 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	return results, nil
 }
 
-func normalizeStr(s string) string {
-	s = strings.TrimSpace(strings.ToUpper(s))
-	s = strings.ReplaceAll(s, " ", "")
-	return s
+func normalizeStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	val := strings.TrimSpace(strings.ToUpper(*s))
+	val = strings.ReplaceAll(val, " ", "")
+	return val
 }
 
 func computeScore(term string, c *CustomerSearchResult) int {
 	score := 0
-	term = normalizeStr(term)
+	term = normalizeStr(&term)
 
 	code := normalizeStr(c.CustomerCode)
 	tel := normalizeStr(c.CustomerTel)
-	lastName := normalizeStr(c.CustomerLastName)
+	lastName := normalizeStr(&c.CustomerLastName)
 	firstName := normalizeStr(c.CustomerFirstName)
 
 	// Correspondances exactes
@@ -477,16 +484,16 @@ func computeScore(term string, c *CustomerSearchResult) int {
 	}
 
 	// Bonus complétude profil
-	if c.CustomerEmail != "" {
+	if c.CustomerEmail != nil && *c.CustomerEmail != "" {
 		score += 40
 	}
-	if c.CustomerTel != "" {
+	if c.CustomerTel != nil && *c.CustomerTel != "" {
 		score += 40
 	}
 	if c.CustomerName != "" {
 		score += 40
 	}
-	if c.CustomerAddress != "" {
+	if c.CustomerAddress != nil && *c.CustomerAddress != "" {
 		score += 40
 	}
 

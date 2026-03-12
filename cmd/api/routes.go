@@ -66,8 +66,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	redisClient, err := redisclient.New()
 	if err != nil {
 		log.Error("Erreur lors de l'initialisation du client Redis", zap.Error(err))
+	} else {
+		log.Info("Redis connecté avec succès")
 	}
-	log.Info("Redis connecté avec succès")
 
 	// =============================
 	//  MODULE INITIALIZATION

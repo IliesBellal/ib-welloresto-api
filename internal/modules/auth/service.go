@@ -32,6 +32,9 @@ func NewAuthService(r AuthRepository, redis *redis.Client) AuthService {
 }
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
+	if s.redis == nil {
+		return s.repo.GetUserByToken(ctx, token) // Pas de cache : on va direct à la BDD
+	}
 	log := logger.FromContext(ctx)
 	cacheKey := userCachePrefix + token
 

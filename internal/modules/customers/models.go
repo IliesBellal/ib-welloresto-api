@@ -50,14 +50,14 @@ type CustomerSearchResult struct {
 	CustomerID         string  `json:"customer_id"`
 	CustomerName       string  `json:"customer_name"`
 	CustomerLastName   string  `json:"customer_last_name"`
-	CustomerFirstName  string  `json:"customer_first_name"`
-	CustomerTel        string  `json:"customer_tel"`
-	CustomerAddress    string  `json:"customer_address"`
-	CustomerEmail      string  `json:"customer_email"`
+	CustomerFirstName  *string `json:"customer_first_name"`
+	CustomerTel        *string `json:"customer_tel"`
+	CustomerAddress    *string `json:"customer_address"`
+	CustomerEmail      *string `json:"customer_email"`
 	CustomerNbOrders   int     `json:"customer_nb_orders"`
 	CustomerTotalSpent float64 `json:"customer_total_spent"`
-	CreationDate       *int64  `json:"creation_date"`
-	CustomerCode       string  `json:"customer_code"`
+	CreationDate       *string `json:"creation_date"`
+	CustomerCode       *string `json:"customer_code"`
 	MatchScore         int     `json:"match_score"`
 }
 
