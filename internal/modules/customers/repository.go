@@ -409,6 +409,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 
 	for rows.Next() {
 		var c CustomerSearchResult
+		var creationDate sql.NullTime
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -419,10 +420,11 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerEmail,
 			&c.CustomerNbOrders,
 			&c.CustomerTotalSpent,
-			&c.CreationDate,
+			&creationDate,
 			&c.CustomerCode,
 		)
 
+		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue // Ou return err, selon ton besoin
