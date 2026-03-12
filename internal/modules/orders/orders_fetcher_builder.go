@@ -595,7 +595,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		o.fulfillment_type, o.use_customer_temporary_address,
 		o.creation_date, o.places_settings, o.pager_number,
 
-		c.customer_id, c.customer_name, c.customer_tel,
+		c.customer_id, c.customer_name, c.customer_last_name, c.customer_first_name, c.customer_tel,
 		c.customer_lat, c.customer_lng,
 		c.customer_temporary_phone, c.customer_temporary_phone_code,
 		c.customer_nb_orders, c.customer_zone_code,
@@ -641,7 +641,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var lastUpdate, creationDate, estimatedReady sql.NullTime
 			var scheduled, isPaid, isDistributed, cashRegisterClosed sql.NullBool
 
-			var cName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
+			var cName, cLastName, cFirstName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
 				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
 				cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 
@@ -657,7 +657,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&fulfillmentType, &useCustomerTemporaryAddress,
 				&creationDate, &placesSettings, &pagerNumber,
 
-				&customerID, &cName, &cTel, &customerLat, &customerLng,
+				&customerID, &cName, &cLastName, &cFirstName, &cTel, &customerLat, &customerLng,
 				&cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
 				&cAddr, &cFloor, &cDoor, &cAddAddr, &cBusName, &cBirth,
 				&cInfo,
@@ -712,6 +712,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				var cust models.Customer
 				cust.CustomerID = &customerID.String
 				cust.CustomerName = helpers.NullStringToPtr(cName)
+				cust.CustomerLastName = helpers.NullStringToPtr(cLastName)
+				cust.CustomerFirstName = helpers.NullStringToPtr(cFirstName)
 				cust.CustomerTel = helpers.NullStringToPtr(cTel)
 				cust.CustomerTemporaryPhone = helpers.NullStringToPtr(cTempPhone)
 				cust.CustomerTemporaryPhoneCode = helpers.NullStringToPtr(cTempPhoneCode)

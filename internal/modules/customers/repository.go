@@ -379,6 +379,8 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
     SELECT 
         customer_id,
         customer_name,
+		customer_last_name,
+		customer_first_name,
         customer_tel,
         customer_address,
         customer_email,
@@ -407,6 +409,8 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 		rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
+			&c.CustomerLastName,
+			&c.CustomerFirstName,
 			&c.CustomerTel,
 			&c.CustomerAddress,
 			&c.CustomerEmail,
@@ -441,7 +445,8 @@ func computeScore(term string, c *CustomerSearchResult) int {
 
 	code := normalizeStr(c.CustomerCode)
 	tel := normalizeStr(c.CustomerTel)
-	name := normalizeStr(c.CustomerName)
+	lastName := normalizeStr(c.CustomerLastName)
+	firstName := normalizeStr(c.CustomerFirstName)
 
 	// Correspondances exactes
 	if code == term {
@@ -450,14 +455,21 @@ func computeScore(term string, c *CustomerSearchResult) int {
 	if tel == term {
 		score += 300
 	}
-	if name == term {
+	if lastName == term {
+		score += 200
+	}
+	if firstName == term {
 		score += 200
 	}
 
 	// Correspondances partielles
-	if strings.Contains(name, term) {
+	if strings.Contains(lastName, term) {
 		score += 80
 	}
+	if strings.Contains(firstName, term) {
+		score += 80
+	}
+
 	if strings.Contains(tel, term) {
 		score += 120
 	}
