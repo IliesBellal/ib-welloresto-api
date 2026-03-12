@@ -36,17 +36,17 @@ func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuServi
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
 	row, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil {
-		return &MerchantResponse{Status: "no_merchant_found"}, err
+		logger.FromContext(ctx).Error(err.Error())
+		return &MerchantResponse{Status: "no_merchant_found"}, nil
 	}
 
-	// 🔥 Expiration QR (2h)
+	// Expiration QR (2h)
 	if row.CreationDate != nil {
 		creationTime := time.Unix(*row.CreationDate, 0)
 
 		if time.Since(creationTime) > 2*time.Hour {
 			return &MerchantResponse{
 				Status: "qr_code_expired",
-				Error:  "Qr Code expired",
 			}, nil
 		}
 	}
@@ -67,7 +67,7 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	}
 
 	resp := &MerchantResponse{
-		Status: "1",
+		Status: "success",
 		Merchant: &MerchantData{
 			MerchantID:      row.MerchantID,
 			BusinessName:    row.FullName,
@@ -76,13 +76,19 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 			Status:          openStatus,
 			PreparationTime: prepMinutes,
 
-			// Nouveaux champs de mode de commande
-			TakeawayEnabled:   row.TakeawayEnabled,
-			TakeawayAvailable: row.TakeawayAvailable,
-			DeliveryEnabled:   row.DeliveryEnabled,
-			DeliveryAvailable: row.DeliveryAvailable,
-			InEnabled:         row.InEnabled,
-			InAvailable:       row.InAvailable,
+			OrderTypes: OrderTypes{
+				TakeawayEnabled:   row.TakeawayEnabled,
+				TakeawayAvailable: row.TakeawayAvailable,
+				DeliveryEnabled:   row.DeliveryEnabled,
+				DeliveryAvailable: row.DeliveryAvailable,
+				InEnabled:         row.InEnabled,
+				InAvailable:       row.InAvailable,
+			},
+
+			PaymentTypes: PaymentTypes{
+				Cash:   false,
+				Online: true,
+			},
 
 			AdvanceOrder: AdvanceOrder{
 				EnableAdvanceOrders: true, // Ou row.EnableAdvanceOrders si tu l'as en base

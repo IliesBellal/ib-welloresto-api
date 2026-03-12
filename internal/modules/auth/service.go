@@ -47,10 +47,11 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		// Cache hit ! On désérialise le JSON et on retourne directement
 		var user UserLoginRow
 		if err := json.Unmarshal([]byte(cached), &user); err == nil {
-			log.Info("User found in Redis cache")
+			log.Info("🧠🙋🏻‍♂️ User found in Redis cache 🙋🏻‍♂️🧠")
 			return &user, nil // ← on n'a pas touché à la BDD
 		}
 	}
+	log.Info("🧠🚫 User not found in Redis cache 🚫🧠")
 
 	loggedUser, err := s.repo.GetUserByToken(ctx, token)
 	if err == nil && loggedUser != nil {
@@ -64,6 +65,8 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		if err := s.redis.Set(ctx, cacheKey, string(serialized), userCacheTTL); err != nil {
 			// Erreur de cache : on log mais on retourne quand même le user
 			log.Warn("Warning Redis Set: " + err.Error())
+		} else {
+			log.Info("🧠📌 User saved in Redis cache 📌🧠")
 		}
 	}
 
@@ -83,29 +86,19 @@ func convertApp(app string) string {
 	}
 }
 
+// InvalidateUserCache — à appeler quand l'utilisateur modifie ses infos
+// Par exemple : changement de rôle, désactivation du compte, etc.
+func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) error {
+	return s.redis.Delete(ctx, userCachePrefix+token)
+}
+
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string) (map[string]interface{}, error) {
 
 	appID := convertApp(payload.App)
 
 	var username string
 	var err error
-	/*
-		if (payload.Username != "" || payload.Email != "") && payload.Password != "" {
-			encrypted, err = helpers.EncryptPHP(payload.Password)
-			if err != nil {
-				log := logger.FromContext(ctx)
-				log.Error("Error encrypting: " + err.Error())
-				return nil, err
-			}
 
-			hashed, err = helpers.HashPassword(payload.Password)
-			if err != nil {
-				log := logger.FromContext(ctx)
-				log.Error("Error hashing: " + err.Error())
-				return nil, err
-			}
-		}
-	*/
 	username = payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, payload.Password, token)

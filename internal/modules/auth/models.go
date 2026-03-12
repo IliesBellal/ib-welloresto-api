@@ -55,14 +55,26 @@ type UserLoginRow struct {
 	DeliveryDeviceToken  sql.NullString
 
 	// rights
-	RightsToken             string
+	RightsToken string
+	MerchantID  string
+
 	AccessReception         bool
 	AccessDelivery          bool
 	AccessWaiter            bool
 	PrintMerchantCashReport bool
 	OpenCashDrawer          bool
+	CanManageMenu           bool
+	CanManagePlannings      bool
+	CanManageUsers          bool
+	CanManageSettings       bool
+	CanManageHACCP          bool
+	CanViewReports          bool
+	CanExportReports        bool
+	CanViewFinancials       bool
+	CanExportFinancials     bool
+	CanManageCustomers      bool
+	CanExportCustomers      bool
 	Admin                   bool
-	MerchantID              string
 
 	// merchant
 	MerchantName    string
