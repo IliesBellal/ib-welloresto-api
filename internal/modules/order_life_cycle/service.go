@@ -8,6 +8,7 @@ import (
 	"time"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/customers"
@@ -84,31 +85,25 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	}
 }
 
-func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, token, orderID string) error {
+func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID string) error {
 	//log := logger.FromContext(ctx)
 
 	// 1) Auth
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
 }
 
-func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, orderID string) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
-	if user == nil {
-		return models.ErrUnauthorized
-	}
 
-	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
+	// user.MerchantID et user.UserID sont récupérés depuis le contexte
 
 	err = s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
 
@@ -117,13 +112,10 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, token, o
 	return err
 }
 
-func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	// sécurité : orderID dans l’URL > orderID dans req
@@ -136,27 +128,21 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, token string, o
 	return err
 }
 
-func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, token string, orderID string) ([]models.Payment, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
+	// Vérifier l'authentification (récupérer l'utilisateur depuis le contexte)
+	_, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
-func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orderID, paymentID string) error {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, paymentID string) error {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	// 1) Récupérer les informations du paiement
@@ -194,14 +180,10 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, token, orde
 	return err
 }
 
-func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	err = s.ordersLifeCycleRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
@@ -232,14 +214,11 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, tok
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, token, orderID string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
 
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	err = s.ordersLifeCycleRepo.MarkProductsBackToProduction(ctx, user.UserID, user.MerchantID, orderID, req.Products)
@@ -311,22 +290,24 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 	return accept_order, err
 }
 
-func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, token, orderID string) (models.HandlerDefaultResponseModelSet, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+	user, err := middleware.UserFromContext(ctx)
 	accept_order := models.HandlerDefaultResponseModelSet{}
 	if err != nil {
 		accept_order.Status = "error"
 		return accept_order, err
 	}
-	if user == nil {
-		accept_order.Status = "error"
-		return accept_order, models.ErrUnauthorized
-	}
 
 	return s.SetOrderAccepted(ctx, user.UserID, user.MerchantID, orderID)
 }
 
-func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, token string, orderID string, userID string) (map[string]interface{}, error) {
+func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID string, userID string) (map[string]interface{}, error) {
+
+	// Vérifier l'authentification
+	_, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return map[string]interface{}{"status": "0", "error": err.Error()}, err
+	}
 
 	// 1) Update Wello DB
 	integrationInfo, err := s.ordersLifeCycleRepo.MarkOrderAsDeliveryStarted(ctx, orderID, userID)
@@ -417,13 +398,10 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 	return map[string]string{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, token, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	in.UserID = user.UserID
@@ -518,14 +496,11 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	return nil
 }
 
-func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token string, in models.DenyOrderInput) error {
+func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
 
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	in.MerchantID = user.MerchantID
@@ -534,13 +509,10 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, token stri
 	return s.DeleteOrder(ctx, in)
 }
 
-func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, token string, req *UpdateProductionStatusRequest) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req *UpdateProductionStatusRequest) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	// Call repository to update production status

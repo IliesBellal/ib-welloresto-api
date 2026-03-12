@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"strings"
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
@@ -24,12 +22,6 @@ func NewOrdersHandler(ordersService *OrdersService) *OrdersHandler {
 }
 
 func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_pending_orders", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 
 	app := r.URL.Query().Get("app")
@@ -37,7 +29,7 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 		app = "WR_RECEPTION"
 	}
 
-	orders, err := h.ordersService.GetPendingOrders(ctx, token, app)
+	orders, err := h.ordersService.GetPendingOrders(ctx, app)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "pending", map[string]string{"error": err.Error()})
 		return
@@ -49,12 +41,6 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_order", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
@@ -63,7 +49,7 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.ordersService.GetOrder(ctx, token, orderID)
+	order, err := h.ordersService.GetOrder(ctx, orderID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			models.SendJSON(w, http.StatusNotFound, "orders", "get_order", map[string]string{"error": "order not found"})
@@ -78,11 +64,6 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_orders", map[string]string{"error": "missing_token"})
-		return
-	}
 	ctx := r.Context()
 
 	var req models.OrderRequest
@@ -91,7 +72,7 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orders, err := h.ordersService.GetOrders(ctx, token, &req)
+	orders, err := h.ordersService.GetOrders(ctx, &req)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_orders", map[string]string{"error": err.Error()})
 		return
@@ -103,11 +84,6 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "update_multiple_products_status", map[string]string{"error": "missing_token"})
-		return
-	}
 	ctx := r.Context()
 
 	var req models.MultipleProductsRequest
@@ -125,12 +101,6 @@ func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *h
 }
 
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_history", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 
 	// read app param from query (default WR_RECEPTION)
@@ -145,7 +115,7 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		models.SendJSON(w, http.StatusBadRequest, "orders", "get_history", map[string]string{"error": "invalid_body"})
 		return
 	}
-	orders, err := h.ordersService.GetHistory(ctx, token, req)
+	orders, err := h.ordersService.GetHistory(ctx, req)
 
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_history", map[string]string{"error": err.Error()})
@@ -158,12 +128,6 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "create_order", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
@@ -174,7 +138,7 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ordersService.PrepareCreateOrder(ctx, token, &req)
+	result, err := h.ordersService.PrepareCreateOrder(ctx, &req)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "create_order", map[string]string{"error": err.Error()})
 		return
@@ -184,12 +148,6 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "update_order", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
@@ -203,7 +161,7 @@ func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := chi.URLParam(r, "order_id")
 	req.Order.OrderID = &orderID
 
-	err := h.ordersService.PrepareUpdateOrder(ctx, token, &req)
+	err := h.ordersService.PrepareUpdateOrder(ctx, &req)
 	if err != nil {
 		log.Error("PrepareCreateOrder error : " + err.Error())
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "update_order", map[string]string{"error": err.Error()})
@@ -216,12 +174,6 @@ func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_pricing", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 	//log := logger.FromContext(ctx)
 
@@ -231,7 +183,7 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ordersService.GetPricing(ctx, token, &req)
+	result, err := h.ordersService.GetPricing(ctx, &req)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "get_pricing", map[string]string{"error": err.Error()})
 		return

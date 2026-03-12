@@ -10,6 +10,7 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
@@ -33,27 +34,21 @@ func NewOrdersService(ordersRepo *OrdersRepository, userRepo auth.AuthService, n
 	}
 }
 
-func (s *OrdersService) ReopenClosedOrder(ctx context.Context, token, orderID string) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) ReopenClosedOrder(ctx context.Context, orderID string) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
-	if user == nil {
-		return models.ErrUnauthorized
-	}
 
-	// Ici user.MerchantID et user.UserID sont récupérés automatiquement
+	// user.MerchantID et user.UserID sont récupérés depuis le contexte
 
 	return s.ordersRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
 }
 
-func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID string, req *models.PaymentRequest) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	// sécurité : orderID dans l’URL > orderID dans req
@@ -62,14 +57,11 @@ func (s *OrdersService) AddPayment(ctx context.Context, token string, orderID st
 	return s.ordersRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
 }
 
-func (s *OrdersService) GetPendingOrders(ctx context.Context, token string, app string) (*models.PendingOrdersResponse, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*models.PendingOrdersResponse, error) {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetPendingOrders(ctx, user.MerchantID, app)
@@ -78,27 +70,21 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 	return s.ordersRepo.GetOrder(ctx, merchantID, orderID)
 }
 
-func (s *OrdersService) GetOrder(ctx context.Context, token, orderID string) (*models.PendingOrdersResponse, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetOrder(ctx context.Context, orderID string) (*models.PendingOrdersResponse, error) {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ComputeGetOrder(ctx, user.MerchantID, orderID)
 }
 
-func (s *OrdersService) GetOrders(ctx context.Context, token string, req *models.OrderRequest) ([]models.Order, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetOrders(ctx context.Context, req *models.OrderRequest) ([]models.Order, error) {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
@@ -109,53 +95,40 @@ func (s *OrdersService) UpdateMultipleProductsStatus(ctx context.Context, req *m
 	return s.ordersRepo.UpdateMultipleProductsStatus(ctx, req)
 }
 
-func (s *OrdersService) GetHistory(ctx context.Context, token string, req models.OrderHistoryRequest) ([]models.Order, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.Order, error) {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
 }
 
-func (s *OrdersService) GetPayments(ctx context.Context, token string, orderID string) ([]models.Payment, error) {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
+	// Récupérer l'utilisateur depuis le contexte (vérification d'authentification)
+	_, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
-func (s *OrdersService) DisablePayment(ctx context.Context, token string, paymentID string) error {
-	// Resolve user by token to get merchant id
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) DisablePayment(ctx context.Context, paymentID string) error {
+	// Récupérer l'utilisateur depuis le contexte (vérification d'authentification)
+	_, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	return s.ordersRepo.DisablePayment(ctx, paymentID)
 }
 
-func (s *OrdersService) SetDistributedProducts(ctx context.Context, token string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) SetDistributedProducts(ctx context.Context, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	err = s.ordersRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
@@ -185,13 +158,10 @@ func (s *OrdersService) CreateOrder(ctx context.Context, req *models.RequestObje
 }
 
 // This function will add Merchant ID and User ID to the payload
-func (s *OrdersService) PrepareCreateOrder(ctx context.Context, token string, req *models.RequestObject) (*models.CreateOrderResult, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) PrepareCreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
@@ -215,13 +185,10 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 }
 
 // This function will add Merchant_Id to the payload
-func (s *OrdersService) PrepareUpdateOrder(ctx context.Context, token string, req *models.RequestObject) error {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) PrepareUpdateOrder(ctx context.Context, req *models.RequestObject) error {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-	if user == nil {
-		return models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
@@ -333,13 +300,10 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 	}, nil
 }
 
-func (s *OrdersService) GetPricing(ctx context.Context, token string, req *models.PricingRequest) (*models.PricingResponse, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *OrdersService) GetPricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID

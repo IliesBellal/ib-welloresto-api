@@ -31,12 +31,6 @@ func NewOrdersLifeCycleHandler(ordersService *OrdersLifeCycleService, deliverySe
 }
 
 func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
@@ -45,7 +39,7 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 		return
 	}
 
-	err := h.ordersLifeCycleService.ReopenClosedOrder(ctx, token, orderID)
+	err := h.ordersLifeCycleService.ReopenClosedOrder(ctx, orderID)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "reopen_closed_order", err)
 		return
@@ -57,12 +51,6 @@ func (h *OrdersLifeCycleHandler) ReopenClosedOrder(w http.ResponseWriter, r *htt
 }
 
 func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	ctx := r.Context()
 
 	orderID := chi.URLParam(r, "order_id")
@@ -77,7 +65,7 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err := h.ordersLifeCycleService.AddPayment(ctx, token, orderID, &req)
+	err := h.ordersLifeCycleService.AddPayment(ctx, orderID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "add_payment", err)
 		return
@@ -89,15 +77,9 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	orderID := chi.URLParam(r, "order_id")
 
-	payments, err := h.ordersLifeCycleService.GetPayments(r.Context(), token, orderID)
+	payments, err := h.ordersLifeCycleService.GetPayments(r.Context(), orderID)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "get_payments", err)
 		return
@@ -109,18 +91,12 @@ func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	ctx := r.Context()
 
 	paymentID := chi.URLParam(r, "payment_id")
 	orderID := chi.URLParam(r, "order_id")
 
-	err := h.ordersLifeCycleService.DisablePayment(ctx, token, orderID, paymentID)
+	err := h.ordersLifeCycleService.DisablePayment(ctx, orderID, paymentID)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "delete_payment", err)
 		return
@@ -132,12 +108,6 @@ func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Re
 }
 
 func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 
@@ -147,7 +117,7 @@ func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r
 	// force orderID from URL
 	req.OrderID = orderID
 
-	resp, err := h.ordersLifeCycleService.SetDistributedProducts(ctx, token, &req)
+	resp, err := h.ordersLifeCycleService.SetDistributedProducts(ctx, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "set_distributed_products", err)
 		return
@@ -157,11 +127,6 @@ func (h *OrdersLifeCycleHandler) SetDistributedProducts(w http.ResponseWriter, r
 }
 
 func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
 	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 
@@ -171,7 +136,7 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 		return
 	}
 
-	result, err := h.ordersLifeCycleService.BackToProduction(ctx, token, orderID, &req)
+	result, err := h.ordersLifeCycleService.BackToProduction(ctx, orderID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "back_to_production", err)
 		return
@@ -181,12 +146,6 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 }
 
 func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
@@ -198,7 +157,7 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 	ctx2, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, token, orderID)
+	res, err := h.ordersLifeCycleService.AcceptOrder(ctx2, orderID)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "accept_order", err)
 		return
@@ -208,12 +167,6 @@ func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
 		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "start_delivery", map[string]string{"error": "missing_parameter"})
@@ -226,7 +179,7 @@ func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), token, orderID, userID)
+	resp, err := h.ordersLifeCycleService.StartDelivery(r.Context(), orderID, userID)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "start_delivery", err)
 		return
@@ -236,12 +189,6 @@ func (h *OrdersLifeCycleHandler) StartDelivery(w http.ResponseWriter, r *http.Re
 }
 
 func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
 		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "deny_order", map[string]string{"error": "missing_parameter"})
@@ -254,7 +201,7 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), token, orderID, req)
+	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), orderID, req)
 
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "deny_order", err)
@@ -300,12 +247,6 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 }
 
 func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
 		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "delete_order", map[string]string{"error": "missing_parameter"})
@@ -318,7 +259,7 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err := h.ordersLifeCycleService.SetOrderDeleted(r.Context(), token, models.DenyOrderInput{
+	err := h.ordersLifeCycleService.SetOrderDeleted(r.Context(), models.DenyOrderInput{
 		OrderID:          orderID,
 		MerchantID:       req.MerchantID,
 		UserID:           req.UserID,
@@ -338,10 +279,9 @@ func (h *OrdersLifeCycleHandler) DeleteOrder(w http.ResponseWriter, r *http.Requ
 
 func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	token := helpers.ExtractToken(r)
 	orderID := chi.URLParam(r, "order_id")
 
-	err := h.ordersLifeCycleService.SetDelivered(ctx, token, orderID)
+	err := h.ordersLifeCycleService.SetDelivered(ctx, orderID)
 	if err != nil {
 
 		var notPaidErr *models.OrderNotFullyPaidError
@@ -367,12 +307,6 @@ func (h *OrdersLifeCycleHandler) SetDelivered(w http.ResponseWriter, r *http.Req
 }
 
 func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "order_life_cycle", "update_production_status", map[string]string{"error": "missing_token"})
-		return
-	}
-
 	ctx := r.Context()
 
 	var req UpdateProductionStatusRequest
@@ -381,7 +315,7 @@ func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r
 		return
 	}
 
-	err := h.ordersLifeCycleService.UpdateProductionStatus(ctx, token, &req)
+	err := h.ordersLifeCycleService.UpdateProductionStatus(ctx, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "update_production_status", err)
 		return

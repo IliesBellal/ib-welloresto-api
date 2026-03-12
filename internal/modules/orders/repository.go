@@ -112,10 +112,11 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 
 	// Récupérer les sessions (spécifique à cet endpoint)
 	// Note : comme on est dans le même package 'repositories', on a accès aux méthodes privées (minuscule)
-	sessions, err := []models.DeliverySession{}, nil /*deliverySessionRepo.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")*/
-	if err != nil {
-		return nil, err
-	}
+	var sessions []models.DeliverySession
+	// err := deliverySessionRepo.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// Assemblage final
 	return &models.PendingOrdersResponse{

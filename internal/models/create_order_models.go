@@ -51,8 +51,8 @@ type CustomerRequest struct {
 	MerchantID       *string    `json:"merchant_id"`
 	Name             *string    `json:"customer_name"`
 	Tel              *string    `json:"customer_tel"`
-	FirstName        *string    `json:"first_name"`
-	LastName         *string    `json:"last_name"`
+	FirstName        *string    `json:"customer_first_name"`
+	LastName         *string    `json:"customer_last_name"`
 	Address          *string    `json:"customer_address"`
 	Lat              *float64   `json:"customer_lat"`
 	Lng              *float64   `json:"customer_lng"`

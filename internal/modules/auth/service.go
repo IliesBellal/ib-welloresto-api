@@ -9,7 +9,6 @@ import (
 	"time"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/models"
 )
 
 type AuthService struct {
@@ -58,8 +57,10 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 
 	loggedUser, err := s.repo.GetUserByToken(ctx, token)
 	if err == nil && loggedUser != nil {
-		context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
-		context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
+		// Note: Ces deux appels sont volontairement omis car le contexte n'est pas retourné
+		// Les valeurs sont injectées via le middleware Auth directement dans le contexte
+		// context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
+		// context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
 	}
 
 	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---

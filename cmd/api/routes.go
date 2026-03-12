@@ -105,6 +105,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
 	authService := authModule.NewAuthService(authRepo, redisClient)
+	authMiddleware := middleware.Auth(&authRepo)
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)
@@ -313,6 +314,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
@@ -321,6 +324,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- POS ---
 	r.Route("/pos", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Post("/create", posH.CreateMerchant)
 		r.Post("/link-user", posH.LinkUser)
 		r.Get("/status", posH.GetPOSStatus)
@@ -362,6 +367,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- STOCKS ---
 	r.Route("/stocks", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/barcode/{barcode}", stocksH.GetBarcodeInfo)
 		r.Post("/barcode/create", stocksH.CreateBarcode)
 		r.Delete("/barcode/{barcode}", stocksH.DeleteBarcode)
@@ -373,6 +380,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- DEVICES ---
 	r.Route("/device", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Post("/token", authH.SaveDeviceToken)
 	})
 
@@ -383,6 +392,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- MENU ---
 	r.Route("/menu", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/", menuH.GetMenu)
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
@@ -419,17 +430,22 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- LOCATIONS ---
 	r.Route("/locations", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/", locationsH.GetLocations)
 		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
 	})
 
 	// --- SERVICES ---
 	r.Route("/services", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/{device_id}", servicesH.GetCurrentService)
 	})
 
 	// --- ORDERS ---
 	r.Route("/orders", func(r chi.Router) {
+		r.Use(authMiddleware)
 
 		r.Post("/create", ordersH.CreateOrder)
 		r.Post("/pricing", ordersH.GetPricing)
@@ -464,6 +480,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- DELIVERY SESSIONS ---
 	r.Route("/delivery_sessions", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/pending", deliverySessionsH.GetPendingDeliverySessions)
 		r.Get("/{delivery_session_id}", deliverySessionsH.GetDeliverySession)
 		r.Delete("/{delivery_session_id}", deliverySessionsH.CancelDeliverySession)
@@ -474,11 +492,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- CASH DRAWER ---
 	r.Route("/cash_drawer", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/open", cashRegisterH.OpenCashDrawer)
 	})
 
 	// --- CUSTOMERS ---
 	r.Route("/customer", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/search", customersH.SearchCustomers)
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
 		r.Patch("/{customer_id}/loyalty/progress", customersH.UpdateLoyaltyProgress)
@@ -487,6 +509,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- CASH REGISTER ---
 	r.Route("/cash_register", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Post("/open", cashRegisterH.OpenCashRegister)
 		r.Get("/history", cashRegisterH.GetHistory)
 
@@ -503,6 +527,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- BOOKINGS ---
 	r.Route("/bookings", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Post("/", bookingsH.SearchBookings)
 		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
 

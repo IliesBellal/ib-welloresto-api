@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,8 @@ import (
 type contextKey string
 
 const userContextKey contextKey = "authenticatedUser"
+
+var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
 
 // AuthRepo est l'interface que ton authRepo doit satisfaire
 // Cela permet de ne pas coupler le middleware directement au repo concret
@@ -54,8 +57,29 @@ func Auth(repo AuthRepo) func(http.Handler) http.Handler {
 }
 
 // GetUser récupère le user injecté par le middleware depuis le contexte
-// C'est cette fonction que tes handlers appelleront — une seule ligne
+// Retourne nil si l'utilisateur n'est pas authentifié
 func GetUser(r *http.Request) *auth.UserLoginRow {
 	user, _ := r.Context().Value(userContextKey).(*auth.UserLoginRow)
 	return user
+}
+
+// UserFromContext récupère le user du contexte avec gestion d'erreur
+// Utilisé par les services qui reçoivent un context.Context
+func UserFromContext(ctx context.Context) (*auth.UserLoginRow, error) {
+	user, ok := ctx.Value(userContextKey).(*auth.UserLoginRow)
+	if !ok || user == nil {
+		return nil, ErrUnunauthenticated
+	}
+	return user, nil
+}
+
+// MustGetUser récupère le user et envoie une erreur HTTP si absent
+// Simplifie la gestion d'erreurs dans les handlers
+func MustGetUser(w http.ResponseWriter, r *http.Request) (*auth.UserLoginRow, bool) {
+	user := GetUser(r)
+	if user == nil {
+		http.Error(w, `{"error":"utilisateur non authentifié"}`, http.StatusUnauthorized)
+		return nil, false
+	}
+	return user, true
 }
