@@ -1,0 +1,26 @@
+package models
+
+import (
+	"time"
+)
+
+const (
+	// Durée de vie du cache : 5 minutes
+	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
+	UserCacheTTL = 5 * time.Minute
+
+	// Préfixe des clés Redis pour les users
+	// Permet d'identifier facilement les clés dans Redis
+	UserCachePrefix = "user:token:"
+
+	// Préfixe des clés Redis pour les merchants (scannorder)
+	// Permet d'identifier facilement les clés dans Redis
+	ScannorderMerchant     = "scannorder:merchant:"
+	ScannorderMerchantMenu = ScannorderMerchant + "menu:"
+
+	// Durée de vie du cache pour les merchants
+	ScannorderMerchantMenuTTL = 10 * time.Minute
+
+	// Durée de vie du cache pour les merchants
+	ScannorderMerchantTTL = 10 * time.Minute
+)

@@ -2,12 +2,13 @@ package scannorder
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"time"
 	"welloresto-api/internal/config"
+	"welloresto-api/internal/infrastructure/redis"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -25,15 +26,67 @@ type Service struct {
 	orderingService        *orders.OrdersService
 	orderLifeCycleSvc      order_life_cycle.OrdersLifeCycleService
 	deliverySessionService delivery_sessions.DeliverySessionsService
-	StripeManager          stripeclient.StripeManager
+	StripeManager          *stripeclient.StripeManager
 	cfg                    config.ScanNOrderConfig
+	redis                  *redis.Client
 }
 
-func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager stripeclient.StripeManager) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager}
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis}
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
+	// Si Redis n'est pas configuré, on court direct à la BDD
+	if s.redis == nil {
+		return s.computeGetMerchant(ctx, qr)
+	}
+
+	log := logger.FromContext(ctx)
+	cacheKey := models.ScannorderMerchant + qr
+
+	// --- ÉTAPE 1 : Chercher dans Redis ---
+	cached, found, err := s.redis.Get(ctx, cacheKey)
+	if err != nil {
+		// On log l'erreur Redis mais on ne bloque pas l'utilisateur
+		log.Warn("Warning Redis Get (Merchant): " + err.Error())
+	}
+
+	if found {
+		// Cache hit !
+		var merchant MerchantResponse
+		if err := json.Unmarshal([]byte(cached), &merchant); err == nil {
+			log.Info("🧠🏪 Merchant found in Redis cache 🏪🧠")
+			return &merchant, nil
+		}
+	}
+
+	log.Info("🧠🚫 Merchant not found in Redis cache 🚫🧠")
+
+	// --- ÉTAPE 2 : Appel BDD (la logique lourde) ---
+	merchant, err := s.computeGetMerchant(ctx, qr)
+	if err != nil {
+		return nil, err // Si la BDD échoue, là c'est un vrai problème
+	}
+
+	if merchant == nil {
+		return nil, nil
+	}
+
+	// --- ÉTAPE 3 : Stocker dans Redis pour la prochaine fois ---
+	serialized, err := json.Marshal(merchant)
+	if err == nil {
+		// Utilise un TTL raisonnable (ex: 24h car un merchant change peu souvent)
+		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantTTL); err != nil {
+			log.Warn("Warning Redis Set (Merchant): " + err.Error())
+		} else {
+			log.Info("🧠📌 Merchant saved in Redis cache 📌🧠")
+		}
+	}
+
+	return merchant, nil
+}
+
+func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
 	row, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
@@ -123,21 +176,57 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	return resp, nil
 }
 
-func nullableInt64(n sql.NullInt64) *int64 {
-	if n.Valid {
-		return &n.Int64
-	}
-	return nil
-}
-
-func nullableString(s sql.NullString) *string {
-	if s.Valid {
-		return &s.String
-	}
-	return nil
-}
-
 func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
+	// Si Redis est absent, direct BDD
+	if s.redis == nil {
+		return s.ComputeGetMenu(ctx, qr, deliveryType)
+	}
+
+	log := logger.FromContext(ctx)
+	// On combine QR et deliveryType dans la clé pour l'unicité
+	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, qr, deliveryType)
+
+	// --- ÉTAPE 1 : Chercher dans Redis ---
+	cached, found, err := s.redis.Get(ctx, cacheKey)
+	if err != nil {
+		log.Warn("Warning Redis Get (Menu): " + err.Error())
+	}
+
+	if found {
+		var menu MenuResponse
+		if err := json.Unmarshal([]byte(cached), &menu); err == nil {
+			log.Info(fmt.Sprintf("🧠📖 Menu (%s) found in Redis cache 📖🧠", deliveryType))
+			return &menu, nil
+		}
+	}
+
+	log.Info(fmt.Sprintf("🧠🚫 Menu (%s) not found in Redis cache 🚫🧠", deliveryType))
+
+	// --- ÉTAPE 2 : Appel BDD (Calcul lourd) ---
+	menu, err := s.ComputeGetMenu(ctx, qr, deliveryType)
+	if err != nil {
+		return nil, err
+	}
+
+	if menu == nil {
+		return nil, nil
+	}
+
+	// --- ÉTAPE 3 : Stocker dans Redis ---
+	serialized, err := json.Marshal(menu)
+	if err == nil {
+		// Un TTL de 1h ou 2h est généralement un bon compromis pour un menu
+		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); err != nil {
+			log.Warn("Warning Redis Set (Menu): " + err.Error())
+		} else {
+			log.Info("🧠📌 Menu saved in Redis cache 📌🧠")
+		}
+	}
+
+	return menu, nil
+}
+
+func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
 
 	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
 	if err != nil || merchantID == "" {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"welloresto-api/internal/models"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -62,4 +64,20 @@ func (c *Client) Set(ctx context.Context, key string, value string, ttl time.Dur
 // Delete supprime une clé (utile pour invalider le cache)
 func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// DeleteAllMerchantKeys supprime toutes les clés liées à un merchant spécifique (ex: après une mise à jour des infos du merchant)
+func (c *Client) DeleteAllMerchantKeys(ctx context.Context, merchantID string) error {
+	pattern := fmt.Sprintf("%s%s*", models.ScannorderMerchant, merchantID)
+	iter := c.rdb.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		err := c.rdb.Del(ctx, iter.Val()).Err()
+		if err != nil {
+			return err
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	return nil
 }

@@ -6,25 +6,15 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"time"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 type AuthService struct {
 	repo  AuthRepository
 	redis *redis.Client
 }
-
-const (
-	// Durée de vie du cache : 5 minutes
-	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
-	userCacheTTL = 5 * time.Minute
-
-	// Préfixe des clés Redis pour les users
-	// Permet d'identifier facilement les clés dans Redis
-	userCachePrefix = "user:token:"
-)
 
 func NewAuthService(r AuthRepository, redis *redis.Client) AuthService {
 	return AuthService{repo: r, redis: redis}
@@ -35,7 +25,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		return s.repo.GetUserByToken(ctx, token) // Pas de cache : on va direct à la BDD
 	}
 	log := logger.FromContext(ctx)
-	cacheKey := userCachePrefix + token
+	cacheKey := models.UserCachePrefix + token
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found, err := s.redis.Get(ctx, cacheKey)
@@ -66,7 +56,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
 	serialized, err := json.Marshal(loggedUser)
 	if err == nil {
-		if err := s.redis.Set(ctx, cacheKey, string(serialized), userCacheTTL); err != nil {
+		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL); err != nil {
 			// Erreur de cache : on log mais on retourne quand même le user
 			log.Warn("Warning Redis Set: " + err.Error())
 		} else {
@@ -93,7 +83,7 @@ func convertApp(app string) string {
 // InvalidateUserCache — à appeler quand l'utilisateur modifie ses infos
 // Par exemple : changement de rôle, désactivation du compte, etc.
 func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) error {
-	return s.redis.Delete(ctx, userCachePrefix+token)
+	return s.redis.Delete(ctx, models.UserCachePrefix+token)
 }
 
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string) (map[string]interface{}, error) {
