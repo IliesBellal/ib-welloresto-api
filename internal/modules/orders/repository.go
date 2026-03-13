@@ -2480,3 +2480,24 @@ func (r *OrdersRepository) UpdateMultipleProductsStatus(ctx context.Context, req
 
 	return nil
 }
+
+func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {
+	var exists bool
+
+	// La requête SELECT 1 est très légère pour la DB
+	query := `
+		SELECT EXISTS(
+			SELECT 1 
+			FROM orders 
+			WHERE brand = ? 
+			  AND brand_order_id = ?
+		)
+	`
+
+	err := r.db.QueryRowContext(ctx, query, brand, brandOrderID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+
+	return exists, nil
+}

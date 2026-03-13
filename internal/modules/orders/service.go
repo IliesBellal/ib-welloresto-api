@@ -22,6 +22,23 @@ type OrdersService struct {
 	notificationsService *notification.NotificationService
 }
 
+func (s *OrdersService) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {
+	// Logique métier : on valide les entrées si nécessaire
+	if brand == "" || brandOrderID == "" {
+		return false, nil
+	}
+
+	// Appel au repository
+	exists, err := s.ordersRepo.ExistsByBrandOrderID(ctx, brand, brandOrderID)
+	if err != nil {
+		// On log l'erreur mais on peut décider de retourner false
+		// pour ne pas bloquer le flux en cas de pépin DB
+		return false, fmt.Errorf("error checking order existence: %w", err)
+	}
+
+	return exists, nil
+}
+
 type OrdersServiceInterface interface {
 	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
 }

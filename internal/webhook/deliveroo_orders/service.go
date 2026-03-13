@@ -31,6 +31,19 @@ func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *
 }
 
 func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload DeliverooWebhookPayload) error {
+	log := logger.FromContext(ctx)
+
+	// 1. VÉRIFICATION IMMÉDIATE (Idempotence)
+	// On vérifie en base si cet ID Deliveroo a déjà été traité
+	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, "DELIVEROO", payload.Body.Order.ID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		log.Info("[DELIVEROO] Order already processed, skipping:" + payload.Body.Order.ID)
+		return nil // On renvoie nil pour que le handler réponde 200 OK
+	}
+
 	ord := payload.Body.Order
 
 	// 1. Récupérer le Merchant ID via le Location ID

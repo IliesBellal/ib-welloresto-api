@@ -27,29 +27,48 @@ type AuthRepo interface {
 func Auth(repo AuthRepo) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1. Extraire le token du header Authorization
+			// 1. Extraire le header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				http.Error(w, `{"error":"token manquant"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// 2. Vérifier le format "Bearer <token>"
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			// 2. Logique hybride : On nettoie et on extrait
+			token := authHeader
+
+			// Si ça commence par "Bearer " (insensible à la casse)
+			if len(authHeader) > 7 && strings.EqualFold(authHeader[:7], "bearer ") {
+				token = authHeader[7:]
+			}
+
+			/*
+				Utiliser ce code une fois que toutes les applications utilisent "Bearer " comme préfixe :
+				// 2. Vérifier le format "Bearer <token>"
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+					http.Error(w, `{"error":"format token invalide - are you using bearer as prefix ?"}`, http.StatusUnauthorized)
+					return
+				}
+				token := parts[1]
+			*/
+			// On nettoie les espaces restants au cas où
+			token = strings.TrimSpace(token)
+
+			// Sécurité : on vérifie que le token n'est pas devenu vide après le nettoyage
+			if token == "" {
 				http.Error(w, `{"error":"format token invalide"}`, http.StatusUnauthorized)
 				return
 			}
-			token := parts[1]
 
-			// 3. Récupérer le user (Redis d'abord, BDD ensuite — géré dans le repo)
+			// 3. Récupérer le user (inchangé)
 			user, err := repo.GetUserByToken(r.Context(), token)
 			if err != nil || user == nil {
 				http.Error(w, `{"error":"token invalide ou expiré"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// 4. Injecter le user dans le contexte et passer au handler suivant
+			// 4. Injecter le user (inchangé)
 			ctx := context.WithValue(r.Context(), userContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
