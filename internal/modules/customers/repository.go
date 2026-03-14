@@ -42,6 +42,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
 		"customer_temporary_door_number":        true,
 		"customer_temporary_floor_number":       true,
 		"customer_temporary_additional_address": true,
+		"advertising_consent":                   true,
 	}
 
 	// -------------------------------------------------------
@@ -388,7 +389,9 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
         customer_nb_orders,
         customer_total_spent,
         creation_date,
-        customer_code
+        customer_code,
+		advertising_consent,
+		customer_brand
     FROM customer
     WHERE merchant_id = ?
       AND enabled = true
@@ -422,6 +425,8 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerTotalSpent,
 			&creationDate,
 			&c.CustomerCode,
+			&c.AdvertisingConsent,
+			&c.CustomerBrand,
 		)
 
 		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)

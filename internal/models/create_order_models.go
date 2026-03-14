@@ -48,6 +48,7 @@ type OrderRequest struct {
 type CustomerRequest struct {
 	CustomerID       *string    `json:"customer_id"`
 	BrandCustomerID  *string    `json:"brand_customer_id"`
+	CustomerBrand    string     `json:"customer_brand"`
 	MerchantID       *string    `json:"merchant_id"`
 	Name             *string    `json:"customer_name"`
 	Tel              *string    `json:"customer_tel"`

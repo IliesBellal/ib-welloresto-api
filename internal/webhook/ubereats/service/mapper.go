@@ -3,6 +3,7 @@ package service
 import (
 	"time"
 
+	"welloresto-api/internal/models"
 	ordersModels "welloresto-api/internal/models"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
@@ -44,7 +45,7 @@ func MapUberOrderToRequest(
 		Order: ordersModels.OrderRequest{
 			BrandOrderID:    &order.ID,
 			BrandOrderNum:   &order.DisplayID,
-			Brand:           "UBER_EATS",
+			Brand:           models.BrandUberEats,
 			TTC:             total,
 			Products:        products,
 			OrderType:       orderType,
@@ -53,6 +54,7 @@ func MapUberOrderToRequest(
 			CashRegisterId:  &cashRegisterID,
 			Customer: &ordersModels.CustomerRequest{
 				BrandCustomerID:    &order.Eaters[0].ID,
+				CustomerBrand:      models.BrandUberEats,
 				FirstName:          &order.Eater.FirstName,
 				LastName:           &order.Eater.LastName,
 				Name:               &customerName,
@@ -65,7 +67,7 @@ func MapUberOrderToRequest(
 			},
 			MerchantApproval: "PENDING_APPROVAL",
 			Payments: []ordersModels.PaymentPayload{
-				{Amount: total, MOP: "UBER_EATS"},
+				{Amount: total, MOP: models.BrandUberEats},
 			},
 		},
 	}

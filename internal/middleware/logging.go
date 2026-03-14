@@ -80,7 +80,10 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 			duration := time.Since(start)
 
 			level := zap.InfoLevel
-			if duration > verySlowThreshold {
+
+			if rw.status >= 500 {
+				level = zap.ErrorLevel
+			} else if duration > verySlowThreshold || (rw.status >= 400 && rw.status < 500) {
 				level = zap.WarnLevel
 			} else if duration > slowThreshold {
 				level = zap.InfoLevel

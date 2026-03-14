@@ -103,6 +103,8 @@ type Customer struct {
 	CustomerTemporaryFloorNumber       *string  `json:"customer_temporary_floor_number"`
 	CustomerTemporaryAdditionalAddress *string  `json:"customer_temporary_additional_address"`
 	CreationDate                       *string  `json:"creation_date"`
+	AdvertisingConsent                 *bool    `json:"advertising_consent"`
+	CustomerBrand                      *string  `json:"customer_brand"`
 }
 
 type Order struct {

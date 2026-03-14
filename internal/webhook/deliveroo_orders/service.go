@@ -193,12 +193,13 @@ func (s *DeliverooService) buildCustomerRequest(merchantID string, ord Deliveroo
 	}
 
 	return &models.CustomerRequest{
-		MerchantID: &merchantID,
-		Name:       &name,
-		Tel:        &phone,
-		Address:    &address,
-		Lat:        &lat,
-		Lng:        &lng,
+		MerchantID:    &merchantID,
+		Name:          &name,
+		Tel:           &phone,
+		Address:       &address,
+		Lat:           &lat,
+		Lng:           &lng,
+		CustomerBrand: models.BrandDeliveroo,
 		// Les champs supplémentaires peuvent être mappés si disponibles
 	}, nil
 }

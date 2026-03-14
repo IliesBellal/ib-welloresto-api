@@ -59,6 +59,8 @@ type CustomerSearchResult struct {
 	CreationDate       *int    `json:"creation_date"`
 	CustomerCode       *string `json:"customer_code"`
 	MatchScore         int     `json:"match_score"`
+	AdvertisingConsent *bool   `json:"advertising_consent"`
+	CustomerBrand      *string `json:"customer_brand"`
 }
 
 type Customer struct {

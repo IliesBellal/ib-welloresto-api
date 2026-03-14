@@ -300,7 +300,7 @@ func (r *OrdersRepository) GetHistory(
 	// =========================
 	// 2️⃣ PAGINATION (IDS ONLY)
 	// =========================
-	limit := 20
+	limit := 50
 	if req.Limit != nil && *req.Limit > 0 {
 		limit = *req.Limit
 	}
@@ -1239,6 +1239,12 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 	}
 	if req.Order.Customer.Lng != nil {
 		cust.CustomerLng = req.Order.Customer.Lng
+	}
+	if req.Order.Customer.CustomerBrand != "" {
+		cust.CustomerBrand = &req.Order.Customer.CustomerBrand
+	} else {
+		brand := models.BrandWelloResto
+		cust.CustomerBrand = &brand
 	}
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.

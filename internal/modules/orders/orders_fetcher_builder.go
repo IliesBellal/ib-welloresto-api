@@ -606,6 +606,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		c.customer_temporary_address, c.customer_temporary_lat,
 		c.customer_temporary_lng, c.customer_temporary_floor_number,
 		c.customer_temporary_door_number,
+		c.advertising_consent, c.customer_brand,
 		c.customer_temporary_additional_address,
 
 		u.user_id, u.lat, u.lng, u.tel AS deliveryTel, u.userName,
@@ -633,13 +634,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
 				meansOfPayment, monnaie, cutleryNotes, dateCall,
-				fulfillmentType, pagerNumber, merchantApproval, userID sql.NullString
+				fulfillmentType, pagerNumber, merchantApproval, userID, customerBrand sql.NullString
 
 			var customerLat, customerLng, customerTemporaryLat,
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
 			var lastUpdate, creationDate, estimatedReady sql.NullTime
-			var scheduled, isPaid, isDistributed, cashRegisterClosed sql.NullBool
+			var scheduled, isPaid, isDistributed, cashRegisterClosed, advertisingConsent sql.NullBool
 
 			var cName, cLastName, cFirstName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
 				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
@@ -662,7 +663,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&cAddr, &cFloor, &cDoor, &cAddAddr, &cBusName, &cBirth,
 				&cInfo,
 				&cTempAddr, &customerTemporaryLat, &customerTemporaryLng,
-				&cTempFloor, &cTempDoor, &cTempAddAddr,
+				&cTempFloor, &cTempDoor, &advertisingConsent, &customerBrand, &cTempAddAddr,
 
 				&userID, &userLat, &userLng, &delTel, &delUserName,
 
@@ -721,6 +722,10 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				cust.CustomerNbOrders = &nb
 				cust.CustomerAdditionalInfo = helpers.NullStringToPtr(cInfo)
 				cust.CustomerZoneCode = helpers.NullStringToPtr(cZoneCode)
+				cust.AdvertisingConsent = &advertisingConsent.Bool
+				cust.CustomerBrand = helpers.NullStringToPtr(customerBrand)
+				cust.CustomerBusinessName = helpers.NullStringToPtr(cBusName)
+				cust.CustomerBirthdate = helpers.NullStringToPtr(cBirth)
 
 				if useCustomerTemporaryAddress.Int64 == 1 {
 					cust.CustomerAddress = helpers.NullStringToPtr(cTempAddr)

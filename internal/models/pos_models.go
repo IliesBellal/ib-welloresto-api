@@ -23,10 +23,10 @@ type POSStatus struct {
 	} `json:"wello_resto_status"`
 
 	Uber struct {
-		EstimatedPrepTime string      `json:"estimated_preparation_time"`
-		DelayDuration     string      `json:"busy_mode_delay_duration"`
-		DelayUntil        interface{} `json:"busy_mode_delay_until"`
-		ClosedUntil       interface{} `json:"closed_until"`
+		EstimatedPrepTime *string `json:"estimated_preparation_time"`
+		DelayDuration     *string `json:"busy_mode_delay_duration"`
+		DelayUntil        *string `json:"busy_mode_delay_until"`
+		ClosedUntil       *string `json:"closed_until"`
 	} `json:"uber_eats_status"`
 }
 
