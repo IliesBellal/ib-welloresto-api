@@ -128,6 +128,12 @@ func extractFieldValue(c *models.Customer, field string) interface{} {
 		}
 		return nil
 
+	case "advertising_consent":
+		if c.AdvertisingConsent != nil {
+			return *c.AdvertisingConsent
+		}
+		return false
+
 	case "customer_first_name":
 		if c.CustomerFirstName != nil && *c.CustomerFirstName != "" {
 			return helpers.Ucfirst(*c.CustomerFirstName)
