@@ -67,6 +67,7 @@ type CustomerRequest struct {
 	TemporaryPhone     *string `json:"temporary_phone"`
 	TemporaryPhoneCode *string `json:"temporary_phone_code"`
 	GooglePlaceID      *string `json:"google_place_id"`
+	AdvertisingConsent *bool   `json:"advertising_consent"`
 }
 
 type OrderProductPayload struct {

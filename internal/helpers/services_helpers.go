@@ -26,6 +26,10 @@ func HashPassword(password string) (string, error) {
 	return string(bytes), err
 }
 
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
 // Old version of crypting
 func EncryptPHP(password string) (string, error) {
 	// CORRECTION 1 : Utiliser la clé directement si elle fait 16 chars (AES-128)

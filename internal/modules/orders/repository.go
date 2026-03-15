@@ -1246,6 +1246,11 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 		brand := models.BrandWelloResto
 		cust.CustomerBrand = &brand
 	}
+	if req.Order.Customer.AdvertisingConsent != nil {
+		cust.AdvertisingConsent = req.Order.Customer.AdvertisingConsent
+	} else {
+		cust.AdvertisingConsent = helpers.BoolPtr(false)
+	}
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns MerchantID as string.

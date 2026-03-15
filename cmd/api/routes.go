@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
+	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
 	"welloresto-api/internal/webhook/deliveroo_menu"
 	"welloresto-api/internal/webhook/deliveroo_orders"
@@ -220,6 +221,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Bookings ----
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
 	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, authService)
+
+	// ---- Reservation (externe) ----
+	reservationRepo := reservation.NewReservationRepository(mysqlDB)
+	reservationService := reservation.NewReservationService(reservationRepo, bookingsService)
+	reservationHandler := reservation.NewReservationHandler(reservationService)
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
@@ -537,6 +543,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
+	})
+
+	// --- BOOKINGS ---
+	r.Route("/rsv/{slug}", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/open-hours", reservationHandler.HandleGetOpenHours)
+		r.Get("/availability", reservationHandler.HandleGetAvailability)
+		r.Post("/booking/create", reservationHandler.HandleCancelReservation)
+		r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
+		r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
+		r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
 	})
 
 	return r
