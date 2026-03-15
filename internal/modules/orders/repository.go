@@ -40,7 +40,7 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 	// ========================================================================
 
 	// 1.a. On construit la clause WHERE complexe ici
-	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING')) OR ds.id IS NOT NULL) "
+	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING'))) "
 
 	// Ajout filtre APP
 	if app == "1" || app == "WR_DELIVERY" {
@@ -1246,10 +1246,9 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 		brand := models.BrandWelloResto
 		cust.CustomerBrand = &brand
 	}
+	cust.AdvertisingConsent = helpers.BoolPtr(false)
 	if req.Order.Customer.AdvertisingConsent != nil {
 		cust.AdvertisingConsent = req.Order.Customer.AdvertisingConsent
-	} else {
-		cust.AdvertisingConsent = helpers.BoolPtr(false)
 	}
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
