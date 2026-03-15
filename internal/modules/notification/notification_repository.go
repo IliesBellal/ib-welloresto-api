@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -45,7 +46,7 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 	return tokens, nil
 }
 
-func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, error) {
+func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (string, error) {
 
 	var token string
 
@@ -63,12 +64,30 @@ func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, 
 	return token, err
 }
 
-func (r *NotificationRepository) StoreFCMToken(ctx context.Context, token string) error {
+func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, time.Time, error) {
+	var token string
+	var expiration time.Time
 
+	err := r.db.QueryRowContext(ctx, `
+        SELECT access_token, expiration_date
+        FROM firebase_fcm_access_token
+        WHERE UTC_TIMESTAMP() <= expiration_date
+        ORDER BY expiration_date DESC
+        LIMIT 1
+    `).Scan(&token, &expiration)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, nil
+	}
+
+	return token, expiration, err
+}
+
+// Optionnel : On peut aussi uniformiser StoreFCMToken pour qu'il soit explicite
+func (r *NotificationRepository) StoreFCMToken(ctx context.Context, token string) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO firebase_fcm_access_token(access_token, expiration_date)
-        VALUES(?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 55 MINUTE))
+        VALUES(?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 50 MINUTE))
     `, token)
-
 	return err
 }

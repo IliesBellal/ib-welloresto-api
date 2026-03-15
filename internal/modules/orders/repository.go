@@ -31,7 +31,7 @@ func NewOrdersRepository(db *sql.DB, ordersF *OrdersFetcher) *OrdersRepository {
 // ==================================================================================
 
 // GetPendingOrders : Récupère toutes les commandes en cours (Optimisé)
-func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
+func (r *OrdersRepository) GetPendingOrdersOld(ctx context.Context, merchantID, app string) (*models.PendingOrdersResponse, error) {
 	// On a besoin du repo session pour récupérer les sessions à la fin
 	//deliverySessionRepo := delivery_sessions.NewDeliverySessionsRepository(r.db, r.log)
 
@@ -123,6 +123,71 @@ func (r *OrdersRepository) GetPendingOrders(ctx context.Context, merchantID, app
 		Orders:           orders,
 		DeliverySessions: sessions,
 	}, nil
+}
+
+// GetPendingOrderIDs : Récupère uniquement les IDs des commandes répondant aux critères (Requête légère)
+func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, app string) ([]string, error) {
+	// 1. Construction de la clause WHERE complexe
+	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING'))) "
+
+	// Ajout filtre spécifique à l'application
+	if app == "1" || app == "WR_DELIVERY" {
+		criteria += " AND o.order_type = 'DELIVERY' AND o.fulfillment_type = 'DELIVERY_BY_RESTAURANT' "
+	} else if app == "2" || app == "WR_WAITER" {
+		criteria += " AND o.order_type NOT IN ('DELIVERY','TAKE_AWAY') "
+	}
+
+	// 2. Requête pour récupérer UNIQUEMENT les IDs
+	qIDs := `SELECT DISTINCT o.order_id
+             FROM orders o
+             LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+             LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+             WHERE o.merchant_id = ? ` + criteria
+
+	rows, err := r.db.QueryContext(ctx, qIDs, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
+	}
+	defer rows.Close()
+
+	var orderIDs []string
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		orderIDs = append(orderIDs, oid)
+	}
+
+	return orderIDs, nil
+}
+
+// GetOrdersByIDs : Appelle le constructeur lourd (FetchAndBuild) uniquement pour les IDs fournis
+func (r *OrdersRepository) GetOrdersByIDs(ctx context.Context, merchantID string, orderIDs []string) ([]models.Order, error) {
+	if len(orderIDs) == 0 {
+		return []models.Order{}, nil
+	}
+
+	// ========================================================================
+	// ÉTAPE : Construction du filtre OPTIMISÉ (IN)
+	// ========================================================================
+	idsStr := ""
+	for i, oid := range orderIDs {
+		if i > 0 {
+			idsStr += ","
+		}
+		idsStr += fmt.Sprintf("'%s'", oid)
+	}
+
+	// Le filtre qui rend les sous-requêtes de FetchAndBuildOrders instantanées
+	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
+
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filterOptimized, "", "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch and build orders by ids: %w", err)
+	}
+
+	return orders, nil
 }
 
 func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.PendingOrdersResponse, error) {
@@ -833,7 +898,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	defer tx.Rollback()
 
 	if len(req.Order.Products) == 0 {
-		return fmt.Errorf("cart_is_empty")
+		return models.ErrCartEmpty
 	}
 
 	// 2. Suppression des items retirés du panier et de tous leurs sous-éléments.

@@ -73,6 +73,8 @@ var (
 	ErrAccountDisabled = errors.New("account_disabled")
 
 	ErrUserNotAllowed = errors.New("user_not_allowed")
+
+	ErrCartEmpty = errors.New("cart_is_empty")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -109,6 +111,9 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrUserNotAllowed):
 		status = http.StatusForbidden
 		errorMsg = "user_not_allowed"
+	case errors.Is(err, ErrCartEmpty):
+		status = http.StatusUnauthorized
+		errorMsg = "cart_is_empty"
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
 		errorMsg = err.Error()

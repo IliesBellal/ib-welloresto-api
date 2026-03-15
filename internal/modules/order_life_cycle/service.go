@@ -6,6 +6,8 @@ import (
 	"log"
 	"strconv"
 	"time"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/redis"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -30,11 +32,12 @@ type OrdersLifeCycleService struct {
 	notificationsService *notification.NotificationService
 	stripeManager        *stripeclient.StripeManager
 	customersRepo        *customers.CustomersRepository
+	redis                *redis.Client
 }
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, userRepo auth.AuthService,
-	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository) *OrdersLifeCycleService {
+	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -45,6 +48,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		notificationsService: notificationsService,
 		stripeManager:        stripeSvc,
 		customersRepo:        customersRepo,
+		redis:                redis,
 	}
 }
 
@@ -56,6 +60,8 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	if err != nil {
 		return err
 	}
+
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(MerchantID, orderID))
 
 	// 3) Notify app
 	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
@@ -106,6 +112,7 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 	// user.MerchantID et user.UserID sont récupérés depuis le contexte
 
 	err = s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
@@ -122,6 +129,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	req.OrderID = orderID
 
 	err = s.ordersLifeCycleRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
@@ -174,6 +182,7 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 
 	// 4) Désactiver le paiement en base de données
 	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
@@ -193,6 +202,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 			"error":  err.Error(),
 		}, nil
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, req.OrderID))
 
 	// Notify
 	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, "UPDATE_ORDER")
@@ -225,6 +235,7 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID s
 	if err != nil {
 		return nil, err
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
 
 	return map[string]interface{}{
 		"status": "1",
@@ -250,6 +261,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		accept_order.Status = "error"
 		return accept_order, err
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(MerchantID, orderID))
 
 	// 3) If brand is external, call integration ASYNC
 	brand := orderMeta.Brand
@@ -314,6 +326,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 	if err != nil {
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(integrationInfo.MerchantID, orderID))
 
 	// 2) Send realtime update
 	//s.notifier.SendOrderUpdate(integrationInfo.MerchantID, orderID)
@@ -364,6 +377,7 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 	if err != nil {
 		return nil, fmt.Errorf("stripe cancel: %w", err)
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(orderMeta.MerchantID, OrderID))
 
 	// 3) If brand is external, call integration ASYNC
 	brand := orderMeta.Brand
@@ -415,6 +429,7 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	if err := s.ordersLifeCycleRepo.SetReadyForDistribution(ctx, in.OrderID, in.MerchantID); err != nil {
 		return err
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(in.MerchantID, in.OrderID))
 
 	// 2 → Send notif
 	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
@@ -467,6 +482,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	if err := s.ordersLifeCycleRepo.ClearBookings(ctx, in.OrderID); err != nil {
 		return err
 	}
+	s.redis.Delete(ctx, helpers.GetRedisOrderKey(in.MerchantID, in.OrderID))
 
 	// Send notif
 	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
@@ -515,14 +531,28 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 		return err
 	}
 
-	// Call repository to update production status
+	// 1. Mise à jour en base de données
 	affectedOrderIDs, err := s.ordersLifeCycleRepo.UpdateProductionStatus(ctx, user.MerchantID, req)
 	if err != nil {
 		return err
 	}
 
-	// Send notifications for all affected orders
+	// 2. Invalidation du cache Redis (Déduplication)
+	// On utilise un map pour ne traiter chaque OrderID qu'une seule fois
+	processedIDs := make(map[string]bool)
 	for _, aOrderID := range affectedOrderIDs {
+		if !processedIDs[aOrderID] {
+			// Suppression de la clé centralisée
+			key := helpers.GetRedisOrderKey(user.MerchantID, aOrderID)
+			_ = s.redis.Delete(ctx, key)
+
+			processedIDs[aOrderID] = true
+		}
+	}
+
+	// 3. Envoi des notifications
+	// On boucle sur le map pour ne notifier qu'une fois par commande également
+	for aOrderID := range processedIDs {
 		s.notificationsService.SendNotificationAsync(user.MerchantID, aOrderID, "UPDATE_ORDER")
 	}
 

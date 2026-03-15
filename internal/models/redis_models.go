@@ -23,4 +23,10 @@ const (
 
 	// Durée de vie du cache pour les merchants
 	ScannorderMerchantTTL = 10 * time.Minute
+
+	// Préfixe des clés Redis pour les orders
+	OrdersCachePrefix = "order:"
+
+	// Durée de vie du cache pour les orders
+	OrdersCacheTTL = 5 * time.Minute
 )

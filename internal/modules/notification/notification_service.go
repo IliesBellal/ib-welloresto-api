@@ -7,14 +7,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 	"welloresto-api/internal/logger"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type NotificationService struct {
 	repo   *NotificationRepository
 	client *FCMClient
 	tokenm FCMTokenManager // interface (voir plus bas)
-	mu     sync.Mutex
+
+	// Variables de cache en mémoire
+	mu          sync.RWMutex // RWMutex permet de multiples lectures simultanées
+	cachedToken string
+	tokenExpiry time.Time
+
+	sfGroup singleflight.Group // Bloque la génération concurrente
 }
 
 func NewNotificationService(repo *NotificationRepository, client *FCMClient, tokenm FCMTokenManager) *NotificationService {
@@ -196,6 +205,69 @@ func (s *NotificationService) sendWithPayload(
 func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 	log := logger.FromContext(ctx)
 
+	// 1. TENTATIVE MÉMOIRE (Trés rapide)
+	s.mu.RLock()
+	// On garde une marge de sécurité de 30 secondes pour éviter de renvoyer
+	// un token qui expire pendant l'appel réseau vers Google.
+	if s.cachedToken != "" && time.Now().Add(30*time.Second).Before(s.tokenExpiry) {
+		token := s.cachedToken
+		s.mu.RUnlock()
+		return token, nil
+	}
+	s.mu.RUnlock()
+
+	// 2. SINGLEFLIGHT (Protection contre les appels simultanés)
+	res, err, _ := s.sfGroup.Do("fcm_access_token", func() (interface{}, error) {
+
+		// Double check mémoire
+		s.mu.RLock()
+		if s.cachedToken != "" && time.Now().Add(30*time.Second).Before(s.tokenExpiry) {
+			token := s.cachedToken
+			s.mu.RUnlock()
+			return token, nil
+		}
+		s.mu.RUnlock()
+
+		// A. Récupération DB (avec la date d'expiration réelle)
+		token, expiry, err := s.repo.GetValidFCMToken(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		// B. Si pas de token valide en DB, on génère
+		if token == "" {
+			token, err = s.tokenm.GenerateToken(ctx)
+			if err != nil {
+				return "", err
+			}
+
+			// On stocke en base (la DB calculera NOW + 50 min)
+			_ = s.repo.StoreFCMToken(ctx, token)
+
+			// Pour le cache local, on simule le même TTL que la DB (50 min)
+			expiry = time.Now().Add(50 * time.Minute)
+			log.Info("New FCM Access Token generated and stored")
+		}
+
+		// C. Mise à jour du cache mémoire avec les infos précises
+		s.mu.Lock()
+		s.cachedToken = token
+		s.tokenExpiry = expiry
+		s.mu.Unlock()
+
+		return token, nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return res.(string), nil
+}
+
+func (s *NotificationService) getFCMTokenOld(ctx context.Context) (string, error) {
+	log := logger.FromContext(ctx)
+
 	// TODO Sauvegarder le token en local afin de pouvoir le réutiliser sans avoir à Query la base de données ??
 
 	// 👉 ON VERROUILLE. Si une autre goroutine arrive, elle mettra l'exécution en pause ici
@@ -204,7 +276,7 @@ func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 	defer s.mu.Unlock()
 
 	// 1. On vérifie en base (la goroutine en attente verra le token fraîchement créé par la 1ère)
-	token, err := s.repo.GetValidFCMToken(ctx)
+	token, err := s.repo.GetValidFCMTokenOld(ctx)
 	if err != nil {
 		log.Error("Error in getFCMToken : " + err.Error())
 		return "", err

@@ -1,6 +1,6 @@
 module welloresto-api
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.3
@@ -30,6 +30,6 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/sync v0.13.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 )

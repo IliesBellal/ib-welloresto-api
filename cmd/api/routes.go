@@ -122,7 +122,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
 	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, ordersFetcher)
 	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, ordersFetcher)
-	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService)
+	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService, redisClient)
 
 	// ---- WEBHOOK STRIPE
 	// Dans main.go
@@ -171,6 +171,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		log,
 		notificationService,
 		customersRepo,
+		redisClient,
 	)
 
 	// 3. Initialiser le StripeWebhookService Stripe
