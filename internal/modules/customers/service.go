@@ -2,6 +2,7 @@ package customers
 
 import (
 	"context"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -85,4 +86,16 @@ func (s *CustomersService) SearchCustomers(ctx context.Context, token, term stri
 
 func (s *CustomersService) ReactivateRewards(ctx context.Context, orderID string) error {
 	return s.customerRepo.ReactivateRewards(ctx, orderID)
+}
+
+func (s *CustomersService) ProcessOrderLoyalty(ctx context.Context, orderID string) error {
+	log := logger.FromContext(ctx)
+
+	err := s.customerRepo.UpdateLoyaltyFromOrder(ctx, orderID)
+	if err != nil {
+		log.Error("Erreur lors de la mise à jour de la fidélité pour la commande " + orderID + " : " + err.Error())
+		return err
+	}
+
+	return nil
 }

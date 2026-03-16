@@ -11,6 +11,15 @@ type LoyaltyProgress struct {
 	Description      string `json:"description"`
 }
 
+type loyaltyProgram struct {
+	ID               string
+	Type             string
+	TargetValue      int
+	RewardType       string
+	RewardValue      int
+	RewardsOrderType string
+}
+
 type LoyaltyReward struct {
 	CustomerID       string `json:"customer_id"`
 	RewardID         string `json:"reward_id"`

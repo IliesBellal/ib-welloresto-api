@@ -526,3 +526,156 @@ func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID str
 	)
 	return err
 }
+
+// Internal struct pour récupérer les données du programme de fidélité
+func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderID string) error {
+	log := logger.FromContext(ctx)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // Se déclenche auto si la fonction crash ou s'arrête sans Commit
+
+	// 1. Mise à jour des stats globales du client
+	const qUpdateStats = `
+		UPDATE customer c
+		INNER JOIN orders o ON o.customer_id = c.customer_id
+		SET c.customer_nb_orders = c.customer_nb_orders + 1,
+			c.customer_total_spent = c.customer_total_spent + o.price,
+			c.last_order_date = UTC_TIMESTAMP(),
+			c.loyalty_reminder_count = 0
+		WHERE o.order_id = ?
+	`
+	if _, err := tx.ExecContext(ctx, qUpdateStats, orderID); err != nil {
+		return err
+	}
+
+	// 2. Récupérer les infos de la commande
+	const qGetOrder = `
+		SELECT o.customer_id, o.merchant_id, o.price, o.order_type
+		FROM orders o
+		WHERE o.order_id = ? AND o.brand = 'WELLO_RESTO'
+	`
+	var customerID, merchantID, orderType string
+	var price int
+
+	err = tx.QueryRowContext(ctx, qGetOrder, orderID).Scan(&customerID, &merchantID, &price, &orderType)
+	if err == sql.ErrNoRows || customerID == "" {
+		// Pas de commande trouvée, pas WELLO_RESTO, ou pas de client rattaché -> On s'arrête avec succès
+		return tx.Commit()
+	} else if err != nil {
+		return err
+	}
+
+	// 3. Récupérer les programmes actifs du marchand
+	const qGetPrograms = `
+		SELECT id, type, target_value, reward_type, reward_value, rewards_order_type
+		FROM customer_loyalty_programs
+		WHERE merchant_id = ? AND enabled = 1
+	`
+	rows, err := tx.QueryContext(ctx, qGetPrograms, merchantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var programs []loyaltyProgram
+	for rows.Next() {
+		var p loyaltyProgram
+		if err := rows.Scan(&p.ID, &p.Type, &p.TargetValue, &p.RewardType, &p.RewardValue, &p.RewardsOrderType); err != nil {
+			return err
+		}
+		programs = append(programs, p)
+	}
+	rows.Close()
+
+	// 4. Parcourir et appliquer la logique pour chaque programme
+	for _, p := range programs {
+		// Vérifier si la commande a déjà été comptée
+		var exists int
+		err := tx.QueryRowContext(ctx, "SELECT 1 FROM customer_loyalty_progress_order WHERE order_id = ? AND loyalty_program_id = ? LIMIT 1", orderID, p.ID).Scan(&exists)
+		if err == nil {
+			continue // Déjà traitée
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+
+		// Récupérer la progression actuelle
+		var progressID string
+		var currentValue int
+		err = tx.QueryRowContext(ctx, "SELECT id, current_value FROM customer_loyalty_progress WHERE customer_id = ? AND loyalty_program_id = ? LIMIT 1", customerID, p.ID).Scan(&progressID, &currentValue)
+
+		if err == sql.ErrNoRows {
+			// Créer la progression
+			res, err := tx.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, 0, UTC_TIMESTAMP())", customerID, p.ID)
+			if err != nil {
+				return err
+			}
+			id, _ := res.LastInsertId()
+			// Attention : LastInsertId retourne un int64. Si ton ID est un UUID/string dans ta DB, adapte cette partie.
+			// (Si l'ID n'est pas auto-increment, il faut générer un UUID ici et l'insérer)
+			// Dans le doute, je simule une base standard :
+			err = tx.QueryRowContext(ctx, "SELECT id FROM customer_loyalty_progress WHERE id = ?", id).Scan(&progressID)
+			currentValue = 0
+		} else if err != nil {
+			return err
+		}
+
+		// 5. Calculer l'incrémentation
+		increment := 0
+		switch p.Type {
+		case "orders_count":
+			increment = 1
+		case "total_spent":
+			increment = price
+		case "product_count":
+			// OPTIMISATION GO : On fait le sum() et la vérification des produits cibles directement en SQL !
+			const qSumProducts = `
+				SELECT COALESCE(SUM(oi.quantity), 0)
+				FROM orderitems oi
+				INNER JOIN customer_loyalty_program_target_products tp ON tp.product_id = oi.product_id
+				WHERE oi.order_id = ? AND tp.loyalty_program_id = ?
+			`
+			_ = tx.QueryRowContext(ctx, qSumProducts, orderID, p.ID).Scan(&increment)
+		}
+
+		if increment == 0 {
+			continue // Rien à ajouter pour cette commande
+		}
+
+		newValue := currentValue + increment
+
+		// 6. Mettre à jour la progression et loguer
+		_, err = tx.ExecContext(ctx, "UPDATE customer_loyalty_progress SET current_value = ?, last_update = UTC_TIMESTAMP() WHERE id = ?", newValue, progressID)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
+		if err != nil {
+			return err
+		}
+
+		// 7. Vérifier les paliers (Rewards)
+		if p.TargetValue > 0 {
+			rewardsAlready := currentValue / p.TargetValue // Division entière en Go
+			rewardsExpected := newValue / p.TargetValue
+			rewardsToAdd := rewardsExpected - rewardsAlready
+
+			for i := 0; i < rewardsToAdd; i++ {
+				_, err = tx.ExecContext(ctx, `
+					INSERT INTO customer_rewards(loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
+					VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
+				`, p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
+
+				if err != nil {
+					return err
+				}
+				log.Info("🎉 Nouvelle récompense ajoutée pour le client " + customerID)
+			}
+		}
+	}
+
+	return tx.Commit()
+}

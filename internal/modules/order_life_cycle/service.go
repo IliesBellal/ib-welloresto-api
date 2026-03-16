@@ -102,6 +102,8 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 		return err
 	}
 
+	s.customersRepo.UpdateLoyaltyFromOrder(ctx, orderID)
+
 	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
 }
 
