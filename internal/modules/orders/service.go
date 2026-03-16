@@ -123,15 +123,17 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 
 	// 2. Tentative de récupération depuis Redis pour chaque ID
 	for _, id := range ids {
-		// Format de clé : order:merchant_id:order_id
-		key := helpers.GetRedisOrderKey(user.MerchantID, id)
 
-		val, found, err := s.redis.Get(ctx, key)
-		if err == nil && found {
-			var order models.Order
-			if err := json.Unmarshal([]byte(val), &order); err == nil {
-				cacheResults[id] = order
-				continue
+		if s.redis != nil {
+			// Format de clé : order:merchant_id:order_id
+			key := helpers.GetRedisOrderKey(user.MerchantID, id)
+			val, found, err := s.redis.Get(ctx, key)
+			if err == nil && found {
+				var order models.Order
+				if err := json.Unmarshal([]byte(val), &order); err == nil {
+					cacheResults[id] = order
+					continue
+				}
 			}
 		}
 		// Si non trouvé ou erreur de désérialisation, on l'ajoute aux manquants
@@ -147,11 +149,13 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 
 		for _, o := range dbOrders {
 			cacheResults[o.OrderID] = o
+			if s.redis != nil {
 
-			// 4. Stockage dans Redis pour la prochaine fois (ex: TTL de 15 minutes)
-			key := fmt.Sprintf(models.OrdersCachePrefix+"%s:%s", user.MerchantID, o.OrderID)
-			jsonData, _ := json.Marshal(o)
-			_ = s.redis.Set(ctx, key, string(jsonData), models.OrdersCacheTTL)
+				// 4. Stockage dans Redis pour la prochaine fois (ex: TTL de 15 minutes)
+				key := fmt.Sprintf(models.OrdersCachePrefix+"%s:%s", user.MerchantID, o.OrderID)
+				jsonData, _ := json.Marshal(o)
+				_ = s.redis.Set(ctx, key, string(jsonData), models.OrdersCacheTTL)
+			}
 		}
 	}
 
@@ -182,11 +186,13 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 	key := helpers.GetRedisOrderKey(merchantID, orderID)
 
 	// 1. TENTATIVE RAPIDE : On regarde directement dans Redis
-	val, found, err := s.redis.Get(ctx, key)
-	if err == nil && found {
-		var resp models.PendingOrdersResponse
-		if err := json.Unmarshal([]byte(val), &resp); err == nil {
-			return &resp, nil
+	if s.redis != nil {
+		val, found, err := s.redis.Get(ctx, key)
+		if err == nil && found {
+			var resp models.PendingOrdersResponse
+			if err := json.Unmarshal([]byte(val), &resp); err == nil {
+				return &resp, nil
+			}
 		}
 	}
 
@@ -196,11 +202,13 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 
 		// 3. DOUBLE-CHECK : On revérifie Redis à l'intérieur du verrou Singleflight
 		// Utile si une requête concurrente vient juste de remplir le cache pendant qu'on attendait le verrou.
-		valInner, foundInner, _ := s.redis.Get(ctx, key)
-		if foundInner {
-			var respInner models.PendingOrdersResponse
-			if err := json.Unmarshal([]byte(valInner), &respInner); err == nil {
-				return &respInner, nil
+		if s.redis != nil {
+			valInner, foundInner, _ := s.redis.Get(ctx, key)
+			if foundInner {
+				var respInner models.PendingOrdersResponse
+				if err := json.Unmarshal([]byte(valInner), &respInner); err == nil {
+					return &respInner, nil
+				}
 			}
 		}
 
@@ -211,7 +219,7 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 		}
 
 		// 5. MISE EN CACHE : On stocke le résultat pour les prochains appels (TTL 10 min)
-		if resp != nil {
+		if resp != nil && s.redis != nil {
 			jsonData, _ := json.Marshal(resp)
 			_ = s.redis.Set(ctx, key, string(jsonData), 10*time.Minute)
 		}
