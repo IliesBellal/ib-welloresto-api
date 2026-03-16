@@ -1407,14 +1407,11 @@ func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 
 		// INSERT ORDER
 		// Default values
-		$merchant_approval = $order_object->order->merchant_approval ?? "ACCEPTED";
-		$order_object->order->brand_status = $order_object->order->brand_status ?? (($order_object->order->online_payment ?? false) ? "ONLINE_PAYMENT_PENDING": "PENDING");
 		$order_object->order->is_scheduled = isset($order_object->order->is_scheduled) && $order_object->order->is_scheduled ? "1" : "0";
 		$order_object->order->places_settings = $order_object->order->places_settings ?? 0;
 
 	*/
 
-	// PHP: $merchant_approval = ... ?? "ACCEPTED";
 	if req.Order.MerchantApproval == "" {
 		req.Order.MerchantApproval = "ACCEPTED"
 	}
@@ -1429,6 +1426,15 @@ func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 	if req.Order.Brand == "" {
 		req.Order.Brand = models.BrandWelloResto
 	}
+
+	var totalPaid int = 0
+	if req.Order.Payments != nil {
+		for _, payment := range req.Order.Payments {
+			totalPaid += payment.Amount
+		}
+	}
+
+	req.Order.IsPaid = totalPaid == req.Order.TTC
 
 	// PHP: $brand_status = ... ?? (($online_payment) ? "ONLINE_PAYMENT_PENDING" : "PENDING");
 	if req.Order.BrandStatus == "" {

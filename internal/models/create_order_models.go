@@ -40,6 +40,7 @@ type OrderRequest struct {
 	PagerNumber                 *string               `json:"pager_number"`
 	OnlinePayment               bool                  `json:"online_payment"`
 	IsSNO                       bool                  `json:"is_sno"`
+	IsPaid                      bool                  `json:"is_paid"`
 	BookingID                   *string               `json:"booking_id"`
 	Currency                    *string               `json:"currency"`
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`

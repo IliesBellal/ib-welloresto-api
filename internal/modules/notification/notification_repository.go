@@ -46,6 +46,25 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 	return tokens, nil
 }
 
+// DeleteDeviceToken : Supprime un token FCM invalide de la base de données
+func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM users_devices 
+		WHERE fcm_token = ?
+	`, token)
+
+	return err
+}
+
+// DeleteAccessToken : Supprime le jeton d'accès FCM actuel (OAuth2) car il est rejeté par Google
+func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM firebase_fcm_access_token 
+		WHERE access_token = ?
+	`, token)
+	return err
+}
+
 func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (string, error) {
 
 	var token string

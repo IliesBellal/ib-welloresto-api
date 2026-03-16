@@ -63,7 +63,7 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 	for _, t := range tokens {
 		token := t
 		// 👉 ON PASSE L'ACCESS TOKEN EN PARAMÈTRE
-		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken)
+		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken, true)
 	}
 
 	log.Info("📢 Successfully sent notification for merchant " + merchantID + " order " + orderID)
@@ -92,7 +92,7 @@ func (s *NotificationService) SendNotificationAsyncWithPayload(
 	return nil
 }
 
-func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID, orderID, token, nType, accessToken string) {
+func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID, orderID, deviceToken, nType, accessToken string, canRetry bool) {
 
 	log := logger.FromContext(ctx)
 	if accessToken == "" {
@@ -102,10 +102,10 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 
 	message := map[string]interface{}{
 		"message": map[string]interface{}{
-			"token": token,
+			"token": deviceToken,
 			"notification": map[string]string{
 				"title": "Nouvelle commande reçue",
-				"body":  fmt.Sprintf("Vous avez une nouvelle commande. MerchantID Commande : %d", orderID),
+				"body":  fmt.Sprintf("Vous avez une nouvelle commande. Commande : %s", orderID),
 			},
 			"data": map[string]interface{}{
 				"type":        nType,
@@ -128,17 +128,63 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 		},
 	}
 
-	resp, err := s.client.SendFCMMessage(ctx, token, accessToken, message)
+	resp, err := s.client.SendFCMMessage(ctx, deviceToken, accessToken, message)
 	if err != nil {
 		//log.Info("sendWithoutPayload error: " + err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		log.Error("🔕 FCM result code=" + resp.Status + " for token " + token)
-	} else {
-		log.Info("📢 Successfully sent FCM notification to " + merchantID + " : " + token)
+	if resp.StatusCode == 200 {
+		log.Info("📢 Notification envoyée avec succès")
+		return
+	}
+
+	// --- GESTION DES ERREURS ---
+
+	// 1. CAS DU 401 (Jeton d'accès expiré)
+	if resp.StatusCode == 401 && canRetry {
+		log.Warn("🚨 Access Token expiré (401). Tentative de rafraîchissement et retry...")
+
+		// On nettoie le cache (Mémoire + DB)
+		s.handleFCMError(ctx, merchantID, deviceToken, accessToken, 401)
+
+		// On récupère un TOUT NOUVEAU token
+		// (Grâce au Singleflight dans getFCMToken, si 50 goroutines font ça,
+		// une seule génère le token, les 49 autres attendent le résultat).
+		newToken, err := s.getFCMToken(ctx)
+		if err != nil {
+			log.Error("Échec du rafraîchissement du token pour le retry: " + err.Error())
+			return
+		}
+
+		// RE-TENTATIVE (On passe canRetry à false pour ne pas boucler à l'infini)
+		s.sendWithoutPayload(ctx, merchantID, orderID, deviceToken, nType, newToken, false)
+		return
+	}
+
+	// 2. AUTRES CAS (404, 410, etc.)
+	s.handleFCMError(ctx, merchantID, deviceToken, accessToken, resp.StatusCode)
+}
+
+func (s *NotificationService) handleFCMError(ctx context.Context, merchantID, deviceToken, accessToken string, statusCode int) {
+	log := logger.FromContext(ctx)
+
+	switch statusCode {
+	case 401:
+		// Invalidation réactive
+		s.mu.Lock()
+		if s.cachedToken == accessToken {
+			s.cachedToken = ""
+			s.tokenExpiry = time.Time{}
+		}
+		s.mu.Unlock()
+		_ = s.repo.DeleteAccessToken(ctx, accessToken)
+
+	case 404, 410:
+		// Nettoyage des devices morts
+		log.Warn(fmt.Sprintf("🗑️ Suppression device token pour %s", merchantID))
+		_ = s.repo.DeleteDeviceToken(ctx, deviceToken)
 	}
 }
 
