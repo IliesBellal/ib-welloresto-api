@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type ReservationHandler struct {
@@ -20,15 +22,15 @@ func (h *ReservationHandler) HandleGetOpenHours(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 
 	// Récupération du paramètre QR (ex: /open-hours?qr=ABC)
-	qr := r.URL.Query().Get("qr")
-	if qr == "" {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "QR code is required"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "Slug is required"})
 		return
 	}
 
 	// Appel du service
-	response := h.svc.GetOpenHours(r.Context(), qr)
+	response := h.svc.GetOpenHours(r.Context(), slug)
 
 	// Envoi de la réponse formatée
 	json.NewEncoder(w).Encode(response)
@@ -37,7 +39,7 @@ func (h *ReservationHandler) HandleGetOpenHours(w http.ResponseWriter, r *http.R
 func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	qr := r.URL.Query().Get("qr")
+	slug := chi.URLParam(r, "slug")
 	date := r.URL.Query().Get("date")
 	partySizeStr := r.URL.Query().Get("party_size")
 
@@ -46,20 +48,20 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 		partySize = 1
 	}
 
-	if qr == "" || date == "" {
+	if slug == "" || date == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(AvailabilityResponse{Status: "error", Error: "Missing parameters"})
 		return
 	}
 
-	response := h.svc.GetBookingAvailability(r.Context(), qr, date, partySize)
+	response := h.svc.GetBookingAvailability(r.Context(), slug, date, partySize)
 	json.NewEncoder(w).Encode(response)
 }
 
 func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	qr := r.URL.Query().Get("qr")
+	slug := chi.URLParam(r, "slug")
 	var req BookingRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -68,31 +70,31 @@ func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *h
 		return
 	}
 
-	response := h.svc.CreateReservation(r.Context(), qr, req)
+	response := h.svc.CreateReservation(r.Context(), slug, req)
 	json.NewEncoder(w).Encode(response)
 }
 
-// GET /reservation?qr=...&number=...
+// GET /reservation?slug=...&number=...
 func (h *ReservationHandler) HandleGetReservation(w http.ResponseWriter, r *http.Request) {
-	qr := r.URL.Query().Get("qr")
+	slug := chi.URLParam(r, "slug")
 	number := r.URL.Query().Get("number")
-	resp := h.svc.GetReservation(r.Context(), qr, number)
+	resp := h.svc.GetReservation(r.Context(), slug, number)
 	json.NewEncoder(w).Encode(resp)
 }
 
-// POST /reservation/update?qr=...
+// POST /reservation/update?slug=...
 func (h *ReservationHandler) HandleUpdateReservation(w http.ResponseWriter, r *http.Request) {
-	qr := r.URL.Query().Get("qr")
+	slug := chi.URLParam(r, "slug")
 	var req BookingRequest
 	json.NewDecoder(r.Body).Decode(&req)
-	resp := h.svc.UpdateReservation(r.Context(), qr, req)
+	resp := h.svc.UpdateReservation(r.Context(), slug, req)
 	json.NewEncoder(w).Encode(resp)
 }
 
-// POST /reservation/cancel?qr=...&number=...
+// POST /reservation/cancel?slug=...&number=...
 func (h *ReservationHandler) HandleCancelReservation(w http.ResponseWriter, r *http.Request) {
-	qr := r.URL.Query().Get("qr")
+	slug := chi.URLParam(r, "slug")
 	number := r.URL.Query().Get("number")
-	resp := h.svc.CancelReservation(r.Context(), qr, number)
+	resp := h.svc.CancelReservation(r.Context(), slug, number)
 	json.NewEncoder(w).Encode(resp)
 }

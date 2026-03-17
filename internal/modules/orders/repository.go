@@ -345,11 +345,7 @@ func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, or
 	return nil
 }
 
-func (r *OrdersRepository) GetHistory(
-	ctx context.Context,
-	merchantID string,
-	req models.OrderHistoryRequest,
-) ([]models.Order, error) {
+func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
 
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS

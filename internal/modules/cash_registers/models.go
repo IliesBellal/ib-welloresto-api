@@ -59,3 +59,15 @@ type TVACategoryLine struct {
 	TTC      int    `json:"TTC"`
 	TVA      int    `json:"TVA"`
 }
+
+type DeviceLinkRequest struct {
+	DeviceID   string `json:"device_id" binding:"required"`
+	OnBehalfOf string `json:"on_behalf_of"`
+}
+
+type DeviceLink struct {
+	DeviceID     string `json:"device_id"`
+	UserID       string `json:"user_id"`
+	OnBehalfOf   string `json:"on_behalf_of"`
+	CreationDate string `json:"creation_date"`
+}

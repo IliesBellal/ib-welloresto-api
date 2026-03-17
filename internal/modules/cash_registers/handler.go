@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
@@ -196,7 +197,10 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, token)
+	var req models.OrderHistoryRequest
+	json.NewDecoder(r.Body).Decode(&req)
+
+	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, req)
 	if err != nil {
 		models.SendErrorJSON(w, "cash_register", "get_history", err)
 		return
@@ -214,16 +218,6 @@ func (h *CashRegisterHandler) json(w http.ResponseWriter, data interface{}, stat
 	json.NewEncoder(w).Encode(data)
 }
 
-func (h *CashRegisterHandler) errorJSON(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "0",
-		"error":  err.Error(),
-	})
-}
-
 func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -232,4 +226,21 @@ func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Requ
 	}
 
 	models.SendJSON(w, http.StatusOK, "cash_drawer", "open", map[string]string{"status": "1"})
+}
+
+func (h *CashRegisterHandler) HandleLinkDevice(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req DeviceLinkRequest
+	json.NewDecoder(r.Body).Decode(&req)
+
+	err := h.cashRegisterService.LinkDevice(r.Context(), req)
+	if err != nil {
+		logger.FromContext(ctx).Error("LinkDevice Error " + err.Error())
+		models.SendErrorJSON(w, "cash_register", "link_device", err)
+		return
+	}
+
+	// 4. Succès
+	models.SendJSON(w, http.StatusOK, "cash_register", "link_device", map[string]string{"status": "linked"})
 }

@@ -2,6 +2,7 @@ package cash_registers
 
 import (
 	"context"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -137,14 +138,27 @@ func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, token string) ([]models.CashRegister, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.CashRegister, error) {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
+
+	return s.cashRegisterRepo.GetCashRegisterHistory(ctx, user.MerchantID, user.UserID, req)
+}
+
+func (s *CashRegisterService) LinkDevice(ctx context.Context, req DeviceLinkRequest) error {
+	// Récupérer l'utilisateur depuis le contexte
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
 	}
 
-	return s.cashRegisterRepo.GetCashRegisterHistory(ctx, user.MerchantID, user.UserID)
+	// Logique métier additionnelle si nécessaire
+	err = s.cashRegisterRepo.UpsertDeviceLink(ctx, req.DeviceID, user.UserID, req.OnBehalfOf)
+	if err != nil {
+		return models.ErrInternalServerError
+	}
+	return nil
 }

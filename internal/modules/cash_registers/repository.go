@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 
@@ -810,48 +811,118 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	return nil
 }
 
-func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string) ([]models.CashRegister, error) {
+func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req models.OrderHistoryRequest) ([]models.CashRegister, error) {
 
-	query := `
-		SELECT cr.cash_register_id,
-		       cr.start_date,
-		       cr.end_date,
-		       cd.cash_desk_id,
-		       cd.name,
-		       cr.closed
-		FROM cash_registers cr
-		INNER JOIN cash_desks cd 
-		       ON cd.cash_desk_id = cr.cash_desk_id
-		WHERE cd.merchant_id = ?
-		  AND cr.end_date IS NOT NULL
-		  AND (
-		        cr.user_id = ?
-		        OR EXISTS (
-		            SELECT 1 
-		            FROM users u
-		            INNER JOIN users_rights ur ON ur.id = u.access_id
-		            WHERE u.user_id = ?
-		              AND u.merchant_id = cd.merchant_id
-		              AND ur.admin = TRUE
-		        )
-		      )
-		ORDER BY cr.start_date DESC
-		LIMIT 50
-	`
+	// ==========================================
+	// 1️⃣ CONSTRUCTION DU WHERE + ARGUMENTS
+	// ==========================================
+	// On garde ta logique complexe de droits (Admin ou propriétaire)
+	where := ` 
+        WHERE cd.merchant_id = ? 
+          AND cr.end_date IS NOT NULL 
+          AND (
+                cr.user_id = ? 
+                OR EXISTS (
+                    SELECT 1 
+                    FROM users u 
+                    INNER JOIN users_rights ur ON ur.id = u.access_id 
+                    WHERE u.user_id = ? 
+                      AND u.merchant_id = cd.merchant_id 
+                      AND ur.admin = TRUE
+                )
+          ) `
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, userID, userID)
+	args := []interface{}{merchantID, userID, userID}
+
+	// Ajout du filtre par date si présent dans la requête
+	if req.DateFrom != nil && req.DateTo != nil {
+		where += " AND cr.start_date BETWEEN ? AND ? "
+		args = append(args, *req.DateFrom, *req.DateTo)
+	}
+
+	// ==========================================
+	// 2️⃣ CALCUL DE LA PAGINATION
+	// ==========================================
+	limit := 50
+	if req.Limit != nil && *req.Limit > 0 {
+		limit = *req.Limit
+	}
+
+	page := 1
+	if req.Page != nil && *req.Page > 0 {
+		page = *req.Page
+	}
+
+	offset := (page - 1) * limit
+
+	// ==========================================
+	// 3️⃣ RÉCUPÉRATION DES IDs UNIQUEMENT
+	// ==========================================
+	idQuery := `
+        SELECT cr.cash_register_id
+        FROM cash_registers cr
+        INNER JOIN cash_desks cd ON cd.cash_desk_id = cr.cash_desk_id
+    ` + where + `
+        ORDER BY cr.start_date DESC
+        LIMIT ? OFFSET ?
+    `
+	idArgs := append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, idQuery, idArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var history []models.CashRegister
-
+	var registerIDs []string
 	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		registerIDs = append(registerIDs, id)
+	}
+
+	if len(registerIDs) == 0 {
+		return []models.CashRegister{}, nil
+	}
+
+	// ==========================================
+	// 4️⃣ CONSTRUCTION DU FILTRE IN (...)
+	// ==========================================
+	var inParts []string
+	for _, id := range registerIDs {
+		inParts = append(inParts, fmt.Sprintf("'%s'", id))
+	}
+
+	// ==========================================
+	// 5️⃣ RÉCUPÉRATION DES DONNÉES COMPLÈTES
+	// ==========================================
+	fullQuery := fmt.Sprintf(`
+        SELECT cr.cash_register_id,
+               cr.start_date,
+               cr.end_date,
+               cd.cash_desk_id,
+               cd.name,
+               cr.closed
+        FROM cash_registers cr
+        INNER JOIN cash_desks cd ON cd.cash_desk_id = cr.cash_desk_id
+        WHERE cr.cash_register_id IN (%s)
+        ORDER BY cr.start_date DESC
+    `, strings.Join(inParts, ","))
+
+	fullRows, err := r.db.QueryContext(ctx, fullQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer fullRows.Close()
+
+	var history []models.CashRegister
+	for fullRows.Next() {
 		var h models.CashRegister
 		var rawStartDate, rawEndDate sql.NullTime
 
-		err := rows.Scan(
+		err := fullRows.Scan(
 			&h.CashRegisterID,
 			&rawStartDate,
 			&rawEndDate,
@@ -991,4 +1062,17 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		MOP:            mops,
 		CashReportType: "Z",
 	}, nil
+}
+
+func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID, userID, onBehalfOf string) error {
+	query := `
+		INSERT INTO device_link (device_id, user_id, on_behalf_of, creation_date)
+		VALUES (?, ?, ?, UTC_TIMESTAMP())
+		ON DUPLICATE KEY UPDATE 
+			on_behalf_of = VALUES(on_behalf_of), 
+			user_id = VALUES(user_id), 
+			creation_date = UTC_TIMESTAMP()`
+
+	_, err := r.db.ExecContext(ctx, query, deviceID, userID, onBehalfOf)
+	return err
 }

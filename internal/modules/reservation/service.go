@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/bookings"
 )
 
@@ -142,13 +143,13 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 		endService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+r.HourTo, loc)
 
 		firstBookable := startService
-		if r.FirstBookingTime.Valid && r.FirstBookingTime.String != "" {
-			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+r.FirstBookingTime.String, loc)
+		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
+			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*r.FirstBookingTime, loc)
 		}
 
 		lastBookable := endService
-		if r.LastBookingTime.Valid && r.LastBookingTime.String != "" {
-			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+r.LastBookingTime.String, loc)
+		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
+			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*r.LastBookingTime, loc)
 		}
 
 		currentSlot := firstBookable
@@ -269,6 +270,8 @@ func (s *reservationService) CreateReservationOld(ctx context.Context, qr string
 
 func (s *reservationService) CreateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse {
 	// 1. Vérification Marchand (Utilise la connexion, puis la libère)
+	log := logger.FromContext(ctx)
+
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
 		return CreateBookingResponse{Status: "-1", Error: "QR Code expired"}
@@ -310,6 +313,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, r
 	if merchant.AutoAcceptReserveBookings {
 		_, err := s.bookingSvc.AcceptBooking(ctx, "nil", bookingID)
 		if err != nil {
+			log.Error(err.Error())
 			return CreateBookingResponse{Status: "-2", Error: "Auto-accept failed"}
 		}
 		req.Booking.Status = "ACCEPTED"

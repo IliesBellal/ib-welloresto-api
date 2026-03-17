@@ -3,7 +3,6 @@ package order_life_cycle
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 	"welloresto-api/internal/helpers"
@@ -62,7 +61,9 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	}
 
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// 3) Notify app
@@ -108,6 +109,8 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 }
 
 func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
+	log := logger.FromContext(ctx)
+
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -117,7 +120,9 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 
 	err = s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
@@ -126,6 +131,8 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 }
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
+	log := logger.FromContext(ctx)
+
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -136,7 +143,9 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	err = s.ordersLifeCycleRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
@@ -155,6 +164,8 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string
 }
 
 func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, paymentID string) error {
+	log := logger.FromContext(ctx)
+
 	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -191,7 +202,9 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 	// 4) Désactiver le paiement en base de données
 	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
@@ -200,6 +213,8 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 }
 
 func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+	log := logger.FromContext(ctx)
+
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -213,7 +228,9 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 		}, nil
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, req.OrderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, req.OrderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// Notify
@@ -237,6 +254,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 }
 
 func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+	log := logger.FromContext(ctx)
 
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -248,7 +266,9 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID s
 		return nil, err
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(user.MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	return map[string]interface{}{
@@ -276,7 +296,9 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		return accept_order, err
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// 3) If brand is external, call integration ASYNC
@@ -320,6 +342,10 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 
 func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string) (models.HandlerDefaultResponseModelSet, error) {
 	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.HandlerDefaultResponseModelSet{}, err
+	}
+
 	accept_order := models.HandlerDefaultResponseModelSet{}
 	if err != nil {
 		accept_order.Status = "error"
@@ -330,9 +356,10 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string
 }
 
 func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID string, userID string) (map[string]interface{}, error) {
+	log := logger.FromContext(ctx)
 
 	// Vérifier l'authentification
-	_, err := middleware.UserFromContext(ctx)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
 	}
@@ -343,7 +370,9 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(integrationInfo.MerchantID, orderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// 2) Send realtime update
@@ -356,7 +385,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 			//TODO recherche le bon endpoint chez Uber Eats
 			//err := s.uberSvc.SetOrderStarted(ctx, integrationInfo.MerchantID, integrationInfo.BrandOrderID)
 			if err != nil {
-				log.Println("UberEats StartDelivery error:", err)
+				//log.Println("UberEats StartDelivery error:", err)
 			}
 		}()
 
@@ -364,7 +393,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 		go func() {
 			err := s.deliverooSvc.StartDeliverooDelivery(ctx, integrationInfo.BrandOrderID)
 			if err != nil {
-				log.Println("Deliveroo StartDelivery error:", err)
+				//log.Println("Deliveroo StartDelivery error:", err)
 			}
 		}()
 	}
@@ -373,6 +402,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 }
 
 func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
+	log := logger.FromContext(ctx)
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, OrderID)
@@ -396,7 +426,9 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 		return nil, fmt.Errorf("stripe cancel: %w", err)
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(orderMeta.MerchantID, OrderID))
+		key := helpers.GetRedisOrderKey(in.MerchantID, OrderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// 3) If brand is external, call integration ASYNC
@@ -445,12 +477,16 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, 
 }
 
 func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in models.ReadyForDistributionInput) error {
+	log := logger.FromContext(ctx)
+
 	// 1 → Wello local update
 	if err := s.ordersLifeCycleRepo.SetReadyForDistribution(ctx, in.OrderID, in.MerchantID); err != nil {
 		return err
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(in.MerchantID, in.OrderID))
+		key := helpers.GetRedisOrderKey(in.MerchantID, in.OrderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// 2 → Send notif
@@ -474,6 +510,12 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 }
 
 func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
+	log := logger.FromContext(ctx)
+	// 1) Auth & permissions
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
 
 	// 1 — Local DB operations
 	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
@@ -505,7 +547,9 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 		return err
 	}
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(in.MerchantID, in.OrderID))
+		key := helpers.GetRedisOrderKey(user.MerchantID, in.OrderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
 	// Send notif
@@ -554,6 +598,7 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 	if err != nil {
 		return err
 	}
+	log := logger.FromContext(ctx)
 
 	// 1. Mise à jour en base de données
 	affectedOrderIDs, err := s.ordersLifeCycleRepo.UpdateProductionStatus(ctx, user.MerchantID, req)
@@ -569,7 +614,8 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 			if !processedIDs[aOrderID] {
 				// Suppression de la clé centralisée
 				key := helpers.GetRedisOrderKey(user.MerchantID, aOrderID)
-				_ = s.redis.Delete(ctx, key)
+				s.redis.Delete(ctx, key)
+				log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 
 				processedIDs[aOrderID] = true
 			}

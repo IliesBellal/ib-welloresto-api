@@ -75,6 +75,8 @@ var (
 	ErrUserNotAllowed = errors.New("user_not_allowed")
 
 	ErrCartEmpty = errors.New("cart_is_empty")
+
+	ErrInternalServerError = errors.New("internal_server_error")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée

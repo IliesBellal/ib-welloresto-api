@@ -1,7 +1,5 @@
 package reservation
 
-import "database/sql"
-
 // Design regroupe les paramètres visuels du marchand
 type Design struct {
 	PrimaryColor            string `json:"primary_color"`
@@ -18,7 +16,7 @@ type Address struct {
 
 // Merchant représente l'entité complète du commerçant
 type Merchant struct {
-	MerchantID                    int               `json:"merchant_id"`
+	MerchantID                    string            `json:"merchant_id"`
 	Timezone                      string            `json:"timezone"`
 	LogoURL                       string            `json:"logo_url"`
 	BusinessName                  string            `json:"business_name"`
@@ -57,7 +55,7 @@ type OpenHoursResponse struct {
 type Slot struct {
 	Time      string `json:"time"`
 	Available bool   `json:"available"`
-	HOOID     int    `json:"hoo_id,omitempty"`
+	HOOID     string `json:"hoo_id,omitempty"`
 }
 
 // AvailabilityResponse est la réponse renvoyée au client
@@ -69,16 +67,16 @@ type AvailabilityResponse struct {
 
 // OperationRange représente une plage horaire étendue avec capacités
 type OperationRange struct {
-	ID               int
+	ID               string
 	HourFrom         string
 	HourTo           string
 	BookingCapacity  int
-	FirstBookingTime sql.NullString
-	LastBookingTime  sql.NullString
+	FirstBookingTime *string
+	LastBookingTime  *string
 }
 
 type BookingRequest struct {
-	MerchantID int           `json:"merchant_id"`
+	MerchantID string        `json:"merchant_id"`
 	Booking    *BookingData  `json:"booking"`
 	Customer   *CustomerData `json:"customer"`
 	CreatedBy  string        `json:"created_by"`
@@ -87,7 +85,7 @@ type BookingRequest struct {
 type BookingData struct {
 	BookingID      string `json:"booking_id"`
 	BookingNumber  string `json:"booking_number"`
-	MerchantID     int    `json:"merchant_id"`
+	MerchantID     string `json:"merchant_id"`
 	StartDate      string `json:"start_date"`
 	EndDate        string `json:"end_date"`
 	PartySize      int    `json:"party_size"`
@@ -97,8 +95,8 @@ type BookingData struct {
 }
 
 type CustomerData struct {
-	CustomerID       int      `json:"customer_id"`
-	MerchantID       int      `json:"merchant_id"`
+	CustomerID       string   `json:"customer_id"`
+	MerchantID       string   `json:"merchant_id"`
 	CustomerTel      string   `json:"customer_tel"`
 	AvailableRewards []Reward `json:"available_rewards,omitempty"`
 }
