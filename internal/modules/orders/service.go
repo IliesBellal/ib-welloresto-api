@@ -131,7 +131,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 			key := helpers.GetRedisOrderKey(user.MerchantID, id)
 			val, found, err := s.redis.Get(ctx, key)
 			if err == nil && found {
-				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠")
+				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
 				var order models.Order
 				if err := json.Unmarshal([]byte(val), &order); err == nil {
 					cacheResults[id] = order
@@ -158,7 +158,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 				key := fmt.Sprintf(models.OrdersCachePrefix+"%s:%s", user.MerchantID, o.OrderID)
 				jsonData, _ := json.Marshal(o)
 				_ = s.redis.Set(ctx, key, string(jsonData), models.OrdersCacheTTL)
-				log.Info("🧠📌 Order saved in Redis cache 📌🧠")
+				log.Info("🧠📌 Order saved in Redis cache 📌🧠 (key: " + key + ")")
 			}
 		}
 	}
@@ -196,7 +196,7 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 		if err == nil && found {
 			var resp models.PendingOrdersResponse
 			if err := json.Unmarshal([]byte(val), &resp); err == nil {
-				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠")
+				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
 				return &resp, nil
 			}
 		}
@@ -213,7 +213,7 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 			if foundInner {
 				var respInner models.PendingOrdersResponse
 				if err := json.Unmarshal([]byte(valInner), &respInner); err == nil {
-					log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠")
+					log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
 					return &respInner, nil
 				}
 			}
@@ -229,7 +229,7 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 		if resp != nil && s.redis != nil {
 			jsonData, _ := json.Marshal(resp)
 			_ = s.redis.Set(ctx, key, string(jsonData), 10*time.Minute)
-			log.Info("🧠📌 Order saved in Redis cache 📌🧠")
+			log.Info("🧠📌 Order saved in Redis cache 📌🧠 (key: " + key + ")")
 		}
 
 		return resp, nil
