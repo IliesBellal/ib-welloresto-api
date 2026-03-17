@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
 
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -127,19 +128,28 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 	for _, id := range ids {
 
 		if s.redis != nil {
-			// Format de clé : order:merchant_id:order_id
 			key := helpers.GetRedisOrderKey(user.MerchantID, id)
 			val, found, err := s.redis.Get(ctx, key)
+
 			if err == nil && found {
-				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
 				var order models.Order
-				if err := json.Unmarshal([]byte(val), &order); err == nil {
+				errUnmarshal := json.Unmarshal([]byte(val), &order)
+
+				// On vérifie qu'il n'y a pas d'erreur ET que l'objet n'est pas vide (ex: order_id existe)
+				if errUnmarshal == nil && order.OrderID != "" {
+					log.Info("🧠🙋🏻‍♂️ Order found and parsed from Redis 🙋🏻‍♂️🧠 (key: " + key + ")")
 					cacheResults[id] = order
 					continue
+				} else if errUnmarshal != nil {
+					// Optionnel : Loguer l'erreur pour comprendre pourquoi ça a planté
+					log.Warn("Failed to unmarshal Redis data, falling back to DB", zap.Error(errUnmarshal), zap.String("val", val))
+				} else {
+					// Le parsing a réussi mais l'objet est vide (ex: Wrapper ou clés incorrectes)
+					log.Warn("Redis data unmarshaled to empty struct, falling back to DB", zap.String("val", val))
 				}
 			}
 		}
-		// Si non trouvé ou erreur de désérialisation, on l'ajoute aux manquants
+		// Si ça foire, ça tombe naturellement ici
 		missingIDs = append(missingIDs, id)
 	}
 
