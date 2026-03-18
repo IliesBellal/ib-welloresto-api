@@ -133,6 +133,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 
 			if err == nil && found {
 				var order models.Order
+				log.Info("Raw Redis Value: " + val)
 				errUnmarshal := json.Unmarshal([]byte(val), &order)
 
 				// On vérifie qu'il n'y a pas d'erreur ET que l'objet n'est pas vide (ex: order_id existe)
