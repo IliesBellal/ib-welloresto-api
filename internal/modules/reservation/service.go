@@ -11,7 +11,7 @@ import (
 // ReservationService définit le contrat pour la logique métier
 type ReservationService interface {
 	GetOpenHours(ctx context.Context, qr string) OpenHoursResponse
-	GetBookingAvailability(ctx context.Context, qr string, requestedDate string, partySize int) AvailabilityResponse
+	GetBookingAvailability(ctx context.Context, qr string, requestedUnix int64, partySize int) AvailabilityResponse
 	CreateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse
 	GetReservation(ctx context.Context, qr string, bookingNumber string) CreateBookingResponse
 	UpdateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse
@@ -99,7 +99,8 @@ func formatTime(dbTime string) string {
 	return dbTime
 }
 
-func (s *reservationService) GetBookingAvailability(ctx context.Context, qr string, requestedDate string, partySize int) AvailabilityResponse {
+// Signature mise à jour : requestedUnix int64
+func (s *reservationService) GetBookingAvailability(ctx context.Context, qr string, requestedUnix int64, partySize int) AvailabilityResponse {
 	// 1. Params marchand
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
@@ -110,46 +111,48 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 		return AvailabilityResponse{Status: "maximum_party_size_reached", Error: "Maximum party size reached"}
 	}
 
-	// 2. Préparation de la date et jour de la semaine
-	t, err := time.Parse("2006-01-02", requestedDate)
-	if err != nil {
-		return AvailabilityResponse{Status: "error", Error: "Invalid date format"}
-	}
+	// 2. Préparation de la date via le timestamp Unix
+	loc, _ := time.LoadLocation(merchant.Timezone)
+	// On convertit le timestamp en heure locale du marchand
+	t := time.Unix(requestedUnix, 0).In(loc)
+
+	// On recrée la string YYYY-MM-DD pour que tes requêtes SQL continuent de fonctionner parfaitement !
+	requestedDateStr := t.Format("2006-01-02")
+
 	dayOfWeek := int(t.Weekday())
 	if dayOfWeek == 0 {
-		dayOfWeek = 7
-	} // Ajustement Dimanche pour ton format PHP (1-7)
+		dayOfWeek = 7 // Ajustement Dimanche (1-7)
+	}
 
-	// 3. Récupération data
-	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDate)
+	// 3. Récupération data (on passe requestedDateStr)
+	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDateStr)
 	if err != nil {
 		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
 	}
 
-	bookings, err := s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDate)
+	bookings, err := s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDateStr)
 	if err != nil {
 		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
 	}
 
 	// 4. Calcul de l'heure actuelle chez le marchand
-	loc, _ := time.LoadLocation(merchant.Timezone)
 	nowMerchant := time.Now().In(loc)
 
 	var allSlots []Slot
 
 	for _, r := range ranges {
-		// Parsing des bornes
-		startService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+r.HourFrom, loc)
-		endService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+r.HourTo, loc)
+		// Parsing des bornes en utilisant la date string qu'on a formatée
+		startService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourFrom, loc)
+		endService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourTo, loc)
 
 		firstBookable := startService
 		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
-			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*r.FirstBookingTime, loc)
+			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.FirstBookingTime, loc)
 		}
 
 		lastBookable := endService
 		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
-			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*r.LastBookingTime, loc)
+			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.LastBookingTime, loc)
 		}
 
 		currentSlot := firstBookable
@@ -165,7 +168,7 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 			}
 
 			if isAvailable {
-				// Vérification capacité sur la fenêtre de durée
+				// Vérification capacité
 				maxBooked := 0
 				endBookingWindow := currentSlot.Add(duration)
 
@@ -186,9 +189,12 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 			}
 
 			allSlots = append(allSlots, Slot{
-				Time:      currentSlot.Format("H:i"),
+				// FIX: "H:i" c'est pour le PHP. En Go, on utilise "15:04" pour extraire l'heure.
+				Time:      currentSlot.Format("15:04"),
 				Available: isAvailable,
 				HOOID:     r.ID,
+				// Facultatif mais très pratique pour le front :
+				// UnixTime: currentSlot.Unix(),
 			})
 
 			currentSlot = currentSlot.Add(interval)

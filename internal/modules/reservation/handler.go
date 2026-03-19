@@ -40,7 +40,7 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "application/json")
 
 	slug := chi.URLParam(r, "slug")
-	date := r.URL.Query().Get("date")
+	dateUnixStr := r.URL.Query().Get("date") // Ex: "1773784295"
 	partySizeStr := r.URL.Query().Get("party_size")
 
 	partySize, _ := strconv.Atoi(partySizeStr)
@@ -48,13 +48,15 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 		partySize = 1
 	}
 
-	if slug == "" || date == "" {
+	// Conversion de la string Unix en entier 64 bits
+	dateUnix, err := strconv.ParseInt(dateUnixStr, 10, 64)
+	if slug == "" || dateUnixStr == "" || err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(AvailabilityResponse{Status: "error", Error: "Missing parameters"})
+		json.NewEncoder(w).Encode(AvailabilityResponse{Status: "error", Error: "Missing or invalid parameters"})
 		return
 	}
 
-	response := h.svc.GetBookingAvailability(r.Context(), slug, date, partySize)
+	response := h.svc.GetBookingAvailability(r.Context(), slug, dateUnix, partySize)
 	json.NewEncoder(w).Encode(response)
 }
 

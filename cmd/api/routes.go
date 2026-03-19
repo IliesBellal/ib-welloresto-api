@@ -552,7 +552,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/rsv/{slug}", func(r chi.Router) {
 
 		r.Get("/open-hours", reservationHandler.HandleGetOpenHours)
-		r.Get("/availability", reservationHandler.HandleGetAvailability)
+		r.Get("/booking-availability", reservationHandler.HandleGetAvailability)
 		r.Post("/booking/create", reservationHandler.HandleCreateReservation)
 		r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
 		r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
