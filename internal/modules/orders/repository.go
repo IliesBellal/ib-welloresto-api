@@ -345,7 +345,56 @@ func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, or
 	return nil
 }
 
-func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
+func (r *OrdersRepository) GetHistoryIDs(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]string, error) {
+	// 1. Build WHERE
+	where := " WHERE o.merchant_id = ? AND o.state = 'CLOSED' "
+	args := []interface{}{merchantID}
+
+	if req.DateFrom != nil && req.DateTo != nil {
+		where += " AND o.creation_date BETWEEN ? AND ? "
+		args = append(args, *req.DateFrom, *req.DateTo)
+	}
+
+	// 2. Pagination
+	limit := 50
+	if req.Limit != nil && *req.Limit > 0 {
+		limit = *req.Limit
+	}
+	page := 1
+	if req.Page != nil && *req.Page > 0 {
+		page = *req.Page
+	}
+	offset := (page - 1) * limit
+
+	// 3. Query (IDs only)
+	query := `
+        SELECT o.order_id
+        FROM orders o
+    ` + where + `
+        ORDER BY o.creation_date DESC
+        LIMIT ? OFFSET ?
+    `
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orderIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		orderIDs = append(orderIDs, id)
+	}
+
+	return orderIDs, rows.Err()
+}
+
+func (r *OrdersRepository) GetHistoryOld(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
 
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS
