@@ -13,6 +13,10 @@ func CORSMiddleware() *cors.Cors {
 			"*.lovableproject.com",
 			"https://scannorder-test.lovable.app",
 
+			// RSV
+			"https://rsv-staging.onrender.com",
+			"https://rsv.onrender.com",
+
 			// Postman
 			"https://wello-resto.postman.co",
 
