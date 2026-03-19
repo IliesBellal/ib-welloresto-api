@@ -352,12 +352,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/safety_stock", posH.ToggleSafetyStockActive)
 		})
 
-		r.Route("/tags", func(r chi.Router) {
-			r.Get("/", tagsH.ListTags)
-			r.Post("/create", tagsH.CreateTag)
-			r.Delete("/{tag_id}", tagsH.DeleteTag)
-		})
-
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
 	})
 
@@ -410,6 +404,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Get("/product/{product_id}", menuH.GetProduct)
+
+		r.Route("/tags", func(r chi.Router) {
+			r.Get("/", tagsH.ListTags)
+			r.Post("/create", tagsH.CreateTag)
+			r.Delete("/{tag_id}", tagsH.DeleteTag)
+		})
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
