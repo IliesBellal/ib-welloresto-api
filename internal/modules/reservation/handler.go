@@ -52,7 +52,7 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 	// Conversion de la string Unix en entier 64 bits
 	dateUnix, err := strconv.ParseInt(dateUnixStr, 10, 64)
 	if slug == "" || dateUnixStr == "" || err != nil {
-		models.SendErrorJSON(w, http.StatusBadRequest, "Missing or invalid parameters")
+		models.SendErrorJSON(w, "rsv", "booking-availability", models.ErrInvalidInput)
 		return
 	}
 	response := h.svc.GetBookingAvailability(r.Context(), slug, dateUnix, partySize)
