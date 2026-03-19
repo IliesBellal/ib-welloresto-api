@@ -66,8 +66,6 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 		go s.sendWithoutPayload(ctx, merchantID, orderID, token, nType, accessToken, true)
 	}
 
-	log.Info("📢 Successfully sent notification for merchant " + merchantID + " order " + orderID)
-
 	return nil
 }
 
@@ -136,7 +134,7 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		log.Info("📢 Notification envoyée avec succès")
+		log.Info("📢 Notification envoyée avec succès à " + merchantID + " - " + nType + " - " + orderID + " - " + deviceToken)
 		return
 	}
 
