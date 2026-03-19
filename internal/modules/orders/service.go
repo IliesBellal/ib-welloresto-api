@@ -286,79 +286,13 @@ func (s *OrdersService) UpdateMultipleProductsStatus(ctx context.Context, req *m
 }
 
 func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.Order, error) {
-	log := logger.FromContext(ctx)
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// 1. Récupération des IDs uniquement (via le nouveau Repo GetHistoryIDs)
-	ids, err := s.ordersRepo.GetHistoryIDs(ctx, user.MerchantID, req)
-	if err != nil || len(ids) == 0 {
-		return []models.Order{}, err
-	}
-
-	var finalOrders = make([]models.Order, 0, len(ids))
-	var missingIDs []string
-	var cacheResults = make(map[string]models.Order)
-
-	// 2. Tentative Redis pour chaque ID
-	for _, id := range ids {
-		if s.redis != nil {
-			key := helpers.GetRedisOrderKey(user.MerchantID, id)
-			val, found, err := s.redis.Get(ctx, key)
-
-			if err == nil && found {
-				var order models.Order
-				// On garde la sécurité du "order.OrderID != """ pour éviter le syndrome du wrapper vide
-				if errUnmarshal := json.Unmarshal([]byte(val), &order); errUnmarshal == nil && order.OrderID != "" {
-					log.Info("🧠🙋🏻‍♂️ History Order found in Redis (key: " + key + ")")
-					cacheResults[id] = order
-					continue
-				}
-			}
-		}
-		missingIDs = append(missingIDs, id)
-	}
-
-	// 3. Fallback DB pour les commandes non présentes en cache
-	if len(missingIDs) > 0 {
-		// On utilise la fonction GetOrdersByIDs du repo que tu as déjà
-		dbOrders, err := s.ordersRepo.GetOrdersByIDs(ctx, user.MerchantID, missingIDs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch missing history orders from db: %w", err)
-		}
-
-		for _, o := range dbOrders {
-			cacheResults[o.OrderID] = o
-			if s.redis != nil {
-				// 4. Stockage dans Redis (On peut mettre un TTL plus long pour l'historique car c'est figé)
-				key := helpers.GetRedisOrderKey(user.MerchantID, o.OrderID)
-				jsonData, _ := json.Marshal(o)
-				_ = s.redis.Set(ctx, key, string(jsonData), models.OrdersCacheTTL)
-				log.Info("🧠📌 History Order cached (key: " + key + ")")
-			}
-		}
-	}
-
-	// 5. Reconstruction de la liste selon l'ordre chronologique des IDs
-	for _, id := range ids {
-		if order, exists := cacheResults[id]; exists {
-			finalOrders = append(finalOrders, order)
-		}
-	}
-
-	return finalOrders, nil
-}
-
-func (s *OrdersService) GetHistoryOld(ctx context.Context, req models.OrderHistoryRequest) ([]models.Order, error) {
 	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.ordersRepo.GetHistoryOld(ctx, user.MerchantID, req)
+	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
 }
 
 func (s *OrdersService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
