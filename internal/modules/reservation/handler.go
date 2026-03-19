@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -51,13 +52,12 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 	// Conversion de la string Unix en entier 64 bits
 	dateUnix, err := strconv.ParseInt(dateUnixStr, 10, 64)
 	if slug == "" || dateUnixStr == "" || err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(AvailabilityResponse{Status: "error", Error: "Missing or invalid parameters"})
+		models.SendErrorJSON(w, http.StatusBadRequest, "Missing or invalid parameters")
 		return
 	}
-
 	response := h.svc.GetBookingAvailability(r.Context(), slug, dateUnix, partySize)
-	json.NewEncoder(w).Encode(response)
+
+	models.SendJSON(w, http.StatusOK, "rsv", "booking-availability", response)
 }
 
 func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *http.Request) {
