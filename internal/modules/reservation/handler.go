@@ -25,8 +25,7 @@ func (h *ReservationHandler) HandleGetOpenHours(w http.ResponseWriter, r *http.R
 	// Récupération du paramètre QR (ex: /open-hours?qr=ABC)
 	slug := chi.URLParam(r, "slug")
 	if slug == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Slug is required"})
+		models.SendErrorJSON(w, "rsv", "open-hours", models.ErrInvalidInput)
 		return
 	}
 
@@ -34,7 +33,7 @@ func (h *ReservationHandler) HandleGetOpenHours(w http.ResponseWriter, r *http.R
 	response := h.svc.GetOpenHours(r.Context(), slug)
 
 	// Envoi de la réponse formatée
-	json.NewEncoder(w).Encode(response)
+	models.SendJSON(w, 200, "rsv", "update.booking", response)
 }
 
 func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *http.Request) {
@@ -67,13 +66,12 @@ func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *h
 	var req BookingRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(CreateBookingResponse{Status: "-4", Error: "Invalid JSON"})
+		models.SendErrorJSON(w, "rsv", "booking-create", models.ErrInvalidInput)
 		return
 	}
 
 	response := h.svc.CreateReservation(r.Context(), slug, req)
-	json.NewEncoder(w).Encode(response)
+	models.SendJSON(w, http.StatusOK, "rsv", "booking-create", response)
 }
 
 // GET /reservation?slug=...&number=...
@@ -81,7 +79,7 @@ func (h *ReservationHandler) HandleGetReservation(w http.ResponseWriter, r *http
 	slug := chi.URLParam(r, "slug")
 	number := r.URL.Query().Get("number")
 	resp := h.svc.GetReservation(r.Context(), slug, number)
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, 200, "rsv", "get.booking", resp)
 }
 
 // POST /reservation/update?slug=...
@@ -90,7 +88,7 @@ func (h *ReservationHandler) HandleUpdateReservation(w http.ResponseWriter, r *h
 	var req BookingRequest
 	json.NewDecoder(r.Body).Decode(&req)
 	resp := h.svc.UpdateReservation(r.Context(), slug, req)
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, 200, "rsv", "update.booking", resp)
 }
 
 // POST /reservation/cancel?slug=...&number=...
@@ -98,5 +96,5 @@ func (h *ReservationHandler) HandleCancelReservation(w http.ResponseWriter, r *h
 	slug := chi.URLParam(r, "slug")
 	number := r.URL.Query().Get("number")
 	resp := h.svc.CancelReservation(r.Context(), slug, number)
-	json.NewEncoder(w).Encode(resp)
+	models.SendJSON(w, 200, "rsv", "cancel.booking", resp)
 }
