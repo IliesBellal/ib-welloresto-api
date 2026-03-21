@@ -602,7 +602,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		q := `
 	SELECT
 		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
-		o.brand, o.brand_status, o.brand_order_id, o.brand_order_num,
+		o.brand, o.merchant_id, o.brand_status, o.brand_order_id, o.brand_order_num,
 		o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
 		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery,
@@ -649,7 +649,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
 				meansOfPayment, monnaie, cutleryNotes, dateCall,
-				fulfillmentType, pagerNumber, merchantApproval, userID, customerBrand sql.NullString
+				fulfillmentType, pagerNumber, merchantApproval, userID, customerBrand, merchantID sql.NullString
 
 			var customerLat, customerLng, customerTemporaryLat,
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
@@ -665,7 +665,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			if err := rows.Scan(
 				&orderID, &orderNum, &orderType, &state, &scheduled,
-				&brand, &brandStatus, &brandOrderID, &brandOrderNum,
+				&brand, &merchantID, &brandStatus, &brandOrderID, &brandOrderNum,
 				&estimatedReady, &meansOfPayment, &price, &TVA, &HT,
 				&monnaie, &cutleryNotes,
 				&isPaid, &isDistributed, &dateCall, &isDelivery,
@@ -689,6 +689,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			// --- Mapping Order ---
 			ord.OrderID = orderID.String
+			ord.MerchantID = &merchantID.String
 			ord.OrderNum = helpers.NullStringToPtr(orderNum)
 			ord.Brand = helpers.NullStringToPtr(brand)
 			ord.BrandOrderID = helpers.NullStringToPtr(brandOrderID)
@@ -705,7 +706,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.PagerNumber = helpers.NullStringToPtr(pagerNumber)
 			ord.IsPaid = isPaid.Bool
 			ord.IsDistributed = isDistributed.Bool
-			ord.IsSNO = userID.String == "-1"
+			ord.IsSNO = userID.String == "SCANNORDER"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
 			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
 			ord.IsDelivery = int(isDelivery.Int64)
