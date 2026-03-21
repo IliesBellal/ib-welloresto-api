@@ -75,18 +75,18 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 			return err
 		}
 
-		// 3. Snapshot APRÈS
-		var newOrder interface{}
-		newOrders, errAfter := s.ordersService.ComputeGetOrder(txCtx, MerchantID, orderID)
-		if errAfter == nil && len(newOrders.Orders) > 0 {
-			newOrder = newOrders.Orders[0]
-		}
-
 		// 4. Nettoyage Cache Redis (dans la transaction)
 		if s.redis != nil {
 			key := helpers.GetRedisOrderKey(MerchantID, orderID)
 			s.redis.Delete(txCtx, key) // Note: ctx ou txCtx, Redis s'en fiche un peu, mais Delete est synchrone
 			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
+		// 3. Snapshot APRÈS
+		var newOrder interface{}
+		newOrders, errAfter := s.ordersService.ComputeGetOrder(txCtx, MerchantID, orderID)
+		if errAfter == nil && len(newOrders.Orders) > 0 {
+			newOrder = newOrders.Orders[0]
 		}
 
 		// 5. Enregistrement Audit sécurisé (Chaîné)
