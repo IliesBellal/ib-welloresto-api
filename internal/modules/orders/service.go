@@ -127,7 +127,7 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 
 	log := logger.FromContext(ctx)
 
-	// 1. On récupère les IDs des commandes en cours (Requête SQL légère)
+	// 1. Récupération des IDs
 	ids, err := s.GetPendingOrderIDs(ctx, app)
 	if err != nil || len(ids) == 0 {
 		return &models.PendingOrdersResponse{Orders: []models.Order{}}, err
@@ -137,9 +137,8 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 	var missingIDs []string
 	var cacheResults = make(map[string]models.Order)
 
-	// 2. Tentative de récupération depuis Redis pour chaque ID
+	// 2. Tentative depuis Redis (On attend bien un modèle Order)
 	for _, id := range ids {
-
 		if s.redis != nil {
 			key := helpers.GetRedisOrderKey(user.MerchantID, id)
 			val, found, err := s.redis.Get(ctx, key)
@@ -148,45 +147,41 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 				var order models.Order
 				errUnmarshal := json.Unmarshal([]byte(val), &order)
 
-				// On vérifie qu'il n'y a pas d'erreur ET que l'objet n'est pas vide (ex: order_id existe)
 				if errUnmarshal == nil && order.OrderID != "" {
 					log.Info("🧠🙋🏻‍♂️ Order found and parsed from Redis 🙋🏻‍♂️🧠 (key: " + key + ")")
 					cacheResults[id] = order
 					continue
 				} else if errUnmarshal != nil {
-					// Optionnel : Loguer l'erreur pour comprendre pourquoi ça a planté
 					log.Warn("Failed to unmarshal Redis data, falling back to DB", zap.Error(errUnmarshal), zap.String("val", val))
 				} else {
-					// Le parsing a réussi mais l'objet est vide (ex: Wrapper ou clés incorrectes)
 					log.Warn("Redis data unmarshaled to empty struct, falling back to DB", zap.String("val", val))
 				}
 			}
 		}
-		// Si ça foire, ça tombe naturellement ici
 		missingIDs = append(missingIDs, id)
 	}
 
-	// 3. Récupération des commandes manquantes depuis la DB
+	// 3. Récupération DB pour les manquants
 	if len(missingIDs) > 0 {
 		dbOrders, err := s.GetOrdersByIDs(ctx, missingIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch missing orders from db: %w", err)
 		}
 
+		// 4. Stockage dans Redis (avec la MÊME clé structurée)
 		for _, o := range dbOrders {
 			cacheResults[o.OrderID] = o
 			if s.redis != nil {
-
-				// 4. Stockage dans Redis pour la prochaine fois (ex: TTL de 15 minutes)
-				key := fmt.Sprintf(models.OrdersCachePrefix+"%s:%s", user.MerchantID, o.OrderID)
+				// Utilisation exclusive du helper pour la clé !
+				key := helpers.GetRedisOrderKey(user.MerchantID, o.OrderID)
 				jsonData, _ := json.Marshal(o)
-				_ = s.redis.Set(ctx, key, string(jsonData), models.OrdersCacheTTL)
+				_ = s.redis.Set(ctx, key, string(jsonData), 10*time.Minute) // J'ai aligné le TTL à 10 min, à adapter
 				log.Info("🧠📌 Order saved in Redis cache 📌🧠 (key: " + key + ")")
 			}
 		}
 	}
 
-	// 5. Reconstruction de la liste finale dans l'ordre original des IDs
+	// 5. Reconstruction dans l'ordre
 	for _, id := range ids {
 		if order, exists := cacheResults[id]; exists {
 			finalOrders = append(finalOrders, order)
@@ -209,48 +204,50 @@ func (s *OrdersService) GetPendingOrdersOld(ctx context.Context, app string) (*m
 }
 
 func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID string) (*models.PendingOrdersResponse, error) {
-	// Clé unique pour Redis et Singleflight
 	key := helpers.GetRedisOrderKey(merchantID, orderID)
 	log := logger.FromContext(ctx)
 
-	// 1. TENTATIVE RAPIDE : On regarde directement dans Redis
+	// 1. TENTATIVE RAPIDE : On cherche un *models.Order* pur dans Redis
 	if s.redis != nil {
 		val, found, err := s.redis.Get(ctx, key)
 		if err == nil && found {
-			var resp models.PendingOrdersResponse
-			if err := json.Unmarshal([]byte(val), &resp); err == nil {
+			var order models.Order
+			if err := json.Unmarshal([]byte(val), &order); err == nil && order.OrderID != "" {
 				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
-				return &resp, nil
+				// On reconstruit le wrapper de réponse à la volée
+				return &models.PendingOrdersResponse{
+					Orders: []models.Order{order},
+				}, nil
 			}
 		}
 	}
 
-	// 2. PROTECTION SINGLEFLIGHT : On évite que plusieurs requêtes identiques tapent la DB
-	// res : contiendra le résultat (interface{}), err : l'erreur, shared : vrai si le résultat a été partagé
+	// 2. PROTECTION SINGLEFLIGHT
 	res, err, _ := s.sfGroup.Do(key, func() (interface{}, error) {
-
-		// 3. DOUBLE-CHECK : On revérifie Redis à l'intérieur du verrou Singleflight
-		// Utile si une requête concurrente vient juste de remplir le cache pendant qu'on attendait le verrou.
+		// 3. DOUBLE-CHECK Redis
 		if s.redis != nil {
 			valInner, foundInner, _ := s.redis.Get(ctx, key)
 			if foundInner {
-				var respInner models.PendingOrdersResponse
-				if err := json.Unmarshal([]byte(valInner), &respInner); err == nil {
-					log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
-					return &respInner, nil
+				var orderInner models.Order
+				if err := json.Unmarshal([]byte(valInner), &orderInner); err == nil && orderInner.OrderID != "" {
+					log.Info("🧠🙋🏻‍♂️ Order found in Redis cache (SF) 🙋🏻‍♂️🧠 (key: " + key + ")")
+					return &models.PendingOrdersResponse{
+						Orders: []models.Order{orderInner},
+					}, nil
 				}
 			}
 		}
 
-		// 4. APPEL RÉEL (DATABASE) : C'est ici qu'on fait le travail lourd
+		// 4. APPEL RÉEL (DATABASE)
 		resp, err := s.ordersRepo.GetOrder(ctx, merchantID, orderID)
 		if err != nil {
 			return nil, err
 		}
 
-		// 5. MISE EN CACHE : On stocke le résultat pour les prochains appels (TTL 10 min)
-		if resp != nil && s.redis != nil {
-			jsonData, _ := json.Marshal(resp)
+		// 5. MISE EN CACHE DE L'ENTITÉ PURE : On extrait l'Order du wrapper pour le stocker
+		if resp != nil && len(resp.Orders) > 0 && s.redis != nil {
+			orderToCache := resp.Orders[0] // On isole la commande
+			jsonData, _ := json.Marshal(orderToCache)
 			_ = s.redis.Set(ctx, key, string(jsonData), 10*time.Minute)
 			log.Info("🧠📌 Order saved in Redis cache 📌🧠 (key: " + key + ")")
 		}
@@ -262,7 +259,6 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 		return nil, err
 	}
 
-	// On cast le résultat du singleflight vers le type attendu
 	return res.(*models.PendingOrdersResponse), nil
 }
 
