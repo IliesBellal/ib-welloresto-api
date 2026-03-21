@@ -98,6 +98,7 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 
 func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 1. Trouver cash_register_id
 	var cashRegisterID sql.NullString
@@ -113,7 +114,8 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 		cashRegisterID.String = req.DeviceID
 		cashRegisterID.Valid = true
 	} else if err != nil {
-		return err // Plus de rollback manuel !
+		log.Error("Error in sql " + err.Error())
+		return err
 	}
 
 	// 2. Vérification du montant (Paiement total déjà effectué ?)
@@ -127,6 +129,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
     `, req.OrderID).Scan(&totalPrice, &alreadyPaid)
 
 	if err != nil {
+		log.Error("Error in sql " + err.Error())
 		return fmt.Errorf("failed to check order payment status: %w", err)
 	}
 
@@ -164,6 +167,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
     `, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, now, userID, req.StatusCheck, prevHash.String, newHash, signature)
 
 	if err != nil {
+		log.Error("Error in sql " + err.Error())
 		return err
 	}
 
@@ -176,6 +180,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
             VALUES (?, ?, ?)
         `, merchantID, paymentID, req.Code)
 		if err != nil {
+			log.Error("Error in sql " + err.Error())
 			return err
 		}
 	}
