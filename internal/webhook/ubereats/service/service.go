@@ -4,16 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/notification"
 
+	models "welloresto-api/internal/models"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/ubereats"
 	ueClient "welloresto-api/internal/webhook/ubereats/client"
-	"welloresto-api/internal/webhook/ubereats/models"
+	modelsUber "welloresto-api/internal/webhook/ubereats/models"
 	"welloresto-api/internal/webhook/ubereats/repository"
 )
 
@@ -32,6 +35,7 @@ type Service struct {
 	orderLifeCycleSvc    *order_life_cycle.OrdersLifeCycleService
 	notificationsService *notification.NotificationService
 	db                   *sql.DB
+	redis                *redis.Client // Optionnel, pour le caching
 }
 
 type ProductMappingRepository interface {
@@ -69,6 +73,7 @@ func NewService(
 	menuService *menu.MenuService,
 	orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService,
 	notificationService *notification.NotificationService,
+	redis *redis.Client,
 ) *Service {
 	return &Service{
 		db:                   db,
@@ -83,28 +88,40 @@ func NewService(
 		orderLifeCycleSvc:    orderLifeCycleSvc,
 		notificationsService: notificationService,
 		systemToken:          systemToken,
+		redis:                redis,
 	}
 }
 
-func (s *Service) ProcessEvent(ctx context.Context, event models.UberWebhookEvent) error {
-
+func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhookEvent) error {
 	log := logger.FromContext(ctx)
 
-	switch event.EventType {
+	// ==========================================
+	// 1. IDEMPOTENCE REDIS (1 Heure)
+	// On crée une clé unique basée sur l'event, la ressource et le statut
+	// ==========================================
+	if s.redis != nil {
+		eventKey := helpers.GetWebhookUberEventKey(event.EventType, event.Meta.ResourceID, event.Meta.Status)
+		_, found, err := s.redis.Get(ctx, eventKey)
+		if err == nil && found {
+			log.Warn("[UBER EATS] Event already processed (Redis cache), skipping:" + eventKey)
+			return nil // On renvoie nil pour valider la réception auprès d'Uber
+		}
+		// On marque l'event comme traité immédiatement
+		_ = s.redis.Set(ctx, eventKey, "processed", models.WebhookUberEatsEventTTL)
+	}
 
+	switch event.EventType {
 	case "orders.notification":
 		return s.handleOrderNotification(ctx, event)
 
 	case "orders.cancel":
 		return s.HandleOrderCanceled(ctx, event.Meta.ResourceID)
 
-	case "delivery.state_changed":
-		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
-	case "delivery.status":
+	case "delivery.state_changed", "delivery.status":
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
 
 	default:
-		log.Error("[UBER EATS] Unhandled event type: %s" + event.EventType)
+		log.Error("[UBER EATS] Unhandled event type: " + event.EventType)
 		return nil
 	}
 }

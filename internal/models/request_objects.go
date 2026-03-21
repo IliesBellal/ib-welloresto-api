@@ -149,8 +149,8 @@ type MOPLine struct {
 }
 
 type AddCustomItemRequest struct {
-	Label string  `json:"label"`
-	Value float64 `json:"value"`
+	Label string `json:"label"`
+	Value int    `json:"value"`
 }
 
 type EncloseCashRegisterRequest struct {

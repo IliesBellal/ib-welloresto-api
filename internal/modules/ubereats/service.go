@@ -3,10 +3,12 @@ package ubereats
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"time"
+	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 
@@ -18,14 +20,16 @@ type UberEatsService struct {
 	repo   *UberRepository
 	db     *sql.DB // Nécessaire pour gérer les transactions (Begin/Commit)
 	config ConfigUberEats
+	redis  *redis.Client // Optionnel, pour le caching
 }
 
-func NewUberEatsService(db *sql.DB, config ConfigUberEats) *UberEatsService {
+func NewUberEatsService(db *sql.DB, config ConfigUberEats, redisClient *redis.Client) *UberEatsService {
 	return &UberEatsService{
 		client: NewUberClient(config),
 		repo:   NewUberEatsRepository(db),
 		db:     db,
 		config: config,
+		redis:  redisClient,
 	}
 }
 
@@ -85,8 +89,26 @@ func (s *UberEatsService) GetOrderByURL(tx *sql.Tx, url string) (*ueModels.UberO
 }
 
 func (s *UberEatsService) GetByStoreID(tx *sql.Tx, storeID string) (*Store, error) {
+	// Pas de ctx dans ta signature, on utilise Background() pour Redis
+	ctx := context.Background()
 
-	// 1. Récupérer le store et le token
+	// ==========================================
+	// 1. CACHE REDIS ETABLISSEMENT (24 Heures)
+	// ==========================================
+	cacheKey := fmt.Sprintf("webhook:uber:store:%s", storeID)
+
+	if s.redis != nil {
+		val, found, err := s.redis.Get(ctx, cacheKey)
+		if err == nil && found {
+			var store Store
+			// Sécurité : On vérifie que la désérialisation fonctionne et que l'objet n'est pas vide
+			if errUnmarshal := json.Unmarshal([]byte(val), &store); errUnmarshal == nil {
+				return &store, nil
+			}
+		}
+	}
+
+	// 2. Fallback DB : Récupérer le store et le token
 	merchantID, err := s.repo.GetMerchantIDFromStoreID(tx, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
@@ -95,10 +117,18 @@ func (s *UberEatsService) GetByStoreID(tx *sql.Tx, storeID string) (*Store, erro
 		return nil, fmt.Errorf("No store " + storeID)
 	}
 
-	// 2. Récupérer le store
+	// 3. Récupérer le store
 	store, err := s.repo.GetStoreData(tx, *merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
+	}
+
+	// ==========================================
+	// 4. SAUVEGARDE REDIS
+	// ==========================================
+	if s.redis != nil && store != nil {
+		jsonData, _ := json.Marshal(store)
+		_ = s.redis.Set(ctx, cacheKey, string(jsonData), 24*time.Hour)
 	}
 
 	return store, nil

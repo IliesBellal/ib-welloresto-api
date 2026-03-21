@@ -8,17 +8,19 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type CustomersRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewCustomerRepository(db *sql.DB) *CustomersRepository {
-	return &CustomersRepository{db: db}
+	return &CustomersRepository{database: db}
 }
 
-func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sql.Tx, c *models.Customer) (*string, error) {
+func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *models.Customer) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	// Liste des colonnes vraiment existantes et autorisées
 	allowed := map[string]bool{
@@ -74,7 +76,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
         `
 		args = append(args, *c.CustomerID, c.MerchantID)
 
-		_, err := tx.ExecContext(ctx, query, args...)
+		_, err := db.ExecContext(ctx, query, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -106,14 +108,12 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, tx *sq
         INSERT INTO customer (` + strings.Join(cols, ", ") + `)
         VALUES (` + strings.Join(placeholders, ", ") + `)
     `
-	res, err := tx.ExecContext(ctx, query, values...)
+	res, err := db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := res.LastInsertId()
-	// DO NOT COMMIT OTHERWISE ORDER CREATION WILL NOT WORK
-	// tx.Commit()
 
 	return helpers.Int64ToStringPtr(id), nil
 }
@@ -219,12 +219,12 @@ func getStringField(c *models.Customer, name string) *string {
 	return nil
 }
 
-func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID string) (*CustomerLoyalty, error) {
+func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID, merchantID string) (*CustomerLoyalty, error) {
 
 	loyalty := &CustomerLoyalty{}
 
 	// progress
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.database.QueryContext(ctx, `
         SELECT 
             p.id, 
             COALESCE(clp.current_value, 0), 
@@ -236,8 +236,8 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
         FROM customer c
         INNER JOIN customer_loyalty_programs p ON p.merchant_id = c.merchant_id
         LEFT JOIN customer_loyalty_progress clp ON clp.loyalty_program_id = p.id AND clp.customer_id = c.customer_id
-        WHERE c.customer_id = ?
-    `, customerID)
+        WHERE c.customer_id = ? AND c.merchant_id = ? AND p.enabled = 1
+    `, customerID, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 	}
 
 	// rewards
-	rows2, err := r.db.QueryContext(ctx, `
+	rows2, err := r.database.QueryContext(ctx, `
         SELECT cr.customer_id, cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value, cr.is_used
         FROM customer_rewards cr
         WHERE cr.customer_id = ?
@@ -289,9 +289,9 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 	return loyalty, nil
 }
 
-func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest) (int, error) {
+func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -306,8 +306,8 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	err = tx.QueryRowContext(ctx, `
         SELECT target_value, reward_type, reward_value, rewards_order_type
         FROM customer_loyalty_programs
-        WHERE id = ?
-    `, req.LoyaltyProgramID).Scan(&targetValue, &rewardType, &rewardValue, &rewardOrderType)
+        WHERE id = ? AND merchant_id = ? AND enabled = 1
+    `, req.LoyaltyProgramID, merchantID).Scan(&targetValue, &rewardType, &rewardValue, &rewardOrderType)
 	if err != nil {
 		return 0, err
 	}
@@ -367,13 +367,14 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	return rewardToCreate, nil
 }
 
-func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *LoyaltyRewardUpdateRequest) error {
+func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *LoyaltyRewardUpdateRequest, merchantID string) error {
+	// TODO : Vérifier que la reward appartient bien au client et au marchand avant de l'updater (sécurité)
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.database.ExecContext(ctx, `
         UPDATE customer_rewards
         SET is_used = ?, usage_date = UTC_TIMESTAMP
-        WHERE reward_id = ?
-    `, req.IsUsed, req.RewardID)
+        WHERE reward_id = ? AND customer_id IN (SELECT customer_id FROM customers WHERE merchant_id = ? AND enabled = 1)
+    `, req.IsUsed, req.RewardID, merchantID)
 
 	return err
 }
@@ -383,7 +384,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	likeTerm := "%" + term + "%"
 	var results []CustomerSearchResult
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.database.QueryContext(ctx, `
     SELECT 
         customer_id,
         customer_name,
@@ -516,7 +517,7 @@ func computeScore(term string, c *CustomerSearchResult) int {
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.database.ExecContext(ctx, `
         UPDATE customer_rewards
         SET is_used = false,
             usage_date = NULL,
@@ -531,7 +532,7 @@ func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID str
 func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderID string) error {
 	log := logger.FromContext(ctx)
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

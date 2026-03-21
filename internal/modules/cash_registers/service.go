@@ -4,28 +4,21 @@ import (
 	"context"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
 )
 
 type CashRegisterService struct {
 	cashRegisterRepo *CashRegisterRepository
-	userRepo         auth.AuthService
 }
 
-func NewCashRegisterService(cashRegisterRepo *CashRegisterRepository, userRepo auth.AuthService) *CashRegisterService {
+func NewCashRegisterService(cashRegisterRepo *CashRegisterRepository) *CashRegisterService {
 	return &CashRegisterService{
 		cashRegisterRepo: cashRegisterRepo,
-		userRepo:         userRepo,
 	}
 }
 
 func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string, req *models.OpenCashRegisterRequest) (*models.CashRegisterOpenResponse, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -37,12 +30,8 @@ func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string
 }
 
 func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token string, cashRegisterID string, req *models.CloseCashRegisterRequest) (map[string]interface{}, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -51,12 +40,8 @@ func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token strin
 }
 
 func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterSummaryResponse, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -64,12 +49,8 @@ func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token 
 }
 
 func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterDetails, error) {
-
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -77,15 +58,12 @@ func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, tok
 }
 
 func (s *CashRegisterService) AddCustomItem(ctx context.Context, token string, id string, req *models.AddCustomItemRequest) (interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	itemID, err := s.cashRegisterRepo.AddCustomItem(ctx, id, req.Label, req.Value)
+	itemID, err := s.cashRegisterRepo.AddCustomItem(ctx, id, req, user)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
 			return map[string]interface{}{"status": "-1", "error": "Cash register " + id + " closed."}, nil
@@ -100,15 +78,12 @@ func (s *CashRegisterService) AddCustomItem(ctx context.Context, token string, i
 }
 
 func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, token string, id string, itemID string) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	err = s.cashRegisterRepo.DeleteCustomItem(ctx, id, itemID)
+	err = s.cashRegisterRepo.DeleteCustomItem(ctx, id, itemID, user)
 	if err != nil {
 		if err.Error() == "cash_register_closed" {
 			return map[string]interface{}{"status": "-1", "error": "Cash register " + id + " closed."}, nil
@@ -119,11 +94,8 @@ func (s *CashRegisterService) DeleteCustomItem(ctx context.Context, token string
 }
 
 func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token, comment string) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 

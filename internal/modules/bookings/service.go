@@ -2,77 +2,87 @@ package bookings
 
 import (
 	"context"
-	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
+	"database/sql"
+	"fmt"
+	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type BookingsService struct {
-	repo     *BookingsRepository
-	userRepo auth.AuthService
+	repo *BookingsRepository
+	db   *sql.DB // Ajout d'une référence à la DB pour les transactions
 }
 
-func NewBookingsService(repo *BookingsRepository, _userRepo auth.AuthService) *BookingsService {
-	return &BookingsService{repo: repo, userRepo: _userRepo}
+func NewBookingsService(repo *BookingsRepository, db *sql.DB) *BookingsService {
+	return &BookingsService{repo: repo, db: db}
 }
 
 func (s *BookingsService) GetBookings(ctx context.Context, token string, req *BookingObjectRequest) ([]Booking, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
-	}
+
 	req.MerchantID = user.MerchantID
 
 	return s.repo.GetBookings(ctx, req)
 }
 
 func (s *BookingsService) GetBookingByID(ctx context.Context, token, bookingID string) (*Booking, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
-	}
+
 	return s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
 }
 
-func (s *BookingsService) CreateBooking(ctx context.Context, token string, req *BookingObjectRequest) (*Booking, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+func (s *BookingsService) CreateBooking(ctx context.Context, req *BookingObjectRequest) (*Booking, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	req.MerchantID = user.MerchantID
 
-	// 2️⃣ Create booking
-	bookingID, err := s.repo.CreateBooking(ctx, req)
+	// Variable pour stocker le résultat final hors de la closure
+	var result *Booking
+
+	// 2️⃣ Lancement de la transaction
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+
+		// 3️⃣ Création du booking (utilise le txCtx pour propager la transaction)
+		bookingID, err := s.repo.CreateBooking(txCtx, req)
+		if err != nil {
+			return fmt.Errorf("repo.CreateBooking failed: %w", err)
+		}
+
+		// 4️⃣ Rechargement du booking complet
+		// On le fait à l'intérieur de la transaction pour être sûr de lire
+		// ce qu'on vient d'écrire (isolation)
+		result, err = s.repo.GetBookingByID(txCtx, req.MerchantID, bookingID)
+		if err != nil {
+			return fmt.Errorf("repo.GetBookingByID failed: %w", err)
+		}
+
+		return nil // Si tout est OK, RunInTx fera le Commit
+	})
+
+	// Si err != nil ici, RunInTx a déjà fait le Rollback
 	if err != nil {
 		return nil, err
 	}
 
-	// 3️⃣ Reload booking using Fetcher (like PHP getBookings)
-	result, err := s.repo.GetBookingByID(ctx, req.MerchantID, bookingID)
-	if err != nil {
-		return nil, err
-	}
+	// 5️⃣ Optionnel : Envoi d'email (Hors transaction car c'est un effet de bord externe)
+	// s.sendBookingConfirmation(result)
 
-	// 4️⃣ Email sending will be added later
 	return result, nil
 }
 
 func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID string) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	// 1️⃣ Update booking state
@@ -96,12 +106,9 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 }
 
 func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID string) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	err = s.repo.SetBookingState(ctx, bookingID, "DENIED")
@@ -121,12 +128,9 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 }
 
 func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, date string) (*BookingAvailabilityResponse, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.repo.GetBookingAvailability(ctx, user.MerchantID, date)

@@ -11,7 +11,6 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/delivery_sessions"
@@ -26,7 +25,6 @@ type OrdersLifeCycleService struct {
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository
 	uberSvc              *ubereats.UberEatsService
 	deliverooSvc         *deliveroo.DeliverooService
-	userRepo             auth.AuthService
 	log                  *zap.Logger
 	notificationsService *notification.NotificationService
 	stripeManager        *stripeclient.StripeManager
@@ -35,12 +33,11 @@ type OrdersLifeCycleService struct {
 }
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
-	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, userRepo auth.AuthService,
+	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository,
 	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
-		userRepo:             userRepo,
 		uberSvc:              uberSvc,
 		deliverooSvc:         deliverooSvc,
 		log:                  log,
@@ -95,9 +92,6 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 }
 
 func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID string) error {
-	//log := logger.FromContext(ctx)
-
-	// 1) Auth
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -109,12 +103,12 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 }
 
 func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
-	log := logger.FromContext(ctx)
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// user.MerchantID et user.UserID sont récupérés depuis le contexte
 
@@ -131,12 +125,12 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 }
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
-	log := logger.FromContext(ctx)
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// sécurité : orderID dans l’URL > orderID dans req
 	req.OrderID = orderID
@@ -164,13 +158,12 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string
 }
 
 func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, paymentID string) error {
-	log := logger.FromContext(ctx)
-
-	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// 1) Récupérer les informations du paiement
 	paymentIntID, err := strconv.ParseInt(paymentID, 10, 64)
@@ -213,12 +206,12 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 }
 
 func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
-	log := logger.FromContext(ctx)
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	log := logger.FromContext(ctx)
 
 	err = s.ordersLifeCycleRepo.SetDistributedProducts(ctx, user.UserID, user.MerchantID, req)
 	if err != nil {
@@ -254,12 +247,12 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 }
 
 func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
-	log := logger.FromContext(ctx)
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	log := logger.FromContext(ctx)
 
 	err = s.ordersLifeCycleRepo.MarkProductsBackToProduction(ctx, user.UserID, user.MerchantID, orderID, req.Products)
 	if err != nil {
@@ -356,13 +349,12 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string
 }
 
 func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID string, userID string) (map[string]interface{}, error) {
-	log := logger.FromContext(ctx)
-
-	// Vérifier l'authentification
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// 1) Update Wello DB
 	integrationInfo, err := s.ordersLifeCycleRepo.MarkOrderAsDeliveryStarted(ctx, orderID, userID)
@@ -477,7 +469,14 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, 
 }
 
 func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in models.ReadyForDistributionInput) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
 	log := logger.FromContext(ctx)
+
+	in.UserID = user.UserID
+	in.MerchantID = user.MerchantID
 
 	// 1 → Wello local update
 	if err := s.ordersLifeCycleRepo.SetReadyForDistribution(ctx, in.OrderID, in.MerchantID); err != nil {
@@ -510,12 +509,12 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 }
 
 func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
-	log := logger.FromContext(ctx)
-	// 1) Auth & permissions
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// 1 — Local DB operations
 	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
@@ -581,7 +580,6 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 }
 
 func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err

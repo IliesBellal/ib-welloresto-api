@@ -5,25 +5,21 @@ import (
 	"errors"
 	"strconv"
 	"time"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
 )
 
 type POSService struct {
-	posRepo  *POSRepository
-	userRepo auth.AuthService
+	posRepo *POSRepository
 }
 
-func NewPOSService(u auth.AuthService, p *POSRepository) *POSService {
-	return &POSService{userRepo: u, posRepo: p}
+func NewPOSService(p *POSRepository) *POSService {
+	return &POSService{posRepo: p}
 }
 
 func (s *POSService) GetPOSStatus(ctx context.Context, token string) (*models.POSStatus, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -31,11 +27,8 @@ func (s *POSService) GetPOSStatus(ctx context.Context, token string) (*models.PO
 }
 
 func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status bool) (*models.POSStatus, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -56,11 +49,8 @@ func (s *POSService) GetDeletionReasons(ctx context.Context, object string) ([]m
 }
 
 func (s *POSService) ToggleScanNOrder(ctx context.Context, token, status string) (int64, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return 0, err
-	}
-	if user == nil {
 		return 0, models.ErrUnauthorized
 	}
 
@@ -68,11 +58,8 @@ func (s *POSService) ToggleScanNOrder(ctx context.Context, token, status string)
 }
 
 func (s *POSService) ToggleProductionPaidOnly(ctx context.Context, token, status string) (int64, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return 0, err
-	}
-	if user == nil {
 		return 0, models.ErrUnauthorized
 	}
 
@@ -80,11 +67,8 @@ func (s *POSService) ToggleProductionPaidOnly(ctx context.Context, token, status
 }
 
 func (s *POSService) GetTVARates(ctx context.Context, token string) ([]ConsumptionType, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -92,11 +76,8 @@ func (s *POSService) GetTVARates(ctx context.Context, token string) ([]Consumpti
 }
 
 func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string) (int64, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return 0, err
-	}
-	if user == nil {
 		return 0, models.ErrUnauthorized
 	}
 
@@ -104,11 +85,8 @@ func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string
 }
 
 func (s *POSService) GetDeliveryMen(ctx context.Context, token string) ([]models.DeliveryMan, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -116,13 +94,8 @@ func (s *POSService) GetDeliveryMen(ctx context.Context, token string) ([]models
 }
 
 func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.TRCheckResponse, error) {
-
-	// 1) Authentication
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	_, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 
@@ -205,13 +178,8 @@ func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.T
 }
 
 func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, req *models.UpdateMerchantSettingsRequest) error {
-
-	// 1) Authentication
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return err
-	}
-	if user == nil {
 		return models.ErrUnauthorized
 	}
 
@@ -219,13 +187,8 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 }
 
 func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*models.MerchantSettingsResponse, error) {
-
-	// 1) Authentication
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if user == nil {
 		return nil, models.ErrUnauthorized
 	}
 

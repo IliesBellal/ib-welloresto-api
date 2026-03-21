@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/notification"
@@ -212,12 +210,6 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		http.Error(w, `{"status":"-1","error":"missing token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	orderID := chi.URLParam(r, "order_id")
 	if orderID == "" {
 		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "set_ready_for_distribution", map[string]string{"error": "missing_parameter"})
@@ -231,9 +223,7 @@ func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, 
 	}
 
 	err := h.ordersLifeCycleService.SetReadyForDistribution(r.Context(), models.ReadyForDistributionInput{
-		OrderID:    orderID,
-		MerchantID: req.MerchantID,
-		UserID:     req.UserID,
+		OrderID: orderID,
 	})
 
 	if err != nil {

@@ -2,8 +2,10 @@ package deliveroo_orders
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
+	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/deliveroo"
 
@@ -19,18 +21,114 @@ type DeliverooService struct {
 	ordersService    *orders.OrdersService
 	lifecycleService *order_life_cycle.OrdersLifeCycleService
 	httpClient       *deliveroo.DeliverooService
+	redis            *redis.Client // Optionnel, pour le caching global d'idempotence
 }
 
-func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *order_life_cycle.OrdersLifeCycleService, deliverooInternalService *deliveroo.DeliverooService) *DeliverooService {
+func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *order_life_cycle.OrdersLifeCycleService, deliverooInternalService *deliveroo.DeliverooService, redisClient *redis.Client) *DeliverooService {
 	return &DeliverooService{
 		repo:             repo,
 		ordersService:    ordSvc,
 		lifecycleService: lcSvc,
 		httpClient:       deliverooInternalService,
+		redis:            redisClient,
 	}
 }
 
 func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload DeliverooWebhookPayload) error {
+	log := logger.FromContext(ctx)
+
+	// 1. VÉRIFICATION IMMÉDIATE DB (Idempotence de secours en cas de flush Redis)
+	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, "DELIVEROO", payload.Body.Order.ID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		log.Info("[DELIVEROO] Order already processed (DB Match), skipping:" + payload.Body.Order.ID)
+		return nil
+	}
+
+	ord := payload.Body.Order
+
+	// ==========================================
+	// 2. CACHE REDIS ETABLISSEMENT (24 Heures)
+	// ==========================================
+	var merchantData *MerchantData // Remplace par ton modèle exact
+	cacheKey := fmt.Sprintf("webhook:deliveroo:location:%s", ord.LocationID)
+
+	if s.redis != nil {
+		val, found, err := s.redis.Get(ctx, cacheKey)
+		if err == nil && found {
+			_ = json.Unmarshal([]byte(val), &merchantData)
+		}
+	}
+
+	// Fallback DB si l'établissement n'est pas en cache
+	if merchantData == nil {
+		merchantData, err = s.repo.GetMerchantByLocationID(ctx, ord.LocationID)
+		if err != nil {
+			return err
+		}
+
+		// Sauvegarde dans Redis pour les prochains appels
+		if s.redis != nil && merchantData != nil {
+			jsonData, _ := json.Marshal(merchantData)
+			_ = s.redis.Set(ctx, cacheKey, string(jsonData), 24*time.Hour)
+		}
+	}
+
+	// 3. Calcul du numéro de commande
+	orderNum, err := s.repo.GetNextOrderNum(ctx, merchantData.MerchantID)
+	if err != nil {
+		return err
+	}
+
+	// 4. Préparer les produits et options (Sync) & Construire le payload
+	productsPayload, err := s.buildProductsPayload(ctx, merchantData.MerchantID, ord.Items)
+	if err != nil {
+		return err
+	}
+
+	// 5. Mapping Client & Adressage
+	customerReq, err := s.buildCustomerRequest(merchantData.MerchantID, ord)
+	if err != nil {
+		return err
+	}
+
+	// 6. Mapping Global de la commande
+	reqObject := s.buildOrderRequestObject(merchantData.MerchantID, orderNum, ord, productsPayload, customerReq)
+
+	// Traitement des commandes refaites (Remake)
+	if ord.RemakeDetails != nil {
+		childOrderID, err := s.repo.GetOrderIDByBrandID(ctx, ord.RemakeDetails.ParentOrderID)
+		if err == nil {
+			s.lifecycleService.DeleteOrder(ctx, models.DenyOrderInput{
+				OrderID:          childOrderID,
+				DeletionComment:  "Remade by Deliveroo",
+				MerchantID:       merchantData.MerchantID,
+				DeletionReasonID: "43",
+				UserID:           "WEBHOOK_DELIVEROO",
+			})
+		}
+	}
+
+	// 7. CRÉATION DE LA COMMANDE
+	result, err := s.ordersService.CreateOrder(ctx, reqObject)
+	if err != nil {
+		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
+	}
+
+	// 8. Auto-acceptation
+	if merchantData.AutoAcceptOrders {
+		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), "DELIVEROO_WEBHOOK", merchantData.MerchantID, result.OrderID)
+		if err != nil {
+			log.Error(fmt.Sprintf("Error auto-accepting order %s: %v", result.OrderID, err))
+		}
+	}
+
+	return nil
+}
+
+func (s *DeliverooService) ProcessNewOrderOld(ctx context.Context, payload DeliverooWebhookPayload) error {
 	log := logger.FromContext(ctx)
 
 	// 1. VÉRIFICATION IMMÉDIATE (Idempotence)
@@ -481,4 +579,47 @@ func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID st
 		}
 	}
 	return nil
+}
+
+// ProcessEvent gère le traitement d'un événement webhook Deliveroo
+func (s *DeliverooService) ProcessEvent(ctx context.Context, payload DeliverooWebhookPayload) error {
+	log := logger.FromContext(ctx)
+
+	// ==========================================
+	// 1. IDEMPOTENCE REDIS GLOBALE (1 Heure)
+	// Protège contre les doublons instantanés
+	// ==========================================
+	if s.redis != nil {
+		// On crée une clé unique pour cet événement précis
+		eventKey := fmt.Sprintf("webhook:deliveroo:event:%s:%s:%s",
+			payload.Event,
+			payload.Body.Order.ID,
+			payload.Body.Order.Status,
+		)
+
+		_, found, err := s.redis.Get(ctx, eventKey)
+		if err == nil && found {
+			log.Info(fmt.Sprintf("[DELIVEROO] Event already processed (Redis cache), skipping: %s", eventKey))
+			return nil // Déjà traité, on valide en renvoyant nil
+		}
+
+		// On le marque comme traité immédiatement
+		_ = s.redis.Set(ctx, eventKey, "processed", time.Hour)
+	}
+
+	// ==========================================
+	// 2. ROUTAGE DE L'ÉVÉNEMENT
+	// ==========================================
+	switch payload.Event {
+	case "order.new", "order.new_order":
+		return s.ProcessNewOrder(ctx, payload)
+
+	case "order.status_update":
+		// Assure-toi d'avoir cette fonction (s.ProcessStatusUpdate)
+		return s.ProcessStatusUpdate(ctx, payload)
+
+	default:
+		log.Info(fmt.Sprintf("[DELIVEROO] Unhandled event type: %s for order %s", payload.Event, payload.Body.Order.ID))
+		return nil
+	}
 }

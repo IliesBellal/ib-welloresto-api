@@ -42,6 +42,7 @@ import (
 	usersModule "welloresto-api/internal/modules/users"
 
 	redisclient "welloresto-api/internal/infrastructure/redis"
+	auditModule "welloresto-api/internal/modules/audit"
 
 	// ---- WEBHOOKS ----
 	webhookstripe "welloresto-api/internal/webhook/stripe"
@@ -74,6 +75,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 	//  MODULE INITIALIZATION
 	// =============================
+
+	// ---- Audit Logger ----
+	auditRepo := auditModule.NewAuditRepository(mysqlDB)
+	auditService := auditModule.NewAuditService(auditRepo)
 
 	// ---- MAILER & SMS (BREVO) ----
 	// Initialize Brevo Email Service
@@ -110,7 +115,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)
-	posService := posModule.NewPOSService(authService, posRepo)
+	posService := posModule.NewPOSService(posRepo)
 
 	// ---- Menu ----
 	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
@@ -122,7 +127,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
 	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, ordersFetcher)
 	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, ordersFetcher)
-	ordersService := ordersModule.NewOrdersService(ordersRepo, authService, notificationService, redisClient)
+	ordersService := ordersModule.NewOrdersService(ordersRepo, notificationService, redisClient, auditService)
 
 	// ---- WEBHOOK STRIPE
 	// Dans main.go
@@ -143,16 +148,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
-	customersService := customersModule.NewCustomersService(customersRepo, authService)
+	customersService := customersModule.NewCustomersService(customersRepo)
 
 	// ---- Stripe ----
 	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
 
 	// ---- Uber ----
-	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats)
+	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats, redisClient)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
-	menuService := menuModule.NewMenuService(menuRepoLegacy, authService, deliverooService, uberService)
+	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
@@ -167,7 +172,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		uberService,
 		deliverooService,
 		deliverySessionsRepo,
-		authService,
 		log,
 		notificationService,
 		customersRepo,
@@ -187,7 +191,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// WH
 	deliverooWebhookRepo := deliveroo_orders.NewRepository(mysqlDB)
-	deliverooWebhookService := deliveroo_orders.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService)
+	deliverooWebhookService := deliveroo_orders.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService, redisClient)
 	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService)
 
 	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(mysqlDB)
@@ -204,24 +208,25 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		menuService,
 		ordersLifeCycleService,
 		notificationService,
+		redisClient,
 	)
 
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, authService, notificationService)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService)
 
 	// ---- Locations ----
 	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
-	locationsService := locModule.NewLocationsService(locationsRepo, authService)
+	locationsService := locModule.NewLocationsService(locationsRepo)
 
 	// ---- Cash Register ----
 	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB, log)
-	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo, authService)
+	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
 
 	// ---- Bookings ----
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, authService)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB)
 
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)
@@ -234,19 +239,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Stocks ----
 	stocksRepo := stocksModule.NewStockRepository(mysqlDB, log)
-	stocksService := stocksModule.NewStockService(stocksRepo, authService)
+	stocksService := stocksModule.NewStockService(stocksRepo)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB, log)
-	servicesService := servicesModule.NewServicesService(servicesRepo, authService)
+	servicesService := servicesModule.NewServicesService(servicesRepo)
 
 	// ---- Allergens ----
 	allergensRepo := allergensModule.NewRepository(mysqlDB)
-	allergensService := allergensModule.NewService(allergensRepo, authService)
+	allergensService := allergensModule.NewService(allergensRepo)
 
 	// ---- Tags ----
 	tagsRepo := tagsModule.NewRepository(mysqlDB)
-	tagsService := tagsModule.NewService(tagsRepo, authService)
+	tagsService := tagsModule.NewService(tagsRepo)
 
 	// =============================
 	//  HANDLERS
@@ -310,6 +315,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// API externes
 	r.Route("/external", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/routes", routeHandler.HandleGetRoute)
 	})
 
@@ -432,6 +439,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- ALLERGENS (system-wide, read-only) ---
 	r.Route("/allergens", func(r chi.Router) {
+		r.Use(authMiddleware)
+
 		r.Get("/", allergensH.ListAllergens)
 	})
 

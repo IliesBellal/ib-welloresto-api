@@ -69,11 +69,6 @@ func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "bookings", "create", map[string]string{"error": "missing_token"})
-		return
-	}
 	ctx := r.Context()
 
 	var req BookingObjectRequest
@@ -82,7 +77,7 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	booking, err := h.svc.CreateBooking(ctx, token, &req)
+	booking, err := h.svc.CreateBooking(ctx, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "bookings", "create", err)
 		return

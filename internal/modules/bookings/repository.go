@@ -8,12 +8,13 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/utils"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type BookingsRepository struct {
-	db              *sql.DB
+	database        *sql.DB
 	log             *zap.Logger
 	builder         *BookingFetcher
 	customerUpdater *customers.CustomersRepository
@@ -21,7 +22,7 @@ type BookingsRepository struct {
 
 func NewBookingsRepository(db *sql.DB, log *zap.Logger) *BookingsRepository {
 	return &BookingsRepository{
-		db:              db,
+		database:        db,
 		log:             log,
 		builder:         NewBookingFetcher(db, log),
 		customerUpdater: customers.NewCustomerRepository(db),
@@ -48,6 +49,7 @@ func (r *BookingsRepository) GetBookingByID(ctx context.Context, merchantID, boo
 }
 
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObjectRequest) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	// 1️⃣ Construire un modèle Customer
 	customer := &models.Customer{
@@ -58,14 +60,14 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		CustomerEmail: req.Customer.CustomerEmail,
 		// Tous les autres champs sont optionnels → nil
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-
+	/*
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return "", err
+		}
+	*/
 	// 2️⃣ Update or Create
-	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, tx, customer)
+	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
 	if err != nil {
 		return "", fmt.Errorf("failed to update/create customer: %w", err)
 	}
@@ -77,12 +79,12 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
 		return "", fmt.Errorf("start_date or end_date is empty")
 	}
-
-	rollback := func(err error) (string, error) {
-		tx.Rollback()
-		return "", err
-	}
-
+	/*
+		rollback := func(err error) (string, error) {
+			tx.Rollback()
+			return "", err
+		}
+	*/
 	//---------------------------------------------------------
 	// 1. Generate unique booking number
 	//---------------------------------------------------------
@@ -92,7 +94,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	for {
 		bookingNumber = utils.GenerateRandomString(6)
 
-		err = tx.QueryRowContext(ctx,
+		err = db.QueryRowContext(ctx,
 			`SELECT booking_id FROM bookings WHERE booking_number = ?`,
 			bookingNumber,
 		).Scan(&exists)
@@ -101,7 +103,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 			break
 		}
 		if err != nil {
-			return rollback(err)
+			return "", err
 		}
 	}
 
@@ -110,17 +112,17 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	//---------------------------------------------------------
 	start, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
 	if err != nil {
-		return rollback(err)
+		return "", err
 	}
 
 	end, err := time.Parse("2006-01-02 15:04:05", req.Booking.EndDate)
 	if err != nil {
-		return rollback(err)
+		return "", err
 	}
 
 	diff := end.Sub(start)
 	if diff < 0 {
-		return rollback(fmt.Errorf("start date is after end date"))
+		return "", fmt.Errorf("start date is after end date")
 	}
 
 	duration := int(diff.Minutes())
@@ -128,7 +130,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	//---------------------------------------------------------
 	// 3. Insert booking
 	//---------------------------------------------------------
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
         INSERT INTO bookings (
             booking_number, status, merchant_id, party_size,
             customer_id, comment, creation_date,
@@ -148,7 +150,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		req.CreatedBy,
 	)
 	if err != nil {
-		return rollback(err)
+		return "", err
 	}
 
 	bookingID, _ := res.LastInsertId()
@@ -157,7 +159,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	// 4. Insert locations
 	//---------------------------------------------------------
 	for _, loc := range req.Booking.Locations {
-		_, err := tx.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
             INSERT INTO booked_location(booking_id, location_id)
             VALUES (?, ?)
         `,
@@ -165,23 +167,25 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 			loc.LocationID,
 		)
 		if err != nil {
-			return rollback(err)
+			return "", err
 		}
 	}
 
 	//---------------------------------------------------------
 	// Commit
 	//---------------------------------------------------------
-	if err := tx.Commit(); err != nil {
-		return rollback(err)
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return rollback(err)
+		}
+	*/
 
 	return fmt.Sprintf("%d", bookingID), nil
 }
 
 func (r *BookingsRepository) SetBookingState(ctx context.Context, bookingID string, state string) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -215,7 +219,7 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 		zap.String("date", requestedDate),
 	)
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +482,7 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 
 func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchantID string) ([]Location, error) {
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.database.QueryContext(ctx, `
         SELECT location_id, location_name, location_desc
         FROM locations
         WHERE merchant_id = ?

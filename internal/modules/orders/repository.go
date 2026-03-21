@@ -11,18 +11,19 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type OrdersRepository struct {
-	db            *sql.DB
+	database      *sql.DB
 	ordersFetcher *OrdersFetcher
 }
 
 func NewOrdersRepository(db *sql.DB, ordersF *OrdersFetcher) *OrdersRepository {
 	return &OrdersRepository{
-		db:            db,
+		database:      db,
 		ordersFetcher: ordersF}
 }
 
@@ -57,7 +58,7 @@ func (r *OrdersRepository) GetPendingOrdersOld(ctx context.Context, merchantID, 
              LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
              WHERE o.merchant_id = ? ` + criteria
 
-	rows, err := r.db.QueryContext(ctx, qIDs, merchantID)
+	rows, err := r.database.QueryContext(ctx, qIDs, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
 	}
@@ -144,7 +145,7 @@ func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, a
              LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
              WHERE o.merchant_id = ? ` + criteria
 
-	rows, err := r.db.QueryContext(ctx, qIDs, merchantID)
+	rows, err := r.database.QueryContext(ctx, qIDs, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
 	}
@@ -263,7 +264,7 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
         LIMIT 10
     `
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +283,7 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
 }
 
 func (r *OrdersRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -386,7 +387,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	args = append(args, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -437,15 +438,19 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 }
 
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx failed: %w", err)
-	}
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx failed: %w", err)
+		}
 
-	rollback := func(err error) error {
-		_ = tx.Rollback()
-		return err
-	}
+		rollback := func(err error) error {
+			_ = tx.Rollback()
+			return err
+		}
+	*/
+
+	db := dbutils.GetDB(ctx, r.database)
 
 	// ---------------------------------------------------
 	// 🎯 SECTION FUTURE : tes vérifications métier ici !
@@ -459,7 +464,7 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 
 	// 1. Trouver cash_register_id
 	var cashRegisterID sql.NullString
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT cr.cash_register_id
 		FROM cash_registers cr
 		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
@@ -470,12 +475,12 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 		cashRegisterID.String = req.DeviceID
 		cashRegisterID.Valid = true
 	} else if err != nil {
-		return rollback(err)
+		return err
 	}
 
 	// 2. Paiement total déjà effectué ?
 	var totalPrice, alreadyPaid float64
-	_ = tx.QueryRowContext(ctx, `
+	_ = db.QueryRowContext(ctx, `
 		SELECT o.price, COALESCE(SUM(p.amount),0)
 		FROM orders o
 		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
@@ -488,7 +493,7 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 
 		if len(req.Items) == 0 {
 			// Paiement total
-			_, err := tx.ExecContext(ctx, `
+			_, err := db.ExecContext(ctx, `
             UPDATE orderitems
             SET isPaid = 1, paid_quantity = quantity
             WHERE order_id = ? AND merchant_id = ?
@@ -504,7 +509,7 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 				itemID := itm.OrderItemID
 				qty := itm.Quantity
 
-				_, err := tx.ExecContext(ctx, `
+				_, err := db.ExecContext(ctx, `
                 UPDATE orderitems
                 SET 
                     paid_quantity = paid_quantity + ?,
@@ -523,30 +528,30 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 	}
 
 	// 4. Insérer le paiement
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO payments
 		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check)
 		VALUES (?, ?, ?, ROUND(?,2), ?, ?, UTC_TIMESTAMP, ?, ?)
 	`, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, userID, req.StatusCheck)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
 
 	paymentID, _ := res.LastInsertId()
 
 	// 5. Ticket restaurant (TR)
 	if req.MOP == "TR" && req.Code != "" {
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
 			INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
 			VALUES (?, ?, ?)
 		`, merchantID, paymentID, req.Code)
 		if err != nil {
-			return rollback(err)
+			return err
 		}
 	}
 
 	// 6. Mettre à jour orders.isPaid
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE orders o
 		INNER JOIN (
 			SELECT order_id, SUM(amount) AS paid
@@ -558,13 +563,14 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 		WHERE o.order_id = ?
 	`, req.OrderID, req.OrderID)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
-
-	err = tx.Commit()
-	if err != nil {
-		return rollback(err)
-	}
+	/*
+		err = tx.Commit()
+		if err != nil {
+			return rollback(err)
+		}
+	*/
 	return nil
 }
 
@@ -576,7 +582,7 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 		ORDER BY payment_date ASC
 	`
 
-	rows, err := r.db.QueryContext(ctx, q, orderID)
+	rows, err := r.database.QueryContext(ctx, q, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +610,7 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 }
 
 func (r *OrdersRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -635,7 +641,7 @@ func (r *OrdersRepository) DisablePayment(ctx context.Context, paymentID string)
 
 func (r *OrdersRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -758,28 +764,30 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	defer cancel()
 
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		log.Error("Cannot open transaction")
-		return nil, err
-	}
+	/*
+		tx, err := r.database.BeginTx(ctx, &sql.TxOptions{})
+		if err != nil {
+			log.Error("Cannot open transaction")
+			return nil, err
+		}
+	*/
 
-	unavailable, err := r.validateProductAvailability(ctx, tx, req)
+	unavailable, err := r.validateProductAvailability(ctx, req)
 
 	if err != nil {
-		tx.Rollback()
+		//tx.Rollback()
 		log.Error("Error validating products availability - " + err.Error())
 		return nil, err
 	}
 	if len(unavailable) > 0 {
-		tx.Rollback()
+		//tx.Rollback()
 		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
 	}
 
 	if req.Order.Customer != nil {
-		customerID, err := r.upsertCustomer(ctx, tx, req)
+		customerID, err := r.upsertCustomer(ctx, req)
 		if err != nil {
-			tx.Rollback()
+			//tx.Rollback()
 			return nil, err
 		}
 		req.Order.Customer.CustomerID = customerID
@@ -788,7 +796,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	// compute estimated ready if not provided
 	estimatedReady := req.Order.EstimatedReady // string or empty
 	if estimatedReady == "" {
-		est, err := r.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
+		est, err := r.ComputeEstimatedReady(ctx, req.MerchantID, len(req.Order.Products))
 		if err != nil {
 			log.Warn("ComputeEstimatedReady warning", zap.Error(err))
 		}
@@ -799,7 +807,7 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	req.Order.EstimatedReady = estimatedReady
 
 	// get next order number
-	orderNum, err := r.GetNextOrderNum(ctx, tx, req.MerchantID)
+	orderNum, err := r.GetNextOrderNum(ctx, req.MerchantID)
 	if err != nil {
 		/*
 			tx.Rollback()
@@ -810,22 +818,22 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 	req.Order.OrderNum = &orderNum
 
 	if req.DeviceID != nil && *req.DeviceID != "" {
-		id, found, err := r.GetActiveCashRegisterID(ctx, tx, *req.DeviceID, req.MerchantID)
+		id, found, err := r.GetActiveCashRegisterID(ctx, *req.DeviceID, req.MerchantID)
 		if err != nil {
-			tx.Rollback()
+			//tx.Rollback()
 			return nil, err
 		}
 		if found {
 			req.Order.CashRegisterId = &id
 		} else {
 			// if no cash register found, check merchant parameter
-			required, err := r.IsCashRegisterRequiredForOrdering(ctx, tx, req.MerchantID)
+			required, err := r.IsCashRegisterRequiredForOrdering(ctx, req.MerchantID)
 			if err != nil {
-				tx.Rollback()
+				//tx.Rollback()
 				return nil, err
 			}
 			if required {
-				tx.Rollback()
+				//tx.Rollback()
 				return &models.CreateOrderResult{Status: "no_cash_register_opened"}, nil
 			}
 		}
@@ -833,36 +841,37 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 	r.setOrderDefaults(ctx, req)
 
-	orderID, err := r.insertOrderBase(ctx, tx, req)
+	orderID, err := r.insertOrderBase(ctx, req)
 	if err != nil {
-		tx.Rollback()
+		//tx.Rollback()
 		log.Error("insertOrderBase failure", zap.Error(err))
 		return nil, err
 	}
 	req.Order.OrderID = &orderID
 
-	usedItems, err := r.insertOrderItems(ctx, tx, req)
+	usedItems, err := r.insertOrderItems(ctx, req)
 	if err != nil {
-		tx.Rollback()
+		//tx.Rollback()
 		log.Error("insertOrderItems failure", zap.Error(err))
 		return nil, err
 	}
 
-	if err := r.insertExtrasWithoutsConfigs(ctx, tx, req, usedItems); err != nil {
-		tx.Rollback()
+	if err := r.insertExtrasWithoutsConfigs(ctx, req, usedItems); err != nil {
+		//tx.Rollback()
 		log.Error("insertExtrasWithoutsConfigs failure", zap.Error(err))
 		return nil, err
 	}
 
-	if err := r.insertPayments(ctx, tx, req); err != nil {
-		tx.Rollback()
+	if err := r.insertPayments(ctx, req); err != nil {
+		//tx.Rollback()
 		log.Error("insertPayments failure", zap.Error(err))
 		return nil, err
 	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+	*/
 
 	var action string
 
@@ -885,13 +894,16 @@ func (r *OrdersRepository) CreateOrder(ctx context.Context, req *models.RequestO
 
 func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
 	log := logger.FromContext(ctx)
+	db := dbutils.GetDB(ctx, r.database)
 
-	// 1. Transaction
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("transaction begin failed: %w", err)
-	}
-	defer tx.Rollback()
+	// 1. Transaction (rempalcée par le transaction manager)
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("transaction begin failed: %w", err)
+		}
+		defer tx.Rollback()
+	*/
 
 	if len(req.Order.Products) == 0 {
 		return models.ErrCartEmpty
@@ -903,7 +915,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	// (les nouveaux produits n'ont pas d'order_item_id). Tous les orderitems de cette commande
 	// qui NE sont PAS dans cette liste sont considérés comme supprimés et doivent être retirés
 	// de la DB, y compris leurs extras / withouts / configurations associés.
-	if err := r.deleteRemovedOrderItems(ctx, tx, req); err != nil {
+	if err := r.deleteRemovedOrderItems(ctx, req); err != nil {
 		return fmt.Errorf("delete removed items failed: %w", err)
 	}
 
@@ -921,7 +933,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	//   - S'il a un order_item_id  → produit EXISTANT : on met à jour la quantité/prix (UPSERT)
 	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
 	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
-	stmtItem, err := tx.PrepareContext(ctx, `
+	stmtItem, err := db.PrepareContext(ctx, `
 		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, price, delay_id, ordered_on)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
@@ -976,7 +988,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 			// proprement ci-dessous — ou le laisser absent si le payload n'en fournit pas.
 			"DELETE FROM order_comments WHERE order_item_id = ?",
 		} {
-			if _, err := tx.ExecContext(ctx, q, p.OrderItemID); err != nil {
+			if _, err := db.ExecContext(ctx, q, p.OrderItemID); err != nil {
 				return fmt.Errorf("cleaning sub-items failed for order_item_id=%s: %w", *p.OrderItemID, err)
 			}
 		}
@@ -997,7 +1009,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 				CreatedBy:   *req.Order.CreatedBy,
 				Comment:     &p.Comment.Content,
 			}
-			if err := r.insertOrderItemComment(ctx, tx, item); err != nil {
+			if err := r.insertOrderItemComment(ctx, item); err != nil {
 				// Non bloquant : on logue mais on ne fait pas échouer la transaction
 				log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *p.OrderItemID), zap.Error(err))
 			}
@@ -1038,28 +1050,28 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	// plus rapide que N requêtes individuelles (1 aller-retour réseau au lieu de N).
 
 	if len(extrasArgs) > 0 {
-		if err := r.bulkInsert(ctx, tx,
+		if err := r.bulkInsert(ctx,
 			"INSERT INTO extra (order_item_id, order_id, component_id, product_id, merchant_id, price) VALUES",
 			6, extrasArgs); err != nil {
 			return fmt.Errorf("bulk insert extras failed: %w", err)
 		}
 	}
 	if len(withoutsArgs) > 0 {
-		if err := r.bulkInsert(ctx, tx,
+		if err := r.bulkInsert(ctx,
 			"INSERT INTO without (order_item_id, order_id, component_id, product_id, merchant_id) VALUES",
 			5, withoutsArgs); err != nil {
 			return fmt.Errorf("bulk insert withouts failed: %w", err)
 		}
 	}
 	if len(configsArgs) > 0 {
-		if err := r.bulkInsert(ctx, tx,
+		if err := r.bulkInsert(ctx,
 			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES",
 			4, configsArgs); err != nil {
 			return fmt.Errorf("bulk insert configs failed: %w", err)
 		}
 	}
 	if len(customersArgs) > 0 {
-		if err := r.bulkInsertWithSuffix(ctx, tx,
+		if err := r.bulkInsertWithSuffix(ctx,
 			"INSERT INTO session_orderitem (user_code, order_item_id, quantity) VALUES",
 			" ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)",
 			3, customersArgs); err != nil {
@@ -1070,7 +1082,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	// 5. Calcul du temps estimé de préparation (si non fourni dans le payload)
 	estimatedReady := req.Order.EstimatedReady
 	if estimatedReady == "" {
-		est, err := r.ComputeEstimatedReady(ctx, tx, req.MerchantID, len(req.Order.Products))
+		est, err := r.ComputeEstimatedReady(ctx, req.MerchantID, len(req.Order.Products))
 		if err != nil {
 			// Non bloquant : la commande peut être sauvegardée sans temps estimé
 			log.Warn("ComputeEstimatedReady warning", zap.Error(err))
@@ -1083,7 +1095,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 
 	// 6. Upsert du client (si fourni)
 	if req.Order.Customer != nil {
-		customerID, err := r.upsertCustomer(ctx, tx, req)
+		customerID, err := r.upsertCustomer(ctx, req)
 		if err != nil {
 			return fmt.Errorf("upsert customer failed: %w", err)
 		}
@@ -1091,13 +1103,13 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 	}
 
 	// 7. Mise à jour de la commande principale (prix, type, etc.)
-	if err := r.updateOrderBase(ctx, tx, req); err != nil {
+	if err := r.updateOrderBase(ctx, req); err != nil {
 		return fmt.Errorf("update order base failed: %w", err)
 	}
 
 	// 8. Gestion des emplacements (table, salle…)
 	// On supprime et réinsère entièrement pour refléter fidèlement le payload.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM order_location WHERE order_id = ?", req.Order.OrderID); err != nil {
+	if _, err := db.ExecContext(ctx, "DELETE FROM order_location WHERE order_id = ?", req.Order.OrderID); err != nil {
 		return fmt.Errorf("delete order_location failed: %w", err)
 	}
 	if len(req.Order.Locations) > 0 {
@@ -1105,15 +1117,17 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 		for _, loc := range req.Order.Locations {
 			locArgs = append(locArgs, req.Order.OrderID, loc.LocationID)
 		}
-		if err := r.bulkInsert(ctx, tx, "INSERT INTO order_location(order_id, location_id) VALUES", 2, locArgs); err != nil {
+		if err := r.bulkInsert(ctx, "INSERT INTO order_location(order_id, location_id) VALUES", 2, locArgs); err != nil {
 			return fmt.Errorf("bulk insert order_location failed: %w", err)
 		}
 	}
 
 	// 9. Commit
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit failed: %w", err)
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit failed: %w", err)
+		}
+	*/
 
 	return nil
 }
@@ -1122,6 +1136,7 @@ func (r *OrdersRepository) UpdateOrder(ctx context.Context, req *models.RequestO
 // queryPrefix : "INSERT INTO table (col1, col2) VALUES"
 // numFields : nombre de colonnes par ligne (ex: 2 pour col1, col2)
 // args : liste plate de toutes les valeurs
+/*
 func (r *OrdersRepository) bulkInsert(ctx context.Context, tx *sql.Tx, queryPrefix string, numFields int, args []interface{}) error {
 	return r.bulkInsertWithSuffix(ctx, tx, queryPrefix, "", numFields, args)
 }
@@ -1151,10 +1166,42 @@ func (r *OrdersRepository) bulkInsertWithSuffix(ctx context.Context, tx *sql.Tx,
 	}
 	return nil
 }
+*/
+
+func (r *OrdersRepository) bulkInsert(ctx context.Context, queryPrefix string, numFields int, args []interface{}) error {
+	return r.bulkInsertWithSuffix(ctx, queryPrefix, "", numFields, args)
+}
+
+func (r *OrdersRepository) bulkInsertWithSuffix(ctx context.Context, queryPrefix, querySuffix string, numFields int, args []interface{}) error {
+	if len(args) == 0 {
+		return nil
+	}
+	db := dbutils.GetDB(ctx, r.database)
+
+	numRows := len(args) / numFields
+	placeholders := make([]string, 0, numRows)
+
+	rowPlaceholder := "(" + strings.Repeat("?,", numFields)
+	rowPlaceholder = rowPlaceholder[:len(rowPlaceholder)-1] + ")"
+
+	for i := 0; i < numRows; i++ {
+		placeholders = append(placeholders, rowPlaceholder)
+	}
+
+	query := fmt.Sprintf("%s %s %s", queryPrefix, strings.Join(placeholders, ","), querySuffix)
+
+	_, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("bulk insert failed: %w", err)
+	}
+	return nil
+}
 
 // GetActiveCashRegisterID returns cash_register_id if an open cash register or sub_cash_register is found for this device and merchant.
 // returns (id, true, nil) if found, (0, false, nil) if not found, or error.
-func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, tx *sql.Tx, deviceID, merchantID string) (string, bool, error) {
+func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, deviceID, merchantID string) (string, bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if deviceID == "" {
 		return "0", false, nil
 	}
@@ -1171,7 +1218,7 @@ func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, tx *sql.
 		`
 
 	var id sql.NullString
-	err := tx.QueryRowContext(ctx, query, deviceID, deviceID, merchantID).Scan(&id)
+	err := db.QueryRowContext(ctx, query, deviceID, deviceID, merchantID).Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "0", false, nil
@@ -1187,9 +1234,10 @@ func (r *OrdersRepository) GetActiveCashRegisterID(ctx context.Context, tx *sql.
 }
 
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
-func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, tx *sql.Tx, merchantID string) (bool, error) {
+func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, merchantID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
 	var required sql.NullString
-	err := tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT mp.cash_register_required_for_ordering
 		FROM merchant_parameters mp
 		WHERE mp.merchant_id = ? LIMIT 1
@@ -1209,7 +1257,8 @@ func (r *OrdersRepository) IsCashRegisterRequiredForOrdering(ctx context.Context
 	return false, nil
 }
 
-func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]string, error) {
+func (r *OrdersRepository) validateProductAvailability(ctx context.Context, req *models.RequestObject) ([]string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -1244,7 +1293,7 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
           AND (CASE WHEN a.product_id IS NOT NULL THEN 'out_of_stock' ELSE p.status END) = 'out_of_stock'
     `, inClause)
 
-	rows, err := tx.QueryContext(ctx, query, ids...)
+	rows, err := db.QueryContext(ctx, query, ids...)
 	if err != nil {
 		return nil, err
 	}
@@ -1263,7 +1312,7 @@ func (r *OrdersRepository) validateProductAvailability(ctx context.Context, tx *
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric MerchantID (nil if none)
-func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (*string, error) {
+func (r *OrdersRepository) upsertCustomer(ctx context.Context, req *models.RequestObject) (*string, error) {
 	log := logger.FromContext(ctx)
 	if req.Order.Customer == nil {
 		log.Warn("customer is required")
@@ -1314,8 +1363,8 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 
 	// CustomerRepository.UpdateOrCreateCustomer should be transaction-aware; if not, it will open its own transaction.
 	// We call it directly. It returns MerchantID as string.
-	custoRepo := customers.NewCustomerRepository(r.db)
-	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, tx, cust)
+	custoRepo := customers.NewCustomerRepository(r.database)
+	newIDStr, err := custoRepo.UpdateOrCreateCustomer(ctx, cust)
 	if err != nil {
 		log.Error("Failed to create - update customer - " + err.Error())
 		return nil, fmt.Errorf("failed to update/create customer: %w", err)
@@ -1329,10 +1378,11 @@ func (r *OrdersRepository) upsertCustomer(ctx context.Context, tx *sql.Tx, req *
 // GetNextOrderNum returns the next order_num following the PHP behaviour:
 // - if last order_num is 99 or null -> return 1
 // - otherwise last + 1
-func (r *OrdersRepository) GetNextOrderNum(ctx context.Context, tx *sql.Tx, merchantID string) (string, error) {
+func (r *OrdersRepository) GetNextOrderNum(ctx context.Context, merchantID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 	var last sql.NullInt64
 
-	err := tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT order_num
 		FROM orders
 		WHERE merchant_id = ?
@@ -1359,22 +1409,11 @@ func (r *OrdersRepository) GetNextOrderNum(ctx context.Context, tx *sql.Tx, merc
 	return strconv.FormatInt(last.Int64+1, 10), nil
 }
 
-func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx, merchantID string, productsCount int) (string, error) {
-	// 1. Détermination de la source de données (Transaction ou DB standard)
-	var queryer interface {
-		QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	}
+func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, merchantID string, productsCount int) (string, error) {
+	db := dbutils.GetDB(ctx, r.database) // Gère tout seul si on est en transaction ou non
 
-	if tx != nil {
-		queryer = tx
-	} else {
-		queryer = r.db // r.db doit être ton instance *sql.DB
-	}
-
-	// 2. Appel de la procédure via le queryer sélectionné
-	rows, err := queryer.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
+	rows, err := db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
 	if err != nil {
-		// Log d'erreur ici si nécessaire
 		return "", nil
 	}
 	defer rows.Close()
@@ -1390,7 +1429,6 @@ func (r *OrdersRepository) ComputeEstimatedReady(ctx context.Context, tx *sql.Tx
 		return "", nil
 	}
 
-	// 3. Calcul du temps estimé
 	t := time.Now().UTC().Add(time.Duration(seconds.Int64) * time.Second)
 	return t.Format("2006-01-02 15:04:05"), nil
 }
@@ -1454,7 +1492,8 @@ func (r *OrdersRepository) setOrderDefaults(ctx context.Context, req *models.Req
 }
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
-func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (orderID string, err error) {
+func (r *OrdersRepository) insertOrderBase(ctx context.Context, req *models.RequestObject) (orderID string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	var customer_id *string
 	if req.Order.Customer != nil {
@@ -1462,7 +1501,7 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	}
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO orders(brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
@@ -1481,7 +1520,7 @@ func (r *OrdersRepository) insertOrderBase(ctx context.Context, tx *sql.Tx, req 
 	}
 	req.Order.OrderID = helpers.Int64ToStringPtr(lastID)
 
-	err = r.insertOrderComment(ctx, tx, req)
+	err = r.insertOrderComment(ctx, req)
 
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
@@ -1506,32 +1545,30 @@ func normalizeEstimatedReady(value string) interface{} {
 }
 
 // insertOrderCommentinsertOrderItemComment inserts the order items comments
-func (r *OrdersRepository) insertOrderItemComment(ctx context.Context, tx *sql.Tx, item *OrderItemInsert) (err error) {
-
+func (r *OrdersRepository) insertOrderItemComment(ctx context.Context, item *OrderItemInsert) error {
 	if item.Comment == nil {
 		return nil
 	}
-	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
-	_, err = tx.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, order_item_id, user_id, content, creation_date)
-		VALUES (?,?, ?,?,UTC_TIMESTAMP)
-		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP`,
+		VALUES (?,?, ?,?,UTC_TIMESTAMP())
+		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP()`,
 		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment, item.Comment,
 	)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // insertOrderComment inserts the orders comments
-func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (err error) {
+func (r *OrdersRepository) insertOrderComment(ctx context.Context, req *models.RequestObject) (err error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	if req.Order.Comment == nil {
 		return nil
 	}
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, user_id, content, creation_date)
 		VALUES (?,?,?,UTC_TIMESTAMP)
 		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP`,
@@ -1544,7 +1581,8 @@ func (r *OrdersRepository) insertOrderComment(ctx context.Context, tx *sql.Tx, r
 }
 
 // updateOrderBase inserts the orders row and returns orderID and orderNum
-func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req *models.RequestObject) (err error) {
+func (r *OrdersRepository) updateOrderBase(ctx context.Context, req *models.RequestObject) (err error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	var customerID *string
 	if req.Order.Customer != nil {
@@ -1552,7 +1590,7 @@ func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req 
 	}
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE orders o
 			SET
 			    o.price = ?,
@@ -1588,13 +1626,13 @@ func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req 
 	// Commentaire de commande : on supprime systématiquement l'ancien puis on réinsère
 	// uniquement si le payload en fournit un. Cela permet de supprimer un commentaire
 	// existant lorsque le client l'efface (payload avec comment = nil ou vide).
-	if _, err := tx.ExecContext(ctx,
+	if _, err := db.ExecContext(ctx,
 		"DELETE FROM order_comments WHERE order_id = ? AND order_item_id IS NULL",
 		req.Order.OrderID); err != nil {
 		return fmt.Errorf("delete order comment failed: %w", err)
 	}
 	if req.Order.Comment != nil && *req.Order.Comment != "" {
-		if err := r.insertOrderComment(ctx, tx, req); err != nil {
+		if err := r.insertOrderComment(ctx, req); err != nil {
 			return fmt.Errorf("insert order comment failed: %w", err)
 		}
 	}
@@ -1603,7 +1641,7 @@ func (r *OrdersRepository) updateOrderBase(ctx context.Context, tx *sql.Tx, req 
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) ([]models.UsedItem, error) {
+func (r *OrdersRepository) insertOrderItems(ctx context.Context, req *models.RequestObject) ([]models.UsedItem, error) {
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
 		if p.Quantity == 0 {
@@ -1622,7 +1660,7 @@ func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 		if p.Comment != nil && p.Comment.Content != "" {
 			item.Comment = &p.Comment.Content
 		}
-		oid, err := r.InsertOrderItem(ctx, tx, item)
+		oid, err := r.InsertOrderItem(ctx, item)
 
 		if err != nil {
 			return nil, err
@@ -1634,7 +1672,7 @@ func (r *OrdersRepository) insertOrderItems(ctx context.Context, tx *sql.Tx, req
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
-func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *sql.Tx, req *models.RequestObject, items []models.UsedItem) error {
+func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, req *models.RequestObject, items []models.UsedItem) error {
 	// Build maps from product iteration to order_item ids; we used ordering to match the order of products to items
 	// Simpler approach: while inserting items we could have returned corresponding mapping; for now assume order preserved.
 	extras := []ExtraInsert{}
@@ -1688,17 +1726,17 @@ func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 	}
 
 	if len(extras) > 0 {
-		if err := r.BulkInsertExtras(ctx, tx, extras); err != nil {
+		if err := r.BulkInsertExtras(ctx, extras); err != nil {
 			return err
 		}
 	}
 	if len(withouts) > 0 {
-		if err := r.BulkInsertWithouts(ctx, tx, withouts); err != nil {
+		if err := r.BulkInsertWithouts(ctx, withouts); err != nil {
 			return err
 		}
 	}
 	if len(configs) > 0 {
-		if err := r.BulkInsertConfigs(ctx, tx, configs); err != nil {
+		if err := r.BulkInsertConfigs(ctx, configs); err != nil {
 			return err
 		}
 	}
@@ -1706,7 +1744,7 @@ func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, tx *
 }
 
 // insertPayments inserts payments
-func (r *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
+func (r *OrdersRepository) insertPayments(ctx context.Context, req *models.RequestObject) error {
 	for _, p := range req.Order.Payments {
 		pi := &PaymentInsert{
 			MerchantID:     req.MerchantID,
@@ -1716,7 +1754,7 @@ func (r *OrdersRepository) insertPayments(ctx context.Context, tx *sql.Tx, req *
 			MOP:            p.MOP,
 			UserID:         req.Order.CreatedBy,
 		}
-		if err := r.InsertPayment(ctx, tx, pi); err != nil {
+		if err := r.InsertPayment(ctx, pi); err != nil {
 			return err
 		}
 	}
@@ -1804,8 +1842,10 @@ type OrderItemInsert struct {
 }
 
 // InsertOrderItem inserts a single orderitem and returns its id
-func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item *OrderItemInsert) (int64, error) {
-	res, err := tx.ExecContext(ctx, `
+func (r *OrdersRepository) InsertOrderItem(ctx context.Context, item *OrderItemInsert) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, price, ordered_on, delay_id)
 		VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.Price, item.DelayID)
@@ -1820,7 +1860,7 @@ func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item
 	}
 	item.OrderItemID = helpers.Int64ToStringPtr(lastID)
 
-	r.insertOrderItemComment(ctx, tx, item)
+	r.insertOrderItemComment(ctx, item)
 
 	return res.LastInsertId()
 }
@@ -1838,7 +1878,9 @@ func (r *OrdersRepository) InsertOrderItem(ctx context.Context, tx *sql.Tx, item
 //
 // Note : si le payload ne contient AUCUN item existant (mise à jour ne conservant aucun
 // ancien produit), on supprime tous les anciens items.
-func (r *OrdersRepository) deleteRemovedOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
+func (r *OrdersRepository) deleteRemovedOrderItems(ctx context.Context, req *models.RequestObject) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// Collecte des order_item_id existants fournis dans le payload
 	keptIDs := make([]interface{}, 0, len(req.Order.Products))
 	for _, p := range req.Order.Products {
@@ -1870,7 +1912,7 @@ func (r *OrdersRepository) deleteRemovedOrderItems(ctx context.Context, tx *sql.
 
 	// 1. Récupère les IDs des items à supprimer pour nettoyer les sous-tables.
 	//    On le fait en une seule requête SELECT pour éviter de répéter la condition.
-	rows, err := tx.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		"SELECT oi.order_item_id FROM orderitems oi "+whereClause,
 		args...)
 	if err != nil {
@@ -1906,14 +1948,14 @@ func (r *OrdersRepository) deleteRemovedOrderItems(ctx context.Context, tx *sql.
 		"DELETE FROM order_comments WHERE order_item_id IN (" + idPlaceholders + ")",
 	}
 	for _, q := range subTables {
-		if _, err := tx.ExecContext(ctx, q, removedIDs...); err != nil {
+		if _, err := db.ExecContext(ctx, q, removedIDs...); err != nil {
 			return fmt.Errorf("delete sub-items for removed orderitems failed: %w", err)
 		}
 	}
 
 	// 3. Suppression des items eux-mêmes
 	delItemsQuery := "DELETE FROM orderitems WHERE order_item_id IN (" + idPlaceholders + ")"
-	if _, err := tx.ExecContext(ctx, delItemsQuery, removedIDs...); err != nil {
+	if _, err := db.ExecContext(ctx, delItemsQuery, removedIDs...); err != nil {
 		return fmt.Errorf("delete removed orderitems failed: %w", err)
 	}
 
@@ -1955,7 +1997,8 @@ type ConfigInsert struct {
 }
 
 // BulkInsertExtras performs multi-value insert for extras
-func (r *OrdersRepository) BulkInsertExtras(ctx context.Context, tx *sql.Tx, list []ExtraInsert) error {
+func (r *OrdersRepository) BulkInsertExtras(ctx context.Context, list []ExtraInsert) error {
+	db := dbutils.GetDB(ctx, r.database)
 	if len(list) == 0 {
 		return nil
 	}
@@ -1966,11 +2009,13 @@ func (r *OrdersRepository) BulkInsertExtras(ctx context.Context, tx *sql.Tx, lis
 		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID, e.Price)
 	}
 	query := "INSERT INTO extra (order_id, order_item_id, component_id, product_id, merchant_id, price) VALUES " + strings.Join(parts, ",")
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *OrdersRepository) BulkInsertWithouts(ctx context.Context, tx *sql.Tx, list []WithoutInsert) error {
+func (r *OrdersRepository) BulkInsertWithouts(ctx context.Context, list []WithoutInsert) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if len(list) == 0 {
 		return nil
 	}
@@ -1981,11 +2026,13 @@ func (r *OrdersRepository) BulkInsertWithouts(ctx context.Context, tx *sql.Tx, l
 		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID)
 	}
 	query := "INSERT INTO without (order_id, order_item_id, component_id, product_id, merchant_id) VALUES " + strings.Join(parts, ",")
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, tx *sql.Tx, list []ConfigInsert) error {
+func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, list []ConfigInsert) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if len(list) == 0 {
 		return nil
 	}
@@ -1996,7 +2043,7 @@ func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, tx *sql.Tx, li
 		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity)
 	}
 	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES " + strings.Join(parts, ",")
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -2010,8 +2057,9 @@ type PaymentInsert struct {
 	UserID         *string
 }
 
-func (r *OrdersRepository) InsertPayment(ctx context.Context, tx *sql.Tx, p *PaymentInsert) error {
-	_, err := tx.ExecContext(ctx, `
+func (r *OrdersRepository) InsertPayment(ctx context.Context, p *PaymentInsert) error {
+	db := dbutils.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx, `
 INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, payment_date, user_id)
 VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
 `, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID)
@@ -2028,7 +2076,7 @@ func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantI
 		WHERE m.id = ? LIMIT 1;
 		`
 	var cfg models.MerchantPricingInfo
-	row := r.db.QueryRowContext(ctx, q, MerchantID)
+	row := r.database.QueryRowContext(ctx, q, MerchantID)
 	if err := row.Scan(&cfg.Timezone, &cfg.Currency, &cfg.DeliveryFees, &cfg.DeliveryFeesLimit, &cfg.MinimumCartForDeliveryOrder); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -2083,7 +2131,7 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 	args = append(args, productIDs...)
 
 	// 4. Exécution
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2144,7 +2192,7 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 		args = append(args, id)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -2203,7 +2251,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 		ORDER BY d.prefered_order ASC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, req.MerchantID)
+	rows, err := r.database.QueryContext(ctx, query, req.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -2248,7 +2296,7 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 		WHERE d.merchant_id = ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID)
+	rows, err := r.database.QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -2296,7 +2344,7 @@ func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, mercha
                   AND d.available IS TRUE
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID)
+	rows, err := r.database.QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -2365,7 +2413,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		args[i] = id
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -2414,7 +2462,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		args2 = append(args2, id)
 	}
 
-	rows2, err := r.db.QueryContext(ctx, query2, args2...)
+	rows2, err := r.database.QueryContext(ctx, query2, args2...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -2441,7 +2489,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 }
 
 func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req *models.PricingRequest, count int) (int, error) {
-	rows, err := r.db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", req.MerchantID, count)
+	rows, err := r.database.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", req.MerchantID, count)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return 0, err
@@ -2480,7 +2528,7 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(
 		args[i] = id
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2504,7 +2552,7 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(
 
 func (r *OrdersRepository) UpdateMultipleProductsStatus(ctx context.Context, req *models.MultipleProductsRequest) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2571,7 +2619,7 @@ func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, bran
 		)
 	`
 
-	err := r.db.QueryRowContext(ctx, query, brand, brandOrderID).Scan(&exists)
+	err := r.database.QueryRowContext(ctx, query, brand, brandOrderID).Scan(&exists)
 	if err != nil {
 		return false, err
 	}

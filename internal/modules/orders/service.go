@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,8 +14,9 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/audit"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -22,10 +24,11 @@ import (
 
 type OrdersService struct {
 	ordersRepo           *OrdersRepository
-	userRepo             auth.AuthService
 	notificationsService *notification.NotificationService
 	redis                *redis.Client
 	sfGroup              singleflight.Group
+	db                   *sql.DB
+	auditService         audit.AuditService
 }
 
 func (s *OrdersService) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {
@@ -49,12 +52,14 @@ type OrdersServiceInterface interface {
 	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
 }
 
-func NewOrdersService(ordersRepo *OrdersRepository, userRepo auth.AuthService, notificationsService *notification.NotificationService, redis *redis.Client) *OrdersService {
+func NewOrdersService(ordersRepo *OrdersRepository, notificationsService *notification.NotificationService, redis *redis.Client, auditService audit.AuditService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,
-		userRepo:             userRepo,
 		notificationsService: notificationsService,
 		redis:                redis,
+		auditService:         auditService,
+		db:                   ordersRepo.database, // On récupère la DB du repository pour les transactions
+
 	}
 }
 
@@ -70,15 +75,22 @@ func (s *OrdersService) ReopenClosedOrder(ctx context.Context, orderID string) e
 }
 
 func (s *OrdersService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	// sécurité : orderID dans l’URL > orderID dans req
+	user, _ := middleware.UserFromContext(ctx)
 	req.OrderID = orderID
 
-	return s.ordersRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
+	return dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		// Pour un paiement, on peut auditer soit l'objet "Order" qui change de statut isPaid,
+		// soit simplement le nouvel objet "Payment". Auditer l'Order est plus sûr.
+		oldOrder, _ := s.ComputeGetOrder(txCtx, user.MerchantID, orderID)
+
+		if err := s.ordersRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req); err != nil {
+			return err
+		}
+
+		newOrder, _ := s.ComputeGetOrder(txCtx, user.MerchantID, orderID)
+
+		return s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
+	})
 }
 
 // GetPendingOrderIDs : Service pour récupérer uniquement les identifiants des commandes en cours
@@ -93,26 +105,25 @@ func (s *OrdersService) GetPendingOrderIDs(ctx context.Context, app string) ([]s
 
 // GetOrdersByIDs : Service pour récupérer les objets commandes complets à partir d'une liste d'IDs
 func (s *OrdersService) GetOrdersByIDs(ctx context.Context, orderIDs []string) ([]models.Order, error) {
-	if len(orderIDs) == 0 {
-		return []models.Order{}, nil
-	}
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(orderIDs) == 0 {
+		return []models.Order{}, nil
 	}
 
 	return s.ordersRepo.GetOrdersByIDs(ctx, user.MerchantID, orderIDs)
 }
 
 func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*models.PendingOrdersResponse, error) {
-	// 0. Récupération de l'utilisateur pour le MerchantID (nécessaire pour les clés Redis)
-	log := logger.FromContext(ctx)
-
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	log := logger.FromContext(ctx)
 
 	// 1. On récupère les IDs des commandes en cours (Requête SQL légère)
 	ids, err := s.GetPendingOrderIDs(ctx, app)
@@ -255,15 +266,9 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 }
 
 func (s *OrdersService) GetOrder(ctx context.Context, orderID string) (*models.PendingOrdersResponse, error) {
-
-	// Récupérer l'utilisateur depuis le contexte
-
 	user, err := middleware.UserFromContext(ctx)
-
 	if err != nil {
-
 		return nil, err
-
 	}
 
 	return s.ComputeGetOrder(ctx, user.MerchantID, orderID)
@@ -361,6 +366,64 @@ func (s *OrdersService) PrepareCreateOrder(ctx context.Context, req *models.Requ
 }
 
 func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
+	log := logger.FromContext(ctx)
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	req.MerchantID = user.MerchantID
+
+	// Tout ce qui est dans ce bloc est transactionnel !
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+
+		// 1. Récupérer l'état AVANT (utilise txCtx pour rester dans la transaction)
+		oldOrder, err := s.ComputeGetOrder(txCtx, req.MerchantID, *req.Order.OrderID)
+		if err != nil {
+			return err
+		}
+
+		// 2. Mettre à jour (utilise txCtx)
+		if err := s.ordersRepo.UpdateOrder(txCtx, req); err != nil {
+			return err
+		}
+
+		// 3. Récupérer l'état APRES
+		// (ou construire le newOrder en mémoire si tu préfères éviter un SELECT)
+		newOrder, err := s.ComputeGetOrder(txCtx, req.MerchantID, *req.Order.OrderID)
+		if err != nil {
+			return err
+		}
+
+		// 4. AUDIT : C'est dans la même transaction !
+		err = s.auditService.LogChange(
+			txCtx,
+			models.ActionOrderUpdate,
+			models.ResourceOrder,
+			*req.Order.OrderID,
+			oldOrder,
+			newOrder,
+		)
+		if err != nil {
+			return err // Si l'audit pète, ça fera un Rollback de tout le bloc !
+		}
+
+		return nil // Tout est bon, Commit !
+	})
+
+	if err != nil {
+		log.Error("UpdateOrder transaction failed: " + err.Error())
+		return err
+	}
+
+	// 5. Actions asynchrones / hors base de données (se font UNIQUEMENT si le commit a réussi)
+	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, "UPDATE_ORDER")
+
+	return nil
+}
+
+func (s *OrdersService) UpdateOrderOld(ctx context.Context, req *models.RequestObject) error {
 	log := logger.FromContext(ctx)
 
 	err := s.ordersRepo.UpdateOrder(ctx, req)
@@ -1062,5 +1125,6 @@ func (s *OrdersService) applyDeliveryRules(req *models.PricingRequest, merchant 
 }
 
 func (s *OrdersService) ComputeEstimatedReady(ctx context.Context, id string) (string, error) {
-	return s.ordersRepo.ComputeEstimatedReady(ctx, nil, id, 3)
+	// On utilise 3 produits comme base pour l'estimation, mais cette logique peut être ajustée selon les besoins réels
+	return s.ordersRepo.ComputeEstimatedReady(ctx, id, 3)
 }

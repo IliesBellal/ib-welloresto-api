@@ -9,6 +9,7 @@ import (
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 
 	"go.uber.org/zap"
 )
@@ -694,7 +695,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	}, nil
 }
 
-func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegisterID string, label string, value float64) (string, error) {
+func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegisterID string, req *models.AddCustomItemRequest, user *auth.UserLoginRow) (string, error) {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -717,13 +718,13 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 		return "", errors.New("cash_register_closed")
 	}
 
-	valueInt := int(value)
+	valueInt := req.Value
 
 	// Insert custom item
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO cash_registers_custom_items (label, amount, cash_register_id)
-		VALUES (?, ?, ?)
-	`, label, valueInt, cashRegisterID)
+		INSERT INTO cash_registers_custom_items (label, amount, cash_register_id, merchant_id, created_by)
+		VALUES (?, ?, ?, ?, ?)
+	`, req.Label, valueInt, cashRegisterID, user.MerchantID, user.UserID)
 
 	if err != nil {
 		return "", err
@@ -735,7 +736,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	return fmt.Sprintf("%d", insertID), nil
 }
 
-func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string) error {
+func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string, user *auth.UserLoginRow) error {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -761,8 +762,8 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 	_, err = tx.ExecContext(ctx, `
 		UPDATE cash_registers_custom_items
 		SET enabled = 0
-		WHERE cash_register_id = ? AND id = ?
-	`, cashRegisterID, itemID)
+		WHERE cash_register_id = ? AND id = ? AND merchant_id = ?
+	`, cashRegisterID, itemID, user.MerchantID)
 	if err != nil {
 		return err
 	}

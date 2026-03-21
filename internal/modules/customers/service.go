@@ -3,19 +3,16 @@ package customers
 import (
 	"context"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/middleware"
 )
 
 type CustomersService struct {
 	customerRepo *CustomersRepository
-	userRepo     auth.AuthService
 }
 
-func NewCustomersService(_customerRepo *CustomersRepository, u auth.AuthService) *CustomersService {
+func NewCustomersService(_customerRepo *CustomersRepository) *CustomersService {
 	return &CustomersService{
 		customerRepo: _customerRepo,
-		userRepo:     u,
 	}
 }
 
@@ -28,27 +25,21 @@ func (s *CustomersService) UpdateOrCreateCustomer(ctx context.Context, params ma
 }
 
 func (s *CustomersService) GetCustomerLoyalty(ctx context.Context, token, customerID string) (*CustomerLoyalty, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
-	}
 
-	return s.customerRepo.GetCustomerLoyalty(ctx, customerID)
+	return s.customerRepo.GetCustomerLoyalty(ctx, customerID, user.MerchantID)
 }
 
 func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token string, req *LoyaltyProgressUpdateRequest) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
-	}
 
-	n, err := s.customerRepo.UpdateLoyaltyProgress(ctx, req)
+	n, err := s.customerRepo.UpdateLoyaltyProgress(ctx, req, user.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,15 +48,12 @@ func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token stri
 }
 
 func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string, req *LoyaltyRewardUpdateRequest) (map[string]interface{}, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
-	}
 
-	if err := s.customerRepo.UpdateLoyaltyReward(ctx, req); err != nil {
+	if err := s.customerRepo.UpdateLoyaltyReward(ctx, req, user.MerchantID); err != nil {
 		return nil, err
 	}
 
@@ -73,12 +61,9 @@ func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string
 }
 
 func (s *CustomersService) SearchCustomers(ctx context.Context, token, term string) ([]CustomerSearchResult, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 
 	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, term)

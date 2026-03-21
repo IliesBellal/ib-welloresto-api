@@ -2,21 +2,19 @@ package delivery_sessions
 
 import (
 	"context"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/notification"
 )
 
 type DeliverySessionsService struct {
 	deliverySessionsRepo *DeliverySessionsRepository
-	userRepo             auth.AuthService
 	notificationsService *notification.NotificationService
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, userRepo auth.AuthService, notificationsService *notification.NotificationService) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
-		userRepo:             userRepo,
 		notificationsService: notificationsService,
 	}
 }
@@ -25,12 +23,9 @@ func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository
 
 // GetPendingDeliverySessions returns delivery sessions (no orders)
 func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]DeliverySession, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
@@ -40,14 +35,9 @@ func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context
 }
 
 func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, token string, req *models.DeliverySessionRequest) (interface{}, error) {
-
-	// 1. Check token → get user + merchant
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
@@ -65,14 +55,9 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 }
 
 func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {
-
-	// 1. Check token → get user + merchant
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
@@ -89,12 +74,9 @@ func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, toke
 }
 
 func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token, delivery_session_id string) (*models.DeliverySession, error) {
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
@@ -103,14 +85,9 @@ func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token,
 }
 
 func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {
-
-	// 1. Check token → get user + merchant
-	user, err := s.userRepo.GetUserByToken(ctx, token)
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if user == nil {
-		return nil, models.ErrUnauthorized
 	}
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
