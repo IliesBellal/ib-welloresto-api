@@ -3,7 +3,7 @@ package audit
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -43,7 +43,9 @@ func (r *auditRepository) InsertLog(ctx context.Context, log *models.AuditLog) e
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to insert audit log: %w", err)
+		logger.FromContext(ctx).Error("failed to insert audit log : " + err.Error())
+		// On ne retourne pas d'erreur temporairement pour éviter de bloquer la logique métier en cas de problème avec l'audit pendant la phase de développement. À revoir pour la production.
+		//return fmt.Errorf("failed to insert audit log: %w", err)
 	}
 
 	return nil
