@@ -3,9 +3,8 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-
-	"github.com/google/uuid"
 )
 
 type AuditService interface {
@@ -33,7 +32,7 @@ func (s *auditService) LogChange(ctx context.Context, MerchantID, UserID, action
 
 	// Création de l'entrée (sans les hashs, le repo s'en charge)
 	logEntry := &models.AuditLog{
-		ID:           uuid.New().String(),
+		ID:           helpers.GeneratePrefixedID("audit-log"),
 		UserID:       UserID,
 		MerchantID:   MerchantID,
 		Action:       action,

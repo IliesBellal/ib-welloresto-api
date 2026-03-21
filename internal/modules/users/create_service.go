@@ -32,7 +32,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	// --- Generate IDs & tokens ---
 	userID := helpers.GeneratePrefixedID("user")
 
-	userToken, err := helpers.GenerateToken(15) // 30-char token for the users.token column (VARCHAR(30))
+	userToken, err := helpers.GenerateToken(30) // 30-char token for the users.token column (VARCHAR(30))
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +53,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 
 	// Link to merchant if provided
 	if req.MerchantID != nil {
-		rightsToken, err := helpers.GenerateToken(16) // 32-char token → VARCHAR(255)
+		rightsToken, err := helpers.GenerateToken(30) // 30-char token → VARCHAR(255)
 		if err != nil {
 			return "", err
 		}
