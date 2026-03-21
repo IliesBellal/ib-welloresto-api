@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
+	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
 	"welloresto-api/internal/webhook/deliveroo_menu"
@@ -164,6 +165,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient)
 	scannHandler := scannorder.NewHandler(scannService)
 
+	// ---- Receipt ----
+	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
+	receiptService := receipt.NewReceiptService(receiptRepo)
+
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
@@ -178,6 +183,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		redisClient,
 		auditService,
 		ordersService,
+		receiptService,
 		mysqlDB,
 	)
 

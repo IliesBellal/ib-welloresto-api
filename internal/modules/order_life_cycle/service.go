@@ -18,8 +18,10 @@ import (
 	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/orders"
+	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/ubereats"
 	"welloresto-api/internal/utils/dbutils"
+	receiptUtils "welloresto-api/internal/utils/receipt"
 
 	"go.uber.org/zap"
 )
@@ -37,9 +39,10 @@ type OrdersLifeCycleService struct {
 	stripeManager        *stripeclient.StripeManager
 	customersService     *customers.CustomersService
 	redis                *redis.Client
+	receiptService       receipt.ReceiptService
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -50,6 +53,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		stripeManager:        stripeSvc,
 		customersService:     customersService,
 		redis:                redis,
+		receiptService:       receiptService,
 		auditService:         auditService,
 		db:                   db,
 		ordersService:        orders,
@@ -103,6 +107,7 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 	return nil
 }
 
+/*
 func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
 	//log := logger.FromContext(ctx)
 
@@ -121,6 +126,53 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	case models.BrandDeliveroo:
 		if order.BrandOrderID != nil {
 			go s.deliverooSvc.SetCollected(*order.BrandOrderID)
+		}
+		return nil
+
+	default:
+		return nil
+	}
+}
+*/
+
+func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
+	// 1) Mettre la commande en Delivered (local DB updates)
+	// orderMeta contient Brand, BrandOrderID, etc.
+	orderMeta, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+	if err != nil {
+		return err
+	}
+
+	// 2) --- NOUVEAU : Récupération des données complètes ---
+	// Tu dois avoir une fonction dans ton repo (ex: ordersRepo) qui récupère
+	// la commande avec ses Items et Payments. Comme on passe 'ctx' (qui est txCtx),
+	// cela se fait à l'intérieur de ta transaction de clôture.
+	fullOrders, err := s.ordersService.GetOrder(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch order details for receipt: %w", err)
+	}
+
+	fullOrder := fullOrders.Orders[0] // On suppose que la commande existe et qu'on a un seul résultat
+
+	// 3) --- NOUVEAU : Construction des Snapshots ---
+	itemsSnap := receiptUtils.BuildItemsSnapshot(fullOrder.Products, *fullOrder.OrderType)
+	paymentsSnap := receiptUtils.BuildPaymentsSnapshot(fullOrder.Payments)
+
+	// 4) --- NOUVEAU : Génération du Reçu Fiscal ---
+	// Si cette fonction échoue, la transaction est annulée, la commande ne passe pas en Delivered.
+	if err := s.receiptService.GenerateFiscalReceipt(ctx, &fullOrder, itemsSnap, paymentsSnap); err != nil {
+		return fmt.Errorf("failed to generate fiscal receipt: %w", err)
+	}
+
+	// 5) Handle integration (Deliveroo, UberEats, etc.)
+	switch orderMeta.Brand {
+	case models.BrandUberEats:
+		// No endpoint to call...
+		return nil
+
+	case models.BrandDeliveroo:
+		if orderMeta.BrandOrderID != nil {
+			go s.deliverooSvc.SetCollected(*orderMeta.BrandOrderID)
 		}
 		return nil
 

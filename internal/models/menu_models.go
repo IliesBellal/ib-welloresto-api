@@ -38,6 +38,7 @@ type ProductEntry struct {
 	Price                        int64                 `json:"price"`
 	PriceTakeAway                *int64                `json:"price_take_away"`
 	PriceDelivery                *int64                `json:"price_delivery"`
+	TVARate                      *float64              `json:"tva_rate,omitempty"`
 	TVAIn                        *float64              `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64              `json:"tva_rate_delivery,omitempty"`
 	TVATakeAway                  *float64              `json:"tva_rate_take_away,omitempty"`

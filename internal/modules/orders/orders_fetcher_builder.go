@@ -379,9 +379,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var paymentID sql.NullInt64
+			var paymentID, amount sql.NullInt64
 			var mop, orderID, UserID sql.NullString
-			var amount sql.NullFloat64
 			var paymentDate sql.NullTime
 			var enabled sql.NullBool
 
@@ -389,7 +388,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), UserID: UserID.String, Enabled: enabled.Bool,
+				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Int64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), UserID: UserID.String, Enabled: enabled.Bool,
 			})
 		}
 	}

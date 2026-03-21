@@ -5,11 +5,17 @@ import (
 	"time"
 )
 
+const (
+	OrderTypeIn       = "IN"
+	OrderTypeTakeAway = "TAKE_AWAY"
+	OrderTypeDelivery = "DELIVERY"
+)
+
 type Payment struct {
 	OrderID     string  `json:"order_id"`
 	PaymentID   int64   `json:"payment_id"`
 	MOP         string  `json:"mop"`
-	Amount      float64 `json:"amount"`
+	Amount      int64   `json:"amount"`
 	PaymentDate int64   `json:"payment_date"`
 	UserID      string  `json:"user_id"`
 	Enabled     bool    `json:"enabled"`
@@ -110,6 +116,7 @@ type Customer struct {
 
 type Order struct {
 	OrderID           string           `json:"order_id"`
+	MerchantID        *string          `json:"merchant_id,omitempty"`
 	OrderNum          *string          `json:"order_num"`
 	DeliverySessionID *string          `json:"delivery_session_id"`
 	DeliveryPriority  *int             `json:"delivery_priority"`
