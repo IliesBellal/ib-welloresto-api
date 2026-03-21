@@ -28,7 +28,7 @@ type OrdersLifeCycleService struct {
 	db                   *sql.DB
 	auditService         audit.AuditService
 	ordersLifeCycleRepo  *OrdersLifeCycleRepository
-	ordersRepo           *orders.OrdersRepository
+	ordersService        *orders.OrdersService
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository
 	uberSvc              *ubereats.UberEatsService
 	deliverooSvc         *deliveroo.DeliverooService
@@ -41,7 +41,7 @@ type OrdersLifeCycleService struct {
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository,
-	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersRepository, db *sql.DB) *OrdersLifeCycleService {
+	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -54,7 +54,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		redis:                redis,
 		auditService:         auditService,
 		db:                   db,
-		ordersRepo:           orders,
+		ordersService:        orders,
 	}
 }
 
@@ -146,7 +146,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	// On lance la transaction
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 		// A. Optionnel : On récupère l'état AVANT pour l'audit
-		oldOrders, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		oldOrders, _ := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, orderID)
 		oldOrder := oldOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
 
 		// B. Exécution du repo (qui utilisera la Tx via txCtx)
@@ -154,8 +154,15 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 			return err
 		}
 
+		// Nettoyage Redis
+		if s.redis != nil {
+			key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+			s.redis.Delete(ctx, key)
+			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
 		// C. Optionnel : Audit Log après succès
-		newOrders, err := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		newOrders, err := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, orderID)
 		if err != nil {
 			log.Error("failed to fetch updated order", zap.Error(err))
 		}
@@ -172,14 +179,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	// --- ACTIONS POST-COMMIT (Side effects) ---
 
-	// 1. Nettoyage Redis
-	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
-		s.redis.Delete(ctx, key)
-		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-	}
-
-	// 2. Notification temps réel
+	// Notification temps réel
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
 
 	return nil

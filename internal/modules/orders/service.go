@@ -74,6 +74,8 @@ func (s *OrdersService) ReopenClosedOrder(ctx context.Context, orderID string) e
 	return s.ordersRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
 }
 
+/*
+Will use order life cycle module
 func (s *OrdersService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
 	user, _ := middleware.UserFromContext(ctx)
 	req.OrderID = orderID
@@ -92,7 +94,7 @@ func (s *OrdersService) AddPayment(ctx context.Context, orderID string, req *mod
 		return s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
 	})
 }
-
+*/
 // GetPendingOrderIDs : Service pour récupérer uniquement les identifiants des commandes en cours
 func (s *OrdersService) GetPendingOrderIDs(ctx context.Context, app string) ([]string, error) {
 	user, err := middleware.UserFromContext(ctx)
@@ -378,7 +380,8 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 
 		// 1. Récupérer l'état AVANT (utilise txCtx pour rester dans la transaction)
-		oldOrder, err := s.GetOrder(txCtx, *req.Order.OrderID)
+		oldOrders, _ := s.ComputeGetOrder(txCtx, user.MerchantID, *req.Order.OrderID)
+		oldOrder := oldOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
 		if err != nil {
 			return err
 		}
@@ -388,12 +391,20 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 			return err
 		}
 
+		// Nettoyage Redis
+		if s.redis != nil {
+			key := helpers.GetRedisOrderKey(user.MerchantID, *req.Order.OrderID)
+			s.redis.Delete(ctx, key)
+			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
 		// 3. Récupérer l'état APRES
 		// (ou construire le newOrder en mémoire si tu préfères éviter un SELECT)
-		newOrder, err := s.GetOrder(txCtx, *req.Order.OrderID)
+		newOrders, err := s.ComputeGetOrder(txCtx, user.MerchantID, *req.Order.OrderID)
 		if err != nil {
-			return err
+			log.Error("failed to fetch updated order", zap.Error(err))
 		}
+		newOrder := newOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
 
 		// 4. AUDIT : C'est dans la même transaction !
 		err = s.auditService.LogChange(

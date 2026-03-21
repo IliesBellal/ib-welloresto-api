@@ -437,6 +437,8 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	)
 }
 
+/*
+Will use order life cycle module
 func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
 	/*
 		tx, err := r.database.BeginTx(ctx, nil)
@@ -448,7 +450,8 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 			_ = tx.Rollback()
 			return err
 		}
-	*/
+*/
+/*
 
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -511,10 +514,10 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 
 				_, err := db.ExecContext(ctx, `
                 UPDATE orderitems
-                SET 
+                SET
                     paid_quantity = paid_quantity + ?,
                     isPaid = (quantity <= paid_quantity + ?)
-                WHERE 
+                WHERE
                     order_id = ?
                     AND order_item_id = ?
                     AND merchant_id = ?
@@ -570,9 +573,10 @@ func (r *OrdersRepository) AddPayment(ctx context.Context, merchantID, userID st
 		if err != nil {
 			return rollback(err)
 		}
-	*/
+*/ /*
 	return nil
 }
+*/
 
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
 	q := `
