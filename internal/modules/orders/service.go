@@ -378,7 +378,7 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 
 		// 1. Récupérer l'état AVANT (utilise txCtx pour rester dans la transaction)
-		oldOrder, err := s.ComputeGetOrder(txCtx, req.MerchantID, *req.Order.OrderID)
+		oldOrder, err := s.GetOrder(txCtx, *req.Order.OrderID)
 		if err != nil {
 			return err
 		}
@@ -390,7 +390,7 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 
 		// 3. Récupérer l'état APRES
 		// (ou construire le newOrder en mémoire si tu préfères éviter un SELECT)
-		newOrder, err := s.ComputeGetOrder(txCtx, req.MerchantID, *req.Order.OrderID)
+		newOrder, err := s.GetOrder(txCtx, *req.Order.OrderID)
 		if err != nil {
 			return err
 		}
