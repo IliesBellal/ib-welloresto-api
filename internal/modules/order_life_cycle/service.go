@@ -2,6 +2,7 @@ package order_life_cycle
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"time"
@@ -11,17 +12,23 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/audit"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/ubereats"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type OrdersLifeCycleService struct {
+	db                   *sql.DB
+	auditService         audit.AuditService
 	ordersLifeCycleRepo  *OrdersLifeCycleRepository
+	ordersRepo           *orders.OrdersRepository
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository
 	uberSvc              *ubereats.UberEatsService
 	deliverooSvc         *deliveroo.DeliverooService
@@ -34,7 +41,7 @@ type OrdersLifeCycleService struct {
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository,
-	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client) *OrdersLifeCycleService {
+	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersRepository, db *sql.DB) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -45,6 +52,9 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		stripeManager:        stripeSvc,
 		customersRepo:        customersRepo,
 		redis:                redis,
+		auditService:         auditService,
+		db:                   db,
+		ordersRepo:           orders,
 	}
 }
 
@@ -125,6 +135,51 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 }
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	req.OrderID = orderID
+	log := logger.FromContext(ctx)
+
+	// On lance la transaction
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		// A. Optionnel : On récupère l'état AVANT pour l'audit
+		oldOrder, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+
+		// B. Exécution du repo (qui utilisera la Tx via txCtx)
+		if err := s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req); err != nil {
+			return err
+		}
+
+		// C. Optionnel : Audit Log après succès
+		newOrder, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		_ = s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
+
+		return nil
+	})
+
+	if err != nil {
+		return err // Si la transaction a échoué, on s'arrête là.
+	}
+
+	// --- ACTIONS POST-COMMIT (Side effects) ---
+
+	// 1. Nettoyage Redis
+	if s.redis != nil {
+		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+	}
+
+	// 2. Notification temps réel
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+
+	return nil
+}
+
+func (s *OrdersLifeCycleService) AddPaymentOld(ctx context.Context, orderID string, req *models.PaymentRequest) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err

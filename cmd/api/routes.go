@@ -176,6 +176,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		notificationService,
 		customersRepo,
 		redisClient,
+		auditService,
+		ordersRepo,
+		mysqlDB,
 	)
 
 	// 3. Initialiser le StripeWebhookService Stripe
