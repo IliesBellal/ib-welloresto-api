@@ -145,9 +145,6 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 	}
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
-
-		// ⚠️ Attention: s.customersRepo.UpdateLoyaltyFromOrder et s.DeliverOrder
-		// DOIVENT utiliser helpers.GetDB(txCtx) en interne pour s'inscrire dans cette transaction.
 		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err
 		}

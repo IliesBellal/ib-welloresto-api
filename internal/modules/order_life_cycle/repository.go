@@ -95,7 +95,6 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 }
 
 func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
-	// Utilisation de ton helper centralisé
 	db := dbutils.GetDB(ctx, r.database)
 
 	// 1. Trouver cash_register_id
@@ -503,127 +502,115 @@ func (r *OrdersLifeCycleRepository) formatQuery(q string, isPostgres bool) strin
 	return result.String()
 }
 
+/*
 func (r *OrdersLifeCycleRepository) SetDistributedProductsOld(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
 
-	//log := logger.FromContext(ctx)
+		//log := logger.FromContext(ctx)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	orderID := req.OrderID
-
-	for _, p := range req.Products {
-
-		// ----- BEFORE value -----
-		var beforeIsDistributed sql.NullInt64
-		err = tx.QueryRowContext(ctx, `
-			SELECT isDistributed
-			FROM orderitems
-			WHERE order_id = ? AND order_item_id = ?
-		`, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
-
+		tx, err := r.database.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
+		defer tx.Rollback()
 
-		// ----- UPDATE ORDER ITEM -----
-		_, err = tx.ExecContext(ctx, `
-			UPDATE orderitems
-			SET 
-				isDistributed = 1,
-				distributed_quantity = quantity,
-				ready_for_distribution_quantity = quantity,
-				distributed_on = UTC_TIMESTAMP
-			WHERE order_id = ? AND order_item_id = ?
-		`, orderID, p.OrderItemID)
-		if err != nil {
-			return err
+		orderID := req.OrderID
+
+		for _, p := range req.Products {
+
+			// ----- BEFORE value -----
+			var beforeIsDistributed sql.NullInt64
+			err = tx.QueryRowContext(ctx, `
+				SELECT isDistributed
+				FROM orderitems
+				WHERE order_id = ? AND order_item_id = ?
+			`, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
+
+			if err != nil {
+				return err
+			}
+
+			// ----- UPDATE ORDER ITEM -----
+			_, err = tx.ExecContext(ctx, `
+				UPDATE orderitems
+				SET
+					isDistributed = 1,
+					distributed_quantity = quantity,
+					ready_for_distribution_quantity = quantity,
+					distributed_on = UTC_TIMESTAMP
+				WHERE order_id = ? AND order_item_id = ?
+			`, orderID, p.OrderItemID)
+			if err != nil {
+				return err
+			}
+
+			// ----- Check if all items distributed -----
+			var existsNotDistributed int
+			err = tx.QueryRowContext(ctx, `
+				SELECT 1
+				FROM orders
+				INNER JOIN orderitems ON orderitems.order_id = orders.order_id
+				WHERE orders.order_id = ?
+				AND orders.merchant_id = ?
+				AND orderitems.isDistributed = 0
+				LIMIT 1
+			`, orderID, merchantID).Scan(&existsNotDistributed)
+
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+
+			orderFullyDistributed := "1"
+			if existsNotDistributed == 1 {
+				orderFullyDistributed = "0"
+			}
+
+			// ----- UPDATE ORDER -----
+			_, err = tx.ExecContext(ctx, `
+				UPDATE orders
+				SET
+					isDistributed = ?,
+					delivered_on = CASE
+						WHEN ? = '0' OR order_type = 'DELIVERY' THEN delivered_on
+						ELSE UTC_TIMESTAMP
+					END,
+					brand_status = CASE
+						WHEN order_type = 'DELIVERY' AND ? = '1' THEN 'READY_FOR_HANDOFF'
+						WHEN order_type = 'TAKE_AWAY' AND ? = '1' THEN 'READY_FOR_TAKE_AWAY'
+						WHEN ? = '0' THEN 'PENDING'
+						ELSE 'DONE'
+					END,
+					last_update = UTC_TIMESTAMP
+				WHERE order_id = ? AND merchant_id = ?
+			`, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderID, merchantID)
+
+			if err != nil {
+				return err
+			}
+
+			// ----- Log order change (replicates PHP) -----
+			// TODO : appeler équivalent Go de logOrderChange(...)
 		}
 
-		// ----- Check if all items distributed -----
-		var existsNotDistributed int
+		// ------ Get brand ------
+		var brand sql.NullString
 		err = tx.QueryRowContext(ctx, `
-			SELECT 1
+			SELECT brand
 			FROM orders
-			INNER JOIN orderitems ON orderitems.order_id = orders.order_id
-			WHERE orders.order_id = ?
-			AND orders.merchant_id = ?
-			AND orderitems.isDistributed = 0
-			LIMIT 1
-		`, orderID, merchantID).Scan(&existsNotDistributed)
-
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-
-		orderFullyDistributed := "1"
-		if existsNotDistributed == 1 {
-			orderFullyDistributed = "0"
-		}
-
-		// ----- UPDATE ORDER -----
-		_, err = tx.ExecContext(ctx, `
-			UPDATE orders
-			SET 
-				isDistributed = ?,
-				delivered_on = CASE 
-					WHEN ? = '0' OR order_type = 'DELIVERY' THEN delivered_on
-					ELSE UTC_TIMESTAMP
-				END,
-				brand_status = CASE
-					WHEN order_type = 'DELIVERY' AND ? = '1' THEN 'READY_FOR_HANDOFF'
-					WHEN order_type = 'TAKE_AWAY' AND ? = '1' THEN 'READY_FOR_TAKE_AWAY'
-					WHEN ? = '0' THEN 'PENDING'
-					ELSE 'DONE'
-				END,
-				last_update = UTC_TIMESTAMP
-			WHERE order_id = ? AND merchant_id = ?
-		`, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderID, merchantID)
+			WHERE order_id = ?
+		`, orderID).Scan(&brand)
 
 		if err != nil {
 			return err
 		}
 
-		// ----- Log order change (replicates PHP) -----
-		// TODO : appeler équivalent Go de logOrderChange(...)
+		err = tx.Commit()
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
-
-	// ------ Get brand ------
-	var brand sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT brand
-		FROM orders
-		WHERE order_id = ?
-	`, orderID).Scan(&brand)
-
-	if err != nil {
-		return err
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-
-	// ------ Notifications / Integrations ------
-	if brand.String == "UBER_EATS" {
-		// TODO : appeler équivalent Go de logOrderChange(...)
-		//r.log.Info("Would call UberEats setOrderReady", zap.String("order_id", orderID))
-	} else if brand.String == "DELIVEROO" {
-		// TODO : appeler équivalent Go de logOrderChange(...)
-		//r.log.Info("Would call Deliveroo setOrderReady", zap.String("order_id", orderID))
-	} else {
-		// TODO : appeler équivalent Go de logOrderChange(...)
-		//r.log.Info("Sending update order notification", zap.String("order_id", orderID))
-		// r.sendOrderUpdateNotification(merchantID, orderID)
-	}
-
-	return nil
-}
-
+*/
 func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Context, userID, merchantID, orderID string, products []models.DistributedProduct) error {
 
 	tx, err := r.database.BeginTx(ctx, nil)
@@ -936,12 +923,14 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 	return err
 }
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+	*/
 	// 0.1 Lock order row
 	const qLockOrder = `
 		SELECT price
@@ -951,8 +940,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 		`
 
 	var price int
-	if err := tx.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
-		tx.Rollback()
+	if err := db.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
 		return nil, err
 	}
 
@@ -964,14 +952,12 @@ WHERE order_id = ?
 `
 
 	var paidAmount int
-	if err := tx.QueryRowContext(ctx, qSumPayments, orderID).
+	if err := db.QueryRowContext(ctx, qSumPayments, orderID).
 		Scan(&paidAmount); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	if paidAmount != price {
-		tx.Rollback()
 		return nil, &models.OrderNotFullyPaidError{
 			OrderID:    orderID,
 			PaidAmount: paidAmount,
@@ -986,9 +972,8 @@ WHERE order_id = ?
 	WHERE order_id = ?
 	`
 	meta := &DeliveredOrderMetadata{}
-	if err := tx.QueryRowContext(ctx, qOrder, orderID).
+	if err := db.QueryRowContext(ctx, qOrder, orderID).
 		Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -1003,8 +988,7 @@ WHERE order_id = ?
 	    delivered_on = UTC_TIMESTAMP()
 	WHERE order_id = ?
 	`
-	if _, err := tx.ExecContext(ctx, qUpd, orderID); err != nil {
-		tx.Rollback()
+	if _, err := db.ExecContext(ctx, qUpd, orderID); err != nil {
 		return nil, err
 	}
 
@@ -1016,15 +1000,13 @@ WHERE order_id = ?
 	INNER JOIN orders o ON o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
 	WHERE o.order_id = ?
 	`
-	if _, err := tx.ExecContext(ctx, qDelQR, orderID); err != nil {
-		tx.Rollback()
+	if _, err := db.ExecContext(ctx, qDelQR, orderID); err != nil {
 		return nil, err
 	}
 
 	// 4) Set bookings status = 0
 	qUpdBook := `UPDATE bookings SET status = '0' WHERE order_id = ?`
-	if _, err := tx.ExecContext(ctx, qUpdBook, orderID); err != nil {
-		tx.Rollback()
+	if _, err := db.ExecContext(ctx, qUpdBook, orderID); err != nil {
 		return nil, err
 	}
 
@@ -1036,7 +1018,7 @@ WHERE order_id = ?
 	INNER JOIN orders o ON o.order_id = dso2.order_id AND o.status > 0
 	WHERE dso.order_id = ?
 	`
-	rows, err := tx.QueryContext(ctx, qCheck, orderID)
+	rows, err := db.QueryContext(ctx, qCheck, orderID)
 	if err == nil {
 		var tmp []string
 		for rows.Next() {
@@ -1052,8 +1034,7 @@ WHERE order_id = ?
 				SET delivery_session.status = 0
 				WHERE delivery_session_order.order_id = ?
 			`
-			if _, err := tx.ExecContext(ctx, qCloseDS, orderID); err != nil {
-				tx.Rollback()
+			if _, err := db.ExecContext(ctx, qCloseDS, orderID); err != nil {
 				return nil, err
 			}
 		}
@@ -1072,14 +1053,15 @@ WHERE order_id = ?
 	  AND oi.distributed_on IS NULL
 	  AND TIMESTAMPADD(SECOND, IFNULL(d.duration,0), oi.ordered_on) <= UTC_TIMESTAMP()
 	`
-	if _, err := tx.ExecContext(ctx, qUpdItems, orderID); err != nil {
-		tx.Rollback()
+	if _, err := db.ExecContext(ctx, qUpdItems, orderID); err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+	*/
 
 	return meta, nil
 }
