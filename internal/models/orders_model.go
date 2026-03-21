@@ -11,6 +11,7 @@ type Payment struct {
 	MOP         string  `json:"mop"`
 	Amount      float64 `json:"amount"`
 	PaymentDate int64   `json:"payment_date"`
+	UserID      string  `json:"user_id"`
 	Enabled     bool    `json:"enabled"`
 	IntentID    *string `json:"intent_id,omitempty"`
 	AccountID   *string `json:"account_id,omitempty"`

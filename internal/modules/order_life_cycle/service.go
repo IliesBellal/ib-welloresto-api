@@ -146,7 +146,8 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	// On lance la transaction
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 		// A. Optionnel : On récupère l'état AVANT pour l'audit
-		oldOrder, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		oldOrders, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		oldOrder := oldOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
 
 		// B. Exécution du repo (qui utilisera la Tx via txCtx)
 		if err := s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req); err != nil {
@@ -154,8 +155,13 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 		}
 
 		// C. Optionnel : Audit Log après succès
-		newOrder, _ := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
-		_ = s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
+		newOrders, err := s.ordersRepo.GetOrder(txCtx, user.MerchantID, orderID)
+		if err != nil {
+			log.Error("failed to fetch updated order", zap.Error(err))
+		}
+		newOrder := newOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
+
+		err = s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
 
 		return nil
 	})

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type AuditRepository interface {
@@ -20,6 +21,8 @@ func NewAuditRepository(db *sql.DB) AuditRepository {
 }
 
 func (r *auditRepository) InsertLog(ctx context.Context, log *models.AuditLog) error {
+	db := dbutils.GetDB(ctx, r.db)
+
 	query := `
 		INSERT INTO audit_logs 
 		(id, user_id, merchant_id, action, resource_type, resource_id, old_values, new_values, created_at) 
@@ -28,7 +31,7 @@ func (r *auditRepository) InsertLog(ctx context.Context, log *models.AuditLog) e
 
 	// log.OldValues et log.NewValues sont des []byte (json.RawMessage),
 	// le driver MySQL les passera directement comme du texte JSON.
-	_, err := r.db.ExecContext(ctx, query,
+	_, err := db.ExecContext(ctx, query,
 		log.ID,
 		log.UserID,
 		log.MerchantID,

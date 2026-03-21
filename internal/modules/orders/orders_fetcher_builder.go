@@ -7,15 +7,16 @@ import (
 	"reflect"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersFetcher struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewOrdersFetcher(db *sql.DB) *OrdersFetcher {
 	return &OrdersFetcher{
-		db: db}
+		database: db}
 }
 
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, orderByFilter, limitsFilters string) ([]models.Order, error) {
@@ -26,29 +27,44 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		return nil, ctx.Err()
 	}
 
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, fmt.Errorf("BeginTx failed: %w", err)
-	}
-
-	// Ensure rollback if anything goes wrong
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	/*
+		tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, fmt.Errorf("BeginTx failed: %w", err)
 		}
-	}()
 
-	// --- HELPER FUNCTIONS CORRIGÉES ---
-	// Helper to run a query with logging
+		// Ensure rollback if anything goes wrong
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+
+		// --- HELPER FUNCTIONS CORRIGÉES ---
+		// Helper to run a query with logging
+		runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
+
+			rows, err := tx.QueryContext(ctx, query, args...)
+
+			if err != nil {
+				return nil, fmt.Errorf("%s query error: %w", step, err)
+			}
+
+			return rows, nil
+		}
+	*/
+
+	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le contexte
+	db := dbutils.GetDB(ctx, r.database)
+
+	// --- HELPER FUNCTIONS ---
+	// Le helper utilise maintenant 'db' (qui peut être un *sql.DB ou un *sql.Tx)
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
-
-		rows, err := tx.QueryContext(ctx, query, args...)
-
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("%s query error: %w", step, err)
 		}
-
 		return rows, nil
 	}
 
@@ -350,7 +366,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "payments"
 		q := `
-		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled
 		from payments p
 		INNER JOIN orders o on o.order_id = p.order_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
@@ -364,16 +380,16 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var paymentID sql.NullInt64
-			var mop, orderID sql.NullString
+			var mop, orderID, UserID sql.NullString
 			var amount sql.NullFloat64
 			var paymentDate sql.NullTime
 			var enabled sql.NullBool
 
-			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &enabled); err != nil {
+			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled); err != nil {
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), Enabled: enabled.Bool,
+				OrderID: orderID.String, PaymentID: paymentID.Int64, MOP: mop.String, Amount: amount.Float64, PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), UserID: UserID.String, Enabled: enabled.Bool,
 			})
 		}
 	}
