@@ -2,6 +2,7 @@ package order_life_cycle
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/utils/security"
 )
 
 type OrdersLifeCycleRepository struct {
@@ -137,12 +139,30 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 		}
 	}
 
-	// 3. Insérer le paiement
+	// 2.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+        SELECT hash FROM payments 
+        WHERE merchant_id = ? 
+        ORDER BY payment_id DESC LIMIT 1 
+        FOR UPDATE
+    `, merchantID).Scan(&prevHash)
+
+	now := time.Now().UTC()
+	paymentDate := now.Format(time.RFC3339)
+
+	// Calcul du hash du nouveau paiement
+	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, req.Amount, req.MOP, req.OrderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	// 3. Insérer le paiement avec son hash
 	res, err := db.ExecContext(ctx, `
         INSERT INTO payments
-        (merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check)
-        VALUES (?, ?, ?, ROUND(?,2), ?, ?, UTC_TIMESTAMP(), ?, ?)
-    `, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, userID, req.StatusCheck)
+        (merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, now, userID, req.StatusCheck, prevHash.String, newHash, signature)
+
 	if err != nil {
 		return err
 	}
@@ -922,6 +942,7 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 
 	return err
 }
+
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -965,30 +986,46 @@ WHERE order_id = ?
 		}
 	}
 
-	// 1) Get brand, brand_order_id, fulfillment_type
-	qOrder := `
-	SELECT brand, brand_order_id, merchant_id, fulfillment_type
-	FROM orders
-	WHERE order_id = ?
-	`
+	// 1) Get metadata
+	qOrder := `SELECT brand, brand_order_id, merchant_id, fulfillment_type, price FROM orders WHERE order_id = ?`
 	meta := &DeliveredOrderMetadata{}
-	if err := db.QueryRowContext(ctx, qOrder, orderID).
-		Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType); err != nil {
+	var currentPrice int
+	if err := db.QueryRowContext(ctx, qOrder, orderID).Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType, &currentPrice); err != nil {
 		return nil, err
 	}
 
-	// 2) Update orders table
+	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+        SELECT hash FROM orders 
+        WHERE merchant_id = ? AND state = 'CLOSED' 
+        ORDER BY delivered_on DESC, order_id DESC LIMIT 1 
+        FOR UPDATE
+    `, meta.MerchantID).Scan(&prevHash)
+
+	now := time.Now().UTC()
+	deliveredOn := now.Format(time.RFC3339)
+
+	// Calcul du hash de clôture de commande
+	payload := fmt.Sprintf("%s|%s|%d|%s", prevHash.String, deliveredOn, currentPrice, orderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	// 2) Update orders table avec Hash de clôture
 	qUpd := `
-	UPDATE orders
-	SET last_update = UTC_TIMESTAMP(),
-	    brand_status = 'CLOSED',
-	    state = 'CLOSED',
-	    isPaid = 1,
-	    isDistributed = 1,
-	    delivered_on = UTC_TIMESTAMP()
-	WHERE order_id = ?
-	`
-	if _, err := db.ExecContext(ctx, qUpd, orderID); err != nil {
+    UPDATE orders
+    SET last_update = ?,
+        brand_status = 'CLOSED',
+        state = 'CLOSED',
+        isPaid = 1,
+        isDistributed = 1,
+        delivered_on = ?,
+        previous_hash = ?,
+        hash = ?,
+		signature = ?
+    WHERE order_id = ?
+    `
+	if _, err := db.ExecContext(ctx, qUpd, now, now, prevHash.String, newHash, signature, orderID); err != nil {
 		return nil, err
 	}
 

@@ -70,16 +70,16 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 			oldOrder = oldOrders.Orders[0]
 		}
 
-		// 2. Exécution de l'action métier
-		if err := work(txCtx); err != nil {
-			return err
-		}
-
 		// 4. Nettoyage Cache Redis (dans la transaction)
 		if s.redis != nil {
 			key := helpers.GetRedisOrderKey(MerchantID, orderID)
 			s.redis.Delete(txCtx, key) // Note: ctx ou txCtx, Redis s'en fiche un peu, mais Delete est synchrone
 			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
+		// 2. Exécution de l'action métier
+		if err := work(txCtx); err != nil {
+			return err
 		}
 
 		// 3. Snapshot APRÈS
@@ -111,15 +111,6 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	if err != nil {
 		return err
 	}
-	/*
-		if s.redis != nil {
-			key := helpers.GetRedisOrderKey(MerchantID, orderID)
-			s.redis.Delete(ctx, key)
-			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-		}
-	*/
-	// 3) Notify app
-	//_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	// 4) Handle integration
 	switch order.Brand {
@@ -206,7 +197,6 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	req.OrderID = orderID
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
-		user, _ := middleware.UserFromContext(txCtx)
 		return s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req)
 	})
 }
