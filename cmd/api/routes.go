@@ -111,7 +111,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
 	authService := authModule.NewAuthService(authRepo, redisClient)
-	authMiddleware := middleware.Auth(&authRepo)
+	authMiddleware := middleware.Auth(&authService)
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)
