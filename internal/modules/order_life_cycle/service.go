@@ -104,22 +104,22 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 }
 
 func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
-	log := logger.FromContext(ctx)
+	//log := logger.FromContext(ctx)
 
 	// 2) Mettre la commande en Delivered (local DB updates)
 	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
 	if err != nil {
 		return err
 	}
-
-	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(MerchantID, orderID)
-		s.redis.Delete(ctx, key)
-		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-	}
-
+	/*
+		if s.redis != nil {
+			key := helpers.GetRedisOrderKey(MerchantID, orderID)
+			s.redis.Delete(ctx, key)
+			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+	*/
 	// 3) Notify app
-	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+	//_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	// 4) Handle integration
 	switch order.Brand {
