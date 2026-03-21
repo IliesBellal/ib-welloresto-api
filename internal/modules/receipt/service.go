@@ -49,14 +49,9 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash) // La fonction HMAC qu'on a vu précédemment
 
-	receiptID, err := helpers.GeneratePrefixedID("receipt")
-	if err != nil {
-		return err
-	}
-
 	// 5. Création et Sauvegarde
 	receipt := &models.Receipt{
-		ReceiptID:        receiptID,
+		ReceiptID:        helpers.GeneratePrefixedID("receipt"),
 		MerchantID:       *order.MerchantID,
 		OrderID:          order.OrderID,
 		ReceiptNumber:    newNumber,

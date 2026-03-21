@@ -8,7 +8,7 @@ import (
 )
 
 type Service struct {
-	repo    *Repository
+	repo *Repository
 }
 
 func NewService(repo *Repository) *Service {
@@ -21,7 +21,7 @@ func (s *Service) ListTags(ctx context.Context, token string) ([]models.TagEntry
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return s.repo.ListTags(ctx, user.MerchantID)
 }
 
@@ -31,17 +31,14 @@ func (s *Service) CreateTag(ctx context.Context, token string, req *CreateTagReq
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Validate input
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 
 	// Generate ID
-	tagID, err := helpers.GeneratePrefixedID("tag")
-	if err != nil {
-		return nil, err
-	}
+	tagID := helpers.GeneratePrefixedID("tag")
 
 	// Create tag
 	return s.repo.CreateTag(ctx, user.MerchantID, tagID, req.Name)

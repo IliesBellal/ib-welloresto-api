@@ -30,10 +30,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	}
 
 	// --- Generate IDs & tokens ---
-	userID, err := helpers.GeneratePrefixedID("user")
-	if err != nil {
-		return "", err
-	}
+	userID := helpers.GeneratePrefixedID("user")
 
 	userToken, err := helpers.GenerateToken(15) // 30-char token for the users.token column (VARCHAR(30))
 	if err != nil {
