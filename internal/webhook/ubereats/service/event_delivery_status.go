@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/notification"
 )
 
 func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string, status string) error {
@@ -13,7 +15,7 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 	switch status {
 
 	case "SCHEDULED":
-		s.orderLifeCycleSvc.SetOrderAccepted(ctx, "UBER_EATS_WEBHOOK", merchantID, orderID)
+		s.orderLifeCycleSvc.SetOrderAccepted(ctx, models.UberEatsWebhookUserID, merchantID, orderID)
 		return nil
 
 	case "EN_ROUTE_TO_PICKUP", "ARRIVED_AT_PICKUP":
@@ -31,13 +33,13 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		s.notificationsService.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	case "ARRIVED_AT_DROPOFF":
 		return nil
 
 	case "FINISHED", "COMPLETED":
-		s.orderLifeCycleSvc.DeliverOrder(ctx, "UBER_EATS_WEBHOOK", merchantID, orderID)
+		s.orderLifeCycleSvc.DeliverOrder(ctx, models.UberEatsWebhookUserID, merchantID, orderID)
 		return nil
 
 	case "FAILED":
@@ -49,7 +51,7 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 			tx.Rollback()
 			return err
 		}
-		s.notificationsService.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 		if err := tx.Commit(); err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
@@ -13,7 +14,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 
 	// 1. VÉRIFICATION IMMÉDIATE (Idempotence)
 	// On vérifie en base si cet ID Uber a déjà été traité
-	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, "UBER_EATS", event.Meta.ResourceID)
+	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, models.BrandUberEats, event.Meta.ResourceID)
 	if err != nil {
 		return err
 	}
@@ -49,7 +50,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	req := MapUberOrderToRequest(order, store.MerchantID)
 	req.Order.Products = products
 	req.MerchantID = store.MerchantID
-	createdBy := "WEBHOOK_UBER_EATS"
+	createdBy := models.UberEatsWebhookUserID
 	req.Order.CreatedBy = &createdBy
 
 	// On valide la transaction locale

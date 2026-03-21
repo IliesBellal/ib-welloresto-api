@@ -4,6 +4,12 @@ import (
 	"database/sql"
 )
 
+const (
+	DeliverooWebhookUserID  = "WEBHOOK_DELIVEROO"
+	UberEatsWebhookUserID   = "WEBHOOK_UBER_EATS"
+	WelloRestoWebhookUserID = "WELLO_RESTO"
+)
+
 // Top-level response
 
 type UserLoginRow struct {

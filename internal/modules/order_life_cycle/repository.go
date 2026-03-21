@@ -96,7 +96,119 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 	return nil
 }
 
-func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
+func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, deviceID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	var cashRegisterID sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT cr.cash_register_id
+		FROM cash_registers cr
+		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
+		WHERE (cr.device_id = ? OR scr.device_id = ?)
+		AND cr.end_date IS NULL
+	`, deviceID, deviceID).Scan(&cashRegisterID)
+
+	if err == sql.ErrNoRows {
+		log.Error("Impossible de trouver le registre de caisse. Fallback sur le device ID")
+		// Fallback sur le deviceID si aucun registre n'est ouvert
+		return deviceID, nil
+	} else if err != nil {
+		log.Error("Error finding cash register: " + err.Error())
+		return "", err
+	}
+
+	return cashRegisterID.String, nil
+}
+
+func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment models.Payment) error {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	// 1. Vérification du montant (Paiement total déjà effectué ?)
+	var totalPrice, alreadyPaid int
+	err := db.QueryRowContext(ctx, `
+		SELECT o.price, COALESCE(SUM(p.amount),0)
+		FROM orders o
+		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
+		WHERE o.order_id = ?
+		GROUP BY o.order_id
+	`, payment.OrderID).Scan(&totalPrice, &alreadyPaid)
+
+	if err != nil {
+		log.Error("Error checking payment status: " + err.Error())
+		return fmt.Errorf("failed to check order payment status: %w", err)
+	}
+
+	if alreadyPaid >= totalPrice || alreadyPaid+payment.Amount > totalPrice {
+		return &models.OrderNotFullyPaidError{
+			OrderID:    payment.OrderID,
+			PaidAmount: alreadyPaid,
+			Price:      totalPrice,
+		}
+	}
+
+	// 2. RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+		SELECT hash FROM payments 
+		WHERE merchant_id = ? 
+		ORDER BY payment_id DESC LIMIT 1 
+		FOR UPDATE
+	`, payment.MerchantID).Scan(&prevHash)
+
+	now := time.Now().UTC()
+	paymentDate := now.Format(time.RFC3339)
+
+	// Calcul du hash du nouveau paiement
+	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, payment.Amount, payment.MOP, payment.OrderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	// 3. Insérer le paiement avec son hash
+	res, err := db.ExecContext(ctx, `
+		INSERT INTO payments
+		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature)
+
+	if err != nil {
+		log.Error("Error inserting payment: " + err.Error())
+		return err
+	}
+
+	paymentID, _ := res.LastInsertId()
+
+	// 4. Ticket restaurant (TR)
+	if payment.MOP == "TR" {
+		// On suppose que Code est un champ dans ta struct Payment, à adapter si besoin
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
+			VALUES (?, ?, ?)
+		`, payment.MerchantID, paymentID, payment.Code)
+		if err != nil {
+			log.Error("Error inserting TR: " + err.Error())
+			return err
+		}
+	}
+
+	// 5. Mettre à jour orders.isPaid
+	_, err = db.ExecContext(ctx, `
+		UPDATE orders o
+		INNER JOIN (
+			SELECT order_id, SUM(amount) AS paid
+			FROM payments
+			WHERE enabled = 1 AND order_id = ?
+			GROUP BY order_id
+		) p ON p.order_id = o.order_id
+		SET o.isPaid = (o.price <= p.paid)
+		WHERE o.order_id = ?
+	`, payment.OrderID, payment.OrderID)
+
+	return err
+}
+
+func (r *OrdersLifeCycleRepository) AddPaymentOld(ctx context.Context, payment models.Payment) error {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -108,10 +220,10 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
         LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
         WHERE (cr.device_id = ? OR scr.device_id = ?)
         AND cr.end_date IS NULL
-    `, req.DeviceID, req.DeviceID).Scan(&cashRegisterID)
+    `, payment.AccountID, payment.AccountID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
-		cashRegisterID.String = req.DeviceID
+		cashRegisterID.String = *payment.AccountID
 		cashRegisterID.Valid = true
 	} else if err != nil {
 		log.Error("Error in sql " + err.Error())
@@ -126,17 +238,17 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
        LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
        WHERE o.order_id = ?
        GROUP BY o.order_id
-    `, req.OrderID).Scan(&totalPrice, &alreadyPaid)
+    `, payment.OrderID).Scan(&totalPrice, &alreadyPaid)
 
 	if err != nil {
 		log.Error("Error in sql " + err.Error())
 		return fmt.Errorf("failed to check order payment status: %w", err)
 	}
 
-	if alreadyPaid >= totalPrice || alreadyPaid+req.Amount > totalPrice {
+	if alreadyPaid >= totalPrice || alreadyPaid+payment.Amount > totalPrice {
 		// On renvoie juste l'erreur, RunInTx s'occupe du reste
 		return &models.OrderNotFullyPaidError{
-			OrderID:    req.OrderID,
+			OrderID:    payment.OrderID,
 			PaidAmount: alreadyPaid,
 			Price:      totalPrice,
 		}
@@ -149,13 +261,13 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
         WHERE merchant_id = ? 
         ORDER BY payment_id DESC LIMIT 1 
         FOR UPDATE
-    `, merchantID).Scan(&prevHash)
+    `, payment.MerchantID).Scan(&prevHash)
 
 	now := time.Now().UTC()
 	paymentDate := now.Format(time.RFC3339)
 
 	// Calcul du hash du nouveau paiement
-	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, req.Amount, req.MOP, req.OrderID)
+	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, payment.Amount, payment.MOP, payment.OrderID)
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash)
 
@@ -164,7 +276,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
         INSERT INTO payments
         (merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, now, userID, req.StatusCheck, prevHash.String, newHash, signature)
+    `, payment.MerchantID, cashRegisterID.String, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature)
 
 	if err != nil {
 		log.Error("Error in sql " + err.Error())
@@ -174,11 +286,11 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
 	paymentID, _ := res.LastInsertId()
 
 	// 4. Ticket restaurant (TR)
-	if req.MOP == "TR" && req.Code != "" {
+	if payment.MOP == "TR" {
 		_, err = db.ExecContext(ctx, `
             INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
             VALUES (?, ?, ?)
-        `, merchantID, paymentID, req.Code)
+        `, payment.MerchantID, paymentID, payment.Code)
 		if err != nil {
 			log.Error("Error in sql " + err.Error())
 			return err
@@ -196,12 +308,12 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, merchantID, 
         ) p ON p.order_id = o.order_id
         SET o.isPaid = (o.price <= p.paid)
         WHERE o.order_id = ?
-    `, req.OrderID, req.OrderID)
+    `, payment.OrderID, payment.OrderID)
 
 	return err // Terminé !
 }
 
-func (r *OrdersLifeCycleRepository) AddPaymentOld(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
+func (r *OrdersLifeCycleRepository) AddPaymentVeryOld(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
 	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)
@@ -267,7 +379,7 @@ func (r *OrdersLifeCycleRepository) AddPaymentOld(ctx context.Context, merchantI
 		INSERT INTO payments
 		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check)
 		VALUES (?, ?, ?, ROUND(?,2), ?, ?, UTC_TIMESTAMP, ?, ?)
-	`, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.DiscountComment, userID, req.StatusCheck)
+	`, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.Comment, userID, req.StatusCheck)
 	if err != nil {
 		return rollback(err)
 	}

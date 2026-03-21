@@ -21,9 +21,9 @@ func MapUberOrderToRequest(
 		total = order.Payment.Charges.SubTotalPromoApplied.Amount
 	}
 
-	orderType := "DELIVERY"
+	orderType := models.OrderTypeDelivery
 	if order.Type == "PICK_UP" {
-		orderType = "TAKE_AWAY"
+		orderType = models.OrderTypeTakeAway
 	}
 
 	var products []ordersModels.OrderProductPayload
@@ -38,7 +38,7 @@ func MapUberOrderToRequest(
 	}
 
 	customerName := order.Eater.FirstName + " " + order.Eater.LastName
-	cashRegisterID := "UBER_EATS"
+	cashRegisterID := models.BrandUberEats
 
 	return &ordersModels.RequestObject{
 		MerchantID: merchantID,

@@ -15,6 +15,8 @@ import (
 
 type ReceiptService interface {
 	GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error
+	GenerateRefundReceipt(ctx context.Context, merchantID string, orderID string, originalReceipt *models.Receipt, refundAmountNegative int, mop string) error
+	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 }
 
 type receiptService struct {
@@ -55,8 +57,8 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 		MerchantID:       *order.MerchantID,
 		OrderID:          order.OrderID,
 		ReceiptNumber:    newNumber,
-		TotalTTC:         order.TTC,
-		TotalHT:          *order.HT,
+		TotalTTC:         int(order.TTC),
+		TotalHT:          int(*order.HT),
 		TaxDetails:       taxDetailsJSON,
 		ItemsSnapshot:    itemsJSON,
 		PaymentsSnapshot: paymentsJSON,
@@ -88,4 +90,72 @@ func (s *receiptService) generateNextReceiptNumber(lastNumber string) string {
 	}
 
 	return prefix + "ERROR"
+}
+
+func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID string, orderID string, originalReceipt *models.Receipt, refundAmountNegative int, mop string) error {
+
+	// 1. On lock et on récupère le dernier chaînage
+	lastNumber, lastHash, err := s.repo.GetLastReceiptData(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+
+	newNumber := s.generateNextReceiptNumber(lastNumber)
+	newTechID := helpers.GeneratePrefixedID("RCT")
+
+	// 2. Snapshot : on met juste une ligne explicite pour l'avoir (puisqu'on omet les items précis pour l'instant)
+	itemsSnap := []models.SnapshotItem{
+		{
+			Name:      fmt.Sprintf("Avoir sur facture %s", originalReceipt.ReceiptNumber),
+			Quantity:  1,
+			PriceTTC:  int64(refundAmountNegative), // Négatif
+			TaxRate:   0,                           // Pour un remboursement générique sans gestion d'items, on lisse souvent à 0, ou on doit recalculer le prorata exact.
+			TaxAmount: 0,
+		},
+	}
+	itemsJSON, _ := json.Marshal(itemsSnap)
+
+	paySnap := []models.SnapshotPayment{
+		{Amount: refundAmountNegative, MOP: mop},
+	}
+	payJSON, _ := json.Marshal(paySnap)
+
+	// 3. Cryptographie
+	now := time.Now().UTC()
+	// Le chaînage est respecté, même avec un montant négatif
+	payload := fmt.Sprintf("%s|%s|%d|%s", lastHash, newNumber, refundAmountNegative, now.Format(time.RFC3339))
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	// 4. Insertion
+	receipt := &models.Receipt{
+		ReceiptID:        newTechID,
+		MerchantID:       merchantID,
+		OrderID:          orderID, // On le lie à la même commande !
+		ReceiptNumber:    newNumber,
+		TotalTTC:         refundAmountNegative,
+		TotalHT:          refundAmountNegative, // Simplifié pour cet exemple
+		TaxDetails:       []byte("{}"),
+		ItemsSnapshot:    itemsJSON,
+		PaymentsSnapshot: payJSON,
+		CreatedAt:        now,
+		PrevHash:         lastHash,
+		Hash:             newHash,
+		Signature:        signature,
+	}
+
+	return s.repo.InsertReceipt(ctx, receipt)
+}
+
+func (s *receiptService) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	// Logique métier optionnelle : vérifier si le merchantID correspondrait ici
+	// si on le passait en paramètre.
+
+	receipt, err := s.repo.GetReceiptByOrderID(ctx, orderID)
+	if err != nil {
+		// On wrap l'erreur du repo avec un contexte "Service"
+		return nil, fmt.Errorf("receiptService.GetReceiptByOrderID: %w", err)
+	}
+
+	return receipt, nil
 }

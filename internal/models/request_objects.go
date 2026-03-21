@@ -5,14 +5,23 @@ import (
 )
 
 type PaymentRequest struct {
-	DeviceID        string        `json:"device_id"`
-	OrderID         string        `json:"order_id"`
-	MOP             string        `json:"mop"`
-	Amount          int           `json:"amount"`
-	Items           []PaymentItem `json:"items"`
-	DiscountComment string        `json:"discount_comment"`
-	StatusCheck     string        `json:"status_check"`
-	Code            string        `json:"tr_code"`
+	DeviceID    string        `json:"device_id"`
+	OrderID     string        `json:"order_id"`
+	MOP         string        `json:"mop"`
+	Amount      int           `json:"amount"`
+	Items       []PaymentItem `json:"items"`
+	Comment     string        `json:"discount_comment"`
+	StatusCheck string        `json:"status_check"`
+	Code        string        `json:"tr_code"`
+}
+
+// La requête envoyée par ton Front-end / TPE
+type RefundRequest struct {
+	DeviceID        string `json:"device_id"`
+	OrderID         string `json:"order_id"`         // La commande d'origine
+	MOP             string `json:"mop"`              // Moyen de paiement (ex: CB, CASH)
+	Amount          int    `json:"amount"`           // Le montant à rembourser (peut être positif en JSON, on l'inversera)
+	DiscountComment string `json:"discount_comment"` // Raison du remboursement
 }
 
 type OpenCashRegisterRequest struct {

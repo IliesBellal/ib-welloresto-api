@@ -9,19 +9,10 @@ const (
 	OrderTypeIn       = "IN"
 	OrderTypeTakeAway = "TAKE_AWAY"
 	OrderTypeDelivery = "DELIVERY"
-)
 
-type Payment struct {
-	OrderID     string  `json:"order_id"`
-	PaymentID   int64   `json:"payment_id"`
-	MOP         string  `json:"mop"`
-	Amount      int64   `json:"amount"`
-	PaymentDate int64   `json:"payment_date"`
-	UserID      string  `json:"user_id"`
-	Enabled     bool    `json:"enabled"`
-	IntentID    *string `json:"intent_id,omitempty"`
-	AccountID   *string `json:"account_id,omitempty"`
-}
+	FulfillmentTypeRestaurant = "DELIVERY_BY_RESTAURANT"
+	FulfillmentTypeDeliveroo  = "DELIVEROO"
+)
 
 type OrderComment struct {
 	OrderID      string     `json:"order_id"`

@@ -315,3 +315,31 @@ func (h *OrdersLifeCycleHandler) UpdateProductionStatus(w http.ResponseWriter, r
 		Status: "success",
 	})
 }
+
+func (h *OrdersLifeCycleHandler) HandleRefund(w http.ResponseWriter, r *http.Request) {
+	// 2. Décodage de la requête
+	var req models.RefundRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Sécurité : On s'assure que le montant est strictement positif dans la requête
+	// (on l'inversera dans le backend pour garantir qu'on ne fait pas de fausse vente)
+	if req.Amount <= 0 {
+		http.Error(w, "Amount to refund must be greater than 0", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Appel du service métier
+	err := h.ordersLifeCycleService.ProcessRefund(r.Context(), req)
+	if err != nil {
+		// Tu peux affiner la gestion d'erreur ici (400 vs 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Succès
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Refund processed successfully"})
+}

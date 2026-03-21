@@ -11,6 +11,7 @@ const (
 	ActionOrderReopen = "ORDER_REOPEN"
 	ActionOrderClose  = "ORDER_CLOSE"
 	ActionOrderDelete = "ORDER_DELETE"
+	ActionOrderRefund = "ORDER_REFUND"
 
 	ActionPaymentAdded   = "PAYMENT_ADDED"
 	ActionPaymentDeleted = "PAYMENT_DELETED"

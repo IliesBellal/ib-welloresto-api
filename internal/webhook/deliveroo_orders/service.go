@@ -38,7 +38,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	log := logger.FromContext(ctx)
 
 	// 1. VÉRIFICATION IMMÉDIATE DB (Idempotence de secours en cas de flush Redis)
-	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, "DELIVEROO", payload.Body.Order.ID)
+	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, models.BrandDeliveroo, payload.Body.Order.ID)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 				DeletionComment:  "Remade by Deliveroo",
 				MerchantID:       merchantData.MerchantID,
 				DeletionReasonID: "43",
-				UserID:           "WEBHOOK_DELIVEROO",
+				UserID:           models.DeliverooWebhookUserID,
 			})
 		}
 	}
@@ -119,7 +119,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 
 	// 8. Auto-acceptation
 	if merchantData.AutoAcceptOrders {
-		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), "DELIVEROO_WEBHOOK", merchantData.MerchantID, result.OrderID)
+		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID)
 		if err != nil {
 			log.Error(fmt.Sprintf("Error auto-accepting order %s: %v", result.OrderID, err))
 		}
@@ -133,7 +133,7 @@ func (s *DeliverooService) ProcessNewOrderOld(ctx context.Context, payload Deliv
 
 	// 1. VÉRIFICATION IMMÉDIATE (Idempotence)
 	// On vérifie en base si cet ID Deliveroo a déjà été traité
-	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, "DELIVEROO", payload.Body.Order.ID)
+	exists, err := s.ordersService.ExistsByBrandOrderID(ctx, models.BrandDeliveroo, payload.Body.Order.ID)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func (s *DeliverooService) ProcessNewOrderOld(ctx context.Context, payload Deliv
 				DeletionComment:  "Remade by Deliveroo",
 				MerchantID:       merchantData.MerchantID,
 				DeletionReasonID: "43",
-				UserID:           "WEBHOOK_DELIVEROO",
+				UserID:           models.DeliverooWebhookUserID,
 			})
 		}
 	}
@@ -195,7 +195,7 @@ func (s *DeliverooService) ProcessNewOrderOld(ctx context.Context, payload Deliv
 	// Ici, on utilise le lifecycle comme demandé.
 	if merchantData.AutoAcceptOrders {
 		// Logique d'acceptation
-		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), "DELIVEROO_WEBHOOK", merchantData.MerchantID, result.OrderID)
+		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID)
 		if err != nil {
 			// On log l'erreur mais on ne bloque pas forcément le flux car la commande est créée
 			fmt.Printf("Error auto-accepting order: %v\n", err)
@@ -275,7 +275,7 @@ func (s *DeliverooService) buildCustomerRequest(merchantID string, ord Deliveroo
 	var name, phone, address string
 	var lat, lng float64
 
-	isRestaurantFulfillment := ord.FulfillmentType == "DELIVERY_BY_RESTAURANT"
+	isRestaurantFulfillment := ord.FulfillmentType == models.FulfillmentTypeRestaurant
 
 	if isRestaurantFulfillment && ord.Delivery != nil {
 		name = ord.Delivery.CustomerName
@@ -316,14 +316,14 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	if total > 0 {
 		payments = append(payments, models.PaymentPayload{
 			Amount: total,
-			MOP:    "DELIVEROO",
+			MOP:    models.DeliverooMOP,
 		})
 	}
 
 	// Order Type
-	orderType := "DELIVERY"
+	orderType := models.OrderTypeDelivery
 	if ord.FulfillmentType == "CUSTOMER" { // Take Away
-		orderType = "TAKE_AWAY"
+		orderType = models.OrderTypeTakeAway
 	}
 
 	// Remake logic
@@ -340,11 +340,11 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	}
 
 	// Helpers pour les pointeurs
-	deviceID := "DELIVEROO"
-	createdBy := "WEBHOOK_DELIVEROO"
+	deviceID := models.BrandDeliveroo
+	createdBy := models.DeliverooWebhookUserID
 	brandStatus := ord.Status
 	merchantApproval := "PENDING_APPROVAL"
-	fulfillmentType := "DELIVERY_BY_RESTAURANT"
+	fulfillmentType := models.FulfillmentTypeRestaurant
 
 	var parentOrderID *string
 
@@ -353,7 +353,7 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	}
 
 	if ord.FulfillmentType != "RESTAURANT" {
-		fulfillmentType = "DELIVEROO"
+		fulfillmentType = models.FulfillmentTypeDeliveroo
 	}
 
 	req := &models.RequestObject{
@@ -451,7 +451,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 			OrderID:          internalOrderID,
 			MerchantID:       merchant.MerchantID,
 			DeletionReasonID: "43",
-			UserID:           "WEBHOOK_DELIVEROO",
+			UserID:           models.DeliverooWebhookUserID,
 		}
 
 		// Attention: Assure-toi que DeleteOrder retourne une erreur pour que le defer la capte si ça casse
@@ -473,7 +473,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 		*/
 
-		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
+		if _, err = s.lifecycleService.SetOrderAccepted(ctx, models.DeliverooWebhookUserID, merchant.MerchantID, internalOrderID); err != nil {
 			log.Error("WEBHOOK DELIVEROO - " + err.Error())
 			return err
 		}
@@ -512,7 +512,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		return nil
 
 	case "confirmed":
-		if _, err = s.lifecycleService.SetOrderAccepted(ctx, "WEBHOOK_DELIVEROO", merchant.MerchantID, internalOrderID); err != nil {
+		if _, err = s.lifecycleService.SetOrderAccepted(ctx, models.DeliverooWebhookUserID, merchant.MerchantID, internalOrderID); err != nil {
 			log.Error("WEBHOOK DELIVEROO - " + err.Error())
 			return err
 		}
@@ -529,14 +529,6 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		// Do nothing
 		return nil
 	}
-}
-
-// --- Helpers API ---
-
-func (s *DeliverooService) getToken() string {
-	// TODO: Implémenter la logique OAuth2 (client_credentials) pour récupérer/cacher le token
-	// Comme dans la fonction PHP getToken()
-	return "YOUR_ACCESS_TOKEN"
 }
 
 func (s *DeliverooService) ConfirmOrder(ctx context.Context, brandOrderID string) {

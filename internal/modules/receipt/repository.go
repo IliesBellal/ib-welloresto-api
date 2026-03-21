@@ -3,6 +3,7 @@ package receipt
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -10,19 +11,20 @@ import (
 type ReceiptRepository interface {
 	GetLastReceiptData(ctx context.Context, merchantID string) (lastNumber string, lastHash string, err error)
 	InsertReceipt(ctx context.Context, receipt *models.Receipt) error
+	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 }
 
 type receiptRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewReceiptRepository(db *sql.DB) ReceiptRepository {
-	return &receiptRepository{db: db}
+	return &receiptRepository{database: db}
 }
 
 // GetLastReceiptData verrouille la lecture pour éviter les doublons de numérotation
 func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID string) (string, string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbutils.GetDB(ctx, r.database)
 
 	var lastNumber sql.NullString
 	var lastHash sql.NullString
@@ -49,7 +51,7 @@ func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID s
 }
 
 func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.Receipt) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 		INSERT INTO receipts 
@@ -63,4 +65,44 @@ func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.R
 		receipt.CreatedAt, receipt.PrevHash, receipt.Hash, receipt.Signature,
 	)
 	return err
+}
+
+func (r *receiptRepository) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT 
+			receipt_id, merchant_id, order_id, receipt_number, 
+			total_ttc, total_ht, tax_details, items_snapshot, 
+			payments_snapshot, created_at, prev_hash, hash, signature
+		FROM receipts
+		WHERE order_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	var receipt models.Receipt
+	err := db.QueryRowContext(ctx, query, orderID).Scan(
+		&receipt.ReceiptID,
+		&receipt.MerchantID,
+		&receipt.OrderID,
+		&receipt.ReceiptNumber,
+		&receipt.TotalTTC,
+		&receipt.TotalHT,
+		&receipt.TaxDetails,
+		&receipt.ItemsSnapshot,
+		&receipt.PaymentsSnapshot,
+		&receipt.CreatedAt,
+		&receipt.PrevHash,
+		&receipt.Hash,
+		&receipt.Signature,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("aucun reçu trouvé pour la commande %s", orderID)
+	} else if err != nil {
+		return nil, fmt.Errorf("erreur lors de la récupération du reçu: %w", err)
+	}
+
+	return &receipt, nil
 }

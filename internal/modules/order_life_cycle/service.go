@@ -249,10 +249,31 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	req.OrderID = orderID
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
-		return s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req)
+		log := logger.FromContext(txCtx)
+
+		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
+		if err != nil {
+			log.Error(err.Error())
+			return models.ErrNoCashRegisterOpen
+		}
+
+		payment := models.Payment{
+			//PaymentID:     helpers.GeneratePrefixedID("PAY"),
+			OrderID:        req.OrderID,
+			MerchantID:     user.MerchantID,
+			UserID:         user.UserID,
+			CashRegisterID: activeRegister, // On l'attache au registre d'AUJOURD'HUI
+			MOP:            req.MOP,
+			Amount:         req.Amount,
+			OperationType:  models.OperationTypeSale,
+			Comment:        &req.Comment,
+			Code:           &req.Code,
+		}
+		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
 	})
 }
 
+/*
 func (s *OrdersLifeCycleService) AddPaymentOld(ctx context.Context, orderID string, req *models.PaymentRequest) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -275,6 +296,7 @@ func (s *OrdersLifeCycleService) AddPaymentOld(ctx context.Context, orderID stri
 
 	return err
 }
+*/
 
 func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
 	// Vérifier l'authentification (récupérer l'utilisateur depuis le contexte)
@@ -439,7 +461,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 			s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
-		if UserID != "WEBHOOK_DELIVEROO" {
+		if UserID != models.DeliverooWebhookUserID {
 			go func(mID, oID string) {
 				ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
@@ -767,4 +789,61 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 	}
 
 	return nil
+}
+
+func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.RefundRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	// On démarre la transaction (j'utilise ta structure ExecuteOrderMutation)
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, req.OrderID, models.ActionOrderRefund, models.ResourceOrder, func(txCtx context.Context) error {
+
+		// 1. Vérifier qu'un registre de caisse est bien OUVERT pour ce Device/Merchant
+		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
+		if err != nil {
+			return err
+		}
+
+		// 2. Récupérer le reçu fiscal d'origine
+		originalReceipt, err := s.receiptService.GetReceiptByOrderID(txCtx, req.OrderID)
+		if err != nil {
+			return fmt.Errorf("impossible de trouver le reçu fiscal d'origine : %w", err)
+		}
+
+		// 3. Créer le paiement négatif
+		// On force le montant en négatif ici. C'est la garantie backend.
+		refundAmount := -req.Amount
+		comment := fmt.Sprintf("Remboursement. Réf facture: %s. Motif: %s", originalReceipt.ReceiptNumber, req.DiscountComment)
+
+		refundPayment := models.Payment{
+			//PaymentID:     helpers.GeneratePrefixedID("PAY"),
+			OrderID:        req.OrderID,
+			MerchantID:     user.MerchantID,
+			UserID:         user.UserID,
+			CashRegisterID: activeRegister, // On l'attache au registre d'AUJOURD'HUI
+			MOP:            req.MOP,
+			Amount:         refundAmount,
+			OperationType:  models.OperationTypeRefund,
+			Comment:        &comment,
+		}
+
+		if err := s.ordersLifeCycleRepo.AddPayment(txCtx, refundPayment); err != nil {
+			return fmt.Errorf("échec de l'insertion du paiement : %w", err)
+		}
+
+		// 4. Générer le Reçu d'Avoir (Credit Note)
+		// On crée un reçu avec un total négatif qui annule comptablement la vente
+		err = s.receiptService.GenerateRefundReceipt(txCtx, user.MerchantID, req.OrderID, originalReceipt, refundAmount, req.MOP)
+		if err != nil {
+			return fmt.Errorf("échec de la génération de l'avoir fiscal : %w", err)
+		}
+
+		// (Optionnel) 5. Mettre à jour le statut de la commande si c'est un remboursement total
+		// Si Amount remboursé == TotalTTC de la commande, alors Order.Status = "REFUNDED"
+		// Sinon, Order.Status = "PARTIALLY_REFUNDED"
+
+		return nil
+	})
 }

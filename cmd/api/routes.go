@@ -484,6 +484,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 
+		r.Patch("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
+
 		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
 		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
 
