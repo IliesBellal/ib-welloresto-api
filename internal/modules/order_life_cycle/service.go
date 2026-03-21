@@ -39,9 +39,7 @@ type OrdersLifeCycleService struct {
 	redis                *redis.Client
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService,
-	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository,
-	log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -56,6 +54,53 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		db:                   db,
 		ordersService:        orders,
 	}
+}
+
+// Helper de type défini pour passer tes fonctions métiers
+type OrderMutationFunc func(txCtx context.Context) error
+
+func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, MerchantID, UserID, orderID, action, resourceType string, work OrderMutationFunc) error {
+	log := logger.FromContext(ctx)
+
+	err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		// 1. Snapshot AVANT
+		var oldOrder interface{}
+		oldOrders, errBefore := s.ordersService.ComputeGetOrder(txCtx, MerchantID, orderID)
+		if errBefore == nil && len(oldOrders.Orders) > 0 {
+			oldOrder = oldOrders.Orders[0]
+		}
+
+		// 2. Exécution de l'action métier
+		if err := work(txCtx); err != nil {
+			return err
+		}
+
+		// 3. Snapshot APRÈS
+		var newOrder interface{}
+		newOrders, errAfter := s.ordersService.ComputeGetOrder(txCtx, MerchantID, orderID)
+		if errAfter == nil && len(newOrders.Orders) > 0 {
+			newOrder = newOrders.Orders[0]
+		}
+
+		// 4. Nettoyage Cache Redis (dans la transaction)
+		if s.redis != nil {
+			key := helpers.GetRedisOrderKey(MerchantID, orderID)
+			s.redis.Delete(txCtx, key) // Note: ctx ou txCtx, Redis s'en fiche un peu, mais Delete est synchrone
+			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
+		// 5. Enregistrement Audit sécurisé (Chaîné)
+		return s.auditService.LogChange(txCtx, MerchantID, UserID, action, resourceType, orderID, oldOrder, newOrder)
+	})
+
+	if err != nil {
+		return err // Si la tx échoue, on retourne l'erreur (Rollback automatique)
+	}
+
+	// --- 6. ACTIONS POST-COMMIT (Effets de bord) ---
+	s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+
+	return nil
 }
 
 func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
@@ -74,23 +119,15 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	}
 
 	// 3) Notify app
-	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+	_ = s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 
-	// 4) HandleWebhook integration
+	// 4) Handle integration
 	switch order.Brand {
 	case models.BrandUberEats:
-		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
-			//TODO Check API Uber Eats pour ajouter le endpoint correspondant (ne semble pas exister)
-			//return s.uberSvc.SetDelivered(ctx, merchantID, *order.BrandOrderID)
-		}
+		// No endpoint to call for Uber Eats when the order is delivered, we just update the status in our DB and notify the app. The delivery session will be closed when the delivery person marks the order as delivered on their side (or after a timeout).
 		return nil
 
 	case models.BrandDeliveroo:
-		if order.FulfillmentType == "DELIVERY_BY_RESTAURANT" {
-			log.Warn("Delivery by restaurant - No BYOC implemented for DELIVEROO")
-			// Not coded in PHP -> return simple OK or your logic
-			return nil
-		}
 		if order.BrandOrderID != nil {
 			go s.deliverooSvc.SetCollected(*order.BrandOrderID)
 		}
@@ -107,16 +144,44 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 		return err
 	}
 
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
+
+		// ⚠️ Attention: s.customersRepo.UpdateLoyaltyFromOrder et s.DeliverOrder
+		// DOIVENT utiliser helpers.GetDB(txCtx) en interne pour s'inscrire dans cette transaction.
+		if err := s.customersRepo.UpdateLoyaltyFromOrder(txCtx, orderID); err != nil {
+			return err
+		}
+		return s.DeliverOrder(txCtx, user.UserID, user.MerchantID, orderID)
+	})
+}
+
+/*
+func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.customersRepo.UpdateLoyaltyFromOrder(ctx, orderID)
 
 	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
 }
+*/
 
 func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderReopen, models.ResourceOrder, func(txCtx context.Context) error {
+		user, _ := middleware.UserFromContext(txCtx)
+		return s.ordersLifeCycleRepo.ReopenClosedOrder(txCtx, user.MerchantID, orderID, user.UserID)
+	})
+}
+
+/*
+func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
 
 	log := logger.FromContext(ctx)
 
@@ -133,6 +198,7 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 
 	return err
 }
+*/
 
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
 	user, err := middleware.UserFromContext(ctx)
@@ -141,48 +207,11 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	}
 
 	req.OrderID = orderID
-	log := logger.FromContext(ctx)
 
-	// On lance la transaction
-	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		// A. Optionnel : On récupère l'état AVANT pour l'audit
-		oldOrders, _ := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, orderID)
-		oldOrder := oldOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
-
-		// B. Exécution du repo (qui utilisera la Tx via txCtx)
-		if err := s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req); err != nil {
-			return err
-		}
-
-		// Nettoyage Redis
-		if s.redis != nil {
-			key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
-			s.redis.Delete(ctx, key)
-			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-		}
-
-		// C. Optionnel : Audit Log après succès
-		newOrders, err := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, orderID)
-		if err != nil {
-			log.Error("failed to fetch updated order", zap.Error(err))
-		}
-		newOrder := newOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
-
-		err = s.auditService.LogChange(txCtx, models.ActionPaymentAdded, models.ResourcePayment, orderID, oldOrder, newOrder)
-
-		return nil
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
+		user, _ := middleware.UserFromContext(txCtx)
+		return s.ordersLifeCycleRepo.AddPayment(txCtx, user.MerchantID, user.UserID, req)
 	})
-
-	if err != nil {
-		return err // Si la transaction a échoué, on s'arrête là.
-	}
-
-	// --- ACTIONS POST-COMMIT (Side effects) ---
-
-	// Notification temps réel
-	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
-
-	return nil
 }
 
 func (s *OrdersLifeCycleService) AddPaymentOld(ctx context.Context, orderID string, req *models.PaymentRequest) error {
@@ -261,7 +290,7 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
-	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	return err
 }
@@ -288,7 +317,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 	}
 
 	// Notify
-	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, notification.NotificationTypeOrderUpdate)
 
 	// 3 → Async integrations
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, req.OrderID)
@@ -368,7 +397,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
 		if UserID != "WEBHOOK_DELIVEROO" {
@@ -379,15 +408,15 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 					s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
 				}
 
-				s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+				s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 			}(MerchantID, orderID)
 
 		} else {
-			s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 		}
 	default:
 		// Internal order — nothing else to do
-		s.notificationsService.SendNotificationAsync(MerchantID, orderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 	}
 
 	accept_order.Status = "success"
@@ -400,16 +429,10 @@ func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string
 		return models.HandlerDefaultResponseModelSet{}, err
 	}
 
-	accept_order := models.HandlerDefaultResponseModelSet{}
-	if err != nil {
-		accept_order.Status = "error"
-		return accept_order, err
-	}
-
 	return s.SetOrderAccepted(ctx, user.UserID, user.MerchantID, orderID)
 }
 
-func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID string, userID string) (map[string]interface{}, error) {
+func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID string, userID string) (map[string]any, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
@@ -497,7 +520,7 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 				s.log.Error("uber deny failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, notification.NotificationTypeOrderUpdate)
 		}(merchantID, OrderID)
 	case models.BrandDeliveroo:
 		go func(mID, oID string) {
@@ -507,11 +530,11 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 				s.log.Error("deliveroo deny failed", zap.String("order_id", oID), zap.Error(err))
 			}
 
-			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
+			s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, notification.NotificationTypeOrderUpdate)
 		}(merchantID, OrderID)
 	default:
 		// Internal order — nothing else to do
-		s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, notification.NotificationTypeOrderUpdate)
 	}
 
 	return map[string]string{"status": "1"}, nil
@@ -550,7 +573,7 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 	}
 
 	// 2 → Send notif
-	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
 
 	// 3 → Async integrations
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
@@ -613,7 +636,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	}
 
 	// Send notif
-	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
 
 	// Integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
@@ -641,6 +664,22 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 }
 
 func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
+	// Comme in nécessite MerchantID et UserID avant exécution
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	in.MerchantID = user.MerchantID
+	in.UserID = user.UserID
+
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, in.OrderID, models.ActionOrderDelete, models.ResourceOrder, func(txCtx context.Context) error {
+		// Pareil, DeleteOrder doit bien utiliser le txCtx
+		return s.DeleteOrder(txCtx, in)
+	})
+}
+
+/*
+func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -651,6 +690,7 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.
 
 	return s.DeleteOrder(ctx, in)
 }
+*/
 
 func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req *UpdateProductionStatusRequest) error {
 	user, err := middleware.UserFromContext(ctx)
@@ -684,7 +724,7 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 	// 3. Envoi des notifications
 	// On boucle sur le map pour ne notifier qu'une fois par commande également
 	for aOrderID := range processedIDs {
-		s.notificationsService.SendNotificationAsync(user.MerchantID, aOrderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(user.MerchantID, aOrderID, notification.NotificationTypeOrderUpdate)
 	}
 
 	return nil

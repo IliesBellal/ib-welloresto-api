@@ -3,8 +3,6 @@ package audit
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
 	"github.com/google/uuid"
@@ -12,7 +10,7 @@ import (
 
 type AuditService interface {
 	// LogChange permet d'enregistrer la modification complète d'un objet (Snapshot)
-	LogChange(ctx context.Context, action, resourceType, resourceID string, oldState, newState interface{}) error
+	LogChange(ctx context.Context, MerchantID, UserID, action, resourceType, resourceID string, oldState, newState interface{}) error
 }
 
 type auditService struct {
@@ -23,37 +21,21 @@ func NewAuditService(repo AuditRepository) AuditService {
 	return &auditService{repo: repo}
 }
 
-func (s *auditService) LogChange(ctx context.Context, action, resourceType, resourceID string, oldState, newState interface{}) error {
-	// 1. Récupération de l'utilisateur depuis le context
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		// En fonction de ta politique stricte, tu peux retourner l'erreur ou
-		// loguer avec un UserID "SYSTEM" si c'est un webhook par exemple.
-		return fmt.Errorf("audit failed: could not extract user from context: %w", err)
-	}
-
-	// 2. Conversion des états en JSON
+func (s *auditService) LogChange(ctx context.Context, MerchantID, UserID, action, resourceType, resourceID string, oldState, newState interface{}) error {
+	// Marshalling des données
 	var oldJSON, newJSON []byte
-
 	if oldState != nil {
-		oldJSON, err = json.Marshal(oldState)
-		if err != nil {
-			return fmt.Errorf("failed to marshal old state: %w", err)
-		}
+		oldJSON, _ = json.Marshal(oldState)
 	}
-
 	if newState != nil {
-		newJSON, err = json.Marshal(newState)
-		if err != nil {
-			return fmt.Errorf("failed to marshal new state: %w", err)
-		}
+		newJSON, _ = json.Marshal(newState)
 	}
 
-	// 3. Construction de l'objet AuditLog
+	// Création de l'entrée (sans les hashs, le repo s'en charge)
 	logEntry := &models.AuditLog{
 		ID:           uuid.New().String(),
-		UserID:       user.UserID,
-		MerchantID:   user.MerchantID,
+		UserID:       UserID,
+		MerchantID:   MerchantID,
 		Action:       action,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
@@ -61,6 +43,6 @@ func (s *auditService) LogChange(ctx context.Context, action, resourceType, reso
 		NewValues:    newJSON,
 	}
 
-	// 4. Sauvegarde
-	return s.repo.InsertLog(ctx, logEntry)
+	// Appel de la méthode chaînée du repo
+	return s.repo.InsertLogWithChain(ctx, logEntry)
 }

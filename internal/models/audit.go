@@ -7,8 +7,11 @@ import (
 
 // Définition de quelques constantes pour standardiser tes logs
 const (
-	ActionOrderUpdate    = "ORDER_UPDATE"
-	ActionOrderReopen    = "ORDER_REOPEN"
+	ActionOrderUpdate = "ORDER_UPDATE"
+	ActionOrderReopen = "ORDER_REOPEN"
+	ActionOrderClose  = "ORDER_CLOSE"
+	ActionOrderDelete = "ORDER_DELETE"
+
 	ActionPaymentAdded   = "PAYMENT_ADDED"
 	ActionPaymentDeleted = "PAYMENT_DELETED"
 

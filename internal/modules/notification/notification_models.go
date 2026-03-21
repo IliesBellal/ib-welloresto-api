@@ -13,3 +13,7 @@ type NotificationMessage struct {
 	EntityID   int
 	Payload    NotificationPayload
 }
+
+const (
+	NotificationTypeOrderUpdate = "UPDATE_ORDER"
+)

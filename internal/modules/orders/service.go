@@ -405,6 +405,8 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 		// 4. AUDIT : C'est dans la même transaction !
 		err = s.auditService.LogChange(
 			txCtx,
+			user.MerchantID,
+			user.UserID,
 			models.ActionOrderUpdate,
 			models.ResourceOrder,
 			*req.Order.OrderID,
@@ -424,7 +426,7 @@ func (s *OrdersService) UpdateOrder(ctx context.Context, req *models.RequestObje
 	}
 
 	// 5. Actions asynchrones / hors base de données (se font UNIQUEMENT si le commit a réussi)
-	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, "UPDATE_ORDER")
+	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
 
 	return nil
 }
@@ -437,7 +439,7 @@ func (s *OrdersService) UpdateOrderOld(ctx context.Context, req *models.RequestO
 	if err != nil {
 		log.Error(err.Error())
 	} else {
-		s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, "UPDATE_ORDER")
+		s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
 	}
 
 	return nil
