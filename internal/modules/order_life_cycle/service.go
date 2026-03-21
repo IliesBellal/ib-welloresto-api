@@ -35,11 +35,11 @@ type OrdersLifeCycleService struct {
 	log                  *zap.Logger
 	notificationsService *notification.NotificationService
 	stripeManager        *stripeclient.StripeManager
-	customersRepo        *customers.CustomersRepository
+	customersService     *customers.CustomersService
 	redis                *redis.Client
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersRepo *customers.CustomersRepository, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, db *sql.DB) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -48,7 +48,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		log:                  log,
 		notificationsService: notificationsService,
 		stripeManager:        stripeSvc,
-		customersRepo:        customersRepo,
+		customersService:     customersService,
 		redis:                redis,
 		auditService:         auditService,
 		db:                   db,
@@ -148,7 +148,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 
 		// ⚠️ Attention: s.customersRepo.UpdateLoyaltyFromOrder et s.DeliverOrder
 		// DOIVENT utiliser helpers.GetDB(txCtx) en interne pour s'inscrire dans cette transaction.
-		if err := s.customersRepo.UpdateLoyaltyFromOrder(txCtx, orderID); err != nil {
+		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err
 		}
 		return s.DeliverOrder(txCtx, user.UserID, user.MerchantID, orderID)
@@ -611,7 +611,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	}
 
 	// Reactivate rewards
-	if err := s.customersRepo.ReactivateRewards(ctx, in.OrderID); err != nil {
+	if err := s.customersService.ReactivateRewards(ctx, in.OrderID); err != nil {
 		return fmt.Errorf("reactivate rewards: %w", err)
 	}
 

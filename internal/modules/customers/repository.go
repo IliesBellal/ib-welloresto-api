@@ -290,12 +290,15 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 }
 
 func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback()
+	*/
 
 	var targetValue int
 	var rewardType string
@@ -303,7 +306,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	var rewardOrderType string
 
 	// 1. Fetch program
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT target_value, reward_type, reward_value, rewards_order_type
         FROM customer_loyalty_programs
         WHERE id = ? AND merchant_id = ? AND enabled = 1
@@ -316,7 +319,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	var progressID string
 	var oldValue int
 
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
         SELECT id, current_value 
         FROM customer_loyalty_progress
         WHERE customer_id = ? AND loyalty_program_id = ?
@@ -329,7 +332,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	rewardToCreate := newRewards - oldRewards
 
 	if exists {
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
             UPDATE customer_loyalty_progress
             SET current_value = ?, last_update = UTC_TIMESTAMP
             WHERE id = ?
@@ -338,7 +341,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 			return 0, err
 		}
 	} else {
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
             INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value)
             VALUES (?, ?, ?)
         `, req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
@@ -350,7 +353,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	// rewards creation
 	if rewardToCreate > 0 {
 		for i := 0; i < rewardToCreate; i++ {
-			_, err = tx.ExecContext(ctx, `
+			_, err = db.ExecContext(ctx, `
                 INSERT INTO customer_rewards (customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
                 VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP)
             `, req.CustomerID, req.LoyaltyProgramID, rewardType, rewardOrderType, rewardValue)
@@ -360,9 +363,11 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	*/
 
 	return rewardToCreate, nil
 }
@@ -531,12 +536,15 @@ func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID str
 // Internal struct pour récupérer les données du programme de fidélité
 func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderID string) error {
 	log := logger.FromContext(ctx)
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() // Se déclenche auto si la fonction crash ou s'arrête sans Commit
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() // Se déclenche auto si la fonction crash ou s'arrête sans Commit
+	*/
 
 	// 1. Mise à jour des stats globales du client
 	const qUpdateStats = `
@@ -548,7 +556,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			c.loyalty_reminder_count = 0
 		WHERE o.order_id = ?
 	`
-	if _, err := tx.ExecContext(ctx, qUpdateStats, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, qUpdateStats, orderID); err != nil {
 		return err
 	}
 
@@ -561,10 +569,10 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 	var customerID, merchantID, orderType string
 	var price int
 
-	err = tx.QueryRowContext(ctx, qGetOrder, orderID).Scan(&customerID, &merchantID, &price, &orderType)
+	err := db.QueryRowContext(ctx, qGetOrder, orderID).Scan(&customerID, &merchantID, &price, &orderType)
 	if err == sql.ErrNoRows || customerID == "" {
 		// Pas de commande trouvée, pas WELLO_RESTO, ou pas de client rattaché -> On s'arrête avec succès
-		return tx.Commit()
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -575,7 +583,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		FROM customer_loyalty_programs
 		WHERE merchant_id = ? AND enabled = 1
 	`
-	rows, err := tx.QueryContext(ctx, qGetPrograms, merchantID)
+	rows, err := db.QueryContext(ctx, qGetPrograms, merchantID)
 	if err != nil {
 		return err
 	}
@@ -595,7 +603,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 	for _, p := range programs {
 		// Vérifier si la commande a déjà été comptée
 		var exists int
-		err := tx.QueryRowContext(ctx, "SELECT 1 FROM customer_loyalty_progress_order WHERE order_id = ? AND loyalty_program_id = ? LIMIT 1", orderID, p.ID).Scan(&exists)
+		err := db.QueryRowContext(ctx, "SELECT 1 FROM customer_loyalty_progress_order WHERE order_id = ? AND loyalty_program_id = ? LIMIT 1", orderID, p.ID).Scan(&exists)
 		if err == nil {
 			continue // Déjà traitée
 		} else if err != sql.ErrNoRows {
@@ -605,11 +613,11 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		// Récupérer la progression actuelle
 		var progressID string
 		var currentValue int
-		err = tx.QueryRowContext(ctx, "SELECT id, current_value FROM customer_loyalty_progress WHERE customer_id = ? AND loyalty_program_id = ? LIMIT 1", customerID, p.ID).Scan(&progressID, &currentValue)
+		err = db.QueryRowContext(ctx, "SELECT id, current_value FROM customer_loyalty_progress WHERE customer_id = ? AND loyalty_program_id = ? LIMIT 1", customerID, p.ID).Scan(&progressID, &currentValue)
 
 		if err == sql.ErrNoRows {
 			// Créer la progression
-			res, err := tx.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, 0, UTC_TIMESTAMP())", customerID, p.ID)
+			res, err := db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, 0, UTC_TIMESTAMP())", customerID, p.ID)
 			if err != nil {
 				return err
 			}
@@ -617,7 +625,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			// Attention : LastInsertId retourne un int64. Si ton ID est un UUID/string dans ta DB, adapte cette partie.
 			// (Si l'ID n'est pas auto-increment, il faut générer un UUID ici et l'insérer)
 			// Dans le doute, je simule une base standard :
-			err = tx.QueryRowContext(ctx, "SELECT id FROM customer_loyalty_progress WHERE id = ?", id).Scan(&progressID)
+			err = db.QueryRowContext(ctx, "SELECT id FROM customer_loyalty_progress WHERE id = ?", id).Scan(&progressID)
 			currentValue = 0
 		} else if err != nil {
 			return err
@@ -638,7 +646,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 				INNER JOIN customer_loyalty_program_target_products tp ON tp.product_id = oi.product_id
 				WHERE oi.order_id = ? AND tp.loyalty_program_id = ?
 			`
-			_ = tx.QueryRowContext(ctx, qSumProducts, orderID, p.ID).Scan(&increment)
+			_ = db.QueryRowContext(ctx, qSumProducts, orderID, p.ID).Scan(&increment)
 		}
 
 		if increment == 0 {
@@ -648,12 +656,12 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		newValue := currentValue + increment
 
 		// 6. Mettre à jour la progression et loguer
-		_, err = tx.ExecContext(ctx, "UPDATE customer_loyalty_progress SET current_value = ?, last_update = UTC_TIMESTAMP() WHERE id = ?", newValue, progressID)
+		_, err = db.ExecContext(ctx, "UPDATE customer_loyalty_progress SET current_value = ?, last_update = UTC_TIMESTAMP() WHERE id = ?", newValue, progressID)
 		if err != nil {
 			return err
 		}
 
-		_, err = tx.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
+		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
 		if err != nil {
 			return err
 		}
@@ -665,7 +673,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			rewardsToAdd := rewardsExpected - rewardsAlready
 
 			for i := 0; i < rewardsToAdd; i++ {
-				_, err = tx.ExecContext(ctx, `
+				_, err = db.ExecContext(ctx, `
 					INSERT INTO customer_rewards(loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
 					VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
 				`, p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
@@ -678,5 +686,6 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		}
 	}
 
-	return tx.Commit()
+	// return tx.Commit()
+	return nil
 }
