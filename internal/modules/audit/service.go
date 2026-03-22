@@ -30,13 +30,6 @@ func (s *auditService) LogChange(ctx context.Context, MerchantID, UserID, action
 		newJSON, _ = json.Marshal(newState)
 	}
 
-	if oldState == nil {
-		oldJSON = []byte("{}")
-	}
-	if newState == nil {
-		newJSON = []byte("{}")
-	}
-
 	// Création de l'entrée (sans les hashs, le repo s'en charge)
 	logEntry := &models.AuditLog{
 		ID:           helpers.GeneratePrefixedID("audit-log"),

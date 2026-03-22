@@ -384,7 +384,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var paymentDate sql.NullTime
 			var enabled sql.NullBool
 
-			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled); err != nil {
+			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled, &operationType); err != nil {
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String],
