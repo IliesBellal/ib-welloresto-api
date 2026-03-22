@@ -328,19 +328,25 @@ func (h *OrdersLifeCycleHandler) HandleRefund(w http.ResponseWriter, r *http.Req
 	// (on l'inversera dans le backend pour garantir qu'on ne fait pas de fausse vente)
 	if req.Amount <= 0 {
 		models.SendErrorJSON(w, "order_life_cycle", "refund", models.ErrRefoundMustBeGreaterThanZero)
-		http.Error(w, "Amount to refund must be greater than 0", http.StatusBadRequest)
 		return
 	}
+	if req.DeviceID == "" {
+		models.SendErrorJSON(w, "order_life_cycle", "refund", models.ErrDeviceIDMissing)
+		return
+	}
+	if req.MOP == "" {
+		models.SendErrorJSON(w, "order_life_cycle", "refund", models.ErrMOPMissing)
+		return
+	}
+
+	req.OrderID = chi.URLParam(r, "order_id")
 
 	// 3. Appel du service métier
 	err := h.ordersLifeCycleService.ProcessRefund(r.Context(), req)
 	if err != nil {
-		// Tu peux affiner la gestion d'erreur ici (400 vs 500)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		models.SendErrorJSON(w, "order_life_cycle", "refund", err)
 		return
 	}
 
-	// 4. Succès
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Refund processed successfully"})
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "refund", map[string]string{"status": "success", "message": "Refund processed successfully"})
 }

@@ -366,8 +366,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "payments"
 		q := `
-		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled
-		from payments p
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled, p.operation_type
+		FROM payments p
 		INNER JOIN orders o on o.order_id = p.order_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -380,16 +380,25 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var amount sql.NullInt64
-			var mop, orderID, UserID, paymentID sql.NullString
+			var mop, orderID, UserID, paymentID, operationType sql.NullString
 			var paymentDate sql.NullTime
 			var enabled sql.NullBool
 
 			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled); err != nil {
 				return nil, err
 			}
-			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String], models.Payment{
-				OrderID: orderID.String, PaymentID: paymentID.String, MOP: mop.String, Amount: int(amount.Int64), PaymentDate: helpers.NullTimePtr(paymentDate).UTC().Unix(), UserID: UserID.String, Enabled: enabled.Bool,
-			})
+			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String],
+				models.Payment{
+					OrderID:       orderID.String,
+					PaymentID:     paymentID.String,
+					MOP:           mop.String,
+					Amount:        int(amount.Int64),
+					PaymentDate:   helpers.NullTimePtr(paymentDate).UTC().Unix(),
+					UserID:        UserID.String,
+					Enabled:       enabled.Bool,
+					OperationType: operationType.String,
+				},
+			)
 		}
 	}
 

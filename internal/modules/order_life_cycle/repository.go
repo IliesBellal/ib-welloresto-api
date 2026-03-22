@@ -140,7 +140,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 		return fmt.Errorf("failed to check order payment status: %w", err)
 	}
 
-	if alreadyPaid >= totalPrice || alreadyPaid+payment.Amount > totalPrice {
+	if (alreadyPaid >= totalPrice && payment.OperationType == models.OperationTypeSale) || alreadyPaid+payment.Amount > totalPrice {
 		return &models.OrderNotFullyPaidError{
 			OrderID:    payment.OrderID,
 			PaidAmount: alreadyPaid,
@@ -168,9 +168,9 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 	// 3. Insérer le paiement avec son hash
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO payments
-		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature)
+		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())

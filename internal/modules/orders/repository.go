@@ -1750,13 +1750,14 @@ func (r *OrdersRepository) insertExtrasWithoutsConfigs(ctx context.Context, req 
 // insertPayments inserts payments
 func (r *OrdersRepository) insertPayments(ctx context.Context, req *models.RequestObject) error {
 	for _, p := range req.Order.Payments {
-		pi := &PaymentInsert{
+		pi := &models.Payment{
 			MerchantID:     req.MerchantID,
-			CashRegisterID: req.DeviceID,
+			CashRegisterID: *req.Order.CashRegisterId,
 			OrderID:        *req.Order.OrderID,
 			Amount:         p.Amount,
 			MOP:            p.MOP,
-			UserID:         req.Order.CreatedBy,
+			UserID:         *req.Order.CreatedBy,
+			OperationType:  models.OperationTypeSale,
 		}
 		if err := r.InsertPayment(ctx, pi); err != nil {
 			return err
@@ -2051,22 +2052,12 @@ func (r *OrdersRepository) BulkInsertConfigs(ctx context.Context, list []ConfigI
 	return err
 }
 
-// Payment insert
-type PaymentInsert struct {
-	MerchantID     string
-	CashRegisterID interface{}
-	OrderID        string
-	Amount         int
-	MOP            string
-	UserID         *string
-}
-
-func (r *OrdersRepository) InsertPayment(ctx context.Context, p *PaymentInsert) error {
+func (r *OrdersRepository) InsertPayment(ctx context.Context, p *models.Payment) error {
 	db := dbutils.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
-INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, payment_date, user_id)
-VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
-`, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID)
+INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, payment_date, user_id, operation_type)
+VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
+`, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID, p.OperationType)
 	return err
 }
 

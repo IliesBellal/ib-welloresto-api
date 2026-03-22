@@ -19,7 +19,7 @@ type Payment struct {
 	Enabled        bool    `json:"enabled"`
 	IntentID       *string `json:"intent_id,omitempty"`
 	AccountID      *string `json:"account_id,omitempty"`
-	OperationType  string  `db:"operation_type"` // 'SALE' ou 'REFUND'
+	OperationType  string  `json:"operation_type"` // 'SALE' ou 'REFUND'
 	Comment        *string `json:"comment,omitempty"`
 	StatusCheck    *string `json:"status_check,omitempty"`
 	Code           *string `json:"code,omitempty"`

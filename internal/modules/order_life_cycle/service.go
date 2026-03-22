@@ -803,6 +803,7 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 
 	// On démarre la transaction (j'utilise ta structure ExecuteOrderMutation)
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, req.OrderID, models.ActionOrderRefund, models.ResourceOrder, func(txCtx context.Context) error {
+		log := logger.FromContext(txCtx)
 
 		// 1. Vérifier qu'un registre de caisse est bien OUVERT pour ce Device/Merchant
 		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
@@ -813,7 +814,13 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 		// 2. Récupérer le reçu fiscal d'origine
 		originalReceipt, err := s.receiptService.GetReceiptByOrderID(txCtx, req.OrderID)
 		if err != nil {
-			return fmt.Errorf("impossible de trouver le reçu fiscal d'origine : %w", err)
+			log.Error(err.Error())
+			return models.ErrReceiptNotFound
+		}
+
+		if originalReceipt.TotalTTC < req.Amount {
+			log.Error(fmt.Sprintf("Refund amount is greater than original receipt total for receipt %s : %d > %d", originalReceipt.ReceiptID, req.Amount, originalReceipt.TotalTTC))
+			return models.ErrRefoundMustBeLowerThanOriginalReceipt
 		}
 
 		// 3. Créer le paiement négatif

@@ -81,6 +81,14 @@ var (
 	ErrNoCashRegisterOpen = errors.New("no_cash_register_open")
 
 	ErrRefoundMustBeGreaterThanZero = errors.New("refund_amount_must_be_greater_than_zero")
+
+	ErrReceiptNotFound = errors.New("receipt_not_found")
+
+	ErrDeviceIDMissing = errors.New("device_id_missing")
+
+	ErrMOPMissing = errors.New("mop_missing")
+
+	ErrRefoundMustBeLowerThanOriginalReceipt = errors.New("refund_amount_must_be_lower_than_original_receipt")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -136,7 +144,23 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	case errors.Is(err, ErrRefoundMustBeGreaterThanZero):
 		status = http.StatusBadRequest
-		errorMsg = "Refund value must be greater than 0"
+		errorMsg = "refund_amount_must_be_greater_than_zero"
+
+	case errors.Is(err, ErrReceiptNotFound):
+		status = http.StatusNotFound
+		errorMsg = "receipt_not_found"
+
+	case errors.Is(err, ErrDeviceIDMissing):
+		status = http.StatusBadRequest
+		errorMsg = "device_id_missing"
+
+	case errors.Is(err, ErrMOPMissing):
+		status = http.StatusBadRequest
+		errorMsg = "mop_missing"
+
+	case errors.Is(err, ErrRefoundMustBeLowerThanOriginalReceipt):
+		status = http.StatusBadRequest
+		errorMsg = "refund_amount_must_be_lower_than_original_receipt"
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
