@@ -327,6 +327,7 @@ func (h *OrdersLifeCycleHandler) HandleRefund(w http.ResponseWriter, r *http.Req
 	// Sécurité : On s'assure que le montant est strictement positif dans la requête
 	// (on l'inversera dans le backend pour garantir qu'on ne fait pas de fausse vente)
 	if req.Amount <= 0 {
+		models.SendErrorJSON(w, "order_life_cycle", "refund", models.ErrRefoundMustBeGreaterThanZero)
 		http.Error(w, "Amount to refund must be greater than 0", http.StatusBadRequest)
 		return
 	}

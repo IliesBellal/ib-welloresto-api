@@ -248,7 +248,11 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	req.OrderID = orderID
 
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
+	// TODO remplacer par le nouvel ID généré une fois la migration vers Postgres terminée
+	newPaymentID := orderID
+	//newPaymentID := helpers.GeneratePrefixedID("pay")
+
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, newPaymentID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
 		log := logger.FromContext(txCtx)
 
 		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
@@ -258,7 +262,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 		}
 
 		payment := models.Payment{
-			//PaymentID:     helpers.GeneratePrefixedID("PAY"),
+			//PaymentID:     newPaymentID,
 			OrderID:        req.OrderID,
 			MerchantID:     user.MerchantID,
 			UserID:         user.UserID,
@@ -815,7 +819,7 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 		// 3. Créer le paiement négatif
 		// On force le montant en négatif ici. C'est la garantie backend.
 		refundAmount := -req.Amount
-		comment := fmt.Sprintf("Remboursement. Réf facture: %s. Motif: %s", originalReceipt.ReceiptNumber, req.DiscountComment)
+		comment := fmt.Sprintf("Remboursement. Réf facture: %s. Motif: %s", originalReceipt.ReceiptNumber, req.Comment)
 
 		refundPayment := models.Payment{
 			//PaymentID:     helpers.GeneratePrefixedID("PAY"),

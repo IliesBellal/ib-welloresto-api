@@ -79,6 +79,8 @@ var (
 	ErrInternalServerError = errors.New("internal_server_error")
 
 	ErrNoCashRegisterOpen = errors.New("no_cash_register_open")
+
+	ErrRefoundMustBeGreaterThanZero = errors.New("refund_amount_must_be_greater_than_zero")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -91,33 +93,51 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrUnauthorized):
 		status = http.StatusUnauthorized
 		errorMsg = "unauthorized"
+
+	case errors.Is(err, ErrNoCashRegisterOpen):
+		status = http.StatusUnauthorized
+		errorMsg = "no cash register opened for this device id"
+
 	case errors.Is(err, ErrForbidden):
 		status = http.StatusForbidden
 		errorMsg = "permission_denied"
+
 	case errors.Is(err, ErrNotFound):
 		status = http.StatusNotFound
 		errorMsg = "not_found"
+
 	case errors.Is(err, ErrInvalidInput):
 		status = http.StatusBadRequest
 		errorMsg = "invalid_input"
+
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest
 		errorMsg = "password_too_short"
+
 	case errors.Is(err, ErrCannotDisableExternalPayments):
 		status = http.StatusUnavailableForLegalReasons
 		errorMsg = "cannot_disable_external_payments"
+
 	case errors.Is(err, ErrUserNotFound):
 		status = http.StatusNotFound
 		errorMsg = "user_not_found"
+
 	case errors.Is(err, ErrAccountDisabled):
 		status = http.StatusForbidden
 		errorMsg = "account_disabled"
+
 	case errors.Is(err, ErrUserNotAllowed):
 		status = http.StatusForbidden
 		errorMsg = "user_not_allowed"
+
 	case errors.Is(err, ErrCartEmpty):
 		status = http.StatusUnauthorized
 		errorMsg = "cart_is_empty"
+
+	case errors.Is(err, ErrRefoundMustBeGreaterThanZero):
+		status = http.StatusBadRequest
+		errorMsg = "Refund value must be greater than 0"
+
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
 		errorMsg = err.Error()

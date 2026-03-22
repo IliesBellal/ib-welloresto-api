@@ -17,11 +17,11 @@ type PaymentRequest struct {
 
 // La requête envoyée par ton Front-end / TPE
 type RefundRequest struct {
-	DeviceID        string `json:"device_id"`
-	OrderID         string `json:"order_id"`         // La commande d'origine
-	MOP             string `json:"mop"`              // Moyen de paiement (ex: CB, CASH)
-	Amount          int    `json:"amount"`           // Le montant à rembourser (peut être positif en JSON, on l'inversera)
-	DiscountComment string `json:"discount_comment"` // Raison du remboursement
+	DeviceID string `json:"device_id"`
+	OrderID  string `json:"order_id"` // La commande d'origine
+	MOP      string `json:"mop"`      // Moyen de paiement (ex: CB, CASH)
+	Amount   int    `json:"amount"`   // Le montant à rembourser (peut être positif en JSON, on l'inversera)
+	Comment  string `json:"comment"`  // Raison du remboursement
 }
 
 type OpenCashRegisterRequest struct {
