@@ -7,21 +7,23 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type NotificationRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewNotificationRepository(db *sql.DB, log *zap.Logger) *NotificationRepository {
-	return &NotificationRepository{db: db}
+	return &NotificationRepository{database: db}
 }
 
 func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID string) ([]string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT fcm_token
         FROM users_devices ud
         INNER JOIN users u ON u.user_id = ud.user_id
@@ -48,7 +50,7 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 
 // DeleteDeviceToken : Supprime un token FCM invalide de la base de données
 func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.database.ExecContext(ctx, `
 		DELETE FROM users_devices 
 		WHERE fcm_token = ?
 	`, token)
@@ -58,7 +60,7 @@ func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token st
 
 // DeleteAccessToken : Supprime le jeton d'accès FCM actuel (OAuth2) car il est rejeté par Google
 func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.database.ExecContext(ctx, `
 		DELETE FROM firebase_fcm_access_token 
 		WHERE access_token = ?
 	`, token)
@@ -69,7 +71,7 @@ func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (strin
 
 	var token string
 
-	err := r.db.QueryRowContext(ctx, `
+	err := r.database.QueryRowContext(ctx, `
         SELECT access_token
         FROM firebase_fcm_access_token
         WHERE UTC_TIMESTAMP() <= expiration_date
@@ -87,7 +89,7 @@ func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, 
 	var token string
 	var expiration time.Time
 
-	err := r.db.QueryRowContext(ctx, `
+	err := r.database.QueryRowContext(ctx, `
         SELECT access_token, expiration_date
         FROM firebase_fcm_access_token
         WHERE UTC_TIMESTAMP() <= expiration_date
@@ -104,7 +106,7 @@ func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, 
 
 // Optionnel : On peut aussi uniformiser StoreFCMToken pour qu'il soit explicite
 func (r *NotificationRepository) StoreFCMToken(ctx context.Context, token string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.database.ExecContext(ctx, `
         INSERT INTO firebase_fcm_access_token(access_token, expiration_date)
         VALUES(?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 50 MINUTE))
     `, token)

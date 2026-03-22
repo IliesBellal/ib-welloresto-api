@@ -522,7 +522,9 @@ func computeScore(term string, c *CustomerSearchResult) int {
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
         UPDATE customer_rewards
         SET is_used = false,
             usage_date = NULL,

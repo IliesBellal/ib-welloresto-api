@@ -9,11 +9,11 @@ import (
 )
 
 type AuthRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewAuthRepository(db *sql.DB) AuthRepository {
-	return AuthRepository{db: db}
+	return AuthRepository{database: db}
 }
 
 func (r *AuthRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
@@ -100,7 +100,7 @@ WHERE ur.token = ?
 LIMIT 1;
 `
 
-	row := r.db.QueryRowContext(ctx, query, token)
+	row := r.database.QueryRowContext(ctx, query, token)
 
 	data := &UserLoginRow{}
 
@@ -235,7 +235,7 @@ WHERE
 LIMIT 1;
 `
 
-	row := r.db.QueryRowContext(ctx, query,
+	row := r.database.QueryRowContext(ctx, query,
 		username,
 		username,
 		token,
@@ -328,7 +328,7 @@ FROM merchant m
 INNER JOIN users_rights ur ON ur.merchant_id = m.id
 WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 `
-	rows, err := r.db.QueryContext(ctx, query, userID)
+	rows, err := r.database.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +346,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 
 func (r *AuthRepository) CheckAppVersion(ctx context.Context, currentVersion int, app, merchantID string) (map[string]interface{}, error) {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +427,7 @@ LIMIT 1;
 
 func (r *AuthRepository) SaveDevice(ctx context.Context, userID, merchantID, app, deviceID, fcmToken string) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

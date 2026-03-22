@@ -701,7 +701,8 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	}
 
 	// Send notif
-	s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
+	// disabled because it is sent somewher else
+	//s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
 
 	// Integration
 	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)

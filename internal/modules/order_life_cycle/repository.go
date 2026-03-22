@@ -994,8 +994,10 @@ func (r *OrdersLifeCycleRepository) CancelStripePayments(ctx context.Context, or
 }
 
 func (r *OrdersLifeCycleRepository) GetOrderBrand(ctx context.Context, orderID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	var brand string
-	err := r.database.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT brand
         FROM orders
         WHERE order_id = ? LIMIT 1`,
@@ -1005,13 +1007,16 @@ func (r *OrdersLifeCycleRepository) GetOrderBrand(ctx context.Context, orderID s
 }
 
 func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context, orderID, merchantID string) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
+	/*	tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+	*/
 	// Update orders
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET 
             brand_status = CASE 
@@ -1024,28 +1029,29 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 		orderID, merchantID,
 	)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
 	}
 
 	// Update items
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE orderitems
         SET ready_for_distribution_quantity = quantity
         WHERE order_id = ? AND merchant_id = ?`,
 		orderID, merchantID,
 	)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
+	db := dbutils.GetDB(ctx, r.database)
 
-	_, err := r.database.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET deletion_reason_id = ?,
             deletion_comment = ?,
@@ -1222,7 +1228,9 @@ WHERE order_id = ?
 
 // Disable payments
 func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
         UPDATE payments
         SET enabled = 0
         WHERE order_id = ?`,
@@ -1233,7 +1241,9 @@ func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID
 
 // Delete QR codes
 func (r *OrdersLifeCycleRepository) DeleteQRCode(ctx context.Context, orderID string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
         DELETE qr
         FROM qrcodes qr
         INNER JOIN order_location ol ON qr.location_id = ol.location_id
@@ -1246,7 +1256,9 @@ func (r *OrdersLifeCycleRepository) DeleteQRCode(ctx context.Context, orderID st
 
 // Clear bookings
 func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
         UPDATE bookings
         SET order_id = NULL
         WHERE order_id = ?`,
