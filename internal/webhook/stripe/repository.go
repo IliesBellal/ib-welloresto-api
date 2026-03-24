@@ -3,6 +3,7 @@ package stripe
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/models"
 )
 
 type Repository interface {
@@ -85,8 +86,8 @@ func (r *mysqlRepo) GetMerchantByStripeAccountID(ctx context.Context, tx *sql.Tx
 
 func (r *mysqlRepo) InsertPayment(ctx context.Context, tx *sql.Tx, p Payment) (int64, error) {
 	query := `INSERT INTO payments(merchant_id, order_id, user_id, amount, mop, payment_date) 
-	          VALUES(?, ?, '0', ?, 'STRIPE_WEB_HOOK', UTC_TIMESTAMP())`
-	res, err := tx.ExecContext(ctx, query, p.MerchantID, p.OrderID, p.Amount)
+	          VALUES(?, ?, ?, ?, ?, UTC_TIMESTAMP())`
+	res, err := tx.ExecContext(ctx, query, p.MerchantID, p.OrderID, models.StripeWebhookUserID, p.Amount, models.StripeMOP)
 	if err != nil {
 		return 0, err
 	}

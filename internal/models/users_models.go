@@ -8,6 +8,9 @@ const (
 	DeliverooWebhookUserID  = "WEBHOOK_DELIVEROO"
 	UberEatsWebhookUserID   = "WEBHOOK_UBER_EATS"
 	WelloRestoWebhookUserID = "WELLO_RESTO"
+	StripeWebhookUserID     = "WEBHOOK_STRIPE"
+
+	StripeMOP = "STRIPE"
 )
 
 // Top-level response
