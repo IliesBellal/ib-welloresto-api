@@ -67,13 +67,13 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	resp, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
+	err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "cash_register", "close", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_register", "close", resp)
+	models.SendJSON(w, http.StatusOK, "cash_register", "close", nil)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {

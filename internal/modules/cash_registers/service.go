@@ -29,10 +29,10 @@ func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string
 	return s.cashRegisterRepo.OpenCashRegister(ctx, req, user.MerchantID)
 }
 
-func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token string, cashRegisterID string, req *models.CloseCashRegisterRequest) (map[string]interface{}, error) {
+func (s *CashRegisterService) CloseCashRegister(ctx context.Context, token string, cashRegisterID string, req *models.CloseCashRegisterRequest) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return err
 	}
 
 	// userID fourni dans la requête → OK (comme PHP)

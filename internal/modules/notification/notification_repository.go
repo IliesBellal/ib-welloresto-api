@@ -50,7 +50,9 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 
 // DeleteDeviceToken : Supprime un token FCM invalide de la base de données
 func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
 		DELETE FROM users_devices 
 		WHERE fcm_token = ?
 	`, token)
@@ -60,7 +62,9 @@ func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token st
 
 // DeleteAccessToken : Supprime le jeton d'accès FCM actuel (OAuth2) car il est rejeté par Google
 func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
 		DELETE FROM firebase_fcm_access_token 
 		WHERE access_token = ?
 	`, token)
@@ -68,10 +72,11 @@ func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token st
 }
 
 func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	var token string
 
-	err := r.database.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT access_token
         FROM firebase_fcm_access_token
         WHERE UTC_TIMESTAMP() <= expiration_date
@@ -86,10 +91,11 @@ func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (strin
 }
 
 func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, time.Time, error) {
+	db := dbutils.GetDB(ctx, r.database)
 	var token string
 	var expiration time.Time
 
-	err := r.database.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT access_token, expiration_date
         FROM firebase_fcm_access_token
         WHERE UTC_TIMESTAMP() <= expiration_date
@@ -106,7 +112,9 @@ func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, 
 
 // Optionnel : On peut aussi uniformiser StoreFCMToken pour qu'il soit explicite
 func (r *NotificationRepository) StoreFCMToken(ctx context.Context, token string) error {
-	_, err := r.database.ExecContext(ctx, `
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
         INSERT INTO firebase_fcm_access_token(access_token, expiration_date)
         VALUES(?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 50 MINUTE))
     `, token)

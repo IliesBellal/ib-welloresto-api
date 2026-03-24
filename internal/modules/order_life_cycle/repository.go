@@ -1293,6 +1293,10 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 			    production_status_done_quantity = CASE
 			        WHEN ? = 'DONE' THEN quantity
 			        ELSE ready_for_distribution_quantity
+			    END,
+				isDistributed = CASE
+			        WHEN ? = 'DONE' THEN 1
+			        ELSE 0
 			    END
 			WHERE order_item_id = ? AND order_id = ?
 		`)
@@ -1302,6 +1306,7 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 		defer stmt.Close()
 
 		_, err = stmt.ExecContext(ctx,
+			product.ProductionStatus,
 			product.ProductionStatus,
 			product.ProductionStatus,
 			product.OrderItemID,

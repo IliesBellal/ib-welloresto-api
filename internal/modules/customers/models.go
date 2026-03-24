@@ -58,7 +58,7 @@ type CustomerSearchRequest struct {
 type CustomerSearchResult struct {
 	CustomerID         string  `json:"customer_id"`
 	CustomerName       string  `json:"customer_name"`
-	CustomerLastName   string  `json:"customer_last_name"`
+	CustomerLastName   *string `json:"customer_last_name"`
 	CustomerFirstName  *string `json:"customer_first_name"`
 	CustomerTel        *string `json:"customer_tel"`
 	CustomerAddress    *string `json:"customer_address"`

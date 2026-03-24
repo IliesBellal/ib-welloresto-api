@@ -10,17 +10,18 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type CashRegisterRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	database *sql.DB
+	log      *zap.Logger
 }
 
 func NewCashRegisterRepository(db *sql.DB, log *zap.Logger) *CashRegisterRepository {
-	return &CashRegisterRepository{db: db, log: log}
+	return &CashRegisterRepository{database: db, log: log}
 }
 
 func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (*models.CashRegisterOpenResponse, error) {
@@ -30,7 +31,7 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 		zap.String("device_id", req.DeviceID),
 	)
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -196,13 +197,15 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 }
 
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+	*/
 	var (
 		startDate string
 		endDate   *string
@@ -212,13 +215,13 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	// --------------------------------------------------------------
 	// 1) Récupérer infos du registre
 	// --------------------------------------------------------------
-	row := tx.QueryRowContext(ctx, `
+	row := db.QueryRowContext(ctx, `
 		SELECT start_date, end_date, cash_fund
 		FROM cash_registers
 		WHERE cash_register_id = ?
 	`, cashRegisterID)
 
-	err = row.Scan(&startDate, &endDate, &cashFund)
+	err := row.Scan(&startDate, &endDate, &cashFund)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +229,7 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	// --------------------------------------------------------------
 	// 2) CALL GET_CASH_REGISTER_REPORT
 	// --------------------------------------------------------------
-	rows, err := tx.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
+	rows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +280,7 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	// --------------------------------------------------------------
 	// 3) CALL GET_CASH_REGISTER_REPORT_MOP
 	// --------------------------------------------------------------
-	mopRows, err := tx.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
+	mopRows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,26 +371,28 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 		CashReportType: "Z",
 	}
 
-	tx.Commit()
+	//tx.Commit()
 
 	return res, nil
 }
 
-func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) (map[string]interface{}, error) {
+func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	r.log.Info("CloseCashRegister START",
 		zap.String("cash_register_id", cashRegisterID),
 	)
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	rollback := func(err error) (map[string]interface{}, error) {
-		tx.Rollback()
-		return nil, err
-	}
+	/*
+		tx, err := r.database.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		rollback := func(err error) (map[string]interface{}, error) {
+			tx.Rollback()
+			return nil, err
+		}
+	*/
 
 	// ---------------------------------------------------------------------
 	//  ZONE VALIDATIONS FUTURES
@@ -399,29 +404,25 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 
 	// 1. Vérifier commandes encore ouvertes
 	var tmp string
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT o.order_id
 		FROM orders o
 		WHERE o.cash_register_id = ?
 		AND o.state NOT IN ('CLOSED','DONE')
-		AND (o.scheduled = '0'
-		     OR (o.scheduled = '1' AND o.estimated_ready > UTC_TIMESTAMP))
+		AND (o.scheduled = false
+		     OR (o.scheduled = true AND UTC_TIMESTAMP > o.estimated_ready ))
 	`, cashRegisterID).Scan(&tmp)
 
 	if err == nil {
 		// commande en cours
-		tx.Rollback()
-		return map[string]interface{}{
-			"status": "orders_still_opened",
-			"error":  "Orders still pending",
-		}, nil
+		return models.ErrOrdersStillOpened
 	}
 	if err != sql.ErrNoRows {
-		return rollback(err)
+		return err
 	}
 
 	// 2. Associer paiements (STRIPE)
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE payments p
 		INNER JOIN orders o ON o.order_id = p.order_id
 		SET p.cash_register_id = ?
@@ -431,11 +432,11 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		  AND p.merchant_id = ?
 	`, cashRegisterID, merchantID)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
 
 	// 3. Associer paiements Uber / Deliveroo
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE payments p
 		INNER JOIN orders o ON o.order_id = p.order_id
 		SET p.cash_register_id = ?
@@ -445,64 +446,62 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		  AND p.merchant_id = ?
 	`, cashRegisterID, merchantID)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
 
 	// 4. Fermer le registre
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE cash_registers
 		SET end_date = UTC_TIMESTAMP
 		WHERE cash_register_id = ?
 		AND end_date IS NULL
 	`, cashRegisterID)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
-
-	// COMMIT 1
-	if err := tx.Commit(); err != nil {
-		return rollback(err)
-	}
-
+	/*
+		// COMMIT 1
+		if err := tx.Commit(); err != nil {
+			return rollback(err)
+		}
+	*/
 	// 5. Récupérer rapport caisse (tu le réimplémenteras ensuite)
 	report, err := r.GetCashRegisterReport(ctx, cashRegisterID)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	// 6. Deuxième transaction pour insérer détails MOP
-	tx2, err := r.db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return nil, err
-	}
-	rollback2 := func(err error) (map[string]interface{}, error) {
-		tx2.Rollback()
-		return nil, err
-	}
+	/*
+		// 6. Deuxième transaction pour insérer détails MOP
+		tx2, err := r.database.BeginTx(context.Background(), nil)
+		if err != nil {
+			return nil, err
+		}
+		rollback2 := func(err error) (map[string]interface{}, error) {
+			tx2.Rollback()
+			return nil, err
+		}
+	*/
 
 	for _, mopLine := range report.MOP {
-		_, err := tx2.ExecContext(context.Background(), `
+		_, err := db.ExecContext(context.Background(), `
 			INSERT INTO cash_registers_items (cash_register_id, mop, amount)
 			VALUES (?, ?, ?)
 		`, cashRegisterID, mopLine.MOP, mopLine.Amount)
 		if err != nil {
-			return rollback2(err)
+			return err
 		}
 	}
-
-	if err := tx2.Commit(); err != nil {
-		return rollback2(err)
-	}
-
-	return map[string]interface{}{
-		"status":               "cash_register_closed",
-		"cash_register_report": report,
-	}, nil
+	/*
+		if err := tx2.Commit(); err != nil {
+			return rollback2(err)
+		}
+	*/
+	return nil
 }
 
 func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cashRegisterID string, merchantID string) (*models.CashRegisterSummaryResponse, error) {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -697,7 +696,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 
 func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegisterID string, req *models.AddCustomItemRequest, user *auth.UserLoginRow) (string, error) {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
@@ -738,7 +737,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 
 func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string, user *auth.UserLoginRow) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -774,7 +773,7 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 
 func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID, cashRegisterID, comment string) error {
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -869,7 +868,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
     `
 	idArgs := append(args, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, idQuery, idArgs...)
+	rows, err := r.database.QueryContext(ctx, idQuery, idArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +911,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
         ORDER BY cr.start_date DESC
     `, strings.Join(inParts, ","))
 
-	fullRows, err := r.db.QueryContext(ctx, fullQuery)
+	fullRows, err := r.database.QueryContext(ctx, fullQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -953,7 +952,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		CashFund  int
 	}
 
-	err := r.db.QueryRowContext(ctx, `
+	err := r.database.QueryRowContext(ctx, `
         SELECT start_date, end_date, cash_fund
         FROM cash_registers
         WHERE cash_register_id = ?
@@ -970,7 +969,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 	}
 
 	// 2. Call stored procedure GET_CASH_REGISTER_REPORT
-	rows, err := r.db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
+	rows, err := r.database.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1001,7 +1000,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 	}
 
 	// 3. Call MOP stored procedure
-	mopRows, err := r.db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
+	mopRows, err := r.database.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1074,6 +1073,6 @@ func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID,
 			user_id = VALUES(user_id), 
 			creation_date = UTC_TIMESTAMP()`
 
-	_, err := r.db.ExecContext(ctx, query, deviceID, userID, onBehalfOf)
+	_, err := r.database.ExecContext(ctx, query, deviceID, userID, onBehalfOf)
 	return err
 }

@@ -473,7 +473,7 @@ func computeScore(term string, c *CustomerSearchResult) int {
 
 	code := normalizeStr(c.CustomerCode)
 	tel := normalizeStr(c.CustomerTel)
-	lastName := normalizeStr(&c.CustomerLastName)
+	lastName := normalizeStr(c.CustomerLastName)
 	firstName := normalizeStr(c.CustomerFirstName)
 
 	// Correspondances exactes

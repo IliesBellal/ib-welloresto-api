@@ -89,83 +89,112 @@ var (
 	ErrMOPMissing = errors.New("mop_missing")
 
 	ErrRefoundMustBeLowerThanOriginalReceipt = errors.New("refund_amount_must_be_lower_than_original_receipt")
+
+	ErrOrdersStillOpened = errors.New("orders_still_opened")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
 func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err error) {
 	status := http.StatusInternalServerError
+	errorStatus := "internal serveur error"
 	errorMsg := "internal_server_error"
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
 	case errors.Is(err, ErrUnauthorized):
 		status = http.StatusUnauthorized
+		errorStatus = "unauthorized"
 		errorMsg = "unauthorized"
 
 	case errors.Is(err, ErrNoCashRegisterOpen):
 		status = http.StatusUnauthorized
+		errorStatus = "no cash register opened for this device id"
 		errorMsg = "no cash register opened for this device id"
 
 	case errors.Is(err, ErrForbidden):
 		status = http.StatusForbidden
+		errorStatus = "permission_denied"
 		errorMsg = "permission_denied"
 
 	case errors.Is(err, ErrNotFound):
 		status = http.StatusNotFound
+		errorStatus = "not_found"
 		errorMsg = "not_found"
 
 	case errors.Is(err, ErrInvalidInput):
 		status = http.StatusBadRequest
+		errorStatus = "invalid_input"
 		errorMsg = "invalid_input"
 
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest
-		errorMsg = "password_too_short"
+		errorStatus = "password_too_short"
+		errorMsg = "Le mot de passe doit faire au minimum 8 charactères"
 
 	case errors.Is(err, ErrCannotDisableExternalPayments):
 		status = http.StatusUnavailableForLegalReasons
-		errorMsg = "cannot_disable_external_payments"
+		errorStatus = "cannot_disable_external_payments"
+		errorMsg = "Cannot disable external payments"
 
 	case errors.Is(err, ErrUserNotFound):
 		status = http.StatusNotFound
-		errorMsg = "user_not_found"
+		errorStatus = "user_not_found"
+		errorMsg = "User not found"
 
 	case errors.Is(err, ErrAccountDisabled):
 		status = http.StatusForbidden
-		errorMsg = "account_disabled"
+		errorStatus = "account_disabled"
+		errorMsg = "User account disabled"
 
 	case errors.Is(err, ErrUserNotAllowed):
 		status = http.StatusForbidden
-		errorMsg = "user_not_allowed"
+		errorStatus = "user_not_allowed"
+		errorMsg = "User not allowed to perform this action"
 
 	case errors.Is(err, ErrCartEmpty):
 		status = http.StatusUnauthorized
-		errorMsg = "cart_is_empty"
+		errorStatus = "cart_is_empty"
+		errorMsg = "Cart is empty"
 
 	case errors.Is(err, ErrRefoundMustBeGreaterThanZero):
 		status = http.StatusBadRequest
-		errorMsg = "refund_amount_must_be_greater_than_zero"
+		errorStatus = "refund_amount_must_be_greater_than_zero"
+		errorMsg = "Refund amount must be greater than zero"
 
 	case errors.Is(err, ErrReceiptNotFound):
 		status = http.StatusNotFound
-		errorMsg = "receipt_not_found"
+		errorStatus = "receipt_not_found"
+		errorMsg = "Receipt not found"
 
 	case errors.Is(err, ErrDeviceIDMissing):
 		status = http.StatusBadRequest
-		errorMsg = "device_id_missing"
+		errorStatus = "device_id_missing"
+		errorMsg = "Device ID missing"
 
 	case errors.Is(err, ErrMOPMissing):
 		status = http.StatusBadRequest
-		errorMsg = "mop_missing"
+		errorStatus = "mop_missing"
+		errorMsg = "Mean of payment missing"
+
+	case errors.Is(err, ErrMOPMissing):
+		status = http.StatusBadRequest
+		errorStatus = "mop_missing"
+		errorMsg = "Mean of payment missing"
 
 	case errors.Is(err, ErrRefoundMustBeLowerThanOriginalReceipt):
 		status = http.StatusBadRequest
-		errorMsg = "refund_amount_must_be_lower_than_original_receipt"
+		errorStatus = "refund_amount_must_be_lower_than_original_receipt"
+		errorMsg = "Refund amount must be lower than original receipt"
+
+	case errors.Is(err, ErrOrdersStillOpened):
+		status = http.StatusUnauthorized
+		errorStatus = "orders_still_opened"
+		errorMsg = "Some orders created with this cash register are still opened"
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
-		errorMsg = err.Error()
+		errorStatus = err.Error()
 	}
 
-	SendJSON(w, status, module, fnName, map[string]string{"error": errorMsg})
+	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "error": errorMsg})
 }
