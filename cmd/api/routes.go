@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"net/http"
-	"os"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/mailer"
@@ -170,7 +169,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	receiptService := receipt.NewReceiptService(receiptRepo)
 
 	// ---- Orders Lifecycle ----
-	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, ordersFetcher)
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, customersRepo)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
 		stripeManager,
@@ -190,7 +189,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// 3. Initialiser le StripeWebhookService Stripe
 	stripeWebhookService := webhookstripe.NewStripeWebhookService(
 		stripeRepo,
-		os.Getenv("STRIPE_SECRET_KEY"),
+		cfg.Stripe.APIKey,
 		mailService,
 		smsService,
 		ordersLifeCycleService,
@@ -472,7 +471,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/orders", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Post("/create", ordersH.CreateOrder)
+		r.Post("/create", ordersLifeCycleH.CreateOrder)
 		r.Post("/pricing", ordersH.GetPricing)
 		r.Post("/list", ordersH.GetOrders)
 
@@ -480,7 +479,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/history", ordersH.GetHistory)
 		r.Get("/{order_id}", ordersH.GetOrder)
 
-		r.Post("/{order_id}/update", ordersH.UpdateOrder)
+		r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
 
 		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 

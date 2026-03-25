@@ -1086,7 +1086,7 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 // SyncProductTags replaces all tag associations for a product in a single transaction.
 // It verifies that the product belongs to merchantID and that all supplied tag_ids also belong
 // to the same merchant before modifying anything.
-func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, productID string, tagIDs []int) error {
+func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, productID string, tagIDs []string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

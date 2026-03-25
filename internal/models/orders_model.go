@@ -14,6 +14,42 @@ const (
 	FulfillmentTypeDeliveroo  = "DELIVEROO"
 )
 
+// OrderItemInsert represents an order item insert
+type OrderItemInsert struct {
+	OrderID     string
+	OrderItemID *string
+	ProductID   string
+	MerchantID  string
+	Quantity    int
+	DiscountID  *string
+	Price       int
+	DelayID     *string
+	Comment     *string
+	CreatedBy   string
+}
+
+type ExtraInsert struct {
+	OrderID     string
+	OrderItemID string
+	ComponentID string
+	ProductID   string
+	MerchantID  string
+	Price       int
+}
+type WithoutInsert struct {
+	OrderID     string
+	OrderItemID string
+	ComponentID string
+	ProductID   string
+	MerchantID  string
+}
+type ConfigInsert struct {
+	OrderItemID string
+	AttributeID string
+	OptionID    string
+	Quantity    int
+}
+
 type OrderComment struct {
 	OrderID      string     `json:"order_id"`
 	UserName     *string    `json:"user_name"`

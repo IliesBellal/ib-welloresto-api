@@ -7,17 +7,20 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{database: db}
 }
 
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
     SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
            mp.currency, mp.primary_color, mp.text_color_on_primary_color,
@@ -42,7 +45,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
     WHERE qr.code = ?`
 
 	row := models.MerchantRow{}
-	err := r.db.QueryRowContext(ctx, query, qr).Scan(
+	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
 		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.PrepTimeMode, &row.PrepTime,
@@ -58,33 +61,9 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	return &row, nil
 }
 
-func (s *Service) GetEffectivePrepMinutes(ctx context.Context, row *models.MerchantRow) int {
-	if row.PrepTimeMode == "MANUAL" {
-		return row.PrepTime
-	}
-
-	// Mode AUTO : on utilise ta logique de procédure stockée
-	// Note : On adapte ComputeEstimatedReady pour obtenir juste le délai
-	estimatedReadyStr, err := s.orderingService.ComputeEstimatedReady(ctx, row.MerchantID)
-	if err != nil || estimatedReadyStr == "" {
-		return row.PrepTime // Fallback sur le temps manuel si l'auto échoue
-	}
-
-	// Calcul de la différence entre "maintenant" et "EstimatedReady"
-	readyTime, err := time.Parse("2006-01-02 15:04:05", estimatedReadyStr)
-	if err != nil {
-		return row.PrepTime
-	}
-
-	diff := time.Until(readyTime)
-	if diff < 0 {
-		return 0
-	}
-
-	return int(diff.Minutes())
-}
-
 func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, prepMinutes int) (map[string][]TimeSlot, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// On convertit les minutes en format TIME (HH:MM:SS) pour MySQL
 	prepDelay := fmt.Sprintf("%02d:%02d:00", prepMinutes/60, prepMinutes%60)
 
@@ -122,7 +101,7 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
         ORDER BY open_date, slot_time;
     `
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, prepDelay)
+	rows, err := db.QueryContext(ctx, query, merchantID, prepDelay)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +129,8 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
 }
 
 func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (string, string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 	SELECT qr.merchant_id, m.timezone
 	FROM qrcodes qr
@@ -158,7 +139,7 @@ func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (s
 
 	var merchantID string
 	var tz string
-	err := r.db.QueryRowContext(ctx, query, qr).Scan(&merchantID, &tz)
+	err := db.QueryRowContext(ctx, query, qr).Scan(&merchantID, &tz)
 	if err != nil {
 		return "", "", err
 	}
@@ -166,13 +147,15 @@ func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (s
 }
 
 func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merchantID string) (string, string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 	SELECT m.id, m.timezone
 	FROM merchant m
 	WHERE m.id = ?`
 
 	var tz string
-	err := r.db.QueryRowContext(ctx, query, merchantID).Scan(&merchantID, &tz)
+	err := db.QueryRowContext(ctx, query, merchantID).Scan(&merchantID, &tz)
 	if err != nil {
 		return "", "", err
 	}
@@ -180,6 +163,8 @@ func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merch
 }
 
 func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]map[string]interface{}, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 	SELECT id, name, description
 	FROM customer_loyalty_programs
@@ -187,7 +172,7 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 	AND target_order_type LIKE ?
 	AND enabled = true`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, "%"+orderType+"%")
+	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -205,12 +190,8 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 	return result, nil
 }
 
-func (r *Repository) GetDiscounts(
-	ctx context.Context,
-	merchantID string,
-	orderType string,
-	dow int,
-) ([]Discount, error) {
+func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderType string, dow int) ([]Discount, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 	SELECT
@@ -243,7 +224,7 @@ func (r *Repository) GetDiscounts(
 	AND d.available = true
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
+	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
 	if err != nil {
 		return nil, err
 	}
@@ -285,20 +266,10 @@ func (r *Repository) GetDiscounts(
 	return discounts, nil
 }
 
-func (r *Repository) GetMerchantOpenStatus(
-	ctx context.Context,
-	merchantID string,
-	dow int,
-	currentTime string,
-) (*MerchantOpenStatus, error) {
+func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantOpenStatus, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	status := &MerchantOpenStatus{}
-
-	conn, err := r.db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
 
 	// 1️⃣ Global open status
 	query1 := `
@@ -311,7 +282,7 @@ func (r *Repository) GetMerchantOpenStatus(
 	LIMIT 1`
 
 	var tmp int
-	if err := conn.QueryRowContext(ctx, query1, merchantID).Scan(&tmp); err == nil {
+	if err := db.QueryRowContext(ctx, query1, merchantID).Scan(&tmp); err == nil {
 		status.OpenStatus = true
 	}
 
@@ -328,13 +299,13 @@ func (r *Repository) GetMerchantOpenStatus(
 	AND hour_to > ?
 	LIMIT 1`
 
-	if err := conn.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp); err == nil {
+	if err := db.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp); err == nil {
 		status.OpenHours = true
 	}
 
 	// 3️⃣ Timezone
 	var timezone string
-	if err := conn.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		"SELECT timezone FROM merchant WHERE id = ?",
 		merchantID,
 	).Scan(&timezone); err != nil {
@@ -345,7 +316,7 @@ func (r *Repository) GetMerchantOpenStatus(
 	now := time.Now().In(loc).Format("2006-01-02 15:04:05")
 
 	// 4️⃣ Stored procedure
-	if _, err := conn.ExecContext(ctx,
+	if _, err := db.ExecContext(ctx,
 		`CALL GET_POS_STATUS(
 			?, ?, 
 			@p_is_open, 
@@ -366,7 +337,7 @@ func (r *Repository) GetMerchantOpenStatus(
 	var isOpen sql.NullInt64
 	var nextStart sql.NullString
 
-	if err := conn.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		"SELECT @p_is_open, @p_next_start",
 	).Scan(&isOpen, &nextStart); err != nil {
 		return nil, err
@@ -381,6 +352,7 @@ func (r *Repository) GetMerchantOpenStatus(
 }
 
 func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID string, dow int, currentTime string) (map[int64]string, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 	SELECT DISTINCT p.product_id, p.name
@@ -395,7 +367,7 @@ func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID stri
 	AND a.available = true
 	AND ap.enabled = true`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, dow, currentTime, currentTime)
+	rows, err := db.QueryContext(ctx, query, merchantID, dow, currentTime, currentTime)
 	if err != nil {
 		return nil, err
 	}
@@ -414,6 +386,7 @@ func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID stri
 }
 
 func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID string) (deliverySessionID *string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 	SELECT dso.order_id, dso.delivery_session_id
@@ -422,7 +395,7 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 	INNER JOIN orders o ON o.order_id = dso.order_id
 	WHERE o.order_id = ?`
 
-	row := r.db.QueryRowContext(ctx, query, orderID)
+	row := db.QueryRowContext(ctx, query, orderID)
 
 	var dsID string
 
@@ -438,10 +411,12 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 }
 
 func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `SELECT merchant_id FROM qrcodes WHERE code = ?`
 	var merchantID string
 
-	err := r.db.QueryRowContext(ctx, query, qr).Scan(&merchantID)
+	err := db.QueryRowContext(ctx, query, qr).Scan(&merchantID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -451,7 +426,8 @@ func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string,
 	return &merchantID, nil
 }
 
-func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
+func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
         SELECT b.customer_id
@@ -464,7 +440,7 @@ func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
     `
 
 	var customerID string
-	err := s.db.QueryRowContext(ctx, query, qrCode).Scan(&customerID)
+	err := db.QueryRowContext(ctx, query, qrCode).Scan(&customerID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -477,7 +453,8 @@ func (s *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 	}, nil
 }
 
-func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
+func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	phone := helpers.NormalizePhoneNumber(*customer.Tel, "FR")
 
@@ -494,7 +471,7 @@ func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
 	var customerID string
 	var autoRewards bool
 
-	err := s.db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
+	err := db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
 	if err == sql.ErrNoRows {
 		return &customer, nil
 	}
@@ -515,7 +492,7 @@ func (s *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
             AND cr.usage_date IS NULL;
         `
 
-		rows, err := s.db.QueryContext(ctx, rewardsQuery, customerID)
+		rows, err := db.QueryContext(ctx, rewardsQuery, customerID)
 		if err != nil {
 			return &customer, nil // comme PHP → fail silencieux
 		}
@@ -552,6 +529,8 @@ func (s *Repository) GetBooking(ctx context.Context, qrCode string) (*models.Boo
 // GetMerchantsByBrandSlug fetches the brand and its merchants.
 // If lat and lng are non-nil, only merchants within 50 km are returned (Haversine).
 func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, lat, lng *float64) (*BrandData, []BrandMerchantRow, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// 1. Fetch brand
 	brandQuery := `
 		SELECT brand_id, name, slug, logo_url, banner_url, description
@@ -560,7 +539,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 		LIMIT 1`
 
 	brand := &BrandData{}
-	err := r.db.QueryRowContext(ctx, brandQuery, slug).Scan(
+	err := db.QueryRowContext(ctx, brandQuery, slug).Scan(
 		&brand.BrandID, &brand.Name, &brand.Slug,
 		&brand.LogoURL, &brand.BannerURL, &brand.Description,
 	)
@@ -600,7 +579,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			HAVING distance_km < 50
 			ORDER BY distance_km ASC`
 
-		rows, err = r.db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
+		rows, err = db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
 	} else {
 		merchantQuery := `
 			SELECT
@@ -624,7 +603,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			WHERE b.brand_id = ?
 			ORDER BY m.fullName ASC`
 
-		rows, err = r.db.QueryContext(ctx, merchantQuery, brand.BrandID)
+		rows, err = db.QueryContext(ctx, merchantQuery, brand.BrandID)
 	}
 
 	if err != nil {

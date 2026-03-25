@@ -59,7 +59,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	}
 
 	// 4. Création finale de la commande
-	_, err = s.ordersService.CreateOrder(context.Background(), req)
+	_, err = s.orderLifeCycleSvc.CreateOrder(context.Background(), req)
 	if err != nil {
 		// Si l'erreur est une violation d'index UNIQUE (doublon), on log et on ignore
 		if strings.Contains(err.Error(), "Duplicate entry") {

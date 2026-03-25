@@ -221,7 +221,7 @@ func (s *MenuService) BulkAssignAllergen(ctx context.Context, token, allergenID 
 
 // SyncProductTags replaces all tag associations for the given product.
 // Only the merchant that owns the product (and the tags) may call this.
-func (s *MenuService) SyncProductTags(ctx context.Context, token, productID string, tagIDs []int) error {
+func (s *MenuService) SyncProductTags(ctx context.Context, token, productID string, tagIDs []string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err

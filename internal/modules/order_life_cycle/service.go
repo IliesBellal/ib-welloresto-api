@@ -859,3 +859,118 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 		return nil
 	})
 }
+
+func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	log := logger.FromContext(ctx)
+
+	result, err := s.ordersLifeCycleRepo.CreateOrder(ctx, req)
+
+	if err != nil {
+		log.Error(err.Error())
+	} else {
+		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
+		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, "NEW_ORDER")
+	}
+
+	return result, err
+}
+
+// This function will add Merchant ID and User ID to the payload
+func (s *OrdersLifeCycleService) PrepareCreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req.MerchantID = user.MerchantID
+	req.Order.CreatedBy = &user.UserID
+
+	return s.CreateOrder(ctx, req)
+}
+
+// This function will add Merchant_Id to the payload
+func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *models.RequestObject) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	req.MerchantID = user.MerchantID
+	req.Order.CreatedBy = &user.UserID
+
+	return s.UpdateOrder(ctx, req)
+}
+
+func (s *OrdersLifeCycleService) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
+	log := logger.FromContext(ctx)
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	req.MerchantID = user.MerchantID
+
+	// Tout ce qui est dans ce bloc est transactionnel !
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+
+		// 1. Récupérer l'état AVANT (utilise txCtx pour rester dans la transaction)
+		oldOrders, _ := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, *req.Order.OrderID)
+		oldOrder := oldOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
+		if err != nil {
+			return err
+		}
+
+		// 2. Mettre à jour (utilise txCtx)
+		if err := s.ordersLifeCycleRepo.UpdateOrder(txCtx, req); err != nil {
+			return err
+		}
+
+		// Nettoyage Redis
+		if s.redis != nil {
+			key := helpers.GetRedisOrderKey(user.MerchantID, *req.Order.OrderID)
+			s.redis.Delete(ctx, key)
+			log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+		}
+
+		// 3. Récupérer l'état APRES
+		// (ou construire le newOrder en mémoire si tu préfères éviter un SELECT)
+		newOrders, err := s.ordersService.ComputeGetOrder(txCtx, user.MerchantID, *req.Order.OrderID)
+		if err != nil {
+			log.Error("failed to fetch updated order", zap.Error(err))
+		}
+		newOrder := newOrders.Orders[0] // on suppose qu'il y a toujours une commande, à adapter si besoin
+
+		// 4. AUDIT : C'est dans la même transaction !
+		err = s.auditService.LogChange(
+			txCtx,
+			user.MerchantID,
+			user.UserID,
+			models.ActionOrderUpdate,
+			models.ResourceOrder,
+			*req.Order.OrderID,
+			oldOrder,
+			newOrder,
+		)
+		if err != nil {
+			return err // Si l'audit pète, ça fera un Rollback de tout le bloc !
+		}
+
+		return nil // Tout est bon, Commit !
+	})
+
+	if err != nil {
+		log.Error("UpdateOrder transaction failed: " + err.Error())
+		return err
+	}
+
+	// 5. Actions asynchrones / hors base de données (se font UNIQUEMENT si le commit a réussi)
+	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
+
+	return nil
+}
+
+func (s *OrdersLifeCycleService) ComputeEstimatedReady(ctx context.Context, id string) (string, error) {
+	// On utilise 3 produits comme base pour l'estimation, mais cette logique peut être ajustée selon les besoins réels
+	return s.ordersLifeCycleRepo.ComputeEstimatedReady(ctx, id, 3)
+}

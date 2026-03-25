@@ -176,6 +176,32 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	return resp, nil
 }
 
+func (s *Service) GetEffectivePrepMinutes(ctx context.Context, row *models.MerchantRow) int {
+	if row.PrepTimeMode == "MANUAL" {
+		return row.PrepTime
+	}
+
+	// Mode AUTO : on utilise ta logique de procédure stockée
+	// Note : On adapte ComputeEstimatedReady pour obtenir juste le délai
+	estimatedReadyStr, err := s.orderLifeCycleSvc.ComputeEstimatedReady(ctx, row.MerchantID)
+	if err != nil || estimatedReadyStr == "" {
+		return row.PrepTime // Fallback sur le temps manuel si l'auto échoue
+	}
+
+	// Calcul de la différence entre "maintenant" et "EstimatedReady"
+	readyTime, err := time.Parse("2006-01-02 15:04:05", estimatedReadyStr)
+	if err != nil {
+		return row.PrepTime
+	}
+
+	diff := time.Until(readyTime)
+	if diff < 0 {
+		return 0
+	}
+
+	return int(diff.Minutes())
+}
+
 func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
 	// Si Redis est absent, direct BDD
 	if s.redis == nil {
@@ -681,7 +707,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	order.Payments = []models.PaymentPayload{}
 
 	// 6️⃣ Création commande BDD
-	newOrder, err := s.orderingService.CreateOrder(ctx, &models.RequestObject{
+	newOrder, err := s.orderLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
 		MerchantID: orderReq.Merchant.MerchantID,
 		Order:      *orderReq.Order,
 	})

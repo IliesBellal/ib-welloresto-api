@@ -453,7 +453,7 @@ func (h *MenuHandler) SyncProductTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		TagIDs []int `json:"tag_ids"`
+		TagIDs []string `json:"tag_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_tags", map[string]string{"error": "invalid_body"})

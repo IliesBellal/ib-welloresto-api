@@ -127,52 +127,6 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	var req models.RequestObject
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Error("PrepareCreateOrder bad request : " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "orders", "create_order", map[string]string{"error": "invalid_body"})
-		return
-	}
-
-	result, err := h.ordersService.PrepareCreateOrder(ctx, &req)
-	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "create_order", map[string]string{"error": err.Error()})
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "orders", "create_order", result)
-}
-
-func (h *OrdersHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	var req models.RequestObject
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Error("PrepareCreateOrder bad request : " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "orders", "update_order", map[string]string{"error": "invalid_body"})
-		return
-	}
-
-	orderID := chi.URLParam(r, "order_id")
-	req.Order.OrderID = &orderID
-
-	err := h.ordersService.PrepareUpdateOrder(ctx, &req)
-	if err != nil {
-		log.Error("PrepareCreateOrder error : " + err.Error())
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "update_order", map[string]string{"error": err.Error()})
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "orders", "update_order", models.HandlerDefaultResponseModelSet{
-		Status: "success",
-	})
-}
-
 func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	//log := logger.FromContext(ctx)

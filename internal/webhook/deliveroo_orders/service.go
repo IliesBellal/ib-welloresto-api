@@ -112,7 +112,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	}
 
 	// 7. CRÉATION DE LA COMMANDE
-	result, err := s.ordersService.CreateOrder(ctx, reqObject)
+	result, err := s.lifecycleService.CreateOrder(ctx, reqObject)
 	if err != nil {
 		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
 	}
@@ -185,7 +185,7 @@ func (s *DeliverooService) ProcessNewOrderOld(ctx context.Context, payload Deliv
 	}
 
 	// 6. CREATION DE LA COMMANDE via le Service existant
-	result, err := s.ordersService.CreateOrder(ctx, reqObject)
+	result, err := s.lifecycleService.CreateOrder(ctx, reqObject)
 	if err != nil {
 		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
 	}
