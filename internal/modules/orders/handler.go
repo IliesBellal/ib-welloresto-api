@@ -83,23 +83,6 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *OrdersHandler) UpdateMultipleProductsStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	var req models.MultipleProductsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "orders", "update_multiple_products_status", map[string]string{"error": "invalid_body"})
-		return
-	}
-
-	if err := h.ordersService.UpdateMultipleProductsStatus(ctx, &req); err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "update_multiple_products_status", map[string]string{"error": err.Error()})
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "orders", "update_multiple_products_status", map[string]string{"status": "ok"})
-}
-
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type LocationsRepository struct {
@@ -16,6 +17,7 @@ func NewLocationsRepository(db *sql.DB) *LocationsRepository {
 }
 
 func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) (*models.LocationResponse, error) {
+	db := dbutils.GetDB(ctx, r.db)
 	res := &models.LocationResponse{
 		Locations: []models.Location{},
 		Floors:    []models.Floor{},
@@ -43,7 +45,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		WHERE l.merchant_id = ? AND l.enabled IS TRUE
 		ORDER BY l.location_order ASC;`
 
-	rowsLoc, err := r.db.QueryContext(ctx, queryLocs, merchantID, merchantID)
+	rowsLoc, err := db.QueryContext(ctx, queryLocs, merchantID, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +77,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		WHERE b.merchant_id = ? AND b.status = 'ACCEPTED'
 		AND b.booking_date_to > UTC_TIMESTAMP - INTERVAL 5 HOUR;`
 
-	rowsBook, err := r.db.QueryContext(ctx, queryBookings, merchantID)
+	rowsBook, err := db.QueryContext(ctx, queryBookings, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +130,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 	}
 
 	// 3) FLOORS
-	rowsFloors, err := r.db.QueryContext(ctx, "SELECT id, name FROM floors WHERE merchant_id = ? AND enabled IS TRUE", merchantID)
+	rowsFloors, err := db.QueryContext(ctx, "SELECT id, name FROM floors WHERE merchant_id = ? AND enabled IS TRUE", merchantID)
 	if err == nil {
 		defer rowsFloors.Close()
 		for rowsFloors.Next() {
@@ -139,7 +141,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 	}
 
 	// 4) AREAS
-	rowsAreas, err := r.db.QueryContext(ctx, `
+	rowsAreas, err := db.QueryContext(ctx, `
 		SELECT fa.id, fa.floor_id, fa.name, fa.points, fa.x, fa.y, fa.angle, fa.stroke_color, fa.color
 		FROM floor_areas fa
 		INNER JOIN floors f ON f.id = fa.floor_id

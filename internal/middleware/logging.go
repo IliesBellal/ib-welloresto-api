@@ -38,8 +38,8 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 				zap.String("request_id", requestID),
 				zap.String("endpoint", endpoint),
 				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
-				zap.String("ip", r.RemoteAddr),
+				//zap.String("path", r.URL.Path),
+				//zap.String("ip", r.RemoteAddr),
 			)
 
 			ctx := logger.WithRequestID(r.Context(), requestID)

@@ -562,7 +562,7 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 	}
 
 	// Cancel stripe payments
-	err = s.ordersLifeCycleRepo.CancelStripePayments(ctx, OrderID)
+	err = s.ordersLifeCycleRepo.DisablePayments(ctx, OrderID)
 	if err != nil {
 		return nil, fmt.Errorf("stripe cancel: %w", err)
 	}

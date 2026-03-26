@@ -6,20 +6,25 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{database: db}
 }
 
 // ListTags returns all tags belonging to a merchant.
 func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
-	rows, err := r.db.QueryContext(ctx,
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	rows, err := db.QueryContext(ctx,
 		`SELECT tag_id, merchant_id, name
 		 FROM tags
 		 WHERE merchant_id = ?
@@ -27,6 +32,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 		merchantID,
 	)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -44,8 +50,10 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 
 // TagBelongsToMerchant verifies a tag is owned by the given merchant.
 func (r *Repository) TagBelongsToMerchant(ctx context.Context, tagID string, merchantID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	var count int
-	err := r.db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?`,
 		tagID, merchantID,
 	).Scan(&count)
@@ -55,13 +63,17 @@ func (r *Repository) TagBelongsToMerchant(ctx context.Context, tagID string, mer
 // CreateTag inserts a new tag for a merchant.
 // Returns the created tag entry.
 func (r *Repository) CreateTag(ctx context.Context, merchantID string, tagID string, name string) (*models.TagEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	// Insert the tag
-	_, err := r.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO tags (tag_id, merchant_id, name)
 		 VALUES (?, ?, ?)`,
 		tagID, merchantID, name,
 	)
 	if err != nil {
+		log.Error(err.Error())
 		// Check for duplicate constraint violation
 		if isUniqueConstraintError(err) {
 			return nil, models.ErrInvalidInput // "Tag with this name already exists for this merchant"
@@ -80,12 +92,16 @@ func (r *Repository) CreateTag(ctx context.Context, merchantID string, tagID str
 // DeleteTag removes a tag by ID (if it belongs to the merchant).
 // Also cascades to product_tags due to FK constraint.
 func (r *Repository) DeleteTag(ctx context.Context, merchantID string, tagID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	// Verify ownership first
 	var count int
-	if err := r.db.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?`,
 		tagID, merchantID,
 	).Scan(&count); err != nil {
+		log.Error(err.Error())
 		return err
 	}
 	if count == 0 {
@@ -93,17 +109,19 @@ func (r *Repository) DeleteTag(ctx context.Context, merchantID string, tagID str
 	}
 
 	// Delete the tag (FK cascade will remove product_tags entries)
-	result, err := r.db.ExecContext(ctx,
+	result, err := db.ExecContext(ctx,
 		`DELETE FROM tags WHERE tag_id = ? AND merchant_id = ?`,
 		tagID, merchantID,
 	)
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
 	// Verify something was actually deleted
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 	if rowsAffected == 0 {

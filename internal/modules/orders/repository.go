@@ -8,7 +8,6 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersRepository struct {
@@ -350,6 +349,7 @@ AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 	return blocked, nil
 }
 
+/*
 // OrderInsert is the minimal data to create an order row
 type OrderInsert struct {
 	CashRegisterID interface{}
@@ -361,8 +361,9 @@ type OrderInsert struct {
 	HT             float64
 	// other fields omitted for brevity
 }
-
+*/
 // InsertOrder inserts order and returns order_id
+/*
 func (r *OrdersRepository) InsertOrder(ctx context.Context, tx *sql.Tx, o *OrderInsert) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO orders (cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, creation_date, dateCall, last_update)
@@ -373,9 +374,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP)
 	}
 	return res.LastInsertId()
 }
-
+*/
 // ResetOrderItems conservé pour compatibilité ascendante (utilisé éventuellement ailleurs).
 // Préférer deleteRemovedOrderItems dans UpdateOrder.
+/*
 func (r *OrdersRepository) ResetOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE orderitems
@@ -384,8 +386,8 @@ func (r *OrdersRepository) ResetOrderItems(ctx context.Context, tx *sql.Tx, req 
 		req.Order.OrderID,
 	)
 	return err
-}
-
+}*/
+/*
 func (r *OrdersRepository) InsertPayment(ctx context.Context, p *models.Payment) error {
 	db := dbutils.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
@@ -393,7 +395,7 @@ INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, paym
 VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
 `, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID, p.OperationType)
 	return err
-}
+}*/
 
 func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantID string) (*models.MerchantPricingInfo, error) {
 	q := `
@@ -836,10 +838,7 @@ func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req
 	return sec, nil
 }
 
-func (r *OrdersRepository) GetConfigurationOptionPrices(
-	ctx context.Context,
-	optionIDs []string,
-) (map[string]int, error) {
+func (r *OrdersRepository) GetConfigurationOptionPrices(ctx context.Context, optionIDs []string) (map[string]int, error) {
 
 	if len(optionIDs) == 0 {
 		return map[string]int{}, nil
@@ -877,62 +876,6 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(
 	}
 
 	return out, nil
-}
-
-func (r *OrdersRepository) UpdateMultipleProductsStatus(ctx context.Context, req *models.MultipleProductsRequest) error {
-
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	orderIDs := map[string]bool{}
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
-
-	query := `
-		UPDATE orderitems
-		SET 
-			production_status = ?,
-			production_status_done_quantity = CASE
-				WHEN ? = 'DONE' THEN quantity
-				ELSE ready_for_distribution_quantity
-			END
-		WHERE order_item_id = ?
-		AND order_id = ?
-	`
-
-	stmt, err := tx.PrepareContext(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, p := range req.Products {
-
-		orderIDs[p.OrderID] = true
-
-		_, err = stmt.ExecContext(ctx,
-			p.ProductionStatus,
-			p.ProductionStatus,
-			p.OrderItemID,
-			p.OrderID,
-		)
-
-		if err != nil {
-			return err
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {

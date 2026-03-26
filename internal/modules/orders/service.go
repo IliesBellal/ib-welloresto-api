@@ -272,11 +272,6 @@ func (s *OrdersService) GetOrders(ctx context.Context, req *models.OrderRequest)
 	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
 }
 
-func (s *OrdersService) UpdateMultipleProductsStatus(ctx context.Context, req *models.MultipleProductsRequest) error {
-
-	return s.ordersRepo.UpdateMultipleProductsStatus(ctx, req)
-}
-
 func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.Order, error) {
 	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)

@@ -37,16 +37,8 @@ func NewOrdersLifeCycleRepository(db *sql.DB, custoRepo *customers.CustomersRepo
 }
 
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// -------------------------
 	//  FUTURE VALIDATIONS HERE
@@ -58,45 +50,16 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 	// - vérifier registre de caisse
 	// --------------------------------------
 
-	// ---- 1. Avant
-	var beforeState string
-	err = tx.QueryRowContext(ctx, `
-		SELECT state FROM orders WHERE order_id = ?
-	`, orderID).Scan(&beforeState)
-	if err != nil {
-		return fmt.Errorf("cannot load before state: %w", err)
-	}
-
 	// ---- 2. Update
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE orders 
 		SET state = 'OPEN'
 		WHERE order_id = ? AND merchant_id = ?
 	`, orderID, merchantID)
 	if err != nil {
+		log.Error(err.Error())
 		return fmt.Errorf("reopen update failed: %w", err)
 	}
-
-	// ---- 3. Après
-	var afterState string
-	err = tx.QueryRowContext(ctx, `
-		SELECT state FROM orders WHERE order_id = ?
-	`, orderID).Scan(&afterState)
-	if err != nil {
-		return fmt.Errorf("cannot load after state: %w", err)
-	}
-
-	// ---- 4. Log si changement
-	if beforeState != afterState {
-		// TODO : appeler équivalent Go de logOrderChange(...)
-	}
-
-	// commit
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	// TODO: Send update notification (équivalent sendUpdateOrderNotification)
 	return nil
 }
 
@@ -157,7 +120,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 	_ = db.QueryRowContext(ctx, `
 		SELECT hash FROM payments 
 		WHERE merchant_id = ? 
-		ORDER BY payment_id DESC LIMIT 1 
+		ORDER BY payment_date DESC LIMIT 1 
 		FOR UPDATE
 	`, payment.MerchantID).Scan(&prevHash)
 
@@ -212,221 +175,9 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 	return err
 }
 
-func (r *OrdersLifeCycleRepository) AddPaymentOld(ctx context.Context, payment models.Payment) error {
-	db := dbutils.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
-
-	// 1. Trouver cash_register_id
-	var cashRegisterID sql.NullString
-	err := db.QueryRowContext(ctx, `
-        SELECT cr.cash_register_id
-        FROM cash_registers cr
-        LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
-        WHERE (cr.device_id = ? OR scr.device_id = ?)
-        AND cr.end_date IS NULL
-    `, payment.AccountID, payment.AccountID).Scan(&cashRegisterID)
-
-	if err == sql.ErrNoRows {
-		cashRegisterID.String = *payment.AccountID
-		cashRegisterID.Valid = true
-	} else if err != nil {
-		log.Error("Error in sql " + err.Error())
-		return err
-	}
-
-	// 2. Vérification du montant (Paiement total déjà effectué ?)
-	var totalPrice, alreadyPaid int
-	err = db.QueryRowContext(ctx, `
-       SELECT o.price, COALESCE(SUM(p.amount),0)
-       FROM orders o
-       LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
-       WHERE o.order_id = ?
-       GROUP BY o.order_id
-    `, payment.OrderID).Scan(&totalPrice, &alreadyPaid)
-
-	if err != nil {
-		log.Error("Error in sql " + err.Error())
-		return fmt.Errorf("failed to check order payment status: %w", err)
-	}
-
-	if alreadyPaid >= totalPrice || alreadyPaid+payment.Amount > totalPrice {
-		// On renvoie juste l'erreur, RunInTx s'occupe du reste
-		return &models.OrderNotFullyPaidError{
-			OrderID:    payment.OrderID,
-			PaidAmount: alreadyPaid,
-			Price:      totalPrice,
-		}
-	}
-
-	// 2.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
-	var prevHash sql.NullString
-	_ = db.QueryRowContext(ctx, `
-        SELECT hash FROM payments 
-        WHERE merchant_id = ? 
-        ORDER BY payment_id DESC LIMIT 1 
-        FOR UPDATE
-    `, payment.MerchantID).Scan(&prevHash)
-
-	now := time.Now().UTC()
-	paymentDate := now.Format(time.RFC3339)
-
-	// Calcul du hash du nouveau paiement
-	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, payment.Amount, payment.MOP, payment.OrderID)
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
-
-	// 3. Insérer le paiement avec son hash
-	res, err := db.ExecContext(ctx, `
-        INSERT INTO payments
-        (merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, payment.MerchantID, cashRegisterID.String, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature)
-
-	if err != nil {
-		log.Error("Error in sql " + err.Error())
-		return err
-	}
-
-	paymentID, _ := res.LastInsertId()
-
-	// 4. Ticket restaurant (TR)
-	if payment.MOP == "TR" {
-		_, err = db.ExecContext(ctx, `
-            INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
-            VALUES (?, ?, ?)
-        `, payment.MerchantID, paymentID, payment.Code)
-		if err != nil {
-			log.Error("Error in sql " + err.Error())
-			return err
-		}
-	}
-
-	// 5. Mettre à jour orders.isPaid
-	_, err = db.ExecContext(ctx, `
-        UPDATE orders o
-        INNER JOIN (
-            SELECT order_id, SUM(amount) AS paid
-            FROM payments
-            WHERE enabled = 1 AND order_id = ?
-            GROUP BY order_id
-        ) p ON p.order_id = o.order_id
-        SET o.isPaid = (o.price <= p.paid)
-        WHERE o.order_id = ?
-    `, payment.OrderID, payment.OrderID)
-
-	return err // Terminé !
-}
-
-func (r *OrdersLifeCycleRepository) AddPaymentVeryOld(ctx context.Context, merchantID, userID string, req *models.PaymentRequest) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx failed: %w", err)
-	}
-
-	rollback := func(err error) error {
-		_ = tx.Rollback()
-		return err
-	}
-
-	// ---------------------------------------------------
-	// 🎯 SECTION FUTURE : tes vérifications métier ici !
-	//
-	// Exemple à venir :
-	// - vérifier si le MOP est autorisé
-	// - vérifier si le caissier a le droit
-	//
-	// ---------------------------------------------------
-
-	// 1. Trouver cash_register_id
-	var cashRegisterID sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT cr.cash_register_id
-		FROM cash_registers cr
-		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
-		WHERE (cr.device_id = ? OR scr.device_id = ?)
-		AND cr.end_date IS NULL
-	`, req.DeviceID, req.DeviceID).Scan(&cashRegisterID)
-	if err == sql.ErrNoRows {
-		cashRegisterID.String = req.DeviceID
-		cashRegisterID.Valid = true
-	} else if err != nil {
-		return rollback(err)
-	}
-
-	// 2. Paiement total déjà effectué ?
-	var totalPrice, alreadyPaid int
-	err = tx.QueryRowContext(ctx, `
-       SELECT o.price, COALESCE(SUM(p.amount),0)
-       FROM orders o
-       LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
-       WHERE o.order_id = ?
-       GROUP BY o.order_id
-    `, req.OrderID).Scan(&totalPrice, &alreadyPaid)
-
-	if err != nil {
-		// Gérer le cas où la commande n'existe pas ou autre erreur SQL
-		return rollback(fmt.Errorf("failed to check order payment status: %w", err))
-	}
-
-	// 👉 LA VÉRIFICATION MÉTIER EST ICI :
-	if alreadyPaid >= totalPrice || alreadyPaid+req.Amount > totalPrice {
-		tx.Rollback()
-		return &models.OrderNotFullyPaidError{
-			OrderID:    req.OrderID,
-			PaidAmount: alreadyPaid,
-			Price:      totalPrice,
-		}
-	}
-
-	// 3. Insérer le paiement
-	res, err := tx.ExecContext(ctx, `
-		INSERT INTO payments
-		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check)
-		VALUES (?, ?, ?, ROUND(?,2), ?, ?, UTC_TIMESTAMP, ?, ?)
-	`, merchantID, cashRegisterID.String, req.OrderID, req.Amount, req.MOP, req.Comment, userID, req.StatusCheck)
-	if err != nil {
-		return rollback(err)
-	}
-
-	paymentID, _ := res.LastInsertId()
-
-	logger.FromContext(ctx).Info("💵 New payment " + *helpers.Int64ToStringPtr(paymentID) + " created for merchant " + merchantID)
-
-	// 4. Ticket restaurant (TR)
-	if req.MOP == "TR" && req.Code != "" {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
-			VALUES (?, ?, ?)
-		`, merchantID, paymentID, req.Code)
-		if err != nil {
-			return rollback(err)
-		}
-	}
-
-	// 5. Mettre à jour orders.isPaid
-	_, err = tx.ExecContext(ctx, `
-		UPDATE orders o
-		INNER JOIN (
-			SELECT order_id, SUM(amount) AS paid
-			FROM payments
-			WHERE enabled = 1 AND order_id = ?
-			GROUP BY order_id
-		) p ON p.order_id = o.order_id
-		SET o.isPaid = (o.price <= p.paid)
-		WHERE o.order_id = ?
-	`, req.OrderID, req.OrderID)
-	if err != nil {
-		return rollback(err)
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return rollback(err)
-	}
-	return nil
-}
-
 func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	q := `
 		SELECT order_id, payment_id, mop, amount, payment_date, enabled
 		FROM payments
@@ -434,7 +185,7 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 		ORDER BY payment_date ASC
 	`
 
-	rows, err := r.database.QueryContext(ctx, q, orderID)
+	rows, err := db.QueryContext(ctx, q, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +213,9 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 }
 
 func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID string, paymentID int64) (*models.Payment, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	q := `
 		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.enabled, sp.payment_intent_id, sa.account_id
 		FROM payments p
@@ -473,7 +227,7 @@ func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID stri
 	var p models.Payment
 	var paymentDate sql.NullTime
 
-	err := r.database.QueryRowContext(ctx, q, orderID, paymentID).Scan(
+	err := db.QueryRowContext(ctx, q, orderID, paymentID).Scan(
 		&p.OrderID, &p.PaymentID, &p.MOP, &p.Amount, &paymentDate, &p.Enabled, &p.IntentID, &p.AccountID,
 	)
 
@@ -481,6 +235,7 @@ func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID stri
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("payment not found: order_id=%s, payment_id=%d", orderID, paymentID)
 		}
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -492,40 +247,41 @@ func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID stri
 }
 
 func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// TODO
 	// Vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo qui ne sont pas anulables
 	// Le client s'en occupe déjà, mais une double vérification côté serveur est nécessaire
 
 	// Disable payment
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE payments SET enabled = 0 WHERE payment_id = ?
 	`, paymentID)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
 	}
 
 	// Refresh order as unpaid
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE orders o 
 		JOIN payments p ON o.order_id = p.order_id
 		SET o.isPaid = false, o.last_update = UTC_TIMESTAMP()
 		WHERE p.payment_id = ?
 	`, paymentID)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	// 1. Préparation des outils de compatibilité
 	now := time.Now().UTC()
 	orderID := req.OrderID
@@ -534,20 +290,15 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 	// Idéalement, stockez r.isPostgres lors de l'initialisation du repo
 	isPostgres := false
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	// 2. Mise à jour des items (Boucle)
 	for _, p := range req.Products {
 		var beforeIsDistributed sql.NullInt64
 
 		// SELECT : On récupère l'ancienne valeur pour le log
 		querySelect := r.formatQuery(`SELECT isDistributed FROM orderitems WHERE order_id = ? AND order_item_id = ?`, isPostgres)
-		err = tx.QueryRowContext(ctx, querySelect, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
+		err := db.QueryRowContext(ctx, querySelect, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
 		if err != nil {
+			log.Error(err.Error())
 			return err
 		}
 
@@ -560,8 +311,9 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 			    distributed_on = ?
 			WHERE order_id = ? AND order_item_id = ?`, isPostgres)
 
-		_, err = tx.ExecContext(ctx, queryUpdateItem, now, orderID, p.OrderItemID)
+		_, err = db.ExecContext(ctx, queryUpdateItem, now, orderID, p.OrderItemID)
 		if err != nil {
+			log.Error(err.Error())
 			return err
 		}
 	}
@@ -569,8 +321,9 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 	// 3. Calcul de l'état global (Optimisé : hors de la boucle précédente)
 	var countNotDistributed int
 	queryCheck := r.formatQuery(`SELECT COUNT(*) FROM orderitems WHERE order_id = ? AND isDistributed = 0`, isPostgres)
-	err = tx.QueryRowContext(ctx, queryCheck, orderID).Scan(&countNotDistributed)
+	err := db.QueryRowContext(ctx, queryCheck, orderID).Scan(&countNotDistributed)
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
@@ -598,7 +351,7 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 		    last_update = ?
 		WHERE order_id = ? AND merchant_id = ?`, isPostgres)
 
-	_, err = tx.ExecContext(ctx, queryUpdateOrder,
+	_, err = db.ExecContext(ctx, queryUpdateOrder,
 		orderFullyDistributedInt, // isDistributed
 		orderFullyDistributedInt, // CASE delivered_on (comparaison)
 		now,                      // delivered_on (valeur)
@@ -610,18 +363,16 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 		merchantID,
 	)
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
 	// 5. Récupération de la marque pour notification
 	var brand sql.NullString
 	queryBrand := r.formatQuery(`SELECT brand FROM orders WHERE order_id = ?`, isPostgres)
-	err = tx.QueryRowContext(ctx, queryBrand, orderID).Scan(&brand)
+	err = db.QueryRowContext(ctx, queryBrand, orderID).Scan(&brand)
 	if err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
@@ -643,126 +394,13 @@ func (r *OrdersLifeCycleRepository) formatQuery(q string, isPostgres bool) strin
 	return result.String()
 }
 
-/*
-func (r *OrdersLifeCycleRepository) SetDistributedProductsOld(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
-
-		//log := logger.FromContext(ctx)
-
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		orderID := req.OrderID
-
-		for _, p := range req.Products {
-
-			// ----- BEFORE value -----
-			var beforeIsDistributed sql.NullInt64
-			err = tx.QueryRowContext(ctx, `
-				SELECT isDistributed
-				FROM orderitems
-				WHERE order_id = ? AND order_item_id = ?
-			`, orderID, p.OrderItemID).Scan(&beforeIsDistributed)
-
-			if err != nil {
-				return err
-			}
-
-			// ----- UPDATE ORDER ITEM -----
-			_, err = tx.ExecContext(ctx, `
-				UPDATE orderitems
-				SET
-					isDistributed = 1,
-					distributed_quantity = quantity,
-					ready_for_distribution_quantity = quantity,
-					distributed_on = UTC_TIMESTAMP
-				WHERE order_id = ? AND order_item_id = ?
-			`, orderID, p.OrderItemID)
-			if err != nil {
-				return err
-			}
-
-			// ----- Check if all items distributed -----
-			var existsNotDistributed int
-			err = tx.QueryRowContext(ctx, `
-				SELECT 1
-				FROM orders
-				INNER JOIN orderitems ON orderitems.order_id = orders.order_id
-				WHERE orders.order_id = ?
-				AND orders.merchant_id = ?
-				AND orderitems.isDistributed = 0
-				LIMIT 1
-			`, orderID, merchantID).Scan(&existsNotDistributed)
-
-			if err != nil && err != sql.ErrNoRows {
-				return err
-			}
-
-			orderFullyDistributed := "1"
-			if existsNotDistributed == 1 {
-				orderFullyDistributed = "0"
-			}
-
-			// ----- UPDATE ORDER -----
-			_, err = tx.ExecContext(ctx, `
-				UPDATE orders
-				SET
-					isDistributed = ?,
-					delivered_on = CASE
-						WHEN ? = '0' OR order_type = 'DELIVERY' THEN delivered_on
-						ELSE UTC_TIMESTAMP
-					END,
-					brand_status = CASE
-						WHEN order_type = 'DELIVERY' AND ? = '1' THEN 'READY_FOR_HANDOFF'
-						WHEN order_type = 'TAKE_AWAY' AND ? = '1' THEN 'READY_FOR_TAKE_AWAY'
-						WHEN ? = '0' THEN 'PENDING'
-						ELSE 'DONE'
-					END,
-					last_update = UTC_TIMESTAMP
-				WHERE order_id = ? AND merchant_id = ?
-			`, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderFullyDistributed, orderID, merchantID)
-
-			if err != nil {
-				return err
-			}
-
-			// ----- Log order change (replicates PHP) -----
-			// TODO : appeler équivalent Go de logOrderChange(...)
-		}
-
-		// ------ Get brand ------
-		var brand sql.NullString
-		err = tx.QueryRowContext(ctx, `
-			SELECT brand
-			FROM orders
-			WHERE order_id = ?
-		`, orderID).Scan(&brand)
-
-		if err != nil {
-			return err
-		}
-
-		err = tx.Commit()
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}
-*/
 func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Context, userID, merchantID, orderID string, products []models.DistributedProduct) error {
-
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	for _, p := range products {
 
-		_, err = tx.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
             UPDATE orderitems
             SET
                 isDistributed = 0,
@@ -786,25 +424,27 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
             AND merchant_id = ?
         `, orderID, p.OrderItemID, merchantID)
 		if err != nil {
+			log.Error(err.Error())
 			return err
 		}
 	}
 
 	// Check if any undistributed items left
 	var remaining int
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT COUNT(*)
         FROM orderitems
         WHERE order_id = ? AND isDistributed = 0
     `, orderID).Scan(&remaining)
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
 	fullyDistributed := remaining == 0
 
 	// Update orders table
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE orders
         SET 
             isDistributed = ?,
@@ -832,20 +472,24 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 		fullyDistributed,
 		orderID, merchantID)
 	if err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context, orderID string) (*models.OrderMeta, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	const q = `
 		SELECT o.brand, o.merchant_id, o.brand_order_id, o.creation_date
 		FROM orders o
 		WHERE o.order_id = ?
 		LIMIT 1;
 	`
-	row := r.database.QueryRowContext(ctx, q, orderID)
+	row := db.QueryRowContext(ctx, q, orderID)
 	var m models.OrderMeta
 	var merchantID sql.NullInt64
 	var brand sql.NullString
@@ -853,6 +497,7 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 	var creation sql.NullTime
 
 	if err := row.Scan(&brand, &merchantID, &brandOrder, &creation); err != nil {
+		log.Error(err.Error())
 		return nil, fmt.Errorf("get order meta: %w", err)
 	}
 	if brand.Valid {
@@ -873,11 +518,8 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 
 // SetOrderAcceptedLocal : mirrors PHP update: state = 'OPEN', brand_status = 'PENDING', merchant_approval = 'ACCEPTED', last_update = UTC_TIMESTAMP
 func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, orderID string) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	q := `
 		UPDATE orders
@@ -887,17 +529,20 @@ func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, o
 		    merchant_approval = 'ACCEPTED'
 		WHERE order_id = ?;
 	`
-	if _, err := tx.ExecContext(ctx, q, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, q, orderID); err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Context, orderID string, userID string) (*OrderIntegrationInfo, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// Update order
-	_, err := r.database.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE orders
 		SET last_update = UTC_TIMESTAMP,
 			brand_status = 'EN_ROUTE_TO_DROPOFF',
@@ -906,11 +551,12 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 		WHERE order_id = ?
 	`, userID, orderID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 
 	// Load integration info
-	row := r.database.QueryRowContext(ctx, `
+	row := db.QueryRowContext(ctx, `
 		SELECT o.merchant_id, o.brand, o.brand_order_id
 		FROM orders o
 		WHERE o.order_id = ?
@@ -919,6 +565,7 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 	var info OrderIntegrationInfo
 	err = row.Scan(&info.MerchantID, &info.Brand, &info.BrandOrderID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -926,12 +573,10 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 }
 
 func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment string) error {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET last_update = UTC_TIMESTAMP,
             brand_status = 'DENIED',
@@ -943,11 +588,11 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
 		deletionReasonID, comment, orderID,
 	)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE customer_rewards
         SET is_used = false,
             usage_date = null,
@@ -956,42 +601,8 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
 		orderID,
 	)
 	if err != nil {
-		tx.Rollback()
+		log.Error(err.Error())
 		return err
-	}
-
-	return tx.Commit()
-}
-
-// Cancel Stripe Payments
-func (r *OrdersLifeCycleRepository) CancelStripePayments(ctx context.Context, orderID string) error {
-	rows, err := r.database.QueryContext(ctx, `
-        SELECT p.mop, sp.checkout_session_id, sa.account_id, sp.payment_intent_id
-        FROM payments p
-        INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
-        INNER JOIN stripe_accounts sa ON sa.merchant_id = p.merchant_id
-        WHERE p.order_id = ?`,
-		orderID,
-	)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var mop, sessionID, accountID, paymentIntent string
-		if err := rows.Scan(&mop, &sessionID, &accountID, &paymentIntent); err != nil {
-			return err
-		}
-
-		if mop == "STRIPE" {
-			/*
-				if err := stripeSvc.CancelPayment(ctx, sessionID, accountID, paymentIntent); err != nil {
-					return err
-				}
-
-			*/
-		}
 	}
 
 	return nil
@@ -1272,16 +883,8 @@ func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID s
 }
 
 func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, merchantID string, req *UpdateProductionStatusRequest) ([]string, error) {
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx failed: %w", err)
-	}
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// Collect unique order IDs
 	orderIDMap := make(map[string]bool)
@@ -1291,7 +894,7 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 
 	// Update each product's production status
 	for _, product := range req.Products {
-		stmt, err := tx.PrepareContext(ctx, `
+		stmt, err := db.PrepareContext(ctx, `
 			UPDATE orderitems
 			SET production_status = ?,
 			    production_status_done_quantity = CASE
@@ -1305,6 +908,7 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 			WHERE order_item_id = ? AND order_id = ?
 		`)
 		if err != nil {
+			log.Error(err.Error())
 			return nil, fmt.Errorf("prepare statement failed: %w", err)
 		}
 		defer stmt.Close()
@@ -1317,13 +921,9 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 			product.OrderID,
 		)
 		if err != nil {
+			log.Error(err.Error())
 			return nil, fmt.Errorf("execute update failed for order_item_id %s: %w", product.OrderItemID, err)
 		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
 	// Convert order ID map to slice
@@ -2127,10 +1727,11 @@ func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx contex
 
 // insertOrderCommentinsertOrderItemComment inserts the order items comments
 func (r *OrdersLifeCycleRepository) insertOrderItemComment(ctx context.Context, item *models.OrderItemInsert) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if item.Comment == nil {
 		return nil
 	}
-	db := dbutils.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, order_item_id, user_id, content, creation_date)

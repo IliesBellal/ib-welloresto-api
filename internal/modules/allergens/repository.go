@@ -3,23 +3,29 @@ package allergens
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{database: db}
 }
 
 // ListAllergens returns all 14 system allergens (no merchant scope – they are global).
 func (r *Repository) ListAllergens(ctx context.Context) ([]models.AllergenEntry, error) {
-	rows, err := r.db.QueryContext(ctx,
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	rows, err := db.QueryContext(ctx,
 		`SELECT id, name, code, COALESCE(icon, '') FROM allergens ORDER BY id ASC`,
 	)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -28,6 +34,7 @@ func (r *Repository) ListAllergens(ctx context.Context) ([]models.AllergenEntry,
 	for rows.Next() {
 		var a models.AllergenEntry
 		if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+			log.Error(err.Error())
 			return nil, err
 		}
 		result = append(result, a)
