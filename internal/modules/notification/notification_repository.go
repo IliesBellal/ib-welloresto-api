@@ -8,15 +8,13 @@ import (
 	"errors"
 	"time"
 	"welloresto-api/internal/utils/dbutils"
-
-	"go.uber.org/zap"
 )
 
 type NotificationRepository struct {
 	database *sql.DB
 }
 
-func NewNotificationRepository(db *sql.DB, log *zap.Logger) *NotificationRepository {
+func NewNotificationRepository(db *sql.DB) *NotificationRepository {
 	return &NotificationRepository{database: db}
 }
 

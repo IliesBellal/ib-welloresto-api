@@ -91,6 +91,12 @@ var (
 	ErrRefoundMustBeLowerThanOriginalReceipt = errors.New("refund_amount_must_be_lower_than_original_receipt")
 
 	ErrOrdersStillOpened = errors.New("orders_still_opened")
+
+	ErrCashRegisterStillOpen = errors.New("cash_register_still_open")
+
+	ErrOrderClosed = errors.New("order_closed")
+
+	ErrOrderOpen = errors.New("order_open")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -101,6 +107,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrOrderOpen):
+		status = http.StatusUnauthorized
+		errorStatus = "order_open"
+		errorMsg = "cannot permorm this action on an opened order"
+
+	case errors.Is(err, ErrOrderClosed):
+		status = http.StatusUnauthorized
+		errorStatus = "order_closed"
+		errorMsg = "cannot permorm this action on a closed order"
+
 	case errors.Is(err, ErrUnauthorized):
 		status = http.StatusUnauthorized
 		errorStatus = "unauthorized"
@@ -110,6 +126,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnauthorized
 		errorStatus = "no_cash_register_opened"
 		errorMsg = "no cash register opened for this device id"
+
+	case errors.Is(err, ErrCashRegisterStillOpen):
+		status = http.StatusUnauthorized
+		errorStatus = "cash_register_still_open"
+		errorMsg = "cannot perform this action on an opened cash register"
 
 	case errors.Is(err, ErrForbidden):
 		status = http.StatusForbidden

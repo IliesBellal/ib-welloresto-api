@@ -47,10 +47,6 @@ func (s *OrdersService) ExistsByBrandOrderID(ctx context.Context, brand, brandOr
 	return exists, nil
 }
 
-type OrdersServiceInterface interface {
-	CreateOrder(ctx context.Context, input models.RequestObject) (int64, error)
-}
-
 func NewOrdersService(ordersRepo *OrdersRepository, notificationsService *notification.NotificationService, redis *redis.Client, auditService audit.AuditService) *OrdersService {
 	return &OrdersService{
 		ordersRepo:           ordersRepo,

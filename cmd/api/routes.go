@@ -105,7 +105,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	fcmClient := notificationModule.NewFCMClient()
 	saPath := "/etc/secrets/wello-resto-150721-6d1253e00d6d.json"
 	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager(saPath)
-	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB, log)
+	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB)
 	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
 
 	// ---- Auth ----
@@ -229,7 +229,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	locationsService := locModule.NewLocationsService(locationsRepo)
 
 	// ---- Cash Register ----
-	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB, log)
+	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB)
 	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
 
 	// ---- Bookings ----

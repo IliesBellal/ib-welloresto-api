@@ -77,8 +77,6 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	`, deviceID, deviceID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
-		log.Error("Impossible de trouver le registre de caisse")
-		// Fallback sur le deviceID si aucun registre n'est ouvert
 		return "", models.ErrNoCashRegisterOpen
 	} else if err != nil {
 		log.Error("Error finding cash register: " + err.Error())
@@ -663,8 +661,54 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 	return nil
 }
 
+func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	var count int
+	err := db.QueryRowContext(ctx, `
+        SELECT COUNT(*)
+        FROM orders
+        WHERE order_id = ? AND state = 'OPEN'`,
+		orderID,
+	).Scan(&count)
+	if err != nil {
+		log.Error(err.Error())
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
 	db := dbutils.GetDB(ctx, r.database)
+
+	// 1) Get metadata
+	qOrder := `SELECT brand, brand_order_id, merchant_id, fulfillment_type, price FROM orders WHERE order_id = ?`
+	meta := &DeliveredOrderMetadata{}
+	var currentPrice int
+	if err := db.QueryRowContext(ctx, qOrder, orderID).Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType, &currentPrice); err != nil {
+		return err
+	}
+
+	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+        SELECT hash FROM orders 
+        WHERE merchant_id = ? AND state = 'CLOSED' 
+        ORDER BY delivered_on DESC, order_id DESC LIMIT 1 
+        FOR UPDATE
+    `, meta.MerchantID).Scan(&prevHash)
+
+	now := time.Now().UTC()
+	deliveredOn := now.Format(time.RFC3339)
+
+	// Calcul du hash de clôture de commande
+	payload := fmt.Sprintf("%s|%s|%d|%s", prevHash.String, deliveredOn, currentPrice, orderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	// 2) Update orders table avec Hash de clôture
 
 	_, err := db.ExecContext(ctx, `
         UPDATE orders
@@ -673,9 +717,12 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
             last_update = UTC_TIMESTAMP,
             state = 'CLOSED',
             brand_status = 'CANCELED',
-            delivered_on = UTC_TIMESTAMP
+            delivered_on = UTC_TIMESTAMP,
+			previous_hash = ?,
+			hash = ?,
+			signature = ?
         WHERE order_id = ?`,
-		reasonID, comment, orderID,
+		reasonID, comment, prevHash, newHash, signature, orderID,
 	)
 
 	return err
@@ -992,12 +1039,16 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	req.Order.OrderNum = &orderNum
 
 	if req.DeviceID != nil && *req.DeviceID != "" {
-
 		activeRegister, err := r.GetActiveCashRegisterID(ctx, *req.DeviceID)
 		if err != nil {
 			return nil, err
 		}
 		req.Order.CashRegisterId = &activeRegister
+	} else if req.DeviceID == nil && req.Order.CashRegisterId != nil {
+		// Vérifier que la commande vient d'Uber Eats, Deliveroo ou ScanNOrder afin d'éviter l'injection de commande non autorisée
+
+	} else {
+		return nil, models.ErrDeviceIDMissing
 	}
 
 	r.setOrderDefaults(ctx, req)

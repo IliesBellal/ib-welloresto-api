@@ -107,46 +107,107 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 	return nil
 }
 
-/*
-func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
-	//log := logger.FromContext(ctx)
+func (s *OrdersLifeCycleService) OrderStillOpen(ctx context.Context, orderID string) (bool, error) {
+	return s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+}
 
-	// 2) Mettre la commande en Delivered (local DB updates)
-	order, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	log := logger.FromContext(ctx)
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, in.OrderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
+	}
+
+	// 1 — Local DB operations
+	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
+		ctx,
+		in.OrderID,
+		in.DeletionReasonID,
+		in.DeletionComment,
+	); err != nil {
+		return err
+	}
+
+	// Reactivate rewards
+	if err := s.customersService.ReactivateRewards(ctx, in.OrderID); err != nil {
+		return fmt.Errorf("reactivate rewards: %w", err)
+	}
+
+	// Delete QR
+	if err := s.ordersLifeCycleRepo.DeleteQRCode(ctx, in.OrderID); err != nil {
+		return err
+	}
+
+	// Disable payments
+	if err := s.ordersLifeCycleRepo.DisablePayments(ctx, in.OrderID); err != nil {
+		return err
+	}
+
+	// Clear bookings
+	if err := s.ordersLifeCycleRepo.ClearBookings(ctx, in.OrderID); err != nil {
+		return err
+	}
+	if s.redis != nil {
+		key := helpers.GetRedisOrderKey(user.MerchantID, in.OrderID)
+		s.redis.Delete(ctx, key)
+		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
+	}
+
+	// Send notif
+	// disabled because it is sent somewher else
+	//s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
+
+	// Integration
+	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
 	if err != nil {
 		return err
 	}
 
-	// 4) Handle integration
-	switch order.Brand {
+	switch brand {
 	case models.BrandUberEats:
-		// No endpoint to call for Uber Eats when the order is delivered, we just update the status in our DB and notify the app. The delivery session will be closed when the delivery person marks the order as delivered on their side (or after a timeout).
-		return nil
+		go s.uberSvc.CancelOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
 
 	case models.BrandDeliveroo:
-		if order.BrandOrderID != nil {
-			go s.deliverooSvc.SetCollected(*order.BrandOrderID)
+		// Eviter de rappeler l'api quand c'est une suppression par webhook
+		if in.UserID != "WEBHOOK_DELIVEROO" {
+			in_changed := models.DenyOrderRequest{
+				DeletionComment:    in.DeletionComment,
+				DeletionReasonType: in.DeletionReasonType,
+				DeletionReasonID:   in.DeletionReasonID,
+			}
+			go s.deliverooSvc.CancelOrder(ctx, in.UserID, in.OrderID, in_changed)
 		}
-		return nil
-
-	default:
-		return nil
 	}
-}
-*/
 
-func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
-	// 1) Mettre la commande en Delivered (local DB updates)
-	// orderMeta contient Brand, BrandOrderID, etc.
-	orderMeta, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+	return nil
+}
+
+func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
+	// Comme in nécessite MerchantID et UserID avant exécution
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
+	in.MerchantID = user.MerchantID
+	in.UserID = user.UserID
 
-	// 2) --- NOUVEAU : Récupération des données complètes ---
-	// Tu dois avoir une fonction dans ton repo (ex: ordersRepo) qui récupère
-	// la commande avec ses Items et Payments. Comme on passe 'ctx' (qui est txCtx),
-	// cela se fait à l'intérieur de ta transaction de clôture.
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, in.OrderID, models.ActionOrderDelete, models.ResourceOrder, func(txCtx context.Context) error {
+		// Pareil, DeleteOrder doit bien utiliser le txCtx
+		return s.DeleteOrder(txCtx, in)
+	})
+}
+
+func (s *OrdersLifeCycleService) HandlerFiscalReceiptGeneration(ctx context.Context, orderID string) error {
+
+	// 2) --- Récupération des données complètes ---
 	fullOrders, err := s.ordersService.GetOrder(ctx, orderID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch order details for receipt: %w", err)
@@ -154,14 +215,32 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 
 	fullOrder := fullOrders.Orders[0] // On suppose que la commande existe et qu'on a un seul résultat
 
-	// 3) --- NOUVEAU : Construction des Snapshots ---
+	// 3) --- Construction des Snapshots ---
 	itemsSnap := receiptUtils.BuildItemsSnapshot(fullOrder.Products, *fullOrder.OrderType)
 	paymentsSnap := receiptUtils.BuildPaymentsSnapshot(fullOrder.Payments)
 
-	// 4) --- NOUVEAU : Génération du Reçu Fiscal ---
-	// Si cette fonction échoue, la transaction est annulée, la commande ne passe pas en Delivered.
+	// 4) --- Génération du Reçu Fiscal ---
 	if err := s.receiptService.GenerateFiscalReceipt(ctx, &fullOrder, itemsSnap, paymentsSnap); err != nil {
 		return fmt.Errorf("failed to generate fiscal receipt: %w", err)
+	}
+
+	return nil
+}
+
+func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
+
+	// 1) Mettre la commande en Delivered (local DB updates)
+	// orderMeta contient Brand, BrandOrderID, etc.
+	orderMeta, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+	if err != nil {
+		return err
+	}
+
+	err = s.HandlerFiscalReceiptGeneration(ctx, orderID)
+
+	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
+		return err
 	}
 
 	// 5) Handle integration (Deliveroo, UberEats, etc.)
@@ -187,6 +266,14 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 		return err
 	}
 
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
+	}
+
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
 		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err
@@ -195,23 +282,18 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 	})
 }
 
-/*
-func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID string) error {
+func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	s.customersRepo.UpdateLoyaltyFromOrder(ctx, orderID)
-
-	return s.DeliverOrder(ctx, user.UserID, user.MerchantID, orderID)
-}
-*/
-
-func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
-	user, err := middleware.UserFromContext(ctx)
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
 	if err != nil {
 		return err
+	}
+	if orderStillOpen {
+		return models.ErrOrderOpen
 	}
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderReopen, models.ResourceOrder, func(txCtx context.Context) error {
@@ -220,30 +302,18 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 	})
 }
 
-/*
-func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID string) error {
-
-	log := logger.FromContext(ctx)
-
-	// user.MerchantID et user.UserID sont récupérés depuis le contexte
-
-	err = s.ordersLifeCycleRepo.ReopenClosedOrder(ctx, user.MerchantID, orderID, user.UserID)
-	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
-		s.redis.Delete(ctx, key)
-		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-	}
-
-	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
-
-	return err
-}
-*/
-
 func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
 	}
 
 	req.OrderID = orderID
@@ -277,31 +347,6 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	})
 }
 
-/*
-func (s *OrdersLifeCycleService) AddPaymentOld(ctx context.Context, orderID string, req *models.PaymentRequest) error {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	log := logger.FromContext(ctx)
-
-	// sécurité : orderID dans l’URL > orderID dans req
-	req.OrderID = orderID
-
-	err = s.ordersLifeCycleRepo.AddPayment(ctx, user.MerchantID, user.UserID, req)
-	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
-		s.redis.Delete(ctx, key)
-		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-	}
-
-	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, "UPDATE_ORDER")
-
-	return err
-}
-*/
-
 func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
 	// Vérifier l'authentification (récupérer l'utilisateur depuis le contexte)
 	_, err := middleware.UserFromContext(ctx)
@@ -316,6 +361,14 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
 	}
 
 	log := logger.FromContext(ctx)
@@ -364,6 +417,14 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, req.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if !orderStillOpen {
+		return nil, models.ErrOrderClosed
 	}
 
 	log := logger.FromContext(ctx)
@@ -424,9 +485,9 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID s
 	}, nil
 }
 
-func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, MerchantID, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, MerchantID, orderID string) (*models.HandlerDefaultResponseModelSet, error) {
 	log := logger.FromContext(ctx)
-	accept_order := models.HandlerDefaultResponseModelSet{}
+	accept_order := &models.HandlerDefaultResponseModelSet{}
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, orderID)
@@ -488,10 +549,18 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 	return accept_order, err
 }
 
-func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string) (models.HandlerDefaultResponseModelSet, error) {
+func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string) (*models.HandlerDefaultResponseModelSet, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return models.HandlerDefaultResponseModelSet{}, err
+		return &models.HandlerDefaultResponseModelSet{}, err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if !orderStillOpen {
+		return nil, models.ErrOrderClosed
 	}
 
 	return s.SetOrderAccepted(ctx, user.UserID, user.MerchantID, orderID)
@@ -501,6 +570,14 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return map[string]interface{}{"status": "0", "error": err.Error()}, err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if !orderStillOpen {
+		return nil, models.ErrOrderClosed
 	}
 
 	log := logger.FromContext(ctx)
@@ -611,6 +688,14 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, 
 		return nil, err
 	}
 
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if !orderStillOpen {
+		return nil, models.ErrOrderClosed
+	}
+
 	in.UserID = user.UserID
 	in.MerchantID = user.MerchantID
 
@@ -623,6 +708,14 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 		return err
 	}
 	log := logger.FromContext(ctx)
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, in.OrderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
+	}
 
 	in.UserID = user.UserID
 	in.MerchantID = user.MerchantID
@@ -656,107 +749,6 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 
 	return nil
 }
-
-func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	log := logger.FromContext(ctx)
-
-	// 1 — Local DB operations
-	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
-		ctx,
-		in.OrderID,
-		in.DeletionReasonID,
-		in.DeletionComment,
-	); err != nil {
-		return err
-	}
-
-	// Reactivate rewards
-	if err := s.customersService.ReactivateRewards(ctx, in.OrderID); err != nil {
-		return fmt.Errorf("reactivate rewards: %w", err)
-	}
-
-	// Delete QR
-	if err := s.ordersLifeCycleRepo.DeleteQRCode(ctx, in.OrderID); err != nil {
-		return err
-	}
-
-	// Disable payments
-	if err := s.ordersLifeCycleRepo.DisablePayments(ctx, in.OrderID); err != nil {
-		return err
-	}
-
-	// Clear bookings
-	if err := s.ordersLifeCycleRepo.ClearBookings(ctx, in.OrderID); err != nil {
-		return err
-	}
-	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(user.MerchantID, in.OrderID)
-		s.redis.Delete(ctx, key)
-		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-	}
-
-	// Send notif
-	// disabled because it is sent somewher else
-	//s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
-
-	// Integration
-	brand, err := s.ordersLifeCycleRepo.GetOrderBrand(ctx, in.OrderID)
-	if err != nil {
-		return err
-	}
-
-	switch brand {
-	case models.BrandUberEats:
-		go s.uberSvc.CancelOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
-
-	case models.BrandDeliveroo:
-		// Eviter de rappeler l'api quand c'est une suppression par webhook
-		if in.UserID != "WEBHOOK_DELIVEROO" {
-			in_changed := models.DenyOrderRequest{
-				DeletionComment:    in.DeletionComment,
-				DeletionReasonType: in.DeletionReasonType,
-				DeletionReasonID:   in.DeletionReasonID,
-			}
-			go s.deliverooSvc.CancelOrder(ctx, in.UserID, in.OrderID, in_changed)
-		}
-	}
-
-	return nil
-}
-
-func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
-	// Comme in nécessite MerchantID et UserID avant exécution
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
-	in.MerchantID = user.MerchantID
-	in.UserID = user.UserID
-
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, in.OrderID, models.ActionOrderDelete, models.ResourceOrder, func(txCtx context.Context) error {
-		// Pareil, DeleteOrder doit bien utiliser le txCtx
-		return s.DeleteOrder(txCtx, in)
-	})
-}
-
-/*
-func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.DenyOrderInput) error {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	in.MerchantID = user.MerchantID
-	in.UserID = user.UserID
-
-	return s.DeleteOrder(ctx, in)
-}
-*/
 
 func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req *UpdateProductionStatusRequest) error {
 	user, err := middleware.UserFromContext(ctx)
@@ -893,6 +885,14 @@ func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *mo
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
+	}
+
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, *req.Order.OrderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return models.ErrOrderClosed
 	}
 
 	req.MerchantID = user.MerchantID
