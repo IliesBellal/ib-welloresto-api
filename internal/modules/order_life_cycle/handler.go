@@ -365,7 +365,7 @@ func (h *OrdersLifeCycleHandler) CreateOrder(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.ordersLifeCycleService.PrepareCreateOrder(ctx, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "create_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "orders", "create_order", err)
 		return
 	}
 

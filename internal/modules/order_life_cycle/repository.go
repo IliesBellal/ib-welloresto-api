@@ -77,7 +77,7 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	`, deviceID, deviceID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
-		log.Error("Impossible de trouver le registre de caisse. Fallback sur le device ID")
+		log.Error("Impossible de trouver le registre de caisse")
 		// Fallback sur le deviceID si aucun registre n'est ouvert
 		return "", models.ErrNoCashRegisterOpen
 	} else if err != nil {
