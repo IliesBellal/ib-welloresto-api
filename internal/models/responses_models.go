@@ -108,7 +108,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	case errors.Is(err, ErrNoCashRegisterOpen):
 		status = http.StatusUnauthorized
-		errorStatus = "no cash register opened for this device id"
+		errorStatus = "no_cash_register_opened"
 		errorMsg = "no cash register opened for this device id"
 
 	case errors.Is(err, ErrForbidden):
@@ -124,7 +124,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrInvalidInput):
 		status = http.StatusBadRequest
 		errorStatus = "invalid_input"
-		errorMsg = "invalid_input"
+		errorMsg = "Invalid input. Please check payloads and path parameters."
 
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest
