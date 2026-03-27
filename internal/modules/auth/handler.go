@@ -120,3 +120,56 @@ func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "device", "save_token", resp)
 }
+
+type VerifyMFARequestPayload struct {
+	Code string `json:"code"`
+}
+
+// VerifyMFA traite la soumission du code à 6 chiffres
+func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
+	// Le token est envoyé par le front (soit dans le header Authorization, soit en query param)
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "mfa_verify", map[string]string{"error": "token manquant"})
+		return
+	}
+
+	var req VerifyMFARequestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "mfa_verify", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	// Appel du service
+	err := h.svc.VerifyMFA(r.Context(), token, req.Code)
+	if err != nil {
+		models.SendErrorJSON(w, "auth", "mfa_verify", err)
+		return
+	}
+
+	// Succès
+	models.SendJSON(w, http.StatusOK, "auth", "mfa_verify", map[string]string{
+		"status":  "SUCCESS",
+		"message": "Authentification terminée",
+	})
+}
+
+// FallbackSMS déclenche l'envoi d'un code de secours par SMS
+func (h *AuthHandler) FallbackSMS(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "fallback_sms", map[string]string{"error": "token manquant"})
+		return
+	}
+
+	err := h.svc.FallbackSMS(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "auth", "fallback_sms", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "fallback_sms", map[string]string{
+		"status":  "SMS_SENT",
+		"message": "Un code de secours a été envoyé par SMS",
+	})
+}
