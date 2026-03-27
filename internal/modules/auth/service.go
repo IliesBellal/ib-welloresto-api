@@ -143,9 +143,17 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 
 	// Si l'utilisateur a configuré un MFA (Email ou SMS) et que son status n'est pas "VERIFIED"
-	if isBackoffice && (mfaType == "email_sms") && mfaStatus != "verified" && s.redis != nil {
+	if isBackoffice && (mfaType == "email_sms") && mfaStatus != models.MFAStatusVerified && s.redis != nil {
 		s.SendMFACode(ctx, user, token, false)
 	}
+
+	// 3. Valider la session en base de données
+	err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
+	if err != nil {
+		logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+		return nil, errors.New("erreur interne lors de la validation")
+	}
+
 	// ==============================================================
 
 	// MULTI-MERCHANT
@@ -468,11 +476,11 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 
 	// 2. Comparaison en clair
 	if storedCode != codeSaisi {
-		return errors.New("code invalide")
+		return models.ErrOTPMismatch
 	}
 
 	// 3. Valider la session en base de données
-	err = s.repo.UpdateMFAStatus(ctx, token, "VERIFIED")
+	err = s.repo.UpdateMFAStatus(ctx, token, models.MFAStatusVerified)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
 		return errors.New("erreur interne lors de la validation")

@@ -99,6 +99,8 @@ var (
 	ErrOrderOpen = errors.New("order_open")
 
 	ErrMFARequired = errors.New("mfa_required")
+
+	ErrOTPMismatch = errors.New("otp_mismatch")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -109,6 +111,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrOTPMismatch):
+		status = http.StatusUnauthorized
+		errorStatus = "otp_mismatch"
+		errorMsg = "The OTP code provided is not valid. Please try again."
+
 	case errors.Is(err, ErrMFARequired):
 		status = http.StatusUnauthorized
 		errorStatus = "mfa_required"

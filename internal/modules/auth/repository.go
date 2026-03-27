@@ -45,7 +45,7 @@ SELECT
     ur.open_cash_drawer,
     ur.merchant_id,
 	u.mfa_type,
-	ur.mfa_status,
+	u.mfa_status,
 
 
     m.fullName,
@@ -175,7 +175,7 @@ SELECT
     ur.merchant_id,
     ur.admin,
 	u.mfa_type,
-	ur.mfa_status,
+	u.mfa_status,
 
 
     m.fullName,
@@ -465,10 +465,10 @@ func (r *AuthRepository) MarkMfaAsVerified(ctx context.Context, token string) er
 }
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
-func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, token string, status string) error {
-	query := `UPDATE users_rights SET mfa_status = ? WHERE token = ?`
+func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
+	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
 
-	result, err := r.database.ExecContext(ctx, query, status, token)
+	result, err := r.database.ExecContext(ctx, query, status, userID)
 	if err != nil {
 		return err
 	}
