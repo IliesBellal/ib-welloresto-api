@@ -119,7 +119,7 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 		return true
 	}
 
-	thirtyDaysAgo := time.Now().Add(5 * time.Minute)
+	thirtyDaysAgo := time.Now().UTC().Add(5 * time.Minute)
 	lastVerifiedAt, err := time.Parse("2006-01-02 15:04:05", *user.MFAVerifiedAt)
 	if err == nil {
 		if lastVerifiedAt.Before(thirtyDaysAgo) {

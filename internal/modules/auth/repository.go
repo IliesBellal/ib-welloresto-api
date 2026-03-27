@@ -463,7 +463,7 @@ ON DUPLICATE KEY UPDATE
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
 func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
-	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
+	query := `UPDATE users SET mfa_status = ?, mfa_verified_at = UTC_TIMESTAMP() WHERE user_id = ?`
 
 	_, err := r.database.ExecContext(ctx, query, status, userID)
 	if err != nil {
