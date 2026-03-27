@@ -545,7 +545,7 @@ func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
 		return errors.New("session invalide ou expirée")
 	}
 
-	err = s.SendMFACode(ctx, user, token, false)
+	err = s.SendMFACode(ctx, user, token, true)
 
 	return err
 }

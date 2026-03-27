@@ -149,8 +149,8 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 
 	// Succès
 	models.SendJSON(w, http.StatusOK, "auth", "mfa_verify", map[string]string{
-		"status":  "SUCCESS",
-		"message": "Authentification terminée",
+		"status":  "success",
+		"message": "Authentication successful.",
 	})
 }
 
@@ -169,7 +169,7 @@ func (h *AuthHandler) FallbackSMS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "auth", "fallback_sms", map[string]string{
-		"status":  "SMS_SENT",
-		"message": "Un code de secours a été envoyé par SMS",
+		"status":  "success",
+		"message": "A new SMS code has been sent. Previous code has been invalidated.",
 	})
 }
