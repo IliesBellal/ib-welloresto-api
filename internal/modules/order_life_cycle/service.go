@@ -307,6 +307,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	if err != nil {
 		return err
 	}
+	log := logger.FromContext(ctx)
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
 	if err != nil {
@@ -318,31 +319,30 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	req.OrderID = orderID
 
-	// TODO remplacer par le nouvel ID généré une fois la migration vers Postgres terminée
-	newPaymentID := orderID
-	//newPaymentID := helpers.GeneratePrefixedID("pay")
+	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, req.DeviceID)
+	if err != nil && req.CashRegisterID == nil {
+		log.Error(err.Error())
+		return models.ErrNoCashRegisterOpen
+	}
 
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, newPaymentID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
-		log := logger.FromContext(txCtx)
+	payment := models.Payment{
+		//PaymentID:     newPaymentID,
+		OrderID:        req.OrderID,
+		MerchantID:     user.MerchantID,
+		UserID:         user.UserID,
+		CashRegisterID: activeRegister, // On l'attache au registre d'AUJOURD'HUI
+		MOP:            req.MOP,
+		Amount:         req.Amount,
+		OperationType:  models.OperationTypeSale,
+		Comment:        &req.Comment,
+		Code:           &req.Code,
+	}
 
-		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
-		if err != nil {
-			log.Error(err.Error())
-			return models.ErrNoCashRegisterOpen
-		}
+	return s.CreatePayment(ctx, payment)
+}
 
-		payment := models.Payment{
-			//PaymentID:     newPaymentID,
-			OrderID:        req.OrderID,
-			MerchantID:     user.MerchantID,
-			UserID:         user.UserID,
-			CashRegisterID: activeRegister, // On l'attache au registre d'AUJOURD'HUI
-			MOP:            req.MOP,
-			Amount:         req.Amount,
-			OperationType:  models.OperationTypeSale,
-			Comment:        &req.Comment,
-			Code:           &req.Code,
-		}
+func (s *OrdersLifeCycleService) CreatePayment(ctx context.Context, payment models.Payment) error {
+	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
 		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
 	})
 }

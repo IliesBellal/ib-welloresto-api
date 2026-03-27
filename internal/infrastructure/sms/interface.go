@@ -1,6 +1,8 @@
 package sms
 
-import "net/http"
+import (
+	"net/http"
+)
 
 // Service defines the interface for sending SMS messages.
 // This allows you to mock the SMS service in your unit tests.
@@ -12,6 +14,8 @@ type Service interface {
 
 	// SendOrderConfirmationSMS sends an order confirmation SMS
 	SendOrderConfirmationSMS(senderID, phoneNumber string, data OrderConfirmationSMSData)
+
+	SendMfaOTP(tel, otp string)
 
 	// TriggerTestSMS sends a test SMS (for testing purposes)
 	TriggerTestSMS(writer http.ResponseWriter, request *http.Request)

@@ -97,6 +97,8 @@ var (
 	ErrOrderClosed = errors.New("order_closed")
 
 	ErrOrderOpen = errors.New("order_open")
+
+	ErrMFARequired = errors.New("mfa_required")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -107,6 +109,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrMFARequired):
+		status = http.StatusUnauthorized
+		errorStatus = "mfa_required"
+		errorMsg = "MFA required, please try login"
+
 	case errors.Is(err, ErrOrderOpen):
 		status = http.StatusUnauthorized
 		errorStatus = "order_open"

@@ -35,4 +35,8 @@ const (
 
 	// Durée de vie du cache pour les notifications d'Uber Eats
 	WebhookUberEatsEventTTL = 3 * time.Hour
+
+	MFACachePrefix = "mfa_otp:"
+
+	MFACacheTTL = 5 * time.Minute
 )

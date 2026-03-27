@@ -111,3 +111,9 @@ func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) error 
 
 	return nil
 }
+
+func (b *BrevoSMS) SendMfaOTP(tel, otp string) {
+	message := fmt.Sprintf("%s\n\nVotre code de vérification MFA est %s\n\n Un employé de Wello Resto ne vous demandera jamais votre code secret.", otp, otp)
+
+	b.SendSMSAsync("Wello Resto", tel, message)
+}

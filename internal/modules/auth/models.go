@@ -91,7 +91,10 @@ type UserLoginRow struct {
 	DeliveryDeviceToken  sql.NullString
 
 	// Rights
-	Rights UserRowRights
+	Rights    UserRowRights
+	MFAType   *string
+	MFAStatus *string
+
 	// Token de droits
 	Token      string
 	MerchantID string

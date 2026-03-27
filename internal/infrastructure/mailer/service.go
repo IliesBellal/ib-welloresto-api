@@ -30,6 +30,7 @@ type Service interface {
 	SendOrderConfirmationToCustomer(to string, data ScanNOrderConfirmationData)
 	SendRefundNotification(s string, data RefundData)
 	SendPayoutPaidNotification(email string, name string, payout PayoutData)
+	SendMfaOTP(data MfaOTPData)
 
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
 }

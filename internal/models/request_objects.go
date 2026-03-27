@@ -5,14 +5,15 @@ import (
 )
 
 type PaymentRequest struct {
-	DeviceID    string        `json:"device_id"`
-	OrderID     string        `json:"order_id"`
-	MOP         string        `json:"mop"`
-	Amount      int           `json:"amount"`
-	Items       []PaymentItem `json:"items"`
-	Comment     string        `json:"discount_comment"`
-	StatusCheck string        `json:"status_check"`
-	Code        string        `json:"tr_code"`
+	DeviceID       string        `json:"device_id"`
+	OrderID        string        `json:"order_id"`
+	MOP            string        `json:"mop"`
+	Amount         int           `json:"amount"`
+	Items          []PaymentItem `json:"items"`
+	Comment        string        `json:"discount_comment"`
+	StatusCheck    string        `json:"status_check"`
+	Code           string        `json:"tr_code"`
+	CashRegisterID *string       `json:"cash_register_id"`
 }
 
 // La requête envoyée par ton Front-end / TPE
@@ -35,9 +36,11 @@ type OpenCashRegisterRequest struct {
 }
 
 type CloseCashRegisterRequest struct {
-	CashFund float64 `json:"cash_fund"`
-	UserID   string  `json:"user_id"`
-	DeviceID string  `json:"device_id"`
+	CashFund      int    `json:"cash_fund"`
+	FinalCashFund int    `json:"final_cash_fund"`
+	Comment       string `json:"comment"`
+	UserID        string `json:"user_id"`
+	DeviceID      string `json:"device_id"`
 }
 
 type CashRegisterSummaryResponse struct {
@@ -50,9 +53,10 @@ type CashRegisterSummary struct {
 	StartDate      int64          `json:"start_date"`
 	EndDate        *int           `json:"end_date"`
 	CashDesk       CashDeskInfo   `json:"cash_desk"`
-	CashFund       float64        `json:"cash_fund"`
-	Currency       string         `json:"currency"`
+	CashFund       int            `json:"cash_fund"`
+	FinalCashFund  int            `json:"final_cash_fund"`
 	Closed         int            `json:"closed"`
+	Currency       string         `json:"currency"`
 	ClosureComment *string        `json:"closure_comment"`
 	OpenedBy       UserBaseInfo   `json:"opened_by"`
 	ClosedBy       UserBaseInfo   `json:"closed_by"`
@@ -152,9 +156,9 @@ type TVACategoryLine struct {
 }
 
 type MOPLine struct {
-	MOP    string  `json:"mop"`
-	Amount float64 `json:"amount"`
-	Label  string  `json:"label,omitempty"`
+	MOP    string `json:"mop"`
+	Amount int    `json:"amount"`
+	Label  string `json:"label,omitempty"`
 }
 
 type AddCustomItemRequest struct {

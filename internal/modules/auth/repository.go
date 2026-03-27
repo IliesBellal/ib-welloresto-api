@@ -44,6 +44,9 @@ SELECT
     ur.print_merchant_cash_report,
     ur.open_cash_drawer,
     ur.merchant_id,
+	u.mfa_type,
+	ur.mfa_status,
+
 
     m.fullName,
     m.merchantTel,
@@ -114,6 +117,7 @@ LIMIT 1;
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID,
+		&data.MFAType, &data.MFAStatus,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
@@ -170,6 +174,9 @@ SELECT
     ur.open_cash_drawer,
     ur.merchant_id,
     ur.admin,
+	u.mfa_type,
+	ur.mfa_status,
+
 
     m.fullName,
     m.merchantTel,
@@ -253,6 +260,7 @@ LIMIT 1;
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID, &data.Rights.Admin,
+		&data.MFAType, &data.MFAStatus,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
@@ -450,4 +458,8 @@ ON DUPLICATE KEY UPDATE
 	}
 
 	return tx.Commit()
+}
+
+func (r *AuthRepository) MarkMfaAsVerified(ctx context.Context, token string) error {
+	return nil
 }

@@ -5,10 +5,11 @@ import (
 )
 
 const (
-	DeliverooWebhookUserID  = "WEBHOOK_DELIVEROO"
-	UberEatsWebhookUserID   = "WEBHOOK_UBER_EATS"
-	WelloRestoWebhookUserID = "WELLO_RESTO"
-	StripeWebhookUserID     = "WEBHOOK_STRIPE"
+	DeliverooWebhookUserID   = "WEBHOOK_DELIVEROO"
+	UberEatsWebhookUserID    = "WEBHOOK_UBER_EATS"
+	WelloRestoWebhookUserID  = "WELLO_RESTO"
+	StripeWebhookUserID      = "WEBHOOK_STRIPE"
+	ScanNOrderCashRegisterID = "SCANNORDER"
 
 	StripeMOP = "STRIPE"
 )

@@ -55,6 +55,11 @@ func (b *BrevoMailer) SendOrderConfirmationToCustomer(to string, data mailer.Sca
 	b.SendAsync(data.MerchantName, to, "Confirmation de votre commande", "scannorder_payout.html", data)
 }
 
+// SendOrderConfirmationToCustomer sends an order confirmation email
+func (b *BrevoMailer) SendMfaOTP(data mailer.MfaOTPData) {
+	b.SendAsync("Wello Resto - Security", data.UserEmail, "Votre code de vérification MFA", "scannorder_payout.html", data)
+}
+
 // SendRefundNotification sends a refund notification email
 func (b *BrevoMailer) SendRefundNotification(email string, data mailer.RefundData) {
 	b.SendAsync("Wello Resto", email, "Remboursement", "customer_refund.html", data)

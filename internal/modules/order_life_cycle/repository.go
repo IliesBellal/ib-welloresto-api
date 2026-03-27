@@ -155,6 +155,11 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 			log.Error("Error inserting TR: " + err.Error())
 			return err
 		}
+	} else if payment.MOP == models.StripeMOP {
+
+		query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, stripe_session_date) 
+				VALUES(?, ?, ?, ?, ?, UTC_TIMESTAMP())`
+		_, err = db.ExecContext(ctx, query, payment.OrderID, payment.PaymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail)
 	}
 
 	// 5. Mettre à jour orders.isPaid

@@ -73,7 +73,9 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_register", "close", nil)
+	models.SendJSON(w, http.StatusOK, "cash_register", "close", models.HandlerDefaultResponseModelSet{
+		Status: "cash_register_closed",
+	})
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {

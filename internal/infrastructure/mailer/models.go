@@ -42,3 +42,9 @@ type ScanNOrderConfirmationData struct {
 	TermsURL         string // Lien conditions générales
 	SupportEmail     string // "Wello Resto SAS..."
 }
+
+type MfaOTPData struct {
+	UserName  string
+	UserEmail string
+	OTP       string
+}

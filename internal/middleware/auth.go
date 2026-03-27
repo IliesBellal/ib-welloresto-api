@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
 
@@ -16,15 +17,15 @@ const userContextKey contextKey = "authenticatedUser"
 
 var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
 
-// AuthRepo est l'interface que ton authRepo doit satisfaire
+// AuthService est l'interface que ton authService doit satisfaire
 // Cela permet de ne pas coupler le middleware directement au repo concret
-type AuthRepo interface {
+type AuthService interface {
 	GetUserByToken(ctx context.Context, token string) (*auth.UserLoginRow, error)
 }
 
 // Auth est le middleware d'authentification principal
 // Il vérifie le token, récupère le user (via Redis), et l'injecte dans le contexte
-func Auth(repo AuthRepo) func(http.Handler) http.Handler {
+func Auth(service AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 1. Extraire le header
@@ -62,10 +63,22 @@ func Auth(repo AuthRepo) func(http.Handler) http.Handler {
 			}
 
 			// 3. Récupérer le user (inchangé)
-			user, err := repo.GetUserByToken(r.Context(), token)
+			user, err := service.GetUserByToken(r.Context(), token)
 			if err != nil || user == nil {
 				http.Error(w, `{"error":"token invalide ou expiré"}`, http.StatusUnauthorized)
 				return
+			}
+
+			// --- NOUVELLE LOGIQUE MFA ---
+			// On vérifie si l'accès demande le MFA (ex: via un header ou le path)
+			isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
+
+			if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
+				// On laisse passer UNIQUEMENT vers l'endpoint de vérification MFA
+				if r.URL.Path != "/auth/mfa/verify" {
+					models.SendErrorJSON(w, "auth", "login", models.ErrMFARequired)
+					return
+				}
 			}
 
 			// 4. Injecter le user (inchangé)

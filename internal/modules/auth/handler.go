@@ -16,8 +16,37 @@ func NewAuthHandler(s AuthService) *AuthHandler {
 	return &AuthHandler{svc: s}
 }
 
-// Can be used with user and pwd, with token in get, or token in authorization
+// Login handler - Can be used with user and pwd, with token in get, or token in authorization
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+
+	var req LoginRequestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && token == "" {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "login", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	// Détection du backoffice (ex: via un header envoyé par le front web)
+	isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
+
+	// On passe isBackoffice au service
+	resp, err := h.svc.Login(r.Context(), req, token, isBackoffice)
+	if err != nil {
+		models.SendErrorJSON(w, "auth", "login", err)
+		return
+	}
+
+	// Si le MFA est requis, on renvoie un code 202 Accepted au lieu de 200 OK
+	if resp["status"] == "MFA_REQUIRED" {
+		models.SendJSON(w, http.StatusAccepted, "auth", "login", resp)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "login", resp)
+}
+
+// Can be used with user and pwd, with token in get, or token in authorization
+func (h *AuthHandler) LoginOld(w http.ResponseWriter, r *http.Request) {
 
 	token := helpers.ExtractToken(r)
 	// Parse JSON body
@@ -27,7 +56,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.svc.Login(r.Context(), req, token)
+	resp, err := h.svc.Login(r.Context(), req, token, false)
 	if err != nil {
 		models.SendErrorJSON(w, "auth", "login", err)
 		return

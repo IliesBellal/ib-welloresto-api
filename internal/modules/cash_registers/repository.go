@@ -2,7 +2,9 @@ package cash_registers
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/utils/security"
 
 	"go.uber.org/zap"
 )
@@ -28,156 +31,57 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	log.Info("OpenCashRegister START",
-		zap.String("merchant_id", merchantID),
-		zap.String("device_id", req.DeviceID),
-	)
-
-	// -------------------------------------------------------------
-	// 1) Vérifier si un registre déjà ouvert pour ce device
-	// -------------------------------------------------------------
+	// 1) Vérifier si un registre est déjà ouvert pour ce device
 	var exists int
 	err := db.QueryRowContext(ctx, `
-        SELECT 1
-        FROM cash_registers
-        WHERE end_date IS NULL
-        AND device_id = ?
-        AND merchant_id = ?
-        LIMIT 1
-    `, req.DeviceID, merchantID).Scan(&exists)
+		SELECT 1
+		FROM cash_registers
+		WHERE end_date IS NULL
+		AND device_id = ?
+		AND merchant_id = ?
+		LIMIT 1
+	`, req.DeviceID, merchantID).Scan(&exists)
 
 	if err == nil {
-
-		if err == nil {
-			res_already_opened := &models.CashRegisterOpenResponse{
-				Status: "device_already_opened_cash_register",
-			}
-			return res_already_opened, nil
-		}
-	}
-	if err != sql.ErrNoRows {
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-	}
-	var cashRegisterID string
-
-	// -------------------------------------------------------------
-	// 2) Sous-registre (cash_register_id fourni)
-	// -------------------------------------------------------------
-	if req.CashRegister.CashRegisterID != nil {
-
-		// Vérifier si un sous-registre existe déjà pour ce device
-		err = db.QueryRowContext(ctx, `
-            SELECT 1
-            FROM cash_registers cr
-            INNER JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
-            WHERE cr.end_date IS NULL
-            AND scr.device_id = ?
-            AND cr.merchant_id = ?
-            LIMIT 1
-        `, req.DeviceID, merchantID).Scan(&exists)
-
-		if err == nil {
-			res_already_opened := &models.CashRegisterOpenResponse{
-				Status: "device_already_opened_sub_cash_register",
-			}
-			return res_already_opened, nil
-		}
-		if err != sql.ErrNoRows {
-			if err != nil {
-				log.Error(err.Error())
-				return nil, err
-			}
-		}
-
-		// Créer le sous-registre
-		_, err := db.ExecContext(ctx, `
-            INSERT INTO sub_cash_registers (cash_register_id, device_id, start_date)
-            VALUES (?, ?, UTC_TIMESTAMP)
-        `, *req.CashRegister.CashRegisterID, req.DeviceID)
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-
-		// MerchantID du registre parent existant
-		cashRegisterID = *req.CashRegister.CashRegisterID
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-
-	} else {
-		// -------------------------------------------------------------
-		// 3) Nouveau registre principal
-		// -------------------------------------------------------------
-
-		// Vérifier si la caisse a déjà un registre ouvert
-		err = db.QueryRowContext(ctx, `
-            SELECT 1
-            FROM cash_registers
-            WHERE end_date IS NULL
-            AND cash_desk_id = ?
-            AND merchant_id = ?
-            LIMIT 1
-        `, req.CashRegister.CashDeskID, merchantID).Scan(&exists)
-
-		if err == nil {
-			res_already_opened := &models.CashRegisterOpenResponse{
-				Status: "cash_desk_already_opened_in_a_cash_register",
-			}
-			return res_already_opened, nil
-		}
-		if err != sql.ErrNoRows {
-			if err != nil {
-				log.Error(err.Error())
-				return nil, err
-			}
-		}
-
-		// Créer le registre
-		res, err := db.ExecContext(ctx, `
-            INSERT INTO cash_registers
-            (cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date)
-            VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP)
-        `,
-			req.CashRegister.CashDeskID,
-			req.DeviceID,
-			req.CashRegister.UserID,
-			merchantID,
-			req.CashRegister.CashFund,
-		)
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-
-		var lai, _ = res.LastInsertId()
-		cashRegisterID = strconv.Itoa(int(lai))
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
+		return &models.CashRegisterOpenResponse{
+			Status: "device_already_opened_cash_register",
+		}, nil
+	} else if err != sql.ErrNoRows {
+		log.Error("Erreur lors de la vérification du registre", zap.Error(err))
+		return nil, err
 	}
 
-	res := &models.CashRegisterOpenResponse{
+	// 2) Nouveau registre principal
+	res, err := db.ExecContext(ctx, `
+		INSERT INTO cash_registers
+		(cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date)
+		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP)
+	`,
+		req.CashRegister.CashDeskID,
+		req.DeviceID,
+		req.CashRegister.UserID,
+		merchantID,
+		req.CashRegister.CashFund,
+	)
+	if err != nil {
+		log.Error("Erreur lors de l'insertion du registre", zap.Error(err))
+		return nil, err
+	}
+
+	lai, err := res.LastInsertId()
+	if err != nil {
+		log.Error("Erreur lors de la récupération de l'ID inséré", zap.Error(err))
+		return nil, err
+	}
+
+	cashRegisterID := strconv.Itoa(int(lai))
+
+	return &models.CashRegisterOpenResponse{
 		Status: "cash_register_created",
 		CashRegister: &models.CashRegisterOpen{
 			CashRegisterId: cashRegisterID,
 		},
-	}
-
-	return res, nil
-	/*
-		return map[string]interface{}{
-			"status": "cash_register_created",
-			"cash_register": map[string]interface{}{
-				"cash_register": cashRegisterID,
-			},
-		}, nil
-	*/
+	}, nil
 }
 
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {
@@ -271,7 +175,7 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	defer mopRows.Close()
 
 	var mopList []models.MOPLine
-	var TTC_MOP float64
+	var TTC_MOP int
 
 	for mopRows.Next() {
 		var line models.MOPLine
@@ -364,25 +268,6 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		rollback := func(err error) (map[string]interface{}, error) {
-			tx.Rollback()
-			return nil, err
-		}
-	*/
-
-	// ---------------------------------------------------------------------
-	//  ZONE VALIDATIONS FUTURES
-	// ---------------------------------------------------------------------
-	// - vérifier que userID a le droit de fermer le registre
-	// - vérifier que device_id correspond au registre ouvert ?
-	// - vérifier si la caisse est verrouillée ?
-	// ---------------------------------------------------------------------
-
 	// 1. Vérifier commandes encore ouvertes
 	var tmp string
 	err := db.QueryRowContext(ctx, `
@@ -390,15 +275,14 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		FROM orders o
 		WHERE o.cash_register_id = ?
 		AND o.state NOT IN ('CLOSED','DONE')
-		AND (o.scheduled = false
-		     OR (o.scheduled = true AND UTC_TIMESTAMP > o.estimated_ready ))
+		AND (o.scheduled = false OR (o.scheduled = true AND UTC_TIMESTAMP > o.estimated_ready))
+		LIMIT 1
 	`, cashRegisterID).Scan(&tmp)
 
 	if err == nil {
-		log.Warn("Orders stil opened, cannot close cash register " + cashRegisterID)
+		log.Warn("Orders still opened, cannot close cash register", zap.String("cash_register_id", cashRegisterID))
 		return models.ErrOrdersStillOpened
-	}
-	if err != sql.ErrNoRows {
+	} else if err != sql.ErrNoRows {
 		return err
 	}
 
@@ -430,53 +314,86 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		return err
 	}
 
-	// 4. Fermer le registre
-	_, err = db.ExecContext(ctx, `
-		UPDATE cash_registers
-		SET end_date = UTC_TIMESTAMP
-		WHERE cash_register_id = ?
-		AND end_date IS NULL
-	`, cashRegisterID)
-	if err != nil {
-		return err
-	}
-	/*
-		// COMMIT 1
-		if err := tx.Commit(); err != nil {
-			return rollback(err)
-		}
-	*/
-	// 5. Récupérer rapport caisse (tu le réimplémenteras ensuite)
+	// 4. Récupérer rapport caisse
 	report, err := r.GetCashRegisterReport(ctx, cashRegisterID)
 	if err != nil {
 		return err
 	}
-	/*
-		// 6. Deuxième transaction pour insérer détails MOP
-		tx2, err := r.database.BeginTx(context.Background(), nil)
-		if err != nil {
-			return nil, err
-		}
-		rollback2 := func(err error) (map[string]interface{}, error) {
-			tx2.Rollback()
-			return nil, err
-		}
-	*/
 
+	// -------------------------------------------------------------
+	// Calcul du fond de caisse théorique (Calculated Cash)
+	// -------------------------------------------------------------
+	// A. Récupérer le fond de caisse initial
+	var initialCashFund int
+	err = db.QueryRowContext(ctx, `
+		SELECT cash_fund FROM cash_registers 
+		WHERE cash_register_id = ?
+	`, cashRegisterID).Scan(&initialCashFund)
+	if err != nil {
+		return fmt.Errorf("erreur récupération fond de caisse initial: %w", err)
+	}
+
+	// B. Isoler les ventes en espèces depuis le rapport et insérer les items
+	var cashSales int
 	for _, mopLine := range report.MOP {
-		_, err := db.ExecContext(context.Background(), `
+		_, err := db.ExecContext(ctx, `
 			INSERT INTO cash_registers_items (cash_register_id, mop, amount)
 			VALUES (?, ?, ?)
 		`, cashRegisterID, mopLine.MOP, mopLine.Amount)
 		if err != nil {
 			return err
 		}
-	}
-	/*
-		if err := tx2.Commit(); err != nil {
-			return rollback2(err)
+
+		// Remplacer "CASH" par l'ID exact que tu utilises pour l'espèce (ex: "ESPECES")
+		if mopLine.MOP == "ES" {
+			cashSales += mopLine.Amount
 		}
-	*/
+	}
+
+	// C. Calcul du fond de caisse final
+	calculatedFinalCash := initialCashFund + cashSales
+	// -------------------------------------------------------------
+
+	// 6. LOGIQUE FISCALE : Récupération du précédent hash
+	var prevHash sql.NullString
+	err = db.QueryRowContext(ctx, `
+		SELECT hash FROM cash_registers 
+		WHERE merchant_id = ? AND end_date IS NOT NULL AND cash_register_id != ?
+		ORDER BY end_date DESC LIMIT 1
+	`, merchantID, cashRegisterID).Scan(&prevHash)
+
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("erreur récupération prev_hash: %w", err)
+	}
+
+	actualPrevHash := "GENESIS_HASH"
+	if prevHash.Valid && prevHash.String != "" {
+		actualPrevHash = prevHash.String
+	}
+
+	// 7. LOGIQUE FISCALE : Calcul du nouveau Hash (utilisation de calculatedFinalCash et correction de %.2d en %.2f)
+	dataToHash := fmt.Sprintf("%s|%s|%.2f|%s", cashRegisterID, merchantID, calculatedFinalCash, actualPrevHash)
+	hashBytes := sha256.Sum256([]byte(dataToHash))
+	newHash := hex.EncodeToString(hashBytes[:])
+
+	signature := security.SignHash(newHash)
+
+	// 8. Fermer le registre (avec MAJ des infos fiscales et du calculatedFinalCash)
+	_, err = db.ExecContext(ctx, `
+		UPDATE cash_registers
+		SET end_date = UTC_TIMESTAMP,
+			final_cash_fund = ?,
+			previous_hash = ?,
+			hash = ?,
+			signature = ?
+		WHERE cash_register_id = ?
+		AND end_date IS NULL
+	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
+
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -484,7 +401,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if r.isCashRegisterOpen(ctx, cashRegisterID) {
+	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
 		return nil, models.ErrCashRegisterStillOpen
 	}
 
@@ -495,7 +412,8 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		SELECT 
 			cr.cash_register_id, cr.start_date, cr.end_date,
 			cd.cash_desk_id, cd.name,
-			cr.cash_fund, cr.closed, cr.closure_comment,
+			cr.cash_fund, cr.final_cash_fund,
+			cr.closed, cr.closure_comment,
 			u.user_id, u.first_name, u.last_name,
 			mp.currency,
 			cb.user_id as closed_by_user_id,
@@ -519,6 +437,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		&cr.CashDesk.CashDeskID,
 		&cr.CashDesk.CashDeskName,
 		&cr.CashFund,
+		&cr.FinalCashFund,
 		&cr.Closed,
 		&cr.ClosureComment,
 		&cr.OpenedBy.UserID,
@@ -684,7 +603,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if r.isCashRegisterOpen(ctx, cashRegisterID) {
+	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
 		return "", models.ErrCashRegisterStillOpen
 	}
 
@@ -704,7 +623,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	return fmt.Sprintf("%d", insertID), nil
 }
 
-func (r *CashRegisterRepository) isCashRegisterOpen(ctx context.Context, cashRegisterID string) bool {
+func (r *CashRegisterRepository) isCashRegisterClosed(ctx context.Context, cashRegisterID string) bool {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -713,7 +632,7 @@ func (r *CashRegisterRepository) isCashRegisterOpen(ctx context.Context, cashReg
 	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM cash_registers
-		WHERE cash_register_id = ? AND closed = false
+		WHERE cash_register_id = ? AND end_date is not null
 	`, cashRegisterID).Scan(&exists)
 
 	if err != nil {
@@ -731,7 +650,7 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if r.isCashRegisterOpen(ctx, cashRegisterID) {
+	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
 		return models.ErrCashRegisterStillOpen
 	}
 
@@ -752,7 +671,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if !r.isCashRegisterOpen(ctx, cashRegisterID) {
+	if r.isCashRegisterClosed(ctx, cashRegisterID) {
 		return errors.New("cash_register_closed")
 	}
 
@@ -977,7 +896,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 	defer mopRows.Close()
 
 	var mops []models.MOPLine
-	var totalMop float64
+	var totalMop int
 
 	for mopRows.Next() {
 		var m models.MOPLine
