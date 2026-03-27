@@ -101,10 +101,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		return nil, err
 	}
 	if user == nil {
-		return map[string]interface{}{
-			"status":  "user_not_found", // 0
-			"enabled": "no user found",
-		}, nil
+		return nil, models.ErrInvalidToken
 	}
 
 	if !user.Enabled {
@@ -379,7 +376,7 @@ func (s *AuthService) CheckAppVersion(ctx context.Context, token, versionCodeStr
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrInvalidToken
 	}
 
 	versionCode, err := strconv.Atoi(versionCodeString)
@@ -403,7 +400,7 @@ func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, d
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.New("invalid token")
+		return nil, models.ErrInvalidToken
 	}
 
 	err = s.repo.SaveDevice(ctx, user.UserID, user.MerchantID, app, deviceID, deviceToken)
@@ -465,6 +462,14 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 
 // VerifyMFA vérifie l'OTP saisi par l'utilisateur
 func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi string) error {
+	user, err := s.repo.GetUserByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return models.ErrInvalidToken
+	}
+
 	log := logger.FromContext(ctx)
 	cacheKey := models.MFACachePrefix + token
 
@@ -480,7 +485,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	}
 
 	// 3. Valider la session en base de données
-	err = s.repo.UpdateMFAStatus(ctx, token, models.MFAStatusVerified)
+	err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
 		return errors.New("erreur interne lors de la validation")
