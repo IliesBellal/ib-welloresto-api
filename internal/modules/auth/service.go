@@ -93,41 +93,45 @@ func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) err
 }
 
 func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
-	// Tout est stocké dans Redis, s'il n'est pas accessible, on bypass le MFA pour l'instant
 	if s.redis == nil {
 		return false
 	}
 
-	// Si pas de MFA activé, on laisse passer
 	if user.MFAType == nil || *user.MFAType == "" {
 		return false
 	}
 
-	// 1. Vérifier si le statut est "VERIFIED"
 	if user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified {
 		return true
+	}
+
+	if user.MFAVerifiedAt == nil || *user.MFAVerifiedAt == "" {
+		return true
+	}
+
+	// 1. Correction du layout : utiliser time.RFC3339 pour gérer le "T" et le "Z"
+	lastVerifiedAt, err := time.Parse(time.RFC3339, *user.MFAVerifiedAt)
+	if err != nil {
+		// Si le format en DB est vraiment "YYYY-MM-DD HH:MM:SS" sans le T,
+		// on peut tenter un second parsing ou logger l'erreur
+		logger.FromContext(ctx).Warn("Cannot parse mfa date: " + err.Error())
+		return false
+	}
+
+	// 1.2. Logique de comparaison :
+	// On définit la limite (ex: 5 minutes en arrière pour tes tests)
+	limit := time.Now().UTC().Add(-5 * time.Minute)
+
+	// Si la date de dernière vérification est AVANT la limite, c'est trop vieux
+	if lastVerifiedAt.Before(limit) {
+		return true // Redemander le MFA
 	}
 
 	// 2. Vérifier si l'IP a changé
 	/*
 	   if user.LastIP != currentIP {
-	       return false
+	       return true
 	   }*/
-
-	// 3. Vérifier si la validation a plus de 30 jours
-	if user.MFAVerifiedAt == nil {
-		return true
-	}
-
-	thirtyDaysAgo := time.Now().UTC().Add(5 * time.Minute)
-	lastVerifiedAt, err := time.Parse("2006-01-02 15:04:05", *user.MFAVerifiedAt)
-	if err == nil {
-		if lastVerifiedAt.Before(thirtyDaysAgo) {
-			return false // Trop vieux -> On redemande
-		}
-	} else {
-		logger.FromContext(ctx).Warn("Cannot check mfa last verified date : " + err.Error())
-	}
 
 	return false
 }
