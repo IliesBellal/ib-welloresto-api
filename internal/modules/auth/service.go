@@ -21,8 +21,8 @@ type AuthService struct {
 	sms   sms.Service
 }
 
-func NewAuthService(r AuthRepository, redis *redis.Client) AuthService {
-	return AuthService{repo: r, redis: redis}
+func NewAuthService(r AuthRepository, redis *redis.Client, email mailer.Service, sms sms.Service) AuthService {
+	return AuthService{repo: r, redis: redis, email: email, sms: sms}
 }
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {

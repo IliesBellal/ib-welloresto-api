@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
-	"welloresto-api/internal/infrastructure/mailer"
-	"welloresto-api/internal/infrastructure/sms"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/receipt"
@@ -82,18 +80,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- MAILER & SMS (BREVO) ----
 	// Initialize Brevo Email Service
-	brevoMailService := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{
+	mailService := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{
 		APIKey: cfg.Brevo.APIKey,
 	})
 
 	// Initialize Brevo SMS Service
-	brevoSMSService := brevo_sms.NewBrevoSMS(brevo_sms.Config{
+	smsService := brevo_sms.NewBrevoSMS(brevo_sms.Config{
 		APIKey: cfg.Brevo.APIKey,
 	})
-
-	// Use as mailer.Service for dependency injection
-	var mailService mailer.Service = brevoMailService
-	var smsService sms.Service = brevoSMSService
 
 	// 2. Initialisation des couches (Injection de dépendances)
 	repo := googlemaps.NewGoogleMapsRepository()
@@ -110,7 +104,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
-	authService := authModule.NewAuthService(authRepo, redisClient)
+	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService)
 	authMiddleware := middleware.Auth(&authService)
 
 	// ---- POS ----
