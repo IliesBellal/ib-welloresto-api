@@ -7,8 +7,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"welloresto-api/internal/infrastructure/mailer"
+	"welloresto-api/internal/models"
 )
 
 // Config holds Brevo API configuration
@@ -57,7 +59,17 @@ func (b *BrevoMailer) SendOrderConfirmationToCustomer(to string, data mailer.Sca
 
 // SendOrderConfirmationToCustomer sends an order confirmation email
 func (b *BrevoMailer) SendMfaOTP(data mailer.MfaOTPData) {
-	b.SendAsync("Wello Resto - Security", data.UserEmail, "Votre code de vérification MFA", "scannorder_payout.html", data)
+	email_data := mailer.MFAMailData{
+		EmailBaseData: mailer.EmailBaseData{
+			BrandName:    "Wello Resto",
+			Year:         time.Now().Year(),
+			SupportEmail: mailer.SupportEmail,
+			BrandLogoURL: mailer.BrandLogoURL,
+		},
+		MFACode:   data.OTP,
+		ExpiresIn: int(models.MFACacheTTL.Minutes()),
+	}
+	b.SendAsync("Wello Resto - Security", data.UserEmail, "Votre code de vérification MFA", "mfa_otp.html", email_data)
 }
 
 // SendRefundNotification sends a refund notification email

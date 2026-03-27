@@ -1,5 +1,10 @@
 package mailer
 
+const (
+	BrandLogoURL = ""
+	SupportEmail = "iliesbellal@gmail.com"
+)
+
 // RefundData pour charge.refunded
 type RefundData struct {
 	MerchantName  string // ex: "Burger King"
@@ -47,4 +52,25 @@ type MfaOTPData struct {
 	UserName  string
 	UserEmail string
 	OTP       string
+}
+
+type EmailBaseData struct {
+	BrandName    string
+	BrandLogoURL string
+	SupportEmail string
+	Year         int
+}
+
+// Pour la confirmation de compte
+type ConfirmationEmailData struct {
+	EmailBaseData
+	FirstName       string
+	ConfirmationURL string
+}
+
+// Pour le code MFA
+type MFAMailData struct {
+	EmailBaseData
+	MFACode   string
+	ExpiresIn int // en minutes
 }
