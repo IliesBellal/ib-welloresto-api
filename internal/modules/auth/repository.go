@@ -460,10 +460,6 @@ ON DUPLICATE KEY UPDATE
 	return tx.Commit()
 }
 
-func (r *AuthRepository) MarkMfaAsVerified(ctx context.Context, token string) error {
-	return nil
-}
-
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
 func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
 	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
