@@ -464,17 +464,13 @@ ON DUPLICATE KEY UPDATE
 func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
 	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
 
-	result, err := r.database.ExecContext(ctx, query, status, userID)
+	_, err := r.database.ExecContext(ctx, query, status, userID)
 	if err != nil {
 		return err
 	}
 
-	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err
-	}
-	if rowsAffected == 0 {
-		return errors.New("aucune session trouvée pour ce token")
 	}
 
 	return nil
