@@ -1,8 +1,10 @@
 package mailer
 
 const (
-	BrandLogoURL = ""
-	SupportEmail = "iliesbellal@gmail.com"
+	BrandLogoURL  = "https://scannorder.welloresto.fr/src/tracking-preview.png"
+	SupportEmail  = "iliesbellal@gmail.com"
+	InvoiceEmail  = "invoice@welloresto.fr"
+	SecurityEmail = "security@welloresto.fr"
 )
 
 // RefundData pour charge.refunded

@@ -463,3 +463,23 @@ ON DUPLICATE KEY UPDATE
 func (r *AuthRepository) MarkMfaAsVerified(ctx context.Context, token string) error {
 	return nil
 }
+
+// UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
+func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, token string, status string) error {
+	query := `UPDATE users_rights SET mfa_status = ? WHERE token = ?`
+
+	result, err := r.database.ExecContext(ctx, query, status, token)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("aucune session trouvée pour ce token")
+	}
+
+	return nil
+}

@@ -72,32 +72,6 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	return loggedUser, err
 }
 
-func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi string) error {
-	// 1. Chercher l'OTP haché dans Redis via le token
-	cacheKey := "mfa_otp:" + token
-	hashedCode, found, err := s.redis.Get(ctx, cacheKey)
-	if err != nil || !found {
-		return errors.New("code expiré ou inexistant")
-	}
-
-	// 2. Vérifier le code (bcrypt ou simple comparaison si non haché)
-	if codeSaisi != hashedCode {
-		return errors.New("code invalide")
-	}
-
-	// 3. Valider la session en BDD
-	err = s.repo.MarkMfaAsVerified(ctx, token)
-	if err != nil {
-		return err
-	}
-
-	// 4. Nettoyer Redis et le cache utilisateur
-	s.redis.Delete(ctx, cacheKey)
-	s.redis.Delete(ctx, models.UserCachePrefix+token) // Force le refresh du cache au prochain appel Auth
-
-	return nil
-}
-
 func convertApp(app string) string {
 	switch strings.ToUpper(app) {
 	case "0", "WR_RECEPTION":
@@ -171,7 +145,6 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// Si l'utilisateur a configuré un MFA (Email ou SMS) et que son status n'est pas "VERIFIED"
 	if isBackoffice && (mfaType == "email_sms") && mfaStatus != "verified" && s.redis != nil {
 		s.SendMFACode(ctx, user, token, false)
-		s.SendMFACode(ctx, user, token, true)
 	}
 	// ==============================================================
 
@@ -480,4 +453,51 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	}
 
 	return nil // Retourne l'erreur du module d'envoi si nécessaire
+}
+
+// VerifyMFA vérifie l'OTP saisi par l'utilisateur
+func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi string) error {
+	log := logger.FromContext(ctx)
+	cacheKey := models.MFACachePrefix + token
+
+	// 1. Récupérer le code dans Redis
+	storedCode, found, err := s.redis.Get(ctx, cacheKey)
+	if err != nil || !found {
+		return errors.New("code expiré ou inexistant, veuillez vous reconnecter")
+	}
+
+	// 2. Comparaison en clair
+	if storedCode != codeSaisi {
+		return errors.New("code invalide")
+	}
+
+	// 3. Valider la session en base de données
+	err = s.repo.UpdateMFAStatus(ctx, token, "VERIFIED")
+	if err != nil {
+		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+		return errors.New("erreur interne lors de la validation")
+	}
+
+	// 4. Nettoyage de Redis
+	// On supprime l'OTP pour qu'il ne soit plus utilisable
+	_ = s.redis.Delete(ctx, cacheKey)
+	// IMPORTANT : On supprime le cache utilisateur pour forcer ton middleware
+	// à recharger les droits (et donc le nouveau mfa_status) à la prochaine requête
+	_ = s.redis.Delete(ctx, models.UserCachePrefix+token)
+
+	log.Info("✅ MFA vérifié avec succès pour le token")
+	return nil
+}
+
+// FallbackSMS génère un nouvel OTP et l'envoie par SMS
+func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
+	// 1. Récupérer l'utilisateur pour avoir son numéro (via la fonction existante)
+	user, err := s.repo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return errors.New("session invalide ou expirée")
+	}
+
+	err = s.SendMFACode(ctx, user, token, false)
+
+	return err
 }

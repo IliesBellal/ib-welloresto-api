@@ -43,7 +43,7 @@ func (b *BrevoMailer) SendAsync(from, to, subject, templateName string, data int
 			return
 		}
 
-		err = b.sendEmailViaBrevo(from, to, subject, html)
+		err = b.sendEmailViaBrevo(from, mailer.InvoiceEmail, to, subject, html)
 		if err != nil {
 			log.Printf("ERROR sending email via Brevo to %s: %v", to, err)
 		} else {
@@ -80,20 +80,13 @@ func (b *BrevoMailer) SendRefundNotification(email string, data mailer.RefundDat
 // SendPayoutPaidNotification sends a payout notification email
 func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payout mailer.PayoutData) {
 	go func() {
-		err := b.sendEmailViaBrevo("Wello Resto", email, "WR ScanNOrder - Virement en cours", "")
-		if err != nil {
-			log.Printf("ERROR sending payout email to %s: %v", email, err)
-		} else {
-			log.Printf("Payout email sent successfully to %s", email)
-		}
-
 		html, renderErr := b.renderTemplate("payout_notification.html", payout)
 		if renderErr != nil {
 			log.Printf("ERROR rendering payout template: %v", renderErr)
 			return
 		}
 
-		err = b.sendEmailViaBrevo("Wello Resto", email, "WR ScanNOrder - Virement en cours", html)
+		err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours", html)
 		if err != nil {
 			log.Printf("ERROR sending payout email via Brevo to %s: %v", email, err)
 		} else {
@@ -118,12 +111,12 @@ func (b *BrevoMailer) TriggerTestEmail(writer http.ResponseWriter, request *http
 }
 
 // sendEmailViaBrevo sends the actual email via Brevo API
-func (b *BrevoMailer) sendEmailViaBrevo(from, to, subject, htmlContent string) error {
+func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, htmlContent string) error {
 	// Prepare the request payload
 	payload := map[string]interface{}{
 		"sender": map[string]string{
-			"name":  from,
-			"email": "invoice@welloresto.fr", // Using the configured From address
+			"name":  from_name,
+			"email": from_email, // Using the configured From address
 		},
 		"to": []map[string]string{
 			{
