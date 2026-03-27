@@ -1,6 +1,8 @@
 package auth
 
-import "database/sql"
+import (
+	"database/sql"
+)
 
 type SaveDeviceTokenRequest struct {
 	DeviceToken string `json:"device_token"`
@@ -91,9 +93,10 @@ type UserLoginRow struct {
 	DeliveryDeviceToken  sql.NullString
 
 	// Rights
-	Rights    UserRowRights
-	MFAType   *string
-	MFAStatus *string
+	Rights        UserRowRights
+	MFAType       *string
+	MFAStatus     *string
+	MFAVerifiedAt *string
 
 	// Token de droits
 	Token      string

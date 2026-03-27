@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/redis"
@@ -91,6 +92,46 @@ func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) err
 	return s.redis.Delete(ctx, models.UserCachePrefix+token)
 }
 
+func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
+	// Tout est stocké dans Redis, s'il n'est pas accessible, on bypass le MFA pour l'instant
+	if s.redis == nil {
+		return false
+	}
+
+	// Si pas de MFA activé, on laisse passer
+	if user.MFAType == nil || *user.MFAType == "" {
+		return false
+	}
+
+	// 1. Vérifier si le statut est "VERIFIED"
+	if user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified {
+		return true
+	}
+
+	// 2. Vérifier si l'IP a changé
+	/*
+	   if user.LastIP != currentIP {
+	       return false
+	   }*/
+
+	// 3. Vérifier si la validation a plus de 30 jours
+	if user.MFAVerifiedAt == nil {
+		return true
+	}
+
+	thirtyDaysAgo := time.Now().Add(5 * time.Minute)
+	lastVerifiedAt, err := time.Parse("2006-01-02 15:04:05", *user.MFAVerifiedAt)
+	if err == nil {
+		if lastVerifiedAt.Before(thirtyDaysAgo) {
+			return false // Trop vieux -> On redemande
+		}
+	} else {
+		logger.FromContext(ctx).Warn("Cannot check mfa last verified date : " + err.Error())
+	}
+
+	return false
+}
+
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (map[string]interface{}, error) {
 	appID := convertApp(payload.App)
 	username := payload.Username + payload.Email
@@ -130,17 +171,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// ==============================================================
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
-	mfaType := ""
-	if user.MFAType != nil {
-		mfaType = *user.MFAType
-	}
-	mfaStatus := ""
-	if user.MFAStatus != nil {
-		mfaStatus = *user.MFAStatus
-	}
-
-	// Si l'utilisateur a configuré un MFA (Email ou SMS) et que son status n'est pas "VERIFIED"
-	if isBackoffice && (mfaType == "email_sms") && mfaStatus != models.MFAStatusVerified && s.redis != nil {
+	if isBackoffice && s.isMFAVerificationRequired(ctx, user) {
 		s.SendMFACode(ctx, user, token, false)
 	}
 
