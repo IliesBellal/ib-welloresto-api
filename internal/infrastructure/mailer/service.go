@@ -26,7 +26,7 @@ type Config struct {
 // Service defines the interface for sending emails.
 // This allows you to mock the mailer in your unit tests.
 type Service interface {
-	SendAsync(from, to, subject, templateName string, data interface{})
+	SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{})
 	SendOrderConfirmationToCustomer(to string, data ScanNOrderConfirmationData)
 	SendRefundNotification(s string, data RefundData)
 	SendPayoutPaidNotification(email string, name string, payout PayoutData)

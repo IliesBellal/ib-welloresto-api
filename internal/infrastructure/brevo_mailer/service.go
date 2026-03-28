@@ -35,7 +35,7 @@ func NewBrevoMailer(cfg Config) mailer.Service {
 // SendAsync sends an email in a separate Goroutine (non-blocking).
 // templateName must match the filename in the templates/ folder (e.g., "payout_notification.html").
 // data is the struct or map containing variables to inject into the HTML.
-func (b *BrevoMailer) SendAsync(from, to, subject, templateName string, data interface{}) {
+func (b *BrevoMailer) SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{}) {
 	go func() {
 		html, err := b.renderTemplate(templateName, data)
 		if err != nil {
@@ -43,7 +43,7 @@ func (b *BrevoMailer) SendAsync(from, to, subject, templateName string, data int
 			return
 		}
 
-		err = b.sendEmailViaBrevo(from, mailer.InvoiceEmail, to, subject, html)
+		err = b.sendEmailViaBrevo(fromName, fromEmail, to, subject, html)
 		if err != nil {
 			log.Printf("ERROR sending email via Brevo to %s: %v", to, err)
 		} else {
@@ -54,7 +54,7 @@ func (b *BrevoMailer) SendAsync(from, to, subject, templateName string, data int
 
 // SendOrderConfirmationToCustomer sends an order confirmation email
 func (b *BrevoMailer) SendOrderConfirmationToCustomer(to string, data mailer.ScanNOrderConfirmationData) {
-	b.SendAsync(data.MerchantName, to, "Confirmation de votre commande", "scannorder_payout.html", data)
+	b.SendAsync(data.MerchantName, mailer.InvoiceEmail, to, "Confirmation de votre commande", "scannorder_payout.html", data)
 }
 
 // SendOrderConfirmationToCustomer sends an order confirmation email
@@ -69,12 +69,12 @@ func (b *BrevoMailer) SendMfaOTP(data mailer.MfaOTPData) {
 		MFACode:   data.OTP,
 		ExpiresIn: int(models.MFACacheTTL.Minutes()),
 	}
-	b.SendAsync("Wello Resto - Security", data.UserEmail, "Votre code de vérification MFA", "mfa_otp.html", email_data)
+	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Votre code de vérification MFA", "mfa_otp.html", email_data)
 }
 
 // SendRefundNotification sends a refund notification email
 func (b *BrevoMailer) SendRefundNotification(email string, data mailer.RefundData) {
-	b.SendAsync("Wello Resto", email, "Remboursement", "customer_refund.html", data)
+	b.SendAsync("Wello Resto", mailer.InvoiceEmail, email, "Remboursement", "customer_refund.html", data)
 }
 
 // SendPayoutPaidNotification sends a payout notification email
