@@ -83,6 +83,7 @@ func ExampleCustomSendAsync() {
 	// Send a custom email with a specific template
 	mailService.SendAsync(
 		"from@example.com",
+		"from@example.com",
 		"to@example.com",
 		"Custom Subject",
 		"custom_template.html", // Your template name

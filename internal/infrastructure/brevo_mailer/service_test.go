@@ -49,7 +49,7 @@ func TestSendAsync(t *testing.T) {
 	}
 
 	// Send async (this should not block)
-	mailer.SendAsync("sender@example.com", "recipient@example.com", "Test Subject", "test.html", data)
+	mailer.SendAsync("sender@example.com", "sender@example.com", "recipient@example.com", "Test Subject", "test.html", data)
 
 	// Give goroutine time to execute (in real tests, use proper synchronization)
 	// For production, use sync.WaitGroup or channels
@@ -132,6 +132,6 @@ func BenchmarkSendAsync(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mailer.SendAsync("sender@example.com", "recipient@example.com", "Test Subject", "test.html", data)
+		mailer.SendAsync("sender@example.com", "sender@example.com", "recipient@example.com", "Test Subject", "test.html", data)
 	}
 }

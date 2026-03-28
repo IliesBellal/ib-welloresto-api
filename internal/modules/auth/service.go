@@ -120,7 +120,7 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 
 	// 1.2. Logique de comparaison :
 	// On définit la limite (ex: 5 minutes en arrière pour tes tests)
-	limit := time.Now().UTC().Add(-5 * time.Minute)
+	limit := time.Now().UTC().Add(-24 * 30 * time.Hour)
 
 	// Si la date de dernière vérification est AVANT la limite, c'est trop vieux
 	if lastVerifiedAt.Before(limit) {
