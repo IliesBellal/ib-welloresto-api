@@ -141,6 +141,10 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 		return false
 	}
 
+	if user.MFAOTPSentAt == nil || *user.MFAOTPSentAt == "" {
+		return true
+	}
+
 	// 1. Correction du layout : utiliser time.RFC3339 pour gérer le "T" et le "Z"
 	lastSentAt, err := time.Parse(time.RFC3339, *user.MFAOTPSentAt)
 	if err != nil {
