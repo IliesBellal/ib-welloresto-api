@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -17,6 +18,7 @@ func NewOrdersRepository(db *sql.DB) *OrdersRepository {
 // Utilisé pour récupérer merchant_id et order_id
 func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandOrderID string) (merchantID string, orderID string, err error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	err = db.QueryRowContext(ctx, `
 		SELECT merchant_id, order_id
@@ -24,12 +26,17 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 		WHERE brand_order_id = ?
 	`, brandOrderID).Scan(&merchantID, &orderID)
 
+	if err != nil {
+		log.Error(err.Error())
+	}
+
 	return
 }
 
 // --- CANCEL ORDER ---
 func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders 
@@ -39,6 +46,7 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 		WHERE brand_order_id = ?
 	`, brandOrderID)
 	if err != nil {
+		log.Error("Error canceling order: " + err.Error())
 		return err
 	}
 
@@ -49,12 +57,17 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 		WHERE o.brand_order_id = ?
 	`, brandOrderID)
 
+	if err != nil {
+		log.Error("Error updating payment status: " + err.Error())
+	}
+
 	return err
 }
 
 // --- DELIVERY STATUS UPDATES ---
 func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var orderID string
 
@@ -70,6 +83,7 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 		return nil // ou une erreur métier si tu préfères
 	}
 	if err != nil {
+		log.Error("Error fetching order ID: " + err.Error())
 		return err
 	}
 
@@ -81,6 +95,7 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 		WHERE order_id = ?
 	`, orderID)
 	if err != nil {
+		log.Error("Error updating order status: " + err.Error())
 		return err
 	}
 
@@ -92,6 +107,7 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 		WHERE order_id = ?
 	`, orderID)
 	if err != nil {
+		log.Error("Error updating order items: " + err.Error())
 		return err
 	}
 
@@ -100,6 +116,7 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 
 func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
@@ -107,6 +124,10 @@ func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) 
 		    brand_status = 'FAILED'
 		WHERE brand_order_id = ?
 	`, brandOrderID)
+
+	if err != nil {
+		log.Error("Error marking order as failed: " + err.Error())
+	}
 
 	return err
 }

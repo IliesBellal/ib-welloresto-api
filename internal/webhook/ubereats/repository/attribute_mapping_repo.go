@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -19,6 +20,7 @@ func NewAttributeMappingRepository(db *sql.DB) *AttributeMappingRepository {
 
 func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Context, merchantID, title string) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// Équivalent PHP: preg_replace('/[^a-zA-Z0-9]/', '_', title)
 	reg := regexp.MustCompile(`[^a-zA-Z0-9]+`)
@@ -33,12 +35,14 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 	`, merchantID, attrName, title)
 
 	if err != nil {
+		log.Error("Error creating attribute from Uber group: " + err.Error())
 		return "", err
 	}
 
 	// Récupération de l'ID généré (équivalent de lastInsertId())
 	id, err := res.LastInsertId()
 	if err != nil {
+		log.Error("Error getting last insert ID for attribute: " + err.Error())
 		return "", err
 	}
 
@@ -47,6 +51,7 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 
 func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, attributeID, title string, price int) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price)
@@ -54,11 +59,13 @@ func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, a
 	`, attributeID, title, price)
 
 	if err != nil {
+		log.Error("Error creating option from Uber item: " + err.Error())
 		return "", err
 	}
 
 	id, err := res.LastInsertId()
 	if err != nil {
+		log.Error("Error getting last insert ID for option: " + err.Error())
 		return "", err
 	}
 
@@ -68,6 +75,7 @@ func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, a
 // ---- Attributes ----
 func (r *AttributeMappingRepository) GetAttributeIDByModifierGroupID(ctx context.Context, merchantID, groupID string) (*string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var id string
 	err := db.QueryRowContext(ctx,
@@ -80,6 +88,7 @@ func (r *AttributeMappingRepository) GetAttributeIDByModifierGroupID(ctx context
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+		log.Error("Error fetching attribute ID by modifier group ID: " + err.Error())
 		return nil, err
 	}
 	return &id, nil
@@ -87,17 +96,22 @@ func (r *AttributeMappingRepository) GetAttributeIDByModifierGroupID(ctx context
 
 func (r *AttributeMappingRepository) CreateAttributeMapping(ctx context.Context, merchantID, attrID, groupID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO integration_uber_eats_attributes_mapping(merchant_id, configurable_attribute_id, modifier_group_id)
         VALUES(?, ?, ?)`,
 		merchantID, attrID, groupID)
+	if err != nil {
+		log.Error("Error creating attribute mapping: " + err.Error())
+	}
 	return err
 }
 
 // ---- Options ----
 func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context, attributeID, uberItemID string) (*string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var id string
 	err := db.QueryRowContext(ctx,
@@ -110,6 +124,7 @@ func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+		log.Error("Error fetching option ID by Uber item ID: " + err.Error())
 		return nil, err
 	}
 	return &id, nil
@@ -117,10 +132,16 @@ func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context
 
 func (r *AttributeMappingRepository) CreateOptionMapping(ctx context.Context, merchantID, optionID, uberItemID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO integration_uber_eats_options_mapping(merchant_id, configurable_attribute_option_id, item_id)
         VALUES(?, ?, ?)`,
 		merchantID, optionID, uberItemID)
+
+	if err != nil {
+		log.Error("Error creating option mapping: " + err.Error())
+	}
+
 	return err
 }

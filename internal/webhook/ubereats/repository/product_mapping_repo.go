@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -16,6 +17,7 @@ func NewProductMappingRepository(db *sql.DB) *ProductMappingRepository {
 
 func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context, merchantID, uberItemID string) (*string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var productID string
 	err := db.QueryRowContext(ctx,
@@ -28,6 +30,7 @@ func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+		log.Error("Error fetching product ID by Uber item ID: " + err.Error())
 		return nil, err
 	}
 	return &productID, nil
@@ -35,10 +38,16 @@ func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context
 
 func (r *ProductMappingRepository) CreateProductMapping(ctx context.Context, merchantID, productID, uberItemID string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO integration_uber_eats_products_mapping(merchant_id, product_id, item_id)
         VALUES(?, ?, ?)`,
 		merchantID, productID, uberItemID)
+
+	if err != nil {
+		log.Error("Error creating product mapping: " + err.Error())
+	}
+
 	return err
 }
