@@ -91,7 +91,8 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 	_, err = db.ExecContext(ctx, `
 		UPDATE orders
 		SET brand_status = 'EN_ROUTE_TO_DROPOFF',
-		    delivery_start = UTC_TIMESTAMP()
+		    delivery_start = UTC_TIMESTAMP(),
+			isDistributed = 1
 		WHERE order_id = ?
 	`, orderID)
 	if err != nil {
