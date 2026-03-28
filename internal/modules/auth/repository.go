@@ -476,3 +476,14 @@ func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, sta
 
 	return nil
 }
+
+func (r *AuthRepository) MarkAsOTPSent(ctx context.Context, userID string) error {
+	query := `UPDATE users SET mfa_otp_sent_at = UTC_TIMESTAMP() WHERE user_id = ?`
+
+	_, err := r.database.ExecContext(ctx, query, userID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

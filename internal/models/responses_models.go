@@ -101,6 +101,8 @@ var (
 	ErrMFARequired = errors.New("mfa_required")
 
 	ErrOTPMismatch = errors.New("otp_mismatch")
+
+	ErrOTPWaitTime = errors.New("otp_wait_time")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -111,6 +113,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrOTPWaitTime):
+		status = http.StatusForbidden
+		errorStatus = "otp_wait_time"
+		errorMsg = "The OTP code was provided too recently. Please try again later."
+
 	case errors.Is(err, ErrOTPMismatch):
 		status = http.StatusUnauthorized
 		errorStatus = "otp_mismatch"

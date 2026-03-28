@@ -97,6 +97,7 @@ type UserLoginRow struct {
 	MFAType       *string
 	MFAStatus     *string
 	MFAVerifiedAt *string
+	MFAOTPSentAt  *string
 
 	// Token de droits
 	Token      string

@@ -136,6 +136,32 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 	return false
 }
 
+func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) bool {
+	if s.redis == nil {
+		return false
+	}
+
+	// 1. Correction du layout : utiliser time.RFC3339 pour gérer le "T" et le "Z"
+	lastSentAt, err := time.Parse(time.RFC3339, *user.MFAOTPSentAt)
+	if err != nil {
+		// Si le format en DB est vraiment "YYYY-MM-DD HH:MM:SS" sans le T,
+		// on peut tenter un second parsing ou logger l'erreur
+		logger.FromContext(ctx).Warn("Cannot parse mfa date: " + err.Error())
+		return false
+	}
+
+	// 1.2. Logique de comparaison :
+	// On définit la limite
+	limit := time.Now().UTC().Add(1 * time.Minute)
+
+	// Si la date de dernier envoie est AVANT la limite, c'est trop vieux
+	if lastSentAt.Before(limit) {
+		return true // Renvoyer
+	}
+
+	return false
+}
+
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (map[string]interface{}, error) {
 	appID := convertApp(payload.App)
 	username := payload.Username + payload.Email
@@ -176,17 +202,16 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
 	if isBackoffice && s.isMFAVerificationRequired(ctx, user) {
+
+		// 3. Valider la session en base de données
+		err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
+		if err != nil {
+			logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+			return nil, errors.New("erreur interne lors de la validation")
+		}
+
 		s.SendMFACode(ctx, user, token, false)
 	}
-
-	// 3. Valider la session en base de données
-	err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
-	if err != nil {
-		logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
-		return nil, errors.New("erreur interne lors de la validation")
-	}
-
-	// ==============================================================
 
 	// MULTI-MERCHANT
 	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
@@ -228,6 +253,8 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		"cash_register_required_for_ordering": user.CashRegisterRequiredForOrdering,
 		"merchant_lng":                        user.MerchantLng,
 		"timezone":                            user.TimeZone,
+		"mfa_status":                          user.MFAStatus,
+		"mfa_type":                            user.MFAType,
 
 		"SNOSettings": map[string]interface{}{
 			"activated": user.SNOActivated,
@@ -452,6 +479,10 @@ func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, d
 func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token string, fallbackToSMS bool) error {
 	log := logger.FromContext(ctx)
 
+	if !s.canSendMFAOTP(ctx, user) {
+		return models.ErrAccountDisabled
+	}
+
 	// 1. Générer le code à 6 chiffres
 	otp, err := helpers.GenerateOTP()
 	if err != nil {
@@ -491,6 +522,8 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 		}
 		go s.email.SendMfaOTP(data)
 	}
+
+	s.repo.MarkAsOTPSent(ctx, user.UserID)
 
 	return nil // Retourne l'erreur du module d'envoi si nécessaire
 }
