@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/middleware"
 )
 
 type responseRecorder struct {
@@ -19,29 +21,23 @@ func (r *responseRecorder) WriteHeader(code int) {
 
 func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-			var bodyCopy []byte
+			var payload []byte = []byte("{}") // Par défaut
+
 			if r.Body != nil {
-				bodyCopy, _ = io.ReadAll(r.Body)
+				bodyCopy, _ := io.ReadAll(r.Body)
+				if len(bodyCopy) > 0 {
+					payload = bodyCopy
+				}
+				// On remet le body pour la suite
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyCopy))
 			}
 
-			var payload []byte
+			// Utilisation du WrapResponseWriter de Chi
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
-			if len(bodyCopy) == 0 {
-				payload = []byte("{}")
-			} else {
-				payload = bodyCopy
-			}
-
-			rec := &responseRecorder{
-				ResponseWriter: w,
-				statusCode:     200,
-			}
-
-			next.ServeHTTP(rec, r)
+			next.ServeHTTP(ww, r)
 
 			var userID *int64
 			var merchantID *int64
@@ -62,7 +58,7 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 				Method:     r.Method,
 				URL:        r.URL.String(),
 				Payload:    payload,
-				StatusCode: rec.statusCode,
+				StatusCode: ww.Status(), // ww récupère le vrai statut final
 				IP:         r.RemoteAddr,
 			})
 		})
