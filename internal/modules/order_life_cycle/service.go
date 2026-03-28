@@ -527,7 +527,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		// call Uber Eats integration async
 		log.Info("Async Call Uber Eats")
 		go func(mID, oID string) {
-			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			if err := s.uberSvc.AcceptOrder(ctxTimeout, mID, oID); err != nil {
 				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
@@ -538,7 +538,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 	case models.BrandDeliveroo:
 		if UserID != models.DeliverooWebhookUserID {
 			go func(mID, oID string) {
-				ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 				defer cancel()
 				if err := s.deliverooSvc.AcceptOrder(ctxTimeout, MerchantID, orderID); err != nil {
 					s.log.Error("deliveroo accept failed", zap.String("order_id", oID), zap.Error(err))
