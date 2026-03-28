@@ -137,7 +137,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorMsg = "unauthorized"
 
 	case errors.Is(err, ErrNoCashRegisterOpen):
-		status = http.StatusUnauthorized
+		status = http.StatusConflict
 		errorStatus = "no_cash_register_opened"
 		errorMsg = "no cash register opened for this device id"
 
