@@ -216,7 +216,9 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 				return nil, errors.New("erreur interne lors de la validation")
 			}
 
-			s.SendMFACode(ctx, user, token, false)
+			if s.canSendMFAOTP(ctx, user) {
+				s.SendMFACode(ctx, user, token, false)
+			}
 		}
 	} else {
 		s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
