@@ -65,7 +65,7 @@ func MapUberOrderToRequest(
 				GooglePlaceID:      order.Eater.Delivery.Location.GooglePlaceID,
 				MerchantID:         &merchantID,
 			},
-			MerchantApproval: "PENDING_APPROVAL",
+			MerchantApproval: models.MerchantApprovalPendingApproval,
 			Payments: []ordersModels.PaymentPayload{
 				{Amount: total, MOP: models.BrandUberEats},
 			},

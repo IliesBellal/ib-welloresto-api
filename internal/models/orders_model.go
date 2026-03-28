@@ -12,6 +12,8 @@ const (
 
 	FulfillmentTypeRestaurant = "DELIVERY_BY_RESTAURANT"
 	FulfillmentTypeDeliveroo  = "DELIVEROO"
+
+	MerchantApprovalPendingApproval = "PENDING_APPROVAL"
 )
 
 // OrderItemInsert represents an order item insert

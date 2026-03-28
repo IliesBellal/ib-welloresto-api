@@ -340,10 +340,9 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	}
 
 	// Helpers pour les pointeurs
-	deviceID := models.BrandDeliveroo
+	cashRegisterID := models.BrandDeliveroo
 	createdBy := models.DeliverooWebhookUserID
 	brandStatus := ord.Status
-	merchantApproval := "PENDING_APPROVAL"
 	fulfillmentType := models.FulfillmentTypeRestaurant
 
 	var parentOrderID *string
@@ -358,14 +357,13 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 
 	req := &models.RequestObject{
 		MerchantID: merchantID,
-		DeviceID:   &deviceID,
 		Order: models.OrderRequest{
 			OrderNum:         &orderNum,
 			Brand:            models.BrandDeliveroo,
 			BrandOrderNum:    &ord.DisplayID,
 			BrandOrderID:     &ord.ID,
 			ParentOrderID:    parentOrderID,
-			CashRegisterId:   &deviceID,
+			CashRegisterId:   &cashRegisterID,
 			FulfillmentType:  &fulfillmentType,
 			IsScheduled:      !ord.ASAP,
 			TTC:              ord.TotalPrice.Fractional,
@@ -379,10 +377,8 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 			Payments:         payments,
 			DeliveryFees:     0, // PHP mettait 0
 			EstimatedReady:   prepareFor,
-			MerchantApproval: merchantApproval,
+			MerchantApproval: models.MerchantApprovalPendingApproval,
 			BrandStatus:      brandStatus,
-			OnlinePayment:    total > 0, // Si Deliveroo a collecté l'argent
-			Currency:         nil,       // Défaut
 		},
 	}
 
@@ -591,7 +587,7 @@ func (s *DeliverooService) ProcessEvent(ctx context.Context, payload DeliverooWe
 
 		_, found := s.redis.Get(ctx, eventKey)
 		if found {
-			log.Info(fmt.Sprintf("[DELIVEROO] Event already processed (Redis cache), skipping: %s", eventKey))
+			log.Warn(fmt.Sprintf("[DELIVEROO] Event already processed (Redis cache), skipping: %s", eventKey))
 			return nil // Déjà traité, on valide en renvoyant nil
 		}
 

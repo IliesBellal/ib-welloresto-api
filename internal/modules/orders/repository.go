@@ -8,6 +8,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersRepository struct {
@@ -880,6 +881,7 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(ctx context.Context, opt
 
 func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {
 	var exists bool
+	db := dbutils.GetDB(ctx, r.database)
 
 	// La requête SELECT 1 est très légère pour la DB
 	query := `
@@ -891,7 +893,7 @@ func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, bran
 		)
 	`
 
-	err := r.database.QueryRowContext(ctx, query, brand, brandOrderID).Scan(&exists)
+	err := db.QueryRowContext(ctx, query, brand, brandOrderID).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
