@@ -156,7 +156,7 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 
 	// 1.2. Logique de comparaison :
 	// On définit la limite
-	limit := time.Now().UTC().Add(1 * time.Minute)
+	limit := time.Now().UTC().Add(-1 * time.Minute)
 
 	// Si la date de dernier envoie est AVANT la limite, c'est trop vieux
 	if lastSentAt.Before(limit) {
