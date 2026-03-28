@@ -6,18 +6,8 @@ import (
 )
 
 func (s *Service) HandleOrderCanceled(ctx context.Context, brandOrderID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.ordersRepo.CancelOrder(ctx, brandOrderID)
 	if err != nil {
-		return err
-	}
-
-	err = s.ordersRepo.CancelOrder(ctx, tx, brandOrderID)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
 		return err
 	}
 

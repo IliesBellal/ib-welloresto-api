@@ -5,21 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type StocksRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	database *sql.DB
 }
 
-func NewStockRepository(db *sql.DB, log *zap.Logger) *StocksRepository {
-	return &StocksRepository{db: db, log: log}
+func NewStockRepository(db *sql.DB) *StocksRepository {
+	return &StocksRepository{database: db}
 }
 
 func (r *StocksRepository) GetBarcodeInfo(ctx context.Context, merchantID, code string) (*models.ComponentBarcodeInfo, []models.AvailableUOM, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
         SELECT bc.component_id, c.name, quantity, bc.uom, price, uomd.uom_desc
@@ -32,7 +34,7 @@ func (r *StocksRepository) GetBarcodeInfo(ctx context.Context, merchantID, code 
         WHERE bc.merchant_id = ? AND barcode = ?;
     `
 
-	row := r.db.QueryRowContext(ctx, query, merchantID, code)
+	row := db.QueryRowContext(ctx, query, merchantID, code)
 	var info models.ComponentBarcodeInfo
 
 	err := row.Scan(
@@ -60,7 +62,7 @@ func (r *StocksRepository) GetBarcodeInfo(ctx context.Context, merchantID, code 
         WHERE component_id = ?;
     `
 
-	rows, err := r.db.QueryContext(ctx, convertQuery, info.ComponentID)
+	rows, err := db.QueryContext(ctx, convertQuery, info.ComponentID)
 	if err != nil {
 		return &info, nil, err
 	}
@@ -80,7 +82,9 @@ func (r *StocksRepository) GetBarcodeInfo(ctx context.Context, merchantID, code 
 }
 
 func (r *StocksRepository) DeleteBarcode(ctx context.Context, merchantID, code string) error {
-	_, err := r.db.ExecContext(ctx,
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
 		`DELETE FROM barcodes WHERE barcode = ? AND merchant_id = ?`,
 		code, merchantID,
 	)
@@ -88,7 +92,9 @@ func (r *StocksRepository) DeleteBarcode(ctx context.Context, merchantID, code s
 }
 
 func (r *StocksRepository) CreateBarcode(ctx context.Context, merchantID, code, componentID string) error {
-	_, err := r.db.ExecContext(ctx,
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO barcodes(merchant_id, barcode, component_id) VALUES (?, ?, ?)`,
 		merchantID, code, componentID,
 	)
@@ -98,17 +104,11 @@ func (r *StocksRepository) CreateBarcode(ctx context.Context, merchantID, code, 
 // AddStockBarcode: implémente la logique transactionnelle équivalente à addStockBarcode PHP.
 // Retourne nil si OK, ou une erreur.
 func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID string, userID string, barcode string, s models.BarcodeSpecs) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	rollback := func(err error) error {
-		_ = tx.Rollback()
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 1) Update barcodes
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE barcodes
 		SET last_scan = UTC_TIMESTAMP,
 		    price = ?,
@@ -118,12 +118,13 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 		  AND merchant_id = ?;
 	`, s.BCPrice, s.BCQuantity, s.BCUOM, barcode, merchantID)
 	if err != nil {
-		return rollback(err)
+		logger.FromContext(ctx).Error(err.Error())
+		return err
 	}
 
 	// 2) Update components stock using unit_of_measure_convert ratio
 	// stock = ROUND(stock + (c_quantity * bc_quantity * ratio), 4)
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE components
 		INNER JOIN unit_of_measure_convert ON components.unit_of_measure = unit_of_measure_convert.id_from
 			AND unit_of_measure_convert.id_to = ?
@@ -132,13 +133,14 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 		WHERE component_id = ?;
 	`, s.BCUOM, s.CQuantity, s.BCQuantity, s.CQuantity, s.BCQuantity, s.ComponentID)
 	if err != nil {
-		return rollback(err)
+		log.Error(err.Error())
+		return err
 	}
 
 	// 3) Update components purchase price info when auto_update_purchase_info is true
 	// purchase_price = CAST(bc_price as DECIMAL(5,3))*100,
 	// purchase_price_quantity = round(bc_quantity * ratio,4)
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE components
 		INNER JOIN unit_of_measure_convert ON components.unit_of_measure = unit_of_measure_convert.id_from
 			AND unit_of_measure_convert.id_to = ?
@@ -148,33 +150,37 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 		  AND auto_update_purchase_info IS TRUE;
 	`, s.BCUOM, s.BCPrice, s.BCQuantity, s.ComponentID)
 	if err != nil {
-		return rollback(err)
+		log.Error(err.Error())
+		return err
 	}
 
 	// 4) Insert stock_movements
 	// VALUES(:merchant_id, :user_id, :component_id, '2', '1',:c_quantity*:bc_quantity, :bc_uom, UTC_TIMESTAMP)
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO stock_movements(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, movement_date)
 		VALUES (?, ?, ?, '2', '1', ? * ?, ?, UTC_TIMESTAMP)
 	`, merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
 	if err != nil {
-		return rollback(err)
+		log.Error(err.Error())
+		return err
 	}
 
 	// 5) Insert purchased_components
 	// VALUES(:merchant_id, :component_id, :barcode, :bc_price, :bc_quantity, :bc_quantity * :c_quantity, :bc_uom, :c_quantity, UTC_TIMESTAMP)
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO purchased_components(
 			merchant_id, component_id, barcode, price, quantity, remaining_quantity, uom, bought_quantity, registration_date
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP)
 	`, merchantID, s.ComponentID, barcode, s.BCPrice, s.BCQuantity, s.BCQuantity*s.CQuantity, s.BCUOM, s.CQuantity)
 	if err != nil {
-		return rollback(err)
+		log.Error(err.Error())
+		return err
 	}
 
 	purchasedComponentID, err := res.LastInsertId()
 	if err != nil {
-		return rollback(err)
+		log.Error(err.Error())
+		return err
 	}
 
 	// 6) If DLC provided -> insert expiration_dates
@@ -186,43 +192,32 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 			_, perr2 := time.Parse("2006-01-02 15:04:05", *s.DLC)
 			if perr2 != nil {
 				// keep it as-is but log a warning; still attempt to insert
-				r.log.Warn("invalid dlc format, inserting raw value", zap.String("dlc", *s.DLC))
+				log.Warn("invalid dlc format, inserting raw value", zap.String("dlc", *s.DLC))
 			}
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
 			INSERT INTO expiration_dates(merchant_id, component_id, expiration_date, creation_date, purchased_component_id)
 			VALUES (?, ?, ?, UTC_TIMESTAMP, ?)
 		`, merchantID, s.ComponentID, *s.DLC, purchasedComponentID)
 		if err != nil {
-			return rollback(err)
+			log.Error(err.Error())
+			return err
 		}
-	}
-
-	// COMMIT
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 
 	return nil
 }
 
 func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, userID string, req models.StockLossRequest) error {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	rollback := func(err error) error {
-		_ = tx.Rollback()
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	switch req.Type {
 
 	case "COMPONENT":
 		// 1️⃣ UPDATE COMPONENT STOCK
-		_, err = tx.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
             UPDATE components c
             INNER JOIN unit_of_measure_convert uomc 
                 ON c.unit_of_measure = uomc.id_from AND uomc.id_to = ?
@@ -242,11 +237,12 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
             WHERE c.component_id = ?;
         `, req.UOM, req.Qty, req.Qty, req.Qty, req.ObjectID)
 		if err != nil {
-			return rollback(err)
+			log.Error(err.Error())
+			return err
 		}
 
 		// 2️⃣ INSERT MOVEMENT
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
             INSERT INTO stock_movements
                 (merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment)
             SELECT u.merchant_id, u.user_id, ?, NULL, 2, 4, ?, ?, NULL, ?
@@ -254,13 +250,14 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
             WHERE u.user_id = ?;
         `, req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
 		if err != nil {
-			return rollback(err)
+			log.Error(err.Error())
+			return err
 		}
 
 	case "PRODUCT":
 
 		// 1️⃣ GET COMPONENTS IMPACTED BY THE PRODUCT LOSS
-		rows, err := tx.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, `
             SELECT 
                 c.merchant_id,
                 p.product_id,
@@ -276,7 +273,8 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
             WHERE p.product_id = ?;
         `, req.Qty, req.ObjectID)
 		if err != nil {
-			return rollback(err)
+			log.Error(err.Error())
+			return err
 		}
 
 		type rowItem struct {
@@ -291,7 +289,8 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 		for rows.Next() {
 			var it rowItem
 			if err := rows.Scan(&it.MerchantID, &it.ProductID, &it.ComponentID, &it.Qty, &it.UOM); err != nil {
-				return rollback(err)
+				log.Error(err.Error())
+				return err
 			}
 			items = append(items, it)
 		}
@@ -299,23 +298,25 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 
 		// 2️⃣ APPLY STOCK LOSS FOR EACH COMPONENT
 		for _, it := range items {
-			_, err = tx.ExecContext(ctx, `
+			_, err = db.ExecContext(ctx, `
                 UPDATE components
                 SET stock = ROUND(stock - ?, 4)
                 WHERE component_id = ?;
             `, it.Qty, it.ComponentID)
 			if err != nil {
-				return rollback(err)
+				log.Error(err.Error())
+				return err
 			}
 
-			_, err = tx.ExecContext(ctx, `
+			_, err = db.ExecContext(ctx, `
                 INSERT INTO stock_movements(
                     merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment
                 )
                 VALUES (?, ?, ?, ?, 2, 4, ?, ?, NULL, ?);
             `, it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
 			if err != nil {
-				return rollback(err)
+				log.Error(err.Error())
+				return err
 			}
 		}
 
@@ -323,10 +324,12 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 		return errors.New("invalid type for stock loss")
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID string, t string) ([]models.StockCategory, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var qCateg, qObjects string
 
@@ -361,7 +364,7 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 	}
 
 	// --- Load UOM ---
-	resUOM, err := r.db.QueryContext(ctx, `
+	resUOM, err := db.QueryContext(ctx, `
         SELECT uom.id, id_to, uomd.uom_desc
         FROM unit_of_measure uom
         INNER JOIN unit_of_measure_convert uomc ON uom.id = uomc.id_from
@@ -369,6 +372,7 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
         WHERE uomd.lang = 'FR';
     `)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -387,8 +391,9 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 	resUOM.Close()
 
 	// --- Load objects ---
-	resObj, err := r.db.QueryContext(ctx, qObjects, merchantID)
+	resObj, err := db.QueryContext(ctx, qObjects, merchantID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -428,8 +433,9 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 	}
 
 	// --- Load categories ---
-	resCateg, err := r.db.QueryContext(ctx, qCateg, merchantID)
+	resCateg, err := db.QueryContext(ctx, qCateg, merchantID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 

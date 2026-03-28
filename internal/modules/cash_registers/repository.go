@@ -87,13 +87,6 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback()
-	*/
 	var (
 		startDate string
 		endDate   *string

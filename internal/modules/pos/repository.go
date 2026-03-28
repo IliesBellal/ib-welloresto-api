@@ -6,32 +6,32 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type POSRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewPOSRepository(db *sql.DB) *POSRepository {
-	return &POSRepository{db: db}
+	return &POSRepository{database: db}
 }
 
 // --------------------
 // UPDATE is_open
 // --------------------
 func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, status bool) error {
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	v := 0
 	if status {
 		v = 1
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE merchant_parameters mp
 		INNER JOIN users u ON mp.merchant_id = u.merchant_id
 		INNER JOIN users_rights ur ON ur.id = u.access_id
@@ -41,14 +41,16 @@ func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, stat
 	)
 
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error updating POS status for user %s: %v", userID, err))
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) ([]models.DeletionReason, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	query := `
 		SELECT dr.deletion_reason_id,
@@ -66,8 +68,9 @@ func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) (
 		  AND dr.deletion_reason_object = ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, object)
+	rows, err := db.QueryContext(ctx, query, object)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching deletion reasons for object %s: %v", object, err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -94,27 +97,25 @@ func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) (
 }
 
 func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*models.POSStatus, error) {
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	var timezone string
 
-	err = tx.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT timezone FROM merchant WHERE id = ?`,
 		merchantID,
 	).Scan(&timezone)
 
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error fetching merchant timezone for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 
 	// Convert timezone
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error loading timezone for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 
@@ -127,31 +128,31 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	}
 
 	// CALL GET_POS_STATUS
-	_, err = tx.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`CALL GET_POS_STATUS(?, ?, @p_is_open, @p_last_start, @p_last_end, @p_current_start, @p_current_end, @p_next_start, @p_next_end)`,
 		merchantID, currentDate,
 	)
 
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error calling GET_POS_STATUS for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 
 	var isOpen int
 	var nextStart, nextEnd sql.NullString
 
-	err = tx.QueryRowContext(ctx,
+	err = db.QueryRowContext(ctx,
 		`SELECT @p_is_open, @p_next_start, @p_next_end`,
 	).Scan(&isOpen, &nextStart, &nextEnd)
 
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error fetching POS status for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 
 	// OPEN/CLOSED based on hours
 	var status string
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT 
 		CASE WHEN ? BETWEEN hour_from AND hour_to THEN 'OPEN' ELSE 'CLOSED' END AS s
 		FROM hours_of_operation
@@ -170,7 +171,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	// Full POS Status Query
 	var result models.POSStatus
 
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT 
 			mp.is_open,
 			?,
@@ -194,7 +195,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	)
 
 	if err != nil {
-		tx.Rollback()
+		log.Error(fmt.Sprintf("Error fetching POS status for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 
@@ -202,20 +203,21 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	result.Wello.NextStart = nextStart.String
 	result.Wello.NextEnd = nextEnd.String
 
-	tx.Commit()
-
 	return &result, nil
 }
 
 func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID string, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-	res, err := r.db.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`UPDATE merchant_parameters 
 		 SET kitchen_show_only_paid = ?
 		 WHERE merchant_id = ?`,
 		status, merchantID,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error toggling production paid only for ID %s: %v", merchantID, err))
 		return 0, err
 	}
 
@@ -252,14 +254,17 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 }
 
 func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-	res, err := r.db.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`UPDATE merchant_parameters 
 		 SET disable_components_under_safety_stock = ?
 		 WHERE merchant_id = ?`,
 		status, merchantID,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error toggling safety stock for ID %s: %v", merchantID, err))
 		return 0, err
 	}
 
@@ -267,14 +272,17 @@ func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string
 }
 
 func (r *POSRepository) ToggleScanNOrder(ctx context.Context, merchantID string, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-	res, err := r.db.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`UPDATE scannorder_settings 
 		 SET activated = ?
 		 WHERE merchant_id = ?`,
 		status, merchantID,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error toggling scan and order for ID %s: %v", merchantID, err))
 		return 0, err
 	}
 
@@ -282,8 +290,10 @@ func (r *POSRepository) ToggleScanNOrder(ctx context.Context, merchantID string,
 }
 
 func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) ([]models.DeliveryMan, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT DISTINCT 
             usv.user_id,
             usv.first_name,
@@ -298,6 +308,7 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
           AND ur.enabled = TRUE
     `, merchantID)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching delivery men for ID %s: %v", merchantID, err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -315,6 +326,7 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
 			&d.Status,
 		)
 		if err != nil {
+			log.Error(fmt.Sprintf("Error scanning delivery men for ID %s: %v", merchantID, err))
 			return nil, err
 		}
 
@@ -325,9 +337,12 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
 }
 
 func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	var exists bool
 
-	err := r.db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT EXISTS(
 			SELECT 1 FROM restaurant_ticket WHERE barcode = ?
 		)`,
@@ -335,6 +350,7 @@ func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, er
 	).Scan(&exists)
 
 	if err != nil {
+		log.Error(fmt.Sprintf("Error checking if ticket is used for code %s: %v", code, err))
 		return false, err
 	}
 
@@ -342,41 +358,41 @@ func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, er
 }
 
 func (s *POSRepository) UpdateMerchantSettings(ctx context.Context, merchantID string, req *models.UpdateMerchantSettingsRequest) error {
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	log := logger.FromContext(ctx)
 
 	if req.Merchant != nil {
-		if err := s.UpdateMerchant(ctx, tx, merchantID, req.Merchant); err != nil {
+		if err := s.UpdateMerchant(ctx, merchantID, req.Merchant); err != nil {
+			log.Error(fmt.Sprintf("Error updating merchant info for ID %s: %v", merchantID, err))
 			return err
 		}
 	}
 
 	if req.Parameters != nil {
-		if err := s.UpdateMerchantParameters(ctx, tx, merchantID, req.Parameters); err != nil {
+		if err := s.UpdateMerchantParameters(ctx, merchantID, req.Parameters); err != nil {
+			log.Error(fmt.Sprintf("Error updating merchant parameters for ID %s: %v", merchantID, err))
 			return err
 		}
 	}
 
 	if req.Marketing != nil {
-		if err := s.UpdateMerchantMarketing(ctx, tx, merchantID, req.Marketing); err != nil {
+		if err := s.UpdateMerchantMarketing(ctx, merchantID, req.Marketing); err != nil {
+			log.Error(fmt.Sprintf("Error updating merchant marketing for ID %s: %v", merchantID, err))
 			return err
 		}
 	}
 
 	if req.Scannorder != nil {
-		if err := s.UpdateScannorderSettings(ctx, tx, merchantID, req.Scannorder); err != nil {
+		if err := s.UpdateScannorderSettings(ctx, merchantID, req.Scannorder); err != nil {
+			log.Error(fmt.Sprintf("Error updating scannorder settings for ID %s: %v", merchantID, err))
 			return err
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
-func (r *POSRepository) UpdateMerchant(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantSettings) error {
+func (r *POSRepository) UpdateMerchant(ctx context.Context, merchantID string, req *models.MerchantSettings) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -458,11 +474,12 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, tx *sql.Tx, merchant
 		WHERE id = ?
 	`, strings.Join(updates, ", "))
 
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, tx *sql.Tx, merchantID string, req *models.ScannorderSettings) error {
+func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, merchantID string, req *models.ScannorderSettings) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -532,11 +549,12 @@ func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, tx *sql.Tx
 		WHERE merchant_id = ?
 	`, strings.Join(updates, ", "))
 
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantMarketingSettings) error {
+func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, merchantID string, req *models.MerchantMarketingSettings) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -582,11 +600,12 @@ func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, tx *sql.Tx,
 		WHERE merchant_id = ?
 	`, strings.Join(updates, ", "))
 
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, tx *sql.Tx, merchantID string, req *models.MerchantParametersSettings) error {
+func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID string, req *models.MerchantParametersSettings) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -724,7 +743,7 @@ func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, tx *sql.Tx
 		WHERE merchant_id = ?
 	`, strings.Join(updates, ", "))
 
-	_, err := tx.ExecContext(ctx, query, args...)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -735,6 +754,8 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	*models.ScannorderSettings,
 	error,
 ) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// ───────────────────────────────
 	// 1) Merchant
@@ -749,7 +770,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	`
 
 	var m models.MerchantSettings
-	row := r.db.QueryRowContext(ctx, queryMerchant, merchantID)
+	row := db.QueryRowContext(ctx, queryMerchant, merchantID)
 	err := row.Scan(
 		&m.MerchantID,
 		&m.BusinessName,
@@ -773,6 +794,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&m.IsActive,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching merchant settings for ID %s: %v", merchantID, err))
 		return nil, nil, nil, nil, err
 	}
 
@@ -799,7 +821,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	`
 
 	var params models.MerchantParametersSettings
-	row = r.db.QueryRowContext(ctx, queryParams, merchantID)
+	row = db.QueryRowContext(ctx, queryParams, merchantID)
 	err = row.Scan(
 		&params.MerchantID,
 		&params.ManageOnSite,
@@ -862,7 +884,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	`
 
 	var marketing models.MerchantMarketingSettings
-	row = r.db.QueryRowContext(ctx, queryMarketing, merchantID)
+	row = db.QueryRowContext(ctx, queryMarketing, merchantID)
 	err = row.Scan(
 		&marketing.ID,
 		&marketing.MerchantID,
@@ -880,6 +902,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&marketing.UpdatedAt,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching merchant marketing settings for ID %s: %v", merchantID, err))
 		return &m, &params, nil, nil, err
 	}
 
@@ -904,7 +927,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	`
 
 	var scann models.ScannorderSettings
-	row = r.db.QueryRowContext(ctx, queryScann, merchantID)
+	row = db.QueryRowContext(ctx, queryScann, merchantID)
 	err = row.Scan(
 		&scann.MerchantID,
 		&scann.Activated,
@@ -945,6 +968,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&scann.SEOCuisineType,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching scannorder settings for ID %s: %v", merchantID, err))
 		return &m, &params, &marketing, nil, err
 	}
 

@@ -8,14 +8,15 @@ import (
 	"fmt"
 	"strings"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type UsersRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewUserRepository(db *sql.DB) *UsersRepository {
-	return &UsersRepository{db: db}
+	return &UsersRepository{database: db}
 }
 
 func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {
@@ -102,7 +103,7 @@ WHERE ur.token = ? OR u.token = ?
 LIMIT 1;
 `
 
-	row := r.db.QueryRowContext(ctx, query, token, token)
+	row := r.database.QueryRowContext(ctx, query, token, token)
 
 	data := &models.UserLoginRow{}
 
@@ -159,7 +160,7 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
         LIMIT 1;
     `
 
-	row := r.db.QueryRowContext(ctx, query, userID, merchantID)
+	row := r.database.QueryRowContext(ctx, query, userID, merchantID)
 
 	var res models.OrderUser
 	err := row.Scan(
@@ -263,29 +264,15 @@ func (r *UsersRepository) UpdateUserSettings(ctx context.Context, userID string,
 		WHERE user_id = ?
 	`, strings.Join(updates, ", "))
 
-	_, err := r.db.ExecContext(ctx, query, args...)
+	_, err := r.database.ExecContext(ctx, query, args...)
 	return err
 }
 
-func (r *UsersRepository) UpdatePassword(
-	ctx context.Context,
-	userID string,
-	merchantID string,
-	hash string,
-) error {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	// Sécurité : rollback par défaut
-	defer func() {
-		_ = tx.Rollback()
-	}()
+func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, merchantID string, hash string) error {
+	db := dbutils.GetDB(ctx, r.database)
 
 	// 1. Update password
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE users
 		SET password = ?
 		WHERE user_id = ?
@@ -303,7 +290,7 @@ func (r *UsersRepository) UpdatePassword(
 	}
 
 	// 2. Load all users_rights for this user
-	rowsUR, err := tx.QueryContext(ctx, `
+	rowsUR, err := db.QueryContext(ctx, `
 		SELECT id
 		FROM users_rights
 		WHERE user_id = ?
@@ -337,7 +324,7 @@ func (r *UsersRepository) UpdatePassword(
 			return err
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
 			UPDATE users_rights
 			SET token = ?
 			WHERE id = ?
@@ -345,11 +332,6 @@ func (r *UsersRepository) UpdatePassword(
 		if err != nil {
 			return err
 		}
-	}
-
-	// 4. Commit
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 
 	return nil

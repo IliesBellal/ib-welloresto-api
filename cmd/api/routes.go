@@ -241,11 +241,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	usersService := usersModule.NewUsersService(usersRepo)
 
 	// ---- Stocks ----
-	stocksRepo := stocksModule.NewStockRepository(mysqlDB, log)
+	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
 	stocksService := stocksModule.NewStockService(stocksRepo)
 
 	// ---- Services ----
-	servicesRepo := servicesModule.NewServicesRepository(mysqlDB, log)
+	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
 
 	// ---- Allergens ----

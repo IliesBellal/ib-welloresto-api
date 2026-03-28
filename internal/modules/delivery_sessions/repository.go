@@ -5,21 +5,26 @@ import (
 	"database/sql"
 	"fmt"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 // LegacyOrdersRepository implements the PHP-style (legacy) data retrieval for pending orders
 type DeliverySessionsRepository struct {
-	db            *sql.DB
+	database      *sql.DB
 	ordersFetcher *orders.OrdersFetcher
 }
 
 func NewDeliverySessionsRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *DeliverySessionsRepository {
-	return &DeliverySessionsRepository{db: db, ordersFetcher: ordersF}
+	return &DeliverySessionsRepository{database: db, ordersFetcher: ordersF}
 }
 
 func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]DeliverySession, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	// 1. Récupérer les sessions actives
 	sessions, err := r.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")
 	if err != nil {
@@ -51,8 +56,9 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		WHERE delivery_session_id IN (%s)
 	`, sessionIDs)
 
-	rows, err := r.db.QueryContext(ctx, qOrderIDs)
+	rows, err := db.QueryContext(ctx, qOrderIDs)
 	if err != nil {
+		log.Error("failed to fetch session order ids: " + err.Error())
 		return nil, fmt.Errorf("failed to fetch session order ids: %w", err)
 	}
 	defer rows.Close()
@@ -124,14 +130,18 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 }
 
 func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, merchantID string, filterStatus string) ([]DeliverySession, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	q := `
        SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
        FROM delivery_session ds
        INNER JOIN users u on u.user_id = ds.user_id
        WHERE ds.merchant_id = ? AND ` + filterStatus
 
-	rows, err := r.db.QueryContext(ctx, q, merchantID)
+	rows, err := db.QueryContext(ctx, q, merchantID)
 	if err != nil {
+		log.Error("failed to fetch delivery sessions: " + err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -141,6 +151,7 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 		var profilePic, firstName, lastName, planningColor, status, id, userID sql.NullString
 		var lat, lng sql.NullFloat64
 		if err := rows.Scan(&id, &userID, &profilePic, &firstName, &lastName, &lat, &lng, &planningColor, &status); err != nil {
+			log.Error("failed to scan delivery session: " + err.Error())
 			return nil, err
 		}
 
@@ -162,11 +173,8 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 }
 
 func (r *DeliverySessionsRepository) GetDeliverySessions(ctx context.Context, merchantID string) ([]models.DeliverySession, error) {
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	qDeliverySessions := `
 SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
@@ -174,8 +182,9 @@ FROM delivery_session ds
 INNER JOIN users u on u.user_id = ds.user_id
 WHERE status IN ('1','PENDING')
 AND ds.merchant_id = ?`
-	rows, err := tx.QueryContext(ctx, qDeliverySessions, merchantID)
+	rows, err := db.QueryContext(ctx, qDeliverySessions, merchantID)
 	if err != nil {
+		log.Error("failed to fetch delivery sessions: " + err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -189,6 +198,7 @@ AND ds.merchant_id = ?`
 		var status sql.NullString
 
 		if err := rows.Scan(&id, &userID, &profilePic, &firstName, &lastName, &lat, &lng, &planningColor, &status); err != nil {
+			log.Error("failed to scan delivery session: " + err.Error())
 			return nil, err
 		}
 		ds := models.DeliverySession{
@@ -208,25 +218,18 @@ AND ds.merchant_id = ?`
 		sessions = append(sessions, ds)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 	return sessions, nil
 }
 
 func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, req *models.DeliverySessionRequest) (*models.DeliverySession, error) {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	userID := req.DeliveryMan.UserID
 	merchantID := req.MerchantID
 
 	// 1. Close finished delivery sessions (PHP calls closeFinishedDeliverySession)
-	_, _ = tx.ExecContext(ctx, `
+	_, _ = db.ExecContext(ctx, `
 		UPDATE delivery_session
 		SET status = 'FINISHED'
 		WHERE user_id = ? AND status IN ('1','PENDING') AND end_date < UTC_TIMESTAMP
@@ -234,21 +237,23 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 
 	// 2. Check if a session is already active
 	var existing string
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT id FROM delivery_session
 		WHERE user_id = ? AND status IN ('1','PENDING')
 	`, userID).Scan(&existing)
 
 	if err != sql.ErrNoRows {
+		log.Error("StartDeliverySession: active session already exists for user " + userID)
 		return nil, models.ErrDeliverySessionAlreadyActive
 	}
 
 	// 3. Insert new delivery_session
-	res, err := tx.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO delivery_session (user_id, merchant_id, start_date, distance, duration, status)
 		VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'PENDING')
 	`, userID, merchantID, req.Distance, req.Duration)
 	if err != nil {
+		log.Error("StartDeliverySession: failed to insert delivery session: " + err.Error())
 		return nil, err
 	}
 
@@ -256,38 +261,27 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 
 	// 4. Insert delivery_session_order
 	for i, o := range req.Orders {
-		_, err := tx.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
 			INSERT INTO delivery_session_order (delivery_session_id, order_id, priority)
 			VALUES (?, ?, ?)
 		`, sessionID, o.OrderID, i)
 		if err != nil {
+			log.Error("StartDeliverySession: failed to insert delivery session order: " + err.Error())
 			return nil, err
 		}
 	}
 
 	// 5. Update orders brand_status
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE orders o
 		INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		SET o.brand_status = 'EN_ROUTE_TO_DROPOFF'
 		WHERE dso.delivery_session_id = ?
 	`, sessionID)
 	if err != nil {
+		log.Error("StartDeliverySession: failed to update order brand status: " + err.Error())
 		return nil, err
 	}
-
-	// 6. Commit
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	// 7. Notifications (equivalent PHP)
-	/*
-		r.sendNewDeliverySessionNotification(merchantID, fmt.Sprint(sessionID))
-		for _, o := range req.Orders {
-			r.sendDeliveryStartSMS(merchantID, o.OrderID)
-		}
-	*/
 
 	// 8. Return the Delivery Session object (like Management->getDeliverySession())
 	session := &models.DeliverySession{
@@ -311,14 +305,11 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 }
 
 func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 1) Revert orders to READY_FOR_HANDOFF
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE orders o
         INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -327,37 +318,33 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
         AND o.brand_status = 'EN_ROUTE_TO_DROPOFF'
 	`, sessionID)
 	if err != nil {
-		tx.Rollback()
+		log.Error("CancelDeliverySession: failed to update order brand status: " + err.Error())
 		return nil, err
 	}
 
 	// ⚠ PHP version commented out the negative MerchantID update → we skip it, as requested.
 
 	// 2) Mark session as canceled
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE delivery_session
         SET status = 'CANCELED'
         WHERE id = ?
         AND status >= 0
 	`, sessionID)
 	if err != nil {
-		tx.Rollback()
+		log.Error("CancelDeliverySession: failed to update delivery session status: " + err.Error())
 		return nil, err
 	}
 
 	// 3) Retrieve merchant_id
 	var merchantID string
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
         SELECT merchant_id
         FROM delivery_session
         WHERE id = ?
 	`, sessionID).Scan(&merchantID)
 	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if err = tx.Commit(); err != nil {
+		log.Error("CancelDeliverySession: failed to retrieve merchant ID: " + err.Error())
 		return nil, err
 	}
 
@@ -369,14 +356,11 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 }
 
 func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 1) Update orders
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE orders o
         INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -387,24 +371,24 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
         AND ds.status NOT IN ('-1','CLOSED','CANCELED')
 	`, sessionID)
 	if err != nil {
-		tx.Rollback()
+		log.Error("CloseDeliverySession: failed to update order status: " + err.Error())
 		return nil, err
 	}
 
 	// 2) Mark session as DONE
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE delivery_session
         SET status = 'DONE'
         WHERE id = ?
         AND status NOT IN ('-1','CLOSED','CANCELED')
 	`, sessionID)
 	if err != nil {
-		tx.Rollback()
+		log.Error("CloseDeliverySession: failed to update delivery session status: " + err.Error())
 		return nil, err
 	}
 
 	// 3) Update payments user_id
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE payments p
         INNER JOIN delivery_session_order dso ON dso.order_id = p.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -412,23 +396,19 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
         WHERE ds.id = ?
 	`, sessionID)
 	if err != nil {
-		tx.Rollback()
+		log.Error("CloseDeliverySession: failed to update payment user ID: " + err.Error())
 		return nil, err
 	}
 
 	// retrieve merchant
 	var merchantID string
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
         SELECT merchant_id
         FROM delivery_session
         WHERE id = ?
 	`, sessionID).Scan(&merchantID)
 	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if err = tx.Commit(); err != nil {
+		log.Error("CloseDeliverySession: failed to retrieve merchant ID: " + err.Error())
 		return nil, err
 	}
 
@@ -440,27 +420,25 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
 }
 
 func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, merchantID, sessionID string) (*models.DeliverySession, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 1️⃣ Fetch session basic info
 	var session models.DeliverySession
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT id, status
 		FROM delivery_session
 		WHERE id = ?
 	`, sessionID).Scan(&session.DeliverySessionID, &session.Status)
 
 	if err != nil {
+		log.Error("GetDeliverySession: failed to fetch delivery session: " + err.Error())
 		return nil, err
 	}
 
 	// 2️⃣ Fetch delivery man info
 	var deliveryMan models.OrderUser
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT DISTINCT usv.user_id, usv.first_name, usv.last_name, usv.lat, usv.lng, usv.status
 		FROM user_status_view usv
 		INNER JOIN users_rights ur ON ur.id = usv.user_id
@@ -479,16 +457,18 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 	)
 
 	if err == sql.ErrNoRows {
+		log.Error("GetDeliverySession: delivery man not found")
 		return nil, fmt.Errorf("cannot_find_delivery_man")
 	}
 	if err != nil {
+		log.Error("GetDeliverySession: failed to fetch delivery man: " + err.Error())
 		return nil, err
 	}
 
 	session.DeliveryMan = deliveryMan
 
 	// 3️⃣ Get order IDs in priority order
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
 		SELECT o.order_id
 		FROM delivery_session ds
 		INNER JOIN delivery_session_order dso ON dso.delivery_session_id = ds.id
@@ -499,6 +479,7 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 	`, sessionID, merchantID)
 
 	if err != nil {
+		log.Error("GetDeliverySession: failed to fetch order IDs: " + err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -514,11 +495,6 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 
 	// 4️⃣ Fetch full order objects using your existing function
 	var allOrders []models.Order
-
-	// 5️⃣ Commit the transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 
 	for _, oid := range orderIDs {
 		filter := fmt.Sprintf(" AND o.order_id = '%s' ", oid)

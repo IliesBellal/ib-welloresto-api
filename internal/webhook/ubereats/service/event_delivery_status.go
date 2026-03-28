@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 )
@@ -9,6 +10,7 @@ import (
 func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string, status string) error {
 	merchantID, orderID, err := s.ordersRepo.GetOrderIDsByBrandOrderID(ctx, brandOrderID)
 	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
 		return err
 	}
 
@@ -22,15 +24,8 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 		return nil
 
 	case "EN_ROUTE_TO_DROPOFF":
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if err := s.ordersRepo.MarkEnRouteToDropoff(ctx, tx, brandOrderID); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.ordersRepo.MarkEnRouteToDropoff(ctx, brandOrderID); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return err
 		}
 		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
@@ -43,18 +38,11 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 		return nil
 
 	case "FAILED":
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if err := s.ordersRepo.MarkFailed(ctx, tx, brandOrderID); err != nil {
-			tx.Rollback()
+		if err := s.ordersRepo.MarkFailed(ctx, brandOrderID); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
 			return err
 		}
 		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-		if err := tx.Commit(); err != nil {
-			return err
-		}
 	}
 
 	return nil

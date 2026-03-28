@@ -40,14 +40,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	// name column = first_name + " " + last_name (legacy field)
 	fullName := strings.TrimSpace(req.FirstName) + " " + strings.TrimSpace(req.LastName)
 
-	// --- Transaction ---
-	tx, err := s.userRepo.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback() //nolint:errcheck — superseded by explicit Commit below
-
-	if err := s.userRepo.CreateUser(ctx, tx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); err != nil {
+	if err := s.userRepo.CreateUser(ctx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); err != nil {
 		return "", err
 	}
 
@@ -57,10 +50,10 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 		if err != nil {
 			return "", err
 		}
-		if _, err := s.userRepo.InsertUserRights(ctx, tx, userID, *req.MerchantID, req.Admin, rightsToken); err != nil {
+		if _, err := s.userRepo.InsertUserRights(ctx, userID, *req.MerchantID, req.Admin, rightsToken); err != nil {
 			return "", err
 		}
 	}
 
-	return userID, tx.Commit()
+	return userID, nil
 }

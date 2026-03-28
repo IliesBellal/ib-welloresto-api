@@ -2,7 +2,6 @@ package pos
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -22,31 +21,25 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 		return CreateMerchantResponse{}, err
 	}
 
-	tx, err := s.posRepo.db.BeginTx(ctx, nil)
-	if err != nil {
-		return CreateMerchantResponse{}, err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
 	// Step 1 — create merchant row
-	merchantID, err := s.posRepo.InsertMerchant(ctx, tx, req, merchantToken)
+	merchantID, err := s.posRepo.InsertMerchant(ctx, req, merchantToken)
 	if err != nil {
 		return CreateMerchantResponse{}, err
 	}
 
 	// Step 2 — initialise companion tables
-	if err := s.posRepo.InitMerchantSatellites(ctx, tx, merchantID); err != nil {
+	if err := s.posRepo.InitMerchantSatellites(ctx, merchantID); err != nil {
 		return CreateMerchantResponse{}, err
 	}
 
 	// Step 3 — optional user linkage (within same transaction)
 	if strings.TrimSpace(req.UserID) != "" {
-		if _, _, err := s.insertUserRightsTx(ctx, tx, req.UserID, merchantID, req.Admin); err != nil {
+		if _, _, err := s.insertUserRightsTx(ctx, req.UserID, merchantID, req.Admin); err != nil {
 			return CreateMerchantResponse{}, err
 		}
 	}
 
-	return CreateMerchantResponse{MerchantID: merchantID}, tx.Commit()
+	return CreateMerchantResponse{MerchantID: merchantID}, nil
 }
 
 // LinkUser links an existing user to an existing merchant with given rights.
@@ -55,29 +48,23 @@ func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUse
 		return LinkUserResponse{}, models.ErrInvalidInput
 	}
 
-	tx, err := s.posRepo.db.BeginTx(ctx, nil)
-	if err != nil {
-		return LinkUserResponse{}, err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	token, id, err := s.insertUserRightsTx(ctx, tx, req.UserID, req.MerchantID, req.Admin)
+	token, id, err := s.insertUserRightsTx(ctx, req.UserID, req.MerchantID, req.Admin)
 	if err != nil {
 		return LinkUserResponse{}, err
 	}
 
-	return LinkUserResponse{RightsID: id, Token: token}, tx.Commit()
+	return LinkUserResponse{RightsID: id, Token: token}, nil
 }
 
 // insertUserRightsTx is the shared helper that inserts a users_rights row and
 // returns (token, rowID, error). It is used both by CreateMerchant and LinkUser.
-func (s *POSService) insertUserRightsTx(ctx context.Context, tx *sql.Tx, userID, merchantID string, admin bool) (string, int, error) {
+func (s *POSService) insertUserRightsTx(ctx context.Context, userID, merchantID string, admin bool) (string, int, error) {
 	rightsToken, err := helpers.GenerateToken(16) // 32-char hex token → VARCHAR(255)
 	if err != nil {
 		return "", 0, err
 	}
 
-	id, err := s.posRepo.InsertUserRights(ctx, tx, userID, merchantID, admin, rightsToken)
+	id, err := s.posRepo.InsertUserRights(ctx, userID, merchantID, admin, rightsToken)
 	if err != nil {
 		return "", 0, err
 	}

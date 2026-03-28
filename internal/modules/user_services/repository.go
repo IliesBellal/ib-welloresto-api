@@ -4,31 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"welloresto-api/internal/models"
-
-	"go.uber.org/zap"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type ServicesRepository struct {
-	db  *sql.DB
-	log *zap.Logger
+	database *sql.DB
 }
 
-func NewServicesRepository(db *sql.DB, log *zap.Logger) *ServicesRepository {
-	return &ServicesRepository{db: db, log: log}
+func NewServicesRepository(db *sql.DB) *ServicesRepository {
+	return &ServicesRepository{database: db}
 }
 
 func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID string, deviceID string) (*models.CurrentServiceResponse, error) {
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// ------------------------------------------------------
 	// 1 — CURRENT SERVICE
@@ -43,7 +31,7 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 
 	var svc *models.PerformedService
 
-	row := tx.QueryRowContext(ctx, qService, userID)
+	row := db.QueryRowContext(ctx, qService, userID)
 	var (
 		sID       string
 		startDate *string
@@ -60,7 +48,7 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 			EndDate:   endDate,
 		}
 	default:
-		err = errScan
+		err := errScan
 		return nil, err
 	}
 
@@ -82,7 +70,7 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 
 	var cr *models.CashRegisterInfo
 
-	rowCR := tx.QueryRowContext(ctx, qCR, deviceID, deviceID, userID)
+	rowCR := db.QueryRowContext(ctx, qCR, deviceID, deviceID, userID)
 
 	var (
 		crDeviceID, crName, crRegisterID, crDeskID string
@@ -116,7 +104,7 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 		AND cd.enabled = 1
 	`
 
-	rows, err := tx.QueryContext(ctx, qDesks, userID)
+	rows, err := db.QueryContext(ctx, qDesks, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +133,6 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// ------------------------------------------------------
-	// COMMIT
-	// ------------------------------------------------------
-
-	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 

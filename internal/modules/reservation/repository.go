@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+	"welloresto-api/internal/logger"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 // ReservationRepository définit le contrat pour l'accès aux données
@@ -12,25 +14,28 @@ type ReservationRepository interface {
 	GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error)
 	GetOperationRanges(ctx context.Context, merchantID string, dayOfWeek int, requestedDate string) ([]OperationRange, error)
 	GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) (map[string]int, error)
-	GetCustomerByPhone(ctx context.Context, tx *sql.Tx, phone string, merchantID string) (*CustomerData, error)
-	GetRewards(ctx context.Context, tx *sql.Tx, customerID string) ([]Reward, error)
-	CreateBooking(ctx context.Context, tx *sql.Tx, b *BookingRequest) (int64, error)
+	GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error)
+	GetRewards(ctx context.Context, customerID string) ([]Reward, error)
+	CreateBooking(ctx context.Context, b *BookingRequest) (int64, error)
 	GetBookingByNumber(ctx context.Context, bookingNumber string, merchantID string) (*BookingData, error)
 	UpdateBooking(ctx context.Context, b *BookingData) error
-	CancelBookingDB(ctx context.Context, tx *sql.Tx, bookingNumber string) error
+	CancelBookingDB(ctx context.Context, bookingNumber string) error
 	CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error)
 }
 
 type reservationRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 // NewReservationRepository instancie le repository
 func NewReservationRepository(db *sql.DB) ReservationRepository {
-	return &reservationRepository{db: db}
+	return &reservationRepository{database: db}
 }
 
 func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) (*Merchant, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT 
 			m.id, m.timezone, m.merchantTel, m.street_number, m.street, m.zip_code, m.city, m.handicap_access, m.logo_url, m.fullName as business_name, 
@@ -45,7 +50,7 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 	var m Merchant
 	var handicapAccess, autoAccept, cancelable string
 
-	err := r.db.QueryRowContext(ctx, query, qr).Scan(
+	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&m.MerchantID, &m.Timezone, &m.Phone, &m.Address.StreetNumber, &m.Address.Street, &m.Address.ZipCode, &m.Address.City,
 		&handicapAccess, &m.LogoURL, &m.BusinessName,
 		&m.DefaultBookingDuration, &m.SlotIntervalMinutes, &autoAccept, &m.ReserveMaximumPartySize, &m.LastBookingOffsetMinutes,
@@ -57,6 +62,7 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 		if err == sql.ErrNoRows {
 			return nil, nil // Retourne nil si non trouvé
 		}
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -68,6 +74,9 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 }
 
 func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT 
 			hoo.day_of_week_from, 
@@ -82,8 +91,9 @@ func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr st
 		  AND (hoo.valid_to IS NULL OR hoo.valid_to >= UTC_TIMESTAMP)
 		ORDER BY hoo.day_of_week_from, hoo.hour_from;`
 
-	rows, err := r.db.QueryContext(ctx, query, qr)
+	rows, err := db.QueryContext(ctx, query, qr)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -92,6 +102,7 @@ func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr st
 	for rows.Next() {
 		var h OperationHour
 		if err := rows.Scan(&h.DayOfWeek, &h.HourFrom, &h.HourTo); err != nil {
+			log.Error(err.Error())
 			return nil, err
 		}
 		hours = append(hours, h)
@@ -101,6 +112,9 @@ func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr st
 }
 
 func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchantID string, dayOfWeek int, requestedDate string) ([]OperationRange, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT id, hour_from, hour_to, booking_capacity, first_booking_time, last_booking_time
 		FROM hours_of_operation
@@ -110,8 +124,9 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 		  AND (valid_from IS NULL OR valid_from <= ?)
 		  AND (valid_to IS NULL OR valid_to >= ?)`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, dayOfWeek, requestedDate, requestedDate)
+	rows, err := db.QueryContext(ctx, query, merchantID, dayOfWeek, requestedDate, requestedDate)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -121,6 +136,7 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 		var o OperationRange
 		err := rows.Scan(&o.ID, &o.HourFrom, &o.HourTo, &o.BookingCapacity, &o.FirstBookingTime, &o.LastBookingTime)
 		if err != nil {
+			log.Error(err.Error())
 			return nil, err
 		}
 		ranges = append(ranges, o)
@@ -129,6 +145,9 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 }
 
 func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) (map[string]int, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT TIME(booking_date_from) AS slot_time, SUM(party_size) AS total_booked
 		FROM bookings
@@ -137,8 +156,9 @@ func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantI
 		  AND merchant_id = ?
 		GROUP BY TIME(booking_date_from)`
 
-	rows, err := r.db.QueryContext(ctx, query, requestedDate, merchantID)
+	rows, err := db.QueryContext(ctx, query, requestedDate, merchantID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -148,6 +168,7 @@ func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantI
 		var slotTime string
 		var total int
 		if err := rows.Scan(&slotTime, &total); err != nil {
+			log.Error(err.Error())
 			return nil, err
 		}
 		bookings[slotTime] = total
@@ -155,7 +176,10 @@ func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantI
 	return bookings, nil
 }
 
-func (r *reservationRepository) GetCustomerByPhone(ctx context.Context, tx *sql.Tx, phone string, merchantID string) (*CustomerData, error) {
+func (r *reservationRepository) GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT c.customer_id
 		FROM customer c 
@@ -163,25 +187,30 @@ func (r *reservationRepository) GetCustomerByPhone(ctx context.Context, tx *sql.
 		WHERE c.customer_tel = ? AND c.enabled = 1 AND c.merchant_id = ?`
 
 	var c CustomerData
-	err := tx.QueryRowContext(ctx, query, phone, merchantID).Scan(&c.CustomerID)
+	err := db.QueryRowContext(ctx, query, phone, merchantID).Scan(&c.CustomerID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+		log.Error(err.Error())
 		return nil, err
 	}
 	return &c, nil
 }
 
-func (r *reservationRepository) GetRewards(ctx context.Context, tx *sql.Tx, customerID string) ([]Reward, error) {
+func (r *reservationRepository) GetRewards(ctx context.Context, customerID string) ([]Reward, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date, p.reward_type, p.reward_value
 		FROM customer_rewards cr
 		INNER JOIN customer_loyalty_programs p ON cr.loyalty_program_id = p.id
 		WHERE cr.customer_id = ? AND cr.usage_date IS NULL`
 
-	rows, err := tx.QueryContext(ctx, query, customerID)
+	rows, err := db.QueryContext(ctx, query, customerID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
@@ -196,19 +225,26 @@ func (r *reservationRepository) GetRewards(ctx context.Context, tx *sql.Tx, cust
 }
 
 // Simulation de l'insertion (à adapter selon ta table 'bookings')
-func (r *reservationRepository) CreateBooking(ctx context.Context, tx *sql.Tx, b *BookingRequest) (int64, error) {
+func (r *reservationRepository) CreateBooking(ctx context.Context, b *BookingRequest) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `INSERT INTO bookings (merchant_id, customer_id, booking_date_from, booking_date_to, party_size, status, created_by) 
 	          VALUES (?, ?, ?, ?, ?, ?, ?)`
-	res, err := tx.ExecContext(ctx, query,
+	res, err := db.ExecContext(ctx, query,
 		b.MerchantID, b.Customer.CustomerID, b.Booking.StartDate, b.Booking.EndDate,
 		b.Booking.PartySize, b.Booking.Status, b.CreatedBy)
 	if err != nil {
+		log.Error(err.Error())
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
 func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingNumber string, merchantID string) (*BookingData, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
 	query := `
 		SELECT booking_id, booking_number, merchant_id, booking_date_from, booking_date_to, party_size, status, sequence_number
 		FROM bookings
@@ -217,47 +253,47 @@ func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingN
 	var b BookingData
 	var err error
 
-	row := r.db.QueryRowContext(ctx, query, bookingNumber, merchantID)
+	row := db.QueryRowContext(ctx, query, bookingNumber, merchantID)
 	err = row.Scan(&b.BookingID, &b.BookingNumber, &b.MerchantID, &b.StartDate, &b.EndDate, &b.PartySize, &b.Status, &b.SequenceNumber)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
+		log.Error(err.Error())
 		return nil, err
 	}
 	return &b, nil
 }
 
 func (r *reservationRepository) UpdateBooking(ctx context.Context, b *BookingData) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		UPDATE bookings 
 		SET booking_date_from = ?, booking_date_to = ?, status = ?, sequence_number = sequence_number + 1
 		WHERE booking_id = ?`
 
 	// On utilise db.ExecContext directement, pas besoin de transaction pour une requête unique
-	_, err := r.db.ExecContext(ctx, query, b.StartDate, b.EndDate, b.Status, b.BookingID)
+	_, err := db.ExecContext(ctx, query, b.StartDate, b.EndDate, b.Status, b.BookingID)
 	return err
 }
 
-func (r *reservationRepository) CancelBookingDB(ctx context.Context, tx *sql.Tx, bookingNumber string) error {
+func (r *reservationRepository) CancelBookingDB(ctx context.Context, bookingNumber string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		UPDATE bookings
 		SET status = 'CANCELED', deletion_date = UTC_TIMESTAMP(), deletion_reason_id = '9'
 		WHERE booking_number = ?`
-	_, err := tx.ExecContext(ctx, query, bookingNumber)
+	_, err := db.ExecContext(ctx, query, bookingNumber)
 	return err
 }
 
 // CreateBookingTransaction gère la récupération du client et l'insertion de la réservation dans une transaction isolée.
 func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error) {
-	// 1. Début de transaction
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	// Sécurité absolue : Rollback automatique si on ne Commit pas à la fin.
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	// 2. Recherche du client (en utilisant la transaction courante)
 	queryCustomer := `
@@ -266,10 +302,11 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		WHERE customer_tel = ? AND enabled = 1 AND merchant_id = ?`
 
 	var customerID string
-	err = tx.QueryRowContext(ctx, queryCustomer, req.Customer.CustomerTel, req.MerchantID).Scan(&customerID)
+	err := db.QueryRowContext(ctx, queryCustomer, req.Customer.CustomerTel, req.MerchantID).Scan(&customerID)
 
 	if err != nil && err != sql.ErrNoRows {
 		// Erreur SQL autre que "non trouvé"
+		log.Error(err.Error())
 		return "", err
 	}
 
@@ -283,7 +320,7 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		INSERT INTO bookings (merchant_id, customer_id, booking_date_from, booking_date_to, party_size, status, created_by) 
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
 
-	res, err := tx.ExecContext(ctx, queryInsert,
+	res, err := db.ExecContext(ctx, queryInsert,
 		req.MerchantID,
 		req.Customer.CustomerID,
 		req.Booking.StartDate,
@@ -298,11 +335,6 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 
 	bookingID, err := res.LastInsertId()
 	if err != nil {
-		return "", err
-	}
-
-	// 4. On valide la transaction
-	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 
