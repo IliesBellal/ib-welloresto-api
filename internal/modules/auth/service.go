@@ -138,7 +138,7 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 
 func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) bool {
 	if s.redis == nil {
-		return false
+		//return false
 	}
 
 	if user.MFAOTPSentAt == nil || *user.MFAOTPSentAt == "" {
@@ -160,7 +160,7 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 
 	// Si la date de dernier envoie est AVANT la limite, c'est trop vieux
 	if lastSentAt.Before(limit) {
-		return true // Renvoyer
+		return false // Ne pas renvoyer
 	}
 
 	return false
@@ -489,7 +489,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	log := logger.FromContext(ctx)
 
 	if !s.canSendMFAOTP(ctx, user) {
-		return models.ErrAccountDisabled
+		return models.ErrOTPWaitTime
 	}
 
 	// 1. Générer le code à 6 chiffres

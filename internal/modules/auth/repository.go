@@ -48,7 +48,7 @@ SELECT
 	u.mfa_type,
 	u.mfa_status,
 	u.mfa_verified_at,
-
+	u.mfa_otp_sent_at,
 
     m.fullName,
     m.merchantTel,
@@ -119,7 +119,7 @@ LIMIT 1;
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID,
-		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt,
+		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt, &data.MFAOTPSentAt,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
