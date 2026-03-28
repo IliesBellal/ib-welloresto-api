@@ -2,18 +2,12 @@ package service
 
 import (
 	"context"
-	"database/sql"
 
 	ordersModels "welloresto-api/internal/models"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
-func (s *Service) mapModifiers(
-	ctx context.Context,
-	tx *sql.Tx,
-	merchantID string,
-	item ueModels.UberCartItem,
-) (*ordersModels.ProductConfiguration, error) {
+func (s *Service) mapModifiers(ctx context.Context, merchantID string, item ueModels.UberCartItem) (*ordersModels.ProductConfiguration, error) {
 
 	if len(item.SelectedModifierGroups) == 0 {
 		return nil, nil
@@ -23,17 +17,17 @@ func (s *Service) mapModifiers(
 
 	for _, group := range item.SelectedModifierGroups {
 
-		attrID, err := s.attributeMappingRepo.GetAttributeIDByModifierGroupID(ctx, tx, merchantID, group.ID)
+		attrID, err := s.attributeMappingRepo.GetAttributeIDByModifierGroupID(ctx, merchantID, group.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		if attrID == nil {
-			newAttrID, err := s.attributeMappingRepo.CreateAttributeFromUberGroup(ctx, tx, merchantID, group.Title)
+			newAttrID, err := s.attributeMappingRepo.CreateAttributeFromUberGroup(ctx, merchantID, group.Title)
 			if err != nil {
 				return nil, err
 			}
-			err = s.attributeMappingRepo.CreateAttributeMapping(ctx, tx, merchantID, newAttrID, group.ID)
+			err = s.attributeMappingRepo.CreateAttributeMapping(ctx, merchantID, newAttrID, group.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -43,17 +37,17 @@ func (s *Service) mapModifiers(
 		var options []ordersModels.ConfigurationOption
 
 		for _, opt := range group.SelectedItems {
-			optID, err := s.attributeMappingRepo.GetOptionIDByUberItemID(ctx, tx, *attrID, opt.ID)
+			optID, err := s.attributeMappingRepo.GetOptionIDByUberItemID(ctx, *attrID, opt.ID)
 			if err != nil {
 				return nil, err
 			}
 
 			if optID == nil {
-				newOptID, err := s.attributeMappingRepo.CreateOptionFromUber(ctx, tx, *attrID, opt.Title, opt.Price.UnitPrice.Amount)
+				newOptID, err := s.attributeMappingRepo.CreateOptionFromUber(ctx, *attrID, opt.Title, opt.Price.UnitPrice.Amount)
 				if err != nil {
 					return nil, err
 				}
-				err = s.attributeMappingRepo.CreateOptionMapping(ctx, tx, merchantID, newOptID, opt.ID)
+				err = s.attributeMappingRepo.CreateOptionMapping(ctx, merchantID, newOptID, opt.ID)
 				if err != nil {
 					return nil, err
 				}

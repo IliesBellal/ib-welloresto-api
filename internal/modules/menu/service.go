@@ -2,7 +2,6 @@ package menu
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 	"welloresto-api/internal/helpers"
@@ -178,9 +177,9 @@ func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token string) error 
 	return s.uber.SyncMenu(ctx, user.MerchantID, uberMenu)
 }
 
-func (s *MenuService) CreateProductFromExternal(ctx context.Context, tx *sql.Tx, merchantID, title, description string, amount int) (*string, error) {
+func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int) (*string, error) {
 	// ⚠️ Plus besoin d'ouvrir une nouvelle transaction ici, on utilise `tx` fourni en paramètre !
-	productID, err := s.legacy.CreateExternalProductTx(ctx, tx, merchantID, title, description, amount)
+	productID, err := s.legacy.CreateExternalProductTx(ctx, merchantID, title, description, amount)
 	if err != nil {
 		return nil, err
 	}

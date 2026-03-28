@@ -1,21 +1,25 @@
 package ubereats
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type UberRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewUberEatsRepository(db *sql.DB) *UberRepository {
-	return &UberRepository{db: db}
+	return &UberRepository{database: db}
 }
 
 // GetMerchantIDFromStoreID récupère le merchant_id du store
-func (r *UberRepository) GetMerchantIDFromStoreID(tx *sql.Tx, storeID string) (*string, error) {
+func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		SELECT iue.merchant_id
 		FROM integration_uber_eats iue
@@ -24,7 +28,7 @@ func (r *UberRepository) GetMerchantIDFromStoreID(tx *sql.Tx, storeID string) (*
 
 	var MerchantID string
 	// Gestion des NULLs potentiels avec sql.NullInt64 si nécessaire, ici simplifié
-	row := tx.QueryRow(query, storeID)
+	row := db.QueryRowContext(ctx, query, storeID)
 	err := row.Scan(&MerchantID)
 	if err != nil {
 		return nil, err
@@ -33,7 +37,9 @@ func (r *UberRepository) GetMerchantIDFromStoreID(tx *sql.Tx, storeID string) (*
 }
 
 // GetStoreData récupère les infos du magasin
-func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, error) {
+func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*Store, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
        SELECT iue.merchant_id, iue.store_id, m.timezone, 
               iue.estimated_preparation_time, iue.last_estimated_preparation_time
@@ -43,7 +49,7 @@ func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, er
 
 	var store Store
 
-	row := tx.QueryRow(query, merchantID)
+	row := db.QueryRowContext(ctx, query, merchantID)
 
 	err := row.Scan(
 		&store.MerchantID,
@@ -63,37 +69,34 @@ func (r *UberRepository) GetStoreData(tx *sql.Tx, merchantID string) (*Store, er
 }
 
 // GetCurrentToken récupère le token actuel
-func (r *UberRepository) GetCurrentToken(tx *sql.Tx, tokenType string) (*UberToken, error) {
+func (r *UberRepository) GetCurrentToken(ctx context.Context, tokenType string) (*UberToken, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `SELECT access_token, expires_at FROM external_tokens WHERE token_type = ?`
 	var token UberToken
-	var err error
 
-	if tx != nil {
-		err = tx.QueryRow(query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
-	} else {
-		err = r.db.QueryRow(query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
-	}
+	err := db.QueryRowContext(ctx, query, tokenType).Scan(&token.AccessToken, &token.ExpiresAt)
+
 	return &token, err
 }
 
 // SaveNewToken met à jour le token
-func (r *UberRepository) SaveNewToken(tx *sql.Tx, tokenType, accessToken string, expiresIn int) error {
+func (r *UberRepository) SaveNewToken(ctx context.Context, tokenType, accessToken string, expiresIn int) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
        INSERT INTO external_tokens (token_type, access_token, expires_at)
        VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND))
        ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(UTC_TIMESTAMP, INTERVAL ? SECOND), access_token = ?`
 
-	var err error
-	if tx != nil {
-		_, err = tx.Exec(query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
-	} else {
-		_, err = r.db.Exec(query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
-	}
+	_, err := db.ExecContext(ctx, query, tokenType, accessToken, expiresIn, expiresIn, accessToken)
 	return err
 }
 
 // GetOrderMetadata récupère les IDs pour la requête
-func (r *UberRepository) GetOrderMetadata(tx *sql.Tx, localOrderID string) (*UberOrderMetadata, error) {
+func (r *UberRepository) GetOrderMetadata(ctx context.Context, localOrderID string) (*UberOrderMetadata, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
        SELECT o.order_id, o.brand_order_id, o.creation_date
        FROM orders o
@@ -101,13 +104,8 @@ func (r *UberRepository) GetOrderMetadata(tx *sql.Tx, localOrderID string) (*Ube
        WHERE o.order_id = ?`
 
 	var meta UberOrderMetadata
-	var err error
 
-	if tx != nil {
-		err = tx.QueryRow(query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
-	} else {
-		err = r.db.QueryRow(query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
-	}
+	err := db.QueryRowContext(ctx, query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
 
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve uber order id: %v", err)
@@ -116,22 +114,26 @@ func (r *UberRepository) GetOrderMetadata(tx *sql.Tx, localOrderID string) (*Ube
 }
 
 // UpdateOrderAccepted met à jour le statut local
-func (r *UberRepository) UpdateOrderAccepted(tx *sql.Tx, orderID string, prepTime int) error {
+func (r *UberRepository) UpdateOrderAccepted(ctx context.Context, orderID string, prepTime int) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		UPDATE orders
 		SET brand_status = 'ACCEPTED', merchant_approval = 'ACCEPTED', 
 		    last_update = UTC_TIMESTAMP, 
 		    estimated_ready = DATE_ADD(UTC_TIMESTAMP, INTERVAL ? MINUTE)
 		WHERE order_id = ?`
-	_, err := tx.Exec(query, prepTime, orderID)
+	_, err := db.ExecContext(ctx, query, prepTime, orderID)
 	return err
 }
 
 // CalculateAutoPrepTime appelle la procédure stockée
-func (r *UberRepository) CalculateAutoPrepTime(tx *sql.Tx, merchantID, orderID string) (int, error) {
+func (r *UberRepository) CalculateAutoPrepTime(ctx context.Context, merchantID, orderID string) (int, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// 1. Get product count
 	var qty int
-	err := tx.QueryRow("SELECT sum(quantity) FROM orderitems WHERE order_id = ?", orderID).Scan(&qty)
+	err := db.QueryRowContext(ctx, "SELECT sum(quantity) FROM orderitems WHERE order_id = ?", orderID).Scan(&qty)
 	if err != nil {
 		return 0, err
 	}
@@ -139,7 +141,7 @@ func (r *UberRepository) CalculateAutoPrepTime(tx *sql.Tx, merchantID, orderID s
 	// 2. Call Procedure
 	// Note: Pour récupérer le résultat d'un CALL et d'un SELECT interne, c'est parfois tricky en Go selon le driver.
 	// Une approche simplifiée si la procédure fait un SELECT à la fin :
-	rows, err := tx.Query("CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, qty)
+	rows, err := db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, qty)
 	if err != nil {
 		return 0, err
 	}
@@ -157,21 +159,27 @@ func (r *UberRepository) CalculateAutoPrepTime(tx *sql.Tx, merchantID, orderID s
 }
 
 // SetOrderStatusDenied met à jour le statut en DENIED
-func (r *UberRepository) SetOrderStatusDenied(tx *sql.Tx, orderID string) error {
+func (r *UberRepository) SetOrderStatusDenied(ctx context.Context, orderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `UPDATE orders SET brand_status = 'DENIED', last_update = UTC_TIMESTAMP WHERE order_id = ?`
-	_, err := tx.Exec(query, orderID)
+	_, err := db.ExecContext(ctx, query, orderID)
 	return err
 }
 
 // SetOrderStatusCanceled met à jour le statut en CANCELED
-func (r *UberRepository) SetOrderStatusCanceled(tx *sql.Tx, orderID string) error {
+func (r *UberRepository) SetOrderStatusCanceled(ctx context.Context, orderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `UPDATE orders SET brand_status = 'CANCELED', status = '-1', last_update = UTC_TIMESTAMP WHERE order_id = ?`
-	_, err := tx.Exec(query, orderID)
+	_, err := db.ExecContext(ctx, query, orderID)
 	return err
 }
 
 // SetOrderStatusReady met à jour orders et orderitems pour le statut READY
-func (r *UberRepository) SetOrderStatusReady(tx *sql.Tx, orderID string) error {
+func (r *UberRepository) SetOrderStatusReady(ctx context.Context, orderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	queryOrder := `
 		UPDATE orders
 		SET brand_status = 'READY_FOR_HANDOFF', status = '2', isDistributed = '1', 
@@ -186,17 +194,19 @@ func (r *UberRepository) SetOrderStatusReady(tx *sql.Tx, orderID string) error {
 		    distributed_on = UTC_TIMESTAMP
 		WHERE order_id = ?`
 
-	if _, err := tx.Exec(queryOrder, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, queryOrder, orderID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(queryItems, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, queryItems, orderID); err != nil {
 		return err
 	}
 	return nil
 }
 
 // SyncOrderState met à jour la commande lors du finishOrderIfDoesNotExist (succès API)
-func (r *UberRepository) SyncOrderState(tx *sql.Tx, uberOrderID, status, state, approval string, reasonID sql.NullInt64) error {
+func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// Mise à jour principale Orders
 	query := `
 		UPDATE orders
@@ -205,7 +215,7 @@ func (r *UberRepository) SyncOrderState(tx *sql.Tx, uberOrderID, status, state, 
 		    last_update = UTC_TIMESTAMP
 		WHERE brand_order_id = ?`
 
-	_, err := tx.Exec(query, status, state, approval, reasonID, status, uberOrderID)
+	_, err := db.ExecContext(ctx, query, status, state, approval, reasonID, status, uberOrderID)
 	if err != nil {
 		return err
 	}
@@ -219,7 +229,7 @@ func (r *UberRepository) SyncOrderState(tx *sql.Tx, uberOrderID, status, state, 
 			    orderitems.isDistributed = '1',
 			    state = 'CLOSED'
 			WHERE o.brand_order_id = ?`
-		_, err := tx.Exec(queryItems, uberOrderID)
+		_, err := db.ExecContext(ctx, queryItems, uberOrderID)
 		if err != nil {
 			return err
 		}
@@ -228,29 +238,34 @@ func (r *UberRepository) SyncOrderState(tx *sql.Tx, uberOrderID, status, state, 
 }
 
 // HandleOrderNotFound gère le cas 404 de l'API Uber (finishOrderIfDoesNotExist)
-func (r *UberRepository) HandleOrderNotFound(tx *sql.Tx, uberOrderID string) error {
+func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		UPDATE orders
 		SET brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'DELIVERED' ELSE 'CANCELED' END,
 		    state = 'CLOSED',
 		    last_update = UTC_TIMESTAMP
 		WHERE brand_order_id = ?`
-	_, err := tx.Exec(query, uberOrderID)
+	_, err := db.ExecContext(ctx, query, uberOrderID)
 	return err
 }
 
 // UpdateBusyModeData met à jour les données de "Busy Mode"
-func (r *UberRepository) UpdateBusyModeData(tx *sql.Tx, storeID string, delayUntil time.Time, duration int) error {
+func (r *UberRepository) UpdateBusyModeData(ctx context.Context, storeID string, delayUntil time.Time, duration int) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		UPDATE integration_uber_eats
 		SET delay_until = ?, delay_duration = ?
 		WHERE store_id = ?`
-	_, err := tx.Exec(query, delayUntil, duration, storeID)
+	_, err := db.ExecContext(ctx, query, delayUntil, duration, storeID)
 	return err
 }
 
 // UpdatePreparationTime met à jour le temps de préparation estimé
-func (r *UberRepository) UpdatePreparationTime(tx *sql.Tx, merchantID string, timeVal int, isAuto bool) error {
+func (r *UberRepository) UpdatePreparationTime(ctx context.Context, merchantID string, timeVal int, isAuto bool) error {
+	db := dbutils.GetDB(ctx, r.database)
 	// Logique PHP :
 	// estimated_preparation_time = case when :auto = 'TRUE' then estimated_preparation_time else :time end
 	// last_estimated_preparation_time = :time
@@ -261,19 +276,23 @@ func (r *UberRepository) UpdatePreparationTime(tx *sql.Tx, merchantID string, ti
 		    last_estimated_preparation_time = ?
 		WHERE merchant_id = ?`
 
-	_, err := tx.Exec(query, isAuto, timeVal, timeVal, merchantID)
+	_, err := db.ExecContext(ctx, query, isAuto, timeVal, timeVal, merchantID)
 	return err
 }
 
 // UpdateStoreClosure met à jour la date de fermeture temporaire
-func (r *UberRepository) UpdateStoreClosure(tx *sql.Tx, storeID string, closedUntil time.Time) error {
+func (r *UberRepository) UpdateStoreClosure(ctx context.Context, storeID string, closedUntil time.Time) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `UPDATE integration_uber_eats SET closed_until = ? WHERE store_id = ?`
-	_, err := tx.Exec(query, closedUntil, storeID)
+	_, err := db.ExecContext(ctx, query, closedUntil, storeID)
 	return err
 }
 
 // GetStoreInfoForMenu récupère ID, BasicAuth et Timezone (utilisé pour toggle item)
-func (r *UberRepository) GetStoreInfoForMenu(tx *sql.Tx, merchantID string) (*Store, error) {
+func (r *UberRepository) GetStoreInfoForMenu(ctx context.Context, merchantID string) (*Store, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// Similaire à GetStoreData mais s'assure que le token n'est pas null
 	query := `
 		SELECT iue.merchant_id, iue.store_id, m.timezone, iue.bearer_token
@@ -283,6 +302,6 @@ func (r *UberRepository) GetStoreInfoForMenu(tx *sql.Tx, merchantID string) (*St
 
 	var store Store
 	// On ignore les champs non demandés dans le Scan
-	err := tx.QueryRow(query, merchantID).Scan(&store.MerchantID, &store.StoreID, &store.Timezone, &store.BearerToken)
+	err := db.QueryRowContext(ctx, query, merchantID).Scan(&store.MerchantID, &store.StoreID, &store.Timezone, &store.BearerToken)
 	return &store, err
 }

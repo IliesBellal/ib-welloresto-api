@@ -9,14 +9,15 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type MenuRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewMenuRepository(db *sql.DB) *MenuRepository {
-	return &MenuRepository{db: db}
+	return &MenuRepository{database: db}
 }
 
 func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID string) ([]Unit, error) {
@@ -58,20 +59,7 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 }
 
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
-	// Begin transaction (read-only)
-	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, fmt.Errorf("BeginTx failed: %w", err)
-	}
-
-	// Ensure rollback if anything goes wrong
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// --- HELPER FUNCTIONS CORRIGÉES ---
 	// On a supprimé les context.WithTimeout internes qui causaient le "context canceled" prématuré.
@@ -79,7 +67,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	// Helper to run a query with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
 		// Utilisation directe du ctx parent. Le timeout est géré par le client/serveur HTTP global.
-		rows, err := tx.QueryContext(ctx, query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 
 		if err != nil {
 			return nil, fmt.Errorf("%s query error: %w", step, err)
@@ -90,7 +78,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	// Helper to run QueryRow with logging
 	runQueryRow := func(step string, query string, args ...interface{}) *sql.Row {
 		// Utilisation directe du ctx parent
-		row := tx.QueryRowContext(ctx, query, args...)
+		row := db.QueryRowContext(ctx, query, args...)
 		return row
 	}
 
@@ -112,10 +100,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			clientTime := lastMenu.UTC().Truncate(time.Second)
 
 			if dbTime.Equal(clientTime) {
-				if err := tx.Commit(); err != nil {
-					return nil, err
-				}
-				committed = true
 				return &models.MenuResponse{Status: "no_update_required"}, nil
 			}
 		}
@@ -600,12 +584,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		})
 	}
 
-	// commit transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	committed = true
-
 	// prepare response
 	resp := &models.MenuResponse{
 		Status:          "ok",
@@ -619,11 +597,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 }
 
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "0", err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 		INSERT INTO products (
@@ -641,7 +615,7 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	res, err := tx.ExecContext(
+	res, err := db.ExecContext(
 		ctx,
 		query,
 		p.MerchantID,
@@ -665,16 +639,13 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		return "0", err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return "0", err
-	}
-
 	_ = r.setMenuUpdated(ctx, p.MerchantID)
 
 	return strconv.FormatInt(id, 10), nil
 }
 
-func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, tx *sql.Tx, merchantID, name, description string, price int) (int64, error) {
+func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID, name, description string, price int) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
 		INSERT INTO products (
@@ -691,7 +662,7 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, tx *sql.Tx
 		VALUES (?, ?, ?, 'UBER_EATS_TEMP', ?, 0, 5, 9, 3)
 	`
 
-	res, err := tx.ExecContext(ctx, query,
+	res, err := db.ExecContext(ctx, query,
 		merchantID,
 		name,
 		description,
@@ -712,6 +683,8 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, tx *sql.Tx
 }
 
 func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*ProductEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	query := `
 		SELECT
 			product_id,
@@ -729,7 +702,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	`
 
 	var p ProductEntry
-	err := r.db.QueryRowContext(ctx, query, merchantID, productID).Scan(
+	err := db.QueryRowContext(ctx, query, merchantID, productID).Scan(
 		&p.ProductID,
 		&p.MerchantID,
 		&p.Name,
@@ -749,51 +722,33 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 }
 
 func (r *MenuRepository) SetComponentAvailability(ctx context.Context, merchantID, cid, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	res, err := tx.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`UPDATE components 
 		 SET status = ?
 		 WHERE component_id = ? AND merchant_id = ?`,
 		status, cid, merchantID,
 	)
 	if err != nil {
-		tx.Rollback()
 		return 0, err
 	}
 
 	_ = r.setMenuUpdated(ctx, merchantID)
 
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-
 	return res.RowsAffected()
 }
 
 func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID, pid, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	res, err := tx.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`UPDATE products 
 		 SET status = ?
 		 WHERE product_id = ? AND merchant_id = ?`,
 		status, pid, merchantID,
 	)
 	if err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 
@@ -803,6 +758,8 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 }
 
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// Note: J'ai ajouté une clause AND merchant_id (ou via jointure) pour la sécurité,
 	// sinon n'importe qui avec un token valide pourrait modifier n'importe quel produit ID.
 	// Si ta table products n'a pas de merchant_id, il faut faire une jointure avec categories/menus.
@@ -834,7 +791,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	// Note: by_product_of n'a pas de COALESCE dans ton PHP original, il est écrasé directement.
 	// Je l'ai laissé tel quel (paramètre direct), mais attention si p.ByProductOf est nil.
 
-	_, err := r.db.ExecContext(ctx, query,
+	_, err := db.ExecContext(ctx, query,
 		p.Name,
 		p.Description,
 		p.BgColor,
@@ -860,6 +817,8 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 }
 
 func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	// Note: J'ai ajouté une clause AND merchant_id (ou via jointure) pour la sécurité,
 	// sinon n'importe qui avec un token valide pourrait modifier n'importe quel produit ID.
 	// Si ta table products n'a pas de merchant_id, il faut faire une jointure avec categories/menus.
@@ -874,7 +833,7 @@ func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) 
 	// Note: by_product_of n'a pas de COALESCE dans ton PHP original, il est écrasé directement.
 	// Je l'ai laissé tel quel (paramètre direct), mais attention si p.ByProductOf est nil.
 
-	_, err := r.db.ExecContext(ctx, query, merchantID)
+	_, err := db.ExecContext(ctx, query, merchantID)
 
 	return err
 }
@@ -882,15 +841,11 @@ func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) 
 // SyncProductAllergens replaces all allergen associations for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, productID string, allergenIDs []int) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check
 	var count int
-	if err := tx.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ?`,
 		productID, merchantID,
 	).Scan(&count); err != nil {
@@ -901,7 +856,7 @@ func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, p
 	}
 
 	// Delete existing associations
-	if _, err := tx.ExecContext(ctx,
+	if _, err := db.ExecContext(ctx,
 		`DELETE FROM product_allergens WHERE product_id = ?`, productID,
 	); err != nil {
 		return err
@@ -909,7 +864,7 @@ func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, p
 
 	// Insert new associations
 	if len(allergenIDs) > 0 {
-		stmt, err := tx.PrepareContext(ctx,
+		stmt, err := db.PrepareContext(ctx,
 			`INSERT INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`,
 		)
 		if err != nil {
@@ -924,9 +879,6 @@ func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, p
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	_ = r.setMenuUpdated(ctx, merchantID)
 	return nil
 }
@@ -934,6 +886,8 @@ func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, p
 // BulkAssignTag adds a tag to multiple products without removing their other tags.
 // Ownership of both the tag and every product is verified against merchantID.
 func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if len(productIDs) == 0 {
 		return nil
 	}
@@ -941,15 +895,9 @@ func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID st
 	// 1. Dédoublonner pour éviter les erreurs de validCount
 	productIDs = uniqueStrings(productIDs)
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	// 2. Vérifier que le tag appartient au marchand
 	var tagCount int
-	err = tx.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?",
 		tagID, merchantID,
 	).Scan(&tagCount)
@@ -975,7 +923,7 @@ func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID st
 	)
 
 	var validCount int
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&validCount); err != nil {
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&validCount); err != nil {
 		return err
 	}
 
@@ -998,11 +946,11 @@ func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID st
 		strings.Join(insertValues, ","),
 	)
 
-	if _, err := tx.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
+	if _, err := db.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // Helper pour éviter les doublons d'IDs dans la slice
@@ -1021,19 +969,15 @@ func uniqueStrings(input []string) []string {
 // BulkAssignAllergen adds an allergen to multiple products without removing their other allergens.
 // Each product must belong to merchantID.
 func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, allergenID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
 	if len(productIDs) == 0 {
 		return nil
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	// Verify allergen exists (system-wide, no merchant_id check needed)
 	var allergenCount int
-	if err := tx.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM allergens WHERE allergen_id = ?`,
 		allergenID,
 	).Scan(&allergenCount); err != nil {
@@ -1055,7 +999,7 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 		placeholders = append(placeholders, pid)
 	}
 	var validCount int
-	if err := tx.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (`+inClause+`)`,
 		placeholders...,
 	).Scan(&validCount); err != nil {
@@ -1066,7 +1010,7 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 	}
 
 	// Upsert associations
-	stmt, err := tx.PrepareContext(ctx,
+	stmt, err := db.PrepareContext(ctx,
 		`INSERT IGNORE INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`,
 	)
 	if err != nil {
@@ -1080,22 +1024,18 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // SyncProductTags replaces all tag associations for a product in a single transaction.
 // It verifies that the product belongs to merchantID and that all supplied tag_ids also belong
 // to the same merchant before modifying anything.
 func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, productID string, tagIDs []string) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check: product must belong to merchant
 	var count int
-	if err := tx.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ?`,
 		productID, merchantID,
 	).Scan(&count); err != nil {
@@ -1118,7 +1058,7 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 			placeholders = append(placeholders, tid)
 		}
 		var validCount int
-		if err := tx.QueryRowContext(ctx,
+		if err := db.QueryRowContext(ctx,
 			`SELECT COUNT(1) FROM tags WHERE merchant_id = ? AND id IN (`+inClause+`)`,
 			placeholders...,
 		).Scan(&validCount); err != nil {
@@ -1130,7 +1070,7 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 	}
 
 	// Delete existing associations
-	if _, err := tx.ExecContext(ctx,
+	if _, err := db.ExecContext(ctx,
 		`DELETE FROM product_tags WHERE product_id = ?`, productID,
 	); err != nil {
 		return err
@@ -1138,7 +1078,7 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 
 	// Insert new associations
 	if len(tagIDs) > 0 {
-		stmt, err := tx.PrepareContext(ctx,
+		stmt, err := db.PrepareContext(ctx,
 			`INSERT INTO product_tags (product_id, tag_id) VALUES (?, ?)`,
 		)
 		if err != nil {
@@ -1153,25 +1093,16 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	_ = r.setMenuUpdated(ctx, merchantID)
 	return nil
 }
 
 func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID, productID string, configIDs []string) error {
-	// 1. Démarrer la transaction
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Defer rollback en cas de panique ou d'erreur non gérée avant le commit
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// 2. Reset Config (Set enabled = 0)
 	// Correspond à: UPDATE product_configurable_attribute SET enabled = 0 WHERE product_id = ...
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE product_configurable_attribute 
 		SET enabled = 0 
 		WHERE product_id = ?`, productID)
@@ -1188,7 +1119,7 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 	`
 
 	// Préparer le statement est plus performant dans une boucle
-	stmt, err := tx.PrepareContext(ctx, stmtQuery)
+	stmt, err := db.PrepareContext(ctx, stmtQuery)
 	if err != nil {
 		return err
 	}
@@ -1202,11 +1133,6 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 		}
 	}
 
-	// 4. Commit
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
 	_ = r.setMenuUpdated(ctx, merchantID)
 
 	return nil
@@ -1214,7 +1140,9 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 
 // ListTags returns all tags belonging to a merchant.
 func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
-	rows, err := r.db.QueryContext(ctx,
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx,
 		`SELECT id, merchant_id, name
 		 FROM tags
 		 WHERE merchant_id = ?

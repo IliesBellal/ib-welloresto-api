@@ -33,11 +33,11 @@ func NewUberEatsService(db *sql.DB, config ConfigUberEats, redisClient *redis.Cl
 	}
 }
 
-func (s *UberEatsService) GetValidToken(tx *sql.Tx) (string, error) {
+func (s *UberEatsService) GetValidToken(ctx context.Context) (string, error) {
 
 	// TODO Sauvegarder le token en local afin de pouvoir le réutiliser sans avoir à Query la base de données ??
 
-	tokenData, err := s.repo.GetCurrentToken(tx, s.config.TokenType)
+	tokenData, err := s.repo.GetCurrentToken(ctx, s.config.TokenType)
 	if err != nil && err != sql.ErrNoRows {
 		return "", err
 	}
@@ -59,7 +59,7 @@ func (s *UberEatsService) GetValidToken(tx *sql.Tx) (string, error) {
 		}
 
 		if err := s.repo.SaveNewToken(
-			tx,
+			ctx,
 			s.config.TokenType,
 			newToken.AccessToken,
 			newToken.ExpiresIn,
@@ -73,9 +73,9 @@ func (s *UberEatsService) GetValidToken(tx *sql.Tx) (string, error) {
 	return tokenData.AccessToken, nil
 }
 
-func (s *UberEatsService) GetOrderByURL(tx *sql.Tx, url string) (*ueModels.UberOrder, error) {
+func (s *UberEatsService) GetOrderByURL(ctx context.Context, url string) (*ueModels.UberOrder, error) {
 
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("token error: %v", err)
 	}
@@ -88,10 +88,7 @@ func (s *UberEatsService) GetOrderByURL(tx *sql.Tx, url string) (*ueModels.UberO
 	return order, nil
 }
 
-func (s *UberEatsService) GetByStoreID(tx *sql.Tx, storeID string) (*Store, error) {
-	// Pas de ctx dans ta signature, on utilise Background() pour Redis
-	ctx := context.Background()
-
+func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*Store, error) {
 	// ==========================================
 	// 1. CACHE REDIS ETABLISSEMENT (24 Heures)
 	// ==========================================
@@ -109,7 +106,7 @@ func (s *UberEatsService) GetByStoreID(tx *sql.Tx, storeID string) (*Store, erro
 	}
 
 	// 2. Fallback DB : Récupérer le store et le token
-	merchantID, err := s.repo.GetMerchantIDFromStoreID(tx, storeID)
+	merchantID, err := s.repo.GetMerchantIDFromStoreID(ctx, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
 	}
@@ -118,7 +115,7 @@ func (s *UberEatsService) GetByStoreID(tx *sql.Tx, storeID string) (*Store, erro
 	}
 
 	// 3. Récupérer le store
-	store, err := s.repo.GetStoreData(tx, *merchantID)
+	store, err := s.repo.GetStoreData(ctx, *merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
 	}
@@ -145,7 +142,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	// ---------------------------------------------------------
 	// ÉTAPE 1 : Récupérer le Token
 	// ---------------------------------------------------------
-	token, err := s.GetValidToken(txRead)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return fmt.Errorf("token error: %v", err)
 	}
@@ -163,13 +160,13 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	err = func() error {
 
 		// 2.a Récupérer le store
-		store, err = s.repo.GetStoreData(txRead, merchantID)
+		store, err = s.repo.GetStoreData(ctx, merchantID)
 		if err != nil {
 			return fmt.Errorf("store error: %v", err)
 		}
 
 		// 2.b Récupérer les métadonnées de la commande
-		orderMeta, err = s.repo.GetOrderMetadata(txRead, orderID)
+		orderMeta, err = s.repo.GetOrderMetadata(ctx, orderID)
 		if err != nil {
 			return fmt.Errorf("metadata error: %v", err)
 		}
@@ -177,7 +174,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 		// 2.c Calculer le temps auto si nécessaire
 		if store.EstimatedPreparationTime == 0 {
 			// On ignore l'erreur ici car on a une valeur par défaut, ou tu peux gérer l'erreur si critique
-			calcTime, errCalc := s.repo.CalculateAutoPrepTime(txRead, merchantID, orderID)
+			calcTime, errCalc := s.repo.CalculateAutoPrepTime(ctx, merchantID, orderID)
 			if errCalc == nil {
 				autoPrepTime = calcTime
 			}
@@ -234,7 +231,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	}
 	defer txUpdate.Rollback()
 
-	if err := s.repo.UpdateOrderAccepted(txUpdate, orderID, prepTime); err != nil {
+	if err := s.repo.UpdateOrderAccepted(ctx, orderID, prepTime); err != nil {
 		return err
 	}
 
@@ -257,7 +254,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	}
 	defer txRead.Rollback()
 
-	token, err := s.GetValidToken(txRead)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -265,7 +262,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	// On utilise une fonction anonyme pour la lecture seule
 	err = func() error {
 
-		meta, err := s.repo.GetOrderMetadata(txRead, orderID)
+		meta, err := s.repo.GetOrderMetadata(ctx, orderID)
 		if err != nil {
 			return err
 		}
@@ -290,7 +287,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 		log.Error("Uber deny failed, trying to recover state", zap.Error(apiErr))
 
 		// Attention : RecoverOrderState ne doit pas être appelé dans une Tx existante
-		s.RecoverOrderState(orderID)
+		s.RecoverOrderState(ctx, orderID)
 
 		return apiErr
 	}
@@ -304,7 +301,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	}
 	defer txUpdate.Rollback()
 
-	if err := s.repo.SetOrderStatusDenied(txUpdate, orderID); err != nil {
+	if err := s.repo.SetOrderStatusDenied(ctx, orderID); err != nil {
 		return err
 	}
 
@@ -316,18 +313,15 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 
 // CancelOrder logique métier (très similaire à Deny)
 func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, reasonID, reasonType, comment string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
+	log := logger.FromContext(ctx)
 
-	err = func() error {
-		token, err := s.GetValidToken(tx)
+	err := func() error {
+		token, err := s.GetValidToken(ctx)
 		if err != nil {
 			return err
 		}
 
-		meta, err := s.repo.GetOrderMetadata(tx, orderID)
+		meta, err := s.repo.GetOrderMetadata(ctx, orderID)
 		if err != nil {
 			return err
 		}
@@ -336,19 +330,19 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 			return err
 		}
 
-		if err := s.repo.SetOrderStatusCanceled(tx, orderID); err != nil {
+		if err := s.repo.SetOrderStatusCanceled(ctx, orderID); err != nil {
 			return err
 		}
 		return nil
 	}()
 
 	if err != nil {
-		tx.Rollback()
-		s.RecoverOrderState(orderID)
+		log.Error(err.Error())
+		s.RecoverOrderState(ctx, orderID)
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // SetOrderReady logique métier
@@ -371,7 +365,7 @@ func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, upda
 	if err := s.client.SetOrderReady(ctx, meta.BrandOrderID, token); err != nil {
 		// Log l'erreur mais ne bloque pas la DB
 		log.Printf("[Uber] Erreur API pour %s: %v", meta.BrandOrderID, err)
-		s.RecoverOrderState(orderID)
+		s.RecoverOrderState(ctx, orderID)
 		return err
 	}
 
@@ -383,34 +377,28 @@ func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, upda
 }
 
 // RecoverOrderState est un wrapper helper pour appeler FinishOrderIfDoesNotExist avec les bons params
-func (s *UberEatsService) RecoverOrderState(orderID string) {
+func (s *UberEatsService) RecoverOrderState(ctx context.Context, orderID string) {
 
-	token, _ := s.GetValidToken(nil)
-	meta, _ := s.repo.GetOrderMetadata(nil, orderID)
+	token, _ := s.GetValidToken(ctx)
+	meta, _ := s.repo.GetOrderMetadata(ctx, orderID)
 
 	if token != "" && meta != nil {
-		s.FinishOrderIfDoesNotExist(token, meta.BrandOrderID)
+		s.FinishOrderIfDoesNotExist(ctx, token, meta.BrandOrderID)
 	}
 }
 
 // FinishOrderIfDoesNotExist (La logique de synchro)
-func (s *UberEatsService) FinishOrderIfDoesNotExist(token string, uberOrderID string) error {
-	// Nouvelle transaction indépendante
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() // Sécurité
+func (s *UberEatsService) FinishOrderIfDoesNotExist(ctx context.Context, token string, uberOrderID string) error {
 
 	// 1. GET Order details
 	details, err := s.client.GetOrderDetails(uberOrderID, token)
 
 	// 2. Gestion cas 404
 	if err != nil && err.Error() == "order_not_found" {
-		if err := s.repo.HandleOrderNotFound(tx, uberOrderID); err != nil {
+		if err := s.repo.HandleOrderNotFound(ctx, uberOrderID); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return nil
 	} else if err != nil {
 		return err // Autre erreur API
 	}
@@ -452,11 +440,11 @@ func (s *UberEatsService) FinishOrderIfDoesNotExist(token string, uberOrderID st
 	}
 
 	// 4. Update DB
-	if err := s.repo.SyncOrderState(tx, uberOrderID, brandStatus, state, merchantApproval, deletionReasonID); err != nil {
+	if err := s.repo.SyncOrderState(ctx, uberOrderID, brandStatus, state, merchantApproval, deletionReasonID); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // UberEatsBYOCStatusUpdate met à jour le statut de livraison
@@ -467,7 +455,7 @@ func (s *UberEatsService) UberEatsBYOCStatusUpdate(ctx context.Context, merchant
 	}
 	defer tx.Rollback()
 
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -495,11 +483,11 @@ func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID str
 	}
 	defer tx.Rollback()
 
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(ctx, merchantID)
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken(tx) // Ou utiliser store.BearerToken via un refresh check
+	token, err := s.GetValidToken(ctx) // Ou utiliser store.BearerToken via un refresh check
 
 	// Calcul des dates (Timezone Aware)
 	loc, err := time.LoadLocation(store.Timezone)
@@ -527,35 +515,30 @@ func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID str
 	}
 
 	// Update DB
-	if err := s.repo.UpdateBusyModeData(tx, store.StoreID, newDate, delayMinutes); err != nil {
+	if err := s.repo.UpdateBusyModeData(ctx, store.StoreID, newDate, delayMinutes); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // UpdateReadyForPickupTime met à jour le temps de préparation standard
 func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchantID string, timeVal int, isAuto bool) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 
 	// Si AUTO, on met juste à jour la BDD (selon ton code PHP)
 	if isAuto {
-		if err := s.repo.UpdatePreparationTime(tx, merchantID, timeVal, true); err != nil {
+		if err := s.repo.UpdatePreparationTime(ctx, merchantID, timeVal, true); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return nil
 	}
 
 	// Sinon, appel API
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(ctx, merchantID)
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 
 	prepTimeSeconds := timeVal * 60
 	req := UberPrepTimeRequest{
@@ -567,26 +550,21 @@ func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchant
 	}
 
 	// Update DB (isAuto = false)
-	if err := s.repo.UpdatePreparationTime(tx, merchantID, timeVal, false); err != nil {
+	if err := s.repo.UpdatePreparationTime(ctx, merchantID, timeVal, false); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // CloseStoreTemporary ferme le magasin temporairement
 func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID string, delayMinutes int) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(ctx, merchantID)
 	if err != nil {
 		return err
 	}
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 
 	// Time calculation
 	loc, err := time.LoadLocation(store.Timezone)
@@ -607,23 +585,17 @@ func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID st
 		return err
 	}
 
-	if err := s.repo.UpdateStoreClosure(tx, store.StoreID, newDate); err != nil {
+	if err := s.repo.UpdateStoreClosure(ctx, store.StoreID, newDate); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // ToggleItemAvailability active ou désactive un produit
 func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID, itemID string, available bool) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	// Récup Store ID, BasicAuth et Timezone
-	store, err := s.repo.GetStoreInfoForMenu(tx, merchantID)
+	store, err := s.repo.GetStoreInfoForMenu(ctx, merchantID)
 	if err != nil {
 		return err
 	}
@@ -668,23 +640,16 @@ func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // GetMenu wrapper simple
 func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[string]interface{}, error) {
-	// Lecture seule, pas de transaction obligatoire mais recommandé pour GetValidToken
-	tx, err := s.db.Begin()
+	store, err := s.repo.GetStoreData(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Commit()
-
-	store, err := s.repo.GetStoreData(tx, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -694,19 +659,12 @@ func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[s
 
 // SyncMenu pousse un menu interne vers l'API Uber Eats
 func (s *UberEatsService) SyncMenu(ctx context.Context, merchantID string, menu interface{}) error {
-	// Lecture seule, pas de transaction obligatoire mais recommandé pour GetValidToken
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Commit()
-
-	store, err := s.repo.GetStoreData(tx, merchantID)
+	store, err := s.repo.GetStoreData(ctx, merchantID)
 	if err != nil {
 		return err
 	}
 
-	token, err := s.GetValidToken(tx)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}

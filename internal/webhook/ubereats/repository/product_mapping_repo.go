@@ -3,19 +3,22 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type ProductMappingRepository struct {
-	db *sql.DB
+	database *sql.DB
 }
 
 func NewProductMappingRepository(db *sql.DB) *ProductMappingRepository {
-	return &ProductMappingRepository{db: db}
+	return &ProductMappingRepository{database: db}
 }
 
-func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context, tx *sql.Tx, merchantID, uberItemID string) (*string, error) {
+func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context, merchantID, uberItemID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
 	var productID string
-	err := tx.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT product_id 
         FROM integration_uber_eats_products_mapping 
         WHERE merchant_id = ? AND item_id = ?`,
@@ -30,8 +33,10 @@ func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context
 	return &productID, nil
 }
 
-func (r *ProductMappingRepository) CreateProductMapping(ctx context.Context, tx *sql.Tx, merchantID, productID, uberItemID string) error {
-	_, err := tx.ExecContext(ctx,
+func (r *ProductMappingRepository) CreateProductMapping(ctx context.Context, merchantID, productID, uberItemID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO integration_uber_eats_products_mapping(merchant_id, product_id, item_id)
         VALUES(?, ?, ?)`,
 		merchantID, productID, uberItemID)
