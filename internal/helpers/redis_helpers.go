@@ -9,6 +9,6 @@ func GetRedisOrderKey(merchantID string, orderID string) string {
 	return fmt.Sprintf(models.OrdersCachePrefix+"%s:%s", merchantID, orderID)
 }
 
-func GetWebhookUberEventKey(eventType, resourceID, status string) string {
-	return fmt.Sprintf(models.WebhookUberEatsEventPrefix+"%s:%s:%s", eventType, resourceID, status)
+func GetWebhookUberEventKey(eventID string) string {
+	return fmt.Sprintf(models.WebhookUberEatsEventPrefix+"%s", eventID)
 }

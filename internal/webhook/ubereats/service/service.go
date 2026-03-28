@@ -100,7 +100,7 @@ func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhook
 	// On crée une clé unique basée sur l'event, la ressource et le statut
 	// ==========================================
 	if s.redis != nil {
-		eventKey := helpers.GetWebhookUberEventKey(event.EventType, event.Meta.ResourceID, event.Meta.Status)
+		eventKey := helpers.GetWebhookUberEventKey(event.EventID)
 		_, found, err := s.redis.Get(ctx, eventKey)
 		if err == nil && found {
 			log.Warn("[UBER EATS] Event already processed (Redis cache), skipping:" + eventKey)
