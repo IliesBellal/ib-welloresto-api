@@ -158,9 +158,9 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 	// On définit la limite
 	limit := time.Now().UTC().Add(-1 * time.Minute)
 
-	// Si la date de dernier envoie est AVANT la limite, c'est trop vieux
+	// Si la date de dernier envoie est AVANT la limite, c'est bon
 	if lastSentAt.Before(limit) {
-		return false // Ne pas renvoyer
+		return true // Ne pas renvoyer
 	}
 
 	return false
