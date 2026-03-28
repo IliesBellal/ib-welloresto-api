@@ -115,9 +115,10 @@ func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context
 
 	var id string
 	err := db.QueryRowContext(ctx,
-		`SELECT configurable_attribute_option_id
-        FROM integration_uber_eats_options_mapping
-        WHERE configurable_attribute_id = ? AND item_id = ?`,
+		`SELECT cao.id
+		FROM configurable_attribute_options cao
+		JOIN integration_uber_eats_options_mapping map ON cao.id = map.configurable_attribute_option_id
+        WHERE cao.configurable_attribute_id = ? AND map.item_id = ?`,
 		attributeID, uberItemID).Scan(&id)
 
 	if err != nil {
