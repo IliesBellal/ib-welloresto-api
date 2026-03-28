@@ -12,3 +12,11 @@ func GetRedisOrderKey(merchantID string, orderID string) string {
 func GetWebhookUberEventKey(eventID string) string {
 	return fmt.Sprintf(models.WebhookUberEatsEventPrefix+"%s", eventID)
 }
+
+func GetWebhookDeliverooEventKey(eventID, orderID, status string) string {
+	return fmt.Sprintf(models.WebhookDeliverooEventPrefix+"%s:%s:%s", eventID, orderID, status)
+}
+
+func GetWebhookDeliverooLocationKey(locationID string) string {
+	return fmt.Sprintf(models.WebhookDeliverooLocationPrefix+"%s", locationID)
+}

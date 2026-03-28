@@ -101,8 +101,8 @@ func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhook
 	// ==========================================
 	if s.redis != nil {
 		eventKey := helpers.GetWebhookUberEventKey(event.EventID)
-		_, found, err := s.redis.Get(ctx, eventKey)
-		if err == nil && found {
+		_, found := s.redis.Get(ctx, eventKey)
+		if found {
 			log.Warn("[UBER EATS] Event already processed (Redis cache), skipping:" + eventKey)
 			return nil // On renvoie nil pour valider la réception auprès d'Uber
 		}

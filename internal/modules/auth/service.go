@@ -34,12 +34,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	cacheKey := models.UserCachePrefix + token
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
-	cached, found, err := s.redis.Get(ctx, cacheKey)
-	if err != nil {
-		// Redis est en erreur : on log mais on continue vers la BDD
-		// L'API reste fonctionnelle même si Redis a un problème
-		log.Warn("Warning Redis Get: " + err.Error())
-	}
+	cached, found := s.redis.Get(ctx, cacheKey)
 
 	if found {
 		// Cache hit ! On désérialise le JSON et on retourne directement
@@ -60,9 +55,8 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
 	serialized, err := json.Marshal(loggedUser)
 	if err == nil {
-		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL); err != nil {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL); !saved {
 			// Erreur de cache : on log mais on retourne quand même le user
-			log.Warn("Warning Redis Set: " + err.Error())
 		} else {
 			log.Info("🧠📌 User saved in Redis cache 📌🧠")
 		}
@@ -87,7 +81,11 @@ func convertApp(app string) string {
 // InvalidateUserCache — à appeler quand l'utilisateur modifie ses infos
 // Par exemple : changement de rôle, désactivation du compte, etc.
 func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) error {
-	return s.redis.Delete(ctx, models.UserCachePrefix+token)
+	deleted := s.redis.Delete(ctx, models.UserCachePrefix+token)
+	if !deleted {
+		logger.FromContext(ctx).Warn("Failed to delete user cache for token: " + token)
+	}
+	return nil
 }
 
 func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
@@ -503,8 +501,8 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	cacheKey := models.MFACachePrefix + token
 
 	// On utilise ton wrapper Redis existant (adapter la signature si besoin)
-	err = s.redis.Set(ctx, cacheKey, otp, models.MFACacheTTL)
-	if err != nil {
+	saved := s.redis.Set(ctx, cacheKey, otp, models.MFACacheTTL)
+	if !saved {
 		log.Error("Erreur Redis lors de la sauvegarde de l'OTP: " + err.Error())
 		return errors.New("erreur interne du serveur")
 	}
@@ -551,9 +549,9 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	cacheKey := models.MFACachePrefix + token
 
 	// 1. Récupérer le code dans Redis
-	storedCode, found, err := s.redis.Get(ctx, cacheKey)
-	if err != nil || !found {
-		return errors.New("code expiré ou inexistant, veuillez vous reconnecter")
+	storedCode, found := s.redis.Get(ctx, cacheKey)
+	if !found {
+		return models.ErrMFAExpired
 	}
 
 	// 2. Comparaison en clair

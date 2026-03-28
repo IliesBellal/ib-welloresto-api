@@ -100,6 +100,8 @@ var (
 
 	ErrMFARequired = errors.New("mfa_required")
 
+	ErrMFAExpired = errors.New("mfa_expired")
+
 	ErrOTPMismatch = errors.New("otp_mismatch")
 
 	ErrOTPWaitTime = errors.New("otp_wait_time")
@@ -113,6 +115,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrMFAExpired):
+		status = http.StatusUnauthorized
+		errorStatus = "mfa_expired"
+		errorMsg = "The MFA code was provided too recently. Please try again later."
+
 	case errors.Is(err, ErrOTPWaitTime):
 		status = http.StatusForbidden
 		errorStatus = "otp_wait_time"

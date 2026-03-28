@@ -95,8 +95,8 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 	cacheKey := fmt.Sprintf("webhook:uber:store:%s", storeID)
 
 	if s.redis != nil {
-		val, found, err := s.redis.Get(ctx, cacheKey)
-		if err == nil && found {
+		val, found := s.redis.Get(ctx, cacheKey)
+		if found {
 			var store Store
 			// Sécurité : On vérifie que la désérialisation fonctionne et que l'objet n'est pas vide
 			if errUnmarshal := json.Unmarshal([]byte(val), &store); errUnmarshal == nil {

@@ -45,11 +45,7 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	cacheKey := models.ScannorderMerchant + qr
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
-	cached, found, err := s.redis.Get(ctx, cacheKey)
-	if err != nil {
-		// On log l'erreur Redis mais on ne bloque pas l'utilisateur
-		log.Warn("Warning Redis Get (Merchant): " + err.Error())
-	}
+	cached, found := s.redis.Get(ctx, cacheKey)
 
 	if found {
 		// Cache hit !
@@ -76,7 +72,7 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	serialized, err := json.Marshal(merchant)
 	if err == nil {
 		// Utilise un TTL raisonnable (ex: 24h car un merchant change peu souvent)
-		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantTTL); err != nil {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantTTL); !saved {
 			log.Warn("Warning Redis Set (Merchant): " + err.Error())
 		} else {
 			log.Info("🧠📌 Merchant saved in Redis cache 📌🧠")
@@ -213,10 +209,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, qr, deliveryType)
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
-	cached, found, err := s.redis.Get(ctx, cacheKey)
-	if err != nil {
-		log.Warn("Warning Redis Get (Menu): " + err.Error())
-	}
+	cached, found := s.redis.Get(ctx, cacheKey)
 
 	if found {
 		var menu MenuResponse
@@ -242,7 +235,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	serialized, err := json.Marshal(menu)
 	if err == nil {
 		// Un TTL de 1h ou 2h est généralement un bon compromis pour un menu
-		if err := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); err != nil {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); !saved {
 			log.Warn("Warning Redis Set (Menu): " + err.Error())
 		} else {
 			log.Info("🧠📌 Menu saved in Redis cache 📌🧠")

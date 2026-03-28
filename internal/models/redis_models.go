@@ -33,6 +33,12 @@ const (
 	// Préfixe des clés Redis pour les notifications
 	WebhookUberEatsEventPrefix = "webhook:uber:event:"
 
+	WebhookDeliverooEventPrefix = "webhook:deliveroo:event:"
+
+	WebhookDeliverooLocationPrefix = "webhook:deliveroo:location:"
+
+	WebhookdeliveroolocationTTL = 24 * time.Hour
+
 	// Durée de vie du cache pour les notifications d'Uber Eats
 	WebhookUberEatsEventTTL = 3 * time.Hour
 

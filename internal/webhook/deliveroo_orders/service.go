@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/deliveroo"
@@ -53,11 +54,10 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	// 2. CACHE REDIS ETABLISSEMENT (24 Heures)
 	// ==========================================
 	var merchantData *MerchantData // Remplace par ton modèle exact
-	cacheKey := fmt.Sprintf("webhook:deliveroo:location:%s", ord.LocationID)
-
+	cacheKey := helpers.GetWebhookDeliverooLocationKey(ord.LocationID)
 	if s.redis != nil {
-		val, found, err := s.redis.Get(ctx, cacheKey)
-		if err == nil && found {
+		val, found := s.redis.Get(ctx, cacheKey)
+		if found {
 			_ = json.Unmarshal([]byte(val), &merchantData)
 		}
 	}
@@ -583,14 +583,14 @@ func (s *DeliverooService) ProcessEvent(ctx context.Context, payload DeliverooWe
 	// ==========================================
 	if s.redis != nil {
 		// On crée une clé unique pour cet événement précis
-		eventKey := fmt.Sprintf("webhook:deliveroo:event:%s:%s:%s",
+		eventKey := helpers.GetWebhookDeliverooEventKey(
 			payload.Event,
 			payload.Body.Order.ID,
 			payload.Body.Order.Status,
 		)
 
-		_, found, err := s.redis.Get(ctx, eventKey)
-		if err == nil && found {
+		_, found := s.redis.Get(ctx, eventKey)
+		if found {
 			log.Info(fmt.Sprintf("[DELIVEROO] Event already processed (Redis cache), skipping: %s", eventKey))
 			return nil // Déjà traité, on valide en renvoyant nil
 		}

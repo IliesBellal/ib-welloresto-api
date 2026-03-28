@@ -137,9 +137,9 @@ func (s *OrdersService) GetPendingOrders(ctx context.Context, app string) (*mode
 	for _, id := range ids {
 		if s.redis != nil {
 			key := helpers.GetRedisOrderKey(user.MerchantID, id)
-			val, found, err := s.redis.Get(ctx, key)
+			val, found := s.redis.Get(ctx, key)
 
-			if err == nil && found {
+			if found {
 				var order models.Order
 				errUnmarshal := json.Unmarshal([]byte(val), &order)
 
@@ -195,8 +195,8 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 
 	// 1. TENTATIVE RAPIDE : On cherche un *models.Order* pur dans Redis
 	if s.redis != nil {
-		val, found, err := s.redis.Get(ctx, key)
-		if err == nil && found {
+		val, found := s.redis.Get(ctx, key)
+		if found {
 			var order models.Order
 			if err := json.Unmarshal([]byte(val), &order); err == nil && order.OrderID != "" {
 				log.Info("🧠🙋🏻‍♂️ Order found in Redis cache 🙋🏻‍♂️🧠 (key: " + key + ")")
@@ -212,7 +212,7 @@ func (s *OrdersService) ComputeGetOrder(ctx context.Context, merchantID, orderID
 	res, err, _ := s.sfGroup.Do(key, func() (interface{}, error) {
 		// 3. DOUBLE-CHECK Redis
 		if s.redis != nil {
-			valInner, foundInner, _ := s.redis.Get(ctx, key)
+			valInner, foundInner := s.redis.Get(ctx, key)
 			if foundInner {
 				var orderInner models.Order
 				if err := json.Unmarshal([]byte(valInner), &orderInner); err == nil && orderInner.OrderID != "" {

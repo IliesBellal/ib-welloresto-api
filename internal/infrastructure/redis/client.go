@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/redis/go-redis/v9"
@@ -42,28 +43,45 @@ func New() (*Client, error) {
 	return &Client{rdb: rdb}, nil
 }
 
-// Get récupère une valeur par sa clé. Retourne ("", false, nil) si la clé n'existe pas.
-func (c *Client) Get(ctx context.Context, key string) (string, bool, error) {
+// Get récupère une valeur. Si Redis est down, on logue et on fait comme si la clé n'existait pas.
+func (c *Client) Get(ctx context.Context, key string) (string, bool) {
+	if c == nil || c.rdb == nil {
+		return "", false
+	}
+
 	val, err := c.rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
-		// Clé absente — ce n'est pas une erreur, juste un cache miss
-		return "", false, nil
+		return "", false
 	}
 	if err != nil {
-		// Vraie erreur réseau ou Redis
-		return "", false, err
+		// ⚠️ Ici est le secret : on logue l'erreur mais on ne la retourne pas
+		logger.FromContext(ctx).Warn("⚠️ Redis Error (Get): " + err.Error())
+		return "", false
 	}
-	return val, true, nil
+	return val, true
 }
 
-// Set stocke une valeur avec une durée de vie (TTL)
-func (c *Client) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
-	return c.rdb.Set(ctx, key, value, ttl).Err()
+// Set stocke une valeur. Si ça échoue, tant pis, on continue.
+func (c *Client) Set(ctx context.Context, key string, value string, ttl time.Duration) bool {
+	if c == nil || c.rdb == nil {
+		return false
+	}
+
+	err := c.rdb.Set(ctx, key, value, ttl).Err()
+	if err != nil {
+		logger.FromContext(ctx).Warn("⚠️ Redis Error (Set): " + err.Error())
+		return false
+	}
+	return true
 }
 
-// Delete supprime une clé (utile pour invalider le cache)
-func (c *Client) Delete(ctx context.Context, key string) error {
-	return c.rdb.Del(ctx, key).Err()
+// Delete pareil : on ne veut pas bloquer un flow métier pour un problème de cache
+func (c *Client) Delete(ctx context.Context, key string) bool {
+	if c == nil || c.rdb == nil {
+		return false
+	}
+	_ = c.rdb.Del(ctx, key).Err()
+	return true
 }
 
 // DeleteAllMerchantKeys supprime toutes les clés liées à un merchant spécifique (ex: après une mise à jour des infos du merchant)
