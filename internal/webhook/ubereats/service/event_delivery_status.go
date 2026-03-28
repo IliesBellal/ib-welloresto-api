@@ -39,7 +39,7 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 		return nil
 
 	case "FINISHED", "COMPLETED":
-		s.orderLifeCycleSvc.DeliverOrder(ctx, models.UberEatsWebhookUserID, merchantID, orderID)
+		s.orderLifeCycleSvc.SetDeliveredExternal(ctx, merchantID, models.UberEatsWebhookUserID, orderID)
 		return nil
 
 	case "FAILED":

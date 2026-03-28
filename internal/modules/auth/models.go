@@ -2,6 +2,12 @@ package auth
 
 import (
 	"database/sql"
+	"time"
+)
+
+const (
+	OTPResendCooldown = 60 * time.Second
+	MFAExpiration     = 30 * 24 * time.Hour
 )
 
 type SaveDeviceTokenRequest struct {

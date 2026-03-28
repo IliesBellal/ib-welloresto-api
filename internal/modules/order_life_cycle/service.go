@@ -205,10 +205,10 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.
 	})
 }
 
-func (s *OrdersLifeCycleService) HandlerFiscalReceiptGeneration(ctx context.Context, orderID string) error {
+func (s *OrdersLifeCycleService) HandlerFiscalReceiptGeneration(ctx context.Context, merchantID, orderID string) error {
 
 	// 2) --- Récupération des données complètes ---
-	fullOrders, err := s.ordersService.GetOrder(ctx, orderID)
+	fullOrders, err := s.ordersService.ComputeGetOrder(ctx, merchantID, orderID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch order details for receipt: %w", err)
 	}
@@ -236,7 +236,7 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 		return err
 	}
 
-	err = s.HandlerFiscalReceiptGeneration(ctx, orderID)
+	err = s.HandlerFiscalReceiptGeneration(ctx, MerchantID, orderID)
 
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
@@ -279,6 +279,16 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 			return err
 		}
 		return s.DeliverOrder(txCtx, user.UserID, user.MerchantID, orderID)
+	})
+}
+
+func (s *OrdersLifeCycleService) SetDeliveredExternal(ctx context.Context, MerchantID, UserID, orderID string) error {
+	// We don't check if order is still opened as it can be already closed by the merchant but we receive the delivery confirmation from the integrator (ex: Uber Eats)
+	return s.ExecuteOrderMutation(ctx, MerchantID, UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
+		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
+			return err
+		}
+		return s.DeliverOrder(txCtx, UserID, MerchantID, orderID)
 	})
 }
 

@@ -52,11 +52,9 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	log.Info("🧠🚫 User not found in Redis cache 🚫🧠")
 
 	loggedUser, err := s.repo.GetUserByToken(ctx, token)
-	if err == nil && loggedUser != nil {
-		// Note: Ces deux appels sont volontairement omis car le contexte n'est pas retourné
-		// Les valeurs sont injectées via le middleware Auth directement dans le contexte
-		// context.WithValue(ctx, models.ContextUserID, loggedUser.UserID)
-		// context.WithValue(ctx, models.ContextMerchantID, loggedUser.MerchantID)
+	if err != nil {
+		log.Error("Error fetching user from DB: " + err.Error())
+		return nil, err
 	}
 
 	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
@@ -120,7 +118,7 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 
 	// 1.2. Logique de comparaison :
 	// On définit la limite (ex: 5 minutes en arrière pour tes tests)
-	limit := time.Now().UTC().Add(-24 * 30 * time.Hour)
+	limit := time.Now().UTC().Add(-1 * MFAExpiration)
 
 	// Si la date de dernière vérification est AVANT la limite, c'est trop vieux
 	if lastVerifiedAt.Before(limit) {
@@ -155,8 +153,8 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 	}
 
 	// 1.2. Logique de comparaison :
-	// On définit la limite
-	limit := time.Now().UTC().Add(-1 * time.Minute)
+	// On définit le cooldown
+	limit := time.Now().UTC().Add(-1 * OTPResendCooldown)
 
 	// Si la date de dernier envoie est AVANT la limite, c'est bon
 	if lastSentAt.Before(limit) {
