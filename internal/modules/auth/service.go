@@ -138,7 +138,7 @@ func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserL
 
 func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) bool {
 	if s.redis == nil {
-		//return false
+		return false
 	}
 
 	if user.MFAOTPSentAt == nil || *user.MFAOTPSentAt == "" {
