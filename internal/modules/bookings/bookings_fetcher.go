@@ -4,36 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type BookingFetcher struct {
-	db  *sql.DB
-	log *zap.Logger
+	database *sql.DB
+	log      *zap.Logger
 }
 
 func NewBookingFetcher(db *sql.DB, log *zap.Logger) *BookingFetcher {
-	return &BookingFetcher{db: db, log: log}
+	return &BookingFetcher{database: db, log: log}
 }
 
-func (f *BookingFetcher) FetchAndBuildBookings(
-	ctx context.Context,
-	req *BookingObjectRequest,
-) ([]Booking, error) {
-
-	f.log.Info("FetchAndBuildBookings START")
-
-	tx, err := f.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *BookingObjectRequest) ([]Booking, error) {
+	db := dbutils.GetDB(ctx, f.database)
 
 	//-----------------------------------------------------
 	// MAIN BOOKING QUERY
 	//-----------------------------------------------------
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT
             b.booking_id, b.order_id, b.booking_number, b.status, b.party_size,
             c.customer_id, b.sequence_number,
@@ -126,7 +117,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 	//-----------------------------------------------------
 	// LOCATIONS QUERY
 	//-----------------------------------------------------
-	locRows, err := tx.QueryContext(ctx, `
+	locRows, err := db.QueryContext(ctx, `
         SELECT
             b.booking_id,
             l.location_id,
@@ -182,8 +173,6 @@ func (f *BookingFetcher) FetchAndBuildBookings(
 		r.Booking.Locations = locationsByBooking[r.Booking.BookingID]
 		bookings = append(bookings, r.Booking)
 	}
-
-	tx.Commit()
 
 	f.log.Info("FetchAndBuildBookings END",
 		zap.Int("count", len(bookings)),

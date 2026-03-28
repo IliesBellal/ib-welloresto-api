@@ -463,7 +463,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(user.UserID, user.MerchantID, req.OrderID, false)
+		go s.uberSvc.SetOrderReady(context.Background(), user.UserID, user.MerchantID, req.OrderID, false)
 
 	case models.BrandDeliveroo:
 		go s.deliverooSvc.ReadyForCollection(req.OrderID)
@@ -751,7 +751,7 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(in.UserID, in.MerchantID, in.OrderID, false)
+		go s.uberSvc.SetOrderReady(context.Background(), in.UserID, in.MerchantID, in.OrderID, false)
 
 	case models.BrandDeliveroo:
 		go s.deliverooSvc.ReadyForCollection(in.OrderID)

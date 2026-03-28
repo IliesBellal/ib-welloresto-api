@@ -133,11 +133,6 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 
 // AcceptOrder réplique setUberEatsOrderAccepted de manière optimisée pour éviter les Deadlocks
 func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID string) error {
-	txRead, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return err
-	}
-	defer txRead.Rollback() // Sécurité : libère la connexion quoi qu'il arrive
 
 	// ---------------------------------------------------------
 	// ÉTAPE 1 : Récupérer le Token
@@ -180,7 +175,7 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 			}
 		}
 
-		return txRead.Commit() // On ferme la transaction de lecture ICI
+		return nil
 	}()
 
 	if err != nil {
@@ -225,18 +220,13 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	// ---------------------------------------------------------
 	// ÉTAPE 5 : Mise à jour finale (Transaction d'écriture courte)
 	// ---------------------------------------------------------
-	txUpdate, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer txUpdate.Rollback()
 
 	if err := s.repo.UpdateOrderAccepted(ctx, orderID, prepTime); err != nil {
 		return err
 	}
 
 	// Commit final rapide
-	return txUpdate.Commit()
+	return nil
 }
 
 // DenyOrder refuse une commande de manière optimisée (sans bloquer la DB)
@@ -247,12 +237,6 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	// ÉTAPE 2 : Récupérer les métadonnées (Lecture courte)
 	// ---------------------------------------------------------
 	var brandOrderID string
-
-	txRead, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return err
-	}
-	defer txRead.Rollback()
 
 	token, err := s.GetValidToken(ctx)
 	if err != nil {
@@ -267,7 +251,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 			return err
 		}
 		brandOrderID = meta.BrandOrderID
-		return txRead.Commit()
+		return nil
 	}()
 
 	if err != nil {
@@ -295,11 +279,6 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	// ---------------------------------------------------------
 	// ÉTAPE 4 : Succès API -> Mise à jour DB (Ecriture courte)
 	// ---------------------------------------------------------
-	txUpdate, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer txUpdate.Rollback()
 
 	if err := s.repo.SetOrderStatusDenied(ctx, orderID); err != nil {
 		return err
@@ -308,7 +287,7 @@ func (s *UberEatsService) DenyOrder(ctx context.Context, merchantID, orderID, re
 	// Notification (peut être faite après le commit ou via un bus d'event)
 	// s.notifications.Send(...)
 
-	return txUpdate.Commit()
+	return nil
 }
 
 // CancelOrder logique métier (très similaire à Deny)
@@ -346,17 +325,17 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 }
 
 // SetOrderReady logique métier
-func (s *UberEatsService) SetOrderReady(userID, merchantID, orderID string, updateStock bool) error {
+func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID, orderID string, updateStock bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// 1. On récupère les infos SANS transaction pour libérer la DB au plus vite
-	token, err := s.GetValidToken(nil)
+	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}
 
-	meta, err := s.repo.GetOrderMetadata(nil, orderID)
+	meta, err := s.repo.GetOrderMetadata(ctx, orderID)
 	if err != nil {
 		return err
 	}

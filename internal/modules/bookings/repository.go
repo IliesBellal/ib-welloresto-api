@@ -184,72 +184,44 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 }
 
 func (r *BookingsRepository) SetBookingState(ctx context.Context, bookingID string, state string) error {
+	db := dbutils.GetDB(ctx, r.database)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	rollback := func(err error) error {
-		tx.Rollback()
-		return err
-	}
-
-	_, err = tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE bookings
         SET status = ?
         WHERE booking_id = ?
     `, state, bookingID)
 
 	if err != nil {
-		return rollback(err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return rollback(err)
+		return err
 	}
 
 	return nil
 }
 
 func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchantID, requestedDate string) (*BookingAvailabilityResponse, error) {
-
-	r.log.Info("BookingAvailability START",
-		zap.String("merchant_id", merchantID),
-		zap.String("date", requestedDate),
-	)
-
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	rollback := func(err error) (*BookingAvailabilityResponse, error) {
-		tx.Rollback()
-		return nil, err
-	}
-
 	// -------------------------------------------------------
 	// 1) Merchant + booking_settings
 	// -------------------------------------------------------
-	params, err := r.loadMerchantBookingParams(ctx, tx, merchantID)
+	params, err := r.loadMerchantBookingParams(ctx, merchantID)
 	if err != nil {
-		return rollback(err)
+		return nil, err
 	}
 
 	// -------------------------------------------------------
 	// 2) Hours of operation
 	// -------------------------------------------------------
-	timeRanges, dayOfWeek, err := r.loadHoursOfOperation(ctx, tx, merchantID, requestedDate)
+	timeRanges, dayOfWeek, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate)
 	if err != nil {
-		return rollback(err)
+		return nil, err
 	}
 
 	// -------------------------------------------------------
 	// 3) Existing bookings (start + end)
 	// -------------------------------------------------------
-	bookings, err := r.loadExistingBookings(ctx, tx, merchantID, requestedDate)
+	bookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate)
 	if err != nil {
-		return rollback(err)
+		return nil, err
 	}
 
 	// -------------------------------------------------------
@@ -266,8 +238,6 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 		timeRanges,
 		occupation,
 	)
-
-	tx.Commit()
 
 	// -------------------------------------------------------
 	// 6) Add locations
@@ -294,9 +264,10 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	return resp, nil
 }
 
-func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, tx *sql.Tx, merchantID string) (*MerchantBookingParams, error) {
+func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merchantID string) (*MerchantBookingParams, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	row := tx.QueryRowContext(ctx, `
+	row := db.QueryRowContext(ctx, `
         SELECT m.id, m.timezone, bs.default_booking_duration, bs.slot_interval_minutes,
                bs.auto_accept_reserve_bookings, bs.reserve_maximum_party_size,
                bs.last_booking_offset_minutes, bs.cancelable_by_customer,
@@ -328,7 +299,8 @@ func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, tx *
 	return &params, nil
 }
 
-func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, tx *sql.Tx, merchantID, requestedDate string) ([]TimeRange, int, error) {
+func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantID, requestedDate string) ([]TimeRange, int, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
 	dateObj, _ := time.Parse("2006-01-02", requestedDate)
 	dayOfWeek := int(dateObj.Weekday())
@@ -336,7 +308,7 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, tx *sql.T
 		dayOfWeek = 7 // dimanche = 7
 	}
 
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT id, hour_from, hour_to, booking_capacity
         FROM hours_of_operation
         WHERE merchant_id = ?
@@ -364,9 +336,10 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, tx *sql.T
 	return list, dayOfWeek, nil
 }
 
-func (r *BookingsRepository) loadExistingBookings(ctx context.Context, tx *sql.Tx, merchantID, requestedDate string) ([]ExistingBooking, error) {
+func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, requestedDate string) ([]ExistingBooking, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT party_size, booking_date_from, booking_date_to
         FROM bookings
         WHERE CAST(booking_date_from AS DATE) = ?
@@ -481,8 +454,9 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 }
 
 func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchantID string) ([]Location, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	rows, err := r.database.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
         SELECT location_id, location_name, location_desc
         FROM locations
         WHERE merchant_id = ?
