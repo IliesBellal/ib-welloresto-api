@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 )
 
 type AuthRepository struct {
@@ -463,7 +464,7 @@ ON DUPLICATE KEY UPDATE
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
 func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
-	query := `UPDATE users SET mfa_status = ?, mfa_verified_at = UTC_TIMESTAMP() WHERE user_id = ?`
+	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
 
 	_, err := r.database.ExecContext(ctx, query, status, userID)
 	if err != nil {
@@ -481,6 +482,21 @@ func (r *AuthRepository) MarkAsOTPSent(ctx context.Context, userID string) error
 	query := `UPDATE users SET mfa_otp_sent_at = UTC_TIMESTAMP() WHERE user_id = ?`
 
 	_, err := r.database.ExecContext(ctx, query, userID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *AuthRepository) MarkAsMFAVerified(ctx context.Context, userID string) error {
+	query := `UPDATE users SET mfa_status = ?, mfa_verified_at = UTC_TIMESTAMP() WHERE user_id = ?`
+
+	_, err := r.database.ExecContext(ctx, query, models.MFAStatusVerified, userID)
+	if err != nil {
+		return err
+	}
+
 	if err != nil {
 		return err
 	}

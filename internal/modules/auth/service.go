@@ -201,16 +201,21 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// ==============================================================
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
-	if isBackoffice && s.isMFAVerificationRequired(ctx, user) {
+	if s.isMFAVerificationRequired(ctx, user) {
 
-		// 3. Valider la session en base de données
-		err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
-		if err != nil {
-			logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
-			return nil, errors.New("erreur interne lors de la validation")
+		if isBackoffice {
+
+			// 3. Valider la session en base de données
+			err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
+			if err != nil {
+				logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+				return nil, errors.New("erreur interne lors de la validation")
+			}
+
+			s.SendMFACode(ctx, user, token, false)
 		}
-
-		s.SendMFACode(ctx, user, token, false)
+	} else {
+		s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
 	}
 
 	// MULTI-MERCHANT
@@ -553,7 +558,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	}
 
 	// 3. Valider la session en base de données
-	err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
+	err = s.repo.MarkAsMFAVerified(ctx, user.UserID)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
 		return errors.New("erreur interne lors de la validation")
