@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
@@ -28,6 +29,8 @@ func (s *Service) HandleDeliveryStatus(ctx context.Context, brandOrderID string,
 			logger.FromContext(ctx).Error(err.Error())
 			return err
 		}
+		key := helpers.GetRedisOrderKey(merchantID, orderID)
+		s.redis.Delete(ctx, key)
 		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	case "ARRIVED_AT_DROPOFF":
