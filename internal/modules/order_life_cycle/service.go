@@ -463,10 +463,16 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(context.Background(), user.UserID, user.MerchantID, req.OrderID, false)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		go s.uberSvc.SetOrderReady(ctxTimeout, user.UserID, user.MerchantID, req.OrderID, false)
 
 	case models.BrandDeliveroo:
-		go s.deliverooSvc.ReadyForCollection(req.OrderID)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		go s.deliverooSvc.ReadyForCollection(ctxTimeout, req.OrderID)
 	}
 
 	return map[string]interface{}{"status": "1"}, nil
@@ -619,10 +625,14 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 
 	case models.BrandDeliveroo:
 		go func() {
-			err := s.deliverooSvc.StartDeliverooDelivery(ctx, integrationInfo.BrandOrderID)
-			if err != nil {
-				//log.Println("Deliveroo StartDelivery error:", err)
-			}
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			go func() {
+				err := s.deliverooSvc.StartDeliverooDelivery(ctxTimeout, integrationInfo.BrandOrderID)
+				if err != nil {
+					//log.Println("Deliveroo StartDelivery error:", err)
+				}
+			}()
 		}()
 	}
 
@@ -751,10 +761,16 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.SetOrderReady(context.Background(), in.UserID, in.MerchantID, in.OrderID, false)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		go s.uberSvc.SetOrderReady(ctxTimeout, in.UserID, in.MerchantID, in.OrderID, false)
 
 	case models.BrandDeliveroo:
-		go s.deliverooSvc.ReadyForCollection(in.OrderID)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		go s.deliverooSvc.ReadyForCollection(ctxTimeout, in.OrderID)
 	}
 
 	return nil

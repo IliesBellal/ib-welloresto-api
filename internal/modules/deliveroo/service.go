@@ -130,9 +130,7 @@ func (s *DeliverooService) FinishOrderIfDoesNotExist(ctx context.Context, brandO
 	// Will be implemented later
 }
 
-func (s *DeliverooService) ReadyForCollection(orderID string) error {
-	ctx := context.Background()
-
+func (s *DeliverooService) ReadyForCollection(ctx context.Context, orderID string) error {
 	brandOrderID, err := s.repo.GetBrandOrderID(ctx, orderID)
 	if err != nil {
 		return err
