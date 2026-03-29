@@ -112,10 +112,6 @@ func (s *OrdersLifeCycleService) OrderStillOpen(ctx context.Context, orderID str
 }
 
 func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.DenyOrderInput) error {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return err
-	}
 	log := logger.FromContext(ctx)
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, in.OrderID)
@@ -156,7 +152,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 		return err
 	}
 	if s.redis != nil {
-		key := helpers.GetRedisOrderKey(user.MerchantID, in.OrderID)
+		key := helpers.GetRedisOrderKey(in.MerchantID, in.OrderID)
 		s.redis.Delete(ctx, key)
 		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
