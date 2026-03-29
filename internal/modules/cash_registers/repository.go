@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -664,8 +663,8 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if r.isCashRegisterClosed(ctx, cashRegisterID) {
-		return errors.New("cash_register_closed")
+	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
+		return models.ErrCashRegisterStillOpen
 	}
 
 	// Update
