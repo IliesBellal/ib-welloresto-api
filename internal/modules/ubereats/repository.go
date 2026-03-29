@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -19,6 +20,7 @@ func NewUberEatsRepository(db *sql.DB) *UberRepository {
 // GetMerchantIDFromStoreID récupère le merchant_id du store
 func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID string) (*string, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	query := `
 		SELECT iue.merchant_id
@@ -31,6 +33,7 @@ func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID s
 	row := db.QueryRowContext(ctx, query, storeID)
 	err := row.Scan(&MerchantID)
 	if err != nil {
+		log.Error("store id : " + storeID + " not found :" + err.Error())
 		return nil, err
 	}
 	return &MerchantID, nil
