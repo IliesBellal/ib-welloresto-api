@@ -621,9 +621,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	r.Route("/integrations", func(r chi.Router) {
 
-		r.Get("uber-eats/connect", uberHandler.GetConnectURL)
-		r.Get("uber-eats/callback", uberHandler.Callback)
-		r.Get("uber-eats/disconnect", uberHandler.Disconnect)
+		r.Get("/uber-eats/connect", uberHandler.GetConnectURL)
+		r.Get("/uber-eats/callback", uberHandler.Callback)
+		r.Get("/uber-eats/disconnect", uberHandler.Disconnect)
 	})
 
 	return r
