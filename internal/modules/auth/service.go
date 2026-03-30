@@ -501,7 +501,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	cacheKey := helpers.GetMFACacheKey(token)
 
 	// On utilise ton wrapper Redis existant (adapter la signature si besoin)
-	saved := s.redis.Set(ctx, cacheKey, otp, models.MFACacheTTL)
+	saved := s.redis.Set(ctx, cacheKey, otp, models.OTPCacheTTL)
 	if !saved {
 		log.Error("Erreur Redis lors de la sauvegarde de l'OTP: " + err.Error())
 		return errors.New("erreur interne du serveur")
@@ -593,6 +593,8 @@ func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
 // SendVerificationCode génère un OTP pour valider un email ou un téléphone
 // mode: "EMAIL" ou "SMS"
 func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode string) error {
+	log := logger.FromContext(ctx)
+
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
 		return errors.New("session invalide ou expirée")
@@ -602,25 +604,25 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 	if err != nil {
 		return errors.New("impossible de générer le code de vérification")
 	}
+	log.Warn("Code stocké : " + otp + " pour le token " + token + " et le mode " + mode)
 
 	// Clé Redis temporaire (ex: verify_email:TOKEN)
 	cacheKey := helpers.GetVerificationCacheKey(mode, user.Token)
 
-	// On stocke 15 minutes
-	savec := s.redis.Set(ctx, cacheKey, otp, 15*time.Minute)
-	if !savec {
+	// On stocke x minutes
+	saved := s.redis.Set(ctx, cacheKey, otp, models.OTPCacheTTL)
+	if !saved {
 		return models.ErrRedisNotAvailable
 	}
 
-	if mode == "SMS" {
-		s.sms.SendOTP(user.Tel, otp)
-	} else {
-
+	if strings.ToUpper(mode) == "EMAIL" {
 		s.email.SendOTP(mailer.MfaOTPData{
 			UserName:  user.FirstName + ", " + user.LastName,
 			OTP:       otp,
 			UserEmail: user.Email,
 		})
+	} else if strings.ToUpper(mode) == "SMS" || strings.ToUpper(mode) == "TEL" {
+		s.sms.SendOTP(user.Tel, otp)
 	}
 
 	return nil
@@ -628,6 +630,8 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 
 // ConfirmVerification valide le code et met à jour la DB
 func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mode string, codeSaisi string) error {
+	log := logger.FromContext(ctx)
+
 	if strings.ToUpper(mode) == "MFA" {
 		return s.VerifyMFA(ctx, token, codeSaisi)
 	}
@@ -635,6 +639,7 @@ func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mod
 
 	storedCode, found := s.redis.Get(ctx, cacheKey)
 	if !found || storedCode != codeSaisi {
+		log.Warn("Code de vérification invalide ou expiré pour le token " + token + " et le mode " + mode + " (code saisi: " + codeSaisi + ", code stocké: " + storedCode + ")")
 		return errors.New("code invalide ou expiré")
 	}
 

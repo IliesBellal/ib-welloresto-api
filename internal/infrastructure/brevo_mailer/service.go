@@ -67,9 +67,9 @@ func (b *BrevoMailer) SendOTP(data mailer.MfaOTPData) {
 			BrandLogoURL: mailer.BrandLogoURL,
 		},
 		MFACode:   data.OTP,
-		ExpiresIn: int(models.MFACacheTTL.Minutes()),
+		ExpiresIn: int(models.OTPCacheTTL.Minutes()),
 	}
-	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Votre code de vérification MFA", "mfa_otp.html", email_data)
+	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Votre code de vérification MFA", "otp.html", email_data)
 }
 
 // SendRefundNotification sends a refund notification email
