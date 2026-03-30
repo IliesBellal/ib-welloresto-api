@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
 
@@ -286,9 +287,11 @@ LIMIT 1;
 	)
 
 	if err == sql.ErrNoRows {
+		logger.FromContext(ctx).Error("No user found")
 		return nil, nil
 	}
 	if err != nil {
+		logger.FromContext(ctx).Error("Login query failed " + err.Error())
 		return nil, err
 	}
 
@@ -299,7 +302,7 @@ LIMIT 1;
 	if !loggedByToken {
 		if !loggedByToken && !strings.HasPrefix(data.Password, "$2") {
 			/*
-				conversion automatique en hash
+				// conversion automatique en hash
 				newHash, err := HashPassword(plainPwd)
 				if err == nil {
 					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)
@@ -312,9 +315,6 @@ LIMIT 1;
 		}
 	}
 
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
 	return data, err
 }
 
