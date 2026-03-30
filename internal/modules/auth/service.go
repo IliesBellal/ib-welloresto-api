@@ -163,7 +163,7 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 }
 
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (map[string]interface{}, error) {
-	appID := convertApp(payload.App)
+	//appID := convertApp(payload.App)
 	username := payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, payload.Password, token)
@@ -183,21 +183,22 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 
 	// Vérification des droits Mobile
-	switch appID {
-	case "WR_RECEPTION":
-		if !user.Rights.AccessReception {
-			return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
+	/*
+		switch appID {
+		case "WR_RECEPTION":
+			if !user.Rights.AccessReception {
+				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
+			}
+		case "WR_DELIVERY":
+			if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
+				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
+			}
+		case "WR_WAITER":
+			if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
+				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
+			}
 		}
-	case "WR_DELIVERY":
-		if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
-			return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
-		}
-	case "WR_WAITER":
-		if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
-			return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
-		}
-	}
-
+	*/
 	// ==============================================================
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
