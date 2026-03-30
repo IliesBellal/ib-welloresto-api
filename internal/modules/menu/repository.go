@@ -31,31 +31,79 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 }
 
 func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) ([]Attribute, error) {
-	return []Attribute{
-		{
-			ID:    "attr_1",
-			Title: "Taille Pizza",
-			Type:  "CHECK",
-			Min:   1,
-			Max:   1,
-			Options: []AttributeOption{
-				{ID: "opt_1", Title: "Junior", Price: 0},
-				{ID: "opt_2", Title: "Senior", Price: 200},
-				{ID: "opt_3", Title: "Mega", Price: 500},
-			},
-		},
-		{
-			ID:    "attr_2",
-			Title: "Suppléments",
-			Type:  "CHECK",
-			Min:   0,
-			Max:   5,
-			Options: []AttributeOption{
-				{ID: "opt_4", Title: "Olive", Price: 50},
-				{ID: "opt_5", Title: "Oeuf", Price: 100},
-			},
-		},
-	}, nil
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 1. Récupération des attributs
+	attrQuery := `
+        SELECT id, attribute_type, name, title, min_options, max_options
+        FROM configurable_attributes
+        WHERE merchant_id = ? AND enabled = 1`
+
+	attrRows, err := db.QueryContext(ctx, attrQuery, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("query attributes failed: %w", err)
+	}
+	defer attrRows.Close() // Très important pour éviter les fuites de connexion
+
+	var attributes []Attribute
+	// On crée une map qui associe l'ID de l'attribut à son index dans la slice `attributes`
+	attrIndexMap := make(map[string]int)
+
+	for attrRows.Next() {
+		var attr Attribute
+		if err := attrRows.Scan(&attr.ID, &attr.Type, &attr.Name, &attr.Title, &attr.Min, &attr.Max); err != nil {
+			return nil, fmt.Errorf("scan attribute failed: %w", err)
+		}
+
+		// Initialisation à vide pour éviter le "null" en JSON si l'attribut n'a pas d'options
+		attr.Options = []AttributeOption{}
+
+		attributes = append(attributes, attr)
+		attrIndexMap[attr.ID] = len(attributes) - 1 // On mémorise sa position
+	}
+
+	// Toujours vérifier les erreurs post-boucle
+	if err := attrRows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error (attributes): %w", err)
+	}
+
+	// 2. Récupération des options
+	optQuery := `
+        SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled
+        FROM configurable_attributes ca
+        INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
+        WHERE ca.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1`
+
+	optRows, err := db.QueryContext(ctx, optQuery, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("query options failed: %w", err)
+	}
+	defer optRows.Close()
+
+	for optRows.Next() {
+		var opt AttributeOption
+		var parentAttrID string
+
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled); err != nil {
+			return nil, fmt.Errorf("scan option failed: %w", err)
+		}
+
+		// 3. Mapping Magique : on trouve l'attribut parent instantanément grâce à la map
+		if index, exists := attrIndexMap[parentAttrID]; exists {
+			attributes[index].Options = append(attributes[index].Options, opt)
+		}
+	}
+
+	if err := optRows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error (options): %w", err)
+	}
+
+	// Si aucun attribut n'est trouvé, on renvoie une slice vide et pas nil
+	if attributes == nil {
+		attributes = []Attribute{}
+	}
+
+	return attributes, nil
 }
 
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {

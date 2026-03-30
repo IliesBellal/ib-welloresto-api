@@ -285,7 +285,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		SET p.cash_register_id = ?
 		WHERE o.state = 'CLOSED'
 		  AND p.mop = 'STRIPE'
-		  AND p.cash_register_id IS NULL
+		  AND p.cash_register_id = 'SCANNORDER'
 		  AND p.merchant_id = ?
 	`, cashRegisterID, merchantID)
 	if err != nil {

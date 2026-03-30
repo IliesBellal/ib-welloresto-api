@@ -205,13 +205,24 @@ func (s *StripeWebhookService) HandleCheckoutSessionCanceled(ctx context.Context
 		return errors.New("missing metadata in stripe session")
 	}
 
-	// Suppression de la commande via le orderlifecycle
-	return s.orderlifecycle.DeleteOrder(ctx, models.DenyOrderInput{
+	err := s.orderlifecycle.DenyOrder(ctx, orderID, models.DenyOrderRequest{
 		MerchantID:       merchantID,
-		OrderID:          orderID,
-		UserID:           "SYSTEM",
+		UserID:           models.StripeWebhookUserID,
 		DeletionReasonID: "43",
 	})
+	if errors.Is(err, models.ErrOrderClosed) {
+		return nil
+	}
+
+	return err
+	/*
+		// Suppression de la commande via le orderlifecycle
+		return s.orderlifecycle.DeleteOrder(ctx, models.DenyOrderInput{
+			MerchantID:       merchantID,
+			OrderID:          orderID,
+			UserID:           "SYSTEM",
+			DeletionReasonID: "43",
+		})*/
 }
 
 // 3. HandleRetrieveFees (Charge Captured)

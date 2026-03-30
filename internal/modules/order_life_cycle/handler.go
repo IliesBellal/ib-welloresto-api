@@ -200,14 +200,14 @@ func (h *OrdersLifeCycleHandler) DenyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	res, err := h.ordersLifeCycleService.DenyOrder(r.Context(), orderID, req)
+	err := h.ordersLifeCycleService.DenyOrder(r.Context(), orderID, req)
 
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "deny_order", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "order_life_cycle", "deny_order", res)
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "deny_order", nil)
 }
 
 func (h *OrdersLifeCycleHandler) SetReadyForDistribution(w http.ResponseWriter, r *http.Request) {

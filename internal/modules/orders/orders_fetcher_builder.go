@@ -207,34 +207,35 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	}
 
 	// --- 7. CLIENTS SNO ---
-	snoClientsMap := map[string][]interface{}{}
-	{
-		step := "clientSNO"
-		q := `
-		SELECT DISTINCT ss.user_code, ss.user_name, oi.order_item_id, so.quantity
-		FROM orderitems oi
-		INNER JOIN session_orderitem so on so.order_item_id = oi.order_item_id
-		INNER JOIN scannorder_session ss on so.user_code = ss.user_code
-		INNER JOIN orders o ON o.order_id = oi.order_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE oi.merchant_id = ? ` + whereFilters + " " + orderByFilter
+	/*
+		snoClientsMap := map[string][]interface{}{}
+		{
+			step := "clientSNO"
+			q := `
+			SELECT DISTINCT ss.user_code, ss.user_name, oi.order_item_id, so.quantity
+			FROM orderitems oi
+			INNER JOIN session_orderitem so on so.order_item_id = oi.order_item_id
+			INNER JOIN scannorder_session ss on so.user_code = ss.user_code
+			INNER JOIN orders o ON o.order_id = oi.order_id
+			-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+			-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+			WHERE oi.merchant_id = ? ` + whereFilters + " " + orderByFilter
 
-		rows, err := runQuery(step, q, merchantID)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var userCode, userName, orderItemID sql.NullString
-			var quantity sql.NullInt64
-			if err := rows.Scan(&userCode, &userName, &orderItemID, &quantity); err != nil {
+			rows, err := runQuery(step, q, merchantID)
+			if err != nil {
 				return nil, err
 			}
-			clientObj := map[string]interface{}{"user_code": userCode.String, "user_name": userName.String, "quantity": quantity.Int64}
-			snoClientsMap[orderItemID.String] = append(snoClientsMap[orderItemID.String], clientObj)
-		}
-	}
+			defer rows.Close()
+			for rows.Next() {
+				var userCode, userName, orderItemID sql.NullString
+				var quantity sql.NullInt64
+				if err := rows.Scan(&userCode, &userName, &orderItemID, &quantity); err != nil {
+					return nil, err
+				}
+				clientObj := map[string]interface{}{"user_code": userCode.String, "user_name": userName.String, "quantity": quantity.Int64}
+				snoClientsMap[orderItemID.String] = append(snoClientsMap[orderItemID.String], clientObj)
+			}
+		}*/
 
 	// --- 11. CONFIG OPTIONS ---
 	// --- Config Options ---
@@ -521,8 +522,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Extra:                        extrasMap[orderItemID.String],
 				Without:                      withoutsMap[orderItemID.String],
 				Components:                   componentsMap[productID.String],
-				Customers:                    snoClientsMap[orderItemID.String],
-				Comment:                      comment,
+				//				Customers:                    snoClientsMap[orderItemID.String],
+				Comment: comment,
 			}
 			if op.Customers == nil {
 				op.Customers = []interface{}{}

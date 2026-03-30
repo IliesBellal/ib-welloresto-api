@@ -91,7 +91,7 @@ func (tm *TasksManager) DenyOrders() {
 			UserID:           "SYSTEM",
 			DeletionReasonID: "42",
 		}
-		_, err := tm.OrderService.SetOrderDenied(context.Background(), orderID, deny_reason)
+		err := tm.OrderService.SetOrderDenied(context.Background(), orderID, deny_reason)
 		if err != nil {
 			log.Printf("[CRON] Erreur SetOrderDenied pour %s: %v", orderID, err)
 		}

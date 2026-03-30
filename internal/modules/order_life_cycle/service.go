@@ -635,13 +635,13 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
+func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID string, in models.DenyOrderRequest) error {
 	log := logger.FromContext(ctx)
 
 	// 1) Get brand and merchant (we need merchant id to call integrators)
 	orderMeta, err := s.ordersLifeCycleRepo.GetOrderBrandAndMerchant(ctx, OrderID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// 2) Update local order immediately and update payments
@@ -651,13 +651,13 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 		in.DeletionComment,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Cancel stripe payments
 	err = s.ordersLifeCycleRepo.DisablePayments(ctx, OrderID)
 	if err != nil {
-		return nil, fmt.Errorf("stripe cancel: %w", err)
+		return fmt.Errorf("stripe cancel: %w", err)
 	}
 	if s.redis != nil {
 		key := helpers.GetRedisOrderKey(in.MerchantID, OrderID)
@@ -695,21 +695,21 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 		s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, notification.NotificationTypeOrderUpdate)
 	}
 
-	return map[string]string{"status": "1"}, nil
+	return nil
 }
 
-func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, in models.DenyOrderRequest) (map[string]string, error) {
+func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, in models.DenyOrderRequest) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, OrderID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !orderStillOpen {
-		return nil, models.ErrOrderClosed
+		return models.ErrOrderClosed
 	}
 
 	in.UserID = user.UserID

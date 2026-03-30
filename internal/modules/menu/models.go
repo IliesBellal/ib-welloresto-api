@@ -168,19 +168,22 @@ type Unit struct {
 }
 
 // Temporaire, à remplacer par les vraies struct
-type AttributeOption struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Price int    `json:"price"`
-}
-
 type Attribute struct {
 	ID      string            `json:"id"`
-	Title   string            `json:"title"`
-	Type    string            `json:"type"`
-	Min     int               `json:"min"`
-	Max     int               `json:"max"`
+	Type    string            `json:"type"`  // attribute_type
+	Name    string            `json:"name"`  // name
+	Title   string            `json:"title"` // title
+	Min     int               `json:"min"`   // min_options
+	Max     int               `json:"max"`   // max_options
 	Options []AttributeOption `json:"options"`
+}
+
+type AttributeOption struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Price       int    `json:"price"`        // extra_price (idéalement stocké en centimes)
+	MaxQuantity int    `json:"max_quantity"` // max_quantity
+	Enabled     bool   `json:"enabled"`      // enabled
 }
 
 type CreateProductPayload struct {
