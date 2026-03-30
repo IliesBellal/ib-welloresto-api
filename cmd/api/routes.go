@@ -466,39 +466,81 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 
 	// --- ORDERS ---
+	/*
+		r.Route("/orders", func(r chi.Router) {
+			r.Use(authMiddleware)
+
+			r.Post("/create", ordersLifeCycleH.CreateOrder)
+			r.Post("/pricing", ordersH.GetPricing)
+			r.Post("/list", ordersH.GetOrders)
+
+			r.Get("/pending", ordersH.GetPendingOrders)
+			r.Post("/history", ordersH.GetHistory)
+			r.Get("/{order_id}", ordersH.GetOrder)
+
+			r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
+
+			r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+
+			r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
+
+			r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
+			r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+
+			r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+
+			r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
+			r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
+
+			r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
+			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
+			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
+
+			r.Route("/{order_id}/payments", func(r chi.Router) {
+				r.Post("/create", ordersLifeCycleH.AddPayment)
+				r.Get("/", ordersLifeCycleH.GetPayments)
+				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+			})
+		})*/
+
 	r.Route("/orders", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Post("/create", ordersLifeCycleH.CreateOrder)
+		// --- 1. ENDPOINTS DE CONSULTATION (Libres) ---
+		// On laisse passer les GET et les POST qui servent uniquement à filtrer/lister
 		r.Post("/pricing", ordersH.GetPricing)
 		r.Post("/list", ordersH.GetOrders)
-
 		r.Get("/pending", ordersH.GetPendingOrders)
 		r.Post("/history", ordersH.GetHistory)
 		r.Get("/{order_id}", ordersH.GetOrder)
 
-		r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
+		r.Get("/{order_id}/payments", ordersLifeCycleH.GetPayments)
 
-		r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+		// --- 2. ENDPOINTS DE CRÉATION / MODIFICATION (Protégés) ---
+		r.Group(func(r chi.Router) {
+			// Ici, on applique le verrou. L'utilisateur doit être vérifié pour continuer.
+			r.Use(middleware.RequirePermission(middleware.IsEmailVerified))
 
-		r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
+			r.Post("/create", ordersLifeCycleH.CreateOrder)
+			r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
+			r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+			r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
 
-		r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
-		r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+			// Cycle de vie
+			r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
+			r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
+			r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
+			r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
+			r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
+			r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
+			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
+			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
 
-		r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
-
-		r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
-		r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
-
-		r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
-		r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
-		r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
-
-		r.Route("/{order_id}/payments", func(r chi.Router) {
-			r.Post("/create", ordersLifeCycleH.AddPayment)
-			r.Get("/", ordersLifeCycleH.GetPayments)
-			r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+			// Sous-route paiements (en écriture)
+			r.Route("/{order_id}/payments", func(r chi.Router) {
+				r.Post("/create", ordersLifeCycleH.AddPayment)
+				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+			})
 		})
 	})
 

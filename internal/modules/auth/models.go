@@ -98,6 +98,9 @@ type UserLoginRow struct {
 	WaiterDeviceToken    sql.NullString
 	DeliveryDeviceToken  sql.NullString
 	EmailVerifiedAt      *string
+	TelVerifiedAt        *string
+
+	CreatedAt *string
 
 	// Rights
 	Rights        UserRowRights

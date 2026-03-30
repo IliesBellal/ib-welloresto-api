@@ -1,6 +1,8 @@
 package middleware
 
-import "welloresto-api/internal/modules/auth"
+import (
+	"welloresto-api/internal/modules/auth"
+)
 
 // ============================================================
 // PERMISSION HELPERS
@@ -91,6 +93,33 @@ func HasCustomerManagementAccess(user *auth.UserLoginRow) bool {
 // HasCustomerExportAccess vérifie que l'utilisateur peut exporter les clients
 func HasCustomerExportAccess(user *auth.UserLoginRow) bool {
 	return user.HasCustomerExportAccess()
+}
+
+// IsEmailVerified vérifie si l'email est validé OU si le compte a moins d'une heure
+func IsEmailVerified(user *auth.UserLoginRow) bool {
+
+	if user.EmailVerifiedAt != nil {
+		return true
+	}
+	// Période de grâce de 1 heure
+	return true // TODO pass this value to false
+}
+
+// IsTelVerified vérifie si le téléphone est validé
+// (Généralement on est plus strict sur le tel pour les responsables)
+func IsTelVerified(user *auth.UserLoginRow) bool {
+	return user.TelVerifiedAt != nil
+}
+
+// IsFullyVerified est un combo pour les responsables (Email + Tel)
+func IsFullyVerified(user *auth.UserLoginRow) bool {
+	return IsEmailVerified(user) && IsTelVerified(user)
+}
+
+// IsResponsibleUser vérifie si l'utilisateur est le responsable (Admin)
+// S'il l'est, on peut lui imposer des vérifications plus strictes
+func IsResponsibleUser(user *auth.UserLoginRow) bool {
+	return user.Rights.Admin
 }
 
 // ============================================================

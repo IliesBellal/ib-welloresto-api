@@ -254,8 +254,8 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
-		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
-		&data.TermsOfUseAccepted, &data.Password,
+		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture,
+		&data.TermsOfUseAccepted, &data.Password, &data.EmailVerifiedAt,
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID, &data.Rights.Admin,
