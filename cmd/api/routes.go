@@ -150,6 +150,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Uber ----
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats, redisClient)
+	uberHandler := uberModule.NewUberHandler(uberService)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
@@ -616,6 +617,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
 		r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
 		r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+	})
+
+	r.Route("/integrations", func(r chi.Router) {
+
+		r.Get("uber-eats/connect", uberHandler.GetConnectURL)
+		r.Get("uber-eats/callback", uberHandler.Callback)
+		r.Get("uber-eats/disconnect", uberHandler.Disconnect)
 	})
 
 	return r

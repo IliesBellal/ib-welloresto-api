@@ -11,6 +11,8 @@ type ConfigUberEats struct {
 	ClientID     string
 	ClientSecret string
 	TokenType    string
+	AuthURL      string
+	TokenURL     string
 }
 
 // Store représente les données du magasin (table integration_uber_eats + merchant)
@@ -133,4 +135,26 @@ type OverrideContext struct {
 type SuspensionDetail struct {
 	SuspendUntil *int64 `json:"suspend_until"` // Timestamp ou null
 	Reason       string `json:"reason"`
+}
+
+// AuthURLResponse renvoyée au front pour la redirection
+type AuthURLResponse struct {
+	URL string `json:"url"`
+}
+
+// TokenRequest envoyé à Uber pour échanger le code contre un token
+type TokenExchangeResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	TokenType    string `json:"token_type"`
+	Scope        string `json:"scope"`
+}
+
+// MerchantInfoResponse réponse de l'API Uber pour identifier le restaurant connecté
+type MerchantInfoResponse struct {
+	Stores []struct {
+		StoreID string `json:"store_id"`
+		Name    string `json:"name"`
+	} `json:"stores"`
 }

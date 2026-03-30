@@ -112,12 +112,15 @@ func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhook
 
 	switch event.EventType {
 	case "orders.notification":
+		log.Info("New Order received for store " + event.Meta.ResourceID + " - " + event.Meta.UserID)
 		return s.handleOrderNotification(ctx, event)
 
 	case "orders.cancel":
+		log.Info("Order canceled for store " + event.Meta.ResourceID + " - " + event.Meta.UserID)
 		return s.HandleOrderCanceled(ctx, event.Meta.ResourceID)
 
 	case "delivery.state_changed", "delivery.status":
+		log.Info("Delivery status update for store " + event.Meta.ResourceID + " - " + event.Meta.UserID + " - New status: " + event.Meta.Status)
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
 
 	default:

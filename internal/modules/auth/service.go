@@ -40,7 +40,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		// Cache hit ! On désérialise le JSON et on retourne directement
 		var user UserLoginRow
 		if err := json.Unmarshal([]byte(cached), &user); err == nil {
-			log.Info("🧠🙋🏻‍♂️ User found in Redis cache 🙋🏻‍♂️🧠")
+			log.Info("🧠🙋🏻‍♂️ User " + user.Name + " (" + user.UserID + ") found in Redis cache 🙋🏻‍♂️🧠")
 			return &user, nil // ← on n'a pas touché à la BDD
 		}
 	}
@@ -58,7 +58,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL); !saved {
 			// Erreur de cache : on log mais on retourne quand même le user
 		} else {
-			log.Info("🧠📌 User saved in Redis cache 📌🧠")
+			log.Info("🧠📌 User " + loggedUser.Name + " (" + loggedUser.UserID + ") saved in Redis cache 📌🧠")
 		}
 	}
 

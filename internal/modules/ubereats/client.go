@@ -25,6 +25,34 @@ func NewUberClient(cfg ConfigUberEats) *UberClient {
 	}
 }
 
+// doJSONRequest est un helper générique
+func (c *UberClient) doJSONRequest(ctx context.Context, method, url, token string, payload interface{}) error {
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	log := logger.FromContext(ctx)
+	log.Info("UberClient.doJSONRequest - doJSONRequest : " + url + " response : " + resp.Status)
+	log.Info("UberClient.doJSONRequest - token : " + token)
+	log.Info("UberClient.doJSONRequest - payload : " + fmt.Sprint(payload))
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // GetNewToken appelle l'endpoint OAuth
 func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 	data := url.Values{}
@@ -33,7 +61,7 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 	data.Set("grant_type", "client_credentials")
 	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write")
 
-	resp, err := c.client.PostForm("https://auth.uber.com/oauth/v2/token", data)
+	resp, err := c.client.PostForm(c.config.TokenURL, data)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +76,59 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 		return nil, err
 	}
 	return &tokenResp, nil
+}
+
+// ExchangeAuthCode transforme le code reçu par Uber en AccessToken/RefreshToken
+func (c *UberClient) ExchangeAuthCode(ctx context.Context, code string, redirectURI string) (*TokenExchangeResponse, error) {
+	data := url.Values{}
+	data.Set("client_secret", c.config.ClientSecret)
+	data.Set("client_id", c.config.ClientID)
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURI)
+
+	resp, err := c.client.PostForm("https://auth.uber.com/oauth/v2/token", data)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("uber token exchange error: status %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var tokenResp TokenExchangeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, err
+	}
+	return &tokenResp, nil
+}
+
+// GetMerchantStores récupère la liste des magasins associés au compte Uber du restaurateur
+func (c *UberClient) GetMerchantStores(ctx context.Context, accessToken string) (*MerchantInfoResponse, error) {
+	req, err := http.NewRequest("GET", "https://api.uber.com/v1/eats/stores", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("uber get stores error: status %d", resp.StatusCode)
+	}
+
+	var storesResp MerchantInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&storesResp); err != nil {
+		return nil, err
+	}
+	return &storesResp, nil
 }
 
 // AcceptOrder envoie la requête d'acceptation
@@ -119,34 +200,6 @@ func (c *UberClient) GetOrderDetails(uberOrderID string, token string) (*UberOrd
 		return nil, err
 	}
 	return &details, nil
-}
-
-// doJSONRequest est un helper générique
-func (c *UberClient) doJSONRequest(ctx context.Context, method, url, token string, payload interface{}) error {
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	log := logger.FromContext(ctx)
-	log.Info("UberClient.doJSONRequest - doJSONRequest : " + url + " response : " + resp.Status)
-	log.Info("UberClient.doJSONRequest - token : " + token)
-	log.Info("UberClient.doJSONRequest - payload : " + fmt.Sprint(payload))
-	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
-	}
-	return nil
 }
 
 // DenyOrder refuse une commande

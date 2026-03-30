@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"time"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
@@ -73,21 +74,6 @@ func (s *UberEatsService) GetValidToken(ctx context.Context) (string, error) {
 	return tokenData.AccessToken, nil
 }
 
-func (s *UberEatsService) GetOrderByURL(ctx context.Context, url string) (*ueModels.UberOrder, error) {
-
-	token, err := s.GetValidToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("token error: %v", err)
-	}
-
-	order, err := s.client.GetOrderByURL(context.Background(), url, token)
-	if err != nil {
-		return nil, err
-	}
-
-	return order, nil
-}
-
 func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*Store, error) {
 	// ==========================================
 	// 1. CACHE REDIS ETABLISSEMENT (24 Heures)
@@ -129,6 +115,64 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 	}
 
 	return store, nil
+}
+
+// GenerateAuthURL crée le lien vers lequel le front-end doit rediriger le client
+func (s *UberEatsService) GenerateAuthURL(merchantID string, redirectURI string) string {
+	// Le paramètre "state" est crucial : on y glisse le merchantID pour se souvenir de QUI se connecte
+	state := merchantID
+
+	u, _ := url.Parse(s.config.AuthURL)
+	q := u.Query()
+	q.Set("client_id", s.config.ClientID)
+	q.Set("response_type", "code")
+	q.Set("redirect_uri", redirectURI)
+	q.Set("scope", "eats.order eats.report eats.store")
+	q.Set("state", state)
+	u.RawQuery = q.Encode()
+
+	return u.String()
+}
+
+// HandleCallback traite le retour de Uber, récupère le store_id et l'enregistre
+func (s *UberEatsService) HandleCallback(ctx context.Context, code, state, redirectURI string) error {
+	merchantID := state // Le state contient le merchantID qu'on a envoyé
+
+	if code == "" || merchantID == "" {
+		return fmt.Errorf("paramètres invalides ou manquants")
+	}
+
+	// 1. Échanger le code contre un Token
+	tokens, err := s.client.ExchangeAuthCode(ctx, code, redirectURI)
+	if err != nil {
+		return fmt.Errorf("échec de l'échange du token: %v", err)
+	}
+
+	// 2. Utiliser le token pour récupérer le StoreID du restaurateur
+	merchantInfos, err := s.client.GetMerchantStores(ctx, tokens.AccessToken)
+	if err != nil {
+		return fmt.Errorf("échec de la récupération des stores: %v", err)
+	}
+
+	if len(merchantInfos.Stores) == 0 {
+		return fmt.Errorf("aucun restaurant trouvé sur ce compte Uber Eats")
+	}
+
+	// Par défaut, on prend le premier restaurant trouvé (à adapter si un compte gère plusieurs stores)
+	storeID := merchantInfos.Stores[0].StoreID
+
+	// 3. Sauvegarder dans ta base de données (Table integration_uber_eats)
+	err = s.repo.EnableIntegration(ctx, merchantID, storeID, tokens.AccessToken, tokens.RefreshToken)
+	if err != nil {
+		return fmt.Errorf("erreur lors de la sauvegarde de l'intégration: %v", err)
+	}
+
+	return nil
+}
+
+// Disconnect supprime l'intégration
+func (s *UberEatsService) Disconnect(ctx context.Context, merchantID string) error {
+	return s.repo.DisableIntegration(ctx, merchantID)
 }
 
 // AcceptOrder réplique setUberEatsOrderAccepted de manière optimisée pour éviter les Deadlocks
@@ -227,6 +271,21 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 
 	// Commit final rapide
 	return nil
+}
+
+func (s *UberEatsService) GetOrderByURL(ctx context.Context, url string) (*ueModels.UberOrder, error) {
+
+	token, err := s.GetValidToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("token error: %v", err)
+	}
+
+	order, err := s.client.GetOrderByURL(context.Background(), url, token)
+	if err != nil {
+		return nil, err
+	}
+
+	return order, nil
 }
 
 // DenyOrder refuse une commande de manière optimisée (sans bloquer la DB)

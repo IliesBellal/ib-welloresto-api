@@ -96,6 +96,35 @@ func (r *UberRepository) SaveNewToken(ctx context.Context, tokenType, accessToke
 	return err
 }
 
+// EnableIntegration insère (ou met à jour) l'intégration Uber Eats pour le marchand
+func (r *UberRepository) EnableIntegration(ctx context.Context, merchantID, storeID, accessToken, refreshToken string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		INSERT INTO integration_uber_eats (merchant_id, store_id, access_token, refresh_token, is_active, updated_at)
+		VALUES (?, ?, ?, ?, 1, NOW())
+		ON DUPLICATE KEY UPDATE 
+			store_id = VALUES(store_id),
+			access_token = VALUES(access_token),
+			refresh_token = VALUES(refresh_token),
+			is_active = 1,
+			updated_at = NOW()`
+
+	_, err := db.ExecContext(ctx, query, merchantID, storeID, accessToken, refreshToken)
+	return err
+}
+
+// DisableIntegration désactive l'intégration
+func (r *UberRepository) DisableIntegration(ctx context.Context, merchantID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Tu peux choisir de supprimer la ligne, ou juste de la marquer inactive (souvent mieux pour les logs)
+	query := `UPDATE integration_uber_eats SET is_active = 0, access_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+
+	_, err := db.ExecContext(ctx, query, merchantID)
+	return err
+}
+
 // GetOrderMetadata récupère les IDs pour la requête
 func (r *UberRepository) GetOrderMetadata(ctx context.Context, localOrderID string) (*UberOrderMetadata, error) {
 	db := dbutils.GetDB(ctx, r.database)
