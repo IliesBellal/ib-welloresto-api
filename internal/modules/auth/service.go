@@ -593,8 +593,6 @@ func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
 // SendVerificationCode génère un OTP pour valider un email ou un téléphone
 // mode: "EMAIL" ou "SMS"
 func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode string) error {
-	log := logger.FromContext(ctx)
-
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
 		return errors.New("session invalide ou expirée")
@@ -604,7 +602,6 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 	if err != nil {
 		return errors.New("impossible de générer le code de vérification")
 	}
-	log.Warn("Code stocké : " + otp + " pour le token " + token + " et le mode " + mode)
 
 	// Clé Redis temporaire (ex: verify_email:TOKEN)
 	cacheKey := helpers.GetVerificationCacheKey(mode, user.Token)
@@ -630,8 +627,6 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 
 // ConfirmVerification valide le code et met à jour la DB
 func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mode string, codeSaisi string) error {
-	log := logger.FromContext(ctx)
-
 	if strings.ToUpper(mode) == "MFA" {
 		return s.VerifyMFA(ctx, token, codeSaisi)
 	}
@@ -639,7 +634,6 @@ func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mod
 
 	storedCode, found := s.redis.Get(ctx, cacheKey)
 	if !found || storedCode != codeSaisi {
-		log.Warn("Code de vérification invalide ou expiré pour le token " + token + " et le mode " + mode + " (code saisi: " + codeSaisi + ", code stocké: " + storedCode + ")")
 		return errors.New("code invalide ou expiré")
 	}
 

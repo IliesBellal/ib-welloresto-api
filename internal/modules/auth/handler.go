@@ -163,7 +163,7 @@ func (h *AuthHandler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Appel du service
-	err := h.svc.ConfirmVerification(r.Context(), token, req.Code, req.Mode)
+	err := h.svc.ConfirmVerification(r.Context(), token, req.Mode, req.Code)
 	if err != nil {
 		models.SendErrorJSON(w, "auth", "otp_verify", err)
 		return
