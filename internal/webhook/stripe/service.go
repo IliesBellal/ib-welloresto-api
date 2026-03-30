@@ -160,7 +160,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		}
 	}
 
-	// G. Update Customer & Email
+	// G. Update Customer
 	if err := s.handleCustomerUpdate(ctx, &session, orderID, merchantID); err != nil {
 		log.Printf("Warning: customer update failed: %v", err)
 	}
@@ -400,39 +400,42 @@ func (s *StripeWebhookService) handleCustomerUpdate(ctx context.Context, session
 		return nil
 	}
 
-	details := session.CustomerDetails
-	var address string
-	if details.Address != nil {
-		address = fmt.Sprintf("%s, %s %s", details.Address.Line1, details.Address.PostalCode, details.Address.City)
-	}
+	/*
+		Il faudra ici mettre à jour le client en s'assurant que l'adresse email soit conservée et que l'adresse postale du client ne soit pas perdue
+			details := session.CustomerDetails
+			var address string
+			if details.Address != nil {
+				address = fmt.Sprintf("%s, %s %s", details.Address.Line1, details.Address.PostalCode, details.Address.City)
+			}
+			existing, err := s.repo.FindCustomer(ctx, details.Email, merchantID)
+			if err != nil {
+				return err
+			}
 
-	existing, err := s.repo.FindCustomer(ctx, details.Email, merchantID)
-	if err != nil {
-		return err
-	}
+			var customerID int64
+			if existing != nil {
+				customerID = existing.ID
+				existing.Name = details.Name
+				if address != "" {
+					existing.Address = address
+				}
+				if err := s.repo.UpdateCustomer(ctx, *existing); err != nil {
+					return err
+				}
+			} else {
+				newC := Customer{
+					Name:    details.Name,
+					Email:   details.Email,
+					Address: address,
+				}
+				id, err := s.repo.CreateCustomer(ctx, newC, merchantID)
+				if err != nil {
+					return err
+				}
+				customerID = id
+			}
 
-	var customerID int64
-	if existing != nil {
-		customerID = existing.ID
-		existing.Name = details.Name
-		if address != "" {
-			existing.Address = address
-		}
-		if err := s.repo.UpdateCustomer(ctx, *existing); err != nil {
-			return err
-		}
-	} else {
-		newC := Customer{
-			Name:    details.Name,
-			Email:   details.Email,
-			Address: address,
-		}
-		id, err := s.repo.CreateCustomer(ctx, newC, merchantID)
-		if err != nil {
-			return err
-		}
-		customerID = id
-	}
-
-	return s.repo.UpdateOrderCustomer(ctx, orderID, customerID)
+			return s.repo.UpdateOrderCustomer(ctx, orderID, customerID)
+	*/
+	return nil
 }

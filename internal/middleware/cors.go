@@ -22,6 +22,9 @@ func CORSMiddleware() *cors.Cors {
 
 			// Dev
 			"http://localhost:8080",
+
+			// ScanNOrder
+			"https://scannorder.welloresto.fr",
 		},
 
 		AllowedMethods: []string{
