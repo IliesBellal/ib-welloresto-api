@@ -288,7 +288,7 @@ LIMIT 1;
 
 	if err == sql.ErrNoRows {
 		logger.FromContext(ctx).Error("No user found for " + username + " with token " + token)
-		return nil, nil
+		return nil, models.ErrUserNotFound
 	}
 	if err != nil {
 		logger.FromContext(ctx).Error("Login query failed " + err.Error())
