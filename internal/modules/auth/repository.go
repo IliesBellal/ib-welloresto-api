@@ -287,7 +287,7 @@ LIMIT 1;
 	)
 
 	if err == sql.ErrNoRows {
-		logger.FromContext(ctx).Error("No user found")
+		logger.FromContext(ctx).Error("No user found for " + username + " with token " + token)
 		return nil, nil
 	}
 	if err != nil {
