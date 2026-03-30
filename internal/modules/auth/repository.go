@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -34,9 +35,7 @@ SELECT
     u.enabled,
     u.pin_code,
     u.profile_picture,
-    u.reception_device_token,
-    u.waiter_device_token,
-    u.delivery_device_token,
+	u.email_verified_at,
 
     ur.token AS rights_token,
     ur.access_wrreception,
@@ -114,8 +113,7 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
-		&data.Enabled, &data.PinCode, &data.ProfilePicture,
-		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
+		&data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID,
@@ -162,11 +160,9 @@ SELECT
     u.enabled,
     u.pin_code,
     u.profile_picture,
-    u.reception_device_token,
-    u.waiter_device_token,
-    u.delivery_device_token,
     u.terms_of_use_accepted,
     u.password,
+	u.email_verified_at,
 
     ur.token AS rights_token,
     ur.access_wrreception,
@@ -258,8 +254,8 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
-		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.ReceptionDeviceToken,
-		&data.WaiterDeviceToken, &data.DeliveryDeviceToken, &data.TermsOfUseAccepted, &data.Password,
+		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
+		&data.TermsOfUseAccepted, &data.Password,
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID, &data.Rights.Admin,
@@ -500,6 +496,40 @@ func (r *AuthRepository) MarkAsMFAVerified(ctx context.Context, userID string) e
 
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// MarkAsVerified met à jour la date de validation pour l'email ou le téléphone
+func (r *AuthRepository) MarkAsVerified(ctx context.Context, token string, mode string) error {
+	var column string
+
+	// On détermine quelle colonne mettre à jour selon le mode
+	switch strings.ToUpper(mode) {
+	case "EMAIL":
+		column = "u.email_verified_at"
+	case "SMS", "TEL":
+		column = "u.tel_verified_at"
+	default:
+		return errors.New("mode de vérification invalide")
+	}
+
+	// On joint users et users_rights pour identifier l'user via son token
+	query := fmt.Sprintf(`
+		UPDATE users u
+		INNER JOIN users_rights ur ON u.user_id = ur.user_id
+		SET %s = NOW()
+		WHERE ur.token = ?`, column)
+
+	result, err := r.database.ExecContext(ctx, query, token)
+	if err != nil {
+		return err
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("aucun utilisateur trouvé pour ce token")
 	}
 
 	return nil

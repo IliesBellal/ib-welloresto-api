@@ -20,3 +20,11 @@ func GetWebhookDeliverooEventKey(eventID, orderID, status string) string {
 func GetWebhookDeliverooLocationKey(locationID string) string {
 	return fmt.Sprintf(models.WebhookDeliverooLocationPrefix+"%s", locationID)
 }
+
+func GetMFACacheKey(token string) string {
+	return fmt.Sprintf(models.MFACachePrefix+"%s", token)
+}
+
+func GetVerificationCacheKey(mode string, token string) string {
+	return fmt.Sprintf(models.VerificationCachePrefix+"%s:%s", mode, token)
+}

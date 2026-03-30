@@ -97,6 +97,7 @@ type UserLoginRow struct {
 	ReceptionDeviceToken sql.NullString
 	WaiterDeviceToken    sql.NullString
 	DeliveryDeviceToken  sql.NullString
+	EmailVerifiedAt      *string
 
 	// Rights
 	Rights        UserRowRights
@@ -249,4 +250,9 @@ func (u *UserLoginRow) HasCustomerManagementAccess() bool {
 // HasCustomerExportAccess vérifie si l'utilisateur peut exporter les clients
 func (u *UserLoginRow) HasCustomerExportAccess() bool {
 	return u.Rights.Admin || u.Rights.CanExportCustomers
+}
+
+type VerifyOTPRequestPayload struct {
+	Code string `json:"code"`
+	Mode string `json:"mode"` // "email" ou "sms" ou mfa
 }

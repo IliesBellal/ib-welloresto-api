@@ -15,7 +15,7 @@ type Service interface {
 	// SendOrderConfirmationSMS sends an order confirmation SMS
 	SendOrderConfirmationSMS(senderID, phoneNumber string, data OrderConfirmationSMSData)
 
-	SendMfaOTP(tel, otp string)
+	SendOTP(tel, otp string)
 
 	// TriggerTestSMS sends a test SMS (for testing purposes)
 	TriggerTestSMS(writer http.ResponseWriter, request *http.Request)

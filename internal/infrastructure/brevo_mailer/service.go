@@ -58,7 +58,7 @@ func (b *BrevoMailer) SendOrderConfirmationToCustomer(to string, data mailer.Sca
 }
 
 // SendOrderConfirmationToCustomer sends an order confirmation email
-func (b *BrevoMailer) SendMfaOTP(data mailer.MfaOTPData) {
+func (b *BrevoMailer) SendOTP(data mailer.MfaOTPData) {
 	email_data := mailer.MFAMailData{
 		EmailBaseData: mailer.EmailBaseData{
 			BrandName:    "Wello Resto",

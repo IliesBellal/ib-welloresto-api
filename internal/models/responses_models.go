@@ -1,9 +1,12 @@
 package models
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"welloresto-api/internal/logger"
 )
 
 type PendingOrdersData struct {
@@ -105,6 +108,8 @@ var (
 	ErrOTPMismatch = errors.New("otp_mismatch")
 
 	ErrOTPWaitTime = errors.New("otp_wait_time")
+
+	ErrRedisNotAvailable = errors.New("not_available")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -115,6 +120,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrRedisNotAvailable):
+		status = http.StatusServiceUnavailable
+		errorStatus = "not_available"
+		errorMsg = "Redis not available"
+
 	case errors.Is(err, ErrMFAExpired):
 		status = http.StatusUnauthorized
 		errorStatus = "mfa_expired"
@@ -244,6 +254,8 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici
 		errorStatus = err.Error()
 	}
+
+	logger.FromContext(context.Background()).Warn("error " + strconv.Itoa(status) + " " + module + "." + fnName + ": " + errorMsg + " - " + errorStatus)
 
 	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "error": errorMsg})
 }

@@ -27,7 +27,7 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 	`, brandOrderID).Scan(&merchantID, &orderID)
 
 	if err != nil {
-		log.Error(err.Error())
+		log.Error("Error fetching order IDs for brand_order_id " + brandOrderID + ": " + err.Error())
 	}
 
 	return

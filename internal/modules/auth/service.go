@@ -498,7 +498,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	}
 
 	// 2. Stocker le code en clair dans Redis (lié au token de la session en cours)
-	cacheKey := models.MFACachePrefix + token
+	cacheKey := helpers.GetMFACacheKey(token)
 
 	// On utilise ton wrapper Redis existant (adapter la signature si besoin)
 	saved := s.redis.Set(ctx, cacheKey, otp, models.MFACacheTTL)
@@ -515,7 +515,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 		}
 		// TODO: Remplacer par l'appel à ton module SMS réel
 		log.Info("Envoi du code par SMS au " + user.Tel)
-		go s.sms.SendMfaOTP(user.Tel, otp)
+		go s.sms.SendOTP(user.Tel, otp)
 	} else {
 		if user.Email == "" {
 			return errors.New("aucune adresse email associée à ce compte")
@@ -527,7 +527,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 			OTP:       otp,
 			UserEmail: user.Email,
 		}
-		go s.email.SendMfaOTP(data)
+		go s.email.SendOTP(data)
 	}
 
 	s.repo.MarkAsOTPSent(ctx, user.UserID)
@@ -546,7 +546,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	}
 
 	log := logger.FromContext(ctx)
-	cacheKey := models.MFACachePrefix + token
+	cacheKey := helpers.GetMFACacheKey(token)
 
 	// 1. Récupérer le code dans Redis
 	storedCode, found := s.redis.Get(ctx, cacheKey)
@@ -588,4 +588,59 @@ func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
 	err = s.SendMFACode(ctx, user, token, true)
 
 	return err
+}
+
+// SendVerificationCode génère un OTP pour valider un email ou un téléphone
+// mode: "EMAIL" ou "SMS"
+func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode string) error {
+	user, err := s.repo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return errors.New("session invalide ou expirée")
+	}
+
+	otp, err := helpers.GenerateOTP()
+	if err != nil {
+		return errors.New("impossible de générer le code de vérification")
+	}
+
+	// Clé Redis temporaire (ex: verify_email:TOKEN)
+	cacheKey := helpers.GetVerificationCacheKey(mode, user.Token)
+
+	// On stocke 15 minutes
+	savec := s.redis.Set(ctx, cacheKey, otp, 15*time.Minute)
+	if !savec {
+		return models.ErrRedisNotAvailable
+	}
+
+	if mode == "SMS" {
+		s.sms.SendOTP(user.Tel, otp)
+	} else {
+
+		s.email.SendOTP(mailer.MfaOTPData{
+			UserName:  user.FirstName + ", " + user.LastName,
+			OTP:       otp,
+			UserEmail: user.Email,
+		})
+	}
+
+	return nil
+}
+
+// ConfirmVerification valide le code et met à jour la DB
+func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mode string, codeSaisi string) error {
+	if strings.ToUpper(mode) == "MFA" {
+		return s.VerifyMFA(ctx, token, codeSaisi)
+	}
+	cacheKey := helpers.GetVerificationCacheKey(mode, token)
+
+	storedCode, found := s.redis.Get(ctx, cacheKey)
+	if !found || storedCode != codeSaisi {
+		return errors.New("code invalide ou expiré")
+	}
+
+	// Suppression du code consommé
+	_ = s.redis.Delete(ctx, cacheKey)
+
+	// Mise à jour en base de données via le repository
+	return s.repo.MarkAsVerified(ctx, token, mode)
 }

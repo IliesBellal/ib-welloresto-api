@@ -45,4 +45,8 @@ const (
 	MFACachePrefix = "mfa_otp:"
 
 	MFACacheTTL = 5 * time.Minute
+
+	VerificationCachePrefix = "verify:"
+
+	VerificationCacheTTL = 15 * time.Minute
 )

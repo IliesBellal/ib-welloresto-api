@@ -121,34 +121,56 @@ func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "device", "save_token", resp)
 }
 
-type VerifyMFARequestPayload struct {
-	Code string `json:"code"`
-}
-
-// VerifyMFA traite la soumission du code à 6 chiffres
-func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
-	// Le token est envoyé par le front (soit dans le header Authorization, soit en query param)
+// SendVerification envoie un code de vérification à l'utilisateur
+func (h *AuthHandler) SendVerification(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if token == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "auth", "mfa_verify", map[string]string{"error": "token manquant"})
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "send_verification", map[string]string{"error": "token manquant"})
 		return
 	}
 
-	var req VerifyMFARequestPayload
+	var req VerifyOTPRequestPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "auth", "mfa_verify", map[string]string{"error": "invalid_request"})
+		models.SendJSON(w, http.StatusBadRequest, "auth", "send_verification", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	err := h.svc.SendVerificationCode(r.Context(), token, req.Mode)
+	if err != nil {
+		models.SendErrorJSON(w, "auth", "send_verification", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "send_verification", map[string]string{
+		"status":  "success",
+		"message": "Verification code sent.",
+	})
+}
+
+// VerifyMFA traite la soumission du code à 6 chiffres
+func (h *AuthHandler) VerifyCode(w http.ResponseWriter, r *http.Request) {
+	// Le token est envoyé par le front (soit dans le header Authorization, soit en query param)
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "otp_verify", map[string]string{"error": "token manquant"})
+		return
+	}
+
+	var req VerifyOTPRequestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "otp_verify", map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	// Appel du service
-	err := h.svc.VerifyMFA(r.Context(), token, req.Code)
+	err := h.svc.ConfirmVerification(r.Context(), token, req.Code, req.Mode)
 	if err != nil {
-		models.SendErrorJSON(w, "auth", "mfa_verify", err)
+		models.SendErrorJSON(w, "auth", "otp_verify", err)
 		return
 	}
 
 	// Succès
-	models.SendJSON(w, http.StatusOK, "auth", "mfa_verify", map[string]string{
+	models.SendJSON(w, http.StatusOK, "auth", "otp_verify", map[string]string{
 		"status":  "success",
 		"message": "Authentication successful.",
 	})
