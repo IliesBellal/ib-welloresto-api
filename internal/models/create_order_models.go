@@ -138,8 +138,9 @@ type CreateOrderResult struct {
 }
 
 type WRCheckoutSession struct {
-	Status string `json:"status"`
-	URL    string `json:"redirect_url"`
+	Status      string `json:"status"`
+	RedirectURL string `json:"redirect_url"`
+	URL         string `json:"url"`
 }
 
 type UsedItem struct {

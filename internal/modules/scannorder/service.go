@@ -730,8 +730,9 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		}
 
 		newOrder.CheckoutSession = &models.WRCheckoutSession{
-			Status: "success",
-			URL:    checkout.URL,
+			Status:      "success",
+			RedirectURL: checkout.URL,
+			URL:         checkout.URL,
 		}
 	}
 
