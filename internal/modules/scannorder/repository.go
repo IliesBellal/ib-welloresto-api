@@ -24,7 +24,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	query := `
     SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
            mp.currency, mp.primary_color, mp.text_color_on_primary_color,
-           mp.delivery_fees, mp.delivery_fees_limit, mp.preparation_time_mode, mp.preparation_time,
+           mp.delivery_fees, mp.delivery_fees_limit, mp.preparation_time_mode, mp.preparation_time, mp.delivery_distance_limit,
            
            qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
            
@@ -48,7 +48,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
-		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.PrepTimeMode, &row.PrepTime,
+		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.PrepTimeMode, &row.PrepTime, &row.DeliveryDistanceLimit,
 		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
 		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
 		&row.TakeawayEnabled, &row.TakeawayAvailable,

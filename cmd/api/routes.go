@@ -155,11 +155,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
 
-	// ---- ScanNOrder ----
-	scannRepo := scannorder.NewRepository(mysqlDB)
-	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient)
-	scannHandler := scannorder.NewHandler(scannService)
-
 	// ---- Receipt ----
 	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
 	receiptService := receipt.NewReceiptService(receiptRepo)
@@ -181,6 +176,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		receiptService,
 		mysqlDB,
 	)
+
+	// ---- ScanNOrder ----
+	scannRepo := scannorder.NewRepository(mysqlDB)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService)
+	scannHandler := scannorder.NewHandler(scannService)
 
 	// 3. Initialiser le StripeWebhookService Stripe
 	stripeWebhookService := webhookstripe.NewStripeWebhookService(

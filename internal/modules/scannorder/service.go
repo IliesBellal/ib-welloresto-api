@@ -24,15 +24,15 @@ type Service struct {
 	repo                   *Repository
 	menu                   *menu.MenuService
 	orderingService        *orders.OrdersService
-	orderLifeCycleSvc      order_life_cycle.OrdersLifeCycleService
+	orderLifeCycleSvc      *order_life_cycle.OrdersLifeCycleService
 	deliverySessionService delivery_sessions.DeliverySessionsService
 	StripeManager          *stripeclient.StripeManager
 	cfg                    config.ScanNOrderConfig
 	redis                  *redis.Client
 }
 
-func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis}
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc}
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
@@ -643,7 +643,8 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	case "DELIVERY":
 		zone_result := s.CustomerInDeliveryZone(*merchant, *order.Customer)
 		if !zone_result.InZone {
-			return models.CreateOrderResult{Status: "address_too_far"}, nil
+			return models.CreateOrderResult{Status: "address_too_far",
+				Message: "Address located at " + strconv.Itoa(int(zone_result.DistanceMeters)) + "m from merchant (limited at " + strconv.Itoa(int(merchant.DeliveryDistanceLimit)) + "m for merchant " + merchant.MerchantID + ")"}, nil
 		}
 
 		order.OnlinePayment = true
@@ -698,6 +699,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	order.CreatedBy = &ScannorderOwner
 	order.IsSNO = true
 	order.Payments = []models.PaymentPayload{}
+	order.CashRegisterId = &ScannorderOwner
 
 	// 6️⃣ Création commande BDD
 	newOrder, err := s.orderLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{

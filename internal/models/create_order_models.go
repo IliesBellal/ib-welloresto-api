@@ -128,6 +128,7 @@ type PaymentPayload struct {
 }
 
 type CreateOrderResult struct {
+	Message         string             `json:"message,omitempty"`
 	Status          string             `json:"status"`
 	OrderID         string             `json:"order_id,omitempty"`
 	OrderNum        *string            `json:"order_num,omitempty"`

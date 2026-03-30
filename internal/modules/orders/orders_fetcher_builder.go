@@ -23,10 +23,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 	// Begin transaction (read-only)
 	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
+	// Bizarre, je supprimer au passage de dbutils.GetDB() dans le repository et je passe la db directement depuis le fetcher, ça évite de devoir faire du context.WithValue pour passer la db dans le repo
+	/*
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	*/
 	/*
 		tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 		if err != nil {

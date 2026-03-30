@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/mailer"
+	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
@@ -26,9 +28,10 @@ type StripeWebhookService struct {
 	smsService     sms.Service
 	orderlifecycle *order_life_cycle.OrdersLifeCycleService
 	notification   *notification.NotificationService
+	redis          *redis.Client
 }
 
-func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService) *StripeWebhookService {
+func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client) *StripeWebhookService {
 	stripe.Key = stripeKey
 	return &StripeWebhookService{
 		repo:           repo,
@@ -37,6 +40,7 @@ func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Ser
 		smsService:     smsService,
 		orderlifecycle: lifecycle,
 		notification:   notification,
+		redis:          redis,
 	}
 }
 
@@ -86,6 +90,9 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 
 	merchantID := session.Metadata["merchant_id"]
 	orderID := session.Metadata["order_id"]
+
+	key := helpers.GetRedisOrderKey(merchantID, orderID)
+	s.redis.Delete(ctx, key)
 
 	if merchantID == "" || orderID == "" {
 		return errors.New("missing metadata in stripe session")

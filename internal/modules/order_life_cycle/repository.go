@@ -975,10 +975,7 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 }
 
 func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	log := logger.FromContext(ctx)
-
-	defer cancel()
 
 	/*
 		tx, err := r.database.BeginTx(ctx, &sql.TxOptions{})
