@@ -59,7 +59,7 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 
 	case "charge.captured":
 		// En PHP c'était retrieveFees. On gère les frais ici.
-		return s.HandleRetrieveFees(ctx, event.Data.Object)
+		return s.HandleRetrieveFees(ctx, event.Data.Object, event.Account)
 
 	case "payment_intent.canceled":
 		return s.HandlePaymentIntentUpdated(ctx, event.Data.Object, "CANCELED")
@@ -212,10 +212,11 @@ func (s *StripeWebhookService) HandleCheckoutSessionCanceled(ctx context.Context
 		return errors.New("missing metadata in stripe session")
 	}
 
-	err := s.orderlifecycle.DenyOrder(ctx, orderID, models.DenyOrderRequest{
+	err := s.orderlifecycle.SetOrderDenied(ctx, orderID, models.DenyOrderRequest{
 		MerchantID:       merchantID,
 		UserID:           models.StripeWebhookUserID,
 		DeletionReasonID: "43",
+		DeletionComment:  "Session de paiement expirée ou annulée",
 	})
 	if errors.Is(err, models.ErrOrderClosed) {
 		return nil
@@ -233,7 +234,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCanceled(ctx context.Context
 }
 
 // 3. HandleRetrieveFees (Charge Captured)
-func (s *StripeWebhookService) HandleRetrieveFees(ctx context.Context, data json.RawMessage) error {
+func (s *StripeWebhookService) HandleRetrieveFees(ctx context.Context, data json.RawMessage, connectedAccountID string) error {
 	var charge stripe.Charge
 	if err := json.Unmarshal(data, &charge); err != nil {
 		return fmt.Errorf("unmarshal charge: %w", err)
@@ -255,15 +256,9 @@ func (s *StripeWebhookService) HandleRetrieveFees(ctx context.Context, data json
 		return fmt.Errorf("missing payment_intent or balance_transaction in charge %s", charge.ID)
 	}
 
-	// 1. Get Connected Account ID via le PI ID
-	accountID, err := s.repo.GetAccountIDByPaymentIntent(ctx, piID)
-	if err != nil {
-		return fmt.Errorf("account not found for intent %s: %w", piID, err)
-	}
-
 	// 2. Call Stripe API pour récupérer les détails des frais
 	params := &stripe.BalanceTransactionParams{}
-	params.SetStripeAccount(accountID)
+	params.SetStripeAccount(connectedAccountID)
 	bt, err := balancetransaction.Get(btID, params)
 	if err != nil {
 		return fmt.Errorf("stripe api error: %w", err)

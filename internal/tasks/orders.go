@@ -85,11 +85,11 @@ func (tm *TasksManager) DenyOrders() {
 			continue
 		}
 
-		// Signature basée sur ton PHP: setOrderDenied(id, "42", "", "SYSTEM", merchantId)
 		deny_reason := models.DenyOrderRequest{
 			MerchantID:       merchantID,
 			UserID:           "SYSTEM",
 			DeletionReasonID: "42",
+			DeletionComment:  "Commande non approuvée dans les délais",
 		}
 		err := tm.OrderService.SetOrderDenied(context.Background(), orderID, deny_reason)
 		if err != nil {

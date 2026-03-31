@@ -119,6 +119,11 @@ func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhook
 		log.Info("Order canceled for store " + event.Meta.ResourceID + " - " + event.Meta.UserID)
 		return s.HandleOrderCanceled(ctx, event.Meta.ResourceID)
 
+	case "store.status.changed":
+		log.Info("🏪 Store status changed for store " + event.Meta.ResourceID + " - " + event.Meta.UserID + " - New status: " + event.Meta.Status + " 🏪")
+		// return s.HandleStoreStatusChanged(ctx, event.Meta.ResourceID, event.Meta.Status)
+		return nil
+
 	case "delivery.state_changed", "delivery.status":
 		log.Info("Delivery status update for store " + event.Meta.ResourceID + " - " + event.Meta.UserID + " - New status: " + event.Meta.Status)
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
