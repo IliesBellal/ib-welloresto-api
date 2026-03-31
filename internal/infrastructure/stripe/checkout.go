@@ -51,10 +51,12 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 							continue
 						}
 
-						description += *option.Label
+						if option.Label != nil {
+							description += *option.Label
+						}
 
 						if option.ExtraPrice > 0 {
-							description += fmt.Sprintf("(+%.2f EUR)", option.ExtraPrice/100)
+							description += fmt.Sprintf("(+%.2f EUR)", float64(option.ExtraPrice)/100)
 							configurationPrice += option.ExtraPrice
 						}
 						description += ", "

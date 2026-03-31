@@ -456,11 +456,6 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 	}
 	req.Time = now.Format("2006-01-02 15:04:05")
 
-	log.Info("SNO pricing context prepared",
-		zap.String("merchant_id", req.MerchantID),
-		zap.Int("dow", req.DayOfWeek),
-	)
-
 	// 🔹 6. Appel module ORDERING (comme PHP require_once)
 	return s.orderingService.ComputePricing(ctx, req)
 }
@@ -477,12 +472,14 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 	// 🔹 1. Appel OrderLifeCycle (comme PHP require_once)
 	response, err := s.orderingService.ComputeGetOrder(ctx, merchant.MerchantID, orderID)
 	if err != nil {
+		log.Error("ComputeGetOrder", zap.Error(err))
 		return nil, err
 	}
 
 	// 🔹 2. Chercher delivery session
 	deliverySessionID, err := s.repo.GetDeliverySessionByOrderID(ctx, orderID)
 	if err != nil {
+		log.Error("GetDeliverySessionByOrderID", zap.String("order_id", orderID), zap.Error(err))
 		return nil, err
 	}
 
@@ -495,6 +492,7 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 
 		session, err := s.deliverySessionService.GetDeliverySession(ctx, merchant.MerchantID, *deliverySessionID)
 		if err != nil {
+			log.Error("GetDeliverySession", zap.String("delivery_session_id", *deliverySessionID), zap.Error(err))
 			return nil, err
 		}
 
