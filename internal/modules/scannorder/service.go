@@ -419,8 +419,6 @@ func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*B
 
 func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
 
-	log := logger.FromContext(ctx)
-
 	// 🔹 1. Récupérer merchant via QR
 	merchant, err := s.repo.GetMerchantByQR(ctx, req.QRCode) // déjà fait dans endpoint précédent
 	if err != nil || merchant == nil {
