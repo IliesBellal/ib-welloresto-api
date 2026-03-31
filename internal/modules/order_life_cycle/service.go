@@ -883,7 +883,7 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 		log.Error(err.Error())
 	} else {
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
-		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, "NEW_ORDER")
+		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
 	}
 
 	return result, err

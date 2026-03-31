@@ -134,7 +134,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 			log.Printf("Warning: failed to update customer: %v", err)
 		}
 		// Async : On utilise context.Background() car la transaction va se fermer
-		go s.notification.SendNotificationAsync(merchantID, orderID, "ORDER_UPDATE")
+		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 		return nil // Succès -> Commit
 	}
 
@@ -149,7 +149,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	// F. Auto Accept Logic
 	orderType, merchantParams, err := s.repo.GetAutoAcceptSettings(ctx, orderID, merchantID)
 	if err == nil {
-		go s.notification.SendNotificationAsync(merchantID, orderID, "UPDATE_ORDER")
+		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 		shouldAccept := (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
 			(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
@@ -193,7 +193,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		}
 	}
 
-	go s.notification.SendNotificationAsync(merchantID, orderID, "ORDER_UPDATE")
+	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
 	return nil // Fin du bloc : Commit automatique
 }
