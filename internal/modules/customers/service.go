@@ -69,6 +69,15 @@ func (s *CustomersService) SearchCustomers(ctx context.Context, token, term stri
 	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, term)
 }
 
+func (s *CustomersService) ListCustomers(ctx context.Context, token, page, page_size string) ([]CustomerSearchResult, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.customerRepo.ListCustomers(ctx, user.MerchantID, page, page_size)
+}
+
 func (s *CustomersService) ReactivateRewards(ctx context.Context, orderID string) error {
 	return s.customerRepo.ReactivateRewards(ctx, orderID)
 }

@@ -458,6 +458,73 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	return results, nil
 }
 
+func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, page, pageSize string) ([]CustomerSearchResult, error) {
+
+	var results []CustomerSearchResult
+
+	rows, err := r.database.QueryContext(ctx, `
+    SELECT 
+        customer_id,
+        customer_name,
+		customer_last_name,
+		customer_first_name,
+        customer_tel,
+        customer_address,
+        customer_email,
+        customer_nb_orders,
+        customer_total_spent,
+        creation_date,
+        customer_code,
+		advertising_consent,
+		customer_brand
+    FROM customer
+    WHERE merchant_id = ?
+      AND enabled = true
+      AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+		 			ORDER BY creation_date DESC
+					LIMIT ?, ?
+`, merchantID, page, pageSize)
+
+	if err != nil {
+		return results, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c CustomerSearchResult
+		var creationDate sql.NullTime
+		err := rows.Scan(
+			&c.CustomerID,
+			&c.CustomerName,
+			&c.CustomerLastName,
+			&c.CustomerFirstName,
+			&c.CustomerTel,
+			&c.CustomerAddress,
+			&c.CustomerEmail,
+			&c.CustomerNbOrders,
+			&c.CustomerTotalSpent,
+			&creationDate,
+			&c.CustomerCode,
+			&c.AdvertisingConsent,
+			&c.CustomerBrand,
+		)
+
+		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
+		if err != nil {
+			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
+			continue // Ou return err, selon ton besoin
+		}
+
+		results = append(results, c)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].MatchScore > results[j].MatchScore
+	})
+
+	return results, nil
+}
+
 func normalizeStr(s *string) string {
 	if s == nil {
 		return ""
