@@ -534,7 +534,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	}
 
 	type compBasicTmp struct {
-		ID     int64
+		ID     string
 		Name   string
 		CatID  *string
 		Status string

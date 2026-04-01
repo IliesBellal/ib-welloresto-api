@@ -311,7 +311,7 @@ LIMIT 1;
 		}
 
 		if !helpers.PasswordMatches(plainPwd, data.Password) {
-			return nil, errors.New("invalid_credentials")
+			return nil, models.ErrUserNotFound
 		}
 	}
 
@@ -323,13 +323,13 @@ func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]Mer
 SELECT 
     m.id,
     m.fullName,
-    m.fullName,
     m.lat,
     m.lng,
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.city,
     m.country,
     m.zip_code,
+	m.logo_url,
     ur.token
 FROM merchant m
 INNER JOIN users_rights ur ON ur.merchant_id = m.id
@@ -345,7 +345,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 	var list []MerchantRow
 	for rows.Next() {
 		var m MerchantRow
-		rows.Scan(&m.MerchantID, &m.FullName, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.Token)
+		rows.Scan(&m.MerchantID, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.LogoURL, &m.Token)
 		list = append(list, m)
 	}
 	return list, nil

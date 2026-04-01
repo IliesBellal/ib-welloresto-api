@@ -127,7 +127,7 @@ type ComponentCategory struct {
 }
 
 type ComponentBasic struct {
-	ComponentID int64   `json:"component_id"`
+	ComponentID string  `json:"component_id"`
 	Name        string  `json:"name"`
 	Category    *string `json:"category"`
 	Price       int     `json:"price"`

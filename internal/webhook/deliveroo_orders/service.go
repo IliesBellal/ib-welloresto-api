@@ -402,7 +402,8 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		// Si erreur, on a déjà envoyé le syncStatus failed dans la fonction.
 		// On retourne nil pour dire à Deliveroo "J'ai bien reçu et traité (en échec)"
 		// et éviter qu'il re-tente indéfiniment.
-		return nil
+
+		//return nil
 	}
 
 	log.Info("Webhook DELIVEROO : ProcessStatusUpdate " + ord.ID + " - " + ord.Status + " (Merchant :" + merchant.MerchantID + ")")
@@ -514,7 +515,7 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 
 		// Envoi succès à Deliveroo en asynchrone
-		//go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
+		go s.setSyncStatus(ctx, ord.ID, "succeeded", "")
 
 		return nil
 

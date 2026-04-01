@@ -313,7 +313,6 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 	if err != nil {
 		return err
 	}
-	log := logger.FromContext(ctx)
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
 	if err != nil {
@@ -327,7 +326,6 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, req.DeviceID)
 	if err != nil && req.CashRegisterID == nil {
-		log.Error(err.Error())
 		return models.ErrNoCashRegisterOpen
 	}
 
@@ -508,8 +506,6 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		accept_order.Status = "error"
 		return accept_order, err
 	}
-
-	log.Info("OrderLifeCycle.SetOrderAccepted - GetOrderBrandAndMerchant : " + orderMeta.BrandOrderID + " - " + orderMeta.Brand + " (merchant: " + orderMeta.MerchantID + ")")
 
 	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP)
 	if err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
@@ -788,16 +784,15 @@ func (s *OrdersLifeCycleService) UpdateProductionStatus(ctx context.Context, req
 	// 2. Invalidation du cache Redis (Déduplication)
 	// On utilise un map pour ne traiter chaque OrderID qu'une seule fois
 	processedIDs := make(map[string]bool)
-	if s.redis != nil {
-		for _, aOrderID := range affectedOrderIDs {
-			if !processedIDs[aOrderID] {
-				// Suppression de la clé centralisée
+	for _, aOrderID := range affectedOrderIDs {
+		if !processedIDs[aOrderID] {
+			// Suppression de la clé centralisée
+			if s.redis != nil {
 				key := helpers.GetRedisOrderKey(user.MerchantID, aOrderID)
 				s.redis.Delete(ctx, key)
 				log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
-
-				processedIDs[aOrderID] = true
 			}
+			processedIDs[aOrderID] = true
 		}
 	}
 

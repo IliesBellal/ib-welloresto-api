@@ -644,6 +644,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		}
 
 		order.OnlinePayment = true
+		order.MerchantApproval = "PENDING_APPROVAL"
 
 		// TODO nettoyage client
 		// 🔥 Nettoyage EXACT PHP
@@ -674,6 +675,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		}
 
 		order.OnlinePayment = true
+		order.MerchantApproval = "PENDING_APPROVAL"
 	}
 
 	// 4️⃣ PRICING

@@ -90,7 +90,7 @@ func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) err
 
 func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
 	if s.redis == nil {
-		//return false
+		return false
 	}
 
 	if user.MFAType == nil || *user.MFAType == "" {

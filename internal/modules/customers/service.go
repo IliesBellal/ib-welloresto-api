@@ -79,8 +79,6 @@ func (s *CustomersService) ProcessOrderLoyalty(ctx context.Context, orderID stri
 	err := s.customerRepo.UpdateLoyaltyFromOrder(ctx, orderID)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour de la fidélité pour la commande " + orderID + " : " + err.Error())
-	} else {
-		log.Info("Fidélité mise à jour avec succès pour la commande " + orderID)
 	}
 
 	return nil

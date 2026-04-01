@@ -42,6 +42,7 @@ type MerchantRow struct {
 	City         string
 	Country      string
 	ZipCode      string
+	LogoURL      string `json:"logo_url"`
 	Token        string `json:"token"`
 }
 

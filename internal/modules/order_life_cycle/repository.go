@@ -1055,6 +1055,12 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		return nil, err
 	}
 
+	// Supposons que tu aies ton objet req.Order disponible
+	err = r.InsertOrderLocations(ctx, req.Order)
+	if err != nil {
+		return nil, err // Gérer l'erreur proprement
+	}
+
 	if err := r.insertExtrasWithoutsConfigs(ctx, req, usedItems); err != nil {
 		//tx.Rollback()
 		log.Error("insertExtrasWithoutsConfigs failure " + err.Error())
@@ -1089,6 +1095,38 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		OrderItems: usedItems,
 		Action:     action,
 	}, nil
+}
+
+// InsertOrderLocations insère toutes les locations liées à une commande en une seule requête (Bulk Insert).
+func (r *OrdersLifeCycleRepository) InsertOrderLocations(ctx context.Context, order models.OrderRequest) error {
+	// S'il n'y a pas de location, on ne fait rien (équivalent du sizeof > 0 en PHP)
+	if len(order.Locations) == 0 {
+		return nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Préparation de la requête et des arguments
+	valueStrings := make([]string, 0, len(order.Locations))
+	valueArgs := make([]interface{}, 0, len(order.Locations)*2)
+
+	for _, loc := range order.Locations {
+		valueStrings = append(valueStrings, "(?, ?)")
+		valueArgs = append(valueArgs, order.OrderID, loc.LocationID)
+	}
+
+	// Construction de la requête finale
+	// Resultat: INSERT INTO order_location (order_id, location_id) VALUES (?, ?), (?, ?)...
+	query := fmt.Sprintf("INSERT INTO order_location (order_id, location_id) VALUES %s", strings.Join(valueStrings, ","))
+
+	// Exécution de la requête unique
+	_, err := db.ExecContext(ctx, query, valueArgs...)
+	if err != nil {
+		logger.FromContext(ctx).Error("failed to bulk insert order locations", zap.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 // upsertCustomer calls the customer repository to create/update the customer and returns numeric MerchantID (nil if none)
