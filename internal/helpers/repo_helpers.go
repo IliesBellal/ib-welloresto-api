@@ -168,6 +168,14 @@ func DebugSQL(log *zap.Logger, query string, args []interface{}) {
 	)
 }
 
+func StringToInt(s string) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return i
+}
+
 func IntToInt64Ptr(v int) *int64 {
 	i := int64(v)
 	return &i

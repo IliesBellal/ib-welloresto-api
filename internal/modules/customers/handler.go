@@ -117,9 +117,15 @@ func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request)
 	}
 
 	page := r.URL.Query().Get("page")
+	if page == "" {
+		page = "0"
+	}
 	page_size := r.URL.Query().Get("page_size")
+	if page_size == "" {
+		page_size = "10"
+	}
 
-	customers, err := h.svc.ListCustomers(ctx, token, page, page_size)
+	customers, err := h.svc.ListCustomers(ctx, token, helpers.StringToInt(page), helpers.StringToInt(page_size))
 	if err != nil {
 		models.SendErrorJSON(w, "customers", "list", err)
 		return

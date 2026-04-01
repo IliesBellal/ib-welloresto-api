@@ -458,7 +458,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	return results, nil
 }
 
-func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, page, pageSize string) ([]CustomerSearchResult, error) {
+func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID string, page, pageSize int) ([]CustomerSearchResult, error) {
 
 	var results []CustomerSearchResult
 
@@ -481,8 +481,8 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, pag
     WHERE merchant_id = ?
       AND enabled = true
       AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
-		 			ORDER BY creation_date DESC
-					LIMIT ?, ?
+	ORDER BY creation_date DESC
+	LIMIT ?, ?
 `, merchantID, page, pageSize)
 
 	if err != nil {
