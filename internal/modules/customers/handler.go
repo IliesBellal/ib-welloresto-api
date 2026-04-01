@@ -107,3 +107,26 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 		"result": customers,
 	})
 }
+
+func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "list", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	page := r.URL.Query().Get("page")
+	page_size := r.URL.Query().Get("page_size")
+
+	customers, err := h.svc.ListCustomers(ctx, token, page, page_size)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "list", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "customers", "list", map[string]interface{}{
+		"status": "success",
+		"result": customers,
+	})
+}

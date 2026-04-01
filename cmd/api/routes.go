@@ -570,6 +570,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/search", customersH.SearchCustomers)
+		r.Get("/list", customersH.ListCustomers)
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
 		r.Patch("/{customer_id}/loyalty/progress", customersH.UpdateLoyaltyProgress)
 		r.Patch("/{customer_id}/loyalty/reward", customersH.UpdateLoyaltyReward)
