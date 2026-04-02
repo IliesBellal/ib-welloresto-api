@@ -122,9 +122,11 @@ type ComponentUsage struct {
 
 // component category
 type ComponentCategory struct {
-	Category   string           `json:"category"`
-	Order      int              `json:"order"`
-	Components []ComponentBasic `json:"components"`
+	CategoryID   string           `json:"category_id"`
+	CategoryName string           `json:"category_name"`
+	Category     string           `json:"category,omitempty"`
+	Order        int              `json:"order"`
+	Components   []ComponentBasic `json:"components"`
 }
 
 type ComponentBasic struct {

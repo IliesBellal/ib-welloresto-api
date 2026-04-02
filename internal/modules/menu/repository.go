@@ -1092,7 +1092,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 
 	// --- STEP 1: component categories (NO available filter) ---
 	type compCatTmp struct {
-		ID    *string
+		ID    string
 		Name  string
 		Order int
 	}
@@ -1145,7 +1145,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	for _, cc := range compCats {
 		actual := []models.ComponentBasic{}
 		for _, cb := range allComponents {
-			if cb.CatID != nil && cc.ID != nil && *cb.CatID == *cc.ID {
+			if cb.CatID != nil && *cb.CatID == cc.ID {
 				actual = append(actual, models.ComponentBasic{
 					ComponentID: cb.ID,
 					Name:        cb.Name,
@@ -1156,9 +1156,10 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 			}
 		}
 		compTypes = append(compTypes, models.ComponentCategory{
-			Category:   cc.Name,
-			Order:      cc.Order,
-			Components: actual,
+			CategoryName: cc.Name,
+			CategoryID:   cc.ID,
+			Order:        cc.Order,
+			Components:   actual,
 		})
 	}
 
