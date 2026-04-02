@@ -162,7 +162,7 @@ type AvailabilityResponse struct {
 }
 
 type Unit struct {
-	ID             int      `json:"id"`
+	ID             string   `json:"id"`
 	Name           string   `json:"name"`
 	CompatibleWith []string `json:"compatible_with"`
 }

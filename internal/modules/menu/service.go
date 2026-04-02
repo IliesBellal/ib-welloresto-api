@@ -81,12 +81,13 @@ func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) 
 	return s.legacy.GetProduct(ctx, user.MerchantID, product_id)
 }
 
-func (s *MenuService) GetUnitsOfMeasures(ctx context.Context, token string) (interface{}, error) {
+func (s *MenuService) GetUnitsOfMeasures(ctx context.Context, token string) ([]Unit, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// Appel du repo legacy ou actuel
 	return s.legacy.GetUnitsOfMeasures(ctx, user.MerchantID)
 }
 
