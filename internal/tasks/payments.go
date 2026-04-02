@@ -6,7 +6,7 @@ import (
 )
 
 // const autoCaptureDelay = 720 // 12 heures en minutes
-const autoCaptureDelay = 20 // 20 minutes pour du test
+const autoCaptureDelay = 720 // 12 heures
 
 // CapturePayments : Valide les paiements Stripe différés
 func (tm *TasksManager) CapturePayments() {

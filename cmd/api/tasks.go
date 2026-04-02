@@ -22,14 +22,6 @@ func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *ord
 
 	return
 
-	// --- Planning (Basé sur vos scripts PHP) ---
-
-	// Toutes les minutes
-	c.AddFunc("@every 1m", func() {
-		taskManager.CapturePayments()
-		taskManager.CancelPayments()
-	})
-
 	// Toutes les 15 minutes
 	c.AddFunc("@every 15m", func() {
 		taskManager.UpdateAverageDistributionTime()
@@ -41,6 +33,9 @@ func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *ord
 		taskManager.CloseOrders()
 		taskManager.DenyOrders()
 		taskManager.SendLoyaltyProgrammReminder()
+
+		taskManager.CapturePayments()
+		taskManager.CancelPayments()
 	})
 
 	// Toutes les heures
