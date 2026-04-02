@@ -45,7 +45,8 @@ func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*
 
 	query := `
        SELECT iue.merchant_id, iue.store_id, m.timezone, 
-              iue.estimated_preparation_time, iue.last_estimated_preparation_time
+              iue.estimated_preparation_time, iue.last_estimated_preparation_time,
+			  iue.auto_accept_orders
        FROM integration_uber_eats iue
        INNER JOIN merchant m ON m.id = iue.merchant_id
        WHERE iue.merchant_id = ?`
@@ -60,6 +61,7 @@ func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*
 		&store.Timezone,
 		&store.EstimatedPreparationTime,
 		&store.LastEstimatedPreparationTime,
+		&store.AutoAcceptOrders,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
