@@ -755,7 +755,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
-                   p.sync_uber_eats, p.sync_deliveroo, p.category_id
+                   p.sync_uber_eats, p.sync_deliveroo
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -773,10 +773,10 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var bg, desc, imageURL sql.NullString
 			var isPopular, availIn, availTake, availDel, syncDel, syncUber sql.NullBool
 
-			if err := rows.Scan(&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.Category, &p.Price,
+			if err := rows.Scan(&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price,
 				&p.PriceTakeAway, &p.PriceDelivery, &p.Description,
 				&tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO,
-				&isPopular, &imageURL, &availIn, &availTake, &availDel, &p.HasImage, &syncUber, &syncDel, &p.CategoryID); err != nil {
+				&isPopular, &imageURL, &availIn, &availTake, &availDel, &p.HasImage, &syncUber, &syncDel); err != nil {
 				return nil, err
 			}
 
@@ -977,7 +977,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	}
 	{
 		step := "component_categories_no_filter"
-		q := `SELECT component_category_id, category_name, category_order FROM component_categories WHERE merchant_id = ? ORDER BY category_order ASC`
+		q := `SELECT component_category_id, category_name, category_order FROM component_category WHERE merchant_id = ? ORDER BY category_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err

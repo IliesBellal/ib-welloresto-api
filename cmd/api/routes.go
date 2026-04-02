@@ -411,8 +411,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/", menuH.GetMenu)
+
 		r.Get("/products", menuH.GetAllProducts)
 		r.Get("/components", menuH.GetAllComponents)
+
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
 		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
