@@ -749,7 +749,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "products_roots_all"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category_id, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
@@ -834,7 +834,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "sub_products_all"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category_id, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status
             FROM products p
