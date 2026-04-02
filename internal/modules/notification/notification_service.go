@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 	"welloresto-api/internal/logger"
@@ -139,6 +140,7 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 	}
 
 	// --- GESTION DES ERREURS ---
+	log.Warn("Status code " + strconv.Itoa(resp.StatusCode) + " received from FCM for merchant " + merchantID + " - " + nType + " - " + orderID + " - " + deviceToken)
 
 	// 1. CAS DU 401 (Jeton d'accès expiré)
 	if resp.StatusCode == 401 && canRetry {
@@ -162,7 +164,7 @@ func (s *NotificationService) sendWithoutPayload(ctx context.Context, merchantID
 	}
 
 	// 2. AUTRES CAS (404, 410, etc.)
-	s.handleFCMError(ctx, merchantID, deviceToken, accessToken, resp.StatusCode)
+	//s.handleFCMError(ctx, merchantID, deviceToken, accessToken, resp.StatusCode)
 }
 
 func (s *NotificationService) handleFCMError(ctx context.Context, merchantID, deviceToken, accessToken string, statusCode int) {
@@ -177,12 +179,12 @@ func (s *NotificationService) handleFCMError(ctx context.Context, merchantID, de
 			s.tokenExpiry = time.Time{}
 		}
 		s.mu.Unlock()
-		//_ = s.repo.DeleteAccessToken(ctx, accessToken)
+		_ = s.repo.DeleteAccessToken(ctx, accessToken)
 
 	case 404, 410:
 		// Nettoyage des devices morts
 		log.Warn(fmt.Sprintf("🗑️ Suppression device token pour %s", merchantID))
-		//_ = s.repo.DeleteDeviceToken(ctx, deviceToken)
+		_ = s.repo.DeleteDeviceToken(ctx, deviceToken)
 	}
 }
 
