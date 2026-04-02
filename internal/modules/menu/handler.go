@@ -57,6 +57,46 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get", menu)
 }
 
+func (h *MenuHandler) GetAllProducts(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_all_products", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	products, err := h.service.GetAllProducts(ctx, token)
+	if err != nil {
+		log.Error("[ERROR] GetAllProducts error " + err.Error())
+		models.SendErrorJSON(w, "menu", "get_all_products", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_all_products", products)
+}
+
+func (h *MenuHandler) GetAllComponents(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_all_components", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	components, err := h.service.GetAllComponents(ctx, token)
+	if err != nil {
+		log.Error("[ERROR] GetAllComponents error " + err.Error())
+		models.SendErrorJSON(w, "menu", "get_all_components", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_all_components", components)
+}
+
 func (h *MenuHandler) GetUnitsOfMeasures(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -221,6 +261,40 @@ func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Reque
 	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category", map[string]string{
 		"status":  "1",
 		"message": "product_category_disabled",
+	})
+}
+
+func (h *MenuHandler) SetProductCategoryAvailability(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_category_availability", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	categoryID := chi.URLParam(r, "category_id")
+	if categoryID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_category_availability", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req models.StatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_category_availability", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	_, err := h.service.SetProductCategoryAvailability(ctx, token, categoryID, req.Status)
+	if err != nil {
+		log.Error("[ERROR] SetProductCategoryAvailability error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "set_category_availability", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "set_category_availability", models.AvailabilityResponse{
+		Status: "1",
 	})
 }
 

@@ -697,6 +697,356 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	return resp, nil
 }
 
+func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) ([]ProductCategory, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("%s query error: %w", step, err)
+		}
+		return rows, nil
+	}
+
+	// --- STEP 1: categories (NO available filter) ---
+	var cats []struct {
+		ID    *string
+		Name  string
+		Order int
+		Bg    sql.NullString
+	}
+	{
+		step := "categories_no_filter"
+		q := `
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
+            FROM productcateg pc
+            WHERE pc.enabled = 1 AND pc.merchant_id = ?
+            ORDER BY pc.categ_order ASC
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c struct {
+				ID    *string
+				Name  string
+				Order int
+				Bg    sql.NullString
+			}
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg); err != nil {
+				return nil, err
+			}
+			cats = append(cats, c)
+		}
+	}
+
+	// --- STEP 2: products (roots, NO available filter) ---
+	type prodTmp struct {
+		ProductEntry
+	}
+	products := make(map[string]*ProductEntry)
+	var productOrder []string
+	{
+		step := "products_roots_no_filter"
+		q := `
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
+                   p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
+                   CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
+                   p.sync_uber_eats, p.sync_deliveroo, p.category_id
+            FROM products p
+            INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
+            INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
+            INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
+            WHERE p.merchant_id = ? AND p.by_product_of IS NULL
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p ProductEntry
+			var tvaIn, tvaDel, tvaTake sql.NullFloat64
+			var bg, desc, imageURL sql.NullString
+			var isPopular, availIn, availTake, availDel, syncDel, syncUber sql.NullBool
+
+			if err := rows.Scan(&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.Category, &p.Price,
+				&p.PriceTakeAway, &p.PriceDelivery, &p.Description,
+				&tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO,
+				&isPopular, &imageURL, &availIn, &availTake, &availDel, &p.HasImage, &syncUber, &syncDel, &p.CategoryID); err != nil {
+				return nil, err
+			}
+
+			if tvaIn.Valid {
+				p.TVAIn = tvaIn.Float64
+			}
+			if tvaDel.Valid {
+				p.TVADelivery = tvaDel.Float64
+			}
+			if tvaTake.Valid {
+				p.TVATakeAway = tvaTake.Float64
+			}
+			if bg.Valid {
+				p.BgColor = &bg.String
+			}
+			if desc.Valid {
+				p.Description = &desc.String
+			}
+			if imageURL.Valid {
+				p.ImageURL = &imageURL.String
+			}
+			if isPopular.Valid {
+				p.IsPopular = isPopular.Bool
+			}
+			if availIn.Valid {
+				p.AvailableIn = availIn.Bool
+			}
+			if availTake.Valid {
+				p.AvailableTakeAway = availTake.Bool
+			}
+			if availDel.Valid {
+				p.AvailableDelivery = availDel.Bool
+			}
+			if syncDel.Valid {
+				p.SyncDeliveroo = syncDel.Bool
+			}
+			if syncUber.Valid {
+				p.SyncUberEats = syncUber.Bool
+			}
+			defaultOrder := 0
+			p.DisplayOrder = &defaultOrder
+
+			products[p.ProductID] = &p
+			productOrder = append(productOrder, p.ProductID)
+		}
+	}
+
+	// --- STEP 3: components ---
+	type compMapEntry struct {
+		ComponentID   int64
+		ProductID     string
+		Name          string
+		Price         int64
+		Status        int
+		Quantity      float64
+		UnitOfMeasure string
+	}
+	compMap := make(map[string][]ComponentUsage)
+	{
+		step := "components"
+		q := `
+            SELECT c.component_id, cp.product_id, c.name, cp.component_price, c.status, cp.quantity, uom.uom_desc
+            FROM components c
+            INNER JOIN component_product cp ON cp.component_id = c.component_id
+            INNER JOIN unit_of_measure_desc uom ON uom.id = cp.unit_of_measure AND uom.lang = 'FR'
+            WHERE c.merchant_id = ?
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cme compMapEntry
+			if err := rows.Scan(&cme.ComponentID, &cme.ProductID, &cme.Name, &cme.Price, &cme.Status, &cme.Quantity, &cme.UnitOfMeasure); err != nil {
+				return nil, err
+			}
+			compMap[cme.ProductID] = append(compMap[cme.ProductID], ComponentUsage{
+				ComponentID:   cme.ComponentID,
+				Name:          cme.Name,
+				Price:         cme.Price,
+				Status:        cme.Status,
+				Quantity:      cme.Quantity,
+				UnitOfMeasure: cme.UnitOfMeasure,
+			})
+		}
+	}
+
+	// --- STEP 4: allergens ---
+	allergenMap := make(map[string][]models.AllergenEntry)
+	{
+		step := "allergens"
+		q := `
+            SELECT pa.product_id, a.allergen_id, a.allergen_name, a.allergen_code, a.allergen_icon
+            FROM product_allergens pa
+            INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
+            WHERE pa.merchant_id = ?
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var productID string
+			var a models.AllergenEntry
+			var icon sql.NullString
+			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &icon); err != nil {
+				return nil, err
+			}
+			if icon.Valid {
+				a.Icon = icon.String
+			}
+			allergenMap[productID] = append(allergenMap[productID], a)
+		}
+	}
+
+	// --- STEP 5: tags ---
+	tagMap := make(map[string][]models.TagEntry)
+	{
+		step := "tags"
+		q := `
+            SELECT pt.product_id, t.tag_id, t.merchant_id, t.tag_name
+            FROM product_tags pt
+            INNER JOIN tags t ON t.tag_id = pt.tag_id
+            WHERE pt.merchant_id = ?
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var productID string
+			var t models.TagEntry
+			if err := rows.Scan(&productID, &t.ID, &t.MerchantID, &t.Name); err != nil {
+				return nil, err
+			}
+			tagMap[productID] = append(tagMap[productID], t)
+		}
+	}
+
+	// --- Attach components, allergens, tags ---
+	for _, p := range products {
+		if comps, ok := compMap[p.ProductID]; ok {
+			p.Components = comps
+		}
+		if allergens, ok := allergenMap[p.ProductID]; ok {
+			p.Allergens = allergens
+		}
+		if tags, ok := tagMap[p.ProductID]; ok {
+			p.Tags = tags
+		}
+		p.Configuration = ConfigurableResponse{Attributes: []ConfigurableAttribute{}}
+	}
+
+	// --- Build categories -> products ---
+	productTypes := []ProductCategory{}
+	for _, c := range cats {
+		actual := []ProductEntry{}
+		for _, pid := range productOrder {
+			if p, ok := products[pid]; ok && p != nil && p.Category == c.ID {
+				actual = append(actual, *p)
+			}
+		}
+		var bg *string
+		if c.Bg.Valid {
+			bg = &c.Bg.String
+		}
+		productTypes = append(productTypes, ProductCategory{
+			Category:   c.Name,
+			CategoryID: c.ID,
+			Order:      c.Order,
+			BgColor:    bg,
+			Products:   actual,
+		})
+	}
+
+	return productTypes, nil
+}
+
+func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string) ([]ComponentCategory, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("%s query error: %w", step, err)
+		}
+		return rows, nil
+	}
+
+	// --- STEP 1: component categories ---
+	var compCats []struct {
+		ID    *string
+		Name  string
+		Order int
+	}
+	{
+		step := "component_categories_no_filter"
+		q := `SELECT component_category_id, category_name, category_order FROM component_categories WHERE merchant_id = ? ORDER BY category_order ASC`
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cc struct {
+				ID    *string
+				Name  string
+				Order int
+			}
+			if err := rows.Scan(&cc.ID, &cc.Name, &cc.Order); err != nil {
+				return nil, err
+			}
+			compCats = append(compCats, cc)
+		}
+	}
+
+	// --- STEP 2: all components (NO available filter) ---
+	type compBasicTmp struct {
+		ID     int64
+		Name   string
+		CatID  *string
+		Status int
+		Price  int
+	}
+	var allComponents []compBasicTmp
+	{
+		step := "components_no_filter"
+		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ?`
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cb compBasicTmp
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price); err != nil {
+				return nil, err
+			}
+			allComponents = append(allComponents, cb)
+		}
+	}
+
+	// --- Build component types ---
+	compTypes := []ComponentCategory{}
+	for _, cc := range compCats {
+		actual := []ComponentBasic{}
+		for _, cb := range allComponents {
+			if cb.CatID != nil && cc.ID != nil && *cb.CatID == *cc.ID {
+				actual = append(actual, ComponentBasic{
+					ComponentID: cb.ID,
+					Name:        cb.Name,
+					Category:    cb.CatID,
+					Price:       cb.Price,
+					Status:      cb.Status,
+				})
+			}
+		}
+		compTypes = append(compTypes, ComponentCategory{
+			Category:   cc.Name,
+			Order:      cc.Order,
+			Components: actual,
+		})
+	}
+
+	return compTypes, nil
+}
+
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -848,6 +1198,24 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 		 SET status = ?
 		 WHERE product_id = ? AND merchant_id = ?`,
 		status, pid, merchantID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return res.RowsAffected()
+}
+
+func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE productcateg 
+		 SET available = ?
+		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
+		status, categoryID, merchantID,
 	)
 	if err != nil {
 		return 0, err

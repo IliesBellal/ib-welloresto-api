@@ -53,6 +53,24 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
+func (s *MenuService) GetAllProducts(ctx context.Context, token string) ([]ProductCategory, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetAllProducts(ctx, user.MerchantID)
+}
+
+func (s *MenuService) GetAllComponents(ctx context.Context, token string) ([]ComponentCategory, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetAllComponents(ctx, user.MerchantID)
+}
+
 func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
 }
@@ -116,6 +134,15 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 	}
 
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
+}
+
+func (s *MenuService) SetProductCategoryAvailability(ctx context.Context, token, categoryID, status string) (int64, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	return s.legacy.SetProductCategoryAvailability(ctx, user.MerchantID, categoryID, status)
 }
 
 func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
