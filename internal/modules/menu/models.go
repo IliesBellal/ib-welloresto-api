@@ -167,6 +167,12 @@ type Unit struct {
 	CompatibleWith []string `json:"compatible_with"`
 }
 
+// UnitConversion est utilisé uniquement en interne pour le mapping
+type UnitConversion struct {
+	IDFrom string
+	IDTo   string
+}
+
 // Temporaire, à remplacer par les vraies struct
 type Attribute struct {
 	ID      string            `json:"id"`
