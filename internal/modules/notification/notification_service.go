@@ -184,7 +184,7 @@ func (s *NotificationService) handleFCMError(ctx context.Context, merchantID, de
 	case 404, 410:
 		// Nettoyage des devices morts
 		log.Warn(fmt.Sprintf("🗑️ Suppression device token pour %s", merchantID))
-		_ = s.repo.DeleteDeviceToken(ctx, deviceToken)
+		// _ = s.repo.DeleteDeviceToken(ctx, deviceToken)
 	}
 }
 
