@@ -82,7 +82,7 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 					Name:        &product.ProductName,
 					Description: &description,
 				},
-				UnitAmount: stripe.Int64(int64(unitAmount + (configurationPrice * qty))),
+				UnitAmount: stripe.Int64(int64((unitAmount + configurationPrice))),
 			},
 		})
 		/*

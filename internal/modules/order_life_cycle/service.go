@@ -116,10 +116,11 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, in.OrderID)
 	if err != nil {
-		return err
+		return nil
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	// 1 — Local DB operations
@@ -267,7 +268,8 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
@@ -299,7 +301,8 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 		return err
 	}
 	if orderStillOpen {
-		return models.ErrOrderOpen
+		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderReopen, models.ResourceOrder, func(txCtx context.Context) error {
@@ -319,7 +322,8 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	req.OrderID = orderID
@@ -372,7 +376,7 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		return nil
 	}
 
 	log := logger.FromContext(ctx)
@@ -428,7 +432,7 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 		return nil, err
 	}
 	if !orderStillOpen {
-		return nil, models.ErrOrderClosed
+		return nil, nil
 	}
 
 	log := logger.FromContext(ctx)
@@ -585,6 +589,7 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 		return nil, err
 	}
 	if !orderStillOpen {
+		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 		return nil, models.ErrOrderClosed
 	}
 
@@ -705,7 +710,8 @@ func (s *OrdersLifeCycleService) DenyOrder(ctx context.Context, OrderID string, 
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(in.MerchantID, OrderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	in.UserID = user.UserID
@@ -726,7 +732,8 @@ func (s *OrdersLifeCycleService) SetReadyForDistribution(ctx context.Context, in
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(in.MerchantID, in.OrderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	in.UserID = user.UserID
@@ -909,7 +916,8 @@ func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *mo
 		return err
 	}
 	if !orderStillOpen {
-		return models.ErrOrderClosed
+		s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
+		return nil
 	}
 
 	req.MerchantID = user.MerchantID
