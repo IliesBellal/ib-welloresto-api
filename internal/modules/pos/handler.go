@@ -181,7 +181,7 @@ func (h *POSHandler) ToggleSafetyStockActive(w http.ResponseWriter, r *http.Requ
 func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_delivery_men", map[string]string{"error": "missing_token"})
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "get_users", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -189,11 +189,11 @@ func (h *POSHandler) GetDeliveryMen(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.service.GetDeliveryMen(ctx, token)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_delivery_men", map[string]interface{}{"status": "0", "error": err.Error()})
+		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_users", map[string]interface{}{"status": "0", "error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "pos", "get_delivery_men", models.DeliveryMenResponse{
+	models.SendJSON(w, http.StatusOK, "pos", "get_users", models.DeliveryMenResponse{
 		Users: users,
 	})
 }

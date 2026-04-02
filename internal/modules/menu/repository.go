@@ -1363,6 +1363,205 @@ func (r *MenuRepository) DeleteProductCategory(ctx context.Context, merchantID, 
 	return nil
 }
 
+func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, componentID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE components 
+		 SET enabled = 0
+		 WHERE component_id = ? AND merchant_id = ?`,
+		componentID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) CreateComponent(ctx context.Context, p *CreateComponentPayload) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Vérifier que la catégorie existe
+	var categoryExists int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM component_category WHERE merchant_categ_id = ? AND merchant_id = ?`,
+		p.CategoryID, p.MerchantID,
+	).Scan(&categoryExists)
+	if err != nil {
+		return "0", fmt.Errorf("check category error: %w", err)
+	}
+	if categoryExists == 0 {
+		return "0", fmt.Errorf("category_not_found")
+	}
+
+	// Vérifier que l'unité de mesure existe
+	var unitExists int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
+		p.UnitID,
+	).Scan(&unitExists)
+	if err != nil {
+		return "0", fmt.Errorf("check unit error: %w", err)
+	}
+	if unitExists == 0 {
+		return "0", fmt.Errorf("unit_not_found")
+	}
+
+	// Mettre la première lettre en majuscule
+	name := strings.TrimSpace(p.Name)
+	if len(name) > 0 {
+		name = strings.ToUpper(string(name[0])) + name[1:]
+	}
+
+	// Insérer le composant
+	query := `
+		INSERT INTO components (
+			merchant_id,
+			name,
+			category_id,
+			component_price,
+			unit_id,
+			enabled,
+			status
+		) VALUES (?, ?, ?, ?, ?, 1, 1)
+	`
+
+	res, err := db.ExecContext(
+		ctx,
+		query,
+		p.MerchantID,
+		name,
+		p.CategoryID,
+		p.Price,
+		p.UnitID,
+	)
+	if err != nil {
+		return "0", fmt.Errorf("insert component error: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "0", fmt.Errorf("get last insert id error: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, p.MerchantID)
+
+	return strconv.FormatInt(id, 10), nil
+}
+
+func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *CreateComponentCategoryPayload) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		return "0", fmt.Errorf("category_name_required")
+	}
+
+	// Mettre la première lettre en majuscule
+	if len(name) > 0 {
+		name = strings.ToUpper(string(name[0])) + name[1:]
+	}
+
+	// Récupérer le prochain categ_order
+	var maxOrder int
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(category_order), 0) FROM component_category WHERE merchant_id = ?`,
+		p.MerchantID,
+	).Scan(&maxOrder)
+	if err != nil && err != sql.ErrNoRows {
+		return "0", fmt.Errorf("get max order error: %w", err)
+	}
+
+	// Insérer la catégorie
+	query := `
+		INSERT INTO component_category (
+			merchant_id,
+			category_name,
+			category_order,
+			enabled,
+			available
+		) VALUES (?, ?, ?, 1, 1)
+	`
+
+	res, err := db.ExecContext(
+		ctx,
+		query,
+		p.MerchantID,
+		name,
+		maxOrder+1,
+	)
+	if err != nil {
+		return "0", fmt.Errorf("insert component category error: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "0", fmt.Errorf("get last insert id error: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, p.MerchantID)
+
+	return strconv.FormatInt(id, 10), nil
+}
+
+func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreateProductCategoryPayload) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		return "0", fmt.Errorf("category_name_required")
+	}
+
+	// Mettre la première lettre en majuscule
+	if len(name) > 0 {
+		name = strings.ToUpper(string(name[0])) + name[1:]
+	}
+
+	// Récupérer le prochain categ_order
+	var maxOrder int
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(categ_order), 0) FROM productcateg WHERE merchant_id = ?`,
+		p.MerchantID,
+	).Scan(&maxOrder)
+	if err != nil && err != sql.ErrNoRows {
+		return "0", fmt.Errorf("get max order error: %w", err)
+	}
+
+	// Insérer la catégorie
+	query := `
+		INSERT INTO productcateg (
+			merchant_id,
+			categ_name,
+			categ_order,
+			enabled,
+			available
+		) VALUES (?, ?, ?, 1, 1)
+	`
+
+	res, err := db.ExecContext(
+		ctx,
+		query,
+		p.MerchantID,
+		name,
+		maxOrder+1,
+	)
+	if err != nil {
+		return "0", fmt.Errorf("insert product category error: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "0", fmt.Errorf("get last insert id error: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, p.MerchantID)
+
+	return strconv.FormatInt(id, 10), nil
+}
+
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
 	db := dbutils.GetDB(ctx, r.database)
 

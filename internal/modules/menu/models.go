@@ -236,3 +236,24 @@ type ProductUpdatePayload struct {
 type ProductAttributesPayload struct {
 	Configuration []string `json:"configuration"` // Liste des ID d'attributs
 }
+
+// CreateComponentPayload pour la création de composants
+type CreateComponentPayload struct {
+	Name       string `json:"name"`        // Nom du composant
+	CategoryID string `json:"category_id"` // ID de la catégorie
+	UnitID     string `json:"unit_id"`     // ID de l'unité de mesure
+	Price      int    `json:"price"`       // Prix en centimes
+	MerchantID string `json:"-"`           // Sera défini par le service
+}
+
+// CreateComponentCategoryPayload pour la création de catégories de composants
+type CreateComponentCategoryPayload struct {
+	Name       string `json:"name"` // Nom de la catégorie
+	MerchantID string `json:"-"`    // Sera défini par le service
+}
+
+// CreateProductCategoryPayload pour la création de catégories de produits
+type CreateProductCategoryPayload struct {
+	Name       string `json:"name"` // Nom de la catégorie
+	MerchantID string `json:"-"`    // Sera défini par le service
+}

@@ -157,6 +157,96 @@ func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *MenuHandler) CreateComponent(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "create_component", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CreateComponentPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	componentID, err := h.service.CreateComponent(ctx, token, &req)
+	if err != nil {
+		log.Error("[ERROR] CreateComponent error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "create_component", map[string]interface{}{
+		"component_id": componentID,
+		"status":       "1",
+		"message":      "component_created",
+	})
+}
+
+func (h *MenuHandler) CreateComponentCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "create_component_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CreateComponentCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	categoryID, err := h.service.CreateComponentCategory(ctx, token, &req)
+	if err != nil {
+		log.Error("[ERROR] CreateComponentCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_component_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "create_component_category", map[string]interface{}{
+		"category_id": categoryID,
+		"status":      "1",
+		"message":     "component_category_created",
+	})
+}
+
+func (h *MenuHandler) CreateProductCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "create_product_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CreateProductCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_product_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	categoryID, err := h.service.CreateProductCategory(ctx, token, &req)
+	if err != nil {
+		log.Error("[ERROR] CreateProductCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_product_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "create_product_category", map[string]interface{}{
+		"category_id": categoryID,
+		"status":      "1",
+		"message":     "product_category_created",
+	})
+}
+
 func (h *MenuHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -261,6 +351,35 @@ func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Reque
 	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category", map[string]string{
 		"status":  "1",
 		"message": "product_category_disabled",
+	})
+}
+
+func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_component", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	componentID := chi.URLParam(r, "component_id")
+	if componentID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_component", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.DeleteComponent(ctx, token, componentID)
+	if err != nil {
+		log.Error("[ERROR] DeleteComponent error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "delete_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_component", map[string]string{
+		"status":  "1",
+		"message": "component_disabled",
 	})
 }
 

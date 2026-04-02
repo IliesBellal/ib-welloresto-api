@@ -90,6 +90,36 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
 }
 
+func (s *MenuService) CreateComponent(ctx context.Context, token string, req *CreateComponentPayload) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	req.MerchantID = user.MerchantID
+	return s.legacy.CreateComponent(ctx, req)
+}
+
+func (s *MenuService) CreateComponentCategory(ctx context.Context, token string, req *CreateComponentCategoryPayload) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	req.MerchantID = user.MerchantID
+	return s.legacy.CreateComponentCategory(ctx, req)
+}
+
+func (s *MenuService) CreateProductCategory(ctx context.Context, token string, req *CreateProductCategoryPayload) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	req.MerchantID = user.MerchantID
+	return s.legacy.CreateProductCategory(ctx, req)
+}
+
 func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) (*models.ProductEntry, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -152,6 +182,15 @@ func (s *MenuService) DeleteProductCategory(ctx context.Context, token, category
 	}
 
 	return s.legacy.DeleteProductCategory(ctx, user.MerchantID, categoryID)
+}
+
+func (s *MenuService) DeleteComponent(ctx context.Context, token, componentID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.DeleteComponent(ctx, user.MerchantID, componentID)
 }
 
 // GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo
