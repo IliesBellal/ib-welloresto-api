@@ -24,6 +24,7 @@ type ProductEntry struct {
 	OrderID                      string                `json:"order_id,omitempty"`
 	OrderItemID                  string                `json:"order_item_id,omitempty"`
 	ProductID                    string                `json:"product_id"`
+	MerchantID                   string                `json:"merchant_id,omitempty"`
 	OrderedOn                    int64                 `json:"ordered_on,omitempty"`
 	ProductionStatus             string                `json:"production_status,omitempty"`
 	ProductionStatusDoneQuantity int                   `json:"production_status_done_quantity,omitempty"`

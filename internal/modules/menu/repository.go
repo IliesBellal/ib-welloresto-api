@@ -697,9 +697,10 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	return resp, nil
 }
 
-func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) ([]ProductCategory, error) {
+func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) ([]models.ProductCategory, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	// --- HELPER FUNCTIONS (same as GetMenu) ---
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
 		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -708,7 +709,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		return rows, nil
 	}
 
-	// --- STEP 1: categories (NO available filter) ---
+	// --- STEP 1: categories (NO available/enabled filter) ---
 	var cats []struct {
 		ID    *string
 		Name  string
@@ -716,11 +717,11 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		Bg    sql.NullString
 	}
 	{
-		step := "categories_no_filter"
+		step := "categories_all_products"
 		q := `
             SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
             FROM productcateg pc
-            WHERE pc.enabled = 1 AND pc.merchant_id = ?
+            WHERE pc.merchant_id = ?
             ORDER BY pc.categ_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -742,16 +743,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		}
 	}
 
-	// --- STEP 2: products (roots, NO available filter) ---
-	type prodTmp struct {
-		ProductEntry
-	}
-	products := make(map[string]*ProductEntry)
+	// --- STEP 2: products (roots, NO available/enabled filter) ---
+	products := make(map[string]*models.ProductEntry)
 	var productOrder []string
 	{
-		step := "products_roots_no_filter"
+		step := "products_roots_all"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category_id, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
@@ -760,7 +758,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
-            WHERE p.merchant_id = ? AND p.by_product_of IS NULL
+            LEFT JOIN products subp on subp.product_id = p.by_product_of
+            WHERE p.merchant_id = ? AND (subp.product_id IS NULL OR subp.product_id = p.product_id)
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -768,26 +767,30 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var p ProductEntry
+			var p models.ProductEntry
 			var tvaIn, tvaDel, tvaTake sql.NullFloat64
-			var bg, desc, imageURL sql.NullString
-			var isPopular, availIn, availTake, availDel, syncDel, syncUber sql.NullBool
+			var bg sql.NullString
+			var desc sql.NullString
+			var imageURL sql.NullString
+			var availIn, availTake, availDel sql.NullBool
+			var isPopular, syncUberEats, syncDeliveroo sql.NullBool
+			var hasImage bool
 
-			if err := rows.Scan(&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price,
-				&p.PriceTakeAway, &p.PriceDelivery, &p.Description,
-				&tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO,
-				&isPopular, &imageURL, &availIn, &availTake, &availDel, &p.HasImage, &syncUber, &syncDel); err != nil {
+			if err := rows.Scan(
+				&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
+				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
+				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo,
+			); err != nil {
 				return nil, err
 			}
-
 			if tvaIn.Valid {
-				p.TVAIn = tvaIn.Float64
+				p.TVAIn = &tvaIn.Float64
 			}
 			if tvaDel.Valid {
-				p.TVADelivery = tvaDel.Float64
+				p.TVADelivery = &tvaDel.Float64
 			}
 			if tvaTake.Valid {
-				p.TVATakeAway = tvaTake.Float64
+				p.TVATakeAway = &tvaTake.Float64
 			}
 			if bg.Valid {
 				p.BgColor = &bg.String
@@ -800,6 +803,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			}
 			if isPopular.Valid {
 				p.IsPopular = isPopular.Bool
+			} else {
+				p.IsPopular = false
 			}
 			if availIn.Valid {
 				p.AvailableIn = availIn.Bool
@@ -810,11 +815,11 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if availDel.Valid {
 				p.AvailableDelivery = availDel.Bool
 			}
-			if syncDel.Valid {
-				p.SyncDeliveroo = syncDel.Bool
+			if syncDeliveroo.Valid {
+				p.SyncDeliveroo = syncDeliveroo.Bool
 			}
-			if syncUber.Valid {
-				p.SyncUberEats = syncUber.Bool
+			if syncUberEats.Valid {
+				p.SyncUberEats = syncUberEats.Bool
 			}
 			defaultOrder := 0
 			p.DisplayOrder = &defaultOrder
@@ -824,24 +829,78 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		}
 	}
 
-	// --- STEP 3: components ---
-	type compMapEntry struct {
-		ComponentID   int64
-		ProductID     string
-		Name          string
-		Price         int64
-		Status        int
-		Quantity      float64
-		UnitOfMeasure string
-	}
-	compMap := make(map[string][]ComponentUsage)
+	// --- STEP 3: sub-products (NO available filter) ---
+	subProducts := make(map[string]*models.ProductEntry)
 	{
-		step := "components"
+		step := "sub_products_all"
 		q := `
-            SELECT c.component_id, cp.product_id, c.name, cp.component_price, c.status, cp.quantity, uom.uom_desc
+            SELECT p.product_id, p.by_product_of, p.name, p.category, p.category_id, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+                   p.available_in, p.available_take_away, p.available_delivery,
+                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status
+            FROM products p
+            INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
+            INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
+            INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
+            WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p models.ProductEntry
+			var by sql.NullString
+			var tvaIn, tvaDel, tvaTake sql.NullFloat64
+			var bg sql.NullString
+			var desc sql.NullString
+			var availIn, availTake, availDel sql.NullBool
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
+				return nil, err
+			}
+			if by.Valid {
+				p.ByProductOf = &by.String
+			}
+			if tvaIn.Valid {
+				p.TVAIn = &tvaIn.Float64
+			}
+			if tvaDel.Valid {
+				p.TVADelivery = &tvaDel.Float64
+			}
+			if tvaTake.Valid {
+				p.TVATakeAway = &tvaTake.Float64
+			}
+			if bg.Valid {
+				p.BgColor = &bg.String
+			}
+			if desc.Valid {
+				p.Description = &desc.String
+			}
+			if availIn.Valid {
+				p.AvailableIn = availIn.Bool
+			}
+			if availTake.Valid {
+				p.AvailableTakeAway = availTake.Bool
+			}
+			if availDel.Valid {
+				p.AvailableDelivery = availDel.Bool
+			}
+			defaultOrder := 0
+			p.DisplayOrder = &defaultOrder
+			subProducts[p.ProductID] = &p
+		}
+	}
+
+	// --- STEP 4: components (requires, NO available filter) ---
+	compMap := make(map[string][]models.ComponentUsage)
+	{
+		step := "components_requires_all"
+		q := `
+            SELECT r.product_id, c.component_id, c.name, c.component_price, c.status, rq.quantity, uomd.uom_desc
             FROM components c
-            INNER JOIN requires rq on c.component_id = rq.component_id
-            INNER JOIN unit_of_measure_desc uom ON uom.id = cp.unit_of_measure AND uom.lang = 'FR'
+            INNER JOIN requires rq on c.component_id = rq.component_id and rq.enabled = true
+            INNER JOIN recipes r on r.recipe_id = rq.recipe_id
+            INNER JOIN unit_of_measure_desc uomd on uomd.lang = 'FR' and uomd.id = rq.unit_of_measure
             WHERE c.merchant_id = ?
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -850,32 +909,84 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var cme compMapEntry
-			if err := rows.Scan(&cme.ComponentID, &cme.ProductID, &cme.Name, &cme.Price, &cme.Status, &cme.Quantity, &cme.UnitOfMeasure); err != nil {
+			var productID string
+			var c models.ComponentUsage
+			var uom sql.NullString
+			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
 				return nil, err
 			}
-			compMap[cme.ProductID] = append(compMap[cme.ProductID], ComponentUsage{
-				ComponentID:   cme.ComponentID,
-				Name:          cme.Name,
-				Price:         cme.Price,
-				Status:        cme.Status,
-				Quantity:      cme.Quantity,
-				UnitOfMeasure: cme.UnitOfMeasure,
-			})
+			if uom.Valid {
+				c.UnitOfMeasure = uom.String
+			}
+			compMap[productID] = append(compMap[productID], c)
 		}
 	}
 
-	// --- STEP 4: allergens ---
-	allergenMap := make(map[string][]models.AllergenEntry)
+	// --- STEP 5: configurable attributes + options (NO availability filter) ---
+	optMap := make(map[string][]models.ConfigurableOption)
 	{
-		step := "allergens"
+		step := "configurable_options_all"
 		q := `
-            SELECT pa.product_id, a.allergen_id, a.allergen_name, a.allergen_code, a.allergen_icon
-            FROM product_allergens pa
-            INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
-            WHERE pa.merchant_id = ?
+            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity
+            FROM products p
+            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+            INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
+            WHERE p.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cfgID string
+			var o models.ConfigurableOption
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
+				return nil, err
+			}
+			optMap[cfgID] = append(optMap[cfgID], o)
+		}
+	}
+
+	attrMap := make(map[string][]models.ConfigurableAttribute)
+	{
+		step := "configurable_attributes_all"
+		q := `
+            SELECT ca.id, pca.product_id, ca.title, ca.max_options, ca.attribute_type, ca.min_options
+            FROM products p
+            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+            WHERE p.merchant_id = ? AND ca.enabled = 1 AND pca.enabled = 1
+            ORDER BY pca.num_order ASC
+        `
+		rows, err := runQuery(step, q, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var a models.ConfigurableAttribute
+			if err := rows.Scan(&a.ID, &a.ProductID, &a.Title, &a.MaxOptions, &a.AttributeType, &a.MinOptions); err != nil {
+				return nil, err
+			}
+			a.Options = optMap[a.ID]
+			attrMap[a.ProductID] = append(attrMap[a.ProductID], a)
+		}
+	}
+
+	// --- STEP 6: allergens per product (NO product availability filter) ---
+	allergenMap := make(map[string][]models.AllergenEntry)
+	{
+		q := `
+			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			FROM product_allergens pa
+			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
+			WHERE pa.product_id IN (
+				SELECT product_id FROM products WHERE merchant_id = ?
+			)
+		`
+		rows, err := runQuery("allergens_per_product_all", q, merchantID)
 		if err != nil {
 			return nil, err
 		}
@@ -883,28 +994,25 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var productID string
 			var a models.AllergenEntry
-			var icon sql.NullString
-			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &icon); err != nil {
+			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
 				return nil, err
-			}
-			if icon.Valid {
-				a.Icon = icon.String
 			}
 			allergenMap[productID] = append(allergenMap[productID], a)
 		}
 	}
 
-	// --- STEP 5: tags ---
+	// --- STEP 7: tags per product (NO product availability filter) ---
 	tagMap := make(map[string][]models.TagEntry)
 	{
-		step := "tags"
 		q := `
-            SELECT pt.product_id, t.tag_id, t.merchant_id, t.tag_name
-            FROM product_tags pt
-            INNER JOIN tags t ON t.tag_id = pt.tag_id
-            WHERE pt.merchant_id = ?
-        `
-		rows, err := runQuery(step, q, merchantID)
+			SELECT pt.product_id, t.tag_id, t.name
+			FROM product_tags pt
+			INNER JOIN tags t ON t.tag_id = pt.tag_id
+			WHERE t.merchant_id = ? AND pt.product_id IN (
+				SELECT product_id FROM products WHERE merchant_id = ?
+			)
+		`
+		rows, err := runQuery("tags_per_product_all", q, merchantID, merchantID)
 		if err != nil {
 			return nil, err
 		}
@@ -912,17 +1020,31 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var productID string
 			var t models.TagEntry
-			if err := rows.Scan(&productID, &t.ID, &t.MerchantID, &t.Name); err != nil {
+			if err := rows.Scan(&productID, &t.ID, &t.Name); err != nil {
 				return nil, err
 			}
 			tagMap[productID] = append(tagMap[productID], t)
 		}
 	}
 
-	// --- Attach components, allergens, tags ---
+	// --- BUILD: attach sub-products to parents & attach components & configuration (same as GetMenu) ---
+	// attach subproducts
+	for _, sp := range subProducts {
+		if sp.ByProductOf != nil {
+			if parent, ok := products[*sp.ByProductOf]; ok && parent != nil {
+				parent.SubProducts = append(parent.SubProducts, *sp)
+			}
+		}
+	}
+	// attach components, configuration, allergens, tags
 	for _, p := range products {
 		if comps, ok := compMap[p.ProductID]; ok {
 			p.Components = comps
+		}
+		if attrs, ok := attrMap[p.ProductID]; ok {
+			p.Configuration = models.ConfigurableResponse{Attributes: attrs}
+		} else {
+			p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
 		}
 		if allergens, ok := allergenMap[p.ProductID]; ok {
 			p.Allergens = allergens
@@ -930,15 +1052,14 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		if tags, ok := tagMap[p.ProductID]; ok {
 			p.Tags = tags
 		}
-		p.Configuration = ConfigurableResponse{Attributes: []ConfigurableAttribute{}}
 	}
 
-	// --- Build categories -> products ---
-	productTypes := []ProductCategory{}
+	// --- build categories -> products ---
+	productTypes := []models.ProductCategory{}
 	for _, c := range cats {
-		actual := []ProductEntry{}
+		actual := []models.ProductEntry{}
 		for _, pid := range productOrder {
-			if p, ok := products[pid]; ok && p != nil && p.Category == c.ID {
+			if p, ok := products[pid]; ok && p != nil && *p.CategoryID == *c.ID {
 				actual = append(actual, *p)
 			}
 		}
@@ -946,7 +1067,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		if c.Bg.Valid {
 			bg = &c.Bg.String
 		}
-		productTypes = append(productTypes, ProductCategory{
+		productTypes = append(productTypes, models.ProductCategory{
 			Category:   c.Name,
 			CategoryID: c.ID,
 			Order:      c.Order,
@@ -958,7 +1079,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	return productTypes, nil
 }
 
-func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string) ([]ComponentCategory, error) {
+func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string) ([]models.ComponentCategory, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
@@ -969,44 +1090,41 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		return rows, nil
 	}
 
-	// --- STEP 1: component categories ---
-	var compCats []struct {
+	// --- STEP 1: component categories (NO available filter) ---
+	type compCatTmp struct {
 		ID    *string
 		Name  string
 		Order int
 	}
+	var compCats []compCatTmp
 	{
-		step := "component_categories_no_filter"
-		q := `SELECT id, category_name, category_order FROM component_category WHERE merchant_id = ? ORDER BY category_order ASC`
+		step := "component_categories_all"
+		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? ORDER BY categ_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var cc struct {
-				ID    *string
-				Name  string
-				Order int
-			}
-			if err := rows.Scan(&cc.ID, &cc.Name, &cc.Order); err != nil {
+			var c compCatTmp
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order); err != nil {
 				return nil, err
 			}
-			compCats = append(compCats, cc)
+			compCats = append(compCats, c)
 		}
 	}
 
 	// --- STEP 2: all components (NO available filter) ---
 	type compBasicTmp struct {
-		ID     int64
+		ID     string
 		Name   string
 		CatID  *string
-		Status int
+		Status string
 		Price  int
 	}
 	var allComponents []compBasicTmp
 	{
-		step := "components_no_filter"
+		step := "all_components"
 		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ?`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1022,13 +1140,13 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		}
 	}
 
-	// --- Build component types ---
-	compTypes := []ComponentCategory{}
+	// --- Build component types (same logic as GetMenu) ---
+	compTypes := []models.ComponentCategory{}
 	for _, cc := range compCats {
-		actual := []ComponentBasic{}
+		actual := []models.ComponentBasic{}
 		for _, cb := range allComponents {
 			if cb.CatID != nil && cc.ID != nil && *cb.CatID == *cc.ID {
-				actual = append(actual, ComponentBasic{
+				actual = append(actual, models.ComponentBasic{
 					ComponentID: cb.ID,
 					Name:        cb.Name,
 					Category:    cb.CatID,
@@ -1037,7 +1155,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				})
 			}
 		}
-		compTypes = append(compTypes, ComponentCategory{
+		compTypes = append(compTypes, models.ComponentCategory{
 			Category:   cc.Name,
 			Order:      cc.Order,
 			Components: actual,
@@ -1133,7 +1251,7 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 	return newID, nil
 }
 
-func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*ProductEntry, error) {
+func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*models.ProductEntry, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
@@ -1152,7 +1270,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		LIMIT 1
 	`
 
-	var p ProductEntry
+	var p models.ProductEntry
 	err := db.QueryRowContext(ctx, query, merchantID, productID).Scan(
 		&p.ProductID,
 		&p.MerchantID,

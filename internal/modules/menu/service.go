@@ -53,7 +53,7 @@ func (s *MenuService) GetMenu(ctx context.Context, token string, lastMenu *time.
 	return s.legacy.GetMenu(ctx, user.MerchantID, lastMenu)
 }
 
-func (s *MenuService) GetAllProducts(ctx context.Context, token string) ([]ProductCategory, error) {
+func (s *MenuService) GetAllProducts(ctx context.Context, token string) ([]models.ProductCategory, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (s *MenuService) GetAllProducts(ctx context.Context, token string) ([]Produ
 	return s.legacy.GetAllProducts(ctx, user.MerchantID)
 }
 
-func (s *MenuService) GetAllComponents(ctx context.Context, token string) ([]ComponentCategory, error) {
+func (s *MenuService) GetAllComponents(ctx context.Context, token string) ([]models.ComponentCategory, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id str
 	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
 }
 
-func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*ProductEntry, error) {
+func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*models.ProductEntry, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -90,7 +90,7 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
 }
 
-func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) (*ProductEntry, error) {
+func (s *MenuService) GetProduct(ctx context.Context, token, product_id string) (*models.ProductEntry, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
