@@ -858,6 +858,24 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 	return res.RowsAffected()
 }
 
+func (r *MenuRepository) DeleteProductCategory(ctx context.Context, merchantID, categoryID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE productcateg 
+		 SET enabled = 0
+		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
+		categoryID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
 	db := dbutils.GetDB(ctx, r.database)
 

@@ -118,6 +118,15 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, pid, st
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, pid, status)
 }
 
+func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.DeleteProductCategory(ctx, user.MerchantID, categoryID)
+}
+
 // GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo
 func (s *MenuService) GetDeliverooMenu(ctx context.Context, token string) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)

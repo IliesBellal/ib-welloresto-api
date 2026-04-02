@@ -195,6 +195,35 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_product_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	categoryID := chi.URLParam(r, "category_id")
+	if categoryID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_product_category", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.DeleteProductCategory(ctx, token, categoryID)
+	if err != nil {
+		log.Error("[ERROR] DeleteProductCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "delete_product_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category", map[string]string{
+		"status":  "1",
+		"message": "product_category_disabled",
+	})
+}
+
 func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	// 1. Auth & Validation basique
 	token := helpers.ExtractToken(r)

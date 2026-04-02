@@ -413,6 +413,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/", menuH.GetMenu)
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
 		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
+		r.Delete("/products/category/{category_id}", menuH.DeleteProductCategory)
 		r.Patch("/product/{product_id}", menuH.UpdateProduct)
 		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Get("/attributes", menuH.GetAttributes)
