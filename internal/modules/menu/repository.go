@@ -840,7 +840,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		q := `
             SELECT c.component_id, cp.product_id, c.name, cp.component_price, c.status, cp.quantity, uom.uom_desc
             FROM components c
-            INNER JOIN component_product cp ON cp.component_id = c.component_id
+            INNER JOIN requires rq on c.component_id = rq.component_id
             INNER JOIN unit_of_measure_desc uom ON uom.id = cp.unit_of_measure AND uom.lang = 'FR'
             WHERE c.merchant_id = ?
         `
@@ -977,7 +977,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	}
 	{
 		step := "component_categories_no_filter"
-		q := `SELECT component_category_id, category_name, category_order FROM component_category WHERE merchant_id = ? ORDER BY category_order ASC`
+		q := `SELECT id, category_name, category_order FROM component_category WHERE merchant_id = ? ORDER BY category_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
