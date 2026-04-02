@@ -24,6 +24,7 @@ type Store struct {
 	EstimatedPreparationTime     int    `db:"estimated_preparation_time"`
 	LastEstimatedPreparationTime int    `db:"last_estimated_preparation_time"`
 	BearerToken                  string // Rempli dynamiquement
+	AutoAcceptOrders             bool   `db:"auto_accept_orders"`
 }
 
 // UberToken représente le token stocké en base

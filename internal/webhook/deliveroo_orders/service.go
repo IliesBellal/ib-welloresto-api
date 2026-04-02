@@ -121,7 +121,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	if merchantData.AutoAcceptOrders {
 		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID)
 		if err != nil {
-			log.Error(fmt.Sprintf("Error auto-accepting order %s: %v", result.OrderID, err))
+			log.Error("Error auto-accepting order " + result.OrderID + ": " + err.Error())
 		}
 	}
 

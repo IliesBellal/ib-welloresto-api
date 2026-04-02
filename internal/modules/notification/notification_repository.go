@@ -26,7 +26,6 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
         FROM users_devices ud
         INNER JOIN users u ON u.user_id = ud.user_id
         WHERE u.merchant_id = ?
-        AND ud.last_used > DATE_ADD(UTC_TIMESTAMP(), INTERVAL -48 HOUR)
     `, merchantID)
 	if err != nil {
 		return nil, err

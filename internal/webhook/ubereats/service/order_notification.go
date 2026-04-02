@@ -47,7 +47,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	req.Order.CreatedBy = &createdBy
 
 	// 4. Création finale de la commande
-	_, err = s.orderLifeCycleSvc.CreateOrder(ctx, req)
+	result, err := s.orderLifeCycleSvc.CreateOrder(ctx, req)
 	if err != nil {
 		// Si l'erreur est une violation d'index UNIQUE (doublon), on log et on ignore
 		if strings.Contains(err.Error(), "Duplicate entry") {
@@ -55,6 +55,14 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 			return nil
 		}
 		return err
+	}
+
+	if store.AutoAcceptOrders {
+		_, err := s.orderLifeCycleSvc.SetOrderAccepted(ctx, models.UberEatsWebhookUserID, store.MerchantID, result.OrderID)
+
+		if err != nil {
+			log.Error("Error auto-accepting order " + result.OrderID + ": " + err.Error())
+		}
 	}
 
 	log.Info("[UBER EATS] Order imported:" + order.ID)
