@@ -225,7 +225,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 			}
 
 			if s.canSendMFAOTP(ctx, user) {
-				s.SendMFACode(ctx, user, token, false)
+				s.SendMFACode(ctx, user, false)
 			}
 		}
 	} else {
@@ -495,7 +495,7 @@ func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, d
 	return map[string]string{"status": "1"}, nil
 }
 
-func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token string, fallbackToSMS bool) error {
+func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, fallbackToSMS bool) error {
 	log := logger.FromContext(ctx)
 
 	if !s.canSendMFAOTP(ctx, user) {
@@ -510,7 +510,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 	}
 
 	// 2. Stocker le code en clair dans Redis (lié au token de la session en cours)
-	cacheKey := helpers.GetMFACacheKey(token)
+	cacheKey := helpers.GetMFACacheKey(user.Token)
 
 	// On utilise ton wrapper Redis existant (adapter la signature si besoin)
 	saved := s.redis.Set(ctx, cacheKey, otp, models.OTPCacheTTL)
@@ -603,7 +603,7 @@ func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
 		return errors.New("session invalide ou expirée")
 	}
 
-	err = s.SendMFACode(ctx, user, token, true)
+	err = s.SendMFACode(ctx, user, true)
 
 	return err
 }
