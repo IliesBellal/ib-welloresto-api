@@ -1423,7 +1423,7 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *CreateComponent
 			name,
 			category_id,
 			component_price,
-			unit_id,
+			unit_of_measure,
 			enabled,
 			status
 		) VALUES (?, ?, ?, ?, ?, 1, 1)
@@ -1465,16 +1465,6 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *CreateC
 		name = strings.ToUpper(string(name[0])) + name[1:]
 	}
 
-	// Récupérer le prochain categ_order
-	var maxOrder int
-	err := db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(category_order), 0) FROM component_category WHERE merchant_id = ?`,
-		p.MerchantID,
-	).Scan(&maxOrder)
-	if err != nil && err != sql.ErrNoRows {
-		return "0", fmt.Errorf("get max order error: %w", err)
-	}
-
 	// Insérer la catégorie
 	query := `
 		INSERT INTO component_category (
@@ -1483,7 +1473,7 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *CreateC
 			category_order,
 			enabled,
 			available
-		) VALUES (?, ?, ?, 1, 1)
+		) VALUES (?, ?, 999, 1, 1)
 	`
 
 	res, err := db.ExecContext(
@@ -1491,7 +1481,6 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *CreateC
 		query,
 		p.MerchantID,
 		name,
-		maxOrder+1,
 	)
 	if err != nil {
 		return "0", fmt.Errorf("insert component category error: %w", err)
