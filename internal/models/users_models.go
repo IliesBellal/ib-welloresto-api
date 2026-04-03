@@ -11,7 +11,8 @@ const (
 	StripeWebhookUserID      = "WEBHOOK_STRIPE"
 	ScanNOrderCashRegisterID = "SCANNORDER"
 
-	StripeMOP = "STRIPE"
+	StripeMOP      = "STRIPE"
+	TicketRestoMOP = "TR"
 )
 
 // Top-level response

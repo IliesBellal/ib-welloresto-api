@@ -145,7 +145,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 	paymentID, _ := res.LastInsertId()
 
 	// 4. Ticket restaurant (TR)
-	if payment.MOP == "TR" {
+	if payment.MOP == models.TicketRestoMOP {
 		// On suppose que Code est un champ dans ta struct Payment, à adapter si besoin
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO restaurant_ticket (merchant_id, payment_id, barcode)
@@ -159,7 +159,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 
 		query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, stripe_session_date) 
 				VALUES(?, ?, ?, ?, ?, UTC_TIMESTAMP())`
-		_, err = db.ExecContext(ctx, query, payment.OrderID, payment.PaymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail)
+		_, err = db.ExecContext(ctx, query, payment.OrderID, paymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail)
 	}
 
 	// 5. Mettre à jour orders.isPaid

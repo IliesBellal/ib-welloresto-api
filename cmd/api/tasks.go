@@ -20,6 +20,8 @@ func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *ord
 	// 3. Configuration du Planificateur (Cron)
 	c := cron.New()
 
+	return
+
 	// Toutes les 15 minutes
 	c.AddFunc("@every 15m", func() {
 		taskManager.UpdateAverageDistributionTime()
