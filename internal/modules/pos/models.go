@@ -50,7 +50,8 @@ type Rate struct {
 }
 
 type ConsumptionType struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Rates []Rate `json:"rates"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DeliveryType string `json:"delivery_type"`
+	Rates        []Rate `json:"rates"`
 }

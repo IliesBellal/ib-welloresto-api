@@ -231,6 +231,7 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 	query := `
 		SELECT 
 			CAST(l.id AS CHAR) as type_id, 
+			t.delivery_type,
 			l.label_value, 
 			l.label as type_name, 
 			CAST(t.tva_id AS CHAR) as rate_id, 
@@ -257,10 +258,10 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 	var order []string
 
 	for rows.Next() {
-		var typeID, labelValue, typeName, rateID, rateLabel string
+		var typeID, labelValue, typeName, rateID, rateLabel, deliveryType string
 		var rateValue float64
 
-		err := rows.Scan(&typeID, &labelValue, &typeName, &rateID, &rateLabel, &rateValue)
+		err := rows.Scan(&typeID, &deliveryType, &labelValue, &typeName, &rateID, &rateLabel, &rateValue)
 		if err != nil {
 			return nil, err
 		}
@@ -268,9 +269,10 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 		// Si c'est la première fois qu'on rencontre ce type (ex: IN)
 		if _, exists := groups[labelValue]; !exists {
 			newType := &ConsumptionType{
-				ID:    typeID,   // Utilise l'ID de la table labels (ex: "59")
-				Name:  typeName, // Utilise le label traduit (ex: "Sur place")
-				Rates: []Rate{},
+				ID:           typeID,   // Utilise l'ID de la table labels (ex: "59")
+				Name:         typeName, // Utilise le label traduit (ex: "Sur place")
+				DeliveryType: deliveryType,
+				Rates:        []Rate{},
 			}
 			groups[labelValue] = newType
 			order = append(order, labelValue)
