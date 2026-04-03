@@ -1285,7 +1285,21 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			price_take_away,
 			price_delivery,
 			category,
-			is_product_group
+			is_product_group,
+			available_in,
+			available_take_away,
+			available_delivery,
+			tva_in_id,
+			tva_delivery_id,
+			tva_take_away_id,
+			bg_color,
+			status,
+			sync_uber_eats,
+			sync_deliveroo
+			available_on_sno,
+			available,
+			image_url
+			 
 		FROM products
 		WHERE merchant_id = ? AND product_id = ?
 		LIMIT 1
@@ -1302,6 +1316,19 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.PriceDelivery,
 		&p.Category,
 		&p.IsProductGroup,
+		&p.AvailableIn,
+		&p.AvailableTakeAway,
+		&p.AvailableDelivery,
+		&p.TVAIn,
+		&p.TVADelivery,
+		&p.TVATakeAway,
+		&p.BgColor,
+		&p.Status,
+		&p.SyncUberEats,
+		&p.SyncDeliveroo,
+		&p.IsAvailableOnSNO,
+		&p.Available,
+		&p.ImageURL,
 	)
 
 	if err != nil {

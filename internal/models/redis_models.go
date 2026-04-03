@@ -7,7 +7,7 @@ import (
 const (
 	// Durée de vie du cache : 5 minutes
 	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
-	UserCacheTTL = 5 * time.Minute
+	UserCacheTTL = 2 * time.Minute
 
 	// Préfixe des clés Redis pour les users
 	// Permet d'identifier facilement les clés dans Redis
