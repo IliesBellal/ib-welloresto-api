@@ -85,7 +85,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 
 			if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
 				// On laisse passer UNIQUEMENT vers l'endpoint de vérification MFA
-				if r.URL.Path != "/auth/mfa/verify" {
+				if r.URL.Path != "/auth/verify" {
 					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse
 					// Sinon le navigateur bloque la réponse avec une erreur CORS
 					SetCORSHeaders(w, r)
