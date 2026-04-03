@@ -20,6 +20,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		"https://rsv.onrender.com":               true,
 		"https://wello-resto.postman.co":         true,
 		"http://localhost:8080":                  true,
+		"http://localhost:8081":                  true,
 		"https://scannorder.welloresto.fr":       true,
 	}
 
@@ -53,6 +54,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// Dev
 			"http://localhost:8080",
+			"http://localhost:8081",
 
 			// ScanNOrder
 			"https://scannorder.welloresto.fr",

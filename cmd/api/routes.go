@@ -344,7 +344,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/auth", func(r chi.Router) {
 		r.Get("/login", authH.Login)
 		r.Post("/login", authH.Login)
-		r.Post("/mfa/fallback-sms", authH.FallbackSMS)
+		r.Get("/mfa/fallback-sms", authH.FallbackSMS)
 		r.Post("/send-verification", authH.SendVerification)
 		r.Post("/verify", authH.VerifyCode)
 	})
