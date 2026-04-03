@@ -1297,7 +1297,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			status,
 			sync_uber_eats,
 			sync_deliveroo,
-			available_on_sno,
+			is_available_on_sno,
 			available,
 			image_url
 		FROM products
