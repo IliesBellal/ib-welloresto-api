@@ -225,32 +225,80 @@ func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID
 }
 
 func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]ConsumptionType, error) {
+	db := dbutils.GetDB(ctx, r.database)
 
-	return []ConsumptionType{
-		{
-			ID:   1,
-			Name: "Sur Place",
-			Rates: []Rate{
-				{ID: 10, Value: 10, Label: "TVA 10%"},
-				{ID: 20, Value: 20, Label: "TVA 20%"},
-			},
-		},
-		{
-			ID:   2,
-			Name: "Emporter",
-			Rates: []Rate{
-				{ID: 5, Value: 5.5, Label: "TVA 5.5%"},
-				{ID: 10, Value: 10, Label: "TVA 10%"},
-			},
-		},
-		{
-			ID:   3,
-			Name: "Livraison",
-			Rates: []Rate{
-				{ID: 20, Value: 20, Label: "TVA 20%"},
-			},
-		},
-	}, nil
+	// La requête JOIN récupère le nom traduit (label) et les taux activés
+	query := `
+		SELECT 
+			CAST(l.id AS CHAR) as type_id, 
+			l.label_value, 
+			l.label as type_name, 
+			CAST(t.tva_id AS CHAR) as rate_id, 
+			t.tva_title, 
+			t.tva_rate
+		FROM labels l
+		INNER JOIN tva_categories t ON l.label_value = t.delivery_type
+		WHERE l.label_type = 'order_type' 
+		  AND l.lang = 'FR' 
+		  AND t.enabled = 1
+		ORDER BY l.id ASC, t.tva_rate ASC`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tva rates with labels: %w", err)
+	}
+	defer rows.Close()
+
+	// Mapping pour regrouper les taux par type de consommation
+	// Key: label_value (IN, TAKE_AWAY, etc.)
+	groups := make(map[string]*ConsumptionType)
+	// Pour conserver l'ordre d'insertion des types
+	var result []ConsumptionType
+	var order []string
+
+	for rows.Next() {
+		var typeID, labelValue, typeName, rateID, rateLabel string
+		var rateValue float64
+
+		err := rows.Scan(&typeID, &labelValue, &typeName, &rateID, &rateLabel, &rateValue)
+		if err != nil {
+			return nil, err
+		}
+
+		// Si c'est la première fois qu'on rencontre ce type (ex: IN)
+		if _, exists := groups[labelValue]; !exists {
+			newType := &ConsumptionType{
+				ID:    typeID,   // Utilise l'ID de la table labels (ex: "59")
+				Name:  typeName, // Utilise le label traduit (ex: "Sur place")
+				Rates: []Rate{},
+			}
+			groups[labelValue] = newType
+			order = append(order, labelValue)
+		}
+
+		// Ajout du taux de TVA au groupe
+		groups[labelValue].Rates = append(groups[labelValue].Rates, Rate{
+			ID:    rateID,
+			Value: rateValue,
+			Label: rateLabel,
+		})
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// On construit la slice finale en respectant l'ordre de la requête SQL
+	for _, key := range order {
+		result = append(result, *groups[key])
+	}
+
+	// Si aucun résultat, on renvoie une slice vide pour éviter le "null" en JSON
+	if result == nil {
+		result = []ConsumptionType{}
+	}
+
+	return result, nil
 }
 
 func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string, status string) (int64, error) {

@@ -109,7 +109,7 @@ func GenerateProductKey(merchantID, productID, ext string) string {
 	if !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
-	return fmt.Sprintf("products/%s/%s%s", merchantID, productID, ext)
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/products/%s%s", merchantID, productID, ext)
 }
 
 // GetExtensionFromContentType retourne l'extension depuis le content type

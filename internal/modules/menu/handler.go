@@ -486,10 +486,20 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 }
 
 func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
 	// 1. Auth & Validation basique
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
 		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		log.Error("[ERROR] UploadProductImage UserFromContext: " + err.Error())
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "invalid_token"})
 		return
 	}
 
@@ -498,9 +508,6 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "missing_parameter"})
 		return
 	}
-
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
 
 	// 2. Parse multipart form (taille max 5 Mo)
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
@@ -532,19 +539,30 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 5. Récupérer le merchant_id depuis le contexte utilisateur
-	user, err := middleware.UserFromContext(ctx)
+	// 6. Récupérer l'ancienne URL d'image (si elle existe)
+	oldImageURL, err := h.service.GetProductImageURL(ctx, token, productID)
 	if err != nil {
-		log.Error("[ERROR] UploadProductImage UserFromContext: " + err.Error())
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "invalid_token"})
-		return
+		// On log l'erreur mais on continue (pas bloquant)
+		log.Warn("[WARN] UploadProductImage GetProductImageURL: " + err.Error())
 	}
 
-	// 6. Générer la clé R2
+	// 7. Générer la clé R2
 	ext := r2.GetExtensionFromContentType(contentType)
 	key := r2.GenerateProductKey(user.MerchantID, productID, ext)
 
-	// 7. Upload vers R2
+	// 8. Supprimer l'ancienne image de R2 (si elle existe)
+	if oldImageURL != "" {
+		// Essayer d'extraire la clé à partir de l'URL publique
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if oldKey != "" {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				// On log l'erreur mais on continue (pas bloquant)
+				log.Warn("[WARN] UploadProductImage DeleteFile (old image): " + err.Error())
+			}
+		}
+	}
+
+	// 9. Upload le nouveau fichier vers R2
 	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
 	if err != nil {
 		log.Error("[ERROR] UploadProductImage UploadFile: " + err.Error())
@@ -552,7 +570,7 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 8. Mettre à jour la base de données
+	// 10. Mettre à jour la base de données
 	if err := h.service.UpdateProductImage(ctx, token, productID, publicURL); err != nil {
 		log.Error("[ERROR] UploadProductImage UpdateProductImage: " + err.Error())
 		models.SendErrorJSON(w, "menu", "upload_product_image", err)

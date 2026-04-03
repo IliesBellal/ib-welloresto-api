@@ -1632,6 +1632,29 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	return err
 }
 
+func (r *MenuRepository) GetProductImageURL(ctx context.Context, merchantID, productID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var imageURL sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT image_url FROM products
+		 WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&imageURL)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil // Produit n'existe pas ou pas d'image
+		}
+		return "", fmt.Errorf("failed to get product image: %w", err)
+	}
+
+	if imageURL.Valid {
+		return imageURL.String, nil
+	}
+	return "", nil
+}
+
 func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, productID, imageURL string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -1653,19 +1676,11 @@ func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, pro
 func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	// Note: J'ai ajouté une clause AND merchant_id (ou via jointure) pour la sécurité,
-	// sinon n'importe qui avec un token valide pourrait modifier n'importe quel produit ID.
-	// Si ta table products n'a pas de merchant_id, il faut faire une jointure avec categories/menus.
-	// Pour l'exemple, je suppose une vérification simple sur product_id ou une structure existante.
-
 	query := `
 		UPDATE merchant_parameters
 		SET last_menu_update = UTC_TIMESTAMP
 		WHERE merchant_id = ?
 	`
-
-	// Note: by_product_of n'a pas de COALESCE dans ton PHP original, il est écrasé directement.
-	// Je l'ai laissé tel quel (paramètre direct), mais attention si p.ByProductOf est nil.
 
 	_, err := db.ExecContext(ctx, query, merchantID)
 

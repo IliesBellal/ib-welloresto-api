@@ -44,13 +44,13 @@ type DeliveryMenResponse struct {
 }
 
 type Rate struct {
-	ID    int     `json:"id"`
+	ID    string  `json:"id"`
 	Value float64 `json:"value"`
 	Label string  `json:"label"`
 }
 
 type ConsumptionType struct {
-	ID    int    `json:"id"`
+	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Rates []Rate `json:"rates"`
 }
