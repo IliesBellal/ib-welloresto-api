@@ -28,6 +28,13 @@ type AuthService interface {
 func Auth(service AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ✅ IMPORTANT : Laisser passer les requêtes OPTIONS (preflight CORS)
+			// Le middleware CORS doit pouvoir répondre sans authentification requise
+			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// 1. Extraire le header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {

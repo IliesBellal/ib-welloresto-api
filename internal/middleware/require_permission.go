@@ -15,6 +15,12 @@ type PermissionFunc func(user *auth.UserLoginRow) bool
 func RequirePermission(permissions ...PermissionFunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ✅ Laisser passer les requêtes OPTIONS (preflight CORS)
+			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			user := GetUser(r)
 			if user == nil {
 				w.Header().Set("Content-Type", "application/json")
