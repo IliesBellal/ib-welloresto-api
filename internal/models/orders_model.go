@@ -53,10 +53,10 @@ type ConfigInsert struct {
 }
 
 type OrderComment struct {
-	OrderID      string     `json:"order_id"`
-	UserName     *string    `json:"user_name"`
-	Content      string     `json:"content"`
-	CreationDate *time.Time `json:"creation_date"`
+	OrderID      *string    `json:"order_id,omitempty"`
+	UserName     *string    `json:"user_name,omitempty"`
+	Content      *string    `json:"content,omitempty"`
+	CreationDate *time.Time `json:"creation_date,omitempty"`
 }
 
 type Location struct {

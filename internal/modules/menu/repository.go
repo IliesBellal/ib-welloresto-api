@@ -1176,6 +1176,19 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	// Vérifier que la catégorie existe et est activée
+	var categoryExists int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
+		p.CategoryID, p.MerchantID,
+	).Scan(&categoryExists)
+	if err != nil {
+		return "0", fmt.Errorf("failed to check category existence: %w", err)
+	}
+	if categoryExists == 0 {
+		return "0", fmt.Errorf("category does not exist or is disabled")
+	}
+
 	query := `
 		INSERT INTO products (
 			merchant_id,
@@ -1204,7 +1217,7 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		p.TvaInID,
 		p.TvaDeliveryID,
 		p.TvaTakeAwayID,
-		p.Category,
+		p.CategoryID,
 		p.IsProductGroup,
 	)
 	if err != nil {

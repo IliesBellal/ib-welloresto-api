@@ -359,7 +359,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, err
 			}
 			commentsByOrderID[orderID.String] = append(commentsByOrderID[orderID.String], models.OrderComment{
-				OrderID: orderID.String, UserName: helpers.NullStringToPtr(userName), Content: content.String, CreationDate: helpers.NullTimePtr(creationDate),
+				OrderID: &orderID.String, UserName: helpers.NullStringToPtr(userName), Content: &content.String, CreationDate: helpers.NullTimePtr(creationDate),
 			})
 		}
 	}
@@ -481,13 +481,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				return nil, fmt.Errorf("Scan failed: %w", scanErr)
 			}
 
-			var comment models.OrderComment
+			var comment *models.OrderComment
 			if commentContent.Valid {
-				comment = models.OrderComment{
-					OrderID: orderID.String, UserName: &commentUserID.String, Content: commentContent.String, CreationDate: helpers.NullTimePtr(commentCreation),
+				comment = &models.OrderComment{
+					OrderID: &orderID.String, UserName: &commentUserID.String, Content: &commentContent.String, CreationDate: helpers.NullTimePtr(commentCreation),
 				}
 			} else {
-				comment = models.OrderComment{}
+				comment = nil
 			}
 
 			op := models.ProductEntry{
@@ -502,12 +502,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Category:                     helpers.NullStringToPtr(categName),
 				CategoryID:                   helpers.NullStringToPtr(categName),
 				Description:                  helpers.NullStringToPtr(productDesc),
-				Quantity:                     int(quantity.Int64),
-				PaidQuantity:                 int(paidQuantity.Int64),
-				DistributedQuantity:          int(distributedQuantity.Int64),
-				ReadyForDistributionQuantity: int(readyForDistribution.Int64),
-				IsPaid:                       int(isPaid.Int64),
-				IsDistributed:                int(isDistributed.Int64),
+				Quantity:                     helpers.IntPtr(int(quantity.Int64)),
+				PaidQuantity:                 helpers.IntPtr(int(paidQuantity.Int64)),
+				DistributedQuantity:          helpers.IntPtr(int(distributedQuantity.Int64)),
+				ReadyForDistributionQuantity: helpers.IntPtr(int(readyForDistribution.Int64)),
+				IsPaid:                       helpers.BoolPtr(isPaid.Int64 != 0),
+				IsDistributed:                helpers.BoolPtr(isDistributed.Int64 != 0),
 				Price:                        price.Int64,
 				PriceTakeAway:                &priceTakeAway.Int64,
 				PriceDelivery:                &priceDelivery.Int64,
@@ -521,20 +521,16 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				AvailableTakeAway:            availableTakeAway.Bool,
 				AvailableDelivery:            availableDelivery.Bool,
 				ProductionColor:              helpers.NullStringToPtr(productionColor),
-				Extra:                        extrasMap[orderItemID.String],
-				Without:                      withoutsMap[orderItemID.String],
 				Components:                   componentsMap[productID.String],
-				//				Customers:                    snoClientsMap[orderItemID.String],
-				Comment: comment,
+				Comment:                      comment,
 			}
-			if op.Customers == nil {
-				op.Customers = []interface{}{}
+
+			// Initialiser Extra et Without avec les slices de la map
+			if extras, ok := extrasMap[orderItemID.String]; ok && len(extras) > 0 {
+				op.Extra = &extras
 			}
-			if op.Extra == nil {
-				op.Extra = []models.OrderProductExtra{}
-			}
-			if op.Without == nil {
-				op.Without = []models.OrderProductWithout{}
+			if withouts, ok := withoutsMap[orderItemID.String]; ok && len(withouts) > 0 {
+				op.Without = &withouts
 			}
 			if op.Components == nil {
 				op.Components = []models.ComponentUsage{}

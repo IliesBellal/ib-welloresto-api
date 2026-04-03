@@ -208,7 +208,7 @@ type CreateProductPayload struct {
 	TvaInID        int64   `json:"tva_in"`
 	TvaDeliveryID  int64   `json:"tva_delivery"`
 	TvaTakeAwayID  int64   `json:"tva_take_away"`
-	Category       int64   `json:"category"`
+	CategoryID     string  `json:"category_id"`
 	IsProductGroup bool    `json:"is_product_group"`
 }
 

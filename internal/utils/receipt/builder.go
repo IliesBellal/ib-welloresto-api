@@ -24,11 +24,16 @@ func BuildItemsSnapshot(items []models.ProductEntry, orderType string) []models.
 		priceHT := priceTTC / (1 + (activeRate / 100))
 		taxAmount := int64(priceTTC - priceHT)
 
+		qty := 0
+		if item.Quantity != nil {
+			qty = *item.Quantity
+		}
+
 		snap = append(snap, models.SnapshotItem{
-			Name:     item.Name,     // Le nom du produit à l'instant T
-			Quantity: item.Quantity, // La quantité
-			PriceTTC: item.Price,    // Le prix payé
-			TaxRate:  taxAmount,     // Ex: 1000 pour 10%, 550 pour 5.5%
+			Name:     item.Name,  // Le nom du produit à l'instant T
+			Quantity: qty,        // La quantité
+			PriceTTC: item.Price, // Le prix payé
+			TaxRate:  taxAmount,  // Ex: 1000 pour 10%, 550 pour 5.5%
 		})
 	}
 	return snap

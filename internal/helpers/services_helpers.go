@@ -30,6 +30,10 @@ func BoolPtr(b bool) *bool {
 	return &b
 }
 
+func IntPtr(i int) *int {
+	return &i
+}
+
 // Old version of crypting
 func EncryptPHP(password string) (string, error) {
 	// CORRECTION 1 : Utiliser la clé directement si elle fait 16 chars (AES-128)
