@@ -176,6 +176,10 @@ func StringToInt(s string) int {
 	return i
 }
 
+func StringPtr(s string) *string {
+	return &s
+}
+
 func IntToInt64Ptr(v int) *int64 {
 	i := int64(v)
 	return &i

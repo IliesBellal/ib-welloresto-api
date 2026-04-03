@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -90,6 +91,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse
 					// Sinon le navigateur bloque la réponse avec une erreur CORS
 					service.UpdateMFAStatus(r.Context(), user.UserID, models.MFAStatusPending)
+					user.MFAStatus = helpers.StringPtr(models.MFAStatusPending) // Mettre à jour le statut dans le user pour les handlers en aval
 					SetCORSHeaders(w, r)
 					models.SendErrorJSON(w, "auth", "login", models.ErrMFARequired)
 					return
