@@ -14,6 +14,7 @@ type AppConfig struct {
 	ScanNOrder ScanNOrderConfig
 	Stripe     StripeConfig
 	Brevo      BrevoConfig
+	R2         R2Config
 }
 
 type App struct {
@@ -32,6 +33,7 @@ func Load() *AppConfig {
 		ScanNOrder: loadScanNOrderConfig(),
 		Stripe:     loadStripeConfig(),
 		Brevo:      loadBrevoConfig(),
+		R2:         loadR2Config(),
 	}
 
 	cfg.validate()

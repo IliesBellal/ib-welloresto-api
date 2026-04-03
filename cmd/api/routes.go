@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
+	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"welloresto-api/internal/modules/googlemaps"
@@ -155,6 +156,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
 
+	// ---- R2 (Cloudflare Storage) ----
+	r2Client, err := r2.NewClient(r2.UploadConfig{
+		AccessKeyID:     cfg.R2.AccessKeyID,
+		SecretAccessKey: cfg.R2.SecretAccessKey,
+		Endpoint:        cfg.R2.Endpoint,
+		Bucket:          cfg.R2.Bucket,
+		PublicBaseURL:   cfg.R2.PublicBaseURL,
+	})
+	if err != nil {
+		log.Error("Erreur lors de l'initialisation du client R2", zap.Error(err))
+	} else {
+		log.Info("R2 client connecté avec succès")
+	}
+
 	// ---- Receipt ----
 	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
 	receiptService := receipt.NewReceiptService(receiptRepo)
@@ -264,7 +279,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	authH := authModule.NewAuthHandler(authService)
 	posH := posModule.NewPOSHandler(posService)
-	menuH := menuModule.NewMenuHandler(menuService)
+	menuH := menuModule.NewMenuHandler(menuService, r2Client)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService)
@@ -423,6 +438,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/product/{product_id}", menuH.UpdateProduct)
 
 		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
+		r.Put("/product/{product_id}/image", menuH.UploadProductImage)
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)

@@ -2,23 +2,30 @@ package menu
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type MenuHandler struct {
-	service *MenuService
+	service  *MenuService
+	r2Client *r2.Client
 }
 
-func NewMenuHandler(s *MenuService) *MenuHandler {
-	return &MenuHandler{service: s}
+func NewMenuHandler(s *MenuService, r2Client *r2.Client) *MenuHandler {
+	return &MenuHandler{
+		service:  s,
+		r2Client: r2Client,
+	}
 }
 
 func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +483,86 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "1", "message": "attributes updated"})
+}
+
+func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request) {
+	// 1. Auth & Validation basique
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	// 2. Parse multipart form (taille max 5 Mo)
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		log.Error("[ERROR] UploadProductImage ParseMultipartForm: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "file_too_large_or_invalid"})
+		return
+	}
+
+	// 3. Récupérer le fichier
+	file, header, err := r.FormFile("photo")
+	if err != nil {
+		log.Error("[ERROR] UploadProductImage FormFile: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "missing_photo_field"})
+		return
+	}
+	defer file.Close()
+
+	// 4. Valider le type MIME
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r2.GetContentTypeFromExtension(header.Filename)
+	}
+
+	if !r2.ValidateImageType(contentType) {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{
+			"error":   "invalid_image_type",
+			"message": "Only JPEG, PNG, and WebP images are allowed",
+		})
+		return
+	}
+
+	// 5. Récupérer le merchant_id depuis le contexte utilisateur
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		log.Error("[ERROR] UploadProductImage UserFromContext: " + err.Error())
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	// 6. Générer la clé R2
+	ext := r2.GetExtensionFromContentType(contentType)
+	key := r2.GenerateProductKey(user.MerchantID, productID, ext)
+
+	// 7. Upload vers R2
+	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
+	if err != nil {
+		log.Error("[ERROR] UploadProductImage UploadFile: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_product_image", fmt.Errorf("failed to upload image"))
+		return
+	}
+
+	// 8. Mettre à jour la base de données
+	if err := h.service.UpdateProductImage(ctx, token, productID, publicURL); err != nil {
+		log.Error("[ERROR] UploadProductImage UpdateProductImage: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_product_image", err)
+		return
+	}
+
+	// 9. Réponse
+	models.SendJSON(w, http.StatusOK, "menu", "upload_product_image", map[string]interface{}{
+		"photo_url": publicURL,
+	})
 }
 
 // GetDeliverooMenu récupère le menu depuis l'API Deliveroo

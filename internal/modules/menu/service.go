@@ -35,6 +35,15 @@ func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string
 	return s.legacy.UpdateProduct(ctx, user.MerchantID, productID, updates)
 }
 
+func (s *MenuService) UpdateProductImage(ctx context.Context, token, productID, imageURL string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateProductImage(ctx, user.MerchantID, productID, imageURL)
+}
+
 func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

@@ -1476,8 +1476,8 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *CreateC
 	query := `
 		INSERT INTO component_category (
 			merchant_id,
-			category_name,
-			category_order,
+			name,
+			categ_order,
 			enabled,
 			available
 		) VALUES (?, ?, 999, 1, 1)
@@ -1553,6 +1553,21 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 		return "0", fmt.Errorf("get last insert id error: %w", err)
 	}
 
+	// Mise à jour temporaire avant migration
+	query = `
+		UPDATE productcateg 
+		SET merchant_categ_id = ?
+		WHERE merchant_id = ? AND categ_id = ?
+	`
+
+	res, err = db.ExecContext(
+		ctx,
+		query,
+		id,
+		p.MerchantID,
+		id,
+	)
+
 	_ = r.setMenuUpdated(ctx, p.MerchantID)
 
 	return strconv.FormatInt(id, 10), nil
@@ -1615,6 +1630,24 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	_ = r.setMenuUpdated(ctx, merchantID)
 
 	return err
+}
+
+func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, productID, imageURL string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE products 
+		 SET image_url = ?
+		 WHERE product_id = ? AND merchant_id = ?`,
+		imageURL, productID, merchantID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update product image: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
 }
 
 func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) error {
