@@ -1293,13 +1293,13 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			tva_delivery_id,
 			tva_take_away_id,
 			bg_color,
+			production_color,
 			status,
 			sync_uber_eats,
-			sync_deliveroo
+			sync_deliveroo,
 			available_on_sno,
 			available,
 			image_url
-			 
 		FROM products
 		WHERE merchant_id = ? AND product_id = ?
 		LIMIT 1
@@ -1323,6 +1323,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.TVADelivery,
 		&p.TVATakeAway,
 		&p.BgColor,
+		&p.ProductionColor,
 		&p.Status,
 		&p.SyncUberEats,
 		&p.SyncDeliveroo,
