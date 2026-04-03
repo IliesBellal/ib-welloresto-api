@@ -518,7 +518,8 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 		log.Error("Erreur Redis lors de la sauvegarde de l'OTP: " + err.Error())
 		return errors.New("erreur interne du serveur")
 	}
-	log.Info("🔑 OTP généré et stocké dans Redis pour le user " + user.UserID)
+	log.Warn("🔑 OTP généré et stocké dans Redis pour le user " + user.UserID + " the code is: " + otp + " 🔑")
+	log.Info(cacheKey)
 
 	// 3. Envoyer le code
 	if fallbackToSMS {
@@ -550,15 +551,18 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, token
 // VerifyMFA vérifie l'OTP saisi par l'utilisateur
 func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi string) error {
 	user, err := s.repo.GetUserByToken(ctx, token)
+	log := logger.FromContext(ctx)
 	if err != nil {
+		log.Error("Erreur lors de la récupération de l'utilisateur pour MFA: " + err.Error())
 		return err
 	}
 	if user == nil {
+		log.Error("Utilisateur non trouvé pour le token lors de la vérification MFA")
 		return models.ErrInvalidToken
 	}
 
-	log := logger.FromContext(ctx)
 	cacheKey := helpers.GetMFACacheKey(token)
+	log.Info(cacheKey)
 
 	// 1. Récupérer le code dans Redis
 	storedCode, found := s.redis.Get(ctx, cacheKey)
