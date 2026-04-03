@@ -13,13 +13,16 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type AuthService struct {
-	repo  AuthRepository
-	redis *redis.Client
-	email mailer.Service
-	sms   sms.Service
+	repo    AuthRepository
+	redis   *redis.Client
+	email   mailer.Service
+	sms     sms.Service
+	sfGroup singleflight.Group
 }
 
 func NewAuthService(r AuthRepository, redis *redis.Client, email mailer.Service, sms sms.Service) AuthService {
@@ -28,41 +31,49 @@ func NewAuthService(r AuthRepository, redis *redis.Client, email mailer.Service,
 
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	if s.redis == nil {
-		return s.repo.GetUserByToken(ctx, token) // Pas de cache : on va direct à la BDD
+		return s.repo.GetUserByToken(ctx, token)
 	}
+
 	log := logger.FromContext(ctx)
 	cacheKey := models.UserCachePrefix + token
 
-	// --- ÉTAPE 1 : Chercher dans Redis ---
+	// --- ÉTAPE 1 : Chercher dans Redis (rapide, on garde tel quel) ---
 	cached, found := s.redis.Get(ctx, cacheKey)
-
 	if found {
-		// Cache hit ! On désérialise le JSON et on retourne directement
 		var user UserLoginRow
 		if err := json.Unmarshal([]byte(cached), &user); err == nil {
 			log.Info("🧠🙋🏻‍♂️ User " + user.Name + " (" + user.UserID + ") found in Redis cache 🙋🏻‍♂️🧠")
-			return &user, nil // ← on n'a pas touché à la BDD
+			return &user, nil
 		}
 	}
-	log.Info("🧠🚫 User not found in Redis cache 🚫🧠")
 
-	loggedUser, err := s.repo.GetUserByToken(ctx, token)
+	// --- ÉTAPE 2 : Singleflight pour éviter le "Cache Stampede" ---
+	// On utilise le 'token' comme clé pour que seuls les appels au même user soient groupés
+	val, err, shared := s.sfGroup.Do(token, func() (interface{}, error) {
+		// Cette partie n'est exécutée qu'UNE SEULE FOIS pour N requêtes simultanées
+		log.Info("🧠🚫 User not found in Redis cache, fetching from DB (Singleflight) 🚫🧠")
+
+		loggedUser, err := s.repo.GetUserByToken(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+
+		// On en profite pour remplir le cache immédiatement
+		serialized, _ := json.Marshal(loggedUser)
+		s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL)
+
+		return loggedUser, nil
+	})
+
 	if err != nil {
-		log.Error("Error fetching user from DB: " + err.Error())
 		return nil, err
 	}
 
-	// --- ÉTAPE 3 : Stocker dans Redis pour les prochains appels ---
-	serialized, err := json.Marshal(loggedUser)
-	if err == nil {
-		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL); !saved {
-			// Erreur de cache : on log mais on retourne quand même le user
-		} else {
-			log.Info("🧠📌 User " + loggedUser.Name + " (" + loggedUser.UserID + ") saved in Redis cache 📌🧠")
-		}
+	if shared {
+		log.Info("🤝 Request shared via Singleflight for token: " + token)
 	}
 
-	return loggedUser, err
+	return val.(*UserLoginRow), nil
 }
 
 func convertApp(app string) string {
