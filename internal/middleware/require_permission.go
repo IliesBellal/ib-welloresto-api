@@ -23,6 +23,7 @@ func RequirePermission(permissions ...PermissionFunc) func(http.Handler) http.Ha
 
 			user := GetUser(r)
 			if user == nil {
+				SetCORSHeaders(w, r)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(`{"error":"unauthorized"}`))
@@ -33,15 +34,15 @@ func RequirePermission(permissions ...PermissionFunc) func(http.Handler) http.Ha
 				if !hasPermission(user) {
 					// Logique spécifique pour les vérifications d'identité
 					if !IsEmailVerified(user) {
-						renderError(w, "EMAIL_VERIFICATION_REQUIRED", http.StatusForbidden)
+						renderError(w, r, "EMAIL_VERIFICATION_REQUIRED", http.StatusForbidden)
 						return
 					}
 					if user.Rights.Admin && !IsTelVerified(user) {
-						renderError(w, "TEL_VERIFICATION_REQUIRED", http.StatusForbidden)
+						renderError(w, r, "TEL_VERIFICATION_REQUIRED", http.StatusForbidden)
 						return
 					}
 
-					renderError(w, "access_denied", http.StatusForbidden)
+					renderError(w, r, "access_denied", http.StatusForbidden)
 					return
 				}
 			}
@@ -51,7 +52,8 @@ func RequirePermission(permissions ...PermissionFunc) func(http.Handler) http.Ha
 }
 
 // Petit helper interne pour rester sec (DRY)
-func renderError(w http.ResponseWriter, code string, status int) {
+func renderError(w http.ResponseWriter, r *http.Request, code string, status int) {
+	SetCORSHeaders(w, r)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	w.Write([]byte(`{"error":"` + code + `"}`))

@@ -38,6 +38,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 			// 1. Extraire le header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
+				SetCORSHeaders(w, r)
 				http.Error(w, `{"error":"token manquant"}`, http.StatusUnauthorized)
 				return
 			}
@@ -65,6 +66,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 
 			// Sécurité : on vérifie que le token n'est pas devenu vide après le nettoyage
 			if token == "" {
+				SetCORSHeaders(w, r)
 				http.Error(w, `{"error":"format token invalide"}`, http.StatusUnauthorized)
 				return
 			}
@@ -72,6 +74,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 			// 3. Récupérer le user (inchangé)
 			user, err := service.GetUserByToken(r.Context(), token)
 			if err != nil || user == nil {
+				SetCORSHeaders(w, r)
 				http.Error(w, `{"error":"token invalide ou expiré"}`, http.StatusUnauthorized)
 				return
 			}
@@ -83,6 +86,9 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 			if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
 				// On laisse passer UNIQUEMENT vers l'endpoint de vérification MFA
 				if r.URL.Path != "/auth/mfa/verify" {
+					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse
+					// Sinon le navigateur bloque la réponse avec une erreur CORS
+					SetCORSHeaders(w, r)
 					models.SendErrorJSON(w, "auth", "login", models.ErrMFARequired)
 					return
 				}
