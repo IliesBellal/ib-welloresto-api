@@ -29,6 +29,10 @@ func NewAuthService(r AuthRepository, redis *redis.Client, email mailer.Service,
 	return AuthService{repo: r, redis: redis, email: email, sms: sms}
 }
 
+func (s *AuthService) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
+	return s.repo.UpdateMFAStatus(ctx, userID, status)
+}
+
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	if s.redis == nil {
 		return s.repo.GetUserByToken(ctx, token)

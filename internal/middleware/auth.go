@@ -21,6 +21,7 @@ var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
 // Cela permet de ne pas coupler le middleware directement au repo concret
 type AuthService interface {
 	GetUserByToken(ctx context.Context, token string) (*auth.UserLoginRow, error)
+	UpdateMFAStatus(ctx context.Context, userID string, status string) error
 }
 
 // Auth est le middleware d'authentification principal
@@ -88,6 +89,7 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 				if r.URL.Path != "/auth/verify" {
 					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse
 					// Sinon le navigateur bloque la réponse avec une erreur CORS
+					service.UpdateMFAStatus(r.Context(), user.UserID, models.MFAStatusPending)
 					SetCORSHeaders(w, r)
 					models.SendErrorJSON(w, "auth", "login", models.ErrMFARequired)
 					return
