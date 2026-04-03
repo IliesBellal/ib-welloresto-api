@@ -722,6 +722,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
             FROM productcateg pc
             WHERE pc.merchant_id = ?
+			AND pc.enabled = 1
             ORDER BY pc.categ_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -760,6 +761,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             LEFT JOIN products subp on subp.product_id = p.by_product_of
             WHERE p.merchant_id = ? AND (subp.product_id IS NULL OR subp.product_id = p.product_id)
+			AND p.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -842,6 +844,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL
+			AND p.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -902,6 +905,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN recipes r on r.recipe_id = rq.recipe_id
             INNER JOIN unit_of_measure_desc uomd on uomd.lang = 'FR' and uomd.id = rq.unit_of_measure
             WHERE c.merchant_id = ?
+			AND c.enabled = 1
+			AND rq.enabled = true
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -933,6 +938,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
             WHERE p.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
+			AND p.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -958,6 +964,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             WHERE p.merchant_id = ? AND ca.enabled = 1 AND pca.enabled = 1
+			AND p.enabled = 1
             ORDER BY pca.num_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -983,7 +990,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ?
+				SELECT product_id FROM products WHERE merchant_id = ? AND enabled = 1
 			)
 		`
 		rows, err := runQuery("allergens_per_product_all", q, merchantID)
@@ -1009,7 +1016,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ?
+				SELECT product_id FROM products WHERE merchant_id = ? AND enabled = 1
 			)
 		`
 		rows, err := runQuery("tags_per_product_all", q, merchantID, merchantID)
@@ -1099,7 +1106,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	var compCats []compCatTmp
 	{
 		step := "component_categories_all"
-		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? ORDER BY categ_order ASC`
+		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? and enabled = 1 ORDER BY categ_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
@@ -1125,7 +1132,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	var allComponents []compBasicTmp
 	{
 		step := "all_components"
-		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ?`
+		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ? and enabled = 1`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
