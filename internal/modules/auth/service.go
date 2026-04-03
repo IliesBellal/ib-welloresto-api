@@ -563,11 +563,13 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	// 1. Récupérer le code dans Redis
 	storedCode, found := s.redis.Get(ctx, cacheKey)
 	if !found {
+		log.Error("Codes not matching, stored: " + storedCode + " - checked: " + codeSaisi)
 		return models.ErrMFAExpired
 	}
 
 	// 2. Comparaison en clair
 	if storedCode != codeSaisi {
+		log.Error("Codes not matching, stored: " + storedCode + " - checked: " + codeSaisi)
 		return models.ErrOTPMismatch
 	}
 
