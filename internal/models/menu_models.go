@@ -114,7 +114,7 @@ type OrderProductWithout struct {
 
 // components required
 type ComponentUsage struct {
-	ComponentID   int64   `json:"component_id"`
+	ComponentID   string  `json:"component_id"`
 	ProductID     string  `json:"product_id,omitempty"`
 	Name          string  `json:"name"`
 	Price         int64   `json:"price"`

@@ -117,14 +117,14 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var productID, name, uom sql.NullString
-			var compID, price, status sql.NullInt64
+			var productID, name, uom, compID sql.NullString
+			var price, status sql.NullInt64
 			var qty sql.NullFloat64
 			if err := rows.Scan(&productID, &compID, &name, &price, &status, &qty, &uom); err != nil {
 				return nil, err
 			}
 			componentsMap[productID.String] = append(componentsMap[productID.String], models.ComponentUsage{
-				ComponentID:   compID.Int64,
+				ComponentID:   compID.String,
 				Name:          name.String,
 				ProductID:     productID.String,
 				Price:         price.Int64,
