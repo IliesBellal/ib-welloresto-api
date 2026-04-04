@@ -283,7 +283,7 @@ func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID,
 
 // SyncProductAllergens replaces all allergen associations for the given product.
 // Only the merchant that owns the product may call this.
-func (s *MenuService) SyncProductAllergens(ctx context.Context, token, productID string, allergenIDs []int) error {
+func (s *MenuService) SyncProductAllergens(ctx context.Context, token, productID string, allergenIDs []string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err

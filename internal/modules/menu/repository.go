@@ -1839,15 +1839,8 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	}
 
 	// Sync allergens
-	var allergenIDs []int
-	for _, allergenID := range p.Allergens {
-		id, err := strconv.Atoi(allergenID)
-		if err == nil {
-			allergenIDs = append(allergenIDs, id)
-		}
-	}
-	if len(allergenIDs) > 0 {
-		if err := r.SyncProductAllergens(ctx, merchantID, productID, allergenIDs); err != nil {
+	if len(p.Allergens) > 0 {
+		if err := r.SyncProductAllergens(ctx, merchantID, productID, p.Allergens); err != nil {
 			return fmt.Errorf("failed to sync product allergens: %w", err)
 		}
 	}
@@ -2034,7 +2027,7 @@ func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) 
 
 // SyncProductAllergens replaces all allergen associations for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
-func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, productID string, allergenIDs []int) error {
+func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, productID string, allergenIDs []string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check

@@ -681,7 +681,7 @@ func (h *MenuHandler) SyncProductAllergens(w http.ResponseWriter, r *http.Reques
 	}
 
 	var body struct {
-		AllergenIDs []int `json:"allergen_ids"`
+		AllergenIDs []string `json:"allergen_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "sync_product_allergens", map[string]string{"error": "invalid_body"})
