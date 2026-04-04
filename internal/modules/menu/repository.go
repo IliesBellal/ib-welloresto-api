@@ -2253,7 +2253,7 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 		}
 		var validCount int
 		if err := db.QueryRowContext(ctx,
-			`SELECT COUNT(1) FROM tags WHERE merchant_id = ? AND id IN (`+inClause+`)`,
+			`SELECT COUNT(1) FROM tags WHERE merchant_id = ? AND tag_id IN (`+inClause+`)`,
 			placeholders...,
 		).Scan(&validCount); err != nil {
 			return err
