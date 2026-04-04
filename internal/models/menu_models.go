@@ -78,7 +78,7 @@ type ProductEntry struct {
 
 // AllergenEntry represents one of the 14 EU regulated allergens.
 type AllergenEntry struct {
-	ID    string `json:"allergen_id "`
+	ID    string `json:"allergen_id"`
 	Name  string `json:"name"`
 	Code  string `json:"code"`
 	Icon  string `json:"icon,omitempty"`
@@ -117,9 +117,9 @@ type ComponentUsage struct {
 	ComponentID   string  `json:"component_id"`
 	ProductID     string  `json:"product_id,omitempty"`
 	Name          string  `json:"name"`
-	Price         int64   `json:"price"`
-	Status        int     `json:"status"`
-	Quantity      float64 `json:"quantity"`
+	Price         int64   `json:"price,omitempty"`
+	Status        int     `json:"status,omitempty"`
+	Quantity      float64 `json:"quantity,omitempty"`
 	UnitOfMeasure string  `json:"unit_of_measure"`
 }
 
