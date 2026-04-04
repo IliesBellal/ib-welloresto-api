@@ -1275,6 +1275,16 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*models.ProductEntry, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	// Helper function to run queries with logging
+	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("%s query error: %w", step, err)
+		}
+		return rows, nil
+	}
+
+	// --- STEP 1: Get product ---
 	query := `
 		SELECT
 			product_id,
@@ -1284,6 +1294,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			price,
 			price_take_away,
 			price_delivery,
+			price_uber_eats,
+			price_deliveroo,
 			category,
 			is_product_group,
 			available_in,
@@ -1314,6 +1326,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.Price,
 		&p.PriceTakeAway,
 		&p.PriceDelivery,
+		&p.PriceUberEats,
+		&p.PriceDeliveroo,
 		&p.Category,
 		&p.IsProductGroup,
 		&p.AvailableIn,
@@ -1335,6 +1349,139 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	if err != nil {
 		return nil, err
 	}
+
+	// --- STEP 2: Load components (requires) ---
+	compSlice := []models.ComponentUsage{}
+	{
+		step := "components_for_product"
+		q := `
+			SELECT c.component_id, c.name, c.component_price, c.status, rq.quantity, uomd.uom_desc
+			FROM components c
+			INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled = true
+			INNER JOIN recipes r ON r.recipe_id = rq.recipe_id AND r.product_id = ?
+			INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
+			WHERE c.merchant_id = ? AND c.available = 1
+		`
+		rows, err := runQuery(step, q, productID, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c models.ComponentUsage
+			var uom sql.NullString
+			if err := rows.Scan(&c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
+				return nil, err
+			}
+			if uom.Valid {
+				c.UnitOfMeasure = uom.String
+			}
+			compSlice = append(compSlice, c)
+		}
+	}
+	p.Components = compSlice
+
+	// --- STEP 3: Load configurable options ---
+	optMap := make(map[string][]models.ConfigurableOption)
+	{
+		step := "configurable_options_for_product"
+		q := `
+			SELECT DISTINCT ca.id, cao.id, cao.title, cao.extra_price, cao.max_quantity
+			FROM product_configurable_attribute pca
+			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
+			INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
+			WHERE pca.product_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
+		`
+		rows, err := runQuery(step, q, productID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cfgID string
+			var o models.ConfigurableOption
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
+				return nil, err
+			}
+			optMap[cfgID] = append(optMap[cfgID], o)
+		}
+	}
+
+	// --- STEP 4: Load configurable attributes ---
+	attrSlice := []models.ConfigurableAttribute{}
+	{
+		step := "configurable_attributes_for_product"
+		q := `
+			SELECT ca.id, ca.title, ca.max_options, ca.attribute_type, ca.min_options
+			FROM product_configurable_attribute pca
+			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
+			WHERE pca.product_id = ? AND ca.enabled = 1 AND pca.enabled = 1
+			ORDER BY pca.num_order ASC
+		`
+		rows, err := runQuery(step, q, productID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var a models.ConfigurableAttribute
+			if err := rows.Scan(&a.ID, &a.Title, &a.MaxOptions, &a.AttributeType, &a.MinOptions); err != nil {
+				return nil, err
+			}
+			a.ProductID = productID
+			a.Options = optMap[a.ID]
+			attrSlice = append(attrSlice, a)
+		}
+	}
+	p.Configuration = models.ConfigurableResponse{Attributes: attrSlice}
+
+	// --- STEP 5: Load allergens ---
+	allergenSlice := []models.AllergenEntry{}
+	{
+		q := `
+			SELECT a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			FROM product_allergens pa
+			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
+			WHERE pa.product_id = ?
+		`
+		rows, err := runQuery("allergens_for_product", q, productID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var a models.AllergenEntry
+			if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+				return nil, err
+			}
+			allergenSlice = append(allergenSlice, a)
+		}
+	}
+	p.Allergens = allergenSlice
+
+	// --- STEP 6: Load tags ---
+	tagSlice := []models.TagEntry{}
+	{
+		q := `
+			SELECT t.tag_id, t.name
+			FROM product_tags pt
+			INNER JOIN tags t ON t.tag_id = pt.tag_id
+			WHERE t.merchant_id = ? AND pt.product_id = ?
+		`
+		rows, err := runQuery("tags_for_product", q, merchantID, productID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t models.TagEntry
+			if err := rows.Scan(&t.ID, &t.Name); err != nil {
+				return nil, err
+			}
+			tagSlice = append(tagSlice, t)
+		}
+	}
+	p.Tags = tagSlice
 
 	return &p, nil
 }
@@ -1617,11 +1764,7 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	// Note: J'ai ajouté une clause AND merchant_id (ou via jointure) pour la sécurité,
-	// sinon n'importe qui avec un token valide pourrait modifier n'importe quel produit ID.
-	// Si ta table products n'a pas de merchant_id, il faut faire une jointure avec categories/menus.
-	// Pour l'exemple, je suppose une vérification simple sur product_id ou une structure existante.
-
+	// Update basic product fields
 	query := `
 		UPDATE products
 		SET 
@@ -1632,21 +1775,20 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 			price = COALESCE(?, price),
 			price_take_away = COALESCE(?, price_take_away),
 			price_delivery = COALESCE(?, price_delivery),
-			by_product_of = ?, 
+			by_product_of = ?,
 			is_available_on_sno = COALESCE(?, is_available_on_sno),
-			img = COALESCE(?, img),
 			enabled = COALESCE(?, enabled),
 			available = COALESCE(?, available),
 			status = COALESCE(?, status),
 			available_in = COALESCE(?, available_in),
 			available_take_away = COALESCE(?, available_take_away),
-			available_delivery = COALESCE(?, available_delivery)
-		WHERE product_id = ? 
-		/* AND merchant_id = ?  <- Sécurité recommandée ici */
+			available_delivery = COALESCE(?, available_delivery),
+			sync_uber_eats = COALESCE(?, sync_uber_eats),
+			sync_deliveroo = COALESCE(?, sync_deliveroo),
+			price_uber_eats = COALESCE(?, price_uber_eats),
+			price_deliveroo = COALESCE(?, price_deliveroo)
+		WHERE product_id = ? AND merchant_id = ?
 	`
-
-	// Note: by_product_of n'a pas de COALESCE dans ton PHP original, il est écrasé directement.
-	// Je l'ai laissé tel quel (paramètre direct), mais attention si p.ByProductOf est nil.
 
 	_, err := db.ExecContext(ctx, query,
 		p.Name,
@@ -1656,21 +1798,183 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.Price,
 		p.PriceTakeAway,
 		p.PriceDelivery,
-		p.ByProductOf, // Attention: si nil, cela mettra NULL en base
+		p.ByProductOf,
 		p.IsAvailableOnSno,
-		p.ImageBase64,
 		p.Enabled,
 		p.Available,
 		p.Status,
 		p.AvailableIn,
 		p.AvailableTakeAway,
 		p.AvailableDelivery,
+		p.SyncUberEats,
+		p.SyncDeliveroo,
+		p.PriceUberEats,
+		p.PriceDeliveroo,
 		productID,
+		merchantID,
 	)
+	if err != nil {
+		return fmt.Errorf("failed to update product basic fields: %w", err)
+	}
+
+	// Sync configurable attributes
+	if len(p.Configuration) > 0 {
+		if err := r.SyncProductAttributes(ctx, merchantID, productID, p.Configuration); err != nil {
+			return fmt.Errorf("failed to sync product attributes: %w", err)
+		}
+	}
+
+	// Sync components (composition)
+	if len(p.Components) > 0 {
+		if err := r.SyncProductComponents(ctx, merchantID, productID, p.Components); err != nil {
+			return fmt.Errorf("failed to sync product components: %w", err)
+		}
+	}
+
+	// Sync tags
+	if len(p.Tags) > 0 {
+		if err := r.SyncProductTags(ctx, merchantID, productID, p.Tags); err != nil {
+			return fmt.Errorf("failed to sync product tags: %w", err)
+		}
+	}
+
+	// Sync allergens
+	var allergenIDs []int
+	for _, allergenID := range p.Allergens {
+		id, err := strconv.Atoi(allergenID)
+		if err == nil {
+			allergenIDs = append(allergenIDs, id)
+		}
+	}
+	if len(allergenIDs) > 0 {
+		if err := r.SyncProductAllergens(ctx, merchantID, productID, allergenIDs); err != nil {
+			return fmt.Errorf("failed to sync product allergens: %w", err)
+		}
+	}
 
 	_ = r.setMenuUpdated(ctx, merchantID)
 
-	return err
+	return nil
+}
+
+// SyncProductAttributes replaces all configurable attributes for a product in a single transaction.
+// It verifies that the product belongs to merchantID before modifying it.
+func (r *MenuRepository) SyncProductAttributes(ctx context.Context, merchantID, productID string, attributeIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Ownership check: verify product belongs to merchant
+	var count int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to verify product ownership: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("product not found for merchant")
+	}
+
+	// Delete all existing product_configurable_attribute associations
+	_, err = db.ExecContext(ctx,
+		`DELETE FROM product_configurable_attribute WHERE product_id = ?`,
+		productID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete old attributes: %w", err)
+	}
+
+	// Insert new attribute associations with ordering
+	for i, attributeID := range attributeIDs {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO product_configurable_attribute 
+			 (product_id, configurable_attribute_id, enabled, num_order) 
+			 VALUES (?, ?, 1, ?)`,
+			productID, attributeID, i,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert attribute association: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// SyncProductComponents replaces all component requirements for a product in a single transaction.
+// It verifies that the product belongs to merchantID before modifying it.
+func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, productID string, components []ProductComponentUpdate) error {
+	// Start transaction with raw sql.DB
+	tx, err := r.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Ownership check: verify product belongs to merchant
+	var count int
+	err = tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to verify product ownership: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("product not found for merchant")
+	}
+
+	// Get or create recipe for this product
+	var recipeID int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT recipe_id FROM recipes WHERE product_id = ? LIMIT 1`,
+		productID,
+	).Scan(&recipeID)
+
+	if err == sql.ErrNoRows {
+		// Create new recipe for this product
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO recipes (product_id) VALUES (?)`,
+			productID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create recipe: %w", err)
+		}
+		recipeID, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get recipe ID: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to query recipe: %w", err)
+	}
+
+	// Delete all existing requires for this recipe
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM requires WHERE recipe_id = ?`,
+		recipeID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete old requires: %w", err)
+	}
+
+	// Insert new component requirements
+	for _, comp := range components {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO requires 
+			 (recipe_id, component_id, quantity, unit_of_measure, enabled) 
+			 VALUES (?, ?, ?, ?, 1)`,
+			recipeID, comp.ComponentID, comp.Quantity, comp.UnitID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert component requirement: %w", err)
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (r *MenuRepository) GetProductImageURL(ctx context.Context, merchantID, productID string) (string, error) {

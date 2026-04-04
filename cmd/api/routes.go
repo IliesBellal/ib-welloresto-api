@@ -431,19 +431,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/components", menuH.GetAllComponents)
 
 		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
-		r.Patch("/product/{product_id}/availability", menuH.SetProductAvailability)
 		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
 		r.Delete("/products/category/{category_id}", menuH.DeleteProductCategory)
 		r.Delete("/components/{component_id}", menuH.DeleteComponent)
-		r.Patch("/product/{product_id}", menuH.UpdateProduct)
 
-		r.Patch("/product/{product_id}/attributes", menuH.UpdateProductAttributes)
-		r.Put("/product/{product_id}/image", menuH.UploadProductImage)
+		r.Patch("/products/{product_id}", menuH.UpdateProduct)
+		r.Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
+		r.Put("/products/{product_id}/image", menuH.UploadProductImage)
+		r.Patch("/products/{product_id}/availability", menuH.SetProductAvailability)
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
-		r.Get("/product/{product_id}", menuH.GetProduct)
+		r.Get("/products/{product_id}", menuH.GetProduct)
 
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/", tagsH.ListTags)
@@ -458,8 +458,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		})
 
 		// --- Allergens & Tags (full sync) ---
-		r.Put("/product/{product_id}/allergens", menuH.SyncProductAllergens)
-		r.Put("/product/{product_id}/tags", menuH.SyncProductTags)
+		r.Put("/products/{product_id}/allergens", menuH.SyncProductAllergens)
+		r.Put("/products/{product_id}/tags", menuH.SyncProductTags)
 
 		// --- Plateformes externes ---
 		r.Get("/deliveroo", menuH.GetDeliverooMenu)
@@ -467,7 +467,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
 
-		r.Post("/product/create", menuH.CreateProduct)
+		r.Post("/products/create", menuH.CreateProduct)
 		r.Post("/components/create", menuH.CreateComponent)
 		r.Post("/components/category/create", menuH.CreateComponentCategory)
 		r.Post("/products/category/create", menuH.CreateProductCategory)

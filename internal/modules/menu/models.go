@@ -212,24 +212,39 @@ type CreateProductPayload struct {
 	IsProductGroup bool    `json:"is_product_group"`
 }
 
-// ProductUpdatePayload correspond aux champs de la table 'products'
+// ProductComponentUpdate pour mettre à jour les composants d'un produit
+type ProductComponentUpdate struct {
+	ComponentID int64   `json:"component_id"` // ID du composant
+	Quantity    float64 `json:"quantity"`     // Quantité requise
+	UnitID      string  `json:"unit_id"`      // ID de l'unité de mesure
+}
+
+// ProductUpdatePayload correspond aux champs de la table 'products' + associations
 type ProductUpdatePayload struct {
-	Name              *string `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
-	Description       *string `json:"product_desc"`
-	BgColor           *string `json:"bg_color"`
-	Category          *string `json:"category"`
-	Price             *int    `json:"price"`
-	PriceTakeAway     *int    `json:"price_take_away"`
-	PriceDelivery     *int    `json:"price_delivery"`
-	ByProductOf       *string `json:"by_product_of"`       // Peut être null
-	IsAvailableOnSno  *bool   `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
-	ImageBase64       *string `json:"base_64"`
-	Enabled           *bool   `json:"enabled"`
-	Available         *bool   `json:"available"`
-	Status            *string `json:"status"`
-	AvailableIn       *bool   `json:"available_in"`
-	AvailableTakeAway *bool   `json:"available_take_away"`
-	AvailableDelivery *bool   `json:"available_delivery"`
+	Name              *string                  `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
+	Description       *string                  `json:"product_desc"`
+	BgColor           *string                  `json:"bg_color"`
+	Category          *string                  `json:"category"`
+	Price             *int                     `json:"price"`
+	PriceTakeAway     *int                     `json:"price_take_away"`
+	PriceDelivery     *int                     `json:"price_delivery"`
+	ByProductOf       *string                  `json:"by_product_of"`       // Peut être null
+	IsAvailableOnSno  *bool                    `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
+	ImageBase64       *string                  `json:"base_64"`
+	Enabled           *bool                    `json:"enabled"`
+	Available         *bool                    `json:"available"`
+	Status            *string                  `json:"status"`
+	AvailableIn       *bool                    `json:"available_in"`
+	AvailableTakeAway *bool                    `json:"available_take_away"`
+	AvailableDelivery *bool                    `json:"available_delivery"`
+	SyncUberEats      *bool                    `json:"sync_uber_eats"`
+	SyncDeliveroo     *bool                    `json:"sync_deliveroo"`
+	PriceUberEats     *int                     `json:"price_uber_eats"`
+	PriceDeliveroo    *int                     `json:"price_deliveroo"`
+	Configuration     []string                 `json:"configuration"` // Liste des IDs d'attributs configurables
+	Components        []ProductComponentUpdate `json:"components"`    // Liste des composants avec quantity et unit_id
+	Tags              []string                 `json:"tags"`          // Liste des IDs de tags
+	Allergens         []string                 `json:"allergens"`     // Liste des IDs d'allergènes
 }
 
 // ProductAttributesPayload pour la configuration des attributs

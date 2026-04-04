@@ -22,7 +22,7 @@ func (r *Repository) ListAllergens(ctx context.Context) ([]models.AllergenEntry,
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, name, code, COALESCE(icon, '') FROM allergens ORDER BY id ASC`,
+		`SELECT allergen_id , name, code, icon, color FROM allergens ORDER BY id ASC`,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -33,7 +33,7 @@ func (r *Repository) ListAllergens(ctx context.Context) ([]models.AllergenEntry,
 	var result []models.AllergenEntry
 	for rows.Next() {
 		var a models.AllergenEntry
-		if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon, &a.Color); err != nil {
 			log.Error(err.Error())
 			return nil, err
 		}

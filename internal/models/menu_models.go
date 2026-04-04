@@ -40,6 +40,8 @@ type ProductEntry struct {
 	Price                        int64                  `json:"price"`
 	PriceTakeAway                *int64                 `json:"price_take_away"`
 	PriceDelivery                *int64                 `json:"price_delivery"`
+	PriceUberEats                *int64                 `json:"price_uber_eats"`
+	PriceDeliveroo               *int64                 `json:"price_deliveroo"`
 	TVARate                      *float64               `json:"tva_rate,omitempty"`
 	TVAIn                        *float64               `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64               `json:"tva_rate_delivery,omitempty"`
@@ -76,10 +78,11 @@ type ProductEntry struct {
 
 // AllergenEntry represents one of the 14 EU regulated allergens.
 type AllergenEntry struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Code string `json:"code"`
-	Icon string `json:"icon,omitempty"`
+	ID    string `json:"allergen_id "`
+	Name  string `json:"name"`
+	Code  string `json:"code"`
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
 }
 
 // TagEntry represents a merchant-specific label attached to a product.

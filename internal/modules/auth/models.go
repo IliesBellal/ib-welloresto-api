@@ -7,7 +7,7 @@ import (
 
 const (
 	OTPResendCooldown = 60 * time.Second
-	MFAExpiration     = 30 * 24 * time.Hour
+	MFAExpiration     = 1 * 24 * time.Hour // For testing purposes, we will use 24 hours  //30 * 24 * time.Hour
 )
 
 type SaveDeviceTokenRequest struct {
