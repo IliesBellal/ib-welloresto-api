@@ -961,7 +961,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			// - Prix d'achat: 850 pour 430g (purchase_price=850, purchase_price_quantity=430, unit_of_measure=3 "KG")
 			// - Conversion G→KG: ratio=1000 (il faut 1000g pour 1kg)
 			//
-			// Calcul: (100 / 1000) * (850 / 430) = 0.1 * 1.977 = 0.1977
+			// Calcul: (100 / 1000) * (850 / 430) = 0.1 * 1.977 = 0.1977 centimes
 
 			quantityInPurchaseUnit := c.Quantity / conversionRatio
 			pricePerPurchaseUnit := purchasePrice / purchasePriceQty
@@ -972,6 +972,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				// Invalide: mettre à 0 et ne pas accumuler
 				c.Cost = 0
 			} else {
+				// Arrondir à 2 décimales (centimes)
+				c.Cost = math.Round(c.Cost*100) / 100
 				// Valide: accumuler le coût total du produit
 				productCostMap[productID] += c.Cost
 			}
@@ -996,13 +998,20 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				// Invalide: mettre CostPrice à nil
 				products[i].CostPrice = nil
 			} else {
-				products[i].CostPrice = &totalCost
+				// Arrondir totalCost à 2 décimales (centimes)
+				totalCostRounded := math.Round(totalCost*100) / 100
+				products[i].CostPrice = &totalCostRounded
 
 				// Calcul du foodcost en pourcentage
-				// foodcost% = (coût de revient / prix de vente) * 100
+				// Formule: (cost_price / price) * 100
+				// Les deux sont en centimes, donc ça s'annule
+				// Exemple: 508 centimes / 1200 centimes = 0.4233 → 42.33%
 				if products[i].Price > 0 {
-					products[i].FoodCostPercent = (totalCost / float64(products[i].Price)) * 100
-					products[i].MarginPercent = 100 - products[i].FoodCostPercent
+					foodCostPercent := (totalCostRounded / float64(products[i].Price)) * 100
+					// Arrondir foodcost_percent à 2 décimales
+					products[i].FoodCostPercent = math.Round(foodCostPercent*100) / 100
+					// Arrondir margin_percent à 2 décimales
+					products[i].MarginPercent = math.Round((100-products[i].FoodCostPercent)*100) / 100
 				}
 			}
 		}
