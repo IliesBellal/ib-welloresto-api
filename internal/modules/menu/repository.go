@@ -894,36 +894,104 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		}
 	}
 
-	// --- STEP 4: components (requires, NO available filter) ---
+	// --- STEP 4: components avec calcul du coût unitaire ---
 	compMap := make(map[string][]models.ComponentUsage)
+	productCostMap := make(map[string]float64) // Nouveau: coût total par produit
 	{
 		step := "components_requires_all"
 		q := `
-            SELECT r.product_id, c.component_id, c.name, rq.quantity, uomd.uom_desc, rq.unit_of_measure
-            FROM components c
-            INNER JOIN requires rq on c.component_id = rq.component_id and rq.enabled = true
-            INNER JOIN recipes r on r.recipe_id = rq.recipe_id
-            INNER JOIN unit_of_measure_desc uomd on uomd.lang = 'FR' and uomd.id = rq.unit_of_measure
-            WHERE c.merchant_id = ?
-			AND c.enabled = 1
-			AND rq.enabled = true
-        `
+		SELECT 
+			r.product_id,
+			c.component_id,
+			c.name,
+			rq.quantity,
+			uomd.uom_desc,
+			rq.unit_of_measure,
+			c.purchase_price,
+			c.purchase_price_quantity,
+			c.unit_of_measure as purchase_uom,
+			COALESCE(conv.ratio, 1) as conversion_ratio
+		FROM components c
+		INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled = true
+		INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
+		LEFT JOIN unit_of_measure_convert conv ON conv.id_from = rq.unit_of_measure AND conv.id_to = c.unit_of_measure
+		WHERE c.merchant_id = ?
+		AND c.enabled = 1
+		AND rq.enabled = true
+	`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
+
 		for rows.Next() {
 			var productID string
 			var c models.ComponentUsage
 			var uom sql.NullString
-			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Quantity, &uom, &c.UnitOfMeasureID); err != nil {
+			var purchasePrice, purchasePriceQty, conversionRatio float64
+			var purchaseUOM int
+
+			if err := rows.Scan(
+				&productID,
+				&c.ComponentID,
+				&c.Name,
+				&c.Quantity,
+				&uom,
+				&c.UnitOfMeasureID,
+				&purchasePrice,
+				&purchasePriceQty,
+				&purchaseUOM,
+				&conversionRatio,
+			); err != nil {
 				return nil, err
 			}
+
 			if uom.Valid {
 				c.UnitOfMeasure = uom.String
 			}
+
+			// CALCUL DU COÛT UNITAIRE
+			// Formule: (quantity_used / conversion_ratio) * (purchase_price / purchase_price_quantity)
+			//
+			// Exemple: Olives dans ta DB
+			// - Recipe utilise: 100g (rq.quantity=100, rq.unit_of_measure=2 "G")
+			// - Prix d'achat: 850 pour 430g (purchase_price=850, purchase_price_quantity=430, unit_of_measure=3 "KG")
+			// - Conversion G→KG: ratio=1000 (il faut 1000g pour 1kg)
+			//
+			// Calcul: (100 / 1000) * (850 / 430) = 0.1 * 1.977 = 0.1977
+
+			quantityInPurchaseUnit := c.Quantity / conversionRatio
+			pricePerPurchaseUnit := purchasePrice / purchasePriceQty
+			c.Cost = quantityInPurchaseUnit * pricePerPurchaseUnit
+
 			compMap[productID] = append(compMap[productID], c)
+
+			// Accumule le coût total du produit
+			productCostMap[productID] += c.Cost
+		}
+	}
+
+	// Plus tard, quand tu attaches les composants aux produits:
+	for i := range products {
+		pid := products[i].ProductID
+
+		// Attache les composants
+		if comps, ok := compMap[pid]; ok {
+			products[i].Components = comps
+		}
+
+		// Calcule le foodcost
+		if totalCost, ok := productCostMap[pid]; ok {
+			products[i].CostPrice = &totalCost
+
+			// Calcul du foodcost en pourcentage
+			// foodcost% = (coût de revient / prix de vente) * 100
+			if products[i].Price > 0 {
+				products[i].FoodCostPercent = (totalCost / float64(products[i].Price)) * 100
+				products[i].MarginPercent = 100 - products[i].FoodCostPercent
+			}
 		}
 	}
 

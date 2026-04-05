@@ -46,6 +46,9 @@ type ProductEntry struct {
 	TVAIn                        *float64               `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64               `json:"tva_rate_delivery,omitempty"`
 	TVATakeAway                  *float64               `json:"tva_rate_take_away,omitempty"`
+	CostPrice                    *float64               `json:"cost_price"`
+	FoodCostPercent              float64                `json:"foodcost_percent"`
+	MarginPercent                float64                `json:"margin_percent"`
 	AvailableIn                  bool                   `json:"available_in"`
 	AvailableTakeAway            bool                   `json:"available_take_away"`
 	AvailableDelivery            bool                   `json:"available_delivery"`
@@ -122,6 +125,7 @@ type ComponentUsage struct {
 	Quantity        float64 `json:"quantity,omitempty"`
 	UnitOfMeasure   string  `json:"unit_of_measure"`
 	UnitOfMeasureID string  `json:"unit_of_measure_id,omitempty"`
+	Cost            float64 `json:"cost,omitempty"`
 }
 
 // component category
@@ -139,6 +143,7 @@ type ComponentBasic struct {
 	Category    *string `json:"category"`
 	Price       int     `json:"price"`
 	Status      string  `json:"status"`
+	Cost        int64   `json:"cost,omitempty"`
 }
 
 // configurable attributes
