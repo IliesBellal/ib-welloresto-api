@@ -22,6 +22,7 @@ var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
 type AuthService interface {
 	GetUserByToken(ctx context.Context, token string) (*auth.UserLoginRow, error)
 	UpdateMFAStatus(ctx context.Context, userID string, status string) error
+	IsMFAVerificationRequired(ctx context.Context, user *auth.UserLoginRow) bool
 }
 
 // Auth est le middleware d'authentification principal
@@ -84,7 +85,8 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 			// On vérifie si l'accès demande le MFA (ex: via un header ou le path)
 			isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
 
-			if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
+			// if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
+			if isBackoffice && service.IsMFAVerificationRequired(r.Context(), user) {
 				// On laisse passer UNIQUEMENT vers l'endpoint de vérification MFA
 				if r.URL.Path != "/auth/verify" {
 					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse

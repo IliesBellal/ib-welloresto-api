@@ -103,7 +103,7 @@ func (s *AuthService) InvalidateUserCache(ctx context.Context, token string) err
 	return nil
 }
 
-func (s *AuthService) isMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
+func (s *AuthService) IsMFAVerificationRequired(ctx context.Context, user *UserLoginRow) bool {
 	if s.redis == nil {
 		return false
 	}
@@ -217,7 +217,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// ==============================================================
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
-	if s.isMFAVerificationRequired(ctx, user) {
+	if s.IsMFAVerificationRequired(ctx, user) {
 
 		if isBackoffice {
 
