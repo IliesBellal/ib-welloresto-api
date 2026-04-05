@@ -214,7 +214,7 @@ type CreateProductPayload struct {
 
 // ProductComponentUpdate pour mettre à jour les composants d'un produit
 type ProductComponentUpdate struct {
-	ComponentID int64   `json:"component_id"` // ID du composant
+	ComponentID string  `json:"component_id"` // ID du composant
 	Quantity    float64 `json:"quantity"`     // Quantité requise
 	UnitID      string  `json:"unit_id"`      // ID de l'unité de mesure
 }
