@@ -1636,11 +1636,13 @@ func (r *MenuRepository) SetProductStatus(ctx context.Context, merchantID, pid, 
 func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	boolStatus := status == "1" || status == "true" || status == "TRUE" || status == "True" // Normalize to "1" or "0"
+
 	res, err := db.ExecContext(ctx,
 		`UPDATE productcateg 
 		 SET available = ?
 		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
-		status, categoryID, merchantID,
+		boolStatus, categoryID, merchantID,
 	)
 	if err != nil {
 		return 0, err
@@ -1654,11 +1656,13 @@ func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, mer
 func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID, productID, status string) (int64, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	boolStatus := status == "1" || status == "true" || status == "TRUE" || status == "True" // Normalize to "1" or "0"
+
 	res, err := db.ExecContext(ctx,
 		`UPDATE products 
 		 SET available = ?
 		 WHERE product_id = ? AND merchant_id = ?`,
-		status, productID, merchantID,
+		boolStatus, productID, merchantID,
 	)
 	if err != nil {
 		return 0, err
