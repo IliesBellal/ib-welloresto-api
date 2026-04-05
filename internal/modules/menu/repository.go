@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -966,10 +967,16 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			pricePerPurchaseUnit := purchasePrice / purchasePriceQty
 			c.Cost = quantityInPurchaseUnit * pricePerPurchaseUnit
 
-			compMap[productID] = append(compMap[productID], c)
+			// Vérification de validité: rejette NaN, +Inf, -Inf
+			if math.IsNaN(c.Cost) || math.IsInf(c.Cost, 0) {
+				// Invalide: mettre à 0 et ne pas accumuler
+				c.Cost = 0
+			} else {
+				// Valide: accumuler le coût total du produit
+				productCostMap[productID] += c.Cost
+			}
 
-			// Accumule le coût total du produit
-			productCostMap[productID] += c.Cost
+			compMap[productID] = append(compMap[productID], c)
 		}
 	}
 
@@ -984,13 +991,19 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 
 		// Calcule le foodcost
 		if totalCost, ok := productCostMap[pid]; ok {
-			products[i].CostPrice = &totalCost
+			// Vérification de validité: rejette NaN, +Inf, -Inf
+			if math.IsNaN(totalCost) || math.IsInf(totalCost, 0) {
+				// Invalide: mettre CostPrice à nil
+				products[i].CostPrice = nil
+			} else {
+				products[i].CostPrice = &totalCost
 
-			// Calcul du foodcost en pourcentage
-			// foodcost% = (coût de revient / prix de vente) * 100
-			if products[i].Price > 0 {
-				products[i].FoodCostPercent = (totalCost / float64(products[i].Price)) * 100
-				products[i].MarginPercent = 100 - products[i].FoodCostPercent
+				// Calcul du foodcost en pourcentage
+				// foodcost% = (coût de revient / prix de vente) * 100
+				if products[i].Price > 0 {
+					products[i].FoodCostPercent = (totalCost / float64(products[i].Price)) * 100
+					products[i].MarginPercent = 100 - products[i].FoodCostPercent
+				}
 			}
 		}
 	}

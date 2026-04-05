@@ -43,7 +43,13 @@ func SendJSON(w http.ResponseWriter, statusCode int, module string, fnName strin
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode) // Très important : doit être appelé APRÈS le header mais AVANT l'encode
-	json.NewEncoder(w).Encode(result)
+
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		// Erreur lors de l'encoding JSON - logger pour debug
+		// Note: On ne peut pas changer le statut car WriteHeader est déjà appelé
+		// mais on peut au moins logger l'erreur
+		println("[JSON_ENCODE_ERROR] " + module + "." + fnName + ": " + err.Error())
+	}
 }
 
 // Sentinel errors pour une gestion d'erreurs standardisée entre Services et Handlers
