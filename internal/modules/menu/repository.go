@@ -2007,16 +2007,11 @@ func (r *MenuRepository) SyncProductAttributes(ctx context.Context, merchantID, 
 // SyncProductComponents replaces all component requirements for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, productID string, components []ProductComponentUpdate) error {
-	// Start transaction with raw sql.DB
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to start transaction: %w", err)
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant
 	var count int
-	err = tx.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM products WHERE product_id = ? AND merchant_id = ?`,
 		productID, merchantID,
 	).Scan(&count)
@@ -2029,14 +2024,14 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 
 	// Get or create recipe for this product
 	var recipeID int64
-	err = tx.QueryRowContext(ctx,
+	err = db.QueryRowContext(ctx,
 		`SELECT recipe_id FROM recipes WHERE product_id = ? LIMIT 1`,
 		productID,
 	).Scan(&recipeID)
 
 	if err == sql.ErrNoRows {
 		// Create new recipe for this product
-		result, err := tx.ExecContext(ctx,
+		result, err := db.ExecContext(ctx,
 			`INSERT INTO recipes (product_id) VALUES (?)`,
 			productID,
 		)
@@ -2052,7 +2047,7 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 	}
 
 	// Delete all existing requires for this recipe
-	_, err = tx.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`DELETE FROM requires WHERE recipe_id = ?`,
 		recipeID,
 	)
@@ -2062,7 +2057,7 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 
 	// Insert new component requirements
 	for _, comp := range components {
-		_, err := tx.ExecContext(ctx,
+		_, err := db.ExecContext(ctx,
 			`INSERT INTO requires 
 			 (recipe_id, component_id, quantity, unit_of_measure, enabled) 
 			 VALUES (?, ?, ?, ?, 1)`,
@@ -2071,11 +2066,6 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 		if err != nil {
 			return fmt.Errorf("failed to insert component requirement: %w", err)
 		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
