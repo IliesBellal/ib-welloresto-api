@@ -755,7 +755,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
-                   p.sync_uber_eats, p.sync_deliveroo
+                   p.sync_uber_eats, p.sync_deliveroo, p.available
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -782,7 +782,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if err := rows.Scan(
 				&p.ProductID, &p.ByProductOf, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
-				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo,
+				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.Available,
 			); err != nil {
 				return nil, err
 			}
@@ -1597,7 +1597,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	return &p, nil
 }
 
-func (r *MenuRepository) SetComponentAvailability(ctx context.Context, merchantID, cid, status string) (int64, error) {
+func (r *MenuRepository) SetComponentStatus(ctx context.Context, merchantID, cid, status string) (int64, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx,
@@ -1615,7 +1615,7 @@ func (r *MenuRepository) SetComponentAvailability(ctx context.Context, merchantI
 	return res.RowsAffected()
 }
 
-func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID, pid, status string) (int64, error) {
+func (r *MenuRepository) SetProductStatus(ctx context.Context, merchantID, pid, status string) (int64, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx,
@@ -2451,4 +2451,24 @@ func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]mod
 		result = append(result, t)
 	}
 	return result, rows.Err()
+}
+
+// DeleteProduct disables a product by setting enabled = 0.
+// It verifies that the product belongs to merchantID before modifying it.
+func (r *MenuRepository) DeleteProduct(ctx context.Context, merchantID, productID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE products 
+		 SET enabled = 0
+		 WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
 }

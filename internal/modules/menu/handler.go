@@ -278,10 +278,10 @@ func (h *MenuHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MenuHandler) SetComponentStatus(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_component_availability", map[string]string{"error": "missing_token"})
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_component_status", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -290,25 +290,25 @@ func (h *MenuHandler) SetComponentAvailability(w http.ResponseWriter, r *http.Re
 
 	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "set_component_availability", map[string]string{"error": "invalid_body"})
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_component_status", map[string]string{"error": "invalid_body"})
 		return
 	}
 
-	_, err := h.service.SetComponentAvailability(ctx, token, componentID, req.Status)
+	_, err := h.service.SetComponentStatus(ctx, token, componentID, req.Status)
 	if err != nil {
-		models.SendErrorJSON(w, "menu", "set_component_availability", err)
+		models.SendErrorJSON(w, "menu", "set_component_status", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "set_component_availability", models.AvailabilityResponse{
+	models.SendJSON(w, http.StatusOK, "menu", "set_component_status", models.AvailabilityResponse{
 		Status: "success",
 	})
 }
 
-func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MenuHandler) SetProductStatus(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_product_availability", map[string]string{"error": "missing_token"})
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_product_status", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -317,17 +317,17 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 
 	var req models.StatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "set_product_availability", map[string]string{"error": "invalid_body"})
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_product_status", map[string]string{"error": "invalid_body"})
 		return
 	}
 
-	_, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
+	_, err := h.service.SetProductStatus(ctx, token, productID, req.Status)
 	if err != nil {
-		models.SendErrorJSON(w, "menu", "set_product_availability", err)
+		models.SendErrorJSON(w, "menu", "set_product_status", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "set_product_availability", models.AvailabilityResponse{
+	models.SendJSON(w, http.StatusOK, "menu", "set_product_status", models.AvailabilityResponse{
 		Status: "1",
 	})
 }
@@ -387,6 +387,35 @@ func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "delete_component", map[string]string{
 		"status":  "1",
 		"message": "component_disabled",
+	})
+}
+
+func (h *MenuHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_product", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_product", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.DeleteProduct(ctx, token, productID)
+	if err != nil {
+		log.Error("[ERROR] DeleteProduct error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "delete_product", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_product", map[string]string{
+		"status":  "1",
+		"message": "product_disabled",
 	})
 }
 

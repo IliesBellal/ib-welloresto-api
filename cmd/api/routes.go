@@ -430,15 +430,17 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/products", menuH.GetAllProducts)
 		r.Get("/components", menuH.GetAllComponents)
 
-		r.Patch("/component/{component_id}/availability", menuH.SetComponentAvailability)
+		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)
+		r.Delete("/components/{component_id}", menuH.DeleteComponent)
+
 		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
 		r.Delete("/products/category/{category_id}", menuH.DeleteProductCategory)
-		r.Delete("/components/{component_id}", menuH.DeleteComponent)
 
 		r.Patch("/products/{product_id}", menuH.UpdateProduct)
 		r.Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Put("/products/{product_id}/image", menuH.UploadProductImage)
-		r.Patch("/products/{product_id}/availability", menuH.SetProductAvailability)
+		r.Patch("/products/{product_id}/status", menuH.SetProductStatus)
+		r.Delete("/products/{product_id}", menuH.DeleteProduct)
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
