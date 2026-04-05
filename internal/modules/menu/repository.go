@@ -1213,16 +1213,30 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 
 	// --- STEP 2: all components (NO available filter) ---
 	type compBasicTmp struct {
-		ID     string
-		Name   string
-		CatID  *string
-		Status string
-		Price  int
+		ID              string
+		Name            string
+		CatID           *string
+		Status          string
+		Price           int
+		UnitOfMeasureID int
+		UnitOfMeasure   sql.NullString
 	}
 	var allComponents []compBasicTmp
 	{
 		step := "all_components"
-		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ? and enabled = 1`
+		q := `
+			SELECT 
+				c.component_id, 
+				c.name, 
+				c.category_id, 
+				c.status, 
+				c.component_price,
+				c.unit_of_measure,
+				COALESCE(uomd.uom_desc, '') as uom_desc
+			FROM components c
+			LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
+			WHERE c.merchant_id = ? and c.enabled = 1
+		`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
@@ -1230,7 +1244,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		defer rows.Close()
 		for rows.Next() {
 			var cb compBasicTmp
-			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price); err != nil {
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure); err != nil {
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
@@ -1243,12 +1257,19 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		actual := []models.ComponentBasic{}
 		for _, cb := range allComponents {
 			if cb.CatID != nil && *cb.CatID == cc.ID {
+				uomID := fmt.Sprintf("%d", cb.UnitOfMeasureID)
+				uomName := ""
+				if cb.UnitOfMeasure.Valid {
+					uomName = cb.UnitOfMeasure.String
+				}
 				actual = append(actual, models.ComponentBasic{
-					ComponentID: cb.ID,
-					Name:        cb.Name,
-					Category:    cb.CatID,
-					Price:       cb.Price,
-					Status:      cb.Status,
+					ComponentID:     cb.ID,
+					Name:            cb.Name,
+					Category:        cb.CatID,
+					Price:           cb.Price,
+					Status:          cb.Status,
+					UnitOfMeasureID: uomID,
+					UnitOfMeasure:   uomName,
 				})
 			}
 		}
