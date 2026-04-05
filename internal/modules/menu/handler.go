@@ -453,6 +453,40 @@ func (h *MenuHandler) SetProductCategoryAvailability(w http.ResponseWriter, r *h
 	})
 }
 
+func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "set_product_availability", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	productID := chi.URLParam(r, "product_id")
+	if productID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_product_availability", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req models.StatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "set_product_availability", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	_, err := h.service.SetProductAvailability(ctx, token, productID, req.Status)
+	if err != nil {
+		log.Error("[ERROR] SetProductAvailability error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "set_product_availability", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "set_product_availability", models.AvailabilityResponse{
+		Status: "1",
+	})
+}
+
 func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	// 1. Auth & Validation basique
 	token := helpers.ExtractToken(r)

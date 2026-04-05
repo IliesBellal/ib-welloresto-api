@@ -193,6 +193,15 @@ func (s *MenuService) SetProductCategoryAvailability(ctx context.Context, token,
 	return s.legacy.SetProductCategoryAvailability(ctx, user.MerchantID, categoryID, status)
 }
 
+func (s *MenuService) SetProductAvailability(ctx context.Context, token, productID, status string) (int64, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	return s.legacy.SetProductAvailability(ctx, user.MerchantID, productID, status)
+}
+
 func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
