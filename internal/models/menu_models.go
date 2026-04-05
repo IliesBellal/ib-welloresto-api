@@ -114,13 +114,14 @@ type OrderProductWithout struct {
 
 // components required
 type ComponentUsage struct {
-	ComponentID   string  `json:"component_id"`
-	ProductID     string  `json:"product_id,omitempty"`
-	Name          string  `json:"name"`
-	Price         int64   `json:"price,omitempty"`
-	Status        int     `json:"status,omitempty"`
-	Quantity      float64 `json:"quantity,omitempty"`
-	UnitOfMeasure string  `json:"unit_of_measure"`
+	ComponentID     string  `json:"component_id"`
+	ProductID       string  `json:"product_id,omitempty"`
+	Name            string  `json:"name"`
+	Price           int64   `json:"price,omitempty"`
+	Status          int     `json:"status,omitempty"`
+	Quantity        float64 `json:"quantity,omitempty"`
+	UnitOfMeasure   string  `json:"unit_of_measure"`
+	UnitOfMeasureID string  `json:"unit_of_measure_id,omitempty"`
 }
 
 // component category

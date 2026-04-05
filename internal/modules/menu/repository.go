@@ -1355,7 +1355,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	{
 		step := "components_for_product"
 		q := `
-			SELECT c.component_id, c.name, c.component_price, c.status, rq.quantity, uomd.uom_desc
+			SELECT c.component_id, c.name, rq.quantity, uomd.uom_desc, rq.unit_of_measure
 			FROM components c
 			INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled = true
 			INNER JOIN recipes r ON r.recipe_id = rq.recipe_id AND r.product_id = ?
@@ -1370,7 +1370,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		for rows.Next() {
 			var c models.ComponentUsage
 			var uom sql.NullString
-			if err := rows.Scan(&c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
+			if err := rows.Scan(&c.ComponentID, &c.Name, &c.Quantity, &uom, &c.UnitOfMeasureID); err != nil {
 				return nil, err
 			}
 			if uom.Valid {
