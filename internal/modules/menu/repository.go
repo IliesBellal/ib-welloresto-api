@@ -712,15 +712,16 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 
 	// --- STEP 1: categories (NO available/enabled filter) ---
 	var cats []struct {
-		ID    *string
-		Name  string
-		Order int
-		Bg    sql.NullString
+		ID        *string
+		Name      string
+		Order     int
+		Bg        sql.NullString
+		Available bool
 	}
 	{
 		step := "categories_all_products"
 		q := `
-            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.available
             FROM productcateg pc
             WHERE pc.merchant_id = ?
 			AND pc.enabled = 1
@@ -733,12 +734,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		defer rows.Close()
 		for rows.Next() {
 			var c struct {
-				ID    *string
-				Name  string
-				Order int
-				Bg    sql.NullString
+				ID        *string
+				Name      string
+				Order     int
+				Bg        sql.NullString
+				Available bool
 			}
-			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg); err != nil {
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Available); err != nil {
 				return nil, err
 			}
 			cats = append(cats, c)
@@ -1169,6 +1171,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			CategoryID:   c.ID,
 			Order:        c.Order,
 			BgColor:      bg,
+			Available:    c.Available,
 			Products:     actual,
 		})
 	}
