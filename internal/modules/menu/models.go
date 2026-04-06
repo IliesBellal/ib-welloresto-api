@@ -261,8 +261,8 @@ type CreateComponentPayload struct {
 	MerchantID string `json:"-"`           // Sera défini par le service
 }
 
-// CreateComponentCategoryPayload pour la création de catégories de composants
-type CreateComponentCategoryPayload struct {
+// UpsertComponentCategoryPayload pour la création de catégories de composants
+type UpsertComponentCategoryPayload struct {
 	Name       string `json:"name"` // Nom de la catégorie
 	MerchantID string `json:"-"`    // Sera défini par le service
 }
@@ -271,4 +271,15 @@ type CreateComponentCategoryPayload struct {
 type CreateProductCategoryPayload struct {
 	Name       string `json:"name"` // Nom de la catégorie
 	MerchantID string `json:"-"`    // Sera défini par le service
+}
+
+// DisplayOrderItem represents a category with its ordered products
+type DisplayOrderItem struct {
+	CategoryID string   `json:"category_id"`
+	Products   []string `json:"products"`
+}
+
+// DisplayOrderPayload is used to update category and product display orders
+type DisplayOrderPayload struct {
+	DisplayOrder []DisplayOrderItem `json:"display_order"`
 }

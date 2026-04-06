@@ -118,7 +118,7 @@ func (s *MenuService) CreateComponent(ctx context.Context, token string, req *Cr
 	return s.legacy.CreateComponent(ctx, req)
 }
 
-func (s *MenuService) CreateComponentCategory(ctx context.Context, token string, req *CreateComponentCategoryPayload) (string, error) {
+func (s *MenuService) CreateComponentCategory(ctx context.Context, token string, req *UpsertComponentCategoryPayload) (string, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return "", err
@@ -202,6 +202,15 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, product
 	return s.legacy.SetProductAvailability(ctx, user.MerchantID, productID, status)
 }
 
+func (s *MenuService) UpdateProductCategory(ctx context.Context, token, categoryID string, payload UpsertComponentCategoryPayload) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, payload.Name)
+}
+
 func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -227,6 +236,15 @@ func (s *MenuService) DeleteProduct(ctx context.Context, token, productID string
 	}
 
 	return s.legacy.DeleteProduct(ctx, user.MerchantID, productID)
+}
+
+func (s *MenuService) UpdateDisplayOrder(ctx context.Context, token string, payload DisplayOrderPayload) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateDisplayOrder(ctx, user.MerchantID, payload)
 }
 
 // GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo

@@ -201,7 +201,7 @@ func (h *MenuHandler) CreateComponentCategory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var req CreateComponentCategoryPayload
+	var req UpsertComponentCategoryPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component_category", map[string]string{"error": "invalid_body"})
 		return
@@ -329,6 +329,71 @@ func (h *MenuHandler) SetProductStatus(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_product_status", models.AvailabilityResponse{
 		Status: "1",
+	})
+}
+
+func (h *MenuHandler) UpdateDisplayOrder(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_display_order", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+
+	var payload DisplayOrderPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_display_order", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.UpdateDisplayOrder(ctx, token, payload)
+	if err != nil {
+		log.Error("[ERROR] UpdateDisplayOrder error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_display_order", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_display_order", map[string]string{
+		"status":  "1",
+		"message": "display_order_updated",
+	})
+}
+
+func (h *MenuHandler) UpdateProductCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_product_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	categoryID := chi.URLParam(r, "category_id")
+	if categoryID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_product_category", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var payload UpsertComponentCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_product_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.UpdateProductCategory(ctx, token, categoryID, payload)
+	if err != nil {
+		log.Error("[ERROR] UpdateProductCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_product_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_product_category", map[string]string{
+		"status":  "1",
+		"message": "product_category_updated",
 	})
 }
 
