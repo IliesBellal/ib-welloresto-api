@@ -757,7 +757,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
-                   p.sync_uber_eats, p.sync_deliveroo, p.available
+                   p.sync_uber_eats, p.sync_deliveroo, p.available, p.display_order
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -784,7 +784,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if err := rows.Scan(
 				&p.ProductID, &p.ByProductOf, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
-				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.Available,
+				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.Available, &p.DisplayOrder,
 			); err != nil {
 				return nil, err
 			}
@@ -826,8 +826,6 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if syncUberEats.Valid {
 				p.SyncUberEats = syncUberEats.Bool
 			}
-			defaultOrder := 0
-			p.DisplayOrder = &defaultOrder
 
 			products[p.ProductID] = &p
 			productOrder = append(productOrder, p.ProductID)
@@ -841,7 +839,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
-                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status
+                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
+				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.status, p.display_order
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -861,7 +860,9 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var bg sql.NullString
 			var desc sql.NullString
 			var availIn, availTake, availDel sql.NullBool
-			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO, &p.Status); err != nil {
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
+				&desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO,
+				&p.Status, &p.DisplayOrder); err != nil {
 				return nil, err
 			}
 			if by.Valid {
@@ -891,8 +892,6 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if availDel.Valid {
 				p.AvailableDelivery = availDel.Bool
 			}
-			defaultOrder := 0
-			p.DisplayOrder = &defaultOrder
 			subProducts[p.ProductID] = &p
 		}
 	}
@@ -2525,7 +2524,7 @@ func (r *MenuRepository) UpdateDisplayOrder(ctx context.Context, merchantID stri
 		_, err := db.ExecContext(ctx,
 			`UPDATE productcateg 
 				 SET categ_order = ?
-				 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
+				 WHERE categ_id = ? AND merchant_id = ? AND enabled = 1`,
 			catOrder, item.CategoryID, merchantID,
 		)
 		if err != nil {
