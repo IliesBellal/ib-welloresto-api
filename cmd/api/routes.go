@@ -433,7 +433,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)
 		r.Delete("/components/{component_id}", menuH.DeleteComponent)
 
-		r.Patch("/display-order", menuH.UpdateDisplayOrder)
+		r.Patch("/display-orders", menuH.UpdateDisplayOrder)
 
 		r.Patch("/products/category/{category_id}", menuH.UpdateProductCategory)
 		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
