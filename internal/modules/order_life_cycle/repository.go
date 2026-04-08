@@ -1286,12 +1286,13 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
 	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
 	stmtItem, err := db.PrepareContext(ctx, `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, price, delay_id, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
 			-- Remet isDistributed à 0 seulement si la quantité distribuée ne correspond plus
 			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
 			quantity      = VALUES(quantity),
+			base_price    = VALUES(base_price),
 			price         = VALUES(price),
 			discount_id   = VALUES(discount_id),
 			delay_id      = VALUES(delay_id),
@@ -1305,9 +1306,15 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		p := &req.Order.Products[i]
 
 		// ── A. Upsert de l'item principal ─────────────────────────────────────────
+		// Calcular le prix final : si discounted_price est fourni, l'utiliser, sinon utiliser price
+		finalPrice := p.Price
+		if p.DiscountedPrice != nil {
+			finalPrice = *p.DiscountedPrice
+		}
+
 		res, err := stmtItem.ExecContext(ctx,
 			p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-			p.Quantity, p.DiscountID, p.Price, p.DelayID)
+			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID)
 		if err != nil {
 			return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 		}
@@ -1907,15 +1914,24 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 		if p.Quantity == 0 {
 			continue
 		}
+
+		// Calcul du prix final : si discounted_price est fourni, l'utiliser, sinon utiliser price
+		finalPrice := p.Price
+		if p.DiscountedPrice != nil {
+			finalPrice = *p.DiscountedPrice
+		}
+
 		item := &models.OrderItemInsert{
-			OrderID:    *req.Order.OrderID,
-			ProductID:  p.ProductID,
-			MerchantID: req.MerchantID,
-			Quantity:   p.Quantity,
-			DiscountID: p.DiscountID,
-			Price:      p.Price,
-			DelayID:    p.DelayID,
-			CreatedBy:  *req.Order.CreatedBy,
+			OrderID:         *req.Order.OrderID,
+			ProductID:       p.ProductID,
+			MerchantID:      req.MerchantID,
+			Quantity:        p.Quantity,
+			DiscountID:      p.DiscountID,
+			Price:           finalPrice,        // Final price to apply
+			BasePrice:       p.Price,           // Original price before discounts
+			DiscountedPrice: p.DiscountedPrice, // Discounted price (optional)
+			DelayID:         p.DelayID,
+			CreatedBy:       *req.Order.CreatedBy,
 		}
 		if p.Comment != nil && p.Comment.Content != "" {
 			item.Comment = &p.Comment.Content
@@ -1936,9 +1952,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbutils.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, price, ordered_on, delay_id)
-		VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
-		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.Price, item.DelayID)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
+		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID)
 	if err != nil {
 		return 0, err
 	}

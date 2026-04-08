@@ -24,8 +24,7 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 	rows, err := db.QueryContext(ctx, `
         SELECT fcm_token
         FROM users_devices ud
-        INNER JOIN users u ON u.user_id = ud.user_id
-        WHERE u.merchant_id = ?
+        WHERE ud.merchant_id = ?
     `, merchantID)
 	if err != nil {
 		return nil, err

@@ -18,16 +18,18 @@ const (
 
 // OrderItemInsert represents an order item insert
 type OrderItemInsert struct {
-	OrderID     string
-	OrderItemID *string
-	ProductID   string
-	MerchantID  string
-	Quantity    int
-	DiscountID  *string
-	Price       int
-	DelayID     *string
-	Comment     *string
-	CreatedBy   string
+	OrderID         string
+	OrderItemID     *string
+	ProductID       string
+	MerchantID      string
+	Quantity        int
+	DiscountID      *string
+	Price           int  // Final price (discounted_price if provided, otherwise base_price)
+	BasePrice       int  // Original price before discounts
+	DiscountedPrice *int // Discounted price (optional)
+	DelayID         *string
+	Comment         *string
+	CreatedBy       string
 }
 
 type ExtraInsert struct {

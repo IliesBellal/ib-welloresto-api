@@ -1,10 +1,11 @@
 package models
 
 type UberOrder struct {
-	ID           string `json:"id"`
-	DisplayID    string `json:"display_id"`
-	CurrentState string `json:"current_state"`
-	Type         string `json:"type"`
+	ID                string  `json:"id"`
+	DisplayID         string  `json:"display_id"`
+	CurrentState      string  `json:"current_state"`
+	Type              string  `json:"type"`
+	StoreInstructions *string `json:"store_instructions"`
 
 	Eaters []UberEater `json:"eaters"`
 	Eater  UberEater   `json:"eater"`
@@ -52,6 +53,19 @@ type UberCartItem struct {
 	SpecialInstructions *string `json:"special_instructions"`
 
 	SelectedModifierGroups []UberModifierGroup `json:"selected_modifier_groups"`
+
+	CustomerRequest *UberCustomerRequest `json:"customer_request"`
+}
+
+type UberCustomerRequest struct {
+	Allergy *UberAllergy `json:"allergy"`
+
+	SpecialInstructions *string `json:"special_instructions"`
+}
+
+type UberAllergy struct {
+	Allergens    []string `json:"allergens"`
+	Instructions *string  `json:"instructions"`
 }
 
 type UberModifierGroup struct {
