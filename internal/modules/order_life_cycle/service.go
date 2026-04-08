@@ -170,7 +170,10 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 
 	switch brand {
 	case models.BrandUberEats:
-		go s.uberSvc.CancelOrder(ctx, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		go s.uberSvc.CancelOrder(ctxTimeout, in.MerchantID, in.OrderID, in.DeletionReasonID, in.DeletionReasonType, in.DeletionComment)
 
 	case models.BrandDeliveroo:
 		// Eviter de rappeler l'api quand c'est une suppression par webhook
@@ -180,7 +183,9 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 				DeletionReasonType: in.DeletionReasonType,
 				DeletionReasonID:   in.DeletionReasonID,
 			}
-			go s.deliverooSvc.CancelOrder(ctx, in.UserID, in.OrderID, in_changed)
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			go s.deliverooSvc.CancelOrder(ctxTimeout, in.UserID, in.OrderID, in_changed)
 		}
 	}
 

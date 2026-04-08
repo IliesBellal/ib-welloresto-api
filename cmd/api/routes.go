@@ -292,6 +292,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	usersH := usersModule.NewUsersHandler(usersService)
 	stocksH := stocksModule.NewStocksHandler(stocksService)
 	servicesH := servicesModule.NewServicesHandler(servicesService)
+	notificationH := notificationModule.NewNotificationHandler(notificationService)
 
 	// ============================================================
 	//                      CRON JOBS
@@ -309,6 +310,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/test", func(r chi.Router) {
 		r.Get("/test-mailer", mailService.TriggerTestEmail)
 		r.Get("/test-sms", smsService.TriggerTestSMS)
+		r.Post("/notification", notificationH.SendTestNotification)
 
 		r.Post("/deliveroo/brandID", deliverooHandler.SyncSiteBrandID)
 		r.Post("/deliveroo/upload-menu", deliverooHandler.UploadTestMenu)
@@ -486,12 +488,24 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/", allergensH.ListAllergens)
 	})
 
+	// --- FLOORS ---
+	r.Route("/floors", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Post("/", locationsH.CreateFloor)
+	})
+
 	// --- LOCATIONS ---
 	r.Route("/locations", func(r chi.Router) {
 		r.Use(authMiddleware)
 
 		r.Get("/", locationsH.GetLocations)
 		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
+
+		// Floor tables management
+		r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)
+		r.Patch("/tables/{location_id}", locationsH.UpdateTable)
+		r.Delete("/tables/{location_id}", locationsH.DeleteTable)
 	})
 
 	// --- SERVICES ---

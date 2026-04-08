@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -165,14 +166,104 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 	return res, nil
 }
 
-func (r *LocationsRepository) UpdateLocationCoordinates(ctx context.Context, merchantID, locationID string, x, y float64) error {
+func (r *LocationsRepository) CreateTable(ctx context.Context, merchantID, floorID string, req CreateTableRequest) (string, error) {
+	db := dbutils.GetDB(ctx, r.db)
 
 	query := `
-        UPDATE locations
-        SET current_x = ?, current_y = ?
-        WHERE location_id = ? AND merchant_id = ?
-    `
+		INSERT INTO locations 
+		(merchant_id, floor_id, location_name, seats, shape, current_x, current_y, current_width, current_height, angle, location_order, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+	`
 
-	_, err := r.db.ExecContext(ctx, query, x, y, locationID, merchantID)
+	// Obtenir le prochain location_order pour ce floor
+	var maxOrder sql.NullInt64
+	_ = db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(location_order), 0) FROM locations WHERE floor_id = ? AND enabled = TRUE`,
+		floorID,
+	).Scan(&maxOrder)
+
+	nextOrder := int(maxOrder.Int64) + 1
+
+	res, err := db.ExecContext(ctx, query,
+		merchantID, floorID, req.LocationName, req.Seats, req.Shape,
+		req.X, req.Y, req.Width, req.Height, req.Angle, nextOrder,
+	)
+
+	if err != nil {
+		return "", err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%d", id), nil
+}
+
+func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locationID string, req UpdateTableRequest) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	query := `
+		UPDATE locations
+		SET
+			location_name = COALESCE(?, location_name),
+			location_order = COALESCE(?, location_order),
+			floor_id = COALESCE(?, floor_id),
+			current_x = COALESCE(?, current_x),
+			current_y = COALESCE(?, current_y),
+			angle = COALESCE(?, angle)
+		WHERE location_id = ? AND merchant_id = ?
+	`
+
+	_, err := db.ExecContext(ctx, query,
+		req.LocationName, req.LocationOrder, req.FloorID, req.X, req.Y, req.Angle,
+		locationID, merchantID,
+	)
+
 	return err
+}
+
+func (r *LocationsRepository) DeleteTable(ctx context.Context, merchantID, locationID string) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	query := `
+		UPDATE locations
+		SET enabled = FALSE
+		WHERE location_id = ? AND merchant_id = ?
+	`
+
+	_, err := db.ExecContext(ctx, query, locationID, merchantID)
+	return err
+}
+
+func (r *LocationsRepository) UpdateLocationCoordinates(ctx context.Context, merchantID, locationID string, x, y float64) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	query := `
+		UPDATE locations
+		SET current_x = ?, current_y = ?
+		WHERE location_id = ? AND merchant_id = ?
+	`
+
+	_, err := db.ExecContext(ctx, query, x, y, locationID, merchantID)
+	return err
+}
+
+func (r *LocationsRepository) CreateFloor(ctx context.Context, merchantID, name string) (string, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	query := `INSERT INTO floors (merchant_id, name, enabled) VALUES (?, ?, TRUE)`
+
+	res, err := db.ExecContext(ctx, query, merchantID, name)
+	if err != nil {
+		return "", err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%d", id), nil
 }
