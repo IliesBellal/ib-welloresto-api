@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"welloresto-api/internal/infrastructure/websocket"
 	"welloresto-api/internal/logger"
 
 	"golang.org/x/sync/singleflight"
@@ -18,6 +19,7 @@ type NotificationService struct {
 	repo   *NotificationRepository
 	client *FCMClient
 	tokenm FCMTokenManager // interface (voir plus bas)
+	hub    *websocket.Hub  // Hub WebSocket optionnel
 
 	// Variables de cache en mémoire
 	mu          sync.RWMutex // RWMutex permet de multiples lectures simultanées
@@ -27,11 +29,12 @@ type NotificationService struct {
 	sfGroup singleflight.Group // Bloque la génération concurrente
 }
 
-func NewNotificationService(repo *NotificationRepository, client *FCMClient, tokenm FCMTokenManager) *NotificationService {
+func NewNotificationService(repo *NotificationRepository, client *FCMClient, tokenm FCMTokenManager, hub *websocket.Hub) *NotificationService {
 	return &NotificationService{
 		repo:   repo,
 		client: client,
 		tokenm: tokenm,
+		hub:    hub,
 	}
 }
 
@@ -43,6 +46,16 @@ No need to put in Go routine here, the function itself will handle that for each
 */
 func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType string) error {
 	ctx := context.Background()
+
+	// Dispatcher via WebSocket si le hub est disponible
+	if s.hub != nil {
+		wsPayload := map[string]interface{}{
+			"type":      nType,
+			"entity_id": orderID,
+		}
+		wsPayloadJSON, _ := json.Marshal(wsPayload)
+		s.hub.BroadcastToMerchant(merchantID, wsPayloadJSON)
+	}
 
 	tokens, err := s.repo.GetDeviceTokens(ctx, merchantID)
 	log := logger.FromContext(ctx)

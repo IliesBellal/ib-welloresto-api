@@ -7,6 +7,7 @@ import (
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
+	"welloresto-api/internal/infrastructure/websocket"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/receipt"
@@ -97,12 +98,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	svc := googlemaps.NewRouteService(repo, googleClient)
 	routeHandler := googlemaps.NewRouteHandler(svc)
 
+	// ---- WebSocket Hub ----
+	wsHub := websocket.NewHub()
+
 	// ---- Notification ---
 	fcmClient := notificationModule.NewFCMClient()
 	saPath := "/etc/secrets/wello-resto-150721-6d1253e00d6d.json"
 	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager(saPath)
 	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB)
-	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager)
+	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager, wsHub)
 
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
@@ -674,6 +678,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats/connect", uberHandler.GetConnectURL)
 		r.Get("/uber-eats/callback", uberHandler.Callback)
 		r.Get("/uber-eats/disconnect", uberHandler.Disconnect)
+	})
+
+	// --- WEBSOCKET ---
+	r.Route("/ws", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			websocket.ServeWS(wsHub, w, r)
+		})
 	})
 
 	return r
