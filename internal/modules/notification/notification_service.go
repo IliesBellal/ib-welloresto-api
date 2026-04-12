@@ -50,8 +50,9 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 	// Dispatcher via WebSocket si le hub est disponible
 	if s.hub != nil {
 		wsPayload := map[string]interface{}{
-			"type":      nType,
-			"entity_id": orderID,
+			"type":        nType,
+			"entity_id":   orderID,
+			"merchant_id": merchantID,
 		}
 		wsPayloadJSON, _ := json.Marshal(wsPayload)
 		s.hub.BroadcastToMerchant(merchantID, wsPayloadJSON)
