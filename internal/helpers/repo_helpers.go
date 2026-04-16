@@ -46,6 +46,13 @@ func NullFloat64Ptr(f sql.NullFloat64) *float64 {
 	return nil
 }
 
+func NullBoolToPtr(b sql.NullBool) *bool {
+	if b.Valid {
+		return &b.Bool
+	}
+	return nil
+}
+
 func NullTimePtr(t sql.NullTime) *time.Time {
 	if t.Valid {
 		return &t.Time

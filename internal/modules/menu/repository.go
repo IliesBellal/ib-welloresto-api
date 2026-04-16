@@ -311,19 +311,19 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				p.IsPopular = false
 			}
 			if availIn.Valid {
-				p.AvailableIn = availIn.Bool
+				p.AvailableIn = &availIn.Bool
 			}
 			if availTake.Valid {
-				p.AvailableTakeAway = availTake.Bool
+				p.AvailableTakeAway = &availTake.Bool
 			}
 			if availDel.Valid {
-				p.AvailableDelivery = availDel.Bool
+				p.AvailableDelivery = &availDel.Bool
 			}
 			if syncDeliveroo.Valid {
-				p.SyncDeliveroo = syncDeliveroo.Bool
+				p.SyncDeliveroo = &syncDeliveroo.Bool
 			}
 			if syncUberEats.Valid {
-				p.SyncUberEats = syncUberEats.Bool
+				p.SyncUberEats = &syncUberEats.Bool
 			}
 
 			products[p.ProductID] = &p
@@ -384,13 +384,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				p.Description = &desc.String
 			}
 			if availIn.Valid {
-				p.AvailableIn = availIn.Bool
+				p.AvailableIn = &availIn.Bool
 			}
 			if availTake.Valid {
-				p.AvailableTakeAway = availTake.Bool
+				p.AvailableTakeAway = &availTake.Bool
 			}
 			if availDel.Valid {
-				p.AvailableDelivery = availDel.Bool
+				p.AvailableDelivery = &availDel.Bool
 			}
 
 			subProducts[p.ProductID] = &p
@@ -812,19 +812,19 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				p.IsPopular = false
 			}
 			if availIn.Valid {
-				p.AvailableIn = availIn.Bool
+				p.AvailableIn = &availIn.Bool
 			}
 			if availTake.Valid {
-				p.AvailableTakeAway = availTake.Bool
+				p.AvailableTakeAway = &availTake.Bool
 			}
 			if availDel.Valid {
-				p.AvailableDelivery = availDel.Bool
+				p.AvailableDelivery = &availDel.Bool
 			}
 			if syncDeliveroo.Valid {
-				p.SyncDeliveroo = syncDeliveroo.Bool
+				p.SyncDeliveroo = &syncDeliveroo.Bool
 			}
 			if syncUberEats.Valid {
-				p.SyncUberEats = syncUberEats.Bool
+				p.SyncUberEats = &syncUberEats.Bool
 			}
 
 			products[p.ProductID] = &p
@@ -884,13 +884,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				p.Description = &desc.String
 			}
 			if availIn.Valid {
-				p.AvailableIn = availIn.Bool
+				p.AvailableIn = &availIn.Bool
 			}
 			if availTake.Valid {
-				p.AvailableTakeAway = availTake.Bool
+				p.AvailableTakeAway = &availTake.Bool
 			}
 			if availDel.Valid {
-				p.AvailableDelivery = availDel.Bool
+				p.AvailableDelivery = &availDel.Bool
 			}
 			subProducts[p.ProductID] = &p
 		}
@@ -1010,9 +1010,11 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				if products[i].Price > 0 {
 					foodCostPercent := (totalCostRounded / float64(products[i].Price)) * 100
 					// Arrondir foodcost_percent à 2 décimales
-					products[i].FoodCostPercent = math.Round(foodCostPercent*100) / 100
+					foodCostPercentRounded := math.Round(foodCostPercent*100) / 100
+					products[i].FoodCostPercent = &foodCostPercentRounded
 					// Arrondir margin_percent à 2 décimales
-					products[i].MarginPercent = math.Round((100-products[i].FoodCostPercent)*100) / 100
+					marginPercentRounded := math.Round((100-foodCostPercentRounded)*100) / 100
+					products[i].MarginPercent = &marginPercentRounded
 				}
 			}
 		}

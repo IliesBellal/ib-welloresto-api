@@ -235,3 +235,23 @@ func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_upsell", resp)
 }
+
+func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	qr := chi.URLParam(r, "qr_code")
+	productID := chi.URLParam(r, "product_id")
+	deliveryType := r.URL.Query().Get("type") // Query param: "DELIVERY" or "TAKE_AWAY"
+
+	log.Info("ScannOrder.GetProduct qr:" + qr + " - product_id: " + productID + " - type: " + deliveryType)
+
+	product, err := h.service.GetProduct(ctx, qr, productID, deliveryType)
+	if err != nil {
+		log.Error("GetProduct error", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_product", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_product", product)
+}

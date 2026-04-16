@@ -279,32 +279,10 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 		for _, p := range products {
 			product := p
 
-			switch deliveryType {
-			case "DELIVERY":
-				product.Price = *product.PriceDelivery
-			case "TAKE_AWAY":
-				product.Price = *product.PriceTakeAway
-			}
+			// Nettoyer et adapter le produit
+			s.cleanProductForSNO(&product, deliveryType)
 
-			product.BgColor = nil
-			product.Category = nil
-			product.TVAIn = nil
-			product.TVADelivery = nil
-			product.TVATakeAway = nil
-			product.PriceDelivery = nil
-			product.PriceTakeAway = nil
-			/*
-				delete(product, "bg_color")
-				delete(product, "category")
-				delete(product, "tva_rate_delivery")
-				delete(product, "tva_rate_in")
-				delete(product, "tva_rate_take_away")
-				delete(product, "price_delivery")
-				delete(product, "price_take_away")
-
-			*/
-
-			if product.IsProductGroup || !product.IsAvailableOnSNO {
+			if product.IsProductGroup == nil || !*product.IsProductGroup || product.IsAvailableOnSNO == nil || !*product.IsAvailableOnSNO {
 				if len(product.SubProducts) > 0 {
 					toAdd = append(toAdd, product.SubProducts...)
 				}
@@ -315,7 +293,9 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 
 		for _, sp := range toAdd {
 			sub := sp
-			if sub.IsAvailableOnSNO {
+			if sub.IsAvailableOnSNO == nil || !*sub.IsAvailableOnSNO {
+				// Nettoyer les sous-produits aussi
+				s.cleanProductForSNO(&sub, deliveryType)
 				finalProducts = append(finalProducts, sub)
 			}
 		}
@@ -938,4 +918,78 @@ func (s *Service) GetUpsell(ctx context.Context, qrCode string) (*UpsellResponse
 	return &UpsellResponse{
 		Products: products,
 	}, nil
+}
+
+// cleanProductForSNO nettoie et adapte un produit pour la réponse SNO
+// - Modifie le prix selon le type de commande (DELIVERY/TAKE_AWAY)
+// - Supprime les attributs non pertinents (prix alternatifs, couleurs, TVAs)
+func (s *Service) cleanProductForSNO(product *models.ProductEntry, deliveryType string) {
+	// 1️⃣ Adapter le prix selon le type de commande
+	switch deliveryType {
+	case "DELIVERY":
+		product.Price = *product.PriceDelivery
+	case "TAKE_AWAY":
+		product.Price = *product.PriceTakeAway
+	}
+
+	// 2️⃣ Nettoyer les attributs non pertinents
+	product.BgColor = nil
+	product.Category = nil
+	product.TVAIn = nil
+	product.TVADelivery = nil
+	product.TVATakeAway = nil
+	product.PriceDelivery = nil
+	product.PriceTakeAway = nil
+	product.IsAvailableOnSNO = nil
+	product.IsProductGroup = nil
+	product.SubProducts = nil
+	product.SyncUberEats = nil
+	product.SyncDeliveroo = nil
+	product.MerchantID = nil
+	product.IsAvailableOnSNO = nil
+	product.Available = nil
+	product.AvailableIn = nil
+	product.AvailableDelivery = nil
+	product.AvailableTakeAway = nil
+	product.MarginPercent = nil
+	product.FoodCostPercent = nil
+	product.IsDistributed = nil
+	product.ProductionColor = nil
+
+}
+
+func (s *Service) GetProduct(ctx context.Context, qr string, productID string, deliveryType string) (*models.ProductEntry, error) {
+	log := logger.FromContext(ctx)
+
+	// 1️⃣ Récupérer le merchantID depuis le QR code
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
+	if err != nil || merchantID == "" {
+		log.Error("GetProduct: Merchant not found from QR", zap.String("qr_code", qr), zap.Error(err))
+		return nil, fmt.Errorf("merchant_not_found")
+	}
+
+	// 2️⃣ Récupérer le produit via le service menu
+	product, err := s.menu.GetProductFromMerchantId(ctx, merchantID, productID)
+	if err != nil {
+		log.Error("GetProduct: Failed to fetch product", zap.String("merchant_id", merchantID), zap.String("product_id", productID), zap.Error(err))
+		return nil, err
+	}
+
+	if product == nil {
+		log.Warn("GetProduct: Product not found", zap.String("merchant_id", merchantID), zap.String("product_id", productID))
+		return nil, fmt.Errorf("product_not_found")
+	}
+
+	// 3️⃣ Vérifier is_available_on_sno
+	if product.IsAvailableOnSNO == nil || !*product.IsAvailableOnSNO {
+		log.Warn("GetProduct: Product not available on SNO", zap.String("merchant_id", merchantID), zap.String("product_id", productID))
+		return nil, fmt.Errorf("product_not_available_on_sno")
+	}
+
+	// 4️⃣ Nettoyer et adapter le produit pour SNO
+	s.cleanProductForSNO(product, deliveryType)
+
+	log.Info("GetProduct success", zap.String("merchant_id", merchantID), zap.String("product_id", productID), zap.String("delivery_type", deliveryType))
+
+	return product, nil
 }

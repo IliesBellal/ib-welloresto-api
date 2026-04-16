@@ -126,7 +126,7 @@ func ToUberEatsFormat(internal *models.MenuResponse) (*UberEatsMenu, error) {
 
 		for _, product := range cat.Products {
 			// 1. VÉRIFICATION : Le produit doit être marqué pour la synchro Uber Eats
-			if !product.SyncUberEats {
+			if product.SyncUberEats == nil || !*product.SyncUberEats {
 				continue
 			}
 
@@ -161,7 +161,7 @@ func ToUberEatsFormat(internal *models.MenuResponse) (*UberEatsMenu, error) {
 				}
 			}
 
-			if product.Status == "out_of_stock" || !product.AvailableDelivery {
+			if product.Status == "out_of_stock" || (product.AvailableDelivery != nil && !*product.AvailableDelivery) {
 				far := int64(9999999999)
 				item.SuspendUntil = &far
 			}
@@ -251,3 +251,4 @@ func i18n(value string) UberEatsI18nValue {
 		Translations: map[string]string{"fr_fr": value},
 	}
 }
+

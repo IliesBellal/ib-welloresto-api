@@ -25,7 +25,7 @@ type ProductEntry struct {
 	OrderID                      string                 `json:"order_id,omitempty"`
 	OrderItemID                  string                 `json:"order_item_id,omitempty"`
 	ProductID                    string                 `json:"product_id"`
-	MerchantID                   string                 `json:"merchant_id,omitempty"`
+	MerchantID                   *string                `json:"merchant_id,omitempty"`
 	OrderedOn                    int64                  `json:"ordered_on,omitempty"`
 	ProductionStatus             string                 `json:"production_status,omitempty"`
 	ProductionStatusDoneQuantity int                    `json:"production_status_done_quantity,omitempty"`
@@ -34,28 +34,28 @@ type ProductEntry struct {
 	ByProductOf                  *string                `json:"by_product_of,omitempty"`
 	ImageURL                     *string                `json:"image_url,omitempty"`
 	IsPopular                    bool                   `json:"is_popular,omitempty"`
-	IsAvailableOnSNO             bool                   `json:"is_available_on_sno,omitempty"`
-	Available                    bool                   `json:"available"`
+	IsAvailableOnSNO             *bool                  `json:"is_available_on_sno,omitempty"`
+	Available                    *bool                  `json:"available"`
 	Components                   []ComponentUsage       `json:"components,omitempty"`
 	Description                  *string                `json:"description,omitempty"`
 	Price                        int64                  `json:"price"`
 	PriceTakeAway                *int64                 `json:"price_take_away"`
-	PriceDelivery                *int64                 `json:"price_delivery"`
-	PriceUberEats                *int64                 `json:"price_uber_eats"`
-	PriceDeliveroo               *int64                 `json:"price_deliveroo"`
+	PriceDelivery                *int64                 `json:"price_delivery,omitempty"`
+	PriceUberEats                *int64                 `json:"price_uber_eats,omitempty"`
+	PriceDeliveroo               *int64                 `json:"price_deliveroo,omitempty"`
 	TVARate                      *float64               `json:"tva_rate,omitempty"`
 	TVAIn                        *float64               `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64               `json:"tva_rate_delivery,omitempty"`
 	TVATakeAway                  *float64               `json:"tva_rate_take_away,omitempty"`
 	CostPrice                    *float64               `json:"cost_price"`
-	FoodCostPercent              float64                `json:"foodcost_percent"`
-	MarginPercent                float64                `json:"margin_percent"`
-	AvailableIn                  bool                   `json:"available_in"`
-	AvailableTakeAway            bool                   `json:"available_take_away"`
-	AvailableDelivery            bool                   `json:"available_delivery"`
-	Category                     *string                `json:"category"` // To Be Deleted
-	CategoryID                   *string                `json:"category_id"`
-	IsProductGroup               bool                   `json:"is_product_group"`
+	FoodCostPercent              *float64               `json:"foodcost_percent,omitempty"`
+	MarginPercent                *float64               `json:"margin_percent,omitempty"`
+	AvailableIn                  *bool                  `json:"available_in,omitempty"`
+	AvailableTakeAway            *bool                  `json:"available_take_away,omitempty"`
+	AvailableDelivery            *bool                  `json:"available_delivery,omitempty"`
+	Category                     *string                `json:"category,omitempty"` // To Be Deleted
+	CategoryID                   *string                `json:"category_id,omitempty"`
+	IsProductGroup               *bool                  `json:"is_product_group"`
 	BgColor                      *string                `json:"bg_color,omitempty"`
 	Status                       string                 `json:"status"`
 	SubProducts                  []ProductEntry         `json:"sub_products"`
@@ -74,8 +74,8 @@ type ProductEntry struct {
 	Without                      *[]OrderProductWithout `json:"without,omitempty"`
 	Comment                      *OrderComment          `json:"comment,omitempty"`
 	DisplayOrder                 *int                   `json:"display_order"`
-	SyncDeliveroo                bool                   `json:"sync_deliveroo,omitempty"`
-	SyncUberEats                 bool                   `json:"sync_ubereats,omitempty"`
+	SyncDeliveroo                *bool                  `json:"sync_deliveroo,omitempty"`
+	SyncUberEats                 *bool                  `json:"sync_ubereats,omitempty"`
 	Tags                         []TagEntry             `json:"tags"`
 	Allergens                    []AllergenEntry        `json:"allergens"`
 }

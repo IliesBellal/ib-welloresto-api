@@ -110,7 +110,7 @@ func ToDeliverooFormat(internal *models.MenuResponse) (*DeliverooMenu, error) {
 			}
 
 			availability := "AVAILABLE"
-			if product.Status == "out_of_stock" || !product.AvailableDelivery {
+			if product.Status == "out_of_stock" || (product.AvailableDelivery != nil && !*product.AvailableDelivery) {
 				availability = "UNAVAILABLE"
 			}
 
@@ -198,3 +198,4 @@ func derefString(s *string) string {
 	}
 	return *s
 }
+

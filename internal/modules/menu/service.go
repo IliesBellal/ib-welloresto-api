@@ -93,6 +93,10 @@ func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id str
 	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
 }
 
+func (s *MenuService) GetProductFromMerchantId(ctx context.Context, merchant_id, product_id string) (*models.ProductEntry, error) {
+	return s.legacy.GetProduct(ctx, merchant_id, product_id)
+}
+
 func (s *MenuService) CreateProduct(ctx context.Context, token string, req *CreateProductPayload) (*models.ProductEntry, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
