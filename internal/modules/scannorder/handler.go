@@ -150,3 +150,88 @@ func (h *Handler) GetBrand(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_brand", resp)
 }
+
+func (h *Handler) CheckDeliveryZone(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	// Parse the request body
+	var req DeliveryCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error("Invalid request body", zap.Error(err))
+		models.SendJSON(w, http.StatusBadRequest, "scannorder", "check_delivery_zone", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	// Extract QR code from URL parameter
+	qrCode := chi.URLParam(r, "qr_code")
+	log.Info("CheckDeliveryZone", zap.String("qr_code", qrCode), zap.Float64("lat", req.Lat), zap.Float64("lng", req.Lng))
+
+	// Call the service
+	resp, err := h.service.CheckDeliveryZone(ctx, qrCode, &req)
+	if err != nil {
+		log.Error("CheckDeliveryZone service error", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "check_delivery_zone", map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Determine HTTP status based on delivery zone check
+	statusCode := http.StatusOK
+	if resp.Status == "out_of_delivery_zone" {
+		statusCode = http.StatusUnprocessableEntity // 422
+	}
+
+	models.SendJSON(w, statusCode, "scannorder", "check_delivery_zone", resp)
+}
+
+func (h *Handler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	qr := chi.URLParam(r, "qr_code")
+	deliveryType := r.URL.Query().Get("type")
+
+	log.Info("ScannOrder.GetLoyaltyPrograms qr:" + qr + " - type: " + deliveryType)
+
+	resp, err := h.service.GetLoyaltyPrograms(ctx, qr, deliveryType)
+	if err != nil {
+		log.Error("GetLoyaltyPrograms error", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_loyalty_programs", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_loyalty_programs", resp)
+}
+
+func (h *Handler) GetDiscounts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	qr := chi.URLParam(r, "qr_code")
+	orderType := r.URL.Query().Get("order_type")
+
+	log.Info("ScannOrder.GetDiscounts qr:" + qr + " - type: " + orderType)
+
+	resp, err := h.service.GetDiscounts(ctx, qr, orderType)
+	if err != nil {
+		log.Error("GetDiscounts error", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_discounts", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_discounts", resp)
+}
+
+func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	qr := chi.URLParam(r, "qr_code")
+
+	resp, err := h.service.GetUpsell(ctx, qr)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_upsell", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_upsell", resp)
+}

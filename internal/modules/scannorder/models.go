@@ -86,7 +86,7 @@ type MenuResponse struct {
 type MenuData struct {
 	OrderType       string                   `json:"order_type"`
 	ProductTypes    []models.ProductCategory `json:"products_types"`
-	LoyaltyPrograms []map[string]interface{} `json:"loyalty_programs,omitempty"`
+	LoyaltyPrograms []LoyaltyProgram         `json:"loyalty_programs,omitempty"`
 	Discounts       []Discount               `json:"discounts,omitempty"`
 }
 
@@ -154,6 +154,7 @@ type MerchantSummary struct {
 }
 
 // BrandMerchantRow is used internally to scan merchant rows from the DB.
+// BrandMerchantRow is used internally to scan merchant rows from the DB.
 type BrandMerchantRow struct {
 	MerchantID      string
 	FullName        string
@@ -168,4 +169,51 @@ type BrandMerchantRow struct {
 	PrepTimeMode    string
 	PrepTime        int
 	DistanceKm      *float64
+}
+
+// --- Delivery Zone Check ---
+
+type DeliveryCheckRequest struct {
+	Address string  `json:"address"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+}
+
+type DeliveryCheckResponse struct {
+	Status                  string  `json:"status"`
+	MinOrderAmount          float64 `json:"min_order_amount,omitempty"`
+	DeliveryFee             int     `json:"delivery_fee,omitempty"`
+	Message                 string  `json:"message,omitempty"`
+	DistanceKm              float64 `json:"distance_km,omitempty"`
+	DeliveryDistanceLimitKm float64 `json:"delivery_distance_limit_km,omitempty"`
+}
+
+// --- Loyalty Programs & Discounts ---
+
+type LoyaltyProgramsResponse struct {
+	LoyaltyPrograms []LoyaltyProgram `json:"loyalty_programs"`
+}
+
+type LoyaltyProgram struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type DiscountsResponse struct {
+	Discounts []Discount `json:"discounts"`
+}
+
+// --- Upsell ---
+
+type UpsellProduct struct {
+	ProductID   string  `json:"product_id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+	Price       int64   `json:"price"`
+	ImageURL    *string `json:"image_url,omitempty"`
+}
+
+type UpsellResponse struct {
+	Products []UpsellProduct `json:"products"`
 }

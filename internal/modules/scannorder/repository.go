@@ -162,7 +162,7 @@ func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merch
 	return merchantID, tz, nil
 }
 
-func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]map[string]interface{}, error) {
+func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]LoyaltyProgram, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
@@ -178,14 +178,11 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 	}
 	defer rows.Close()
 
-	var result []map[string]interface{}
+	var result []LoyaltyProgram
 	for rows.Next() {
-		var id int64
-		var name, desc string
-		rows.Scan(&id, &name, &desc)
-		result = append(result, map[string]interface{}{
-			"id": id, "name": name, "description": desc,
-		})
+		var lp LoyaltyProgram
+		rows.Scan(&lp.ID, &lp.Name, &lp.Description)
+		result = append(result, lp)
 	}
 	return result, nil
 }
@@ -647,4 +644,59 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 	}
 
 	return brand, merchants, nil
+}
+
+func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]UpsellProduct, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+	SELECT 
+		p.product_id,
+		p.name,
+		p.product_desc,
+		p.price,
+		p.image_url
+	FROM products p
+	WHERE p.merchant_id = ?
+	AND p.is_popular = 1
+	AND p.status in ('available','1')
+	ORDER BY p.name ASC`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []UpsellProduct
+	for rows.Next() {
+		var product UpsellProduct
+		var description sql.NullString
+		var imageURL sql.NullString
+
+		if err := rows.Scan(
+			&product.ProductID,
+			&product.Name,
+			&description,
+			&product.Price,
+			&imageURL,
+		); err != nil {
+			return nil, err
+		}
+
+		if description.Valid {
+			product.Description = &description.String
+		}
+		if imageURL.Valid {
+			product.ImageURL = &imageURL.String
+		}
+
+		products = append(products, product)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return products, nil
 }

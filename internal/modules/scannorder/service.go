@@ -761,20 +761,202 @@ func (s *Service) CustomerInDeliveryZone(merchant models.MerchantRow, customer m
 	distanceMeters := earthRadius * c
 	distanceKm := distanceMeters / 1000
 
-	// Même logique PHP
-	var price int
-	if distanceKm < 5 {
-		price = 5
-	} else if distanceKm < 10 {
-		price = 10
-	} else {
-		price = 15
-	}
-
 	return DeliveryZoneResult{
 		InZone:         merchant.DeliveryDistanceLimit >= distanceMeters,
 		DistanceMeters: distanceMeters,
 		DistanceKm:     distanceKm,
-		EstimatedFee:   price,
+		EstimatedFee:   int(merchant.DeliveryFees),
 	}
+}
+
+// CheckDeliveryZone vérifie si un client est dans la zone de livraison
+// et retourne les informations de livraison (frais minima, frais de livraison)
+func (s *Service) CheckDeliveryZone(ctx context.Context, qrCode string, req *DeliveryCheckRequest) (*DeliveryCheckResponse, error) {
+	log := logger.FromContext(ctx)
+
+	log.Info("CheckDeliveryZone called", zap.String("qr_code", qrCode), zap.Float64("lat", req.Lat), zap.Float64("lng", req.Lng))
+
+	// 1️⃣ Retrieve merchant from QR code
+	merchant, err := s.repo.GetMerchantByQR(ctx, qrCode)
+	if err != nil {
+		log.Error("GetMerchantByQR failed", zap.Error(err))
+		return &DeliveryCheckResponse{
+			Status:  "error",
+			Message: "Failed to retrieve merchant information",
+		}, err
+	}
+
+	if merchant == nil {
+		log.Warn("QR code expired or invalid", zap.String("qr_code", qrCode))
+		return &DeliveryCheckResponse{
+			Status:  "qr_code_expired",
+			Message: "QR code is expired or invalid",
+		}, nil
+	}
+
+	// 2️⃣ Convert the delivery check request coordinates to CustomerRequest format
+	customer := models.CustomerRequest{
+		Lat: &req.Lat,
+		Lng: &req.Lng,
+	}
+
+	// 3️⃣ Check if customer is in delivery zone
+	zoneResult := s.CustomerInDeliveryZone(*merchant, customer)
+
+	log.Info("Delivery zone check result",
+		zap.Bool("in_zone", zoneResult.InZone),
+		zap.Float64("distance_km", zoneResult.DistanceKm),
+		zap.Float64("distance_limit_km", merchant.DeliveryDistanceLimit/1000),
+		zap.Int("estimated_fee", zoneResult.EstimatedFee),
+	)
+
+	// 4️⃣ Prepare response based on zone check
+	if !zoneResult.InZone {
+		return &DeliveryCheckResponse{
+			Status:                  "out_of_delivery_zone",
+			Message:                 "Désolé, nous ne livrons pas encore dans cette zone.",
+			DistanceKm:              zoneResult.DistanceKm,
+			DeliveryDistanceLimitKm: merchant.DeliveryDistanceLimit / 1000,
+		}, nil
+	}
+
+	// 5️⃣ Extract minimum cart amount and delivery fees from merchant data
+	// Using the DeliveryFeesLimit as minimum order amount
+	// and DeliveryFees or EstimatedFee based on distance
+	minOrderAmount := merchant.DeliveryFeesLimit
+	deliveryFee := zoneResult.EstimatedFee
+
+	return &DeliveryCheckResponse{
+		Status:                  "in_delivery_zone",
+		MinOrderAmount:          minOrderAmount,
+		DeliveryFee:             deliveryFee,
+		DistanceKm:              zoneResult.DistanceKm,
+		DeliveryDistanceLimitKm: merchant.DeliveryDistanceLimit / 1000,
+	}, nil
+}
+
+// GetLoyaltyPrograms retrieves active loyalty programs for the QR code's merchant
+func (s *Service) GetLoyaltyPrograms(ctx context.Context, qrCode string, deliveryType string) (*LoyaltyProgramsResponse, error) {
+	log := logger.FromContext(ctx)
+
+	log.Info("GetLoyaltyPrograms called", zap.String("qr_code", qrCode), zap.String("delivery_type", deliveryType))
+
+	// 1️⃣ Get merchant ID from QR code
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
+	if err != nil || merchantID == "" {
+		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
+		return &LoyaltyProgramsResponse{
+			LoyaltyPrograms: []LoyaltyProgram{},
+		}, nil
+	}
+
+	// 2️⃣ If no deliveryType provided, default to "DELIVERY"
+	if deliveryType == "" {
+		deliveryType = "DELIVERY"
+	}
+
+	log.Debug("Retrieving loyalty programs", zap.String("merchant_id", merchantID), zap.String("delivery_type", deliveryType))
+
+	// 3️⃣ Retrieve loyalty programs from repository
+	loyaltyPrograms, err := s.repo.GetLoyaltyPrograms(ctx, merchantID, deliveryType)
+	if err != nil {
+		log.Error("GetLoyaltyPrograms repo error", zap.Error(err))
+		return nil, err
+	}
+
+	// 4️⃣ Return empty array if nil
+	if loyaltyPrograms == nil {
+		loyaltyPrograms = []LoyaltyProgram{}
+	}
+
+	log.Info("GetLoyaltyPrograms success", zap.Int("count", len(loyaltyPrograms)))
+
+	return &LoyaltyProgramsResponse{
+		LoyaltyPrograms: loyaltyPrograms,
+	}, nil
+}
+
+// GetDiscounts retrieves active discounts for the QR code's merchant
+func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType string) (*DiscountsResponse, error) {
+	log := logger.FromContext(ctx)
+
+	log.Info("GetDiscounts called", zap.String("qr_code", qrCode), zap.String("delivery_type", deliveryType))
+
+	// 1️⃣ Get merchant ID and timezone from QR code
+	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
+	if err != nil || merchantID == "" {
+		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
+		return &DiscountsResponse{
+			Discounts: []Discount{},
+		}, nil
+	}
+
+	// 2️⃣ If no deliveryType provided, default to "DELIVERY"
+	if deliveryType == "" {
+		deliveryType = "DELIVERY"
+	}
+
+	// 3️⃣ Get current day of week in merchant's timezone
+	loc, _ := time.LoadLocation(tz)
+	now := time.Now().In(loc)
+	dow := int(now.Weekday())
+	if dow == 0 {
+		dow = 7
+	}
+
+	log.Debug("Retrieving discounts", zap.String("merchant_id", merchantID), zap.String("delivery_type", deliveryType), zap.Int("day_of_week", dow))
+
+	// 4️⃣ Retrieve discounts from repository
+	discounts, err := s.repo.GetDiscounts(ctx, merchantID, deliveryType, dow)
+	if err != nil {
+		log.Error("GetDiscounts repo error", zap.Error(err))
+		return nil, err
+	}
+
+	// 5️⃣ Return empty array if nil
+	if discounts == nil {
+		discounts = []Discount{}
+	}
+
+	log.Info("GetDiscounts success", zap.Int("count", len(discounts)))
+
+	return &DiscountsResponse{
+		Discounts: discounts,
+	}, nil
+}
+
+// GetUpsell retrieves famous (upsell) products for the QR code's merchant
+func (s *Service) GetUpsell(ctx context.Context, qrCode string) (*UpsellResponse, error) {
+	log := logger.FromContext(ctx)
+
+	log.Info("GetUpsell called", zap.String("qr_code", qrCode))
+
+	// 1️⃣ Get merchant ID from QR code
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
+	if err != nil || merchantID == "" {
+		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
+		return &UpsellResponse{
+			Products: []UpsellProduct{},
+		}, nil
+	}
+
+	log.Debug("Retrieving upsell products", zap.String("merchant_id", merchantID))
+
+	// 2️⃣ Retrieve famous (is_famous = 1) products from repository
+	products, err := s.repo.GetUpsellProducts(ctx, merchantID)
+	if err != nil {
+		log.Error("GetUpsellProducts repo error", zap.Error(err))
+		return nil, err
+	}
+
+	// 3️⃣ Return empty array if nil
+	if products == nil {
+		products = []UpsellProduct{}
+	}
+
+	log.Info("GetUpsell success", zap.Int("count", len(products)))
+
+	return &UpsellResponse{
+		Products: products,
+	}, nil
 }

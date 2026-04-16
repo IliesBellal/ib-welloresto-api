@@ -19,6 +19,6 @@ func (s *ServicesService) GetCurrentService(ctx context.Context, token string, d
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return s.servicesRepo.GetCurrentService(ctx, user.UserID, deviceID)
 }
