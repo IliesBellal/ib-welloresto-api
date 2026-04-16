@@ -16,6 +16,7 @@ type Repository interface {
 	UpdateOrderPaymentStatus(cdb context.Context, orderID string) error
 	UpdateOrderDetails(cdb context.Context, checkoutSessionID, orderID string) error
 	UpdateOrderItemsPaid(cdb context.Context, checkoutSessionID, orderID string) error
+	UpdateOrderCreationDate(cdb context.Context, orderID string) error
 	GetOrder(cdb context.Context, orderID string) (*Order, error)
 	GetMerchant(cdb context.Context, merchantID string) (*Merchant, error)
 	GetAutoAcceptSettings(cdb context.Context, orderID, merchantID string) (string, *Merchant, error) // Returns orderType and settings
@@ -139,6 +140,14 @@ func (r *mysqlRepo) UpdateOrderItemsPaid(cdb context.Context, checkoutSessionID,
               SET oi.isPaid = true, oi.paid_quantity = oi.quantity
               WHERE sp.checkout_session_id = ? AND o.order_id = ?`
 	_, err := db.ExecContext(cdb, query, checkoutSessionID, orderID)
+	return err
+}
+
+func (r *mysqlRepo) UpdateOrderCreationDate(cdb context.Context, orderID string) error {
+	db := dbutils.GetDB(cdb, r.database)
+
+	query := `UPDATE orders SET creation_date = UTC_TIMESTAMP() WHERE order_id = ?`
+	_, err := db.ExecContext(cdb, query, orderID)
 	return err
 }
 

@@ -35,11 +35,11 @@ type ProductEntry struct {
 	ImageURL                     *string                `json:"image_url,omitempty"`
 	IsPopular                    bool                   `json:"is_popular,omitempty"`
 	IsAvailableOnSNO             *bool                  `json:"is_available_on_sno,omitempty"`
-	Available                    *bool                  `json:"available"`
+	Available                    *bool                  `json:"available,omitempty"`
 	Components                   []ComponentUsage       `json:"components,omitempty"`
 	Description                  *string                `json:"description,omitempty"`
 	Price                        int64                  `json:"price"`
-	PriceTakeAway                *int64                 `json:"price_take_away"`
+	PriceTakeAway                *int64                 `json:"price_take_away,omitempty"`
 	PriceDelivery                *int64                 `json:"price_delivery,omitempty"`
 	PriceUberEats                *int64                 `json:"price_uber_eats,omitempty"`
 	PriceDeliveroo               *int64                 `json:"price_deliveroo,omitempty"`
@@ -47,7 +47,7 @@ type ProductEntry struct {
 	TVAIn                        *float64               `json:"tva_rate_in,omitempty"`
 	TVADelivery                  *float64               `json:"tva_rate_delivery,omitempty"`
 	TVATakeAway                  *float64               `json:"tva_rate_take_away,omitempty"`
-	CostPrice                    *float64               `json:"cost_price"`
+	CostPrice                    *float64               `json:"cost_price,omitempty"`
 	FoodCostPercent              *float64               `json:"foodcost_percent,omitempty"`
 	MarginPercent                *float64               `json:"margin_percent,omitempty"`
 	AvailableIn                  *bool                  `json:"available_in,omitempty"`
@@ -55,21 +55,21 @@ type ProductEntry struct {
 	AvailableDelivery            *bool                  `json:"available_delivery,omitempty"`
 	Category                     *string                `json:"category,omitempty"` // To Be Deleted
 	CategoryID                   *string                `json:"category_id,omitempty"`
-	IsProductGroup               *bool                  `json:"is_product_group"`
+	IsProductGroup               *bool                  `json:"is_product_group,omitempty"`
 	BgColor                      *string                `json:"bg_color,omitempty"`
 	Status                       string                 `json:"status"`
-	SubProducts                  []ProductEntry         `json:"sub_products"`
+	SubProducts                  []ProductEntry         `json:"sub_products,omitempty"`
 	Configuration                ConfigurableResponse   `json:"configuration"`
 	Quantity                     *int                   `json:"quantity,omitempty"`
 	PaidQuantity                 *int                   `json:"paid_quantity,omitempty"`
 	DistributedQuantity          *int                   `json:"distributed_quantity,omitempty"`
 	ReadyForDistributionQuantity *int                   `json:"ready_for_distribution_quantity,omitempty"`
 	IsPaid                       *bool                  `json:"isPaid,omitempty"`
-	IsDistributed                *bool                  `json:"isDistributed"`
+	IsDistributed                *bool                  `json:"isDistributed,omitempty"`
 	DiscountID                   *int64                 `json:"discount_id,omitempty"`
 	DiscountName                 *string                `json:"discount_name,omitempty"`
 	DiscountedPrice              *int64                 `json:"discounted_price,omitempty"`
-	ProductionColor              *string                `json:"production_color"`
+	ProductionColor              *string                `json:"production_color,omitempty"`
 	Extra                        *[]OrderProductExtra   `json:"extra,omitempty"`
 	Without                      *[]OrderProductWithout `json:"without,omitempty"`
 	Comment                      *OrderComment          `json:"comment,omitempty"`

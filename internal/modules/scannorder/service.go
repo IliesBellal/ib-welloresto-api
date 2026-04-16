@@ -107,14 +107,6 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	// 1. Calculer le temps de préparation effectif
 	prepMinutes := s.GetEffectivePrepMinutes(ctx, row)
 
-	// 2. Récupérer les slots en passant ce délai
-	availableSlots, err := s.repo.GetAvailableSlots(ctx, row.MerchantID, prepMinutes)
-	if err != nil {
-		// Optionnel : on log l'erreur mais on continue avec un map vide
-		// pour ne pas bloquer tout l'affichage du marchand
-		availableSlots = make(map[string][]TimeSlot)
-	}
-
 	resp := &MerchantResponse{
 		Status: "success",
 		Merchant: &MerchantData{
@@ -138,11 +130,7 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 				Cash:   false,
 				Online: true,
 			},
-
-			AdvanceOrder: AdvanceOrder{
-				EnableAdvanceOrders: true, // Ou row.EnableAdvanceOrders si tu l'as en base
-				AvailableSlots:      availableSlots,
-			},
+			AdvanceOrdersEnabled: true, // Ou row.EnableAdvanceOrders si tu l'as en base
 		},
 	}
 	// Mapping des sous-structures refactorisées
@@ -387,6 +375,7 @@ func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*B
 			},
 			TakeawayEnabled: row.TakeawayEnabled,
 			DeliveryEnabled: row.DeliveryEnabled,
+			URL:             "https://scannorder.example.com/merchant/" + row.MerchantID,
 		})
 	}
 
@@ -517,7 +506,7 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 	now := time.Now().Unix()
 	calc := now - creationTime.Unix()
 
-	if calc > 150 {
+	if calc > 60 {
 		return map[string]interface{}{"status": "too_late_to_delete_order"}, nil
 	}
 
@@ -940,6 +929,8 @@ func (s *Service) cleanProductForSNO(product *models.ProductEntry, deliveryType 
 	product.TVATakeAway = nil
 	product.PriceDelivery = nil
 	product.PriceTakeAway = nil
+	product.PriceDeliveroo = nil
+	product.PriceUberEats = nil
 	product.IsAvailableOnSNO = nil
 	product.IsProductGroup = nil
 	product.SubProducts = nil
@@ -992,4 +983,63 @@ func (s *Service) GetProduct(ctx context.Context, qr string, productID string, d
 	log.Info("GetProduct success", zap.String("merchant_id", merchantID), zap.String("product_id", productID), zap.String("delivery_type", deliveryType))
 
 	return product, nil
+}
+
+func (s *Service) GetSlots(ctx context.Context, qr string) (*SlotsResponse, error) {
+	log := logger.FromContext(ctx)
+
+	// 1️⃣ Récupérer le merchant via QR code
+	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
+	if err != nil {
+		log.Error("GetSlots: Merchant retrieval failed", zap.String("qr_code", qr), zap.Error(err))
+		return &SlotsResponse{
+			Status: "qr_code_expired",
+		}, nil
+	}
+
+	if merchant == nil {
+		log.Warn("GetSlots: Merchant not found", zap.String("qr_code", qr))
+		return &SlotsResponse{
+			Status: "qr_code_expired",
+		}, nil
+	}
+
+	// 2️⃣ Vérifier que les commandes avancées sont activées
+	// Note: On suppose que EnableAdvanceOrders est une propriété du merchant récupéré
+	// Si elle n'existe pas, vous pouvez hardcoder à true ou l'ajouter à la récupération du merchant
+	if !merchant.EnableAdvanceOrders {
+		log.Warn("GetSlots: Advance orders not enabled for merchant", zap.String("merchant_id", merchant.MerchantID))
+		return &SlotsResponse{
+			Status: "advance_orders_disabled",
+			Error:  "Advanced orders are not enabled for this merchant",
+		}, nil
+	}
+
+	// 3️⃣ Récupérer le temps de préparation effectif
+	merchantRow := &models.MerchantRow{
+		MerchantID:   merchant.MerchantID,
+		Timezone:     merchant.Timezone,
+		PrepTimeMode: merchant.PrepTimeMode,
+		PrepTime:     merchant.PrepTime,
+	}
+	prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
+
+	// 4️⃣ Récupérer les slots disponibles
+	availableSlots, err := s.repo.GetAvailableSlots(ctx, merchant.MerchantID, prepMinutes)
+	if err != nil {
+		log.Error("GetSlots: Failed to retrieve slots", zap.String("merchant_id", merchant.MerchantID), zap.Error(err))
+		return nil, err
+	}
+
+	// 5️⃣ Retourner les slots
+	if availableSlots == nil {
+		availableSlots = make(map[string][]TimeSlot)
+	}
+
+	log.Info("GetSlots success", zap.String("merchant_id", merchant.MerchantID), zap.Int("slot_count", len(availableSlots)))
+
+	return &SlotsResponse{
+		Status:         "1",
+		AvailableSlots: availableSlots,
+	}, nil
 }

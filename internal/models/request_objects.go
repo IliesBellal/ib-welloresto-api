@@ -255,8 +255,9 @@ type MerchantRow struct {
 	InEnabled         bool `json:"in_enabled"`
 	InAvailable       bool `json:"in_available"`
 
-	PrepTimeMode string `json:"prep_time_mode"` // AUTO | MANUAL
-	PrepTime     int    `json:"prep_time"`      // en minutes
+	PrepTimeMode        string `json:"prep_time_mode"` // AUTO | MANUAL
+	PrepTime            int    `json:"prep_time"`      // en minutes
+	EnableAdvanceOrders bool   `json:"enable_advance_orders"`
 }
 
 type PricingResult struct {

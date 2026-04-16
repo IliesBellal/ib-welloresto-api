@@ -31,12 +31,7 @@ type TimeSlot struct {
 	Available bool   `json:"available"`
 }
 
-type AdvanceOrder struct {
-	EnableAdvanceOrders bool                  `json:"enable_advance_orders"`
-	AvailableSlots      map[string][]TimeSlot `json:"available_slots"` // On change le type ici
-}
-
-// Ta structure MerchantData mise à jour
+// MerchantData structure containing merchant information and order settings
 type MerchantData struct {
 	MerchantID      string              `json:"merchant_id"`
 	BusinessName    string              `json:"business_name"`
@@ -49,8 +44,9 @@ type MerchantData struct {
 	Fee             MerchantFees        `json:"fees"`
 	PreparationTime int                 `json:"preparation_time"`
 
-	OrderTypes   OrderTypes   `json:"order_types"`
-	PaymentTypes PaymentTypes `json:"payment_types"`
+	OrderTypes           OrderTypes   `json:"order_types"`
+	PaymentTypes         PaymentTypes `json:"payment_types"`
+	AdvanceOrdersEnabled bool         `json:"advance_orders_enabled"`
 
 	QRCode struct {
 		LocationID     *string `json:"location_id"`
@@ -60,7 +56,12 @@ type MerchantData struct {
 		LastWaiterCall *int    `json:"last_waiter_call"`
 		OrderID        *string `json:"order_id"`
 	} `json:"qr_code"`
-	AdvanceOrder AdvanceOrder `json:"advance_order"`
+}
+
+type SlotsResponse struct {
+	Status         string                `json:"status"`
+	AvailableSlots map[string][]TimeSlot `json:"available_slots,omitempty"`
+	Error          string                `json:"error,omitempty"`
 }
 
 type OrderTypes struct {
@@ -151,6 +152,7 @@ type MerchantSummary struct {
 	Address         Address  `json:"address"`
 	TakeawayEnabled bool     `json:"takeaway_enabled"`
 	DeliveryEnabled bool     `json:"delivery_enabled"`
+	URL             string   `json:"url"`
 }
 
 // BrandMerchantRow is used internally to scan merchant rows from the DB.

@@ -39,9 +39,9 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(ctx)
 
 	qr := chi.URLParam(r, "qr_code")
-	deliveryType := r.URL.Query().Get("type")
+	deliveryType := r.URL.Query().Get("order_type")
 
-	log.Info("ScannOrder.GetMenu qr:" + qr + " - type: " + deliveryType)
+	log.Info("ScannOrder.GetMenu qr:" + qr + " - order_type: " + deliveryType)
 
 	resp, err := h.service.GetMenu(ctx, qr, deliveryType)
 	if err != nil {
@@ -201,6 +201,24 @@ func (h *Handler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_loyalty_programs", resp)
+}
+
+func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	qr := chi.URLParam(r, "qr_code")
+
+	log.Info("ScannOrder.GetSlots qr:" + qr)
+
+	slots, err := h.service.GetSlots(ctx, qr)
+	if err != nil {
+		log.Error("GetSlots error", zap.Error(err))
+		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_slots", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_slots", slots)
 }
 
 func (h *Handler) GetDiscounts(w http.ResponseWriter, r *http.Request) {

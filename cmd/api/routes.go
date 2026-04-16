@@ -400,6 +400,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{qr_code}/discounts", scannHandler.GetDiscounts)
 		r.Get("/{qr_code}/upsell", scannHandler.GetUpsell)
 		r.Get("/{qr_code}/products/{product_id}", scannHandler.GetProduct)
+		r.Get("/{qr_code}/slots", scannHandler.GetSlots)
 		r.Post("/{qr_code}/pricing", scannHandler.GetPricingSNO)
 		r.Post("/{qr_code}/delivery/check", scannHandler.CheckDeliveryZone)
 		r.Post("/{qr_code}/create", scannHandler.CreateOrderSNO)

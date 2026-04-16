@@ -251,4 +251,3 @@ func i18n(value string) UberEatsI18nValue {
 		Translations: map[string]string{"fr_fr": value},
 	}
 }
-

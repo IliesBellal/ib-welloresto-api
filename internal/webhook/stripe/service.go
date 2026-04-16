@@ -123,6 +123,11 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		return fmt.Errorf("insert payment: %w", err)
 	}
 
+	// B. Update Order Creation Date to current time upon successful payment
+	if err := s.repo.UpdateOrderCreationDate(ctx, orderID); err != nil {
+		return fmt.Errorf("update order creation date: %w", err)
+	}
+
 	// C. Update Order Status
 	if err := s.repo.UpdateOrderPaymentStatus(ctx, orderID); err != nil {
 		return fmt.Errorf("update order payment status: %w", err)
