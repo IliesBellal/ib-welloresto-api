@@ -402,8 +402,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/{qr_code}/pricing", scannHandler.GetPricingSNO)
 		r.Post("/{qr_code}/delivery/check", scannHandler.CheckDeliveryZone)
 		r.Post("/{qr_code}/create", scannHandler.CreateOrderSNO)
-		r.Get("/{qr_code}/order/{order_id}", scannHandler.GetOrderSNO)
-		r.Post("/{qr_code}/order/{order_id}/cancel", scannHandler.CancelOrderSNO)
+		r.Get("/{qr_code}/orders/{order_id}", scannHandler.GetOrderSNO)
+		r.Delete("/{qr_code}/orders/{order_id}", scannHandler.CancelOrderSNO)
+		r.Delete("/{qr_code}/orders/{order_id}/cancel", scannHandler.CancelOrderSNO)
 	})
 
 	// --- STOCKS ---

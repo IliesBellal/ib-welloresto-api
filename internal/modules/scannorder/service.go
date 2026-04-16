@@ -501,8 +501,6 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 }
 
 func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {
-	log := logger.FromContext(ctx)
-
 	// 1️⃣ Merchant depuis QR
 	merchantID, err := s.repo.GetMerchantIDByQR(ctx, qr)
 	if err != nil {
@@ -534,12 +532,7 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 	}
 
 	// 4️⃣ Vérifier délai 150 sec
-	creationStr := fmt.Sprintf("%v", orderResp.CreationDate)
-	creationTime, err := time.Parse("2006-01-02 15:04:05", creationStr)
-	if err != nil {
-		log.Error("Failed to parse creation date", zap.String("creation_date", creationStr), zap.Error(err))
-		return nil, err
-	}
+	creationTime := time.Unix(orderResp.CreationDate, 0)
 
 	now := time.Now().Unix()
 	calc := now - creationTime.Unix()
@@ -554,20 +547,6 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 		"now":           now,
 		"creation_date": creationTime.Unix(),
 	}, nil
-
-	// --- CODE INATTEIGNABLE MAIS PRÉSENT EN PHP ---
-
-	/*
-		if int64(orderRaw["merchant_id"].(float64)) != *merchantID {
-			return map[string]interface{}{
-				"status":   "cannot_delete_this_order_from_this_merchant",
-				"order":    orderRaw,
-				"merchant": merchantID,
-			}, nil
-		}
-
-		return s.orderLifeCycleSvc.SetDeleted(ctx, *merchantID, orderID, "SCANNORDER", "3", "")
-	*/
 }
 
 func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest) (models.CreateOrderResult, error) {
