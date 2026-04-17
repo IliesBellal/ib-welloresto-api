@@ -128,7 +128,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Name:          name.String,
 				ProductID:     productID.String,
 				Price:         price.Int64,
-				Quantity:      qty.Float64,
+				Quantity:      &qty.Float64,
 				UnitOfMeasure: uom.String,
 				Status:        int(status.Int64),
 			})

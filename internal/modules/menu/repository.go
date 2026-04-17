@@ -969,7 +969,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			//
 			// Calcul: (100 / 1000) * (850 / 430) = 0.1 * 1.977 = 0.1977 centimes
 
-			quantityInPurchaseUnit := c.Quantity / conversionRatio
+			quantityInPurchaseUnit := *c.Quantity / conversionRatio
 			pricePerPurchaseUnit := purchasePrice / purchasePriceQty
 			c.Cost = quantityInPurchaseUnit * pricePerPurchaseUnit
 
