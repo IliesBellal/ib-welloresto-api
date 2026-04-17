@@ -395,16 +395,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/brands/{brand_slug}", scannHandler.GetBrand)
 		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
+		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)
+
 		r.Get("/{merchant_slug}/menu", scannHandler.GetMenu)
 		r.Get("/{merchant_slug}/loyalty_programs", scannHandler.GetLoyaltyPrograms)
 		r.Get("/{merchant_slug}/discounts", scannHandler.GetDiscounts)
+
 		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell)
-		r.Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
-		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)
 		r.Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
 		r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
+
 		r.Post("/{merchant_slug}/orders", scannHandler.CreateOrderSNO)
 		r.Get("/{merchant_slug}/orders/{order_id}", scannHandler.GetOrderSNO)
+		r.Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
+
 		r.Delete("/{merchant_slug}/orders/{order_id}", scannHandler.CancelOrderSNO)
 	})
 

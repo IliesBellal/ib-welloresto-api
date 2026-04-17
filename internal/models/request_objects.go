@@ -209,13 +209,13 @@ type TRCheckResponse struct {
 type PricingRequest struct {
 	MerchantID                  string        `json:"merchant_id"`
 	Order                       *OrderRequest `json:"order"`
-	DayOfWeek                   int           `json:"day_of_week"`
-	Time                        string        `json:"time"`
+	DayOfWeek                   int           `json:"-"`
+	Time                        string        `json:"-"`
 	DiscountCode                string        `json:"discount_code,omitempty"`
-	MinimumCartForDeliveryOrder int
-	IsOrderable                 bool
-	IsSNO                       bool
-	NotOrderableReason          string
+	MinimumCartForDeliveryOrder int           `json:"-"`
+	IsOrderable                 bool          `json:"-"`
+	IsSNO                       bool          `json:"is_sno,omitempty"`
+	NotOrderableReason          string        `json:"not_orderable_reason,omitempty"`
 
 	QRCode           string `json:"qr_code,omitempty"`
 	IsInDeliveryZone bool   `json:"is_in_delivery_zone,omitempty"`

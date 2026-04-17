@@ -247,7 +247,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 		dow = 7
 	}
 
-	rawMenu, err := s.menu.GetMenuFromMerchantId(ctx, merchantID, nil) // 🔥 PLACEHOLDER
+	rawMenu, err := s.menu.GetMenuFromMerchantId(ctx, merchantID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -264,30 +264,39 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 		finalProducts := []models.ProductEntry{}
 		var toAdd []models.ProductEntry
 
+		// --- ÉTAPE 1 : Sélection et extraction (SANS nettoyage) ---
 		for _, p := range products {
-			product := p
+			// On vérifie si le produit principal doit être affiché tel quel
+			isGroup := p.IsProductGroup != nil && *p.IsProductGroup
+			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO
 
-			// Nettoyer et adapter le produit
-			s.cleanProductForSNO(&product, deliveryType)
-
-			if product.IsProductGroup == nil || !*product.IsProductGroup || product.IsAvailableOnSNO == nil || !*product.IsAvailableOnSNO {
-				if len(product.SubProducts) > 0 {
-					toAdd = append(toAdd, product.SubProducts...)
+			if !isGroup && isAvailable {
+				finalProducts = append(finalProducts, p)
+			} else {
+				// Si c'est un groupe non disponible ou un produit simple avec des sous-produits,
+				// on récupère les enfants pour les traiter plus tard
+				if len(p.SubProducts) > 0 {
+					toAdd = append(toAdd, p.SubProducts...)
 				}
-				continue
 			}
-			finalProducts = append(finalProducts, product)
 		}
 
+		// On traite les sous-produits extraits
 		for _, sp := range toAdd {
-			sub := sp
-			if sub.IsAvailableOnSNO == nil || !*sub.IsAvailableOnSNO {
-				// Nettoyer les sous-produits aussi
-				s.cleanProductForSNO(&sub, deliveryType)
-				finalProducts = append(finalProducts, sub)
+			// On ne garde le sous-produit que s'il est disponible
+			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO {
+				finalProducts = append(finalProducts, sp)
 			}
 		}
 
+		// --- ÉTAPE 2 : Nettoyage final ---
+		// Maintenant que finalProducts contient exactement ce qu'on veut renvoyer,
+		// on peut nettoyer sans crainte de casser la logique de filtrage.
+		for i := range finalProducts {
+			s.cleanProductForSNO(&finalProducts[i], deliveryType)
+		}
+
+		// Si on a des produits, on ajoute la catégorie au menu filtré
 		if len(finalProducts) > 0 {
 			pt.Products = finalProducts
 			filtered = append(filtered, pt)
@@ -295,7 +304,6 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 	}
 
 	menu.ProductTypes = filtered
-
 	menu.LoyaltyPrograms, _ = s.repo.GetLoyaltyPrograms(ctx, merchantID, deliveryType)
 	menu.Discounts, _ = s.repo.GetDiscounts(ctx, merchantID, deliveryType, dow)
 
@@ -373,9 +381,15 @@ func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*B
 				Lat:     row.Lat,
 				Lng:     row.Lng,
 			},
-			TakeawayEnabled: row.TakeawayEnabled,
-			DeliveryEnabled: row.DeliveryEnabled,
-			URL:             "https://scannorder.example.com/merchant/" + row.MerchantID,
+			OrderTypes: OrderTypes{
+				TakeawayEnabled:   row.TakeawayEnabled,
+				TakeawayAvailable: row.TakeawayAvailable,
+				DeliveryEnabled:   row.DeliveryEnabled,
+				DeliveryAvailable: row.DeliveryAvailable,
+				InEnabled:         row.InEnabled,
+				InAvailable:       row.InAvailable,
+			},
+			URL: s.cfg.SNORedirectBaseURL + "/restaurant/" + row.Slug,
 		})
 	}
 
@@ -411,7 +425,16 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 		req.Order.Customer = customer
 	}
 
-	// 🔹 4. Timezone logic (IDENTIQUE PHP)
+	// 🔹 4. 🔒 SECURITY: Validate and clean prices before transmission
+	if err := s.validateAndCleanPricingPayload(ctx, req, merchant); err != nil {
+		log := logger.FromContext(ctx)
+		log.Error("Price validation failed - potential fraud attempt", zap.Error(err))
+		return &models.PricingResponse{
+			Status: "pricing_validation_failed",
+		}, nil
+	}
+
+	// 🔹 5. Timezone logic (IDENTIQUE PHP)
 	loc, _ := time.LoadLocation(merchant.Timezone)
 	now := time.Now().In(loc)
 
@@ -423,8 +446,136 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 	}
 	req.Time = now.Format("2006-01-02 15:04:05")
 
-	// 🔹 6. Appel module ORDERING (comme PHP require_once)
-	return s.orderingService.ComputePricing(ctx, req)
+	pricing, err := s.orderingService.ComputePricing(ctx, req)
+
+	pricing.IsOrderable = pricing.OrderRequest.IsOrderable && pricing.OrderRequest.IsInDeliveryZone
+	if !pricing.OrderRequest.IsInDeliveryZone {
+		pricing.NotOrderableReason = "out_of_delivery_zone"
+	}
+	pricing.OrderRequest.IsSNO = true
+	pricing.OrderRequest.Order.IsPaid = false
+
+	// 🔹 6. Appel module ORDERING (prices now sanitized)
+	return pricing, err
+}
+
+// validateAndCleanPricingPayload ensures all prices come from the database
+// This is a critical security function that prevents client-side price manipulation
+func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *models.PricingRequest, merchant *models.MerchantRow) error {
+	log := logger.FromContext(ctx)
+
+	if req.Order == nil || len(req.Order.Products) == 0 {
+		return nil
+	}
+
+	// --- STEP 1: Collect all product and option IDs from payload ---
+	productIDs := make([]string, 0)
+	optionIDs := make(map[string]bool)
+
+	for _, product := range req.Order.Products {
+		productIDs = append(productIDs, product.ProductID)
+
+		// Collect option IDs from configuration
+		if product.Config != nil && product.Config.Attributes != nil {
+			for _, attr := range product.Config.Attributes {
+				for _, opt := range attr.Options {
+					optionIDs[opt.ID] = true
+				}
+			}
+		}
+	}
+
+	// --- STEP 2: Fetch official prices from database ---
+	officialProductPrices, err := s.repo.GetProductPricesForSNO(ctx, merchant.MerchantID, productIDs)
+	if err != nil {
+		log.Error("Failed to fetch official product prices", zap.Error(err))
+		return fmt.Errorf("pricing_fetch_failed: %w", err)
+	}
+
+	// Validate all products exist in database
+	for _, productID := range productIDs {
+		if _, exists := officialProductPrices[productID]; !exists {
+			log.Warn("SECURITY: Client sent invalid product ID",
+				zap.String("product_id", productID),
+				zap.String("merchant_id", merchant.MerchantID),
+			)
+			return fmt.Errorf("invalid_product_id: %s", productID)
+		}
+	}
+
+	// Options (if any)
+	optIDList := make([]string, 0, len(optionIDs))
+	for id := range optionIDs {
+		optIDList = append(optIDList, id)
+	}
+
+	officialOptionPrices := make(map[string]int)
+	if len(optIDList) > 0 {
+		officialOptionPrices, err = s.repo.GetConfigurationOptionPricesForSNO(ctx, optIDList)
+		if err != nil {
+			log.Error("Failed to fetch official option prices", zap.Error(err))
+			return fmt.Errorf("option_pricing_fetch_failed: %w", err)
+		}
+
+		// Validate all options exist in database
+		for _, optionID := range optIDList {
+			if _, exists := officialOptionPrices[optionID]; !exists {
+				log.Warn("SECURITY: Client sent invalid configuration option ID",
+					zap.String("option_id", optionID),
+					zap.String("merchant_id", merchant.MerchantID),
+				)
+				return fmt.Errorf("invalid_option_id: %s", optionID)
+			}
+		}
+	}
+
+	// --- STEP 3: OVERWRITE payload prices with database values ---
+	orderType := req.Order.OrderType
+
+	for i := range req.Order.Products {
+		product := &req.Order.Products[i]
+
+		// Overwrite product price based on order type and database values
+		officialPrices := officialProductPrices[product.ProductID]
+		switch orderType {
+		case "DELIVERY":
+			product.Price = int(officialPrices["price_delivery"])
+		case "TAKE_AWAY":
+			product.Price = int(officialPrices["price_take_away"])
+		default: // "IN"
+			product.Price = int(officialPrices["price"])
+		}
+
+		log.Debug("Product price normalized from database",
+			zap.String("product_id", product.ProductID),
+			zap.String("order_type", orderType),
+			zap.Int("official_price", product.Price),
+		)
+
+		// Overwrite configuration option prices with database values
+		if product.Config != nil && product.Config.Attributes != nil {
+			for _, attr := range product.Config.Attributes {
+				for i, opt := range attr.Options {
+					if officialPrice, exists := officialOptionPrices[opt.ID]; exists {
+						attr.Options[i].ExtraPrice = officialPrice
+
+						log.Debug("Option price normalized from database",
+							zap.String("option_id", opt.ID),
+							zap.Int("official_extra_price", officialPrice),
+						)
+					}
+				}
+			}
+		}
+	}
+
+	log.Info("Price validation and sanitization completed successfully",
+		zap.Int("product_count", len(productIDs)),
+		zap.Int("option_count", len(optIDList)),
+		zap.String("merchant_id", merchant.MerchantID),
+	)
+
+	return nil
 }
 
 func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.Order, error) {
@@ -507,7 +658,7 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 	calc := now - creationTime.Unix()
 
 	if calc > 60 {
-		return map[string]interface{}{"status": "too_late_to_delete_order"}, nil
+		return nil, models.ErrTooLateToDeleteOrder
 	}
 
 	// 🐛 RETURN DEBUG EXACT COMME PHP
@@ -909,11 +1060,7 @@ func (s *Service) GetUpsell(ctx context.Context, qrCode string) (*UpsellResponse
 	}, nil
 }
 
-// cleanProductForSNO nettoie et adapte un produit pour la réponse SNO
-// - Modifie le prix selon le type de commande (DELIVERY/TAKE_AWAY)
-// - Supprime les attributs non pertinents (prix alternatifs, couleurs, TVAs)
-func (s *Service) cleanProductForSNO(product *models.ProductEntry, deliveryType string) {
-	// 1️⃣ Adapter le prix selon le type de commande
+func (s *Service) cleanProductPricesForSNO(product *models.ProductEntry, deliveryType string) {
 	switch deliveryType {
 	case "DELIVERY":
 		product.Price = *product.PriceDelivery
@@ -921,16 +1068,25 @@ func (s *Service) cleanProductForSNO(product *models.ProductEntry, deliveryType 
 		product.Price = *product.PriceTakeAway
 	}
 
+	product.PriceDelivery = nil
+	product.PriceTakeAway = nil
+	product.PriceDeliveroo = nil
+	product.PriceUberEats = nil
+}
+
+// cleanProductForSNO nettoie et adapte un produit pour la réponse SNO
+// - Modifie le prix selon le type de commande (DELIVERY/TAKE_AWAY)
+// - Supprime les attributs non pertinents (prix alternatifs, couleurs, TVAs)
+func (s *Service) cleanProductForSNO(product *models.ProductEntry, deliveryType string) {
+	// 1️⃣ Adapter le prix selon le type de commande
+	s.cleanProductPricesForSNO(product, deliveryType)
+
 	// 2️⃣ Nettoyer les attributs non pertinents
 	product.BgColor = nil
 	product.Category = nil
 	product.TVAIn = nil
 	product.TVADelivery = nil
 	product.TVATakeAway = nil
-	product.PriceDelivery = nil
-	product.PriceTakeAway = nil
-	product.PriceDeliveroo = nil
-	product.PriceUberEats = nil
 	product.IsAvailableOnSNO = nil
 	product.IsProductGroup = nil
 	product.SubProducts = nil

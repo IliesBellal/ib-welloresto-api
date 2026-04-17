@@ -399,7 +399,7 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 	}
 
 	// --- Step 7: Apply discounts ---
-	appliedDiscounts := s.applyDiscounts(req, selectedProducts, discounts, discountProducts, discountOptions, baseTotal)
+	_ = s.applyDiscounts(req, selectedProducts, discounts, discountProducts, discountOptions, baseTotal)
 
 	// --- Step 8: Load rewards ---
 	rewards, err := s.ordersRepo.GetRewards(ctx, req)
@@ -429,7 +429,6 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 		Status:                    "success",
 		OrderRequest:              req,
 		EstimatedDistributionTime: estimatedTime,
-		AppliedDiscounts:          appliedDiscounts,
 	}, nil
 }
 

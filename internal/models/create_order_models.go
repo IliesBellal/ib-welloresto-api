@@ -26,22 +26,22 @@ type OrderRequest struct {
 	OrderType                   string                `json:"order_type"`
 	PlacesSettings              int                   `json:"places_settings"`
 	CreatedBy                   *string               `json:"created_by"`
-	Responsible                 *string               `json:"responsible"`
+	Responsible                 *string               `json:"responsible,omitempty"`
 	Comment                     *string               `json:"comment"`
 	Payments                    []PaymentPayload      `json:"payments"`
-	Locations                   []OrderLocation       `json:"locations"`
+	Locations                   []OrderLocation       `json:"locations,omitempty"`
 	DeliveryFees                int                   `json:"delivery_fees"`
 	EstimatedReady              string                `json:"estimated_ready"`
 	IsScheduled                 bool                  `json:"is_scheduled"`
 	UseCustomerTemporaryAddress bool                  `json:"use_customer_temporary_address"`
 	MerchantApproval            string                `json:"merchant_approval"`
 	BrandStatus                 string                `json:"brand_status"`
-	DelayID                     *string               `json:"delay_id"`
+	DelayID                     *string               `json:"delay_id,omitempty"`
 	PagerNumber                 *string               `json:"pager_number"`
 	OnlinePayment               bool                  `json:"online_payment"`
 	IsSNO                       bool                  `json:"is_sno"`
 	IsPaid                      bool                  `json:"is_paid"`
-	BookingID                   *string               `json:"booking_id"`
+	BookingID                   *string               `json:"booking_id,omitempty"`
 	Currency                    *string               `json:"currency"`
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
 }
@@ -133,7 +133,6 @@ type CreateOrderResult struct {
 	OrderID         string             `json:"order_id,omitempty"`
 	OrderNum        *string            `json:"order_num,omitempty"`
 	Action          string             `json:"action,omitempty"`
-	OrderItems      []UsedItem         `json:"order_items,omitempty"`
 	CheckoutSession *WRCheckoutSession `json:"checkout_session,omitempty"`
 }
 

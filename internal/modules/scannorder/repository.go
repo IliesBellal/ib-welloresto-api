@@ -559,10 +559,17 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				m.lat,
 				m.lng,
 				m.timezone,
+				m.logo_url,
 				snos.take_away_enabled,
+				snos.take_away_available,
 				snos.delivery_enabled,
+				snos.delivery_available,
+				snos.in_enabled,
+				snos.in_available,
+				snos.header_background,
 				mp.preparation_time_mode,
 				mp.preparation_time,
+				qr.code as slug,
 				(6371 * ACOS(
 					COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
 					COS(RADIANS(m.lng) - RADIANS(?)) +
@@ -570,6 +577,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				)) AS distance_km
 			FROM brands b
 			INNER JOIN merchant m ON m.brand_id = b.brand_id
+          	INNER JOIN qrcodes qr ON qr.merchant_id = m.id and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
 			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
 			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
 			WHERE b.brand_id = ?
@@ -588,13 +596,19 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				m.timezone,
 				m.logo_url,
 				snos.take_away_enabled,
+				snos.take_away_available,
 				snos.delivery_enabled,
+				snos.delivery_available,
+				snos.in_enabled,
+				snos.in_available,
 				snos.header_background,
 				mp.preparation_time_mode,
 				mp.preparation_time,
+				qr.code as slug,
 				NULL AS distance_km
 			FROM brands b
 			INNER JOIN merchant m ON m.brand_id = b.brand_id
+          	INNER JOIN qrcodes qr ON qr.merchant_id = m.id and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
 			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
 			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
 			WHERE b.brand_id = ?
@@ -622,10 +636,15 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			&row.Timezone,
 			&row.LogoURL,
 			&row.TakeawayEnabled,
+			&row.TakeawayAvailable,
 			&row.DeliveryEnabled,
+			&row.DeliveryAvailable,
+			&row.InEnabled,
+			&row.InAvailable,
 			&row.BannerURL,
 			&row.PrepTimeMode,
 			&row.PrepTime,
+			&row.Slug,
 			&distanceKm,
 		); err != nil {
 			return nil, nil, err
@@ -699,4 +718,117 @@ func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) (
 	}
 
 	return products, nil
+}
+
+// GetProductPricesForSNO retrieves official product prices for SNO from database
+// Returns a map of productID -> {price, price_delivery, price_take_away}
+// This ensures backend is the single source of truth for pricing
+func (r *Repository) GetProductPricesForSNO(ctx context.Context, merchantID string, productIDs []string) (map[string]map[string]int64, error) {
+	if len(productIDs) == 0 {
+		return make(map[string]map[string]int64), nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Build placeholders for IN clause
+	placeholders := ""
+	args := []interface{}{merchantID}
+	for i, id := range productIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			p.product_id,
+			p.price,
+			COALESCE(p.price_delivery, p.price) as price_delivery,
+			COALESCE(p.price_take_away, p.price) as price_take_away
+		FROM products p
+		WHERE p.merchant_id = ?
+		AND p.product_id IN (%s)
+	`, placeholders)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query product prices: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]map[string]int64)
+	for rows.Next() {
+		var productID string
+		var price, priceDelivery, priceTakeaway int64
+
+		if err := rows.Scan(&productID, &price, &priceDelivery, &priceTakeaway); err != nil {
+			return nil, fmt.Errorf("failed to scan product price: %w", err)
+		}
+
+		result[productID] = map[string]int64{
+			"price":           price,
+			"price_delivery":  priceDelivery,
+			"price_take_away": priceTakeaway,
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error during product price fetch: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetConfigurationOptionPricesForSNO retrieves official configuration option prices from database
+// Returns a map of optionID -> extra_price
+// Ensures client cannot manipulate option prices
+func (r *Repository) GetConfigurationOptionPricesForSNO(ctx context.Context, optionIDs []string) (map[string]int, error) {
+	if len(optionIDs) == 0 {
+		return make(map[string]int), nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Build placeholders for IN clause
+	placeholders := ""
+	args := []interface{}{}
+	for i, id := range optionIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, extra_price
+		FROM configurable_attribute_options
+		WHERE id IN (%s)
+	`, placeholders)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query option prices: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]int)
+	for rows.Next() {
+		var optionID string
+		var extraPrice int
+
+		if err := rows.Scan(&optionID, &extraPrice); err != nil {
+			return nil, fmt.Errorf("failed to scan option price: %w", err)
+		}
+
+		result[optionID] = extraPrice
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error during option price fetch: %w", err)
+	}
+
+	return result, nil
 }

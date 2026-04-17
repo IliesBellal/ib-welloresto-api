@@ -109,7 +109,7 @@ type DeliveryZoneResult struct {
 }
 
 type Discount struct {
-	DiscountID         int     `json:"discount_id"`
+	DiscountID         string  `json:"discount_id"`
 	DiscountOrderType  string  `json:"discount_order_type"`
 	DiscountCode       *string `json:"discount_code"`
 	DiscountDesc       string  `json:"discount_desc"`
@@ -144,33 +144,37 @@ type BrandData struct {
 }
 
 type MerchantSummary struct {
-	MerchantID      string   `json:"merchant_id"`
-	BusinessName    string   `json:"business_name"`
-	IsOpen          bool     `json:"is_open"`
-	PreparationTime int      `json:"preparation_time"`
-	DistanceKm      *float64 `json:"distance_km"`
-	Address         Address  `json:"address"`
-	TakeawayEnabled bool     `json:"takeaway_enabled"`
-	DeliveryEnabled bool     `json:"delivery_enabled"`
-	URL             string   `json:"url"`
+	MerchantID      string     `json:"merchant_id"`
+	BusinessName    string     `json:"business_name"`
+	IsOpen          bool       `json:"is_open"`
+	PreparationTime int        `json:"preparation_time"`
+	DistanceKm      *float64   `json:"distance_km"`
+	Address         Address    `json:"address"`
+	OrderTypes      OrderTypes `json:"order_types"`
+	URL             string     `json:"url"`
 }
 
 // BrandMerchantRow is used internally to scan merchant rows from the DB.
 // BrandMerchantRow is used internally to scan merchant rows from the DB.
 type BrandMerchantRow struct {
-	MerchantID      string
-	FullName        string
-	Address         string
-	Lat             float64
-	Lng             float64
-	Timezone        string
-	LogoURL         *string
-	BannerURL       *string
-	TakeawayEnabled bool
-	DeliveryEnabled bool
-	PrepTimeMode    string
-	PrepTime        int
-	DistanceKm      *float64
+	MerchantID        string
+	FullName          string
+	Address           string
+	Lat               float64
+	Lng               float64
+	Timezone          string
+	LogoURL           *string
+	BannerURL         *string
+	TakeawayEnabled   bool
+	TakeawayAvailable bool
+	DeliveryEnabled   bool
+	DeliveryAvailable bool
+	InEnabled         bool
+	InAvailable       bool
+	PrepTimeMode      string
+	PrepTime          int
+	Slug              string
+	DistanceKm        *float64
 }
 
 // --- Delivery Zone Check ---

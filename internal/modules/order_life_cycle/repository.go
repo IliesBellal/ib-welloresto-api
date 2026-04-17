@@ -1089,11 +1089,10 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	}
 
 	return &models.CreateOrderResult{
-		Status:     "success",
-		OrderID:    orderID,
-		OrderNum:   &orderNum,
-		OrderItems: usedItems,
-		Action:     action,
+		Status:   "success",
+		OrderID:  orderID,
+		OrderNum: &orderNum,
+		Action:   action,
 	}, nil
 }
 

@@ -81,6 +81,8 @@ var (
 
 	ErrAccountDisabled = errors.New("account_disabled")
 
+	ErrTooLateToDeleteOrder = errors.New("too_late_to_delete_order")
+
 	ErrUserNotAllowed = errors.New("user_not_allowed")
 
 	ErrCartEmpty = errors.New("cart_is_empty")
@@ -126,6 +128,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrTooLateToDeleteOrder):
+		status = http.StatusForbidden
+		errorStatus = "too_late_to_delete_order"
+		errorMsg = "Too late to delete order, you can only delete an order within 60 seconds after its creation"
+
 	case errors.Is(err, ErrRedisNotAvailable):
 		status = http.StatusServiceUnavailable
 		errorStatus = "not_available"
