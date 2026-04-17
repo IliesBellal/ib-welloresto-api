@@ -1476,8 +1476,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	}
 
 	// Build integrations object
-	p.Integrations = ProductIntegrations{
-		UberEats: ProductIntegrationItem{
+	p.Integrations = models.ProductIntegrations{
+		UberEats: models.ProductIntegrationItem{
 			Enabled: syncUberEats,
 			PriceOverride: func() *int {
 				if priceUberEats.Valid {
@@ -1487,7 +1487,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 				return nil
 			}(),
 		},
-		Deliveroo: ProductIntegrationItem{
+		Deliveroo: models.ProductIntegrationItem{
 			Enabled: syncDeliveroo,
 			PriceOverride: func() *int {
 				if priceDeliveroo.Valid {
@@ -2036,7 +2036,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 
 // SyncProductIntegrations updates the integration settings for a product (Uber Eats, Deliveroo).
 // It updates the sync status and price overrides for each integration.
-func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations ProductIntegrations) error {
+func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations models.ProductIntegrations) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant

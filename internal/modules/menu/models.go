@@ -25,56 +25,56 @@ type ProductCategory struct {
 
 // product
 type ProductEntry struct {
-	OrderID                      string                 `json:"order_id,omitempty"`
-	OrderItemID                  string                 `json:"order_item_id"`
-	ProductID                    string                 `json:"product_id"`
-	MerchantID                   *string                `json:"merchantID"`
-	OrderedOn                    *time.Time             `json:"ordered_on,omitempty"`
-	ProductionStatus             string                 `json:"production_status,omitempty"`
-	ProductionStatusDoneQuantity int                    `json:"production_status_done_quantity,omitempty"`
-	Name                         string                 `json:"name"`
-	HasImage                     bool                   `json:"has_image,omitempty"`
-	ByProductOf                  *string                `json:"by_product_of,omitempty"`
-	ImageURL                     *string                `json:"image_url,omitempty"`
-	IsPopular                    bool                   `json:"is_popular,omitempty"`
-	EligibleForUpsales           bool                   `json:"eligible_for_upsales,omitempty"`
-	IsAvailableOnSNO             bool                   `json:"is_available_on_sno,omitempty"`
-	Components                   []ComponentUsage       `json:"components,omitempty"`
-	Allergens                    []models.AllergenEntry `json:"allergens,omitempty"`
-	Tags                         []models.TagEntry      `json:"tags,omitempty"`
-	Description                  *string                `json:"description,omitempty"`
-	Price                        int64                  `json:"price"`
-	PriceTakeAway                int64                  `json:"price_take_away"`
-	PriceDelivery                int64                  `json:"price_delivery"`
-	TVAIn                        float64                `json:"tva_rate_in,omitempty"`
-	TVADelivery                  float64                `json:"tva_rate_delivery,omitempty"`
-	TVATakeAway                  float64                `json:"tva_rate_take_away,omitempty"`
-	AvailableIn                  bool                   `json:"available_in,omitempty"`
-	AvailableTakeAway            bool                   `json:"available_take_away,omitempty"`
-	AvailableDelivery            bool                   `json:"available_delivery,omitempty"`
-	Category                     *string                `json:"category"` // To Be Deleted
-	CategoryID                   *string                `json:"category_id"`
-	IsProductGroup               bool                   `json:"is_product_group"`
-	BgColor                      *string                `json:"bg_color,omitempty"`
-	Status                       int                    `json:"status"`
-	SubProducts                  []ProductEntry         `json:"sub_products"`
-	Configuration                ConfigurableResponse   `json:"configuration"`
-	Quantity                     int                    `json:"quantity"`
-	PaidQuantity                 int                    `json:"paid_quantity"`
-	DistributedQuantity          int                    `json:"distributed_quantity"`
-	ReadyForDistributionQuantity int                    `json:"ready_for_distribution_quantity"`
-	IsPaid                       int                    `json:"isPaid"`
-	IsDistributed                int                    `json:"isDistributed"`
-	DiscountID                   *int64                 `json:"discount_id"`
-	DiscountName                 *string                `json:"discount_name"`
-	DiscountedPrice              *int64                 `json:"discounted_price"`
-	ProductionColor              *string                `json:"production_color"`
-	Extra                        []OrderProductExtra    `json:"extra"`
-	Without                      []OrderProductWithout  `json:"without"`
-	Customers                    []interface{}          `json:"customers"` // keep generic as original
-	Comment                      models.OrderComment    `json:"comment"`
-	DisplayOrder                 *int                   `json:"display_order"`
-	Integrations                 ProductIntegrations    `json:"integrations,omitempty"`
+	OrderID                      string                     `json:"order_id,omitempty"`
+	OrderItemID                  string                     `json:"order_item_id"`
+	ProductID                    string                     `json:"product_id"`
+	MerchantID                   *string                    `json:"merchantID"`
+	OrderedOn                    *time.Time                 `json:"ordered_on,omitempty"`
+	ProductionStatus             string                     `json:"production_status,omitempty"`
+	ProductionStatusDoneQuantity int                        `json:"production_status_done_quantity,omitempty"`
+	Name                         string                     `json:"name"`
+	HasImage                     bool                       `json:"has_image,omitempty"`
+	ByProductOf                  *string                    `json:"by_product_of,omitempty"`
+	ImageURL                     *string                    `json:"image_url,omitempty"`
+	IsPopular                    bool                       `json:"is_popular,omitempty"`
+	EligibleForUpsales           bool                       `json:"eligible_for_upsales,omitempty"`
+	IsAvailableOnSNO             bool                       `json:"is_available_on_sno,omitempty"`
+	Components                   []ComponentUsage           `json:"components,omitempty"`
+	Allergens                    []models.AllergenEntry     `json:"allergens,omitempty"`
+	Tags                         []models.TagEntry          `json:"tags,omitempty"`
+	Description                  *string                    `json:"description,omitempty"`
+	Price                        int64                      `json:"price"`
+	PriceTakeAway                int64                      `json:"price_take_away"`
+	PriceDelivery                int64                      `json:"price_delivery"`
+	TVAIn                        float64                    `json:"tva_rate_in,omitempty"`
+	TVADelivery                  float64                    `json:"tva_rate_delivery,omitempty"`
+	TVATakeAway                  float64                    `json:"tva_rate_take_away,omitempty"`
+	AvailableIn                  bool                       `json:"available_in,omitempty"`
+	AvailableTakeAway            bool                       `json:"available_take_away,omitempty"`
+	AvailableDelivery            bool                       `json:"available_delivery,omitempty"`
+	Category                     *string                    `json:"category"` // To Be Deleted
+	CategoryID                   *string                    `json:"category_id"`
+	IsProductGroup               bool                       `json:"is_product_group"`
+	BgColor                      *string                    `json:"bg_color,omitempty"`
+	Status                       int                        `json:"status"`
+	SubProducts                  []ProductEntry             `json:"sub_products"`
+	Configuration                ConfigurableResponse       `json:"configuration"`
+	Quantity                     int                        `json:"quantity"`
+	PaidQuantity                 int                        `json:"paid_quantity"`
+	DistributedQuantity          int                        `json:"distributed_quantity"`
+	ReadyForDistributionQuantity int                        `json:"ready_for_distribution_quantity"`
+	IsPaid                       int                        `json:"isPaid"`
+	IsDistributed                int                        `json:"isDistributed"`
+	DiscountID                   *int64                     `json:"discount_id"`
+	DiscountName                 *string                    `json:"discount_name"`
+	DiscountedPrice              *int64                     `json:"discounted_price"`
+	ProductionColor              *string                    `json:"production_color"`
+	Extra                        []OrderProductExtra        `json:"extra"`
+	Without                      []OrderProductWithout      `json:"without"`
+	Customers                    []interface{}              `json:"customers"` // keep generic as original
+	Comment                      models.OrderComment        `json:"comment"`
+	DisplayOrder                 *int                       `json:"display_order"`
+	Integrations                 models.ProductIntegrations `json:"integrations,omitempty"`
 }
 
 type OrderProductExtra struct {
@@ -220,35 +220,25 @@ type ProductComponentUpdate struct {
 
 // ProductUpdatePayload correspond aux champs de la table 'products' + associations
 type ProductUpdatePayload struct {
-	Name              *string                  `json:"name"` // Pointeurs pour gérer le NULL/Omission
-	Description       *string                  `json:"description"`
-	IsAvailableOnSno  *bool                    `json:"is_available_on_sno"`
-	CategoryID        *string                  `json:"category"`
-	Price             *int                     `json:"price"`
-	PriceTakeAway     *int                     `json:"price_take_away"`
-	PriceDelivery     *int                     `json:"price_delivery"`
-	AvailableIn       *bool                    `json:"available_in"`
-	AvailableTakeAway *bool                    `json:"available_take_away"`
-	AvailableDelivery *bool                    `json:"available_delivery"`
-	ByProductOf       *string                  `json:"by_product_of"` // Peut être null
-	BgColor           *string                  `json:"bg_color"`
-	Enabled           *bool                    `json:"enabled"`
-	Status            *string                  `json:"status"`
-	Configuration     []string                 `json:"configuration"` // Liste des IDs d'attributs configurables
-	Components        []ProductComponentUpdate `json:"components"`    // Liste des composants avec quantity et unit_id
-	Tags              []string                 `json:"tags"`          // Liste des IDs de tags
-	Allergens         []string                 `json:"allergens"`     // Liste des IDs d'allergènes
-	Integrations      ProductIntegrations      `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
-}
-
-type ProductIntegrations struct {
-	UberEats  ProductIntegrationItem `json:"uber_eats"`
-	Deliveroo ProductIntegrationItem `json:"deliveroo"`
-}
-
-type ProductIntegrationItem struct {
-	Enabled       bool `json:"enabled"`
-	PriceOverride *int `json:"price_override,omitempty"` // Permet de spécifier un prix différent pour l'intégration
+	Name              *string                    `json:"name"` // Pointeurs pour gérer le NULL/Omission
+	Description       *string                    `json:"description"`
+	IsAvailableOnSno  *bool                      `json:"is_available_on_sno"`
+	CategoryID        *string                    `json:"category"`
+	Price             *int                       `json:"price"`
+	PriceTakeAway     *int                       `json:"price_take_away"`
+	PriceDelivery     *int                       `json:"price_delivery"`
+	AvailableIn       *bool                      `json:"available_in"`
+	AvailableTakeAway *bool                      `json:"available_take_away"`
+	AvailableDelivery *bool                      `json:"available_delivery"`
+	ByProductOf       *string                    `json:"by_product_of"` // Peut être null
+	BgColor           *string                    `json:"bg_color"`
+	Enabled           *bool                      `json:"enabled"`
+	Status            *string                    `json:"status"`
+	Configuration     []string                   `json:"configuration"` // Liste des IDs d'attributs configurables
+	Components        []ProductComponentUpdate   `json:"components"`    // Liste des composants avec quantity et unit_id
+	Tags              []string                   `json:"tags"`          // Liste des IDs de tags
+	Allergens         []string                   `json:"allergens"`     // Liste des IDs d'allergènes
+	Integrations      models.ProductIntegrations `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
 }
 
 // ProductAttributesPayload pour la configuration des attributs

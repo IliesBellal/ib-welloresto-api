@@ -79,6 +79,17 @@ type ProductEntry struct {
 	SyncUberEats                 *bool                  `json:"sync_ubereats,omitempty"`
 	Tags                         []TagEntry             `json:"tags"`
 	Allergens                    []AllergenEntry        `json:"allergens"`
+	Integrations                 ProductIntegrations    `json:"integrations,omitempty"`
+}
+
+type ProductIntegrations struct {
+	UberEats  ProductIntegrationItem `json:"uber_eats"`
+	Deliveroo ProductIntegrationItem `json:"deliveroo"`
+}
+
+type ProductIntegrationItem struct {
+	Enabled       bool `json:"enabled"`
+	PriceOverride *int `json:"price_override,omitempty"` // Permet de spécifier un prix différent pour l'intégration
 }
 
 // AllergenEntry represents one of the 14 EU regulated allergens.
