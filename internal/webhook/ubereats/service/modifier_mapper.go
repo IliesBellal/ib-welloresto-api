@@ -56,7 +56,7 @@ func (s *Service) mapModifiers(ctx context.Context, merchantID string, item ueMo
 
 			options = append(options, ordersModels.ConfigurationOption{
 				ID:         *optID,
-				Quantity:   item.Quantity, // When using opt.Quantity, value is always 1, even if the modifier allows multiple quantities. So we use the parent item quantity instead.
+				Quantity:   opt.Quantity,
 				ExtraPrice: opt.Price.UnitPrice.Amount,
 			})
 		}
