@@ -569,7 +569,7 @@ func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	// 2. Parsing du Body
 	var payload ProductUpdatePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "update_product", map[string]string{"error": "invalid_body", "message": err.Error()})
+		models.SendErrorJSON(w, "menu", "update_product", err)
 		return
 	}
 

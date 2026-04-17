@@ -221,30 +221,35 @@ type ProductComponentUpdate struct {
 
 // ProductUpdatePayload correspond aux champs de la table 'products' + associations
 type ProductUpdatePayload struct {
-	Name              *string                  `json:"product_name"` // Pointeurs pour gérer le NULL/Omission
-	Description       *string                  `json:"product_desc"`
-	BgColor           *string                  `json:"bg_color"`
-	Category          *string                  `json:"category"`
+	Name              *string                  `json:"name"` // Pointeurs pour gérer le NULL/Omission
+	Description       *string                  `json:"description"`
+	IsAvailableOnSno  *bool                    `json:"is_available_on_sno"`
+	CategoryID        *string                  `json:"category"`
 	Price             *int                     `json:"price"`
 	PriceTakeAway     *int                     `json:"price_take_away"`
 	PriceDelivery     *int                     `json:"price_delivery"`
-	ByProductOf       *string                  `json:"by_product_of"`       // Peut être null
-	IsAvailableOnSno  *bool                    `json:"is_available_on_sno"` // ou bool selon ta BDD, int ici comme PHP
-	ImageBase64       *string                  `json:"base_64"`
-	Enabled           *bool                    `json:"enabled"`
-	Available         *bool                    `json:"available"`
-	Status            *string                  `json:"status"`
 	AvailableIn       *bool                    `json:"available_in"`
 	AvailableTakeAway *bool                    `json:"available_take_away"`
 	AvailableDelivery *bool                    `json:"available_delivery"`
-	SyncUberEats      *bool                    `json:"sync_uber_eats"`
-	SyncDeliveroo     *bool                    `json:"sync_deliveroo"`
-	PriceUberEats     *int                     `json:"price_uber_eats"`
-	PriceDeliveroo    *int                     `json:"price_deliveroo"`
+	ByProductOf       *string                  `json:"by_product_of"` // Peut être null
+	BgColor           *string                  `json:"bg_color"`
+	Enabled           *bool                    `json:"enabled"`
+	Status            *string                  `json:"status"`
 	Configuration     []string                 `json:"configuration"` // Liste des IDs d'attributs configurables
 	Components        []ProductComponentUpdate `json:"components"`    // Liste des composants avec quantity et unit_id
 	Tags              []string                 `json:"tags"`          // Liste des IDs de tags
 	Allergens         []string                 `json:"allergens"`     // Liste des IDs d'allergènes
+	Integrations      IntegrationUpdate        `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
+}
+
+type IntegrationUpdate struct {
+	UberEats  IntegrationItemUpdate `json:"uber_eats"`
+	Deliveroo IntegrationItemUpdate `json:"deliveroo"`
+}
+
+type IntegrationItemUpdate struct {
+	Enabled       bool `json:"enabled"`
+	PriceOverride *int `json:"price_override,omitempty"` // Permet de spécifier un prix différent pour l'intégration
 }
 
 // ProductAttributesPayload pour la configuration des attributs

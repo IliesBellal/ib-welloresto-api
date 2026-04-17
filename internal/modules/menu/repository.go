@@ -1938,15 +1938,10 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 			by_product_of = ?,
 			is_available_on_sno = COALESCE(?, is_available_on_sno),
 			enabled = COALESCE(?, enabled),
-			available = COALESCE(?, available),
 			status = COALESCE(?, status),
 			available_in = COALESCE(?, available_in),
 			available_take_away = COALESCE(?, available_take_away),
-			available_delivery = COALESCE(?, available_delivery),
-			sync_uber_eats = COALESCE(?, sync_uber_eats),
-			sync_deliveroo = COALESCE(?, sync_deliveroo),
-			price_uber_eats = COALESCE(?, price_uber_eats),
-			price_deliveroo = COALESCE(?, price_deliveroo)
+			available_delivery = COALESCE(?, available_delivery)
 		WHERE product_id = ? AND merchant_id = ?
 	`
 
@@ -1954,27 +1949,27 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.Name,
 		p.Description,
 		p.BgColor,
-		p.Category,
+		p.CategoryID,
 		p.Price,
 		p.PriceTakeAway,
 		p.PriceDelivery,
 		p.ByProductOf,
 		p.IsAvailableOnSno,
 		p.Enabled,
-		p.Available,
 		p.Status,
 		p.AvailableIn,
 		p.AvailableTakeAway,
 		p.AvailableDelivery,
-		p.SyncUberEats,
-		p.SyncDeliveroo,
-		p.PriceUberEats,
-		p.PriceDeliveroo,
 		productID,
 		merchantID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update product basic fields: %w", err)
+	}
+
+	// Sync integration settings (Uber Eats, Deliveroo)
+	if err := r.SyncProductIntegrations(ctx, merchantID, productID, p.Integrations); err != nil {
+		return fmt.Errorf("failed to sync product integrations: %w", err)
 	}
 
 	// Sync configurable attributes
@@ -2006,6 +2001,74 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	}
 
 	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+// SyncProductIntegrations updates the integration settings for a product (Uber Eats, Deliveroo).
+// It updates the sync status and price overrides for each integration.
+func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations IntegrationUpdate) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Ownership check: verify product belongs to merchant
+	var count int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to verify product ownership: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("product not found for merchant")
+	}
+
+	// Process each integration in the list
+	// Update Uber Eats integration settings
+	if integrations.UberEats.Enabled || integrations.UberEats.PriceOverride != nil {
+		updateQuery := `
+				UPDATE products
+				SET sync_uber_eats = ?
+			`
+		args := []interface{}{integrations.UberEats.Enabled}
+
+		// Add price override if specified
+		if integrations.UberEats.PriceOverride != nil {
+			updateQuery += `, price_uber_eats = ?`
+			args = append(args, *integrations.UberEats.PriceOverride)
+		}
+
+		updateQuery += ` WHERE product_id = ? AND merchant_id = ?`
+		args = append(args, productID, merchantID)
+
+		_, err := db.ExecContext(ctx, updateQuery, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update uber eats integration: %w", err)
+		}
+	}
+
+	// Update Deliveroo integration settings
+	if integrations.Deliveroo.Enabled || integrations.Deliveroo.PriceOverride != nil {
+		updateQuery := `
+				UPDATE products
+				SET sync_deliveroo = ?
+			`
+		args := []interface{}{integrations.Deliveroo.Enabled}
+
+		// Add price override if specified
+		if integrations.Deliveroo.PriceOverride != nil {
+			updateQuery += `, price_deliveroo = ?`
+			args = append(args, *integrations.Deliveroo.PriceOverride)
+		}
+
+		updateQuery += ` WHERE product_id = ? AND merchant_id = ?`
+		args = append(args, productID, merchantID)
+
+		_, err := db.ExecContext(ctx, updateQuery, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update deliveroo integration: %w", err)
+		}
+	}
 
 	return nil
 }
