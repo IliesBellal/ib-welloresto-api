@@ -443,7 +443,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/", menuH.GetMenu)
 
-		r.Get("/products", menuH.GetAllProducts)
+		r.Get("/products", menuH.GetAllProducts) // used by: back-office
 		r.Get("/components", menuH.GetAllComponents)
 
 		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)

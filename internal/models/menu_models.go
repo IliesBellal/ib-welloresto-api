@@ -55,6 +55,7 @@ type ProductEntry struct {
 	AvailableDelivery            *bool                  `json:"available_delivery,omitempty"`
 	Category                     *string                `json:"category,omitempty"` // To Be Deleted
 	CategoryID                   *string                `json:"category_id,omitempty"`
+	CategoryName                 *string                `json:"category_name,omitempty"`
 	IsProductGroup               *bool                  `json:"is_product_group,omitempty"`
 	BgColor                      *string                `json:"bg_color,omitempty"`
 	Status                       string                 `json:"status"`
@@ -94,6 +95,7 @@ type TagEntry struct {
 	ID         string `json:"id"`
 	MerchantID string `json:"merchant_id,omitempty"`
 	Name       string `json:"name"`
+	Color      string `json:"color,omitempty"`
 }
 
 type OrderProductExtra struct {

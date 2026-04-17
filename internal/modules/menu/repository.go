@@ -753,12 +753,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "products_roots_all"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.price_uber_eats, p.price_deliveroo, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
                    p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
                    p.sync_uber_eats, p.sync_deliveroo, p.available, p.display_order
             FROM products p
+			INNER JOIN productcateg pc on pc.merchant_categ_id = p.category and pc.merchant_id = p.merchant_id
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
@@ -782,7 +783,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var hasImage bool
 
 			if err := rows.Scan(
-				&p.ProductID, &p.ByProductOf, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
+				&p.ProductID, &p.ByProductOf, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &p.PriceUberEats, &p.PriceDeliveroo,
 				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
 				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.Available, &p.DisplayOrder,
 			); err != nil {
@@ -837,11 +838,12 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "sub_products_all"
 		q := `
-            SELECT p.product_id, p.by_product_of, p.name, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
+            SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.price_uber_eats, p.price_deliveroo, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
 				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.status, p.display_order
             FROM products p
+			INNER JOIN productcateg pc on pc.merchant_categ_id = p.category and pc.merchant_id = p.merchant_id
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
@@ -860,7 +862,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var bg sql.NullString
 			var desc sql.NullString
 			var availIn, availTake, availDel sql.NullBool
-			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &p.PriceUberEats, &p.PriceDeliveroo,
 				&desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO,
 				&p.Status, &p.DisplayOrder); err != nil {
 				return nil, err
@@ -1105,7 +1107,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	tagMap := make(map[string][]models.TagEntry)
 	{
 		q := `
-			SELECT pt.product_id, t.tag_id, t.name
+			SELECT pt.product_id, t.tag_id, t.name, t.color
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
@@ -1120,7 +1122,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var productID string
 			var t models.TagEntry
-			if err := rows.Scan(&productID, &t.ID, &t.Name); err != nil {
+			if err := rows.Scan(&productID, &t.ID, &t.Name, &t.Color); err != nil {
 				return nil, err
 			}
 			tagMap[productID] = append(tagMap[productID], t)
