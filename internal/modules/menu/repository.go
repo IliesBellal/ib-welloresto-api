@@ -839,7 +839,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		step := "sub_products_all"
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.price_uber_eats, p.price_deliveroo, p.product_desc,
-                   p.available_in, p.available_take_away, p.available_delivery,
+                   p.available_in, p.available_take_away, p.available_delivery, p.image_url,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
 				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.status, p.display_order
             FROM products p
@@ -860,9 +860,9 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var by sql.NullString
 			var tvaIn, tvaDel, tvaTake sql.NullFloat64
 			var bg sql.NullString
-			var desc sql.NullString
+			var desc, imageURL sql.NullString
 			var availIn, availTake, availDel sql.NullBool
-			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &p.PriceUberEats, &p.PriceDeliveroo,
+			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &imageURL, &p.PriceUberEats, &p.PriceDeliveroo,
 				&desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO,
 				&p.Status, &p.DisplayOrder); err != nil {
 				return nil, err
@@ -872,6 +872,9 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			}
 			if tvaIn.Valid {
 				p.TVAIn = &tvaIn.Float64
+			}
+			if imageURL.Valid {
+				p.ImageURL = &imageURL.String
 			}
 			if tvaDel.Valid {
 				p.TVADelivery = &tvaDel.Float64
