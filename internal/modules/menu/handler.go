@@ -479,7 +479,7 @@ func (h *MenuHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "delete_product", map[string]string{
-		"status":  "1",
+		"status":  "success",
 		"message": "product_disabled",
 	})
 }
