@@ -22,7 +22,7 @@ func (h *Handler) GetMerchant(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 
 	merchantData, err := h.service.GetMerchant(ctx, qr)
 	if err != nil {
@@ -38,7 +38,7 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	deliveryType := r.URL.Query().Get("order_type")
 
 	log.Info("ScannOrder.GetMenu qr:" + qr + " - order_type: " + deliveryType)
@@ -63,7 +63,7 @@ func (h *Handler) GetPricingSNO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	req.QRCode = qr
 	resp, err := h.service.GetPricingSNO(ctx, &req)
 	if err != nil {
@@ -80,7 +80,7 @@ func (h *Handler) GetOrderSNO(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(ctx)
 
 	orderIDStr := chi.URLParam(r, "order_id")
-	qrCode := chi.URLParam(r, "qr_code")
+	qrCode := chi.URLParam(r, "merchant_slug")
 
 	orders, err := h.service.GetOrderSNO(ctx, qrCode, orderIDStr)
 	if err != nil {
@@ -96,7 +96,7 @@ func (h *Handler) CancelOrderSNO(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	orderIDStr := chi.URLParam(r, "order_id")
 
 	resp, err := h.service.CancelOrderSNO(ctx, qr, orderIDStr)
@@ -116,7 +116,7 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	req.QRCode = qr
 
 	create_order, err := h.service.CreateOrderSNO(r.Context(), &req)
@@ -132,7 +132,7 @@ func (h *Handler) GetBrand(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	slug := chi.URLParam(r, "slug")
+	slug := chi.URLParam(r, "brand_slug")
 	latStr := r.URL.Query().Get("lat")
 	lngStr := r.URL.Query().Get("lng")
 
@@ -164,8 +164,8 @@ func (h *Handler) CheckDeliveryZone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract QR code from URL parameter
-	qrCode := chi.URLParam(r, "qr_code")
-	log.Info("CheckDeliveryZone", zap.String("qr_code", qrCode), zap.Float64("lat", req.Lat), zap.Float64("lng", req.Lng))
+	qrCode := chi.URLParam(r, "merchant_slug")
+	log.Info("CheckDeliveryZone", zap.String("merchant_slug", qrCode), zap.Float64("lat", req.Lat), zap.Float64("lng", req.Lng))
 
 	// Call the service
 	resp, err := h.service.CheckDeliveryZone(ctx, qrCode, &req)
@@ -188,7 +188,7 @@ func (h *Handler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	deliveryType := r.URL.Query().Get("type")
 
 	log.Info("ScannOrder.GetLoyaltyPrograms qr:" + qr + " - type: " + deliveryType)
@@ -207,7 +207,7 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 
 	log.Info("ScannOrder.GetSlots qr:" + qr)
 
@@ -225,7 +225,7 @@ func (h *Handler) GetDiscounts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	orderType := r.URL.Query().Get("order_type")
 
 	log.Info("ScannOrder.GetDiscounts qr:" + qr + " - type: " + orderType)
@@ -243,7 +243,7 @@ func (h *Handler) GetDiscounts(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 
 	resp, err := h.service.GetUpsell(ctx, qr)
 	if err != nil {
@@ -258,7 +258,7 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	qr := chi.URLParam(r, "qr_code")
+	qr := chi.URLParam(r, "merchant_slug")
 	productID := chi.URLParam(r, "product_id")
 	deliveryType := r.URL.Query().Get("type") // Query param: "DELIVERY" or "TAKE_AWAY"
 
