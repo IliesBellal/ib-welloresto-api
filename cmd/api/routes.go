@@ -455,6 +455,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
 		r.Delete("/products/category/{category_id}", menuH.DeleteProductCategory)
 
+		r.Get("/products/{product_id}", menuH.GetProduct)
 		r.Patch("/products/{product_id}", menuH.UpdateProduct)
 		r.Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
 		r.Put("/products/{product_id}/image", menuH.UploadProductImage)
@@ -464,8 +465,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
-
-		r.Get("/products/{product_id}", menuH.GetProduct)
 
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/", tagsH.ListTags)

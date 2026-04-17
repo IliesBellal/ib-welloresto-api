@@ -1438,6 +1438,11 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	`
 
 	var p models.ProductEntry
+	var syncUberEats bool
+	var syncDeliveroo bool
+	var priceUberEats sql.NullInt64
+	var priceDeliveroo sql.NullInt64
+
 	err := db.QueryRowContext(ctx, query, merchantID, productID).Scan(
 		&p.ProductID,
 		&p.MerchantID,
@@ -1446,8 +1451,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.Price,
 		&p.PriceTakeAway,
 		&p.PriceDelivery,
-		&p.PriceUberEats,
-		&p.PriceDeliveroo,
+		&priceUberEats,
+		&priceDeliveroo,
 		&p.Category,
 		&p.IsProductGroup,
 		&p.AvailableIn,
@@ -1459,8 +1464,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.BgColor,
 		&p.ProductionColor,
 		&p.Status,
-		&p.SyncUberEats,
-		&p.SyncDeliveroo,
+		&syncUberEats,
+		&syncDeliveroo,
 		&p.IsAvailableOnSNO,
 		&p.Available,
 		&p.ImageURL,
@@ -1468,6 +1473,30 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Build integrations object
+	p.Integrations = ProductIntegrations{
+		UberEats: ProductIntegrationItem{
+			Enabled: syncUberEats,
+			PriceOverride: func() *int {
+				if priceUberEats.Valid {
+					val := int(priceUberEats.Int64)
+					return &val
+				}
+				return nil
+			}(),
+		},
+		Deliveroo: ProductIntegrationItem{
+			Enabled: syncDeliveroo,
+			PriceOverride: func() *int {
+				if priceDeliveroo.Valid {
+					val := int(priceDeliveroo.Int64)
+					return &val
+				}
+				return nil
+			}(),
+		},
 	}
 
 	// --- STEP 2: Load components (requires) ---
@@ -2007,7 +2036,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 
 // SyncProductIntegrations updates the integration settings for a product (Uber Eats, Deliveroo).
 // It updates the sync status and price overrides for each integration.
-func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations IntegrationUpdate) error {
+func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations ProductIntegrations) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant

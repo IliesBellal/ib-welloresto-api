@@ -73,9 +73,8 @@ type ProductEntry struct {
 	Without                      []OrderProductWithout  `json:"without"`
 	Customers                    []interface{}          `json:"customers"` // keep generic as original
 	Comment                      models.OrderComment    `json:"comment"`
-	SyncDeliveroo                bool                   `json:"sync_deliveroo,omitempty"`
-	SyncUberEats                 bool                   `json:"sync_uber_eats,omitempty"`
 	DisplayOrder                 *int                   `json:"display_order"`
+	Integrations                 ProductIntegrations    `json:"integrations,omitempty"`
 }
 
 type OrderProductExtra struct {
@@ -239,15 +238,15 @@ type ProductUpdatePayload struct {
 	Components        []ProductComponentUpdate `json:"components"`    // Liste des composants avec quantity et unit_id
 	Tags              []string                 `json:"tags"`          // Liste des IDs de tags
 	Allergens         []string                 `json:"allergens"`     // Liste des IDs d'allergènes
-	Integrations      IntegrationUpdate        `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
+	Integrations      ProductIntegrations      `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
 }
 
-type IntegrationUpdate struct {
-	UberEats  IntegrationItemUpdate `json:"uber_eats"`
-	Deliveroo IntegrationItemUpdate `json:"deliveroo"`
+type ProductIntegrations struct {
+	UberEats  ProductIntegrationItem `json:"uber_eats"`
+	Deliveroo ProductIntegrationItem `json:"deliveroo"`
 }
 
-type IntegrationItemUpdate struct {
+type ProductIntegrationItem struct {
 	Enabled       bool `json:"enabled"`
 	PriceOverride *int `json:"price_override,omitempty"` // Permet de spécifier un prix différent pour l'intégration
 }
