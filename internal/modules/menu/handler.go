@@ -600,35 +600,6 @@ func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *MenuHandler) DeleteComponentCategory(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_component_category", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	ctx := r.Context()
-	categoryID := chi.URLParam(r, "category_id")
-	if categoryID == "" {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_component_category", map[string]string{"error": "missing_parameter"})
-		return
-	}
-
-	log := logger.FromContext(ctx)
-
-	err := h.service.DeleteComponentCategory(ctx, token, categoryID)
-	if err != nil {
-		log.Error("[ERROR] DeleteComponentCategory error: " + err.Error())
-		models.SendErrorJSON(w, "menu", "delete_component_category", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "menu", "delete_component_category", map[string]string{
-		"status":  "success",
-		"message": "component_category_disabled",
-	})
-}
-
 func (h *MenuHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
