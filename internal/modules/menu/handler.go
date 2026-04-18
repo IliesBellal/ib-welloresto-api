@@ -249,7 +249,7 @@ func (h *MenuHandler) CreateProductCategory(w http.ResponseWriter, r *http.Reque
 
 	models.SendJSON(w, http.StatusOK, "menu", "create_product_category", map[string]interface{}{
 		"category_id": categoryID,
-		"status":      "1",
+		"status":      "success",
 		"message":     "product_category_created",
 	})
 }
@@ -357,7 +357,7 @@ func (h *MenuHandler) UpdateDisplayOrder(w http.ResponseWriter, r *http.Request)
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "update_display_order", map[string]string{
-		"status":  "1",
+		"status":  "success",
 		"message": "display_order_updated",
 	})
 }
@@ -392,7 +392,7 @@ func (h *MenuHandler) UpdateProductCategory(w http.ResponseWriter, r *http.Reque
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "update_product_category", map[string]string{
-		"status":  "1",
+		"status":  "success",
 		"message": "product_category_updated",
 	})
 }
@@ -421,7 +421,7 @@ func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Reque
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category", map[string]string{
-		"status":  "1",
+		"status":  "success",
 		"message": "product_category_disabled",
 	})
 }
@@ -450,7 +450,7 @@ func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "delete_component", map[string]string{
-		"status":  "1",
+		"status":  "success",
 		"message": "component_disabled",
 	})
 }
@@ -514,7 +514,7 @@ func (h *MenuHandler) SetProductCategoryAvailability(w http.ResponseWriter, r *h
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_category_availability", models.AvailabilityResponse{
-		Status: "1",
+		Status: "success",
 	})
 }
 
@@ -548,7 +548,7 @@ func (h *MenuHandler) SetProductAvailability(w http.ResponseWriter, r *http.Requ
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_product_availability", models.AvailabilityResponse{
-		Status: "1",
+		Status: "success",
 	})
 }
 
@@ -582,7 +582,7 @@ func (h *MenuHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Réponse
-	models.SendJSON(w, http.StatusOK, "menu", "update_product", map[string]string{"status": "1", "message": "product updated"})
+	models.SendJSON(w, http.StatusOK, "menu", "update_product", map[string]string{"status": "success", "message": "product updated"})
 }
 
 func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Request) {
@@ -610,7 +610,7 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "1", "message": "attributes updated"})
+	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "success", "message": "attributes updated"})
 }
 
 func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request) {
@@ -707,6 +707,7 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 
 	// 9. Réponse
 	models.SendJSON(w, http.StatusOK, "menu", "upload_product_image", map[string]interface{}{
+		"status":    "success",
 		"photo_url": publicURL,
 	})
 }
@@ -749,7 +750,7 @@ func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_deliveroo_menu", map[string]string{"status": "1", "message": "menu synced to deliveroo"})
+	models.SendJSON(w, http.StatusOK, "menu", "sync_deliveroo_menu", map[string]string{"status": "success", "message": "menu synced to deliveroo"})
 }
 
 // GetUberEatsMenu récupère le menu depuis l'API Uber Eats
@@ -790,7 +791,7 @@ func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]string{"status": "1", "message": "menu synced to uber eats"})
+	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]string{"status": "success", "message": "menu synced to uber eats"})
 }
 
 // SyncProductAllergens — PUT /menu/product/:product_id/allergens
@@ -821,7 +822,7 @@ func (h *MenuHandler) SyncProductAllergens(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_product_allergens", map[string]string{"status": "1", "message": "allergens updated"})
+	models.SendJSON(w, http.StatusOK, "menu", "sync_product_allergens", map[string]string{"status": "success", "message": "allergens updated"})
 }
 
 // BulkAssignTag — POST /menu/bulk/tags/assign
@@ -852,8 +853,49 @@ func (h *MenuHandler) BulkAssignTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_tag", map[string]interface{}{
-		"status":  "1",
+		"status":  "success",
 		"message": "tag assigned",
+		"updated": len(body.ProductIDs),
+	})
+}
+
+// BulkAssignProductsToCategory — POST /menu/products/categories/{category_id}/bulk-assign
+// Assigns multiple products (and their sub-products) to a category
+func (h *MenuHandler) BulkAssignProductsToCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_products_to_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if categoryID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	var body BulkAssignProductsToCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(body.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_category", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkAssignProductsToCategory(ctx, token, categoryID, body.ProductIDs); err != nil {
+		log.Error("[ERROR] BulkAssignProductsToCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_assign_products_to_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_products_to_category", map[string]interface{}{
+		"status":  "success",
+		"message": "products assigned to category",
 		"updated": len(body.ProductIDs),
 	})
 }
@@ -886,7 +928,7 @@ func (h *MenuHandler) BulkAssignAllergen(w http.ResponseWriter, r *http.Request)
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_allergen", map[string]interface{}{
-		"status":  "1",
+		"status":  "success",
 		"message": "allergen assigned",
 		"updated": len(body.ProductIDs),
 	})
@@ -920,7 +962,7 @@ func (h *MenuHandler) SyncProductTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_product_tags", map[string]string{"status": "1", "message": "tags updated"})
+	models.SendJSON(w, http.StatusOK, "menu", "sync_product_tags", map[string]string{"status": "success", "message": "tags updated"})
 }
 
 // GET /pos/tags
@@ -937,5 +979,8 @@ func (h *MenuHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "tags", "list", tagList)
+	models.SendJSON(w, http.StatusOK, "tags", "list", map[string]interface{}{
+		"status": "success",
+		"tags":   tagList,
+	})
 }

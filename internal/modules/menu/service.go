@@ -215,6 +215,15 @@ func (s *MenuService) UpdateProductCategory(ctx context.Context, token, category
 	return s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, payload.Name)
 }
 
+func (s *MenuService) BulkAssignProductsToCategory(ctx context.Context, token, categoryID string, productIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.BulkAssignProductsToCategory(ctx, user.MerchantID, categoryID, productIDs)
+}
+
 func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

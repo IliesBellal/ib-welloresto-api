@@ -278,3 +278,8 @@ type DisplayOrderItem struct {
 type DisplayOrderPayload struct {
 	DisplayOrder []DisplayOrderItem `json:"display_order"`
 }
+
+// BulkAssignProductsToCategoryPayload for bulk assigning products to a category
+type BulkAssignProductsToCategoryPayload struct {
+	ProductIDs []string `json:"product_ids"` // Product IDs to assign to this category
+}
