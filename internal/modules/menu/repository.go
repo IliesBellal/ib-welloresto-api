@@ -588,14 +588,14 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	}
 
 	type compBasicTmp struct {
-		ID              string
-		Name            string
-		CatID           *string
-		Status          string
-		Price           int
-		UnitOfMeasureID int
-		UnitOfMeasure   sql.NullString
-		PurchasePrice   sql.NullInt64
+		ID               string
+		Name             string
+		CatID            *string
+		Status           string
+		Price            int
+		UnitOfMeasureID  int
+		UnitOfMeasure    sql.NullString
+		PurchasePrice    sql.NullInt64
 		PurchasePriceQty sql.NullInt64
 	}
 	var allComponents []compBasicTmp
@@ -1250,14 +1250,14 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 
 	// --- STEP 2: all components (NO available filter) ---
 	type compBasicTmp struct {
-		ID              string
-		Name            string
-		CatID           *string
-		Status          string
-		Price           int
-		UnitOfMeasureID int
-		UnitOfMeasure   sql.NullString
-		PurchasePrice   sql.NullInt64
+		ID               string
+		Name             string
+		CatID            *string
+		Status           string
+		Price            int
+		UnitOfMeasureID  int
+		UnitOfMeasure    sql.NullString
+		PurchasePrice    sql.NullInt64
 		PurchasePriceQty sql.NullInt64
 	}
 	var allComponents []compBasicTmp
@@ -1362,14 +1362,14 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 	`
 
 	var (
-		id              string
-		name            string
-		catID           *string
-		status          string
-		price           int
-		unitOfMeasureID int
-		unitOfMeasure   sql.NullString
-		purchasePrice   sql.NullInt64
+		id               string
+		name             string
+		catID            *string
+		status           string
+		price            int
+		unitOfMeasureID  int
+		unitOfMeasure    sql.NullString
+		purchasePrice    sql.NullInt64
 		purchasePriceQty sql.NullInt64
 	)
 
