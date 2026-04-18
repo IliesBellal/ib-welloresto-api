@@ -568,7 +568,19 @@ func (h *MenuHandler) UpdateComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "update_component", map[string]string{"status": "success", "message": "component updated"})
+	// Récupérer le composant mis à jour pour retourner l'objet complet
+	component, err := h.service.GetComponent(ctx, token, componentID)
+	if err != nil {
+		log.Error("[ERROR] GetComponent after update error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_component", map[string]interface{}{
+		"status":    "success",
+		"message":   "component updated",
+		"component": component,
+	})
 }
 
 func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
