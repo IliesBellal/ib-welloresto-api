@@ -310,3 +310,18 @@ type UpdateAttributePayload struct {
 type BulkAssignProductsToCategoryPayload struct {
 	ProductIDs []string `json:"product_ids"` // Product IDs to assign to this category
 }
+
+// BulkUpdateProductPrice represents a single product price update
+type BulkUpdateProductPrice struct {
+	ProductID      string `json:"product_id"`      // Product ID to update
+	Price          *int   `json:"price"`           // Base price (optional)
+	PriceTakeAway  *int   `json:"price_take_away"` // Take away price (optional)
+	PriceDelivery  *int   `json:"price_delivery"`  // Delivery price (optional)
+	PriceUberEats  *int   `json:"price_uber_eats"` // Uber Eats price override (optional)
+	PriceDeliveroo *int   `json:"price_deliveroo"` // Deliveroo price override (optional)
+}
+
+// BulkUpdateProductPricesPayload for bulk updating product prices
+type BulkUpdateProductPricesPayload struct {
+	Products []BulkUpdateProductPrice `json:"products"` // Array of products with prices to update
+}

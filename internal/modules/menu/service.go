@@ -417,3 +417,13 @@ func (s *MenuService) ListTags(ctx context.Context, token string) ([]models.TagE
 
 	return s.legacy.ListTags(ctx, user.MerchantID)
 }
+
+// BulkUpdateProductPrices updates prices for multiple products in a single operation
+func (s *MenuService) BulkUpdateProductPrices(ctx context.Context, token string, products []BulkUpdateProductPrice) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.BulkUpdateProductPrices(ctx, user.MerchantID, products)
+}

@@ -3168,6 +3168,74 @@ func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]mod
 	return result, rows.Err()
 }
 
+// BulkUpdateProductPrices updates prices for multiple products
+func (r *MenuRepository) BulkUpdateProductPrices(ctx context.Context, merchantID string, products []BulkUpdateProductPrice) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	for _, product := range products {
+		// Verify product belongs to merchant
+		var count int
+		err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM products WHERE product_id = ? AND merchant_id = ?`,
+			product.ProductID, merchantID,
+		).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("failed to verify product ownership: %w", err)
+		}
+		if count == 0 {
+			return fmt.Errorf("product %s not found for merchant", product.ProductID)
+		}
+
+		// Build dynamic UPDATE query based on provided fields
+		updateParts := []string{}
+		args := []interface{}{}
+
+		if product.Price != nil {
+			updateParts = append(updateParts, "price = ?")
+			args = append(args, *product.Price)
+		}
+		if product.PriceTakeAway != nil {
+			updateParts = append(updateParts, "price_take_away = ?")
+			args = append(args, *product.PriceTakeAway)
+		}
+		if product.PriceDelivery != nil {
+			updateParts = append(updateParts, "price_delivery = ?")
+			args = append(args, *product.PriceDelivery)
+		}
+		if product.PriceUberEats != nil {
+			updateParts = append(updateParts, "price_uber_eats = ?")
+			args = append(args, *product.PriceUberEats)
+		}
+		if product.PriceDeliveroo != nil {
+			updateParts = append(updateParts, "price_deliveroo = ?")
+			args = append(args, *product.PriceDeliveroo)
+		}
+
+		// Skip if no prices provided
+		if len(updateParts) == 0 {
+			continue
+		}
+
+		// Add WHERE clause
+		args = append(args, product.ProductID, merchantID)
+
+		query := fmt.Sprintf(
+			"UPDATE products SET %s WHERE product_id = ? AND merchant_id = ?",
+			strings.Join(updateParts, ", "),
+		)
+
+		_, err = db.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update product %s prices: %w", product.ProductID, err)
+		}
+	}
+
+	// Update menu modification time
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 // DeleteProduct disables a product by setting enabled = 0.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) DeleteProduct(ctx context.Context, merchantID, productID string) error {

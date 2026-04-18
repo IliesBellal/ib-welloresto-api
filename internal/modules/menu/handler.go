@@ -1141,3 +1141,37 @@ func (h *MenuHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 		"tags":   tagList,
 	})
 }
+
+func (h *MenuHandler) BulkUpdateProductPrices(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_update_product_prices", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload BulkUpdateProductPricesPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_update_product_prices", err)
+		return
+	}
+
+	if len(payload.Products) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_update_product_prices", map[string]string{"error": "no_products_provided"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	err := h.service.BulkUpdateProductPrices(ctx, token, payload.Products)
+	if err != nil {
+		log.Error("[ERROR] BulkUpdateProductPrices error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_update_product_prices", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_update_product_prices", map[string]string{
+		"status":  "success",
+		"message": "products_prices_updated",
+	})
+}
