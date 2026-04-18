@@ -681,9 +681,9 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 					purchasePrice = &pp
 				}
 
-				var purchasePriceQty *int
+				var purchasePriceQty *float64
 				if cb.PurchasePriceQty.Valid {
-					ppq := int(cb.PurchasePriceQty.Int64)
+					ppq := float64(cb.PurchasePriceQty.Int64)
 					purchasePriceQty = &ppq
 				}
 
@@ -1258,7 +1258,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		UnitOfMeasureID  int
 		UnitOfMeasure    sql.NullString
 		PurchasePrice    sql.NullInt64
-		PurchasePriceQty sql.NullInt64
+		PurchasePriceQty sql.NullFloat64
 	}
 	var allComponents []compBasicTmp
 	{
@@ -1311,9 +1311,9 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					purchasePrice = &pp
 				}
 
-				var purchasePriceQty *int
+				var purchasePriceQty *float64
 				if cb.PurchasePriceQty.Valid {
-					ppq := int(cb.PurchasePriceQty.Int64)
+					ppq := cb.PurchasePriceQty.Float64
 					purchasePriceQty = &ppq
 				}
 
@@ -1370,7 +1370,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		unitOfMeasureID  int
 		unitOfMeasure    sql.NullString
 		purchasePrice    sql.NullInt64
-		purchasePriceQty sql.NullInt64
+		purchasePriceQty sql.NullFloat64
 	)
 
 	err := db.QueryRowContext(ctx, q, componentID, merchantID).Scan(
@@ -1395,9 +1395,9 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		pp = &ppVal
 	}
 
-	var ppq *int
+	var ppq *float64
 	if purchasePriceQty.Valid {
-		ppqVal := int(purchasePriceQty.Int64)
+		ppqVal := purchasePriceQty.Float64
 		ppq = &ppqVal
 	}
 
