@@ -1998,7 +1998,7 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		return "0", fmt.Errorf("category_not_found")
 	}
 
-	// Vérifier que l'unité de mesure existe
+	// Vérifier que l'unité de mesure de vente existe
 	var unitExists int
 	err = db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
@@ -2011,10 +2011,42 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		return "0", fmt.Errorf("unit_not_found")
 	}
 
+	// Vérifier que l'unité de mesure d'achat existe si fournie
+	if p.PurchaseUnitID != nil && *p.PurchaseUnitID != "" {
+		var purchaseUnitExists int
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
+			*p.PurchaseUnitID,
+		).Scan(&purchaseUnitExists)
+		if err != nil {
+			return "0", fmt.Errorf("check purchase unit error: %w", err)
+		}
+		if purchaseUnitExists == 0 {
+			return "0", fmt.Errorf("purchase_unit_id_not_found")
+		}
+	}
+
 	// Mettre la première lettre en majuscule
 	name := strings.TrimSpace(*p.Name)
 	if len(name) > 0 {
 		name = strings.ToUpper(string(name[0])) + name[1:]
+	}
+
+	// Déterminer les valeurs optionnelles d'achat
+	var purchaseCost interface{} = nil
+	if p.PurchaseCost != nil {
+		purchaseCost = *p.PurchaseCost
+	}
+
+	var purchaseCostQty interface{} = nil
+	if p.PurchaseCostQty != nil {
+		purchaseCostQty = *p.PurchaseCostQty
+	}
+
+	// Déterminer l'unité de mesure d'achat (par défaut = unit_id de vente)
+	unitOfMeasure := p.UnitID
+	if p.PurchaseUnitID != nil && *p.PurchaseUnitID != "" {
+		unitOfMeasure = p.PurchaseUnitID
 	}
 
 	// Insérer le composant
@@ -2025,9 +2057,11 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 			category_id,
 			component_price,
 			unit_of_measure,
+			purchase_price,
+			purchase_price_quantity,
 			enabled,
 			status
-		) VALUES (?, ?, ?, ?, ?, 1, 1)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
 	`
 
 	res, err := db.ExecContext(
@@ -2037,7 +2071,9 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		name,
 		p.CategoryID,
 		p.Price,
-		p.UnitID,
+		unitOfMeasure,
+		purchaseCost,
+		purchaseCostQty,
 	)
 	if err != nil {
 		return "0", fmt.Errorf("insert component error: %w", err)

@@ -177,6 +177,24 @@ func (h *MenuHandler) CreateComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validation des champs requis
+	if req.Name == nil || *req.Name == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "name_required"})
+		return
+	}
+	if req.CategoryID == nil || *req.CategoryID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "category_id_required"})
+		return
+	}
+	if req.UnitID == nil || *req.UnitID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "unit_id_required"})
+		return
+	}
+	if req.Price == nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "price_required"})
+		return
+	}
+
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
