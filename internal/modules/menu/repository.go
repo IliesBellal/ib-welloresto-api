@@ -1791,13 +1791,13 @@ func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, 
 
 // BulkAssignProductsToCategory assigns multiple products to a category (including their sub-products)
 func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merchantID, categoryID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
-
 	if len(productIDs) == 0 {
 		return fmt.Errorf("product_ids list cannot be empty")
 	}
 
-	// Vérifier que la catégorie existe et appartient au merchant
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 2. Vérifier que la catégorie existe et appartient au merchant
 	var categoryExists int
 	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
@@ -1810,54 +1810,47 @@ func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merch
 		return fmt.Errorf("category does not exist or is disabled")
 	}
 
-	// Construire la clause IN pour les product_ids
+	// 3. Préparer les placeholders et les arguments dans le BON ORDRE
+	// Ordre attendu par le SQL : categoryID, merchantID, puis la liste des productIDs
 	placeholders := make([]string, len(productIDs))
-	args := make([]interface{}, len(productIDs)+2) // +2 pour categoryID et merchantID
-	for i, id := range productIDs {
+	for i := range productIDs {
 		placeholders[i] = "?"
-		args[i] = id
 	}
-	args[len(productIDs)] = categoryID
-	args[len(productIDs)+1] = merchantID
-
 	inClause := strings.Join(placeholders, ",")
 
-	// UPDATE 1: Mettre à jour les produits racines dont le product_id est dans la liste
-	_, err = db.ExecContext(ctx,
-		fmt.Sprintf(
-			`UPDATE products 
-			 SET category = ?
-			 WHERE merchant_id = ? AND product_id IN (%s) AND enabled = 1`,
-			inClause,
-		),
-		args...,
-	)
+	// Construction du slice d'arguments final
+	args := make([]interface{}, 0, len(productIDs)+2)
+	args = append(args, categoryID, merchantID)
+	for _, id := range productIDs {
+		args = append(args, id)
+	}
+
+	// UPDATE 1: Produits racines
+	query1 := fmt.Sprintf(`
+        UPDATE products 
+        SET category = ? 
+        WHERE merchant_id = ? AND product_id IN (%s) AND enabled = 1`,
+		inClause)
+
+	_, err = db.ExecContext(ctx, query1, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update root products: %w", err)
 	}
 
-	// UPDATE 2: Mettre à jour les sous-produits (by_product_of) des produits assignés
-	subProductArgs := make([]interface{}, len(productIDs)+2)
-	for i, id := range productIDs {
-		subProductArgs[i] = id
-	}
-	subProductArgs[len(productIDs)] = categoryID
-	subProductArgs[len(productIDs)+1] = merchantID
+	// UPDATE 2: Sous-produits (by_product_of)
+	// On réutilise les mêmes arguments car la structure de la requête est identique
+	query2 := fmt.Sprintf(`
+        UPDATE products 
+        SET category = ? 
+        WHERE merchant_id = ? AND by_product_of IN (%s) AND enabled = 1`,
+		inClause)
 
-	_, err = db.ExecContext(ctx,
-		fmt.Sprintf(
-			`UPDATE products 
-			 SET category = ?
-			 WHERE merchant_id = ? AND by_product_of IN (%s) AND enabled = 1`,
-			inClause,
-		),
-		subProductArgs...,
-	)
+	_, err = db.ExecContext(ctx, query2, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update sub-products: %w", err)
 	}
 
-	// Rafraîchir la date de dernière mise à jour du menu
+	// Rafraîchir la date de dernière mise à jour
 	_ = r.setMenuUpdated(ctx, merchantID)
 
 	return nil
