@@ -453,7 +453,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/products/categories/{category_id}", menuH.UpdateProductCategory)
 		r.Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
-		r.Post("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory)
+		r.Patch("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory)
 		r.Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
 
 		r.Get("/products/{product_id}", menuH.GetProduct)
