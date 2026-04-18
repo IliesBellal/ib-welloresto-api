@@ -286,6 +286,26 @@ type DisplayOrderPayload struct {
 	DisplayOrder []DisplayOrderItem `json:"display_order"`
 }
 
+// UpdateAttributeOptionPayload represents an option in the update attribute payload
+type UpdateAttributeOptionPayload struct {
+	ID          *string `json:"id"`           // Optional: if not provided, option will be created
+	Title       string  `json:"title"`        // Title of the option
+	Price       int     `json:"price"`        // Price in cents
+	MaxQuantity *int    `json:"max_quantity"` // Max quantity per option
+	Enabled     *bool   `json:"enabled"`      // Whether the option is enabled
+	ExtraPrice  *int    `json:"extra_price"`  // Extra price (deprecated, use Price)
+}
+
+// UpdateAttributePayload for updating configurable attributes
+type UpdateAttributePayload struct {
+	Type    string                         `json:"type"`    // attribute_type (e.g., "CHECK", "RADIO")
+	Name    string                         `json:"name"`    // Name of the attribute
+	Title   string                         `json:"title"`   // Display title
+	Min     int                            `json:"min"`     // Minimum options to select
+	Max     int                            `json:"max"`     // Maximum options to select
+	Options []UpdateAttributeOptionPayload `json:"options"` // Array of options
+}
+
 // BulkAssignProductsToCategoryPayload for bulk assigning products to a category
 type BulkAssignProductsToCategoryPayload struct {
 	ProductIDs []string `json:"product_ids"` // Product IDs to assign to this category

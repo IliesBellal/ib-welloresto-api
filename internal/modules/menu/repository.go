@@ -160,6 +160,123 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	return attributes, nil
 }
 
+func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attributeID string, payload *UpdateAttributePayload) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 1. Verify attribute exists and belongs to merchant
+	var existsCheck int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM configurable_attributes WHERE id = ? AND merchant_id = ?`,
+		attributeID, merchantID).Scan(&existsCheck)
+	if err != nil || existsCheck == 0 {
+		return fmt.Errorf("attribute_not_found")
+	}
+
+	// 2. Update the attribute itself
+	updateAttrQuery := `
+		UPDATE configurable_attributes
+		SET 
+			attribute_type = ?,
+			name = ?,
+			title = ?,
+			min_options = ?,
+			max_options = ?
+		WHERE id = ? AND merchant_id = ?
+	`
+
+	_, err = db.ExecContext(ctx, updateAttrQuery,
+		payload.Type,
+		payload.Name,
+		payload.Title,
+		payload.Min,
+		payload.Max,
+		attributeID,
+		merchantID)
+	if err != nil {
+		return fmt.Errorf("update attribute error: %w", err)
+	}
+
+	// 3. Process options
+	for _, opt := range payload.Options {
+		if opt.ID != nil && *opt.ID != "" {
+			// Option exists - update it
+			price := opt.Price
+			if opt.ExtraPrice != nil {
+				price = *opt.ExtraPrice
+			}
+
+			maxQty := 1
+			if opt.MaxQuantity != nil {
+				maxQty = *opt.MaxQuantity
+			}
+
+			enabled := true
+			if opt.Enabled != nil {
+				enabled = *opt.Enabled
+			}
+
+			updateOptQuery := `
+				UPDATE configurable_attribute_options
+				SET 
+					title = ?,
+					extra_price = ?,
+					max_quantity = ?,
+					enabled = ?
+				WHERE id = ? AND configurable_attribute_id = ?
+			`
+
+			_, err = db.ExecContext(ctx, updateOptQuery,
+				opt.Title,
+				price,
+				maxQty,
+				enabled,
+				*opt.ID,
+				attributeID)
+			if err != nil {
+				return fmt.Errorf("update option error: %w", err)
+			}
+		} else {
+			// New option - create it
+			price := opt.Price
+			if opt.ExtraPrice != nil {
+				price = *opt.ExtraPrice
+			}
+
+			maxQty := 1
+			if opt.MaxQuantity != nil {
+				maxQty = *opt.MaxQuantity
+			}
+
+			enabled := true
+			if opt.Enabled != nil {
+				enabled = *opt.Enabled
+			}
+
+			insertOptQuery := `
+				INSERT INTO configurable_attribute_options (
+					configurable_attribute_id,
+					title,
+					extra_price,
+					max_quantity,
+					enabled
+				) VALUES (?, ?, ?, ?, ?)
+			`
+
+			_, err = db.ExecContext(ctx, insertOptQuery,
+				attributeID,
+				opt.Title,
+				price,
+				maxQty,
+				enabled)
+			if err != nil {
+				return fmt.Errorf("insert option error: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -2058,6 +2175,24 @@ func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, compon
 	return nil
 }
 
+func (r *MenuRepository) DeleteComponentCategory(ctx context.Context, merchantID, categoryID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE component_category 
+		 SET enabled = 0
+		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
+		categoryID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 // UpdateComponent met à jour les informations d'un composant
 func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, componentID string, updates *UpdateComponentPayload) error {
 	db := dbutils.GetDB(ctx, r.database)
@@ -2292,6 +2427,24 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 	id, err := res.LastInsertId()
 	if err != nil {
 		return "0", fmt.Errorf("get last insert id error: %w", err)
+	}
+
+	// Mettre à jour merchant_categ_id avec l'ID de la catégorie
+	query = `
+		UPDATE component_category 
+		SET merchant_categ_id = ?
+		WHERE merchant_id = ? AND id = ?
+	`
+
+	_, err = db.ExecContext(
+		ctx,
+		query,
+		id,
+		p.MerchantID,
+		id,
+	)
+	if err != nil {
+		return "0", fmt.Errorf("update merchant_categ_id error: %w", err)
 	}
 
 	_ = r.setMenuUpdated(ctx, p.MerchantID)

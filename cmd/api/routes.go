@@ -467,6 +467,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/products/{product_id}", menuH.DeleteProduct)
 
 		r.Get("/attributes", menuH.GetAttributes)
+		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Route("/tags", func(r chi.Router) {
@@ -491,10 +492,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
 
-		r.Post("/products", menuH.CreateProduct)                        // used by: back-office
-		r.Post("/products/categories", menuH.CreateProductCategory)     // used by: back-office
-		r.Post("/components", menuH.CreateComponent)                    // used by: back-office
-		r.Post("/components/categories", menuH.CreateComponentCategory) // used by: back-office
+		r.Post("/products", menuH.CreateProduct)                                        // used by: back-office
+		r.Post("/products/categories", menuH.CreateProductCategory)                     // used by: back-office
+		r.Post("/components", menuH.CreateComponent)                                    // used by: back-office
+		r.Post("/components/categories", menuH.CreateComponentCategory)                 // used by: back-office
+		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory) // used by: back-office
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
