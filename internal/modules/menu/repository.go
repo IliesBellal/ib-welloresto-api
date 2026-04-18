@@ -588,16 +588,20 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	}
 
 	type compBasicTmp struct {
-		ID     string
-		Name   string
-		CatID  *string
-		Status string
-		Price  int
+		ID              string
+		Name            string
+		CatID           *string
+		Status          string
+		Price           int
+		UnitOfMeasureID int
+		UnitOfMeasure   sql.NullString
+		PurchasePrice   sql.NullInt64
+		PurchasePriceQty sql.NullInt64
 	}
 	var allComponents []compBasicTmp
 	{
 		step := "all_components"
-		q := `SELECT component_id, name, category_id, status, component_price FROM components WHERE merchant_id = ?`
+		q := `SELECT component_id, name, category_id, status, component_price, unit_of_measure, COALESCE(uomd.uom_desc, '') as uom_desc, purchase_price, purchase_price_quantity FROM components c LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure WHERE c.merchant_id = ?`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
@@ -606,7 +610,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		count := 0
 		for rows.Next() {
 			var cb compBasicTmp
-			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price); err != nil {
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.PurchasePrice, &cb.PurchasePriceQty); err != nil {
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
@@ -670,19 +674,43 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		actual := []models.ComponentBasic{}
 		for _, cb := range allComponents {
 			if cb.CatID != nil && cc.ID != nil && *cb.CatID == *cc.ID {
+				// Convertir les valeurs d'achat nullables en pointeurs
+				var purchasePrice *int
+				if cb.PurchasePrice.Valid {
+					pp := int(cb.PurchasePrice.Int64)
+					purchasePrice = &pp
+				}
+
+				var purchasePriceQty *int
+				if cb.PurchasePriceQty.Valid {
+					ppq := int(cb.PurchasePriceQty.Int64)
+					purchasePriceQty = &ppq
+				}
+
+				uomID := fmt.Sprintf("%d", cb.UnitOfMeasureID)
+				uomName := ""
+				if cb.UnitOfMeasure.Valid {
+					uomName = cb.UnitOfMeasure.String
+				}
+
 				actual = append(actual, models.ComponentBasic{
-					ComponentID: cb.ID,
-					Name:        cb.Name,
-					Category:    cb.CatID,
-					Price:       cb.Price,
-					Status:      cb.Status,
+					ComponentID:      cb.ID,
+					Name:             cb.Name,
+					Category:         cb.CatID,
+					Price:            cb.Price,
+					Status:           cb.Status,
+					UnitOfMeasureID:  uomID,
+					UnitOfMeasure:    uomName,
+					PurchasePrice:    purchasePrice,
+					PurchasePriceQty: purchasePriceQty,
 				})
 			}
 		}
 		compTypes = append(compTypes, models.ComponentCategory{
-			Category:   cc.Name,
-			Order:      cc.Order,
-			Components: actual,
+			CategoryName: cc.Name,
+			CategoryID:   *cc.ID,
+			Order:        cc.Order,
+			Components:   actual,
 		})
 	}
 
@@ -1229,6 +1257,8 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		Price           int
 		UnitOfMeasureID int
 		UnitOfMeasure   sql.NullString
+		PurchasePrice   sql.NullInt64
+		PurchasePriceQty sql.NullInt64
 	}
 	var allComponents []compBasicTmp
 	{
@@ -1241,7 +1271,9 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				c.status, 
 				c.component_price,
 				c.unit_of_measure,
-				COALESCE(uomd.uom_desc, '') as uom_desc
+				COALESCE(uomd.uom_desc, '') as uom_desc,
+				c.purchase_price,
+				c.purchase_price_quantity
 			FROM components c
 			LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
 			WHERE c.merchant_id = ? and c.enabled = 1
@@ -1253,7 +1285,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		defer rows.Close()
 		for rows.Next() {
 			var cb compBasicTmp
-			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure); err != nil {
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.PurchasePrice, &cb.PurchasePriceQty); err != nil {
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
@@ -1271,14 +1303,30 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				if cb.UnitOfMeasure.Valid {
 					uomName = cb.UnitOfMeasure.String
 				}
+
+				// Convertir les valeurs d'achat nullables en pointeurs
+				var purchasePrice *int
+				if cb.PurchasePrice.Valid {
+					pp := int(cb.PurchasePrice.Int64)
+					purchasePrice = &pp
+				}
+
+				var purchasePriceQty *int
+				if cb.PurchasePriceQty.Valid {
+					ppq := int(cb.PurchasePriceQty.Int64)
+					purchasePriceQty = &ppq
+				}
+
 				actual = append(actual, models.ComponentBasic{
-					ComponentID:     cb.ID,
-					Name:            cb.Name,
-					Category:        cb.CatID,
-					Price:           cb.Price,
-					Status:          cb.Status,
-					UnitOfMeasureID: uomID,
-					UnitOfMeasure:   uomName,
+					ComponentID:      cb.ID,
+					Name:             cb.Name,
+					Category:         cb.CatID,
+					Price:            cb.Price,
+					Status:           cb.Status,
+					UnitOfMeasureID:  uomID,
+					UnitOfMeasure:    uomName,
+					PurchasePrice:    purchasePrice,
+					PurchasePriceQty: purchasePriceQty,
 				})
 			}
 		}
@@ -1291,6 +1339,79 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	}
 
 	return compTypes, nil
+}
+
+// GetComponent retrieves a single component by ID
+func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, componentID string) (*models.ComponentBasic, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	q := `
+		SELECT 
+			c.component_id, 
+			c.name, 
+			c.category_id, 
+			c.status, 
+			c.component_price,
+			c.unit_of_measure,
+			COALESCE(uomd.uom_desc, '') as uom_desc,
+			c.purchase_price,
+			c.purchase_price_quantity
+		FROM components c
+		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
+		WHERE c.component_id = ? AND c.merchant_id = ? AND c.enabled = 1
+	`
+
+	var (
+		id              string
+		name            string
+		catID           *string
+		status          string
+		price           int
+		unitOfMeasureID int
+		unitOfMeasure   sql.NullString
+		purchasePrice   sql.NullInt64
+		purchasePriceQty sql.NullInt64
+	)
+
+	err := db.QueryRowContext(ctx, q, componentID, merchantID).Scan(
+		&id, &name, &catID, &status, &price, &unitOfMeasureID, &unitOfMeasure, &purchasePrice, &purchasePriceQty,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("component_not_found")
+		}
+		return nil, fmt.Errorf("get component query error: %w", err)
+	}
+
+	uomID := fmt.Sprintf("%d", unitOfMeasureID)
+	uomName := ""
+	if unitOfMeasure.Valid {
+		uomName = unitOfMeasure.String
+	}
+
+	var pp *int
+	if purchasePrice.Valid {
+		ppVal := int(purchasePrice.Int64)
+		pp = &ppVal
+	}
+
+	var ppq *int
+	if purchasePriceQty.Valid {
+		ppqVal := int(purchasePriceQty.Int64)
+		ppq = &ppqVal
+	}
+
+	return &models.ComponentBasic{
+		ComponentID:      id,
+		Name:             name,
+		Category:         catID,
+		Price:            price,
+		Status:           status,
+		UnitOfMeasureID:  uomID,
+		UnitOfMeasure:    uomName,
+		PurchasePrice:    pp,
+		PurchasePriceQty: ppq,
+	}, nil
 }
 
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {

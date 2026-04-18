@@ -446,6 +446,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
+		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office
 		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)
 		r.Patch("/components/{component_id}", menuH.UpdateComponent)  // used by: back-office
 		r.Delete("/components/{component_id}", menuH.DeleteComponent) // used by: back-office

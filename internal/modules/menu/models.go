@@ -116,11 +116,15 @@ type ComponentCategory struct {
 }
 
 type ComponentBasic struct {
-	ComponentID int64   `json:"component_id"`
-	Name        string  `json:"name"`
-	Category    *string `json:"category"`
-	Price       int     `json:"price"`
-	Status      int     `json:"status"`
+	ComponentID      int64   `json:"component_id"`
+	Name             string  `json:"name"`
+	Category         *string `json:"category"`
+	Price            int     `json:"price"`
+	Status           int     `json:"status"`
+	UnitOfMeasureID  string  `json:"unit_of_measure_id,omitempty"`
+	UnitOfMeasure    string  `json:"unit_of_measure,omitempty"`
+	PurchasePrice    *int    `json:"purchase_price,omitempty"`
+	PurchasePriceQty *int    `json:"purchase_price_qty,omitempty"`
 }
 
 // configurable attributes

@@ -164,6 +164,36 @@ func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *MenuHandler) GetComponent(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_component", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	componentID := chi.URLParam(r, "component_id")
+	if componentID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "get_component", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	component, err := h.service.GetComponent(ctx, token, componentID)
+	if err != nil {
+		log.Error("[ERROR] GetComponent error: " + err.Error())
+		if err.Error() == "component_not_found" {
+			models.SendJSON(w, http.StatusNotFound, "menu", "get_component", map[string]string{"error": "component_not_found"})
+			return
+		}
+		models.SendErrorJSON(w, "menu", "get_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_component", component)
+}
+
 func (h *MenuHandler) CreateComponent(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -205,10 +235,18 @@ func (h *MenuHandler) CreateComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "create_component", map[string]interface{}{
-		"component_id": componentID,
-		"status":       "1",
-		"message":      "component_created",
+	// Récupérer le composant créé pour retourner l'objet complet
+	component, err := h.service.GetComponent(ctx, token, componentID)
+	if err != nil {
+		log.Error("[ERROR] GetComponent after create error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "menu", "create_component", map[string]interface{}{
+		"status":    "success",
+		"message":   "component_created",
+		"component": component,
 	})
 }
 

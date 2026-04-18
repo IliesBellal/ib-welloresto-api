@@ -233,6 +233,15 @@ func (s *MenuService) UpdateComponent(ctx context.Context, token, componentID st
 	return s.legacy.UpdateComponent(ctx, user.MerchantID, componentID, updates)
 }
 
+func (s *MenuService) GetComponent(ctx context.Context, token, componentID string) (*models.ComponentBasic, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetComponent(ctx, user.MerchantID, componentID)
+}
+
 func (s *MenuService) DeleteProductCategory(ctx context.Context, token, categoryID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
