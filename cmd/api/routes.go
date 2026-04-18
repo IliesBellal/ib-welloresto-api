@@ -443,17 +443,17 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/", menuH.GetMenu)
 
-		r.Get("/products", menuH.GetAllProducts) // used by: back-office
-		r.Get("/components", menuH.GetAllComponents)
+		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
+		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
 		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)
 		r.Delete("/components/{component_id}", menuH.DeleteComponent)
 
 		r.Patch("/display-orders", menuH.UpdateDisplayOrder)
 
-		r.Patch("/products/category/{category_id}", menuH.UpdateProductCategory)
-		r.Patch("/products/category/{category_id}/availability", menuH.SetProductCategoryAvailability)
-		r.Delete("/products/category/{category_id}", menuH.DeleteProductCategory)
+		r.Patch("/products/categories/{category_id}", menuH.UpdateProductCategory)
+		r.Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
+		r.Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
 
 		r.Get("/products/{product_id}", menuH.GetProduct)
 		r.Patch("/products/{product_id}", menuH.UpdateProduct)
@@ -488,10 +488,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu)
 
-		r.Post("/products/create", menuH.CreateProduct)
-		r.Post("/components/create", menuH.CreateComponent)
-		r.Post("/components/category/create", menuH.CreateComponentCategory)
-		r.Post("/products/category/create", menuH.CreateProductCategory)
+		r.Post("/products", menuH.CreateProduct)                        // used by: back-office
+		r.Post("/products/categories", menuH.CreateProductCategory)     // used by: back-office
+		r.Post("/components", menuH.CreateComponent)                    // used by: back-office
+		r.Post("/components/categories", menuH.CreateComponentCategory) // used by: back-office
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
