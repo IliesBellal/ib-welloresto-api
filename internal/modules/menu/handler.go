@@ -171,9 +171,9 @@ func (h *MenuHandler) CreateComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateComponentPayload
+	var req UpdateComponentPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "invalid_body"})
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_component", map[string]string{"error": "invalid_body", "message": err.Error()})
 		return
 	}
 

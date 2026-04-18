@@ -112,7 +112,7 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
 }
 
-func (s *MenuService) CreateComponent(ctx context.Context, token string, req *CreateComponentPayload) (string, error) {
+func (s *MenuService) CreateComponent(ctx context.Context, token string, req *UpdateComponentPayload) (string, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return "", err

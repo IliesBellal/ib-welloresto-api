@@ -247,15 +247,6 @@ type ProductAttributesPayload struct {
 	Configuration []string `json:"configuration"` // Liste des ID d'attributs
 }
 
-// CreateComponentPayload pour la création de composants
-type CreateComponentPayload struct {
-	Name       string `json:"name"`        // Nom du composant
-	CategoryID string `json:"category_id"` // ID de la catégorie
-	UnitID     string `json:"unit_id"`     // ID de l'unité de mesure
-	Price      int    `json:"price"`       // Prix en centimes
-	MerchantID string `json:"-"`           // Sera défini par le service
-}
-
 // UpdateComponentPayload pour la mise à jour de composants
 type UpdateComponentPayload struct {
 	Name            *string `json:"name"`              // Nom du composant (optionnel)
@@ -263,6 +254,9 @@ type UpdateComponentPayload struct {
 	PurchaseCost    *int    `json:"purchase_cost"`     // Coût d'achat en centimes (optionnel)
 	PurchaseUnitID  *string `json:"purchase_unit_id"`  // ID unité de mesure d'achat (optionnel)
 	PurchaseCostQty *int    `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
+	MerchantID      string  `json:"-"`                 // ID du marchand, à récupérer du token
+	CategoryID      *string `json:"category_id"`       // ID de la catégorie
+	UnitID          *string `json:"unit_id"`           // ID de l'unité de mesure
 }
 
 // UpsertComponentCategoryPayload pour la création de catégories de composants

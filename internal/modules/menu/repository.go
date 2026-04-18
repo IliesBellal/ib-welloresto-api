@@ -1982,7 +1982,7 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 	return nil
 }
 
-func (r *MenuRepository) CreateComponent(ctx context.Context, p *CreateComponentPayload) (string, error) {
+func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponentPayload) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Vérifier que la catégorie existe
@@ -2012,7 +2012,7 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *CreateComponent
 	}
 
 	// Mettre la première lettre en majuscule
-	name := strings.TrimSpace(p.Name)
+	name := strings.TrimSpace(*p.Name)
 	if len(name) > 0 {
 		name = strings.ToUpper(string(name[0])) + name[1:]
 	}
