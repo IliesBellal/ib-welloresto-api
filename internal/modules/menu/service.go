@@ -179,6 +179,15 @@ func (s *MenuService) UpdateAttribute(ctx context.Context, token, attributeID st
 	return s.legacy.UpdateAttribute(ctx, user.MerchantID, attributeID, payload)
 }
 
+func (s *MenuService) DeleteAttribute(ctx context.Context, token, attributeID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.DeleteAttribute(ctx, user.MerchantID, attributeID)
+}
+
 func (s *MenuService) SetComponentStatus(ctx context.Context, token, cid, status string) (int64, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

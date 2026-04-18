@@ -168,6 +168,35 @@ func (h *MenuHandler) UpdateAttribute(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "update_attribute", map[string]string{"status": "success", "message": "attribute updated"})
 }
 
+func (h *MenuHandler) DeleteAttribute(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_attribute", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	attributeID := chi.URLParam(r, "attribute_id")
+	if attributeID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_attribute", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	err := h.service.DeleteAttribute(ctx, token, attributeID)
+	if err != nil {
+		log.Error("[ERROR] DeleteAttribute error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "delete_attribute", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_attribute", map[string]string{
+		"status":  "success",
+		"message": "attribute_disabled",
+	})
+}
+
 func (h *MenuHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

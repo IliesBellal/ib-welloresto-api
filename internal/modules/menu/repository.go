@@ -196,6 +196,14 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 		return fmt.Errorf("update attribute error: %w", err)
 	}
 
+	// 2.5. Disable all existing options for this attribute (before processing new ones)
+	_, err = db.ExecContext(ctx,
+		`UPDATE configurable_attribute_options SET enabled = 0 WHERE configurable_attribute_id = ?`,
+		attributeID)
+	if err != nil {
+		return fmt.Errorf("disable options error: %w", err)
+	}
+
 	// 3. Process options
 	for _, opt := range payload.Options {
 		if opt.ID != nil && *opt.ID != "" {
@@ -272,6 +280,29 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				return fmt.Errorf("insert option error: %w", err)
 			}
 		}
+	}
+
+	return nil
+}
+
+func (r *MenuRepository) DeleteAttribute(ctx context.Context, merchantID, attributeID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Verify attribute exists and belongs to merchant
+	var existsCheck int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM configurable_attributes WHERE id = ? AND merchant_id = ?`,
+		attributeID, merchantID).Scan(&existsCheck)
+	if err != nil || existsCheck == 0 {
+		return fmt.Errorf("attribute_not_found")
+	}
+
+	// Disable the attribute by setting enabled = 0
+	_, err = db.ExecContext(ctx,
+		`UPDATE configurable_attributes SET enabled = 0 WHERE id = ? AND merchant_id = ?`,
+		attributeID, merchantID)
+	if err != nil {
+		return fmt.Errorf("delete attribute error: %w", err)
 	}
 
 	return nil

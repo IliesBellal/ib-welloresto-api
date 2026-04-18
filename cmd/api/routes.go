@@ -470,6 +470,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
+		r.Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Route("/tags", func(r chi.Router) {
