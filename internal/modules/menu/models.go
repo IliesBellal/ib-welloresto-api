@@ -232,6 +232,7 @@ type ProductUpdatePayload struct {
 	AvailableDelivery *bool                      `json:"available_delivery"`
 	ByProductOf       *string                    `json:"by_product_of"` // Peut être null
 	BgColor           *string                    `json:"bg_color"`
+	ProductionColor   *string                    `json:"production_color"`
 	Enabled           *bool                      `json:"enabled"`
 	Status            *string                    `json:"status"`
 	Configuration     []string                   `json:"configuration"` // Liste des IDs d'attributs configurables
