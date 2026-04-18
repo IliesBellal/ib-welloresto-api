@@ -200,13 +200,13 @@ type AttributeOption struct {
 type CreateProductPayload struct {
 	MerchantID     string  `json:"merchant_id"`
 	Name           string  `json:"name"`
-	ProductDesc    string  `json:"product_desc"`
+	ProductDesc    string  `json:"description"`
 	Price          float64 `json:"price"`
 	PriceTakeAway  float64 `json:"price_take_away"`
 	PriceDelivery  float64 `json:"price_delivery"`
-	TvaInID        string  `json:"tva_in"`
-	TvaDeliveryID  string  `json:"tva_delivery"`
-	TvaTakeAwayID  string  `json:"tva_take_away"`
+	TvaInID        string  `json:"tva_in_id"`
+	TvaDeliveryID  string  `json:"tva_delivery_id"`
+	TvaTakeAwayID  string  `json:"tva_take_away_id"`
 	CategoryID     string  `json:"category_id"`
 	IsProductGroup bool    `json:"is_product_group"`
 }

@@ -1296,7 +1296,18 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	// Vérifier que la catégorie existe et est activée
+	// --- VALIDATION 1: Vérifier les champs obligatoires de TVA ---
+	if p.TvaInID == "" {
+		return "0", fmt.Errorf("tva_in_id is required")
+	}
+	if p.TvaDeliveryID == "" {
+		return "0", fmt.Errorf("tva_delivery_id is required")
+	}
+	if p.TvaTakeAwayID == "" {
+		return "0", fmt.Errorf("tva_take_away_id is required")
+	}
+
+	// --- VALIDATION 2: Vérifier que la catégorie existe et est activée ---
 	var categoryExists int
 	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
@@ -1309,6 +1320,51 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		return "0", fmt.Errorf("category does not exist or is disabled")
 	}
 
+	// --- VALIDATION 3: Vérifier que tous les taux de TVA existent et sont activés ---
+	var tvaCount int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tva_categories 
+		 WHERE enabled = 1 AND tva_id IN (?, ?, ?)`,
+		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
+	).Scan(&tvaCount)
+	if err != nil {
+		return "0", fmt.Errorf("failed to check tva rates existence: %w", err)
+	}
+	if tvaCount != 3 {
+		return "0", fmt.Errorf("one or more tva rates do not exist or are disabled: provided %d but found %d", 3, tvaCount)
+	}
+
+	// --- VALIDATION 4: Vérifier que les taux TVA existent tous dans les résultats ---
+	var tvaInExists, tvaDeliveryExists, tvaTakeAwayExists int
+	err = db.QueryRowContext(ctx,
+		`SELECT 
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_in_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_delivery_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_take_away_count`,
+		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
+	).Scan(&tvaInExists, &tvaDeliveryExists, &tvaTakeAwayExists)
+	if err != nil {
+		return "0", fmt.Errorf("failed to validate individual tva rates: %w", err)
+	}
+	if tvaInExists == 0 {
+		return "0", fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
+	}
+	if tvaDeliveryExists == 0 {
+		return "0", fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
+	}
+	if tvaTakeAwayExists == 0 {
+		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
+	}
+
+	// Calculer le prix le plus haut entre price, price_delivery, et price_takeaway
+	maxPrice := p.Price
+	if p.PriceDelivery > maxPrice {
+		maxPrice = p.PriceDelivery
+	}
+	if p.PriceTakeAway > maxPrice {
+		maxPrice = p.PriceTakeAway
+	}
+
 	query := `
 		INSERT INTO products (
 			merchant_id,
@@ -1317,12 +1373,14 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 			price,
 			price_take_away,
 			price_delivery,
+			price_uber_eats,
+			price_deliveroo,
 			tva_in_id,
 			tva_delivery_id,
 			tva_take_away_id,
 			category,
 			is_product_group
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	res, err := db.ExecContext(
@@ -1334,6 +1392,8 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		p.Price,
 		p.PriceTakeAway,
 		p.PriceDelivery,
+		maxPrice, // price_uber_eats
+		maxPrice, // price_deliveroo
 		p.TvaInID,
 		p.TvaDeliveryID,
 		p.TvaTakeAwayID,
