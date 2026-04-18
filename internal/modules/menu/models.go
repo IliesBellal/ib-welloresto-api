@@ -256,6 +256,15 @@ type CreateComponentPayload struct {
 	MerchantID string `json:"-"`           // Sera défini par le service
 }
 
+// UpdateComponentPayload pour la mise à jour de composants
+type UpdateComponentPayload struct {
+	Name            *string `json:"name"`              // Nom du composant (optionnel)
+	Price           *int    `json:"price"`             // Prix de vente en centimes (optionnel)
+	PurchaseCost    *int    `json:"purchase_cost"`     // Coût d'achat en centimes (optionnel)
+	PurchaseUnitID  *string `json:"purchase_unit_id"`  // ID unité de mesure d'achat (optionnel)
+	PurchaseCostQty *int    `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
+}
+
 // UpsertComponentCategoryPayload pour la création de catégories de composants
 type UpsertComponentCategoryPayload struct {
 	Name       string `json:"name"` // Nom de la catégorie

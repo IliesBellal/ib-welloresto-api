@@ -1892,6 +1892,96 @@ func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, compon
 	return nil
 }
 
+// UpdateComponent met à jour les informations d'un composant
+func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, componentID string, updates *UpdateComponentPayload) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Vérifier que le composant existe et appartient au merchant
+	var componentExists int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM components WHERE component_id = ? AND merchant_id = ? AND enabled = 1`,
+		componentID, merchantID,
+	).Scan(&componentExists)
+	if err != nil {
+		return fmt.Errorf("failed to check component existence: %w", err)
+	}
+	if componentExists == 0 {
+		return fmt.Errorf("component does not exist or is disabled")
+	}
+
+	// Vérifier les unités de mesure si fournies
+	if updates.PurchaseUnitID != nil && *updates.PurchaseUnitID != "" {
+		var unitExists int
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
+			*updates.PurchaseUnitID,
+		).Scan(&unitExists)
+		if err != nil {
+			return fmt.Errorf("failed to check purchase unit: %w", err)
+		}
+		if unitExists == 0 {
+			return fmt.Errorf("purchase_unit_id does not exist")
+		}
+	}
+
+	// Construire la requête UPDATE dynamiquement
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if updates.Name != nil && *updates.Name != "" {
+		// Mettre la première lettre en majuscule
+		name := strings.TrimSpace(*updates.Name)
+		if len(name) > 0 {
+			name = strings.ToUpper(string(name[0])) + name[1:]
+		}
+		updateFields = append(updateFields, "name = ?")
+		updateArgs = append(updateArgs, name)
+	}
+
+	if updates.Price != nil {
+		updateFields = append(updateFields, "component_price = ?")
+		updateArgs = append(updateArgs, *updates.Price)
+	}
+
+	if updates.PurchaseCost != nil {
+		updateFields = append(updateFields, "purchase_price = ?")
+		updateArgs = append(updateArgs, *updates.PurchaseCost)
+	}
+
+	if updates.PurchaseCostQty != nil {
+		updateFields = append(updateFields, "purchase_price_quantity = ?")
+		updateArgs = append(updateArgs, *updates.PurchaseCostQty)
+	}
+
+	if updates.PurchaseUnitID != nil && *updates.PurchaseUnitID != "" {
+		updateFields = append(updateFields, "unit_of_measure = ?")
+		updateArgs = append(updateArgs, *updates.PurchaseUnitID)
+	}
+
+	// S'il n'y a rien à mettre à jour, retourner sans erreur
+	if len(updateFields) == 0 {
+		return nil
+	}
+
+	// Ajouter componentID et merchantID pour la clause WHERE
+	updateArgs = append(updateArgs, componentID, merchantID)
+
+	// Exécuter la requête UPDATE
+	query := fmt.Sprintf(
+		`UPDATE components SET %s WHERE component_id = ? AND merchant_id = ? AND enabled = 1`,
+		strings.Join(updateFields, ", "),
+	)
+
+	_, err = db.ExecContext(ctx, query, updateArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to update component: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 func (r *MenuRepository) CreateComponent(ctx context.Context, p *CreateComponentPayload) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 

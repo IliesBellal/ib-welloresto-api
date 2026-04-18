@@ -426,6 +426,38 @@ func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (h *MenuHandler) UpdateComponent(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_component", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	componentID := chi.URLParam(r, "component_id")
+	if componentID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_component", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var payload UpdateComponentPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendErrorJSON(w, "menu", "update_component", err)
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	err := h.service.UpdateComponent(ctx, token, componentID, &payload)
+	if err != nil {
+		log.Error("[ERROR] UpdateComponent error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_component", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_component", map[string]string{"status": "success", "message": "component updated"})
+}
+
 func (h *MenuHandler) DeleteComponent(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
