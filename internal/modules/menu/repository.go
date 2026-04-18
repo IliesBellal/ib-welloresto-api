@@ -160,6 +160,131 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	return attributes, nil
 }
 
+func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attributeID string) (*Attribute, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 1. Récupération de l'attribut
+	attrQuery := `
+        SELECT id, attribute_type, name, title, min_options, max_options
+        FROM configurable_attributes
+        WHERE id = ? AND merchant_id = ? AND enabled = 1`
+
+	var attr Attribute
+	err := db.QueryRowContext(ctx, attrQuery, attributeID, merchantID).Scan(
+		&attr.ID, &attr.Type, &attr.Name, &attr.Title, &attr.Min, &attr.Max)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("attribute_not_found")
+		}
+		return nil, fmt.Errorf("query attribute failed: %w", err)
+	}
+
+	// Initialisation à vide pour éviter le "null" en JSON si l'attribut n'a pas d'options
+	attr.Options = []AttributeOption{}
+
+	// 2. Récupération des options
+	optQuery := `
+        SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled
+        FROM configurable_attribute_options
+        WHERE configurable_attribute_id = ? AND enabled = 1`
+
+	optRows, err := db.QueryContext(ctx, optQuery, attributeID)
+	if err != nil {
+		return nil, fmt.Errorf("query options failed: %w", err)
+	}
+	defer optRows.Close()
+
+	for optRows.Next() {
+		var opt AttributeOption
+		var parentAttrID string
+
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled); err != nil {
+			return nil, fmt.Errorf("scan option failed: %w", err)
+		}
+
+		attr.Options = append(attr.Options, opt)
+	}
+
+	if err := optRows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error (options): %w", err)
+	}
+
+	return &attr, nil
+}
+
+func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string, payload *UpdateAttributePayload) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Generate new UUID for attribute
+	attributeID := helpers.GenerateUUID()
+
+	// Insert the new attribute
+	insertAttrQuery := `
+		INSERT INTO configurable_attributes (
+			id,
+			merchant_id,
+			attribute_type,
+			name,
+			title,
+			min_options,
+			max_options,
+			enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+	`
+
+	_, err := db.ExecContext(ctx, insertAttrQuery,
+		attributeID,
+		merchantID,
+		payload.Type,
+		payload.Name,
+		payload.Title,
+		payload.Min,
+		payload.Max)
+	if err != nil {
+		return "", fmt.Errorf("insert attribute error: %w", err)
+	}
+
+	// Process options
+	for _, opt := range payload.Options {
+		price := opt.Price
+		if opt.ExtraPrice != nil {
+			price = *opt.ExtraPrice
+		}
+
+		maxQty := 1
+		if opt.MaxQuantity != nil {
+			maxQty = *opt.MaxQuantity
+		}
+
+		enabled := true
+		if opt.Enabled != nil {
+			enabled = *opt.Enabled
+		}
+
+		insertOptQuery := `
+			INSERT INTO configurable_attribute_options (
+				configurable_attribute_id,
+				title,
+				extra_price,
+				max_quantity,
+				enabled
+			) VALUES (?, ?, ?, ?, ?)
+		`
+
+		_, err = db.ExecContext(ctx, insertOptQuery,
+			attributeID,
+			opt.Title,
+			price,
+			maxQty,
+			enabled)
+		if err != nil {
+			return "", fmt.Errorf("insert option error: %w", err)
+		}
+	}
+
+	return attributeID, nil
+}
+
 func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attributeID string, payload *UpdateAttributePayload) error {
 	db := dbutils.GetDB(ctx, r.database)
 

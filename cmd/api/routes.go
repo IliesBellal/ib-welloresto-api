@@ -469,6 +469,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/products/{product_id}", menuH.DeleteProduct)
 
 		r.Get("/attributes", menuH.GetAttributes)
+		r.Get("/attributes/{attribute_id}", menuH.GetAttribute) // used by: back-office
+		r.Post("/attributes", menuH.CreateAttribute)            // used by: back-office
 		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
 		r.Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)

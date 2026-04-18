@@ -140,6 +140,68 @@ func (h *MenuHandler) GetAttributes(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get_attributes", updated)
 }
 
+func (h *MenuHandler) GetAttribute(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_attribute", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	attributeID := chi.URLParam(r, "attribute_id")
+	if attributeID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "get_attribute", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	ctx := r.Context()
+
+	attribute, err := h.service.GetAttribute(ctx, token, attributeID)
+	if err != nil {
+		models.SendErrorJSON(w, "menu", "get_attribute", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_attribute", attribute)
+}
+
+func (h *MenuHandler) CreateAttribute(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "create_attribute", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload UpdateAttributePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_attribute", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	attributeID, err := h.service.CreateAttribute(ctx, token, &payload)
+	if err != nil {
+		log.Error("[ERROR] CreateAttribute error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_attribute", err)
+		return
+	}
+
+	// Fetch the complete attribute object to return
+	attribute, err := h.service.GetAttribute(ctx, token, attributeID)
+	if err != nil {
+		log.Error("[ERROR] GetAttribute error after creation: " + err.Error())
+		models.SendErrorJSON(w, "menu", "create_attribute", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "menu", "create_attribute", map[string]interface{}{
+		"status":    "success",
+		"message":   "attribute_created",
+		"attribute": attribute,
+	})
+}
+
 func (h *MenuHandler) UpdateAttribute(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

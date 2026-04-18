@@ -170,6 +170,24 @@ func (s *MenuService) GetAttributes(ctx context.Context, token string) (interfac
 	return s.legacy.GetAttributes(ctx, user.MerchantID)
 }
 
+func (s *MenuService) GetAttribute(ctx context.Context, token, attributeID string) (interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetAttribute(ctx, user.MerchantID, attributeID)
+}
+
+func (s *MenuService) CreateAttribute(ctx context.Context, token string, payload *UpdateAttributePayload) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return s.legacy.CreateAttribute(ctx, user.MerchantID, payload)
+}
+
 func (s *MenuService) UpdateAttribute(ctx context.Context, token, attributeID string, payload *UpdateAttributePayload) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
