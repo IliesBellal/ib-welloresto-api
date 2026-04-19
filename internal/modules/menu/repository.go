@@ -870,7 +870,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		UnitOfMeasureID         int
 		UnitOfMeasure           sql.NullString
 		PurchasePrice           sql.NullInt64
-		PurchasePriceQty        sql.NullInt64
+		PurchasePriceQty        sql.NullFloat64
 		PurchaseUnitOfMeasureID sql.NullInt64
 		PurchaseUnitOfMeasure   sql.NullString
 	}
@@ -959,7 +959,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 				var purchasePriceQty *float64
 				if cb.PurchasePriceQty.Valid {
-					ppq := float64(cb.PurchasePriceQty.Int64)
+					ppq := float64(cb.PurchasePriceQty.Float64)
 					purchasePriceQty = &ppq
 				}
 
