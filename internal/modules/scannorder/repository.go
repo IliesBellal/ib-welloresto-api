@@ -219,6 +219,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 		OR NOT d.is_time_limited
 	)
 	AND d.available = true
+	AND d.enabled = true
 	`
 
 	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
