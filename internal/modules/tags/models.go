@@ -44,3 +44,24 @@ func (r *UpdateTagsDisplayOrderRequest) Validate() error {
 	}
 	return nil
 }
+
+// UpdateTagRequest is the DTO for updating a tag.
+type UpdateTagRequest struct {
+	Name         *string `json:"name,omitempty"`
+	Color        *string `json:"color,omitempty"`
+	DisplayOrder *int    `json:"display_order,omitempty"`
+}
+
+// Validate checks that the request is valid
+func (r *UpdateTagRequest) Validate() error {
+	if r.Name != nil && len(*r.Name) == 0 {
+		return models.ErrInvalidInput
+	}
+	if r.Name != nil && len(*r.Name) > 100 {
+		return models.ErrInvalidInput
+	}
+	if r.DisplayOrder != nil && *r.DisplayOrder < 0 {
+		return models.ErrInvalidInput
+	}
+	return nil
+}

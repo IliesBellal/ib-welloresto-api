@@ -3,6 +3,7 @@ package tags
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -176,6 +177,87 @@ func (r *Repository) UpdateTagsDisplayOrder(ctx context.Context, merchantID stri
 	}
 
 	return nil
+}
+
+// UpdateTag updates a tag's properties (name, color, display_order).
+// Only updates the fields that are provided (non-nil).
+func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID string, req *UpdateTagRequest) (*models.TagEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	// 1. Verify tag belongs to merchant and exists
+	var tagExists int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?`,
+		tagID, merchantID,
+	).Scan(&tagExists); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	if tagExists == 0 {
+		return nil, models.ErrForbidden
+	}
+
+	// 2. Build dynamic UPDATE query
+	var updates []string
+	var args []interface{}
+
+	if req.Name != nil {
+		updates = append(updates, "name = ?")
+		args = append(args, *req.Name)
+	}
+	if req.Color != nil {
+		updates = append(updates, "color = ?")
+		args = append(args, *req.Color)
+	}
+	if req.DisplayOrder != nil {
+		updates = append(updates, "display_order = ?")
+		args = append(args, *req.DisplayOrder)
+	}
+
+	// If nothing to update, return current tag
+	if len(updates) == 0 {
+		var t models.TagEntry
+		err := db.QueryRowContext(ctx,
+			`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, COALESCE(color, '') as color
+			 FROM tags
+			 WHERE tag_id = ? AND merchant_id = ?`,
+			tagID, merchantID,
+		).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color)
+		if err != nil {
+			log.Error(err.Error())
+			return nil, err
+		}
+		return &t, nil
+	}
+
+	// 3. Execute update
+	args = append(args, tagID, merchantID)
+	updateSQL := `UPDATE tags SET ` + strings.Join(updates, ", ") + ` WHERE tag_id = ? AND merchant_id = ?`
+
+	if _, err := db.ExecContext(ctx, updateSQL, args...); err != nil {
+		log.Error(err.Error())
+		// Check for duplicate constraint violation
+		if isUniqueConstraintError(err) {
+			return nil, models.ErrInvalidInput
+		}
+		return nil, err
+	}
+
+	// 4. Fetch and return updated tag
+	var t models.TagEntry
+	err := db.QueryRowContext(ctx,
+		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, COALESCE(color, '') as color
+		 FROM tags
+		 WHERE tag_id = ? AND merchant_id = ?`,
+		tagID, merchantID,
+	).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	return &t, nil
 }
 
 // Helper to detect unique constraint violations (MySQL-specific).

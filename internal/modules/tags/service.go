@@ -75,3 +75,19 @@ func (s *Service) UpdateTagsDisplayOrder(ctx context.Context, token string, req 
 	// Update display order
 	return s.repo.UpdateTagsDisplayOrder(ctx, user.MerchantID, req.Tags)
 }
+
+// UpdateTag updates a tag's properties for the authenticated merchant.
+func (s *Service) UpdateTag(ctx context.Context, token string, tagID string, req *UpdateTagRequest) (*models.TagEntry, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate input
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Update tag
+	return s.repo.UpdateTag(ctx, user.MerchantID, tagID, req)
+}

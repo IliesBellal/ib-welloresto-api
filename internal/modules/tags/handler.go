@@ -103,3 +103,32 @@ func (h *Handler) UpdateTagsDisplayOrder(w http.ResponseWriter, r *http.Request)
 
 	models.SendJSON(w, http.StatusOK, "tags", "update_display_order", map[string]string{"message": "Display order updated successfully"})
 }
+
+// PATCH /menu/tags/{tag_id}
+func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "tags", "update", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	tagID := chi.URLParam(r, "tag_id")
+	if strings.TrimSpace(tagID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "tags", "update", map[string]string{"error": "missing_tag_id"})
+		return
+	}
+
+	var req UpdateTagRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "tags", "update", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	tag, err := h.service.UpdateTag(r.Context(), token, tagID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "tags", "update", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "tags", "update", tag)
+}
