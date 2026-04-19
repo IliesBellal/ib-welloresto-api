@@ -86,7 +86,7 @@ func (h *Handler) CreateDiscount(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateDiscountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "discounts", "create", map[string]string{"error": "invalid_body"})
+		models.SendJSON(w, http.StatusBadRequest, "discounts", "create", map[string]string{"error": "invalid_body", "message": err.Error()})
 		return
 	}
 
