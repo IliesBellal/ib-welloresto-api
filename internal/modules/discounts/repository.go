@@ -251,10 +251,14 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 
 	// Insert schedules
 	for _, s := range req.Schedules {
+		// Format TIME columns as HH:MM:SS strings for MySQL TIME type
+		availableFromStr := s.AvailableFrom.Format("15:04:05")
+		availableToStr := s.AvailableTo.Format("15:04:05")
+
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
 			VALUES (?, ?, ?, ?, 1)
-		`, req.DiscountID, s.DayOfWeek, s.AvailableFrom, s.AvailableTo)
+		`, req.DiscountID, s.DayOfWeek, availableFromStr, availableToStr)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
