@@ -1107,6 +1107,41 @@ func (h *MenuHandler) BulkAssignTag(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// BulkAssignProductsToTag — PATCH /menu/tags/{tag_id}/bulk_assign
+// Replaces all product-tag links for a given tag.
+// Removes all existing links from this tag to any product, then adds new links to the provided product IDs.
+func (h *MenuHandler) BulkAssignProductsToTag(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_products_to_tag", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	tagID := chi.URLParam(r, "tag_id")
+	if strings.TrimSpace(tagID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_tag", map[string]string{"error": "missing_tag_id"})
+		return
+	}
+
+	var body BulkAssignProductsPayload
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_tag", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.BulkAssignProductsToTag(r.Context(), token, tagID, body.ProductIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_assign_products_to_tag", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_products_to_tag", map[string]interface{}{
+		"status":   "success",
+		"message":  "tag assignments updated",
+		"tag_id":   tagID,
+		"products": len(body.ProductIDs),
+	})
+}
+
 // BulkAssignProductsToCategory — POST /menu/products/categories/{category_id}/bulk-assign
 // Assigns multiple products (and their sub-products) to a category
 func (h *MenuHandler) BulkAssignProductsToCategory(w http.ResponseWriter, r *http.Request) {
@@ -1122,7 +1157,7 @@ func (h *MenuHandler) BulkAssignProductsToCategory(w http.ResponseWriter, r *htt
 		return
 	}
 
-	var body BulkAssignProductsToCategoryPayload
+	var body BulkAssignProductsPayload
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_category", map[string]string{"error": "invalid_body"})
 		return

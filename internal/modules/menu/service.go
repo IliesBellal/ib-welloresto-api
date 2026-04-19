@@ -414,6 +414,17 @@ func (s *MenuService) BulkAssignTag(ctx context.Context, token, tagID string, pr
 	return s.legacy.BulkAssignTag(ctx, user.MerchantID, tagID, productIDs)
 }
 
+// BulkAssignProductsToTag replaces all product-tag links for a given tag.
+// Removes all existing links from this tag to any product, then adds new links to the provided product IDs.
+func (s *MenuService) BulkAssignProductsToTag(ctx context.Context, token, tagID string, productIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.BulkAssignProductsToTag(ctx, user.MerchantID, tagID, productIDs)
+}
+
 // BulkAssignAllergen adds an allergen to many products without removing their other allergens.
 func (s *MenuService) BulkAssignAllergen(ctx context.Context, token, allergenID string, productIDs []string) error {
 	user, err := middleware.UserFromContext(ctx)

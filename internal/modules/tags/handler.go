@@ -80,3 +80,26 @@ func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// PATCH /menu/tags/display-order
+func (h *Handler) UpdateTagsDisplayOrder(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "tags", "update_display_order", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req UpdateTagsDisplayOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "tags", "update_display_order", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	err := h.service.UpdateTagsDisplayOrder(r.Context(), token, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "tags", "update_display_order", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "tags", "update_display_order", map[string]string{"message": "Display order updated successfully"})
+}

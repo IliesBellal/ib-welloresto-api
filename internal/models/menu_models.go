@@ -103,10 +103,11 @@ type AllergenEntry struct {
 
 // TagEntry represents a merchant-specific label attached to a product.
 type TagEntry struct {
-	ID         string `json:"id"`
-	MerchantID string `json:"merchant_id,omitempty"`
-	Name       string `json:"name"`
-	Color      string `json:"color,omitempty"`
+	ID           string `json:"id"`
+	MerchantID   string `json:"merchant_id,omitempty"`
+	Name         string `json:"name"`
+	Color        string `json:"color,omitempty"`
+	DisplayOrder int    `json:"display_order"`
 }
 
 type OrderProductExtra struct {

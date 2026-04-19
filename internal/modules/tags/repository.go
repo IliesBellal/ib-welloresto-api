@@ -25,10 +25,10 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT tag_id, merchant_id, name
+		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, t.color
 		 FROM tags
 		 WHERE merchant_id = ?
-		 ORDER BY name ASC`,
+		 ORDER BY display_order ASC, name ASC`,
 		merchantID,
 	)
 	if err != nil {
@@ -40,7 +40,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 	var result []models.TagEntry
 	for rows.Next() {
 		var t models.TagEntry
-		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name); err != nil {
+		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color); err != nil {
 			return nil, err
 		}
 		result = append(result, t)
@@ -62,15 +62,26 @@ func (r *Repository) TagBelongsToMerchant(ctx context.Context, tagID string, mer
 
 // CreateTag inserts a new tag for a merchant.
 // Returns the created tag entry.
-func (r *Repository) CreateTag(ctx context.Context, merchantID string, tagID string, name string) (*models.TagEntry, error) {
+func (r *Repository) CreateTag(ctx context.Context, merchantID string, req *CreateTagRequest) (*models.TagEntry, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// Get the next display order (count of existing tags)
+	var displayOrder int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tags WHERE merchant_id = ?`,
+		merchantID,
+	).Scan(&displayOrder)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
 	// Insert the tag
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO tags (tag_id, merchant_id, name)
-		 VALUES (?, ?, ?)`,
-		tagID, merchantID, name,
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO tags (tag_id, merchant_id, name, display_order, color)
+		 VALUES (?, ?, ?, ?, ?)`,
+		*req.ID, merchantID, req.Name, displayOrder, req.Color,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -83,9 +94,11 @@ func (r *Repository) CreateTag(ctx context.Context, merchantID string, tagID str
 
 	// Return the created tag
 	return &models.TagEntry{
-		ID:         tagID,
-		MerchantID: merchantID,
-		Name:       name,
+		ID:           *req.ID,
+		MerchantID:   merchantID,
+		Name:         req.Name,
+		DisplayOrder: displayOrder,
+		Color:        *req.Color,
 	}, nil
 }
 
@@ -126,6 +139,40 @@ func (r *Repository) DeleteTag(ctx context.Context, merchantID string, tagID str
 	}
 	if rowsAffected == 0 {
 		return models.ErrNotFound
+	}
+
+	return nil
+}
+
+// UpdateTagsDisplayOrder updates the display order of tags for a merchant.
+func (r *Repository) UpdateTagsDisplayOrder(ctx context.Context, merchantID string, tags []TagDisplayOrderItem) error {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	// Update display_order for each tag
+	for displayOrder, tag := range tags {
+		// Verify tag belongs to merchant
+		var count int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?`,
+			tag.ID, merchantID,
+		).Scan(&count); err != nil {
+			log.Error(err.Error())
+			return err
+		}
+		if count == 0 {
+			return models.ErrForbidden
+		}
+
+		// Update display_order
+		_, err := db.ExecContext(ctx,
+			`UPDATE tags SET display_order = ? WHERE tag_id = ? AND merchant_id = ?`,
+			displayOrder, tag.ID, merchantID,
+		)
+		if err != nil {
+			log.Error(err.Error())
+			return err
+		}
 	}
 
 	return nil

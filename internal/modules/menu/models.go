@@ -306,9 +306,9 @@ type UpdateAttributePayload struct {
 	Options []UpdateAttributeOptionPayload `json:"options"` // Array of options
 }
 
-// BulkAssignProductsToCategoryPayload for bulk assigning products to a category
-type BulkAssignProductsToCategoryPayload struct {
-	ProductIDs []string `json:"product_ids"` // Product IDs to assign to this category
+// BulkAssignProductsPayload is the standard payload for bulk assigning products to a resource
+type BulkAssignProductsPayload struct {
+	ProductIDs []string `json:"product_ids"` // Product IDs to assign
 }
 
 // BulkUpdateProductPrice represents a single product price update

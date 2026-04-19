@@ -791,12 +791,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	tagMap := make(map[string][]models.TagEntry)
 	{
 		q := `
-			SELECT pt.product_id, t.tag_id, t.name
+			SELECT pt.product_id, t.tag_id, t.name, COALESCE(t.display_order, 0) as display_order, t.color
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
 				SELECT product_id FROM products WHERE merchant_id = ? AND available = 1 AND enabled = 1
 			)
+			ORDER BY t.display_order ASC
 		`
 		rows, err := runQuery("tags_per_product", q, merchantID, merchantID)
 		if err != nil {
@@ -806,7 +807,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var productID string
 			var t models.TagEntry
-			if err := rows.Scan(&productID, &t.ID, &t.Name); err != nil {
+			if err := rows.Scan(&productID, &t.ID, &t.Name, &t.DisplayOrder, &t.Color); err != nil {
 				return nil, err
 			}
 			tagMap[productID] = append(tagMap[productID], t)
@@ -1424,12 +1425,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	tagMap := make(map[string][]models.TagEntry)
 	{
 		q := `
-			SELECT pt.product_id, t.tag_id, t.name, t.color
+			SELECT pt.product_id, t.tag_id, t.name, t.color, COALESCE(t.display_order, 0) as display_order
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
 				SELECT product_id FROM products WHERE merchant_id = ? AND enabled = 1
 			)
+			ORDER BY t.display_order ASC
 		`
 		rows, err := runQuery("tags_per_product_all", q, merchantID, merchantID)
 		if err != nil {
@@ -1439,7 +1441,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var productID string
 			var t models.TagEntry
-			if err := rows.Scan(&productID, &t.ID, &t.Name, &t.Color); err != nil {
+			if err := rows.Scan(&productID, &t.ID, &t.Name, &t.Color, &t.DisplayOrder); err != nil {
 				return nil, err
 			}
 			tagMap[productID] = append(tagMap[productID], t)
@@ -2111,10 +2113,11 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	tagSlice := []models.TagEntry{}
 	{
 		q := `
-			SELECT t.tag_id, t.name
+			SELECT t.tag_id, t.name, COALESCE(t.display_order, 0) as display_order
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id = ?
+			ORDER BY t.display_order ASC
 		`
 		rows, err := runQuery("tags_for_product", q, merchantID, productID)
 		if err != nil {
@@ -2123,7 +2126,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		defer rows.Close()
 		for rows.Next() {
 			var t models.TagEntry
-			if err := rows.Scan(&t.ID, &t.Name); err != nil {
+			if err := rows.Scan(&t.ID, &t.Name, &t.DisplayOrder); err != nil {
 				return nil, err
 			}
 			tagSlice = append(tagSlice, t)
@@ -3092,6 +3095,84 @@ func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID st
 
 	// 4. Insertion en masse avec INSERT IGNORE (Spécifique MySQL)
 	// On réutilise les placeholders pour faire un seul INSERT groupé pour la performance
+	insertValues := make([]string, len(productIDs))
+	insertArgs := make([]interface{}, 0, len(productIDs)*2)
+
+	for i, pid := range productIDs {
+		insertValues[i] = "(?, ?)"
+		insertArgs = append(insertArgs, pid, tagID)
+	}
+
+	insertQuery := fmt.Sprintf(
+		"INSERT INTO product_tags (product_id, tag_id) VALUES %s",
+		strings.Join(insertValues, ","),
+	)
+
+	if _, err := db.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// BulkAssignProductsToTag replaces all product-tag links for a given tag.
+// Removes all existing links from this tag to any product, then adds new links to the provided product IDs.
+// Ownership of both the tag and every product is verified against merchantID.
+func (r *MenuRepository) BulkAssignProductsToTag(ctx context.Context, merchantID, tagID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 1. Verify that the tag belongs to the merchant
+	var tagCount int
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM tags WHERE tag_id = ? AND merchant_id = ?",
+		tagID, merchantID,
+	).Scan(&tagCount)
+
+	if err != nil || tagCount == 0 {
+		return models.ErrForbidden
+	}
+
+	// 3. Delete all existing product-tag links for this tag
+	if _, err := db.ExecContext(ctx,
+		"DELETE FROM product_tags WHERE tag_id = ?",
+		tagID,
+	); err != nil {
+		return err
+	}
+
+	// 4. If no new products provided, just return
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	// 5. Deduplicate product IDs
+	productIDs = uniqueStrings(productIDs)
+
+	// 6. Verify that ALL products belong to the merchant
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, len(productIDs)+1)
+	args[0] = merchantID
+
+	for i, pid := range productIDs {
+		placeholders[i] = "?"
+		args[i+1] = pid
+	}
+
+	query := fmt.Sprintf(
+		"SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+
+	var validCount int
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&validCount); err != nil {
+		return err
+	}
+
+	if validCount != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	// 7. Insert all new product-tag links
 	insertValues := make([]string, len(productIDs))
 	insertArgs := make([]interface{}, 0, len(productIDs)*2)
 

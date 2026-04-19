@@ -39,9 +39,14 @@ func (s *Service) CreateTag(ctx context.Context, token string, req *CreateTagReq
 
 	// Generate ID
 	tagID := helpers.GeneratePrefixedID("tag")
+	req.ID = &tagID
+	if req.Color == nil {
+		defaultColor := "#FFFFFF"
+		req.Color = &defaultColor
+	}
 
 	// Create tag
-	return s.repo.CreateTag(ctx, user.MerchantID, tagID, req.Name)
+	return s.repo.CreateTag(ctx, user.MerchantID, req)
 }
 
 // DeleteTag deletes a tag owned by the authenticated merchant.
@@ -53,4 +58,20 @@ func (s *Service) DeleteTag(ctx context.Context, token string, tagID string) err
 
 	// Delete tag (checks ownership inside)
 	return s.repo.DeleteTag(ctx, user.MerchantID, tagID)
+}
+
+// UpdateTagsDisplayOrder updates the display order of tags for the authenticated merchant.
+func (s *Service) UpdateTagsDisplayOrder(ctx context.Context, token string, req *UpdateTagsDisplayOrderRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Validate input
+	if err := req.Validate(); err != nil {
+		return err
+	}
+
+	// Update display order
+	return s.repo.UpdateTagsDisplayOrder(ctx, user.MerchantID, req.Tags)
 }

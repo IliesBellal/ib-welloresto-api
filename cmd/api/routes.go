@@ -478,12 +478,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/", tagsH.ListTags)
 			r.Post("/create", tagsH.CreateTag)
+			r.Patch("/display-order", tagsH.UpdateTagsDisplayOrder)
+			r.Patch("/{tag_id}/bulk_assign", menuH.BulkAssignProductsToTag)
 			r.Delete("/{tag_id}", tagsH.DeleteTag)
 		})
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
-			r.Post("/tags/assign", menuH.BulkAssignTag)
 			r.Post("/allergens/assign", menuH.BulkAssignAllergen)
 		})
 
