@@ -3,6 +3,7 @@ package discounts
 import (
 	"context"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 )
 
@@ -55,6 +56,8 @@ func (s *Service) CreateDiscount(ctx context.Context, token string, req *CreateD
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
+
+	req.DiscountID = helpers.GeneratePrefixedID("discount")
 
 	return s.repo.CreateDiscount(ctx, user.MerchantID, req)
 }

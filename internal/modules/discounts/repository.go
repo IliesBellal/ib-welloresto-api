@@ -220,14 +220,14 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	// Insert discount
 	result, err := db.ExecContext(ctx, `
 		INSERT INTO discounts (
-			merchant_id, discount_name, discount_desc, prefered_order,
+			id, merchant_id, discount_name, discount_desc, prefered_order,
 			discount_code, discount_order_type, discount_value, discount_unit,
 			valid_from, valid_to, min_order_value, min_order_unit,
 			max_discount_value, max_discount_unit, discounted_quantity,
 			is_cumulative, is_time_limited, available, enabled, creation_date
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
+		req.DiscountID, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
 		req.ValidFrom, req.ValidTo, req.MinOrderValue, req.MinOrderUnit,
 		req.MaxDiscountValue, req.MaxDiscountUnit, req.DiscountedQuantity,
