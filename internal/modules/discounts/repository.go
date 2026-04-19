@@ -69,18 +69,25 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 			d.ValidTo = &validTo.Time
 		}
 
-		// Load products and schedules
-		if products, err := r.getDiscountProducts(ctx, d.DiscountID); err == nil {
-			d.Products = products
-		}
-		if schedules, err := r.getDiscountSchedules(ctx, d.DiscountID); err == nil {
-			d.Schedules = schedules
-		}
-
 		discounts = append(discounts, d)
 	}
 
-	return discounts, rows.Err()
+	if err := rows.Err(); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	// Load products and schedules AFTER closing rows to avoid deadlock
+	for i := range discounts {
+		if products, err := r.getDiscountProducts(ctx, discounts[i].DiscountID); err == nil {
+			discounts[i].Products = products
+		}
+		if schedules, err := r.getDiscountSchedules(ctx, discounts[i].DiscountID); err == nil {
+			discounts[i].Schedules = schedules
+		}
+	}
+
+	return discounts, nil
 }
 
 // GetAllDiscounts retrieves all discounts for a merchant (regardless of validity)
@@ -131,18 +138,25 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 			d.ValidTo = &validTo.Time
 		}
 
-		// Load products and schedules
-		if products, err := r.getDiscountProducts(ctx, d.DiscountID); err == nil {
-			d.Products = products
-		}
-		if schedules, err := r.getDiscountSchedules(ctx, d.DiscountID); err == nil {
-			d.Schedules = schedules
-		}
-
 		discounts = append(discounts, d)
 	}
 
-	return discounts, rows.Err()
+	if err := rows.Err(); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	// Load products and schedules AFTER closing rows to avoid deadlock
+	for i := range discounts {
+		if products, err := r.getDiscountProducts(ctx, discounts[i].DiscountID); err == nil {
+			discounts[i].Products = products
+		}
+		if schedules, err := r.getDiscountSchedules(ctx, discounts[i].DiscountID); err == nil {
+			discounts[i].Schedules = schedules
+		}
+	}
+
+	return discounts, nil
 }
 
 // GetDiscountByID retrieves a single discount by ID
@@ -419,7 +433,9 @@ func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, disc
 
 func (r *Repository) getDiscountProducts(ctx context.Context, discountID string) ([]DiscountProduct, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
+	log.Debug("Executing getDiscountProducts with discountID: " + discountID)
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, discount_id, product_id, new_price, enabled
 		FROM discounts_products
@@ -458,9 +474,20 @@ func (r *Repository) getDiscountSchedules(ctx context.Context, discountID string
 	var schedules []DiscountSchedule
 	for rows.Next() {
 		var s DiscountSchedule
-		if err := rows.Scan(&s.ScheduleID, &s.DiscountID, &s.DayOfWeek, &s.AvailableFrom, &s.AvailableTo, &s.Enabled); err != nil {
+		var availableFrom, availableTo string // Read TIME columns as strings
+
+		if err := rows.Scan(&s.ScheduleID, &s.DiscountID, &s.DayOfWeek, &availableFrom, &availableTo, &s.Enabled); err != nil {
 			return nil, err
 		}
+
+		// Parse TIME strings to TimeOfDay (format: "HH:MM:SS")
+		if t, err := time.Parse("15:04:05", availableFrom); err == nil {
+			s.AvailableFrom = TimeOfDay(t)
+		}
+		if t, err := time.Parse("15:04:05", availableTo); err == nil {
+			s.AvailableTo = TimeOfDay(t)
+		}
+
 		schedules = append(schedules, s)
 	}
 

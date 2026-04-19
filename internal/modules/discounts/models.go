@@ -1,8 +1,31 @@
 package discounts
 
 import (
+	"encoding/json"
 	"time"
 )
+
+// TimeOfDay represents a time of day in HH:MM format for JSON serialization
+type TimeOfDay time.Time
+
+// MarshalJSON formats TimeOfDay as "HH:MM"
+func (t TimeOfDay) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Time(t).Format("15:04"))
+}
+
+// UnmarshalJSON parses "HH:MM" format from JSON
+func (t *TimeOfDay) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := time.Parse("15:04", s)
+	if err != nil {
+		return err
+	}
+	*t = TimeOfDay(parsed)
+	return nil
+}
 
 // DiscountUnit represents the unit type for discount calculation
 type DiscountUnit string
@@ -51,8 +74,8 @@ type DiscountSchedule struct {
 	ScheduleID    int64     `json:"schedule_id"`
 	DiscountID    int64     `json:"discount_id"`
 	DayOfWeek     int       `json:"day_of_week"`    // 1 = Sunday, 2 = Monday, etc.
-	AvailableFrom time.Time `json:"available_from"` // UTC time (only time part)
-	AvailableTo   time.Time `json:"available_to"`   // UTC time (only time part)
+	AvailableFrom TimeOfDay `json:"available_from"` // HH:MM format
+	AvailableTo   TimeOfDay `json:"available_to"`   // HH:MM format
 	Enabled       bool      `json:"enabled"`
 }
 
@@ -65,7 +88,7 @@ type Discount struct {
 	PreferredOrder     int                `json:"preferred_order"`
 	DiscountCode       *string            `json:"discount_code,omitempty"`
 	OrderType          *OrderType         `json:"order_type,omitempty"` // nil = all types
-	DiscountValue      float64            `json:"discount_value"`
+	DiscountValue      *int               `json:"discount_value"`
 	DiscountUnit       DiscountUnit       `json:"discount_unit"`
 	ValidFrom          time.Time          `json:"valid_from"`         // UTC
 	ValidTo            *time.Time         `json:"valid_to,omitempty"` // UTC
