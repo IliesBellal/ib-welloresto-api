@@ -20,16 +20,19 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{database: db}
 }
 
-// ListTags returns all tags belonging to a merchant.
+// ListTags returns all tags belonging to a merchant with the count of linked products.
 func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, color
-		 FROM tags
-		 WHERE merchant_id = ?
-		 ORDER BY display_order ASC, name ASC`,
+		`SELECT t.tag_id, t.merchant_id, t.name, COALESCE(t.display_order, 0) as display_order, 
+		        COALESCE(t.color, '') as color, COALESCE(COUNT(pt.product_id), 0) as product_count
+		 FROM tags t
+		 LEFT JOIN product_tags pt ON t.tag_id = pt.tag_id
+		 WHERE t.merchant_id = ?
+		 GROUP BY t.tag_id, t.merchant_id, t.name, t.display_order, t.color
+		 ORDER BY t.display_order ASC, t.name ASC`,
 		merchantID,
 	)
 	if err != nil {
@@ -41,7 +44,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 	var result []models.TagEntry
 	for rows.Next() {
 		var t models.TagEntry
-		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color); err != nil {
+		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color, &t.ProductCount); err != nil {
 			return nil, err
 		}
 		result = append(result, t)
@@ -219,11 +222,14 @@ func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID str
 	if len(updates) == 0 {
 		var t models.TagEntry
 		err := db.QueryRowContext(ctx,
-			`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, COALESCE(color, '') as color
-			 FROM tags
-			 WHERE tag_id = ? AND merchant_id = ?`,
+			`SELECT t.tag_id, t.merchant_id, t.name, COALESCE(t.display_order, 0) as display_order, 
+			        COALESCE(t.color, '') as color, COALESCE(COUNT(pt.product_id), 0) as product_count
+			 FROM tags t
+			 LEFT JOIN product_tags pt ON t.tag_id = pt.tag_id
+			 WHERE t.tag_id = ? AND t.merchant_id = ?
+			 GROUP BY t.tag_id, t.merchant_id, t.name, t.display_order, t.color`,
 			tagID, merchantID,
-		).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color)
+		).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color, &t.ProductCount)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -247,11 +253,14 @@ func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID str
 	// 4. Fetch and return updated tag
 	var t models.TagEntry
 	err := db.QueryRowContext(ctx,
-		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, COALESCE(color, '') as color
-		 FROM tags
-		 WHERE tag_id = ? AND merchant_id = ?`,
+		`SELECT t.tag_id, t.merchant_id, t.name, COALESCE(t.display_order, 0) as display_order, 
+		        COALESCE(t.color, '') as color, COALESCE(COUNT(pt.product_id), 0) as product_count
+		 FROM tags t
+		 LEFT JOIN product_tags pt ON t.tag_id = pt.tag_id
+		 WHERE t.tag_id = ? AND t.merchant_id = ?
+		 GROUP BY t.tag_id, t.merchant_id, t.name, t.display_order, t.color`,
 		tagID, merchantID,
-	).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color)
+	).Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color, &t.ProductCount)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err

@@ -108,6 +108,7 @@ type TagEntry struct {
 	Name         string `json:"name"`
 	Color        string `json:"color,omitempty"`
 	DisplayOrder int    `json:"display_order"`
+	ProductCount int    `json:"product_count"`
 }
 
 type OrderProductExtra struct {
