@@ -62,8 +62,8 @@ const (
 
 // DiscountProduct represents a product associated with a discount and its custom price
 type DiscountProduct struct {
-	ID         int64  `json:"id"`
-	DiscountID int64  `json:"discount_id"`
+	ID         string `json:"id"`
+	DiscountID string `json:"discount_id"`
 	ProductID  string `json:"product_id"` // UUID
 	NewPrice   *int64 `json:"new_price,omitempty"`
 	Enabled    bool   `json:"enabled"`
@@ -71,8 +71,8 @@ type DiscountProduct struct {
 
 // DiscountSchedule represents time slot availability for a discount
 type DiscountSchedule struct {
-	ScheduleID    int64     `json:"schedule_id"`
-	DiscountID    int64     `json:"discount_id"`
+	ScheduleID    string    `json:"schedule_id"`
+	DiscountID    string    `json:"discount_id"`
 	DayOfWeek     int       `json:"day_of_week"`    // 1 = Sunday, 2 = Monday, etc.
 	AvailableFrom TimeOfDay `json:"available_from"` // HH:MM format
 	AvailableTo   TimeOfDay `json:"available_to"`   // HH:MM format
