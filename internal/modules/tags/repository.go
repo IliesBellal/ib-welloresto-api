@@ -25,7 +25,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, t.color
+		`SELECT tag_id, merchant_id, name, COALESCE(display_order, 0) as display_order, color
 		 FROM tags
 		 WHERE merchant_id = ?
 		 ORDER BY display_order ASC, name ASC`,
