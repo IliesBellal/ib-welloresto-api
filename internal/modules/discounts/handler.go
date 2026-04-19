@@ -96,7 +96,12 @@ func (h *Handler) CreateDiscount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusCreated, "discounts", "create", discount)
+	// Return response with status and discount
+	response := map[string]interface{}{
+		"status":   "success",
+		"discount": discount,
+	}
+	models.SendJSON(w, http.StatusCreated, "discounts", "create", response)
 }
 
 // PATCH /menu/discounts/{discount_id}
