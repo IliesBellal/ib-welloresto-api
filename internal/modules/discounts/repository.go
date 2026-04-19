@@ -3,7 +3,6 @@ package discounts
 import (
 	"context"
 	"database/sql"
-	"strconv"
 	"strings"
 	"time"
 
@@ -218,14 +217,14 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	log := logger.FromContext(ctx)
 
 	// Insert discount
-	result, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO discounts (
-			id, merchant_id, discount_name, discount_desc, prefered_order,
+			discount_id, merchant_id, discount_name, discount_desc, prefered_order,
 			discount_code, discount_order_type, discount_value, discount_unit,
 			valid_from, valid_to, min_order_value, min_order_unit,
 			max_discount_value, max_discount_unit, discounted_quantity,
 			is_cumulative, is_time_limited, available, enabled, creation_date
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		req.DiscountID, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
@@ -238,19 +237,12 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		return nil, err
 	}
 
-	discountID, err := result.LastInsertId()
-	if err != nil {
-		log.Error(err.Error())
-		return nil, err
-	}
-	discountIDStr := strconv.FormatInt(discountID, 10)
-
 	// Insert products
 	for _, p := range req.Products {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO discounts_products (discount_id, product_id, new_price, enabled)
 			VALUES (?, ?, ?, 1)
-		`, discountIDStr, p.ProductID, p.NewPrice)
+		`, req.DiscountID, p.ProductID, p.NewPrice)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -262,7 +254,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
 			VALUES (?, ?, ?, ?, 1)
-		`, discountIDStr, s.DayOfWeek, s.AvailableFrom, s.AvailableTo)
+		`, req.DiscountID, s.DayOfWeek, s.AvailableFrom, s.AvailableTo)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -270,7 +262,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	}
 
 	// Fetch and return the created discount
-	return r.GetDiscountByID(ctx, merchantID, discountIDStr)
+	return r.GetDiscountByID(ctx, merchantID, req.DiscountID)
 }
 
 // UpdateDiscount updates an existing discount
