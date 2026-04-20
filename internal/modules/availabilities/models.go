@@ -42,12 +42,13 @@ type CreateAvailabilityScheduleReq struct {
 	EndTime    string `json:"end_time"`    // Format: "HH:MM:SS" ou "HH:MM"
 }
 
-// UpdateAvailabilityRequest pour la mise à jour
+// UpdateAvailabilityRequest pour la mise à jour (tous les champs sont optionnels)
 type UpdateAvailabilityRequest struct {
-	Name               string                          `json:"name"`
+	Name               *string                         `json:"name,omitempty"`
 	UnavailableMessage *string                         `json:"unavailable_message,omitempty"`
-	ProductIDs         []string                        `json:"product_ids"`
-	Schedules          []CreateAvailabilityScheduleReq `json:"schedules"`
+	ProductIDs         []string                        `json:"product_ids,omitempty"`
+	Schedules          []CreateAvailabilityScheduleReq `json:"schedules,omitempty"`
+	Available          *bool                           `json:"available,omitempty"`
 }
 
 // AvailabilityResponse pour les réponses API

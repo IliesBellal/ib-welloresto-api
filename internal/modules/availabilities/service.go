@@ -66,29 +66,39 @@ func (s *AvailabilitiesService) CreateAvailability(ctx context.Context, req Crea
 	return s.availabilitiesRepo.Create(ctx, user.MerchantID, req)
 }
 
-// UpdateAvailability met à jour une disponibilité existante
+// UpdateAvailability met à jour une disponibilité existante (supporte les mises à jour partielles)
 func (s *AvailabilitiesService) UpdateAvailability(ctx context.Context, availabilityID string, req UpdateAvailabilityRequest) (*Availability, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Validation basique
-	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("availability name is required")
+	// Validation : au moins un champ doit être fourni
+	if req.Name == nil && req.UnavailableMessage == nil && len(req.ProductIDs) == 0 && len(req.Schedules) == 0 && req.Available == nil {
+		return nil, fmt.Errorf("at least one field must be provided for update")
 	}
 
-	if len(req.ProductIDs) == 0 {
-		return nil, fmt.Errorf("at least one product is required")
+	// Validation conditionnelle : si Name est fourni, il ne doit pas être vide
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		return nil, fmt.Errorf("availability name cannot be empty")
 	}
 
-	if len(req.Schedules) == 0 {
-		return nil, fmt.Errorf("at least one schedule is required")
+	// Validation conditionnelle : si ProductIDs sont fournis, au moins un est requis
+	if len(req.ProductIDs) > 0 {
+		if len(req.ProductIDs) == 0 {
+			return nil, fmt.Errorf("product_ids cannot be empty if provided")
+		}
 	}
 
-	// Valider les créneaux
-	if err := validateSchedules(req.Schedules); err != nil {
-		return nil, err
+	// Validation conditionnelle : si Schedules sont fournis, au moins un est requis
+	if len(req.Schedules) > 0 {
+		if len(req.Schedules) == 0 {
+			return nil, fmt.Errorf("schedules cannot be empty if provided")
+		}
+		// Valider les créneaux
+		if err := validateSchedules(req.Schedules); err != nil {
+			return nil, err
+		}
 	}
 
 	return s.availabilitiesRepo.Update(ctx, user.MerchantID, availabilityID, req)

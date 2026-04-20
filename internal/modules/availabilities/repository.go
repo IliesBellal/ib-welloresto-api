@@ -262,16 +262,56 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 
 	now := time.Now().UTC()
 
+	// Récupérer l'availability actuelle pour garder les valeurs non modifiées
+	current, err := r.GetAvailabilityByID(ctx, merchantID, availabilityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch current availability: %w", err)
+	}
+	if current == nil {
+		return nil, fmt.Errorf("availability not found")
+	}
+
+	// Appliquer les mises à jour partielles
+	name := current.Name
+	if req.Name != nil {
+		name = *req.Name
+	}
+
+	unavailableMessage := current.UnavailableMessage
+	if req.UnavailableMessage != nil {
+		unavailableMessage = req.UnavailableMessage
+	}
+
+	enabled := current.Enabled
+	if req.Available != nil {
+		if *req.Available {
+			enabled = 1
+		} else {
+			enabled = 0
+		}
+	}
+
+	productIDs := current.ProductIDs
+	if len(req.ProductIDs) > 0 {
+		productIDs = req.ProductIDs
+	}
+
+	schedules := current.Schedules
+	if len(req.Schedules) > 0 {
+		schedules = convertSchedules(availabilityID, req.Schedules, now)
+	}
+
 	// Mettre à jour l'availability
 	updateQuery := `
 		UPDATE availabilities
-		SET availability_name = ?, unavailable_message = ?, update_date = ?
-		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
+		SET availability_name = ?, unavailable_message = ?, enabled = ?, update_date = ?
+		WHERE availability_id = ? AND merchant_id = ?
 	`
 
 	result, err := db.ExecContext(ctx, updateQuery,
-		req.Name,
-		req.UnavailableMessage,
+		name,
+		unavailableMessage,
+		enabled,
 		now,
 		availabilityID,
 		merchantID,
@@ -288,15 +328,16 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		return nil, fmt.Errorf("availability not found")
 	}
 
-	// Supprimer les produits existants
-	deleteProductsQuery := `DELETE FROM availabilities_products WHERE availability_id = ?`
-	_, err = db.ExecContext(ctx, deleteProductsQuery, availabilityID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete products: %w", err)
-	}
-
-	// Insérer les nouveaux produits
+	// Mettre à jour les produits seulement s'ils sont fournis
 	if len(req.ProductIDs) > 0 {
+		// Supprimer les produits existants
+		deleteProductsQuery := `DELETE FROM availabilities_products WHERE availability_id = ?`
+		_, err = db.ExecContext(ctx, deleteProductsQuery, availabilityID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete products: %w", err)
+		}
+
+		// Insérer les nouveaux produits
 		productQuery := `
 			INSERT INTO availabilities_products (
 				availability_product_id,
@@ -319,15 +360,16 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		}
 	}
 
-	// Supprimer les créneaux existants
-	deleteSchedulesQuery := `DELETE FROM availabilities_schedules WHERE availability_id = ?`
-	_, err = db.ExecContext(ctx, deleteSchedulesQuery, availabilityID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete schedules: %w", err)
-	}
-
-	// Insérer les nouveaux créneaux
+	// Mettre à jour les créneaux seulement s'ils sont fournis
 	if len(req.Schedules) > 0 {
+		// Supprimer les créneaux existants
+		deleteSchedulesQuery := `DELETE FROM availabilities_schedules WHERE availability_id = ?`
+		_, err = db.ExecContext(ctx, deleteSchedulesQuery, availabilityID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete schedules: %w", err)
+		}
+
+		// Insérer les nouveaux créneaux
 		scheduleQuery := `
 			INSERT INTO availabilities_schedules (
 				schedule_id,
@@ -357,22 +399,17 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		}
 	}
 
-	// Commit la transaction
-	// if err = tx.Commit(); err != nil {
-	// 	return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	// }
-
 	// Retourner l'objet mis à jour
 	return &Availability{
 		AvailabilityID:     availabilityID,
 		MerchantID:         merchantID,
-		Name:               req.Name,
-		UnavailableMessage: req.UnavailableMessage,
-		Enabled:            1,
-		CreatedAt:          now,
+		Name:               name,
+		UnavailableMessage: unavailableMessage,
+		Enabled:            enabled,
+		CreatedAt:          current.CreatedAt,
 		UpdatedAt:          now,
-		ProductIDs:         req.ProductIDs,
-		Schedules:          convertSchedules(availabilityID, req.Schedules, now),
+		ProductIDs:         productIDs,
+		Schedules:          schedules,
 	}, nil
 }
 
