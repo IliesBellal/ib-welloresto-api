@@ -38,7 +38,7 @@ func (s *Service) CreateTag(ctx context.Context, token string, req *CreateTagReq
 	}
 
 	// Generate ID
-	tagID := helpers.GeneratePrefixedID("tag")
+	tagID := helpers.GeneratePrefixedID(helpers.TagIDPrefix)
 	req.ID = &tagID
 	if req.Color == nil {
 		defaultColor := "#FFFFFF"

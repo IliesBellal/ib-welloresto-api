@@ -53,7 +53,7 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 
 	// 5. Création et Sauvegarde
 	receipt := &models.Receipt{
-		ReceiptID:        helpers.GeneratePrefixedID("receipt"),
+		ReceiptID:        helpers.GeneratePrefixedID(helpers.ReceiptIDPrefix),
 		MerchantID:       *order.MerchantID,
 		OrderID:          order.OrderID,
 		ReceiptNumber:    newNumber,
@@ -101,7 +101,7 @@ func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID s
 	}
 
 	newNumber := s.generateNextReceiptNumber(lastNumber)
-	newTechID := helpers.GeneratePrefixedID("RCT")
+	newTechID := helpers.GeneratePrefixedID(helpers.ReceiptIDPrefix)
 
 	// 2. Snapshot : on met juste une ligne explicite pour l'avoir (puisqu'on omet les items précis pour l'instant)
 	itemsSnap := []models.SnapshotItem{

@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/utils/dbutils"
-
-	"github.com/google/uuid"
 )
 
 type AvailabilitiesRepository struct {
@@ -155,7 +154,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Générer l'ID
-	availabilityID := uuid.New().String()
+	availabilityID := helpers.GeneratePrefixedID(helpers.AvailabilityIDPrefix)
 	now := time.Now().UTC()
 
 	// Insérer la disponibilité
@@ -196,7 +195,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 
 		for _, productID := range req.ProductIDs {
 			_, err := db.ExecContext(ctx, productQuery,
-				uuid.New().String(),
+				helpers.GeneratePrefixedID(helpers.AvailabilityProductPrefix),
 				availabilityID,
 				productID,
 				now,
@@ -222,8 +221,9 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 		`
 
 		for _, schedule := range req.Schedules {
+			schedule.ScheduleID = helpers.GeneratePrefixedID(helpers.AvailabilitySchedulePrefix)
 			_, err := db.ExecContext(ctx, scheduleQuery,
-				uuid.New().String(),
+				schedule.ScheduleID,
 				availabilityID,
 				schedule.DayOfWeek,
 				schedule.StartTime,
@@ -308,7 +308,7 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 
 		for _, productID := range req.ProductIDs {
 			_, err := db.ExecContext(ctx, productQuery,
-				uuid.New().String(),
+				helpers.GeneratePrefixedID(helpers.AvailabilityProductPrefix),
 				availabilityID,
 				productID,
 				now,
@@ -341,8 +341,9 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		`
 
 		for _, schedule := range req.Schedules {
+			schedule.ScheduleID = helpers.GeneratePrefixedID(helpers.AvailabilitySchedulePrefix)
 			_, err := db.ExecContext(ctx, scheduleQuery,
-				uuid.New().String(),
+				schedule.ScheduleID,
 				availabilityID,
 				schedule.DayOfWeek,
 				schedule.StartTime,
@@ -571,7 +572,7 @@ func convertSchedules(availabilityID string, reqs []CreateAvailabilityScheduleRe
 	var schedules []AvailabilitySchedule
 	for _, req := range reqs {
 		schedules = append(schedules, AvailabilitySchedule{
-			ScheduleID:     uuid.New().String(),
+			ScheduleID:     req.ScheduleID,
 			AvailabilityID: availabilityID,
 			DayOfWeek:      req.DayOfWeek,
 			StartTime:      normalizeTime(req.StartTime),

@@ -216,7 +216,7 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 	db := dbutils.GetDB(ctx, r.database)
 
 	// Generate new UUID for attribute
-	attributeID := helpers.GeneratePrefixedID("attr")
+	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
 
 	// Insert the new attribute
 	insertAttrQuery := `

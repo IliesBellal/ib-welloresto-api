@@ -32,7 +32,7 @@ func (s *auditService) LogChange(ctx context.Context, MerchantID, UserID, action
 
 	// Création de l'entrée (sans les hashs, le repo s'en charge)
 	logEntry := &models.AuditLog{
-		ID:           helpers.GeneratePrefixedID("audit-log"),
+		ID:           helpers.GeneratePrefixedID(helpers.AuditLogIDPrefix),
 		UserID:       UserID,
 		MerchantID:   MerchantID,
 		Action:       action,

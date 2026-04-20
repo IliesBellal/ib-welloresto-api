@@ -57,7 +57,7 @@ func (s *Service) CreateDiscount(ctx context.Context, token string, req *CreateD
 		return nil, err
 	}
 
-	req.DiscountID = helpers.GeneratePrefixedID("discount")
+	req.DiscountID = helpers.GeneratePrefixedID(helpers.DiscountIDPrefix)
 
 	return s.repo.CreateDiscount(ctx, user.MerchantID, req)
 }

@@ -36,9 +36,10 @@ type CreateAvailabilityRequest struct {
 
 // CreateAvailabilityScheduleReq représente un créneau dans la requête de création
 type CreateAvailabilityScheduleReq struct {
-	DayOfWeek int    `json:"day_of_week"`
-	StartTime string `json:"start_time"` // Format: "HH:MM:SS" ou "HH:MM"
-	EndTime   string `json:"end_time"`   // Format: "HH:MM:SS" ou "HH:MM"
+	ScheduleID string `json:"schedule_id"`
+	DayOfWeek  int    `json:"day_of_week"`
+	StartTime  string `json:"start_time"` // Format: "HH:MM:SS" ou "HH:MM"
+	EndTime    string `json:"end_time"`   // Format: "HH:MM:SS" ou "HH:MM"
 }
 
 // UpdateAvailabilityRequest pour la mise à jour

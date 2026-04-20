@@ -519,11 +519,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		// --- Discounts/Promotions ---
 		r.Get("/discounts", discountsH.ListActiveDiscounts)
-		r.Get("/discounts/all", discountsH.ListAllDiscounts) // for back-office
-		r.Post("/discounts", discountsH.CreateDiscount)
-		r.Get("/discounts/{discount_id}", discountsH.GetDiscount)
-		r.Patch("/discounts/{discount_id}", discountsH.UpdateDiscount)
-		r.Delete("/discounts/{discount_id}", discountsH.DeleteDiscount)
+		r.Get("/discounts/all", discountsH.ListAllDiscounts)            // for back-office
+		r.Post("/discounts", discountsH.CreateDiscount)                 // for back-office
+		r.Get("/discounts/{discount_id}", discountsH.GetDiscount)       // for back-office
+		r.Patch("/discounts/{discount_id}", discountsH.UpdateDiscount)  // for back-office
+		r.Delete("/discounts/{discount_id}", discountsH.DeleteDiscount) // for back-office
 
 		// --- Availabilities/Schedules ---
 		r.Get("/availabilities", availabilitiesH.GetAvailabilities)
