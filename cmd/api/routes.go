@@ -25,6 +25,7 @@ import (
 	// ---- MODULES ----
 	allergensModule "welloresto-api/internal/modules/allergens"
 	authModule "welloresto-api/internal/modules/auth"
+	availabilitiesModule "welloresto-api/internal/modules/availabilities"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
 	customersModule "welloresto-api/internal/modules/customers"
@@ -282,6 +283,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	discountsRepo := discountsModule.NewRepository(mysqlDB)
 	discountsService := discountsModule.NewService(discountsRepo)
 
+	// ---- Availabilities ----
+	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(mysqlDB)
+	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
+
 	// =============================
 	//  HANDLERS
 	// =============================
@@ -292,6 +297,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	discountsH := discountsModule.NewHandler(discountsService)
+	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService)
 	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
@@ -518,6 +524,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/discounts/{discount_id}", discountsH.GetDiscount)
 		r.Patch("/discounts/{discount_id}", discountsH.UpdateDiscount)
 		r.Delete("/discounts/{discount_id}", discountsH.DeleteDiscount)
+
+		// --- Availabilities/Schedules ---
+		r.Get("/availabilities", availabilitiesH.GetAvailabilities)
+		r.Post("/availabilities", availabilitiesH.CreateAvailability)
+		r.Put("/availabilities/{id}", availabilitiesH.UpdateAvailability)
+		r.Delete("/availabilities/{id}", availabilitiesH.DeleteAvailability)
+		r.Get("/availabilities/check", availabilitiesH.CheckProductAvailability)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
