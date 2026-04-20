@@ -30,7 +30,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 			merchant_id,
 			availability_name,
 			unavailable_message,
-			enabled,
+			available,
 			creation_date,
 			update_date
 		FROM availabilities
@@ -54,7 +54,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 			&a.MerchantID,
 			&a.Name,
 			&a.UnavailableMessage,
-			&a.Enabled,
+			&a.Available,
 			&a.CreatedAt,
 			&a.UpdatedAt,
 		)
@@ -105,7 +105,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 			merchant_id,
 			availability_name,
 			unavailable_message,
-			enabled,
+			available,
 			creation_date,
 			update_date
 		FROM availabilities
@@ -120,7 +120,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 		&a.MerchantID,
 		&a.Name,
 		&a.UnavailableMessage,
-		&a.Enabled,
+		&a.Available,
 		&a.CreatedAt,
 		&a.UpdatedAt,
 	)
@@ -164,7 +164,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 			merchant_id,
 			availability_name,
 			unavailable_message,
-			enabled,
+			available,
 			creation_date,
 			update_date
 		) VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -248,7 +248,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 		MerchantID:         merchantID,
 		Name:               req.Name,
 		UnavailableMessage: req.UnavailableMessage,
-		Enabled:            1,
+		Available:          true,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 		ProductIDs:         req.ProductIDs,
@@ -282,13 +282,9 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		unavailableMessage = req.UnavailableMessage
 	}
 
-	enabled := current.Enabled
+	available := current.Available
 	if req.Available != nil {
-		if *req.Available {
-			enabled = 1
-		} else {
-			enabled = 0
-		}
+		available = *req.Available
 	}
 
 	productIDs := current.ProductIDs
@@ -304,14 +300,14 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 	// Mettre à jour l'availability
 	updateQuery := `
 		UPDATE availabilities
-		SET availability_name = ?, unavailable_message = ?, enabled = ?, update_date = ?
+		SET availability_name = ?, unavailable_message = ?, available = ?, update_date = ?
 		WHERE availability_id = ? AND merchant_id = ?
 	`
 
 	result, err := db.ExecContext(ctx, updateQuery,
 		name,
 		unavailableMessage,
-		enabled,
+		available,
 		now,
 		availabilityID,
 		merchantID,
@@ -405,7 +401,7 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		MerchantID:         merchantID,
 		Name:               name,
 		UnavailableMessage: unavailableMessage,
-		Enabled:            enabled,
+		Available:          available,
 		CreatedAt:          current.CreatedAt,
 		UpdatedAt:          now,
 		ProductIDs:         productIDs,
@@ -449,7 +445,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 			a.merchant_id,
 			a.availability_name,
 			a.unavailable_message,
-			a.enabled,
+			a.available,
 			a.creation_date,
 			a.update_date
 		FROM availabilities a
@@ -474,7 +470,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 			&a.MerchantID,
 			&a.Name,
 			&a.UnavailableMessage,
-			&a.Enabled,
+			&a.Available,
 			&a.CreatedAt,
 			&a.UpdatedAt,
 		)

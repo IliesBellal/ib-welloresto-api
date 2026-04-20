@@ -8,7 +8,7 @@ type Availability struct {
 	MerchantID         string                 `json:"merchant_id"`
 	Name               string                 `json:"name"`
 	UnavailableMessage *string                `json:"unavailable_message,omitempty"`
-	Enabled            int                    `json:"enabled"`
+	Available          bool                   `json:"available"`
 	CreatedAt          time.Time              `json:"creation_date"`
 	UpdatedAt          time.Time              `json:"update_date"`
 	ProductIDs         []string               `json:"product_ids"`
@@ -56,7 +56,7 @@ type AvailabilityResponse struct {
 	AvailabilityID     string                 `json:"availability_id"`
 	Name               string                 `json:"name"`
 	UnavailableMessage *string                `json:"unavailable_message,omitempty"`
-	Enabled            int                    `json:"enabled"`
+	Available          bool                   `json:"available"`
 	CreatedAt          time.Time              `json:"creation_date"`
 	UpdatedAt          time.Time              `json:"update_date"`
 	ProductIDs         []string               `json:"product_ids"`
