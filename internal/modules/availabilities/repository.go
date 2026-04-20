@@ -265,7 +265,7 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 	// Mettre à jour l'availability
 	updateQuery := `
 		UPDATE availabilities
-		SET availability_name = ?, availability_desc = ?, updated_at = ?
+		SET availability_name = ?, availability_desc = ?, update_date = ?
 		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
 	`
 
@@ -382,7 +382,7 @@ func (r *AvailabilitiesRepository) Delete(ctx context.Context, merchantID, avail
 
 	query := `
 		UPDATE availabilities
-		SET enabled = 0, updated_at = ?
+		SET enabled = 0, update_date = ?
 		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
 	`
 
