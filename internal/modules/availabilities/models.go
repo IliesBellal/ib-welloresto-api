@@ -9,8 +9,8 @@ type Availability struct {
 	Name           string                 `json:"name"`
 	Description    *string                `json:"description,omitempty"`
 	Enabled        int                    `json:"enabled"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	CreatedAt      time.Time              `json:"creation_date"`
+	UpdatedAt      time.Time              `json:"update_date"`
 	ProductIDs     []string               `json:"product_ids"`
 	Schedules      []AvailabilitySchedule `json:"schedules"`
 }
@@ -22,8 +22,8 @@ type AvailabilitySchedule struct {
 	DayOfWeek      int       `json:"day_of_week"` // 0 = dimanche, 1 = lundi, ..., 6 = samedi
 	StartTime      string    `json:"start_time"`  // Format: "HH:MM:SS"
 	EndTime        string    `json:"end_time"`    // Format: "HH:MM:SS"
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedAt      time.Time `json:"creation_date"`
+	UpdatedAt      time.Time `json:"update_date"`
 }
 
 // CreateAvailabilityRequest DTOs pour la création
@@ -56,8 +56,8 @@ type AvailabilityResponse struct {
 	Name           string                 `json:"name"`
 	Description    *string                `json:"description,omitempty"`
 	Enabled        int                    `json:"enabled"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	CreatedAt      time.Time              `json:"creation_date"`
+	UpdatedAt      time.Time              `json:"update_date"`
 	ProductIDs     []string               `json:"product_ids"`
 	Schedules      []AvailabilitySchedule `json:"schedules"`
 }
