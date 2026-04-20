@@ -38,6 +38,7 @@ import (
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
 	posModule "welloresto-api/internal/modules/pos"
+	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
 	uberModule "welloresto-api/internal/modules/ubereats"
@@ -118,6 +119,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)
 	posService := posModule.NewPOSService(posRepo)
+
+	// ---- STATS ----
+	statsRepo := statsModule.NewStatsRepository()
+	statsService := statsModule.NewStatsService(statsRepo)
 
 	// ---- Menu ----
 	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
@@ -293,6 +298,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	authH := authModule.NewAuthHandler(authService)
 	posH := posModule.NewPOSHandler(posService)
+	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
@@ -375,6 +381,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
 		r.Patch("/{user_id}/reset-password", usersH.UpdatePassword)
+	})
+
+	// --- STATS ---
+	r.Route("/stats", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Route("/dashboard", func(r chi.Router) {
+			r.Get("/summary", statsH.GetDashboardSummary)
+		})
 	})
 
 	// --- POS ---
