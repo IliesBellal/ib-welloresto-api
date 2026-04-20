@@ -1610,6 +1610,13 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					purchasePriceQty = &ppq
 				}
 
+				// Calculer purchase_price_per_unit = purchase_price / purchase_price_quantity
+				var purchasePricePerUnit *float64
+				if purchasePrice != nil && purchasePriceQty != nil && *purchasePriceQty > 0 {
+					ppu := float64(*purchasePrice) / *purchasePriceQty
+					purchasePricePerUnit = &ppu
+				}
+
 				purchaseUomID := ""
 				if cb.PurchaseUnitOfMeasureID.Valid {
 					purchaseUomID = fmt.Sprintf("%d", cb.PurchaseUnitOfMeasureID.Int64)
@@ -1629,6 +1636,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					UnitOfMeasure:           uomName,
 					PurchasePrice:           purchasePrice,
 					PurchasePriceQty:        purchasePriceQty,
+					PurchasePricePerUnit:    purchasePricePerUnit,
 					PurchaseUnitOfMeasureID: purchaseUomID,
 					PurchaseUnitOfMeasure:   purchaseUomName,
 				})

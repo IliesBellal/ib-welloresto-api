@@ -164,6 +164,7 @@ type ComponentBasic struct {
 	UnitOfMeasureID         string   `json:"unit_of_measure_id,omitempty"`
 	PurchasePrice           *int     `json:"purchase_price,omitempty"`
 	PurchasePriceQty        *float64 `json:"purchase_price_qty,omitempty"`
+	PurchasePricePerUnit    *float64 `json:"purchase_price_per_unit,omitempty"`
 	PurchaseUnitOfMeasureID string   `json:"purchase_unit_of_measure_id,omitempty"`
 	PurchaseUnitOfMeasure   string   `json:"purchase_unit_of_measure,omitempty"`
 }
