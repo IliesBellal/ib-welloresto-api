@@ -528,7 +528,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		// --- Availabilities/Schedules ---
 		r.Get("/availabilities", availabilitiesH.GetAvailabilities)
 		r.Post("/availabilities", availabilitiesH.CreateAvailability)
-		r.Put("/availabilities/{id}", availabilitiesH.UpdateAvailability)
+		r.Patch("/availabilities/{id}", availabilitiesH.UpdateAvailability)
 		r.Delete("/availabilities/{id}", availabilitiesH.DeleteAvailability)
 		r.Get("/availabilities/check", availabilitiesH.CheckProductAvailability)
 	})

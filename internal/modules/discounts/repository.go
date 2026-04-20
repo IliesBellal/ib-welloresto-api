@@ -42,7 +42,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 	}
 	defer rows.Close()
 
-	var discounts []Discount
+	discounts := make([]Discount, 0)
 	for rows.Next() {
 		var d Discount
 		var orderType sql.NullString
@@ -111,7 +111,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 	}
 	defer rows.Close()
 
-	var discounts []Discount
+	discounts := make([]Discount, 0)
 	for rows.Next() {
 		var d Discount
 		var orderType sql.NullString

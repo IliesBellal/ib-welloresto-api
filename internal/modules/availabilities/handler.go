@@ -93,7 +93,7 @@ func (h *AvailabilitiesHandler) CreateAvailability(w http.ResponseWriter, r *htt
 	})
 }
 
-// PUT /menu/availabilities/{id}
+// PATCH /menu/availabilities/{id}
 // Met à jour une disponibilité existante
 func (h *AvailabilitiesHandler) UpdateAvailability(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
