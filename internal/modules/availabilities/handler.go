@@ -42,14 +42,14 @@ func (h *AvailabilitiesHandler) GetAvailabilities(w http.ResponseWriter, r *http
 	response := make([]AvailabilityResponse, 0)
 	for _, a := range availabilities {
 		response = append(response, AvailabilityResponse{
-			AvailabilityID: a.AvailabilityID,
-			Name:           a.Name,
-			Description:    a.Description,
-			Enabled:        a.Enabled,
-			CreatedAt:      a.CreatedAt,
-			UpdatedAt:      a.UpdatedAt,
-			ProductIDs:     a.ProductIDs,
-			Schedules:      a.Schedules,
+			AvailabilityID:     a.AvailabilityID,
+			Name:               a.Name,
+			UnavailableMessage: a.UnavailableMessage,
+			Enabled:            a.Enabled,
+			CreatedAt:          a.CreatedAt,
+			UpdatedAt:          a.UpdatedAt,
+			ProductIDs:         a.ProductIDs,
+			Schedules:          a.Schedules,
 		})
 	}
 
@@ -82,14 +82,14 @@ func (h *AvailabilitiesHandler) CreateAvailability(w http.ResponseWriter, r *htt
 	}
 
 	models.SendJSON(w, http.StatusCreated, "availabilities", "create_availability", AvailabilityResponse{
-		AvailabilityID: availability.AvailabilityID,
-		Name:           availability.Name,
-		Description:    availability.Description,
-		Enabled:        availability.Enabled,
-		CreatedAt:      availability.CreatedAt,
-		UpdatedAt:      availability.UpdatedAt,
-		ProductIDs:     availability.ProductIDs,
-		Schedules:      availability.Schedules,
+		AvailabilityID:     availability.AvailabilityID,
+		Name:               availability.Name,
+		UnavailableMessage: availability.UnavailableMessage,
+		Enabled:            availability.Enabled,
+		CreatedAt:          availability.CreatedAt,
+		UpdatedAt:          availability.UpdatedAt,
+		ProductIDs:         availability.ProductIDs,
+		Schedules:          availability.Schedules,
 	})
 }
 
@@ -122,14 +122,14 @@ func (h *AvailabilitiesHandler) UpdateAvailability(w http.ResponseWriter, r *htt
 	}
 
 	models.SendJSON(w, http.StatusOK, "availabilities", "update_availability", AvailabilityResponse{
-		AvailabilityID: availability.AvailabilityID,
-		Name:           availability.Name,
-		Description:    availability.Description,
-		Enabled:        availability.Enabled,
-		CreatedAt:      availability.CreatedAt,
-		UpdatedAt:      availability.UpdatedAt,
-		ProductIDs:     availability.ProductIDs,
-		Schedules:      availability.Schedules,
+		AvailabilityID:     availability.AvailabilityID,
+		Name:               availability.Name,
+		UnavailableMessage: availability.UnavailableMessage,
+		Enabled:            availability.Enabled,
+		CreatedAt:          availability.CreatedAt,
+		UpdatedAt:          availability.UpdatedAt,
+		ProductIDs:         availability.ProductIDs,
+		Schedules:          availability.Schedules,
 	})
 }
 

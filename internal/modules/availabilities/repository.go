@@ -29,7 +29,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 			availability_id,
 			merchant_id,
 			availability_name,
-			availability_desc,
+			unavailable_message,
 			enabled,
 			creation_date,
 			update_date
@@ -53,7 +53,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 			&a.AvailabilityID,
 			&a.MerchantID,
 			&a.Name,
-			&a.Description,
+			&a.UnavailableMessage,
 			&a.Enabled,
 			&a.CreatedAt,
 			&a.UpdatedAt,
@@ -104,7 +104,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 			availability_id,
 			merchant_id,
 			availability_name,
-			availability_desc,
+			unavailable_message,
 			enabled,
 			creation_date,
 			update_date
@@ -119,7 +119,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 		&a.AvailabilityID,
 		&a.MerchantID,
 		&a.Name,
-		&a.Description,
+		&a.UnavailableMessage,
 		&a.Enabled,
 		&a.CreatedAt,
 		&a.UpdatedAt,
@@ -163,7 +163,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 			availability_id,
 			merchant_id,
 			availability_name,
-			availability_desc,
+			unavailable_message,
 			enabled,
 			creation_date,
 			update_date
@@ -174,7 +174,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 		availabilityID,
 		merchantID,
 		req.Name,
-		req.Description,
+		req.UnavailableMessage,
 		now,
 		now,
 	)
@@ -244,15 +244,15 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 
 	// Retourner l'objet créé
 	return &Availability{
-		AvailabilityID: availabilityID,
-		MerchantID:     merchantID,
-		Name:           req.Name,
-		Description:    req.Description,
-		Enabled:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ProductIDs:     req.ProductIDs,
-		Schedules:      convertSchedules(availabilityID, req.Schedules, now),
+		AvailabilityID:     availabilityID,
+		MerchantID:         merchantID,
+		Name:               req.Name,
+		UnavailableMessage: req.UnavailableMessage,
+		Enabled:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		ProductIDs:         req.ProductIDs,
+		Schedules:          convertSchedules(availabilityID, req.Schedules, now),
 	}, nil
 }
 
@@ -265,13 +265,13 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 	// Mettre à jour l'availability
 	updateQuery := `
 		UPDATE availabilities
-		SET availability_name = ?, availability_desc = ?, update_date = ?
+		SET availability_name = ?, unavailable_message = ?, update_date = ?
 		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
 	`
 
 	result, err := db.ExecContext(ctx, updateQuery,
 		req.Name,
-		req.Description,
+		req.UnavailableMessage,
 		now,
 		availabilityID,
 		merchantID,
@@ -364,15 +364,15 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 
 	// Retourner l'objet mis à jour
 	return &Availability{
-		AvailabilityID: availabilityID,
-		MerchantID:     merchantID,
-		Name:           req.Name,
-		Description:    req.Description,
-		Enabled:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ProductIDs:     req.ProductIDs,
-		Schedules:      convertSchedules(availabilityID, req.Schedules, now),
+		AvailabilityID:     availabilityID,
+		MerchantID:         merchantID,
+		Name:               req.Name,
+		UnavailableMessage: req.UnavailableMessage,
+		Enabled:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		ProductIDs:         req.ProductIDs,
+		Schedules:          convertSchedules(availabilityID, req.Schedules, now),
 	}, nil
 }
 
@@ -411,7 +411,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 			a.availability_id,
 			a.merchant_id,
 			a.availability_name,
-			a.availability_desc,
+			a.unavailable_message,
 			a.enabled,
 			a.creation_date,
 			a.update_date
@@ -436,7 +436,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 			&a.AvailabilityID,
 			&a.MerchantID,
 			&a.Name,
-			&a.Description,
+			&a.UnavailableMessage,
 			&a.Enabled,
 			&a.CreatedAt,
 			&a.UpdatedAt,
