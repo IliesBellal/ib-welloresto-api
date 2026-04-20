@@ -27,7 +27,7 @@ GET    /menu/availabilities/check?product_id=X # Vérifier disponibilité
 3. Retourner booléen
 
 ### Jours de la semaine
-- 1 = Dimanche, 2 = Lundi, ..., 7 = Samedi
+- 0 = Dimanche, 1 = Lundi, ..., 6 = Samedi
 
 ## Base de données
 

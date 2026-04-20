@@ -83,7 +83,7 @@ if isAvailable {
 
 ## ⚙️ Configuration
 
-- **Jour de semaine** : 1 (dimanche) à 7 (samedi)
+- **Jour de semaine** : 0 (dimanche) à 6 (samedi)
 - **Heures** : Format `HH:MM` ou `HH:MM:SS` en UTC
 - **Par défaut** : Aucune disponibilité = disponible
 

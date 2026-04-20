@@ -66,7 +66,7 @@ Table définissant les créneaux horaires pour chaque disponibilité.
 CREATE TABLE availabilities_schedules (
     schedule_id CHAR(36) PRIMARY KEY,
     availability_id CHAR(36) NOT NULL,
-    day_of_week INT NOT NULL,              -- 1=Dimanche, 2=Lundi, ..., 7=Samedi
+    day_of_week INT NOT NULL,              -- 0=Dimanche, 1=Lundi, ..., 6=Samedi
     start_time TIME NOT NULL,               -- Format: HH:MM:SS
     end_time TIME NOT NULL,                 -- Format: HH:MM:SS
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -243,13 +243,13 @@ func (s *AvailabilitiesService) IsProductAvailable(ctx context.Context, merchant
 ```
 
 #### Jour de la semaine
-- 1 = Dimanche
-- 2 = Lundi
-- 3 = Mardi
-- 4 = Mercredi
-- 5 = Jeudi
-- 6 = Vendredi
-- 7 = Samedi
+- 0 = Dimanche
+- 1 = Lundi
+- 2 = Mardi
+- 3 = Mercredi
+- 4 = Jeudi
+- 5 = Vendredi
+- 6 = Samedi
 
 #### Format d'heure
 - Format accepté en entrée: `HH:MM` ou `HH:MM:SS`
@@ -321,7 +321,7 @@ if err = tx.Commit(); err != nil {
 ### Créneaux horaires valides
 ```json
 {
-  "day_of_week": 2,        // 1-7
+  "day_of_week": 1,        // 0-6
   "start_time": "08:00",   // HH:MM ou HH:MM:SS
   "end_time": "11:00"      // HH:MM ou HH:MM:SS (doit être > start_time)
 }
@@ -331,7 +331,7 @@ if err = tx.Commit(); err != nil {
 - `availability_name_required` : Le nom ne peut pas être vide
 - `at_least_one_product_required` : Au moins un produit est obligatoire
 - `at_least_one_schedule_required` : Au moins un créneau est obligatoire
-- `invalid_day_of_week` : day_of_week doit être entre 1 et 7
+- `invalid_day_of_week` : day_of_week doit être entre 0 et 6
 - `invalid_time_format` : Format d'heure invalide
 - `start_time_must_be_before_end_time` : start_time >= end_time
 - `availability_not_found` : La disponibilité n'existe pas

@@ -106,7 +106,7 @@ Repository (Requêtes SQL + Transactions)
 | JSON snake_case | ✅ Tous les tags |
 | Suppression logique | ✅ enabled = 0 |
 | IsProductAvailable() | ✅ UTC + jour_of_week |
-| Jour de semaine 1-7 | ✅ 1=dimanche, 7=samedi |
+| Jour de semaine 0-6 | ✅ | 0=dimanche, 1=lundi, ..., 6=samedi |
 
 ---
 
@@ -114,13 +114,13 @@ Repository (Requêtes SQL + Transactions)
 
 ### Jour de la semaine
 ```
-1 = Dimanche
-2 = Lundi
-3 = Mardi
-4 = Mercredi
-5 = Jeudi
-6 = Vendredi
-7 = Samedi
+0 = Dimanche
+1 = Lundi
+2 = Mardi
+3 = Mercredi
+4 = Jeudi
+5 = Vendredi
+6 = Samedi
 ```
 
 ### Format d'heure

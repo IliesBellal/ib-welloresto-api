@@ -304,9 +304,7 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 
 	dateObj, _ := time.Parse("2006-01-02", requestedDate)
 	dayOfWeek := int(dateObj.Weekday())
-	if dayOfWeek == 0 {
-		dayOfWeek = 7 // dimanche = 7
-	}
+	// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
 
 	rows, err := db.QueryContext(ctx, `
         SELECT id, hour_from, hour_to, booking_capacity

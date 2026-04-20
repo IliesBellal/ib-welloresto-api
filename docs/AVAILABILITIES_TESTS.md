@@ -110,7 +110,7 @@ func TestIsProductAvailable_WrongDay(t *testing.T) {
 	
 	schedules := []AvailabilitySchedule{
 		{
-			DayOfWeek: 2, // Lundi
+			DayOfWeek: 1, // Lundi
 			StartTime: "08:00:00",
 			EndTime:   "11:00:00",
 		},
@@ -162,7 +162,7 @@ func TestValidateSchedules_ValidInput(t *testing.T) {
 func TestValidateSchedules_InvalidDayOfWeek(t *testing.T) {
 	schedules := []CreateAvailabilityScheduleReq{
 		{
-			DayOfWeek: 8, // Invalid (must be 1-7)
+			DayOfWeek: 7, // Invalid (must be 0-6)
 			StartTime: "08:00",
 			EndTime:   "11:00",
 		},

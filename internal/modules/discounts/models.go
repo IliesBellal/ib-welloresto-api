@@ -73,7 +73,7 @@ type DiscountProduct struct {
 type DiscountSchedule struct {
 	ScheduleID    string    `json:"schedule_id"`
 	DiscountID    string    `json:"discount_id"`
-	DayOfWeek     int       `json:"day_of_week"`    // 1 = Sunday, 2 = Monday, etc.
+	DayOfWeek     int       `json:"day_of_week"`    // 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
 	AvailableFrom TimeOfDay `json:"available_from"` // HH:MM format
 	AvailableTo   TimeOfDay `json:"available_to"`   // HH:MM format
 	Enabled       bool      `json:"enabled"`

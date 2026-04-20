@@ -95,7 +95,7 @@ availabilities_products
 availabilities_schedules
 ├── schedule_id (UUID)
 ├── availability_id (UUID) [FK]
-├── day_of_week (1-7)
+├── day_of_week (0-6)
 ├── start_time (HH:MM:SS)
 ├── end_time (HH:MM:SS)
 └── timestamps
@@ -268,7 +268,7 @@ func (s *MenuService) GetMenuForCustomer(ctx context.Context, merchantID string)
 | Suppression logique | ✅ | enabled = 0 |
 | IsProductAvailable() | ✅ | UTC + day_of_week |
 | UTC temps réel | ✅ | time.Now().UTC() |
-| Jour semaine 1-7 | ✅ | 1=Dimanche, 7=Samedi |
+| Jour semaine 0-6 | ✅ | 0=Dimanche, 6=Samedi |
 | Compilation | ✅ | 0 erreurs |
 
 ---

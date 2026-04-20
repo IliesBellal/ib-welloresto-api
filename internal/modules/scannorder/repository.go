@@ -85,7 +85,7 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
         JOIN hours_of_operation AS hoo
             ON hoo.merchant_id = ?
             AND hoo.enabled = 1
-            AND (DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) % 7) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
+            AND (DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) - 1) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
             AND time_slots.time_slot > hoo.hour_from
             AND time_slots.time_slot <= hoo.hour_to
         LEFT JOIN merchant_parameters AS mp ON mp.merchant_id = hoo.merchant_id

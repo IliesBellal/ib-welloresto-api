@@ -124,7 +124,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	currentTime := now.Format("15:04:05")
 	currentDay := int(now.Weekday())
 	if currentDay == 0 {
-		currentDay = 7 // Sunday=7
+		currentDay = 0 // Sunday=0 (0-6 standard)
 	}
 
 	// CALL GET_POS_STATUS

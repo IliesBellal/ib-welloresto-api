@@ -16,6 +16,11 @@ curl -X POST http://localhost:8080/menu/availabilities \
     ],
     "schedules": [
       {
+        "day_of_week": 1,
+        "start_time": "08:00",
+        "end_time": "11:00"
+      },
+      {
         "day_of_week": 2,
         "start_time": "08:00",
         "end_time": "11:00"
@@ -32,11 +37,6 @@ curl -X POST http://localhost:8080/menu/availabilities \
       },
       {
         "day_of_week": 5,
-        "start_time": "08:00",
-        "end_time": "11:00"
-      },
-      {
-        "day_of_week": 6,
         "start_time": "08:00",
         "end_time": "11:00"
       }
@@ -61,7 +61,7 @@ curl -X POST http://localhost:8080/menu/availabilities \
     {
       "schedule_id": "sch-001",
       "availability_id": "123e4567-e89b-12d3-a456-426614174000",
-      "day_of_week": 2,
+      "day_of_week": 1,
       "start_time": "08:00:00",
       "end_time": "11:00:00",
       "created_at": "2026-04-20T08:00:00Z",
@@ -206,21 +206,21 @@ curl -X GET "http://localhost:8080/menu/availabilities/check?product_id=550e8400
       "name": "Petit-déjeuner",
       "product_ids": ["cafe-uuid", "croissant-uuid"],
       "schedules": [
+        { "day_of_week": 1, "start_time": "06:00", "end_time": "11:00" },
         { "day_of_week": 2, "start_time": "06:00", "end_time": "11:00" },
         { "day_of_week": 3, "start_time": "06:00", "end_time": "11:00" },
         { "day_of_week": 4, "start_time": "06:00", "end_time": "11:00" },
         { "day_of_week": 5, "start_time": "06:00", "end_time": "11:00" },
-        { "day_of_week": 6, "start_time": "06:00", "end_time": "11:00" },
-        { "day_of_week": 7, "start_time": "07:00", "end_time": "12:00" },
-        { "day_of_week": 1, "start_time": "07:00", "end_time": "12:00" }
+        { "day_of_week": 6, "start_time": "07:00", "end_time": "12:00" },
+        { "day_of_week": 0, "start_time": "07:00", "end_time": "12:00" }
       ]
     },
     {
       "name": "Déjeuner",
       "product_ids": ["pizza-uuid", "salade-uuid"],
       "schedules": [
+        { "day_of_week": 1, "start_time": "11:30", "end_time": "14:30" },
         { "day_of_week": 2, "start_time": "11:30", "end_time": "14:30" },
-        { "day_of_week": 3, "start_time": "11:30", "end_time": "14:30" },
         { "day_of_week": 4, "start_time": "11:30", "end_time": "14:30" },
         { "day_of_week": 5, "start_time": "11:30", "end_time": "14:30" },
         { "day_of_week": 6, "start_time": "11:30", "end_time": "14:30" }
@@ -266,8 +266,8 @@ curl -X GET "http://localhost:8080/menu/availabilities/check?product_id=550e8400
   "description": "Menu spécial samedi et dimanche",
   "product_ids": ["brunch-uuid", "dessert-uuid"],
   "schedules": [
-    { "day_of_week": 7, "start_time": "10:00", "end_time": "16:00" },
-    { "day_of_week": 1, "start_time": "10:00", "end_time": "16:00" }
+    { "day_of_week": 6, "start_time": "10:00", "end_time": "16:00" },
+    { "day_of_week": 0, "start_time": "10:00", "end_time": "16:00" }
   ]
 }
 ```
@@ -312,7 +312,7 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 ## Notes importantes
 
 1. **Format d'heure** : Accepte `HH:MM` ou `HH:MM:SS`, stocké en `HH:MM:SS`
-2. **Jour de la semaine** : 1 (dimanche) à 7 (samedi)
+2. **Jour de la semaine** : 0 (dimanche) à 6 (samedi)
 3. **Heure UTC** : Toutes les vérifications utilisent `time.Now().UTC()`
 4. **Par défaut** : Si aucune disponibilité n'existe pour un produit, il est disponible
 5. **Suppression logique** : Les disponibilités supprimées restent en base avec `enabled = 0`

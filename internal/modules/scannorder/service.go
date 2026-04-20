@@ -440,10 +440,8 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 
 	req.MerchantID = merchant.MerchantID
 	req.IsSNO = true
+	// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
 	req.DayOfWeek = int(now.Weekday())
-	if req.DayOfWeek == 0 {
-		req.DayOfWeek = 7
-	}
 	req.Time = now.Format("2006-01-02 15:04:05")
 
 	pricing, err := s.orderingService.ComputePricing(ctx, req)
@@ -695,9 +693,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		now := time.Now().In(tz)
 
 		req.DayOfWeek = int(now.Weekday())
-		if req.DayOfWeek == 0 {
-			req.DayOfWeek = 7
-		}
+		// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
 		req.Time = now.Format("2006-01-02 15:04:05")
 
 		openStatus, err := s.repo.GetMerchantOpenStatus(ctx, req.MerchantID, req.DayOfWeek, req.Time)

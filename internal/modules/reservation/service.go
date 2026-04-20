@@ -48,13 +48,13 @@ func (s *reservationService) GetOpenHours(ctx context.Context, qr string) OpenHo
 	jsOpenDaysMap := make(map[int]bool)
 	openHoursByDay := make(map[string]string)
 	dayMap := map[int]string{
+		0: "Dimanche",
 		1: "Lundi", 2: "Mardi", 3: "Mercredi", 4: "Jeudi",
-		5: "Vendredi", 6: "Samedi", 7: "Dimanche",
+		5: "Vendredi", 6: "Samedi",
 	}
 
 	for _, row := range operationHours {
-		jsDay := row.DayOfWeek % 7
-		jsOpenDaysMap[jsDay] = true
+		jsOpenDaysMap[row.DayOfWeek] = true
 
 		dayName := dayMap[row.DayOfWeek]
 		timeRange := formatTime(row.HourFrom) + " - " + formatTime(row.HourTo)
@@ -66,9 +66,9 @@ func (s *reservationService) GetOpenHours(ctx context.Context, qr string) OpenHo
 		}
 	}
 
-	// 4. Finalisation de la map de la semaine
+	// Finalisation de la map de la semaine
 	fullWeekHours := make(map[string]string)
-	for i := 1; i <= 7; i++ {
+	for i := 0; i <= 6; i++ {
 		dayName := dayMap[i]
 		if hours, open := openHoursByDay[dayName]; open {
 			fullWeekHours[dayName] = hours
@@ -120,9 +120,7 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 	requestedDateStr := t.Format("2006-01-02")
 
 	dayOfWeek := int(t.Weekday())
-	if dayOfWeek == 0 {
-		dayOfWeek = 7 // Ajustement Dimanche (1-7)
-	}
+	// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
 
 	// 3. Récupération data (on passe requestedDateStr)
 	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDateStr)
