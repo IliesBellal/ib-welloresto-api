@@ -38,6 +38,8 @@ import (
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
 	posModule "welloresto-api/internal/modules/pos"
+	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
+	posReportsModule "welloresto-api/internal/modules/pos/reports"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
@@ -74,6 +76,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		log.Error("Erreur lors de l'initialisation du client Redis", zap.Error(err))
 	} else {
 		log.Info("Redis connecté avec succès")
+	}
+
+	// ---- R2 (Cloudflare Storage) ----
+	r2Client, err := r2.NewClient(r2.UploadConfig{
+		AccessKeyID:     cfg.R2.AccessKeyID,
+		SecretAccessKey: cfg.R2.SecretAccessKey,
+		Endpoint:        cfg.R2.Endpoint,
+		Bucket:          cfg.R2.Bucket,
+		PublicBaseURL:   cfg.R2.PublicBaseURL,
+	})
+	if err != nil {
+		log.Error("Erreur lors de l'initialisation du client R2", zap.Error(err))
+	} else {
+		log.Info("R2 client connecté avec succès")
 	}
 
 	// =============================
@@ -119,6 +135,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(mysqlDB)
 	posService := posModule.NewPOSService(posRepo)
+
+	// ---- POS Reports ----
+	posReportsRepo := posReportsModule.NewReportsRepository(mysqlDB)
+	posReportsService := posReportsModule.NewReportsService(posReportsRepo)
+	posReportsHandler := posReportsModule.NewReportsHandler(posReportsService)
+
+	// ---- POS Accounting ----
+	posAccountingRepo := posAccountingModule.NewAccountingRepository(mysqlDB)
+	posAccountingService := posAccountingModule.NewAccountingService(posAccountingRepo)
+	posAccountingHandler := posAccountingModule.NewAccountingHandler(posAccountingService, r2Client)
 
 	// ---- STATS ----
 	statsRepo := statsModule.NewStatsRepository()
@@ -166,20 +192,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
-
-	// ---- R2 (Cloudflare Storage) ----
-	r2Client, err := r2.NewClient(r2.UploadConfig{
-		AccessKeyID:     cfg.R2.AccessKeyID,
-		SecretAccessKey: cfg.R2.SecretAccessKey,
-		Endpoint:        cfg.R2.Endpoint,
-		Bucket:          cfg.R2.Bucket,
-		PublicBaseURL:   cfg.R2.PublicBaseURL,
-	})
-	if err != nil {
-		log.Error("Erreur lors de l'initialisation du client R2", zap.Error(err))
-	} else {
-		log.Info("R2 client connecté avec succès")
-	}
 
 	// ---- Receipt ----
 	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
@@ -416,6 +428,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		})
 
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
+
+		r.Route("/reports", func(r chi.Router) {
+			r.Post("/tva", posReportsHandler.GetTVAReport)
+			r.Post("/payments", posReportsHandler.GetPaymentsReport)
+		})
+
+		r.Route("/accounting", func(r chi.Router) {
+			r.Post("/export", posAccountingHandler.ExportAccounting)
+		})
 	})
 
 	// --- SCANNORDER ---
