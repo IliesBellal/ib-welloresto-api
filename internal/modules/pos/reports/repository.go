@@ -25,7 +25,7 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 
 	sqlQuery := `
 		SELECT 
-			DATE(o.creation_date) AS report_date,
+			DATE_FORMAT(o.creation_date, '%Y-%m-%d') AS report_date,
 			o.order_type,
 			tva.tva_title AS title,
 			tva.tva_rate AS rate,
@@ -55,7 +55,7 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 		  AND tva.show_in_report
 		UNION ALL
 		SELECT
-			DATE(o_fees.creation_date) AS report_date,
+			DATE_FORMAT(o_fees.creation_date, '%Y-%m-%d') AS report_date,
 			o_fees.order_type,
 			tva_fees.tva_title AS title,
 			tva_fees.tva_rate AS rate,
@@ -188,7 +188,7 @@ func (r *ReportsRepository) GetPaymentsReportData(ctx context.Context, merchantI
 
 	sqlQuery := `
 		SELECT 
-			DATE(o.creation_date) AS report_date,
+			DATE_FORMAT(o.creation_date, '%Y-%m-%d') AS report_date,
 			p.mop AS payment_code,
 			l.label AS payment_label,
 			SUM(p.amount) AS total_amount
