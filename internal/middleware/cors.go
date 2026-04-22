@@ -46,6 +46,8 @@ func CORSMiddleware() *cors.Cors {
 			// Prod
 			"https://mywelloresto.welloresto.fr",
 			"https://wello-back-office.onrender.com",
+			"https://my-wello-resto-prod.onrender.com",
+			"https://my-wello-resto-staging.onrender.com",
 
 			// Lovable
 			"*.lovableproject.com",
