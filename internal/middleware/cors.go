@@ -13,15 +13,21 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 
 	// Liste des origines autorisées (doit correspondre à CORSMiddleware)
 	allowedOrigins := map[string]bool{
-		"https://mywelloresto.welloresto.fr":     true,
-		"https://wello-back-office.onrender.com": true,
-		"https://scannorder-test.lovable.app":    true,
-		"https://rsv-staging.onrender.com":       true,
-		"https://rsv.onrender.com":               true,
-		"https://wello-resto.postman.co":         true,
-		"http://localhost:8080":                  true,
-		"http://localhost:8081":                  true,
-		"https://scannorder.welloresto.fr":       true,
+		"https://mywelloresto.welloresto.fr": true,
+
+		"https://my-wello-resto-prod.onrender.com":    true,
+		"https://my-wello-resto-staging.onrender.com": true,
+
+		"https://scannorder-test.lovable.app": true,
+		"https://scannorder.welloresto.fr":    true,
+
+		"https://rsv-staging.onrender.com": true,
+		"https://rsv.onrender.com":         true,
+
+		"https://wello-resto.postman.co": true,
+
+		"http://localhost:8080": true,
+		"http://localhost:8081": true,
 	}
 
 	// Vérifier si l'origine est autorisée
