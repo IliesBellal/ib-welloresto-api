@@ -1,4 +1,4 @@
-package stats
+﻿package stats
 
 import (
 	"context"
@@ -25,28 +25,43 @@ func (s *StatsService) GetDashboardSummary(ctx context.Context, token string) (*
 	}
 
 	merchantID := user.MerchantID
-	now := time.Now()
 
-	// Get revenue data
-	revToday, revYesterday, revWeekCurrent, revWeekPrevious, revMonthCurrent, revMonthPrevious, err := s.statsRepo.GetRevenue(ctx, merchantID, now)
+	// 1ï¸âƒ£ Load merchant timezone
+	tzString, err := s.statsRepo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load merchant timezone: %w", err)
+	}
+
+	// 2ï¸âƒ£ Parse timezone string
+	merchantTz, err := time.LoadLocation(tzString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid merchant timezone '%s': %w", tzString, err)
+	}
+
+	// 3ï¸âƒ£ Get current time in merchant timezone
+	nowUTC := time.Now().UTC()
+	nowInMerchantTz := nowUTC.In(merchantTz)
+
+	// 4ï¸âƒ£ Get revenue data (passing timezone and time in merchant timezone)
+	revToday, revYesterday, revWeekCurrent, revWeekPrevious, revMonthCurrent, revMonthPrevious, err := s.statsRepo.GetRevenue(ctx, merchantID, merchantTz, nowInMerchantTz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get revenue: %w", err)
 	}
 
 	// Get order count
-	ordersToday, ordersYesterday, err := s.statsRepo.GetOrderCount(ctx, merchantID, now)
+	ordersToday, ordersYesterday, err := s.statsRepo.GetOrderCount(ctx, merchantID, merchantTz, nowInMerchantTz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order count: %w", err)
 	}
 
 	// Get average basket
-	avgBasketToday, avgBasketYesterday, err := s.statsRepo.GetAverageBasket(ctx, merchantID, now)
+	avgBasketToday, avgBasketYesterday, err := s.statsRepo.GetAverageBasket(ctx, merchantID, merchantTz, nowInMerchantTz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get average basket: %w", err)
 	}
 
 	// Get hourly data
-	hourlyRawData, err := s.statsRepo.GetHourlyData(ctx, merchantID, now)
+	hourlyRawData, err := s.statsRepo.GetHourlyData(ctx, merchantID, merchantTz, nowInMerchantTz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hourly data: %w", err)
 	}
