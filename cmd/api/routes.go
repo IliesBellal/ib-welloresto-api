@@ -147,7 +147,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	posAccountingHandler := posAccountingModule.NewAccountingHandler(posAccountingService, r2Client)
 
 	// ---- STATS ----
-	statsRepo := statsModule.NewStatsRepository()
+	statsRepo := statsModule.NewStatsRepository(mysqlDB)
 	statsService := statsModule.NewStatsService(statsRepo)
 
 	// ---- Menu ----
