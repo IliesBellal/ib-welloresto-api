@@ -155,7 +155,7 @@ func (r *StatsRepository) GetAverageBasket(ctx context.Context, merchantID strin
 // getAverageBasketForPeriod calculates average basket size for a period
 func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchantID string, startTime, endTime time.Time) (int64, error) {
 	query := `
-	SELECT COALESCE(AVG(o.price), 0) as avg_basket
+	SELECT ROUND(COALESCE(AVG(o.price), 0),0) as avg_basket
 	FROM orders o
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
