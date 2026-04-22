@@ -61,13 +61,14 @@ func (s *StatsService) GetDashboardSummary(ctx context.Context, token string) (*
 	}
 
 	// Get hourly data
-	hourlyRawData, err := s.statsRepo.GetHourlyData(ctx, merchantID, merchantTz, nowInMerchantTz)
+	hourlyRevenue, hourlyOrders, err := s.statsRepo.GetHourlyData(ctx, merchantID, merchantTz, nowInMerchantTz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hourly data: %w", err)
 	}
 
-	// Build hourly data response
-	hourlyData := s.buildHourlyData(hourlyRawData)
+	// Build hourly data responses
+	hourlyRevenueData := s.buildHourlyMetric(hourlyRevenue)
+	hourlyOrdersData := s.buildHourlyMetric(hourlyOrders)
 
 	summary := &DashboardSummaryResponse{
 		KPIs: KPIData{
@@ -94,19 +95,20 @@ func (s *StatsService) GetDashboardSummary(ctx context.Context, token string) (*
 				Yesterday: ordersYesterday,
 			},
 		},
-		Hourly: hourlyData,
+		HourlyRevenue: hourlyRevenueData,
+		HourlyOrders:  hourlyOrdersData,
 	}
 
 	return summary, nil
 }
 
-// buildHourlyData converts raw hourly data into the response format
-func (s *StatsService) buildHourlyData(rawData []map[string]interface{}) []HourlyData {
-	hourlyMap := make(map[int]*HourlyData)
+// buildHourlyMetric converts raw hourly data into HourlyMetric response format
+func (s *StatsService) buildHourlyMetric(rawData []map[string]interface{}) []HourlyMetric {
+	hourlyMap := make(map[int]*HourlyMetric)
 
 	// Initialize all hours from 0 to 23
 	for i := 0; i < 24; i++ {
-		hourlyMap[i] = &HourlyData{
+		hourlyMap[i] = &HourlyMetric{
 			Hour:      fmt.Sprintf("%02d:00", i),
 			SurPlace:  0,
 			Emporter:  0,
@@ -121,26 +123,41 @@ func (s *StatsService) buildHourlyData(rawData []map[string]interface{}) []Hourl
 	for _, row := range rawData {
 		hour := row["hour"].(int)
 		if _, exists := hourlyMap[hour]; !exists {
-			hourlyMap[hour] = &HourlyData{
+			hourlyMap[hour] = &HourlyMetric{
 				Hour: fmt.Sprintf("%02d:00", hour),
 			}
 		}
 
-		hourlyMap[hour].SurPlace = getIntValue(row["sur_place"])
-		hourlyMap[hour].Emporter = getIntValue(row["emporter"])
-		hourlyMap[hour].Livraison = getIntValue(row["livraison"])
-		hourlyMap[hour].UberEats = getIntValue(row["uber_eats"])
-		hourlyMap[hour].Deliveroo = getIntValue(row["deliveroo"])
-		hourlyMap[hour].Total = getIntValue(row["total"])
+		hourlyMap[hour].SurPlace = getInt64Value(row["sur_place"])
+		hourlyMap[hour].Emporter = getInt64Value(row["emporter"])
+		hourlyMap[hour].Livraison = getInt64Value(row["livraison"])
+		hourlyMap[hour].UberEats = getInt64Value(row["uber_eats"])
+		hourlyMap[hour].Deliveroo = getInt64Value(row["deliveroo"])
+		hourlyMap[hour].Total = getInt64Value(row["total"])
 	}
 
 	// Convert map to sorted slice
-	result := make([]HourlyData, 0, 24)
+	result := make([]HourlyMetric, 0, 24)
 	for i := 0; i < 24; i++ {
 		result = append(result, *hourlyMap[i])
 	}
 
 	return result
+}
+
+// getInt64Value safely extracts int64 value from interface{}
+func getInt64Value(v interface{}) int64 {
+	switch val := v.(type) {
+	case int64:
+		return val
+	case int:
+		return int64(val)
+	case string:
+		i, _ := strconv.ParseInt(val, 10, 64)
+		return i
+	default:
+		return 0
+	}
 }
 
 // getIntValue safely extracts int value from interface{}

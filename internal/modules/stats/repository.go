@@ -97,7 +97,6 @@ func (r *StatsRepository) getRevenueForPeriod(ctx context.Context, merchantID st
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	AND o.isPaid = 1
 	`
 
 	var total int64
@@ -182,7 +181,6 @@ func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchan
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	AND o.isPaid = 1
 	`
 
 	var avgBasket int64
@@ -195,7 +193,8 @@ func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchan
 }
 
 // GetHourlyData retrieves hourly breakdown of orders for today (accounting for merchant timezone)
-func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) ([]map[string]interface{}, error) {
+// Returns two separate datasets: revenue and order counts
+func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) (hourlyRevenue, hourlyOrders []map[string]interface{}, err error) {
 	startDay := time.Date(dateInMerchantTz.Year(), dateInMerchantTz.Month(), dateInMerchantTz.Day(), 0, 0, 0, 0, merchantTz)
 	endDay := startDay.Add(24 * time.Hour)
 
@@ -221,7 +220,6 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
 	AND o.isPaid = 1
 	GROUP BY HOUR(CONVERT_TZ(o.creation_date, '+00:00', ?))
 	ORDER BY hour
@@ -232,14 +230,16 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 
 	rows, err := r.database.QueryContext(ctx, query, tzOffset, merchantID, startDayUTC, endDayUTC, tzOffset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get hourly data: %w", err)
+		return nil, nil, fmt.Errorf("failed to get hourly data: %w", err)
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	revenueData := make([]map[string]interface{}, 0)
+	orderData := make([]map[string]interface{}, 0)
+
 	for rows.Next() {
 		var hour int
-		var surPlaceCount, emporterCount, livraisonCount, uberEatsCount, deliverooCount int
+		var surPlaceCount, emporterCount, livraisonCount, uberEatsCount, deliverooCount int64
 		var surPlaceRevenue, emporterRevenue, livraisonRevenue, uberEatsRevenue, deliverooRevenue int64
 
 		err := rows.Scan(
@@ -251,10 +251,22 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 			&deliverooRevenue, &deliverooCount,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan hourly data: %w", err)
+			return nil, nil, fmt.Errorf("failed to scan hourly data: %w", err)
 		}
 
-		results = append(results, map[string]interface{}{
+		// Revenue data
+		revenueData = append(revenueData, map[string]interface{}{
+			"hour":      hour,
+			"sur_place": surPlaceRevenue,
+			"emporter":  emporterRevenue,
+			"livraison": livraisonRevenue,
+			"uber_eats": uberEatsRevenue,
+			"deliveroo": deliverooRevenue,
+			"total":     surPlaceRevenue + emporterRevenue + livraisonRevenue + uberEatsRevenue + deliverooRevenue,
+		})
+
+		// Order counts data
+		orderData = append(orderData, map[string]interface{}{
 			"hour":      hour,
 			"sur_place": surPlaceCount,
 			"emporter":  emporterCount,
@@ -265,7 +277,7 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 		})
 	}
 
-	return results, nil
+	return revenueData, orderData, nil
 }
 
 // ============ HELPER FUNCTIONS ============

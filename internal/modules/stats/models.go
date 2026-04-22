@@ -4,8 +4,9 @@ package stats
 
 // DashboardSummaryResponse est la structure de réponse du dashboard
 type DashboardSummaryResponse struct {
-	KPIs   KPIData      `json:"kpis"`
-	Hourly []HourlyData `json:"hourly"`
+	KPIs          KPIData        `json:"kpis"`
+	HourlyRevenue []HourlyMetric `json:"hourly_revenue"`
+	HourlyOrders  []HourlyMetric `json:"hourly_orders"`
 }
 
 // KPIData contient les indicateurs clés de performance
@@ -43,7 +44,18 @@ type OrdersKPI struct {
 	Yesterday int `json:"yesterday"`
 }
 
-// HourlyData contient les données horaires
+// HourlyMetric contient les données horaires (revenue ou orders)
+type HourlyMetric struct {
+	Hour      string `json:"hour"`
+	SurPlace  int64  `json:"sur_place"`
+	Emporter  int64  `json:"emporter"`
+	Livraison int64  `json:"livraison"`
+	UberEats  int64  `json:"uber_eats"`
+	Deliveroo int64  `json:"deliveroo"`
+	Total     int64  `json:"total"`
+}
+
+// HourlyData deprecated - use HourlyMetric instead
 type HourlyData struct {
 	Hour      string `json:"hour"`
 	SurPlace  int    `json:"sur_place"`
