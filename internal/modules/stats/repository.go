@@ -72,7 +72,7 @@ func (r *StatsRepository) GetRevenue(ctx context.Context, merchantID string, dat
 // getRevenueForPeriod sums TTC (total price) for orders in a given period
 func (r *StatsRepository) getRevenueForPeriod(ctx context.Context, merchantID string, startTime, endTime time.Time) (int64, error) {
 	query := `
-	SELECT COALESCE(SUM(o.TTC), 0) as total
+	SELECT COALESCE(SUM(o.price), 0) as total
 	FROM orders o
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
@@ -155,7 +155,7 @@ func (r *StatsRepository) GetAverageBasket(ctx context.Context, merchantID strin
 // getAverageBasketForPeriod calculates average basket size for a period
 func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchantID string, startTime, endTime time.Time) (int64, error) {
 	query := `
-	SELECT COALESCE(AVG(o.TTC), 0) as avg_basket
+	SELECT COALESCE(AVG(o.price), 0) as avg_basket
 	FROM orders o
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
@@ -181,15 +181,15 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	query := `
 	SELECT 
 		HOUR(o.creation_date) as hour,
-		SUM(CASE WHEN o.order_type = 'IN' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.TTC ELSE 0 END) as sur_place_revenue,
+		SUM(CASE WHEN o.order_type = 'IN' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.price ELSE 0 END) as sur_place_revenue,
 		COUNT(DISTINCT CASE WHEN o.order_type = 'IN' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.order_id END) as sur_place_count,
-		SUM(CASE WHEN o.order_type = 'TAKE_AWAY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.TTC ELSE 0 END) as emporter_revenue,
+		SUM(CASE WHEN o.order_type = 'TAKE_AWAY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.price ELSE 0 END) as emporter_revenue,
 		COUNT(DISTINCT CASE WHEN o.order_type = 'TAKE_AWAY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.order_id END) as emporter_count,
-		SUM(CASE WHEN o.order_type = 'DELIVERY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.TTC ELSE 0 END) as livraison_revenue,
+		SUM(CASE WHEN o.order_type = 'DELIVERY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.price ELSE 0 END) as livraison_revenue,
 		COUNT(DISTINCT CASE WHEN o.order_type = 'DELIVERY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.order_id END) as livraison_count,
-		SUM(CASE WHEN o.brand = 'UBER_EATS' THEN o.TTC ELSE 0 END) as uber_eats_revenue,
+		SUM(CASE WHEN o.brand = 'UBER_EATS' THEN o.price ELSE 0 END) as uber_eats_revenue,
 		COUNT(DISTINCT CASE WHEN o.brand = 'UBER_EATS' THEN o.order_id END) as uber_eats_count,
-		SUM(CASE WHEN o.brand = 'DELIVEROO' THEN o.TTC ELSE 0 END) as deliveroo_revenue,
+		SUM(CASE WHEN o.brand = 'DELIVEROO' THEN o.price ELSE 0 END) as deliveroo_revenue,
 		COUNT(DISTINCT CASE WHEN o.brand = 'DELIVEROO' THEN o.order_id END) as deliveroo_count
 	FROM orders o
 	WHERE o.merchant_id = ?
