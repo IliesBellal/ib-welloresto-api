@@ -148,8 +148,8 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 			FROM extra
 			GROUP BY order_item_id
 		) e ON e.order_item_id = oi.order_item_id
-		WHERE o.creation_date >= DATE_FORMAT(?, '%Y-%m-%d 00:00:00')
-		  AND o.creation_date <= DATE_FORMAT(?, '%Y-%m-%d 23:59:59')
+		WHERE o.creation_date >= ?
+		  AND o.creation_date <= ?
 		  AND o.merchant_id = ?
 		  AND o.state = 'CLOSED'
 		  AND o.brand = 'WELLO_RESTO'
@@ -162,9 +162,9 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 			tva_fees.tva_rate AS rate,
 			o_fees.delivery_fees AS TTC
 		FROM orders o_fees
-		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
-		WHERE o_fees.creation_date >= DATE_FORMAT(?, '%Y-%m-%d 00:00:00')
-		  AND o_fees.creation_date <= DATE_FORMAT(?, '%Y-%m-%d 23:59:59')
+		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = '-1'
+		WHERE o_fees.creation_date >= ?
+		  AND o_fees.creation_date <= ?
 		  AND o_fees.merchant_id = ?
 		  AND o_fees.brand = 'WELLO_RESTO'
 		  AND o_fees.created_by NOT IN ('-1', 'SCANNORDER')
@@ -224,10 +224,8 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 			tva = row.TTC - ht
 		}
 
-		// Conversion centimes → euros (division par 100)
-		row.TTC = row.TTC / 100
-		row.HT = ht / 100
-		row.TVA = tva / 100
+		row.HT = ht
+		row.TVA = tva
 
 		result = append(result, *row)
 	}
@@ -252,8 +250,8 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 			AND l.lang = 'FR'
 		WHERE p.merchant_id = ?
 		  AND p.enabled = 1
-		  AND o.creation_date >= DATE_FORMAT(?, '%Y-%m-%d 00:00:00')
-		  AND o.creation_date <= DATE_FORMAT(?, '%Y-%m-%d 23:59:59')
+		  AND o.creation_date >= ?
+		  AND o.creation_date <= ?
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND o.state = 'CLOSED'
 		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
@@ -283,7 +281,7 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 		// Conversion centimes → euros (division par 100)
 		result = append(result, PaymentRow{
 			Label:  label,
-			Amount: float64(amount) / 100,
+			Amount: amount,
 		})
 	}
 

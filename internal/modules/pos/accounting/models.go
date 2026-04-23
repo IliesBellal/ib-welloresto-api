@@ -36,7 +36,7 @@ type TVARow struct {
 // PaymentRow représente un moyen de paiement
 type PaymentRow struct {
 	Label  string
-	Amount float64
+	Amount int64
 }
 
 // PDFReportData contient toutes les données pour le PDF
