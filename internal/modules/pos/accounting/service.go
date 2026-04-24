@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/middleware"
@@ -28,17 +29,47 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		return nil, models.ErrUnauthorized
 	}
 
-	// Parse les dates pour obtenir l'année et le mois
-	fromDate, err := time.Parse("2006-01-02", dateFrom)
+	// Récupérer les infos merchant (dont timezone) pour traiter la période en heure locale établissement.
+	header, err := s.repo.GetMerchantHeader(ctx, user.MerchantID)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Format date_from invalide. Attendu: YYYY-MM-DD",
+			Error:  "Erreur lors de la récupération des infos du merchant",
 		}, nil
 	}
 
-	year := fromDate.Year()
-	month := int(fromDate.Month())
+	tzName := strings.TrimSpace(header.Timezone)
+	if tzName == "" {
+		tzName = "Europe/Paris"
+	}
+
+	merchantLoc, err := time.LoadLocation(tzName)
+	if err != nil {
+		merchantLoc = time.FixedZone("UTC", 0)
+		tzName = "UTC"
+	}
+
+	// Parse les dates UTC reçues par les applications puis conversion en TZ merchant.
+	fromUTC, err := parseUTCDateTime(dateFrom)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Format date_from invalide. Attendu: YYYY-MM-DD HH:MM:SS",
+		}, nil
+	}
+	toUTC, err := parseUTCDateTime(dateTo)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Format date_to invalide. Attendu: YYYY-MM-DD HH:MM:SS",
+		}, nil
+	}
+
+	fromLocal := fromUTC.In(merchantLoc)
+	toLocal := toUTC.In(merchantLoc)
+
+	year := fromLocal.Year()
+	month := int(fromLocal.Month())
 
 	// Vérifier que le mois est clôturé
 	monthClosed, err := s.repo.IsMonthClosed(ctx, user.MerchantID, strconv.Itoa(year), fmt.Sprintf("%02d", month))
@@ -46,15 +77,6 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Le mois n'est pas encore clôturé. Impossible de générer un rapport officiel.",
-		}, nil
-	}
-
-	// Récupérer les données
-	header, err := s.repo.GetMerchantHeader(ctx, user.MerchantID)
-	if err != nil {
-		return &ExportAccountingResponse{
-			Status: "0",
-			Error:  "Erreur lors de la récupération des infos du merchant",
 		}, nil
 	}
 
@@ -75,7 +97,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 	}
 
 	// Construire le PDF
-	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments)
+	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments, fromLocal, toLocal, tzName)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -103,7 +125,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 }
 
 // buildPDFReport génère le PDF avec les données comptables
-func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow) ([]byte, error) {
+func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow, fromLocal, toLocal time.Time, tzName string) ([]byte, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	translate := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 	pdf.AddPage()
@@ -121,7 +143,10 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	pdf.SetFont("Arial", "", 11)
 	pdf.Ln(5)
 	headerText := fmt.Sprintf(
-		"Adresse : %s\nSIRET : %s\nTVA : %s\nTéléphone : %s",
+		"Période : %s -> %s (%s)\nAdresse : %s\nSIRET : %s\nTVA : %s\nTéléphone : %s",
+		fromLocal.Format("02/01/2006 15:04:05"),
+		toLocal.Format("02/01/2006 15:04:05"),
+		tzName,
 		header.Address,
 		header.SIRET,
 		header.VATNumber,
@@ -184,4 +209,25 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	}
 
 	return buf.Bytes(), nil
+}
+
+func parseUTCDateTime(raw string) (time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty datetime")
+	}
+
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.UTC(), nil
+	}
+
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC); err == nil {
+		return t.UTC(), nil
+	}
+
+	if t, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
+		return t.UTC(), nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid datetime format: %s", value)
 }

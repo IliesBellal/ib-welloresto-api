@@ -22,6 +22,7 @@ type MerchantHeader struct {
 	Address      string
 	Phone        string
 	Currency     string
+	Timezone     string
 }
 
 // TVARow représente une ligne de TVA

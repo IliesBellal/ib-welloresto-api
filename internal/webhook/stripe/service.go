@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/helpers"
@@ -315,14 +316,44 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 		return err
 	}
 
+	cardLast4 := ""
+	cardBrand := ""
+	paymentMethod := "Carte bancaire"
+	paymentDetail := ""
+	if refundedCharge.PaymentMethodDetails != nil {
+		if refundedCharge.PaymentMethodDetails.Link != nil {
+			paymentMethod = "Link"
+			if refundedCharge.PaymentMethodDetails.Card != nil {
+				cardLast4 = refundedCharge.PaymentMethodDetails.Card.Last4
+				cardBrand = string(refundedCharge.PaymentMethodDetails.Card.Brand)
+			}
+			if cardLast4 != "" {
+				paymentDetail = "•••• " + cardLast4
+			} else if refundedCharge.PaymentMethodDetails.Link.Country != "" {
+				paymentDetail = strings.ToUpper(refundedCharge.PaymentMethodDetails.Link.Country)
+			}
+		} else if refundedCharge.PaymentMethodDetails.Card != nil {
+			cardLast4 = refundedCharge.PaymentMethodDetails.Card.Last4
+			cardBrand = string(refundedCharge.PaymentMethodDetails.Card.Brand)
+			if cardBrand != "" {
+				paymentMethod = cardBrand
+			}
+			if cardLast4 != "" {
+				paymentDetail = "•••• " + cardLast4
+			}
+		}
+	}
+
 	// Préparation des données pour le mail
 	refundData := mailer.RefundData{
-		Amount:       fmt.Sprintf("%.2f", float64(refundedCharge.Amount)/100) + " " + string(refundedCharge.Currency),
-		CardLast4:    refundedCharge.PaymentMethodDetails.Card.Last4,
-		CardBrand:    string(refundedCharge.PaymentMethodDetails.Card.Brand),
-		MerchantLogo: "http://storage.welloresto.fr/img/defaults/wr_logo_invoice.png",
-		RefundReason: "Remboursement",
-		SupportEmail: "contact@welloresto.fr",
+		Amount:        fmt.Sprintf("%.2f", float64(refundedCharge.Amount)/100) + " " + string(refundedCharge.Currency),
+		PaymentMethod: paymentMethod,
+		PaymentDetail: paymentDetail,
+		CardLast4:     cardLast4,
+		CardBrand:     cardBrand,
+		MerchantLogo:  "http://storage.welloresto.fr/img/defaults/wr_logo_invoice.png",
+		RefundReason:  "Remboursement",
+		SupportEmail:  "contact@welloresto.fr",
 	}
 	go s.email.SendRefundNotification(refundedCharge.BillingDetails.Email, refundData)
 	return nil

@@ -2,8 +2,10 @@ package websocket
 
 import (
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 // Client représente une connexion WebSocket active pour un merchant
@@ -12,6 +14,8 @@ type Client struct {
 	merchantID string
 	connID     string
 	send       chan []byte
+	startedAt  time.Time
+	log        *zap.Logger
 }
 
 // Hub gère toutes les connexions WebSocket des merchants

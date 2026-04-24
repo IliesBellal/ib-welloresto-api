@@ -16,6 +16,8 @@ type RefundData struct {
 	Date          string // ex: "12/02/2024"
 	CustomerName  string // Nom du client
 	RefundReason  string // ex: "requested_by_customer" (traduire en FR)
+	PaymentMethod string // ex: "Visa" ou "Link"
+	PaymentDetail string // ex: "•••• 4242" ou "FR"
 	CardBrand     string // ex: "Visa"
 	CardLast4     string // ex: "4242"
 	ReceiptURL    string // URL du reçu Stripe

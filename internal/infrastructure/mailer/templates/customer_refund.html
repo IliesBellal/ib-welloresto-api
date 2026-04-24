@@ -61,7 +61,9 @@
                                                 <table width="100%" style="background-color: rgba(255,255,255,0.5); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                                                     <tr>
                                                         <td style="font-size:14px; color:#333; padding: 5px 0;"><strong>Moyen de paiement :</strong></td>
-                                                        <td style="font-size:14px; color:#333; text-align:right;">{{ .CardBrand }} •••• {{ .CardLast4 }}</td>
+                                                        <td style="font-size:14px; color:#333; text-align:right;">
+                                                            {{ .PaymentMethod }}{{ if .PaymentDetail }} {{ .PaymentDetail }}{{ else if .CardLast4 }} •••• {{ .CardLast4 }}{{ end }}
+                                                        </td>
                                                     </tr>
                                                     <tr>
                                                         <td style="font-size:14px; color:#333; padding: 5px 0;"><strong>Motif :</strong></td>

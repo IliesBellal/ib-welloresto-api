@@ -31,7 +31,8 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 			m.fullName,
 			m.merchantTel,
 			m.vat_number,
-			mp.currency
+			mp.currency,
+			m.timezone
 		FROM merchant m
 		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
 		WHERE m.id = ?
@@ -48,6 +49,7 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 		&header.Phone,
 		&header.VATNumber,
 		&header.Currency,
+		&header.Timezone,
 	)
 
 	if err == sql.ErrNoRows {
@@ -59,6 +61,7 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 			Address:      "Adresse inconnue",
 			Currency:     "EUR",
 			Phone:        "N/A",
+			Timezone:     "Europe/Paris",
 		}, nil
 	}
 

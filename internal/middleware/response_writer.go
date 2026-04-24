@@ -33,6 +33,9 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, errors.New("hijack not supported")
 	}
+	if rw.status == 0 {
+		rw.status = http.StatusSwitchingProtocols
+	}
 	return h.Hijack()
 }
 

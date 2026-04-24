@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
@@ -22,6 +21,41 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+func websocketCloseText(code int) string {
+	switch code {
+	case websocket.CloseNormalClosure:
+		return "normal closure"
+	case websocket.CloseGoingAway:
+		return "going away"
+	case websocket.CloseProtocolError:
+		return "protocol error"
+	case websocket.CloseUnsupportedData:
+		return "unsupported data"
+	case websocket.CloseNoStatusReceived:
+		return "no status received"
+	case websocket.CloseAbnormalClosure:
+		return "abnormal closure"
+	case websocket.CloseInvalidFramePayloadData:
+		return "invalid frame payload data"
+	case websocket.ClosePolicyViolation:
+		return "policy violation"
+	case websocket.CloseMessageTooBig:
+		return "message too big"
+	case websocket.CloseMandatoryExtension:
+		return "mandatory extension missing"
+	case websocket.CloseInternalServerErr:
+		return "internal server error"
+	case websocket.CloseServiceRestart:
+		return "service restart"
+	case websocket.CloseTryAgainLater:
+		return "try again later"
+	case websocket.CloseTLSHandshake:
+		return "tls handshake failure"
+	default:
+		return "unknown close code"
+	}
+}
+
 // ServeWS gère la connexion WebSocket pour un client
 func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -37,26 +71,39 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// Upgrader la connexion HTTP en WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Error("[WEBSOCKET] Upgrade error: " + err.Error())
+		log.Error("websocket upgrade failed",
+			zap.Error(err),
+			zap.String("remote_addr", r.RemoteAddr),
+			zap.String("origin", r.Header.Get("Origin")),
+			zap.String("user_agent", r.UserAgent()),
+		)
 		http.Error(w, `{"error":"failed to upgrade to websocket"}`, http.StatusInternalServerError)
 		return
 	}
+
+	connID := uuid.New().String()
+	clientLog := log.With(
+		zap.String("merchant_id", user.MerchantID),
+		zap.String("conn_id", connID),
+		zap.String("remote_addr", r.RemoteAddr),
+		zap.String("origin", r.Header.Get("Origin")),
+		zap.String("user_agent", r.UserAgent()),
+	)
 
 	// Créer un nouveau client avec un UUID unique
 	client := &Client{
 		conn:       conn,
 		merchantID: user.MerchantID,
-		connID:     uuid.New().String(),
+		connID:     connID,
 		send:       make(chan []byte, 256),
+		startedAt:  time.Now(),
+		log:        clientLog,
 	}
 
 	// Enregistrer le client dans le hub
 	hub.Register(client)
 
-	log.Info("🔗 WebSocket connected",
-		zap.String("merchant_id", client.merchantID),
-		zap.String("conn_id", client.connID),
-	)
+	clientLog.Info("websocket connected")
 
 	// Lancer les goroutines pour la gestion de la connexion
 	go client.writePump(hub)
@@ -65,9 +112,18 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 // readPump lis les messages du WebSocket (bloquant pour la goroutine courante)
 func (c *Client) readPump(hub *Hub) {
+	closeReason := "client disconnected"
+	closeCode := 0
+	logLevel := zap.InfoLevel
+
 	defer func() {
 		hub.Unregister(c)
 		c.conn.Close()
+		c.log.Log(logLevel, "websocket disconnected",
+			zap.Int("close_code", closeCode),
+			zap.String("close_reason", closeReason),
+			zap.Duration("connection_duration", time.Since(c.startedAt)),
+		)
 	}()
 
 	c.conn.SetReadLimit(512 * 1024)
@@ -76,12 +132,32 @@ func (c *Client) readPump(hub *Hub) {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
+	c.conn.SetCloseHandler(func(code int, text string) error {
+		closeCode = code
+		if text != "" {
+			closeReason = text
+		} else {
+			closeReason = websocketCloseText(code)
+		}
+		return nil
+	})
 
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Printf("[WebSocket] Error: %v\n", err)
+			if closeErr, ok := err.(*websocket.CloseError); ok {
+				closeCode = closeErr.Code
+				if closeErr.Text != "" {
+					closeReason = closeErr.Text
+				} else {
+					closeReason = websocketCloseText(closeErr.Code)
+				}
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					logLevel = zap.WarnLevel
+				}
+			} else {
+				closeReason = err.Error()
+				logLevel = zap.WarnLevel
 			}
 			break
 		}
@@ -93,7 +169,7 @@ func (c *Client) readPump(hub *Hub) {
 			select {
 			case c.send <- []byte(`{"type":"PONG"}`):
 			default:
-				// Si le channel est plein, ignorer silencieusement
+				c.log.Warn("websocket pong dropped: send buffer full")
 			}
 		}
 	}
@@ -113,17 +189,21 @@ func (c *Client) writePump(hub *Hub) {
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
 				// Le channel a été fermé par hub.Unregister
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
+					c.log.Debug("websocket close frame write failed", zap.Error(err))
+				}
 				return
 			}
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				c.log.Warn("websocket write failed", zap.Error(err))
 				return
 			}
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
+				c.log.Warn("websocket ping failed", zap.Error(err))
 				return
 			}
 		}
