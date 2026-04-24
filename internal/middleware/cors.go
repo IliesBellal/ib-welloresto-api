@@ -20,6 +20,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 
 		"https://scannorder-test.lovable.app": true,
 		"https://scannorder.welloresto.fr":    true,
+		"https://scannorder.lovable.app":      true,
 
 		"https://rsv-staging.onrender.com": true,
 		"https://rsv.onrender.com":         true,
@@ -66,6 +67,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// ScanNOrder
 			"https://scannorder.welloresto.fr",
+			"https://scannorder.lovable.app",
 		},
 
 		AllowedMethods: []string{
