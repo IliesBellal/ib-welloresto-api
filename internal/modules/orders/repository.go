@@ -182,7 +182,7 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
 	return out, nil
 }
 
-func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, error) {
+func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, int, int, int, error) {
 
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS
@@ -208,6 +208,16 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		page = *req.Page
 	}
 
+	countQuery := `
+		SELECT COUNT(*)
+		FROM orders o
+	` + where
+
+	var totalItems int
+	if err := r.database.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return nil, 0, page, limit, err
+	}
+
 	offset := (page - 1) * limit
 
 	// =========================
@@ -225,7 +235,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	rows, err := r.database.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, page, limit, err
 	}
 	defer rows.Close()
 
@@ -233,17 +243,17 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, 0, page, limit, err
 		}
 		orderIDs = append(orderIDs, id)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, page, limit, err
 	}
 
 	if len(orderIDs) == 0 {
-		return []models.Order{}, nil
+		return []models.Order{}, totalItems, page, limit, nil
 	}
 
 	// =========================
@@ -264,13 +274,18 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	// =========================
 	// 5️⃣ FETCH FULL ORDERS
 	// =========================
-	return r.ordersFetcher.FetchAndBuildOrders(
+	orders, err := r.ordersFetcher.FetchAndBuildOrders(
 		ctx,
 		merchantID,
 		whereFilter,
 		orderBy,
 		"",
 	)
+	if err != nil {
+		return nil, 0, page, limit, err
+	}
+
+	return orders, totalItems, page, limit, nil
 }
 
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {

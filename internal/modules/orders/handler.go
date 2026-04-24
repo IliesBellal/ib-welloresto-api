@@ -86,13 +86,6 @@ func (h *OrdersHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// read app param from query (default WR_RECEPTION)
-	app := r.URL.Query().Get("app")
-	if app == "" {
-		// default to WR_RECEPTION as in legacy
-		app = "WR_RECEPTION"
-	}
-
 	var req models.OrderHistoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "orders", "get_history", map[string]string{"error": "invalid_body"})
@@ -105,9 +98,7 @@ func (h *OrdersHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "orders", "get_history", models.PendingOrdersData{
-		Orders: orders,
-	})
+	models.SendJSON(w, http.StatusOK, "orders", "get_history", orders)
 }
 
 func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {

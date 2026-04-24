@@ -13,6 +13,18 @@ type PendingOrdersData struct {
 	Orders []Order `json:"orders"`
 }
 
+type PaginationMetadata struct {
+	TotalItems  int `json:"total_items"`
+	TotalPages  int `json:"total_pages"`
+	CurrentPage int `json:"current_page"`
+	Limit       int `json:"limit"`
+}
+
+type OrderHistoryData struct {
+	Metadata PaginationMetadata `json:"metadata"`
+	Orders   []Order            `json:"orders"`
+}
+
 type OpenCashRegisterData struct {
 	Status string `json:"status"`
 }

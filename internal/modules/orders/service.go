@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
@@ -268,14 +269,32 @@ func (s *OrdersService) GetOrders(ctx context.Context, req *models.OrderRequest)
 	return s.ordersRepo.GetOrders(ctx, user.MerchantID, req)
 }
 
-func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.Order, error) {
+func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryRequest) (*models.OrderHistoryData, error) {
 	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
+	orders, totalItems, page, limit, err := s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = int(math.Ceil(float64(totalItems) / float64(limit)))
+	}
+
+	return &models.OrderHistoryData{
+		Metadata: models.PaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  totalPages,
+			CurrentPage: page,
+			Limit:       limit,
+		},
+		Orders: orders,
+	}, nil
 }
 
 func (s *OrdersService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
