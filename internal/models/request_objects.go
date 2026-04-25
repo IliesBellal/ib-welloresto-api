@@ -185,6 +185,7 @@ type BookingObjectRequest struct {
 type OrderHistoryRequest struct {
 	DateFrom *string `json:"date_from"`
 	DateTo   *string `json:"date_to"`
+	Search   *string `json:"search"`
 	Page     *int
 	Limit    *int
 }

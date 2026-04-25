@@ -187,12 +187,32 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS
 	// =========================
+	fromClause := " FROM orders o LEFT JOIN customer c ON o.customer_id = c.customer_id "
 	where := " WHERE o.merchant_id = ? AND o.state = 'CLOSED' "
 	args := []interface{}{merchantID}
 
 	if req.DateFrom != nil && req.DateTo != nil {
 		where += " AND o.creation_date BETWEEN ? AND ? "
 		args = append(args, *req.DateFrom, *req.DateTo)
+	}
+
+	if req.Search != nil {
+		searchTerm := strings.TrimSpace(*req.Search)
+		if searchTerm != "" {
+			likeTerm := "%" + searchTerm + "%"
+			where += `
+				AND (
+					LOWER(COALESCE(c.customer_name, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(c.customer_first_name, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(c.customer_last_name, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(c.customer_id, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(c.customer_code, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(o.brand_order_num, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(o.order_id, '')) LIKE LOWER(?)
+				)
+			`
+			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm)
+		}
 	}
 
 	// =========================
@@ -210,8 +230,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	countQuery := `
 		SELECT COUNT(*)
-		FROM orders o
-	` + where
+	` + fromClause + where
 
 	var totalItems int
 	if err := r.database.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
@@ -225,8 +244,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	// =========================
 	query := `
 		SELECT o.order_id
-		FROM orders o
-	` + where + `
+	` + fromClause + where + `
 		ORDER BY o.creation_date DESC
 		LIMIT ? OFFSET ?
 	`
@@ -346,7 +364,7 @@ LEFT JOIN (
     INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
 ) a ON a.product_id = p.product_id
 WHERE p.merchant_id = ?
-AND p.product_id IN (?)
+AND p.product_id IN (%s)
 AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 `, strings.Join(placeholders, ","))
 	rows, err := tx.QueryContext(ctx, query, args...)

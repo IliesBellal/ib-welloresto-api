@@ -209,7 +209,7 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 	}
 
 	models.SendJSON(w, http.StatusOK, "cash_register", "get_history", models.CashRegisterHistoryResponse{
-		Status:        "1",
+		Status:        "success",
 		CashRegisters: result,
 	})
 }
@@ -227,7 +227,7 @@ func (h *CashRegisterHandler) OpenCashDrawer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_drawer", "open", map[string]string{"status": "1"})
+	models.SendJSON(w, http.StatusOK, "cash_drawer", "open", map[string]string{"status": "success"})
 }
 
 func (h *CashRegisterHandler) HandleLinkDevice(w http.ResponseWriter, r *http.Request) {
@@ -244,5 +244,5 @@ func (h *CashRegisterHandler) HandleLinkDevice(w http.ResponseWriter, r *http.Re
 	}
 
 	// 4. Succès
-	models.SendJSON(w, http.StatusOK, "cash_register", "link_device", map[string]string{"status": "linked"})
+	models.SendJSON(w, http.StatusOK, "cash_register", "link_device", map[string]string{"status": "success"})
 }
