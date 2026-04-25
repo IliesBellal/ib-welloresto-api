@@ -363,11 +363,6 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			p.Target.Currency = &currency
 		}
 
-		if p.Reward.Type == "fixed_discount" {
-			currency := "EUR_CENTS"
-			p.Reward.Currency = &currency
-		}
-
 		programs = append(programs, p)
 	}
 
