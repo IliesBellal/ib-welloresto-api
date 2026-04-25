@@ -390,7 +390,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 	inClause := strings.Join(placeholders, ",")
 
 	targetProductsQuery := fmt.Sprintf(`
-		SELECT tp.loyalty_program_id, p.product_id, COALESCE(p.product_name, '')
+		SELECT tp.loyalty_program_id, p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_target_products tp
 		INNER JOIN products p ON p.product_id = tp.product_id
 		WHERE tp.loyalty_program_id IN (%s)
@@ -418,7 +418,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 	}
 
 	rewardProductsQuery := fmt.Sprintf(`
-		SELECT rp.loyalty_program_id, p.product_id, COALESCE(p.product_name, '')
+		SELECT rp.loyalty_program_id, p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_reward_products rp
 		INNER JOIN products p ON p.product_id = rp.product_id
 		WHERE rp.loyalty_program_id IN (%s)
