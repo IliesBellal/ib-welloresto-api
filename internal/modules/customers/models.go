@@ -66,6 +66,7 @@ type CustomerSearchResult struct {
 	CustomerNbOrders   int     `json:"customer_nb_orders"`
 	CustomerTotalSpent float64 `json:"customer_total_spent"`
 	CreationDate       *int    `json:"creation_date"`
+	LastOrderDate      *int    `json:"last_order_date"`
 	CustomerCode       *string `json:"customer_code"`
 	MatchScore         int     `json:"match_score"`
 	AdvertisingConsent *bool   `json:"advertising_consent"`

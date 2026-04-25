@@ -401,6 +401,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
         customer_nb_orders,
         customer_total_spent,
         creation_date,
+        last_order_date,
         customer_code,
 		advertising_consent,
 		customer_brand
@@ -425,6 +426,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	for rows.Next() {
 		var c CustomerSearchResult
 		var creationDate sql.NullTime
+		var lastOrderDate sql.NullTime
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -436,12 +438,14 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerNbOrders,
 			&c.CustomerTotalSpent,
 			&creationDate,
+			&lastOrderDate,
 			&c.CustomerCode,
 			&c.AdvertisingConsent,
 			&c.CustomerBrand,
 		)
 
 		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
+		c.LastOrderDate = helpers.NullTimeToNullUnixInt(lastOrderDate)
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue // Ou return err, selon ton besoin
@@ -474,6 +478,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID stri
         customer_nb_orders,
         customer_total_spent,
         creation_date,
+        last_order_date,
         customer_code,
 		advertising_consent,
 		customer_brand
@@ -493,6 +498,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID stri
 	for rows.Next() {
 		var c CustomerSearchResult
 		var creationDate sql.NullTime
+		var lastOrderDate sql.NullTime
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -504,12 +510,14 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID stri
 			&c.CustomerNbOrders,
 			&c.CustomerTotalSpent,
 			&creationDate,
+			&lastOrderDate,
 			&c.CustomerCode,
 			&c.AdvertisingConsent,
 			&c.CustomerBrand,
 		)
 
 		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
+		c.LastOrderDate = helpers.NullTimeToNullUnixInt(lastOrderDate)
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue // Ou return err, selon ton besoin
