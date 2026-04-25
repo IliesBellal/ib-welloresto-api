@@ -44,7 +44,7 @@ type LoyaltyProgramTarget struct {
 	Type       string                  `json:"type"`
 	Value      int                     `json:"value"`
 	Currency   *string                 `json:"currency,omitempty"`
-	OrderTypes []string                `json:"order_types"`
+	OrderTypes string                  `json:"order_types"`
 	Products   []LoyaltyProgramProduct `json:"products"`
 }
 
@@ -52,7 +52,7 @@ type LoyaltyProgramRewardConfig struct {
 	Type       string                  `json:"type"`
 	Value      int                     `json:"value"`
 	Currency   *string                 `json:"currency,omitempty"`
-	OrderTypes []string                `json:"order_types"`
+	OrderTypes string                  `json:"order_types"`
 	Products   []LoyaltyProgramProduct `json:"products"`
 }
 

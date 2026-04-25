@@ -454,7 +454,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
 
 		r.Post("/{merchant_slug}/orders", scannHandler.CreateOrderSNO)
-		r.Post("/{merchant_slug}/create", scannHandler.CreateOrderSNO)
+		r.Post("/{merchant_slug}/create", scannHandler.CreateOrderSNO) // TO BE DELETED
 		r.Get("/{merchant_slug}/orders/{order_id}", scannHandler.GetOrderSNO)
 		r.Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
 

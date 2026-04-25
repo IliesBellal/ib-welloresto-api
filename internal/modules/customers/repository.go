@@ -353,8 +353,8 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			return nil, err
 		}
 
-		p.Target.OrderTypes = parseOrderTypes(targetOrderTypes)
-		p.Reward.OrderTypes = parseOrderTypes(rewardOrderTypes)
+		p.Target.OrderTypes = targetOrderTypes
+		p.Reward.OrderTypes = rewardOrderTypes
 		p.Target.Products = make([]LoyaltyProgramProduct, 0)
 		p.Reward.Products = make([]LoyaltyProgramProduct, 0)
 
@@ -986,6 +986,8 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		case "total_spent":
 			increment = price
 		case "product_count":
+			fallthrough // Même logique que products_count
+		case "products_count":
 			// OPTIMISATION GO : On fait le sum() et la vérification des produits cibles directement en SQL !
 			const qSumProducts = `
 				SELECT COALESCE(SUM(oi.quantity), 0)
