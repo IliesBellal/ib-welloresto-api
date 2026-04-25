@@ -35,7 +35,7 @@ func (h *CustomersHandler) GetCustomerLoyalty(w http.ResponseWriter, r *http.Req
 	}
 
 	models.SendJSON(w, http.StatusOK, "customers", "get_loyalty", map[string]interface{}{
-		"status":  "1",
+		"status":  "success",
 		"loyalty": result,
 	})
 }
@@ -48,10 +48,25 @@ func (h *CustomersHandler) UpdateLoyaltyProgress(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req LoyaltyProgressUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	customerID := strings.TrimSpace(chi.URLParam(r, "customer_id"))
+	loyaltyProgramID := strings.TrimSpace(chi.URLParam(r, "loyalty_program_id"))
+	if customerID == "" || loyaltyProgramID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_progress", map[string]string{"error": "missing_path_params"})
+		return
+	}
+
+	var body struct {
+		CurrentValue int `json:"current_value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_progress", map[string]string{"error": "invalid_request"})
 		return
+	}
+
+	req := LoyaltyProgressUpdateRequest{
+		CustomerID:       customerID,
+		LoyaltyProgramID: loyaltyProgramID,
+		CurrentValue:     body.CurrentValue,
 	}
 
 	result, err := h.svc.UpdateLoyaltyProgress(ctx, token, &req)

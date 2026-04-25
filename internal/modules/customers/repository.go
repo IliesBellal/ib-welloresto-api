@@ -229,7 +229,10 @@ func getStringField(c *models.Customer, name string) *string {
 
 func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID, merchantID string) (*CustomerLoyalty, error) {
 
-	loyalty := &CustomerLoyalty{}
+	loyalty := &CustomerLoyalty{
+		LoyaltyProgress:  make([]LoyaltyProgress, 0),
+		AvailableRewards: make([]LoyaltyReward, 0),
+	}
 
 	// progress
 	rows, err := r.database.QueryContext(ctx, `
