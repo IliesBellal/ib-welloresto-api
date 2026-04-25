@@ -196,6 +196,14 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		args = append(args, *req.DateFrom, *req.DateTo)
 	}
 
+	if req.CustomerID != nil {
+		customerID := strings.TrimSpace(*req.CustomerID)
+		if customerID != "" {
+			where += " AND o.customer_id = ? "
+			args = append(args, customerID)
+		}
+	}
+
 	if req.Search != nil {
 		searchTerm := strings.TrimSpace(*req.Search)
 		if searchTerm != "" {

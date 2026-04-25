@@ -183,11 +183,12 @@ type BookingObjectRequest struct {
 }
 
 type OrderHistoryRequest struct {
-	DateFrom *string `json:"date_from"`
-	DateTo   *string `json:"date_to"`
-	Search   *string `json:"search"`
-	Page     *int
-	Limit    *int
+	DateFrom   *string `json:"date_from"`
+	DateTo     *string `json:"date_to"`
+	Search     *string `json:"search"`
+	CustomerID *string `json:"customer_id"`
+	Page       *int
+	Limit      *int
 }
 
 type UpdateLocationCoordinatesRequest struct {
