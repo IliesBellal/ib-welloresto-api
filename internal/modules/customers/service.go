@@ -20,7 +20,7 @@ func NewCustomersService(_customerRepo *CustomersRepository) *CustomersService {
 func (s *CustomersService) UpdateOrCreateCustomer(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	// TODO: Implémentation complète plus tard
 	return map[string]interface{}{
-		"status":      "1",
+		"status":      "success",
 		"customer_id": params["customer_id"],
 	}, nil
 }
@@ -45,7 +45,7 @@ func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token stri
 		return nil, err
 	}
 
-	return map[string]interface{}{"status": "1", "created_rewards": n}, nil
+	return map[string]interface{}{"status": "success", "created_rewards": n}, nil
 }
 
 func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string, req *LoyaltyRewardUpdateRequest) (map[string]interface{}, error) {
@@ -58,7 +58,7 @@ func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string
 		return nil, err
 	}
 
-	return map[string]interface{}{"status": "1"}, nil
+	return map[string]interface{}{"status": "success"}, nil
 }
 
 func (s *CustomersService) SearchCustomers(ctx context.Context, token, term, sortField, sortDir string, page, pageSize int) (*CustomerListData, error) {
