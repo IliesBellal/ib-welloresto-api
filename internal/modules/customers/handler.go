@@ -95,17 +95,26 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 	}
 
 	search_term := r.URL.Query().Get("term")
+	sortField := r.URL.Query().Get("sort_field")
+	sortDir := r.URL.Query().Get("sort_dir")
 
-	customers, err := h.svc.SearchCustomers(ctx, token, search_term)
+	page := helpers.StringToInt(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+
+	pageSize := helpers.StringToInt(r.URL.Query().Get("page_size"))
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	customerData, err := h.svc.SearchCustomers(ctx, token, search_term, sortField, sortDir, page, pageSize)
 	if err != nil {
 		models.SendErrorJSON(w, "customers", "search", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "customers", "search", map[string]interface{}{
-		"status": "success",
-		"result": customers,
-	})
+	models.SendJSON(w, http.StatusOK, "customers", "search", customerData)
 }
 
 func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request) {
@@ -116,23 +125,24 @@ func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	page := r.URL.Query().Get("page")
-	if page == "" {
-		page = "0"
-	}
-	page_size := r.URL.Query().Get("page_size")
-	if page_size == "" {
-		page_size = "10"
+	sortField := r.URL.Query().Get("sort_field")
+	sortDir := r.URL.Query().Get("sort_dir")
+
+	page := helpers.StringToInt(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
 	}
 
-	customers, err := h.svc.ListCustomers(ctx, token, helpers.StringToInt(page), helpers.StringToInt(page_size))
+	pageSize := helpers.StringToInt(r.URL.Query().Get("page_size"))
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	customerData, err := h.svc.ListCustomers(ctx, token, sortField, sortDir, page, pageSize)
 	if err != nil {
 		models.SendErrorJSON(w, "customers", "list", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "customers", "list", map[string]interface{}{
-		"status": "success",
-		"result": customers,
-	})
+	models.SendJSON(w, http.StatusOK, "customers", "list", customerData)
 }

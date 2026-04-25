@@ -3,8 +3,9 @@ package customers
 import (
 	"context"
 	"database/sql"
-	"sort"
+	"fmt"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -384,42 +385,71 @@ func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *Loya
 	return err
 }
 
-func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term string) ([]CustomerSearchResult, error) {
-
-	likeTerm := "%" + term + "%"
+func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
 	var results []CustomerSearchResult
 
-	rows, err := r.database.QueryContext(ctx, `
-    SELECT 
-        customer_id,
-        customer_name,
-		customer_last_name,
-		customer_first_name,
-        customer_tel,
-        customer_address,
-        customer_email,
-        customer_nb_orders,
-        customer_total_spent,
-        creation_date,
-        last_order_date,
-        customer_code,
-		advertising_consent,
-		customer_brand
-    FROM customer
-    WHERE merchant_id = ?
-      AND enabled = true
-      AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
-      AND (
-            customer_code = ?
-         OR UPPER(customer_tel) LIKE UPPER(?)
-         OR UPPER(customer_name) LIKE UPPER(?)
-		 OR UPPER(customer_first_name) LIKE UPPER(?)
-		 OR UPPER(customer_last_name) LIKE UPPER(?)
-      )
-`, merchantID, term, likeTerm, likeTerm, likeTerm, likeTerm)
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	offset := (page - 1) * pageSize
 
+	fromClause := `
+    FROM customer c
+    WHERE c.merchant_id = ?
+      AND c.enabled = true
+      AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+`
+	args := []interface{}{merchantID}
+
+	trimmedTerm := strings.TrimSpace(term)
+	if trimmedTerm != "" {
+		likeTerm := "%" + trimmedTerm + "%"
+		fromClause += `
+      AND (
+            c.customer_code = ?
+         OR UPPER(COALESCE(c.customer_tel, '')) LIKE UPPER(?)
+         OR UPPER(COALESCE(c.customer_name, '')) LIKE UPPER(?)
+		 OR UPPER(COALESCE(c.customer_first_name, '')) LIKE UPPER(?)
+		 OR UPPER(COALESCE(c.customer_last_name, '')) LIKE UPPER(?)
+      )
+`
+		args = append(args, trimmedTerm, likeTerm, likeTerm, likeTerm, likeTerm)
+	}
+
+	countQuery := `SELECT COUNT(*) ` + fromClause
+	var totalItems int
+	if err := r.database.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return results, 0, err
+	}
+
+	orderBy := buildCustomerOrderByClause(sortField, sortDir)
+	query := `
+    SELECT
+        c.customer_id,
+        c.customer_name,
+		c.customer_last_name,
+		c.customer_first_name,
+        c.customer_tel,
+        c.customer_address,
+        c.customer_email,
+        c.customer_nb_orders,
+        c.customer_total_spent,
+        c.creation_date,
+        c.last_order_date,
+        c.customer_code,
+		c.advertising_consent,
+		c.customer_brand
+` + fromClause + orderBy + `
+	LIMIT ? OFFSET ?
+`
+
+	queryArgs := append(args, pageSize, offset)
+	rows, err := r.database.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
-		return results, err
+		return results, 0, err
 	}
 	defer rows.Close()
 
@@ -444,54 +474,68 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerBrand,
 		)
 
-		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
-		c.LastOrderDate = helpers.NullTimeToNullUnixInt(lastOrderDate)
+		c.CreationDate = nullTimeToUTCISOZ(creationDate)
+		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
-			continue // Ou return err, selon ton besoin
+			continue
 		}
 
 		c.MatchScore = computeScore(term, &c)
 		results = append(results, c)
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].MatchScore > results[j].MatchScore
-	})
-
-	return results, nil
+	return results, totalItems, nil
 }
 
-func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID string, page, pageSize int) ([]CustomerSearchResult, error) {
-
+func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
 	var results []CustomerSearchResult
 
-	rows, err := r.database.QueryContext(ctx, `
-    SELECT 
-        customer_id,
-        customer_name,
-		customer_last_name,
-		customer_first_name,
-        customer_tel,
-        customer_address,
-        customer_email,
-        customer_nb_orders,
-        customer_total_spent,
-        creation_date,
-        last_order_date,
-        customer_code,
-		advertising_consent,
-		customer_brand
-    FROM customer
-    WHERE merchant_id = ?
-      AND enabled = true
-      AND customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
-	ORDER BY creation_date DESC
-	LIMIT ?, ?
-`, merchantID, page, pageSize)
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	offset := (page - 1) * pageSize
 
+	fromClause := `
+    FROM customer c
+    WHERE c.merchant_id = ?
+      AND c.enabled = true
+      AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+`
+
+	var totalItems int
+	countQuery := `SELECT COUNT(*) ` + fromClause
+	if err := r.database.QueryRowContext(ctx, countQuery, merchantID).Scan(&totalItems); err != nil {
+		return results, 0, err
+	}
+
+	orderBy := buildCustomerOrderByClause(sortField, sortDir)
+	query := `
+    SELECT
+        c.customer_id,
+        c.customer_name,
+		c.customer_last_name,
+		c.customer_first_name,
+        c.customer_tel,
+        c.customer_address,
+        c.customer_email,
+        c.customer_nb_orders,
+        c.customer_total_spent,
+        c.creation_date,
+        c.last_order_date,
+        c.customer_code,
+		c.advertising_consent,
+		c.customer_brand
+` + fromClause + orderBy + `
+	LIMIT ? OFFSET ?
+`
+
+	rows, err := r.database.QueryContext(ctx, query, merchantID, pageSize, offset)
 	if err != nil {
-		return results, err
+		return results, 0, err
 	}
 	defer rows.Close()
 
@@ -516,21 +560,63 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID stri
 			&c.CustomerBrand,
 		)
 
-		c.CreationDate = helpers.NullTimeToNullUnixInt(creationDate)
-		c.LastOrderDate = helpers.NullTimeToNullUnixInt(lastOrderDate)
+		c.CreationDate = nullTimeToUTCISOZ(creationDate)
+		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
-			continue // Ou return err, selon ton besoin
+			continue
 		}
 
 		results = append(results, c)
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].MatchScore > results[j].MatchScore
-	})
+	return results, totalItems, nil
+}
 
-	return results, nil
+func buildCustomerOrderByClause(sortField, sortDir string) string {
+	field := strings.ToLower(strings.TrimSpace(sortField))
+	dir := strings.ToUpper(strings.TrimSpace(sortDir))
+
+	if dir != "ASC" && dir != "DESC" {
+		dir = "DESC"
+	}
+
+	fieldExpr := "c.creation_date"
+	isText := false
+
+	switch field {
+	case "customer_first_name":
+		fieldExpr = "LOWER(c.customer_first_name)"
+		isText = true
+	case "customer_email":
+		fieldExpr = "LOWER(c.customer_email)"
+		isText = true
+	case "customer_tel":
+		fieldExpr = "LOWER(c.customer_tel)"
+		isText = true
+	case "customer_nb_orders":
+		fieldExpr = "c.customer_nb_orders"
+	case "customer_total_spent":
+		fieldExpr = "c.customer_total_spent"
+	case "creation_date":
+		fieldExpr = "c.creation_date"
+	case "last_order_date":
+		fieldExpr = "c.last_order_date"
+	}
+
+	if isText {
+		return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL OR %s = '' THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, fieldExpr, dir)
+	}
+
+	return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, dir)
+}
+
+func nullTimeToUTCISOZ(nt sql.NullTime) *string {
+	if !nt.Valid {
+		return nil
+	}
+	formatted := nt.Time.UTC().Format(time.RFC3339)
+	return &formatted
 }
 
 func normalizeStr(s *string) string {

@@ -55,6 +55,18 @@ type CustomerSearchRequest struct {
 	Code    string `json:"code"`
 }
 
+type CustomerPaginationMetadata struct {
+	TotalItems  int `json:"total_items"`
+	TotalPages  int `json:"total_pages"`
+	CurrentPage int `json:"current_page"`
+	Limit       int `json:"limit"`
+}
+
+type CustomerListData struct {
+	Metadata  CustomerPaginationMetadata `json:"metadata"`
+	Customers []CustomerSearchResult     `json:"customers"`
+}
+
 type CustomerSearchResult struct {
 	CustomerID         string  `json:"customer_id"`
 	CustomerName       string  `json:"customer_name"`
@@ -65,8 +77,8 @@ type CustomerSearchResult struct {
 	CustomerEmail      *string `json:"customer_email"`
 	CustomerNbOrders   int     `json:"customer_nb_orders"`
 	CustomerTotalSpent float64 `json:"customer_total_spent"`
-	CreationDate       *int    `json:"creation_date"`
-	LastOrderDate      *int    `json:"last_order_date"`
+	CreationDate       *string `json:"creation_date"`
+	LastOrderDate      *string `json:"last_order_date"`
 	CustomerCode       *string `json:"customer_code"`
 	MatchScore         int     `json:"match_score"`
 	AdvertisingConsent *bool   `json:"advertising_consent"`

@@ -2,6 +2,7 @@ package customers
 
 import (
 	"context"
+	"math"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 )
@@ -60,22 +61,58 @@ func (s *CustomersService) UpdateLoyaltyReward(ctx context.Context, token string
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *CustomersService) SearchCustomers(ctx context.Context, token, term string) ([]CustomerSearchResult, error) {
+func (s *CustomersService) SearchCustomers(ctx context.Context, token, term, sortField, sortDir string, page, pageSize int) (*CustomerListData, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.customerRepo.SearchCustomers(ctx, user.MerchantID, term)
+	customers, totalItems, err := s.customerRepo.SearchCustomers(ctx, user.MerchantID, term, sortField, sortDir, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = int(math.Ceil(float64(totalItems) / float64(pageSize)))
+	}
+
+	return &CustomerListData{
+		Metadata: CustomerPaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  totalPages,
+			CurrentPage: page,
+			Limit:       pageSize,
+		},
+		Customers: customers,
+	}, nil
 }
 
-func (s *CustomersService) ListCustomers(ctx context.Context, token string, page, page_size int) ([]CustomerSearchResult, error) {
+func (s *CustomersService) ListCustomers(ctx context.Context, token, sortField, sortDir string, page, pageSize int) (*CustomerListData, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.customerRepo.ListCustomers(ctx, user.MerchantID, page, page_size)
+	customers, totalItems, err := s.customerRepo.ListCustomers(ctx, user.MerchantID, sortField, sortDir, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = int(math.Ceil(float64(totalItems) / float64(pageSize)))
+	}
+
+	return &CustomerListData{
+		Metadata: CustomerPaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  totalPages,
+			CurrentPage: page,
+			Limit:       pageSize,
+		},
+		Customers: customers,
+	}, nil
 }
 
 func (s *CustomersService) ReactivateRewards(ctx context.Context, orderID string) error {

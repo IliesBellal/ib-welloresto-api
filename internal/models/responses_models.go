@@ -25,6 +25,11 @@ type OrderHistoryData struct {
 	Orders   []Order            `json:"orders"`
 }
 
+type CustomerListData struct {
+	Metadata  PaginationMetadata     `json:"metadata"`
+	Customers []CustomerSearchResult `json:"customers"`
+}
+
 type OpenCashRegisterData struct {
 	Status string `json:"status"`
 }
