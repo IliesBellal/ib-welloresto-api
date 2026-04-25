@@ -103,7 +103,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// Enregistrer le client dans le hub
 	hub.Register(client)
 
-	clientLog.Info("websocket connected")
+	clientLog.Info("🔗 websocket connected")
 
 	// Lancer les goroutines pour la gestion de la connexion
 	go client.writePump(hub)
@@ -119,7 +119,7 @@ func (c *Client) readPump(hub *Hub) {
 	defer func() {
 		hub.Unregister(c)
 		c.conn.Close()
-		c.log.Log(logLevel, "websocket disconnected",
+		c.log.Log(logLevel, "🔌 websocket disconnected",
 			zap.Int("close_code", closeCode),
 			zap.String("close_reason", closeReason),
 			zap.Duration("connection_duration", time.Since(c.startedAt)),
