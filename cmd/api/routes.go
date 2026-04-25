@@ -508,6 +508,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
 
+		r.Post("/products", menuH.CreateProduct) // used by: back-office
 		r.Get("/products/{product_id}", menuH.GetProduct)
 		r.Patch("/products/{product_id}", menuH.UpdateProduct)
 		r.Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
@@ -515,6 +516,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/products/{product_id}/status", menuH.SetProductStatus)
 		r.Patch("/products/{product_id}/availability", menuH.SetProductAvailability)
 		r.Delete("/products/{product_id}", menuH.DeleteProduct)
+		r.Put("/products/{product_id}/allergens", menuH.SyncProductAllergens)
+		r.Put("/products/{product_id}/tags", menuH.SyncProductTags)
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/attributes/{attribute_id}", menuH.GetAttribute) // used by: back-office
@@ -537,17 +540,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Post("/allergens/assign", menuH.BulkAssignAllergen)
 		})
 
-		// --- Allergens & Tags (full sync) ---
-		r.Put("/products/{product_id}/allergens", menuH.SyncProductAllergens)
-		r.Put("/products/{product_id}/tags", menuH.SyncProductTags)
-
 		// --- Plateformes externes ---
 		r.Get("/deliveroo", menuH.GetDeliverooMenu)
 		r.Patch("/deliveroo/sync", menuH.SyncDeliverooMenu) // used by: back-office
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
 
-		r.Post("/products", menuH.CreateProduct)                                        // used by: back-office
 		r.Post("/products/categories", menuH.CreateProductCategory)                     // used by: back-office
 		r.Post("/components", menuH.CreateComponent)                                    // used by: back-office
 		r.Post("/components/categories", menuH.CreateComponentCategory)                 // used by: back-office

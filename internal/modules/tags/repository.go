@@ -41,7 +41,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 	}
 	defer rows.Close()
 
-	var result []models.TagEntry
+	result := make([]models.TagEntry, 0)
 	for rows.Next() {
 		var t models.TagEntry
 		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name, &t.DisplayOrder, &t.Color, &t.ProductCount); err != nil {

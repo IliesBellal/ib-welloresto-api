@@ -1930,9 +1930,9 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			available_in,
 			available_take_away,
 			available_delivery,
-			tva_in_id,
-			tva_delivery_id,
-			tva_take_away_id,
+			tva_in.tva_rate as tva_rate_in,
+			tva_delivery.tva_rate as tva_rate_delivery,
+			tva_take_away.tva_rate as tva_rate_take_away,
 			bg_color,
 			production_color,
 			status,
@@ -1941,8 +1941,11 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			is_available_on_sno,
 			available,
 			image_url
-		FROM products
-		WHERE merchant_id = ? AND product_id = ?
+		FROM products p
+		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
+		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
+		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
+		WHERE p.merchant_id = ? AND p.product_id = ?
 		LIMIT 1
 	`
 
@@ -1951,6 +1954,9 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	var syncDeliveroo bool
 	var priceUberEats sql.NullInt64
 	var priceDeliveroo sql.NullInt64
+	var tvaIn sql.NullFloat64
+	var tvaDelivery sql.NullFloat64
+	var tvaTakeAway sql.NullFloat64
 
 	err := db.QueryRowContext(ctx, query, merchantID, productID).Scan(
 		&p.ProductID,
@@ -1967,9 +1973,9 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.AvailableIn,
 		&p.AvailableTakeAway,
 		&p.AvailableDelivery,
-		&p.TVAIn,
-		&p.TVADelivery,
-		&p.TVATakeAway,
+		&tvaIn,
+		&tvaDelivery,
+		&tvaTakeAway,
 		&p.BgColor,
 		&p.ProductionColor,
 		&p.Status,
@@ -1982,6 +1988,16 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 
 	if err != nil {
 		return nil, err
+	}
+
+	if tvaIn.Valid {
+		p.TVAIn = &tvaIn.Float64
+	}
+	if tvaDelivery.Valid {
+		p.TVADelivery = &tvaDelivery.Float64
+	}
+	if tvaTakeAway.Valid {
+		p.TVATakeAway = &tvaTakeAway.Float64
 	}
 
 	// Build integrations object
@@ -3402,7 +3418,7 @@ func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]mod
 	}
 	defer rows.Close()
 
-	var result []models.TagEntry
+	result := make([]models.TagEntry, 0)
 	for rows.Next() {
 		var t models.TagEntry
 		if err := rows.Scan(&t.ID, &t.MerchantID, &t.Name); err != nil {
