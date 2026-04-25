@@ -701,6 +701,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// --- CUSTOMERS ---
 	// TO BE DELETED
+	// Requirements : update application to use /customers instead of /customer, then delete this route and all its references in the codebase
+	// Deprecated on 2024-06-25
 	r.Route("/customer", func(r chi.Router) {
 		r.Use(authMiddleware)
 

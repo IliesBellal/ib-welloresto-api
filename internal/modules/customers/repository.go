@@ -275,6 +275,7 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
         SELECT cr.customer_id, cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value, cr.is_used
         FROM customer_rewards cr
         WHERE cr.customer_id = ?
+		ORDER BY is_used ASC, creation_date DESC
     `, customerID)
 	if err != nil {
 		return nil, err
@@ -302,14 +303,6 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 
 func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {
 	db := dbutils.GetDB(ctx, r.database)
-
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return 0, err
-		}
-		defer tx.Rollback()
-	*/
 
 	var targetValue int
 	var rewardType string
