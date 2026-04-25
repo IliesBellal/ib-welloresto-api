@@ -3,6 +3,7 @@ package customers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -299,6 +300,183 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 	}
 
 	return loyalty, nil
+}
+
+func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID string) ([]LoyaltyProgram, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT
+			id,
+			merchant_id,
+			COALESCE(name, ''),
+			COALESCE(description, ''),
+			enabled,
+			COALESCE(type, ''),
+			COALESCE(target_value, 0),
+			COALESCE(target_order_type, ''),
+			COALESCE(reward_type, ''),
+			COALESCE(reward_value, 0),
+			COALESCE(rewards_order_type, '')
+		FROM customer_loyalty_programs
+		WHERE merchant_id = ?
+		ORDER BY id DESC
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	programs := make([]LoyaltyProgram, 0)
+	programsByID := make(map[string]*LoyaltyProgram)
+
+	for rows.Next() {
+		var p LoyaltyProgram
+		var targetOrderTypes string
+		var rewardOrderTypes string
+
+		if err := rows.Scan(
+			&p.ID,
+			&p.MerchantID,
+			&p.Name,
+			&p.Description,
+			&p.Enabled,
+			&p.Target.Type,
+			&p.Target.Value,
+			&targetOrderTypes,
+			&p.Reward.Type,
+			&p.Reward.Value,
+			&rewardOrderTypes,
+		); err != nil {
+			return nil, err
+		}
+
+		p.Target.OrderTypes = parseOrderTypes(targetOrderTypes)
+		p.Reward.OrderTypes = parseOrderTypes(rewardOrderTypes)
+		p.Target.Products = make([]LoyaltyProgramProduct, 0)
+		p.Reward.Products = make([]LoyaltyProgramProduct, 0)
+
+		if p.Target.Type == "total_spent" {
+			currency := "EUR_CENTS"
+			p.Target.Currency = &currency
+		}
+
+		if p.Reward.Type == "fixed_discount" {
+			currency := "EUR_CENTS"
+			p.Reward.Currency = &currency
+		}
+
+		programs = append(programs, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(programs) == 0 {
+		return []LoyaltyProgram{}, nil
+	}
+
+	ids := make([]interface{}, 0, len(programs))
+	placeholders := make([]string, 0, len(programs))
+	for i := range programs {
+		programsByID[programs[i].ID] = &programs[i]
+		ids = append(ids, programs[i].ID)
+		placeholders = append(placeholders, "?")
+	}
+
+	inClause := strings.Join(placeholders, ",")
+
+	targetProductsQuery := fmt.Sprintf(`
+		SELECT tp.loyalty_program_id, p.product_id, COALESCE(p.product_name, '')
+		FROM customer_loyalty_program_target_products tp
+		INNER JOIN products p ON p.product_id = tp.product_id
+		WHERE tp.loyalty_program_id IN (%s)
+	`, inClause)
+
+	targetRows, err := db.QueryContext(ctx, targetProductsQuery, ids...)
+	if err != nil {
+		return nil, err
+	}
+	defer targetRows.Close()
+
+	for targetRows.Next() {
+		var programID, productID, productName string
+		if err := targetRows.Scan(&programID, &productID, &productName); err != nil {
+			return nil, err
+		}
+
+		if program, ok := programsByID[programID]; ok {
+			program.Target.Products = append(program.Target.Products, LoyaltyProgramProduct{ID: productID, Name: productName})
+		}
+	}
+
+	if err := targetRows.Err(); err != nil {
+		return nil, err
+	}
+
+	rewardProductsQuery := fmt.Sprintf(`
+		SELECT rp.loyalty_program_id, p.product_id, COALESCE(p.product_name, '')
+		FROM customer_loyalty_program_reward_products rp
+		INNER JOIN products p ON p.product_id = rp.product_id
+		WHERE rp.loyalty_program_id IN (%s)
+	`, inClause)
+
+	rewardRows, err := db.QueryContext(ctx, rewardProductsQuery, ids...)
+	if err != nil {
+		return nil, err
+	}
+	defer rewardRows.Close()
+
+	for rewardRows.Next() {
+		var programID, productID, productName string
+		if err := rewardRows.Scan(&programID, &productID, &productName); err != nil {
+			return nil, err
+		}
+
+		if program, ok := programsByID[programID]; ok {
+			program.Reward.Products = append(program.Reward.Products, LoyaltyProgramProduct{ID: productID, Name: productName})
+		}
+	}
+
+	if err := rewardRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return programs, nil
+}
+
+func parseOrderTypes(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+
+	if strings.HasPrefix(raw, "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			clean := make([]string, 0, len(arr))
+			for _, item := range arr {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					clean = append(clean, item)
+				}
+			}
+			return clean
+		}
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {

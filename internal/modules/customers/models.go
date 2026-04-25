@@ -35,6 +35,42 @@ type CustomerLoyalty struct {
 	AvailableRewards []LoyaltyReward   `json:"available_rewards"`
 }
 
+type LoyaltyProgramProduct struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type LoyaltyProgramTarget struct {
+	Type       string                  `json:"type"`
+	Value      int                     `json:"value"`
+	Currency   *string                 `json:"currency,omitempty"`
+	OrderTypes []string                `json:"order_types"`
+	Products   []LoyaltyProgramProduct `json:"products"`
+}
+
+type LoyaltyProgramRewardConfig struct {
+	Type       string                  `json:"type"`
+	Value      int                     `json:"value"`
+	Currency   *string                 `json:"currency,omitempty"`
+	OrderTypes []string                `json:"order_types"`
+	Products   []LoyaltyProgramProduct `json:"products"`
+}
+
+type LoyaltyProgram struct {
+	ID          string                     `json:"id"`
+	MerchantID  string                     `json:"merchant_id"`
+	Name        string                     `json:"name"`
+	Description string                     `json:"description"`
+	Enabled     bool                       `json:"enabled"`
+	Target      LoyaltyProgramTarget       `json:"target"`
+	Reward      LoyaltyProgramRewardConfig `json:"reward"`
+}
+
+type LoyaltyProgramsData struct {
+	Status          string           `json:"status"`
+	LoyaltyPrograms []LoyaltyProgram `json:"loyalty_programs"`
+}
+
 // --- update progress ---
 type LoyaltyProgressUpdateRequest struct {
 	CustomerID       string `json:"customer_id"`

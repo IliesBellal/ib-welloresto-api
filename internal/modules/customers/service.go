@@ -34,6 +34,23 @@ func (s *CustomersService) GetCustomerLoyalty(ctx context.Context, token, custom
 	return s.customerRepo.GetCustomerLoyalty(ctx, customerID, user.MerchantID)
 }
 
+func (s *CustomersService) GetLoyaltyPrograms(ctx context.Context, token string) (*LoyaltyProgramsData, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	programs, err := s.customerRepo.GetLoyaltyPrograms(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LoyaltyProgramsData{
+		Status:          "success",
+		LoyaltyPrograms: programs,
+	}, nil
+}
+
 func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token string, req *LoyaltyProgressUpdateRequest) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

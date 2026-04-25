@@ -40,6 +40,23 @@ func (h *CustomersHandler) GetCustomerLoyalty(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (h *CustomersHandler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "get_loyalty_programs", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	result, err := h.svc.GetLoyaltyPrograms(ctx, token)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "get_loyalty_programs", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "customers", "get_loyalty_programs", result)
+}
+
 func (h *CustomersHandler) UpdateLoyaltyProgress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := helpers.ExtractToken(r)
