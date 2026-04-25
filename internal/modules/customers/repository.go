@@ -28,6 +28,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 		"customer_name":                         true,
 		"customer_first_name":                   true,
 		"customer_last_name":                    true,
+		"customer_brand":                        true,
 		"customer_tel":                          true,
 		"customer_address":                      true,
 		"customer_email":                        true,
@@ -134,6 +135,12 @@ func extractFieldValue(c *models.Customer, field string) interface{} {
 			return *c.AdvertisingConsent
 		}
 		return false
+
+	case "customer_brand":
+		if c.CustomerBrand != nil && *c.CustomerBrand != "" {
+			return helpers.Ucfirst(*c.CustomerBrand)
+		}
+		return nil
 
 	case "customer_first_name":
 		if c.CustomerFirstName != nil && *c.CustomerFirstName != "" {
