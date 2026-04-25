@@ -388,9 +388,12 @@ func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *Loya
 
 	_, err := r.database.ExecContext(ctx, `
         UPDATE customer_rewards
-        SET is_used = ?, usage_date = UTC_TIMESTAMP
-        WHERE reward_id = ? AND customer_id IN (SELECT customer_id FROM customers WHERE merchant_id = ? AND enabled = 1)
-    `, req.IsUsed, req.RewardID, merchantID)
+		SET is_used = ?,
+			usage_date = CASE WHEN ? THEN UTC_TIMESTAMP ELSE NULL END
+		WHERE reward_id = ?
+		  AND customer_id = ?
+		  AND customer_id IN (SELECT customer_id FROM customer WHERE merchant_id = ? AND enabled = 1)
+	`, req.IsUsed, req.IsUsed, req.RewardID, req.CustomerID, merchantID)
 
 	return err
 }

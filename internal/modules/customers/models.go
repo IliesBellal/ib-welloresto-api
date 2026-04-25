@@ -44,8 +44,9 @@ type LoyaltyProgressUpdateRequest struct {
 
 // --- update reward ---
 type LoyaltyRewardUpdateRequest struct {
-	RewardID string `json:"reward_id"`
-	IsUsed   int    `json:"is_used"`
+	CustomerID string `json:"customer_id"`
+	RewardID   string `json:"reward_id"`
+	IsUsed     bool   `json:"is_used"`
 }
 
 type CustomerSearchRequest struct {

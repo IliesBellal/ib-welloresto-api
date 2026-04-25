@@ -86,10 +86,25 @@ func (h *CustomersHandler) UpdateLoyaltyReward(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var req LoyaltyRewardUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	customerID := strings.TrimSpace(chi.URLParam(r, "customer_id"))
+	rewardID := strings.TrimSpace(chi.URLParam(r, "reward_id"))
+	if customerID == "" || rewardID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_reward", map[string]string{"error": "missing_path_params"})
+		return
+	}
+
+	var body struct {
+		IsUsed bool `json:"is_used"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_reward", map[string]string{"error": "invalid_request"})
 		return
+	}
+
+	req := LoyaltyRewardUpdateRequest{
+		CustomerID: customerID,
+		RewardID:   rewardID,
+		IsUsed:     body.IsUsed,
 	}
 
 	result, err := h.svc.UpdateLoyaltyReward(ctx, token, &req)
