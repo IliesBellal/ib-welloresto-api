@@ -437,7 +437,8 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 		return nil, err
 	}
 	if !orderStillOpen {
-		return nil, nil
+		s.notificationsService.SendNotificationAsync(user.MerchantID, req.OrderID, notification.NotificationTypeOrderUpdate)
+		return map[string]interface{}{"status": "0"}, nil
 	}
 
 	log := logger.FromContext(ctx)
