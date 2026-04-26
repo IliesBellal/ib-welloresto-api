@@ -157,9 +157,9 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 
 	// 4) Insert stock_movements
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO stock_movements(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, movement_date)
-		VALUES (?, ?, ?, 'scan', 'add', ? * ?, ?, UTC_TIMESTAMP)
-	`, merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
+		INSERT INTO stock_movements(id, merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, movement_date)
+		VALUES (?, ?, ?, ?, 'scan', 'add', ? * ?, ?, UTC_TIMESTAMP)
+	`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -197,9 +197,9 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 		}
 
 		_, err = db.ExecContext(ctx, `
-			INSERT INTO expiration_dates(merchant_id, component_id, expiration_date, creation_date, purchased_component_id)
-			VALUES (?, ?, ?, UTC_TIMESTAMP, ?)
-		`, merchantID, s.ComponentID, *s.DLC, purchasedComponentID)
+			INSERT INTO expiration_dates(id, merchant_id, component_id, expiration_date, creation_date, purchased_component_id)
+			VALUES (?, ?, ?, ?, UTC_TIMESTAMP, ?)
+		`, helpers.GeneratePrefixedID("exp-date"), merchantID, s.ComponentID, *s.DLC, purchasedComponentID)
 		if err != nil {
 			log.Error(err.Error())
 			return err
@@ -244,11 +244,11 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 		// 2️⃣ INSERT MOVEMENT
 		_, err = db.ExecContext(ctx, `
             INSERT INTO stock_movements
-                (merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment)
-            SELECT u.merchant_id, u.user_id, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?
+                (id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment)
+            SELECT ?, u.merchant_id, u.user_id, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?
             FROM users u
             WHERE u.user_id = ?;
-        `, req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
+        `, helpers.GeneratePrefixedID("stck-mvt"), req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
 		if err != nil {
 			log.Error(err.Error())
 			return err
@@ -310,10 +310,10 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 
 			_, err = db.ExecContext(ctx, `
                 INSERT INTO stock_movements(
-                    merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment
+                    id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment
                 )
-                VALUES (?, ?, ?, ?, 'manual', 'loss', ?, ?, NULL, ?);
-            `, it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
+                VALUES (?, ?, ?, ?, ?, 'manual', 'loss', ?, ?, NULL, ?);
+            `, helpers.GeneratePrefixedID("stck-mvt"), it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
 			if err != nil {
 				log.Error(err.Error())
 				return err
@@ -591,9 +591,9 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 	// source = 'manual', quantity and unit stored as received (not converted).
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO stock_movements
-			(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, comment)
-		VALUES (?, ?, ?, 'manual', ?, ?, ?, ?)
-	`, merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
+			(id, merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, comment)
+		VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?)
+	`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
 	return err
 }
 
@@ -673,9 +673,9 @@ func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, us
 		// Record the movement.
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO stock_movements
-				(merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
-			VALUES (?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
-		`, merchantID, userID, cr.ComponentID, cr.ProductID, cr.Qty, cr.UOMID, cr.OrderItemID, orderID); err != nil {
+				(id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
+			VALUES (?, ?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
+		`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, cr.ComponentID, cr.ProductID, cr.Qty, cr.UOMID, cr.OrderItemID, orderID); err != nil {
 			return err
 		}
 	}
