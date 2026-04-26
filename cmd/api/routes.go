@@ -716,7 +716,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/loyalty-programs/{loyalty_program_id}", customersH.DeleteLoyaltyProgram)
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
 
-		r.Use(middleware.RequirePermission(middleware.IsAdmin))
 		r.Patch("/{customer_id}/loyalty/{loyalty_program_id}", customersH.UpdateLoyaltyProgress)
 		r.Patch("/{customer_id}/rewards/{reward_id}", customersH.UpdateLoyaltyReward)
 	})
