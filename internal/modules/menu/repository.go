@@ -884,7 +884,6 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
 		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
 		WHERE c.merchant_id = ? AND c.enabled = 1 AND c.available = 1
-		ORDER BY c.display_order ASC
 		`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
