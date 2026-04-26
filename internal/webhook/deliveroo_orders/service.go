@@ -417,23 +417,6 @@ func (s *DeliverooService) ProcessStatusUpdate(ctx context.Context, payload Deli
 		}
 	}()
 
-	// 3. Initialiser la transaction
-	/*
-		tx, err := s.repo.db.BeginTx(ctx, nil)
-		if err != nil {
-			log.Error("WEBHOOK DELIVEROO - " + err.Error())
-			return err
-		}
-		defer tx.Rollback()
-
-		// 5. COMMIT de la transaction AVANT les appels lifecycle
-		if err = tx.Commit(); err != nil {
-			log.Error("WEBHOOK DELIVEROO - " + err.Error())
-			return err
-		}
-
-	*/
-
 	// 4. Récupérer l'ID interne
 	internalOrderID, err := s.repo.GetOrderIDByBrandID(ctx, ord.ID)
 	if err != nil {

@@ -615,11 +615,6 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	/*	tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-	*/
 	// Update orders
 	_, err := db.ExecContext(ctx, `
         UPDATE orders
@@ -723,12 +718,6 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-	*/
 	// 0.1 Lock order row
 	const qLockOrder = `
 		SELECT price
@@ -976,14 +965,6 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 
 func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	log := logger.FromContext(ctx)
-
-	/*
-		tx, err := r.database.BeginTx(ctx, &sql.TxOptions{})
-		if err != nil {
-			log.Error("Cannot open transaction")
-			return nil, err
-		}
-	*/
 
 	unavailable, err := r.validateProductAvailability(ctx, req)
 
@@ -1246,15 +1227,6 @@ func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Cont
 func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
 	log := logger.FromContext(ctx)
 	db := dbutils.GetDB(ctx, r.database)
-
-	// 1. Transaction (rempalcée par le transaction manager)
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("transaction begin failed: %w", err)
-		}
-		defer tx.Rollback()
-	*/
 
 	if len(req.Order.Products) == 0 {
 		return models.ErrCartEmpty

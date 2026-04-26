@@ -60,12 +60,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		CustomerEmail: req.Customer.CustomerEmail,
 		// Tous les autres champs sont optionnels → nil
 	}
-	/*
-		tx, err := r.db.BeginTx(ctx, nil)
-		if err != nil {
-			return "", err
-		}
-	*/
+
 	// 2️⃣ Update or Create
 	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
 	if err != nil {

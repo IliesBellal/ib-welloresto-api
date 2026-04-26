@@ -73,7 +73,7 @@ func (s *CustomersService) CreateLoyaltyProgram(ctx context.Context, token strin
 		return nil, err
 	}
 
-	loyaltyProgramID := helpers.GeneratePrefixedID("loyalty-program")
+	loyaltyProgramID := helpers.GeneratePrefixedID("loyal-prog")
 	return s.customerRepo.CreateLoyaltyProgram(ctx, user.MerchantID, loyaltyProgramID, req)
 }
 

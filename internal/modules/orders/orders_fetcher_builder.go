@@ -21,42 +21,6 @@ func NewOrdersFetcher(db *sql.DB) *OrdersFetcher {
 
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, orderByFilter, limitsFilters string) ([]models.Order, error) {
 
-	// Begin transaction (read-only)
-	// Note: On utilise le ctx parent. Si la requête HTTP est annulée, la transaction s'arrêtera proprement.
-	// Bizarre, je supprimer au passage de dbutils.GetDB() dans le repository et je passe la db directement depuis le fetcher, ça évite de devoir faire du context.WithValue pour passer la db dans le repo
-	/*
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-	*/
-	/*
-		tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-		if err != nil {
-			return nil, fmt.Errorf("BeginTx failed: %w", err)
-		}
-
-		// Ensure rollback if anything goes wrong
-		committed := false
-		defer func() {
-			if !committed {
-				_ = tx.Rollback()
-			}
-		}()
-
-		// --- HELPER FUNCTIONS CORRIGÉES ---
-		// Helper to run a query with logging
-		runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
-
-			rows, err := tx.QueryContext(ctx, query, args...)
-
-			if err != nil {
-				return nil, fmt.Errorf("%s query error: %w", step, err)
-			}
-
-			return rows, nil
-		}
-	*/
-
 	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le contexte
 	db := dbutils.GetDB(ctx, r.database)
 

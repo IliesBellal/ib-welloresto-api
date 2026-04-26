@@ -727,9 +727,9 @@ func (r *CustomersRepository) replaceLoyaltyProgramTargetProducts(ctx context.Co
 			continue
 		}
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO customer_loyalty_program_target_products (loyalty_program_id, product_id)
-			VALUES (?, ?)
-		`, loyaltyProgramID, pid); err != nil {
+			INSERT INTO customer_loyalty_program_target_products (id, loyalty_program_id, product_id)
+			VALUES (?, ?, ?)
+		`, helpers.GeneratePrefixedID("target-prod"), loyaltyProgramID, pid); err != nil {
 			return err
 		}
 	}
@@ -750,9 +750,9 @@ func (r *CustomersRepository) replaceLoyaltyProgramRewardProducts(ctx context.Co
 			continue
 		}
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO customer_loyalty_program_reward_products (loyalty_program_id, product_id)
-			VALUES (?, ?)
-		`, loyaltyProgramID, pid); err != nil {
+			INSERT INTO customer_loyalty_program_reward_products (id, loyalty_program_id, product_id)
+			VALUES (?, ?, ?)
+		`, helpers.GeneratePrefixedID("reward-prod"), loyaltyProgramID, pid); err != nil {
 			return err
 		}
 	}
@@ -874,9 +874,9 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 		}
 	} else {
 		_, err = db.ExecContext(ctx, `
-            INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value)
-            VALUES (?, ?, ?)
-        `, req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
+            INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value)
+            VALUES (?, ?, ?, ?)
+        `, helpers.GeneratePrefixedID("loyalty-progress"), req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
 		if err != nil {
 			return 0, err
 		}
@@ -886,28 +886,23 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	if rewardToCreate > 0 {
 		for i := 0; i < rewardToCreate; i++ {
 			_, err = db.ExecContext(ctx, `
-                INSERT INTO customer_rewards (customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
-                VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP)
-            `, req.CustomerID, req.LoyaltyProgramID, rewardType, rewardOrderType, rewardValue)
+                INSERT INTO customer_rewards (id, customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
+                VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP)
+            `, helpers.GeneratePrefixedID("cus-reward"), req.CustomerID, req.LoyaltyProgramID, rewardType, rewardOrderType, rewardValue)
 			if err != nil {
 				return 0, err
 			}
 		}
 	}
 
-	/*
-		if err := tx.Commit(); err != nil {
-			return 0, err
-		}
-	*/
-
 	return rewardToCreate, nil
 }
 
 func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *LoyaltyRewardUpdateRequest, merchantID string) error {
 	// TODO : Vérifier que la reward appartient bien au client et au marchand avant de l'updater (sécurité)
+	db := dbutils.GetDB(ctx, r.database)
 
-	_, err := r.database.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE customer_rewards
 		SET is_used = ?,
 			usage_date = CASE WHEN ? THEN UTC_TIMESTAMP ELSE NULL END
@@ -920,6 +915,7 @@ func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *Loya
 }
 
 func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
+	db := dbutils.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
 
 	if page <= 0 {
@@ -955,7 +951,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 
 	countQuery := `SELECT COUNT(*) ` + fromClause
 	var totalItems int
-	if err := r.database.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
 		return results, 0, err
 	}
 
@@ -981,7 +977,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 `
 
 	queryArgs := append(args, pageSize, offset)
-	rows, err := r.database.QueryContext(ctx, query, queryArgs...)
+	rows, err := db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return results, 0, err
 	}
@@ -1023,6 +1019,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 }
 
 func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
+	db := dbutils.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
 
 	if page <= 0 {
@@ -1042,7 +1039,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 
 	var totalItems int
 	countQuery := `SELECT COUNT(*) ` + fromClause
-	if err := r.database.QueryRowContext(ctx, countQuery, merchantID).Scan(&totalItems); err != nil {
+	if err := db.QueryRowContext(ctx, countQuery, merchantID).Scan(&totalItems); err != nil {
 		return results, 0, err
 	}
 
@@ -1235,14 +1232,6 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 	log := logger.FromContext(ctx)
 	db := dbutils.GetDB(ctx, r.database)
 
-	/*
-		tx, err := r.database.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback() // Se déclenche auto si la fonction crash ou s'arrête sans Commit
-	*/
-
 	// 1. Récupérer les infos de la commande
 	const qGetOrder = `
 		SELECT o.customer_id, o.merchant_id, o.price, o.order_type
@@ -1318,15 +1307,12 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 
 		if err == sql.ErrNoRows {
 			// Créer la progression
-			res, err := db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, 0, UTC_TIMESTAMP())", customerID, p.ID)
+			newProgressID := helpers.GeneratePrefixedID("cus-progress")
+			_, err := db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, ?, 0, UTC_TIMESTAMP())", newProgressID, customerID, p.ID)
 			if err != nil {
 				return err
 			}
-			id, _ := res.LastInsertId()
-			// Attention : LastInsertId retourne un int64. Si ton ID est un UUID/string dans ta DB, adapte cette partie.
-			// (Si l'ID n'est pas auto-increment, il faut générer un UUID ici et l'insérer)
-			// Dans le doute, je simule une base standard :
-			err = db.QueryRowContext(ctx, "SELECT id FROM customer_loyalty_progress WHERE id = ?", id).Scan(&progressID)
+			progressID = newProgressID
 			currentValue = 0
 		} else if err != nil {
 			return err
@@ -1364,7 +1350,8 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			return err
 		}
 
-		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
+		newProgressOrderID := helpers.GeneratePrefixedID("cus-progress-order")
+		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (id, loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?, ?)", newProgressOrderID, p.ID, progressID, orderID, increment)
 		if err != nil {
 			return err
 		}
@@ -1376,10 +1363,11 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			rewardsToAdd := rewardsExpected - rewardsAlready
 
 			for i := 0; i < rewardsToAdd; i++ {
+				newRewardID := helpers.GeneratePrefixedID("cus-reward")
 				_, err = db.ExecContext(ctx, `
-					INSERT INTO customer_rewards(loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
-					VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
-				`, p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
+					INSERT INTO customer_rewards(id, loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
+					VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+				`, newRewardID, p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
 
 				if err != nil {
 					return err
