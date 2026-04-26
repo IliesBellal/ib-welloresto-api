@@ -203,9 +203,8 @@ func (r *reservationRepository) GetRewards(ctx context.Context, customerID strin
 	log := logger.FromContext(ctx)
 
 	query := `
-		SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date, p.reward_type, p.reward_value
+		SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value
 		FROM customer_rewards cr
-		INNER JOIN customer_loyalty_programs p ON cr.loyalty_program_id = p.id
 		WHERE cr.customer_id = ? AND cr.usage_date IS NULL`
 
 	rows, err := db.QueryContext(ctx, query, customerID)

@@ -275,9 +275,11 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 	rows2, err := r.database.QueryContext(ctx, `
         SELECT cr.customer_id, cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value, cr.is_used
         FROM customer_rewards cr
+		INNER JOIN customer c ON c.customer_id = cr.customer_id
         WHERE cr.customer_id = ?
+		  AND c.merchant_id = ?
 		ORDER BY is_used ASC, creation_date DESC
-    `, customerID)
+    `, customerID, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +319,10 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			COALESCE(target_order_type, ''),
 			COALESCE(reward_type, ''),
 			COALESCE(reward_value, 0),
-			COALESCE(rewards_order_type, '')
+			COALESCE(rewards_order_type, ''),
+			COALESCE(min_order_value, 0),
+			max_discount_value,
+			COALESCE(max_rewards_per_order, 0)
 		FROM customer_loyalty_programs
 		WHERE merchant_id = ?
 		ORDER BY id DESC
@@ -336,6 +341,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 		var p LoyaltyProgram
 		var targetOrderTypes string
 		var rewardOrderTypes string
+		var maxDiscountValue sql.NullInt64
 
 		if err := rows.Scan(
 			&p.ID,
@@ -349,12 +355,19 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			&p.Reward.Type,
 			&p.Reward.Value,
 			&rewardOrderTypes,
+			&p.Reward.MinOrderValue,
+			&maxDiscountValue,
+			&p.Reward.MaxRewardsPerOrder,
 		); err != nil {
 			return nil, err
 		}
 
 		p.Target.OrderTypes = targetOrderTypes
 		p.Reward.OrderTypes = rewardOrderTypes
+		if maxDiscountValue.Valid {
+			v := int(maxDiscountValue.Int64)
+			p.Reward.MaxDiscountValue = &v
+		}
 		p.Target.Products = make([]LoyaltyProgramProduct, 0)
 		p.Reward.Products = make([]LoyaltyProgramProduct, 0)
 
@@ -443,6 +456,310 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 	return programs, nil
 }
 
+func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchantID, loyaltyProgramID string) (*LoyaltyProgram, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT
+			id,
+			merchant_id,
+			COALESCE(name, ''),
+			COALESCE(description, ''),
+			enabled,
+			COALESCE(type, ''),
+			COALESCE(target_value, 0),
+			COALESCE(target_order_type, ''),
+			COALESCE(reward_type, ''),
+			COALESCE(reward_value, 0),
+			COALESCE(rewards_order_type, ''),
+			COALESCE(min_order_value, 0),
+			max_discount_value,
+			COALESCE(max_rewards_per_order, 0)
+		FROM customer_loyalty_programs
+		WHERE merchant_id = ? AND id = ?
+		LIMIT 1
+	`
+
+	var p LoyaltyProgram
+	var targetOrderTypes string
+	var rewardOrderTypes string
+	var maxDiscountValue sql.NullInt64
+
+	err := db.QueryRowContext(ctx, query, merchantID, loyaltyProgramID).Scan(
+		&p.ID,
+		&p.MerchantID,
+		&p.Name,
+		&p.Description,
+		&p.Enabled,
+		&p.Target.Type,
+		&p.Target.Value,
+		&targetOrderTypes,
+		&p.Reward.Type,
+		&p.Reward.Value,
+		&rewardOrderTypes,
+		&p.Reward.MinOrderValue,
+		&maxDiscountValue,
+		&p.Reward.MaxRewardsPerOrder,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	p.Target.OrderTypes = targetOrderTypes
+	p.Reward.OrderTypes = rewardOrderTypes
+	if maxDiscountValue.Valid {
+		v := int(maxDiscountValue.Int64)
+		p.Reward.MaxDiscountValue = &v
+	}
+	p.Target.Products = make([]LoyaltyProgramProduct, 0)
+	p.Reward.Products = make([]LoyaltyProgramProduct, 0)
+
+	targetRows, err := db.QueryContext(ctx, `
+		SELECT p.product_id, COALESCE(p.name, '')
+		FROM customer_loyalty_program_target_products tp
+		INNER JOIN products p ON p.product_id = tp.product_id
+		WHERE tp.loyalty_program_id = ?
+	`, loyaltyProgramID)
+	if err != nil {
+		return nil, err
+	}
+	defer targetRows.Close()
+
+	for targetRows.Next() {
+		var productID, productName string
+		if err := targetRows.Scan(&productID, &productName); err != nil {
+			return nil, err
+		}
+		p.Target.Products = append(p.Target.Products, LoyaltyProgramProduct{ID: productID, Name: productName})
+	}
+
+	rewardRows, err := db.QueryContext(ctx, `
+		SELECT p.product_id, COALESCE(p.name, '')
+		FROM customer_loyalty_program_reward_products rp
+		INNER JOIN products p ON p.product_id = rp.product_id
+		WHERE rp.loyalty_program_id = ?
+	`, loyaltyProgramID)
+	if err != nil {
+		return nil, err
+	}
+	defer rewardRows.Close()
+
+	for rewardRows.Next() {
+		var productID, productName string
+		if err := rewardRows.Scan(&productID, &productName); err != nil {
+			return nil, err
+		}
+		p.Reward.Products = append(p.Reward.Products, LoyaltyProgramProduct{ID: productID, Name: productName})
+	}
+
+	if p.Target.Type == "total_spent" {
+		currency := "EUR_CENTS"
+		p.Target.Currency = &currency
+	}
+
+	return &p, nil
+}
+
+func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string, req *CreateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO customer_loyalty_programs (
+			id,
+			merchant_id,
+			name,
+			description,
+			type,
+			target_value,
+			target_order_type,
+			reward_type,
+			reward_value,
+			rewards_order_type,
+			min_order_value,
+			max_discount_value,
+			max_rewards_per_order,
+			enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		loyaltyProgramID,
+		merchantID,
+		req.Name,
+		req.Description,
+		req.Target.Type,
+		req.Target.Value,
+		req.Target.OrderTypes,
+		req.Reward.Type,
+		req.Reward.Value,
+		req.Reward.OrderTypes,
+		req.Reward.MinOrderValue,
+		req.Reward.MaxDiscountValue,
+		req.Reward.MaxRewardsPerOrder,
+		enabled,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := r.replaceLoyaltyProgramTargetProducts(ctx, loyaltyProgramID, req.Target.ProductIDs); err != nil {
+		return nil, err
+	}
+
+	if err := r.replaceLoyaltyProgramRewardProducts(ctx, loyaltyProgramID, req.Reward.ProductIDs); err != nil {
+		return nil, err
+	}
+
+	return r.GetLoyaltyProgramByID(ctx, merchantID, loyaltyProgramID)
+}
+
+func (r *CustomersRepository) UpdateLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string, req *UpdateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	updates := make([]string, 0)
+	args := make([]interface{}, 0)
+
+	if req.Name != nil {
+		updates = append(updates, "name = ?")
+		args = append(args, *req.Name)
+	}
+
+	if req.Description != nil {
+		updates = append(updates, "description = ?")
+		args = append(args, *req.Description)
+	}
+
+	if req.Enabled != nil {
+		updates = append(updates, "enabled = ?")
+		args = append(args, *req.Enabled)
+	}
+
+	if req.Target != nil {
+		if req.Target.Type != nil {
+			updates = append(updates, "type = ?")
+			args = append(args, *req.Target.Type)
+		}
+		if req.Target.Value != nil {
+			updates = append(updates, "target_value = ?")
+			args = append(args, *req.Target.Value)
+		}
+		if req.Target.OrderTypes != nil {
+			updates = append(updates, "target_order_type = ?")
+			args = append(args, *req.Target.OrderTypes)
+		}
+	}
+
+	if req.Reward != nil {
+		if req.Reward.Type != nil {
+			updates = append(updates, "reward_type = ?")
+			args = append(args, *req.Reward.Type)
+		}
+		if req.Reward.Value != nil {
+			updates = append(updates, "reward_value = ?")
+			args = append(args, *req.Reward.Value)
+		}
+		if req.Reward.OrderTypes != nil {
+			updates = append(updates, "rewards_order_type = ?")
+			args = append(args, *req.Reward.OrderTypes)
+		}
+		if req.Reward.MinOrderValue != nil {
+			updates = append(updates, "min_order_value = ?")
+			args = append(args, *req.Reward.MinOrderValue)
+		}
+		if req.Reward.MaxDiscountValue != nil {
+			updates = append(updates, "max_discount_value = ?")
+			args = append(args, *req.Reward.MaxDiscountValue)
+		}
+		if req.Reward.MaxRewardsPerOrder != nil {
+			updates = append(updates, "max_rewards_per_order = ?")
+			args = append(args, *req.Reward.MaxRewardsPerOrder)
+		}
+	}
+
+	if len(updates) > 0 {
+		updateSQL := "UPDATE customer_loyalty_programs SET " + strings.Join(updates, ", ") + " WHERE id = ? AND merchant_id = ?"
+		args = append(args, loyaltyProgramID, merchantID)
+		if _, err := db.ExecContext(ctx, updateSQL, args...); err != nil {
+			return nil, err
+		}
+	}
+
+	if req.Target != nil && req.Target.ProductIDs != nil {
+		if err := r.replaceLoyaltyProgramTargetProducts(ctx, loyaltyProgramID, *req.Target.ProductIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	if req.Reward != nil && req.Reward.ProductIDs != nil {
+		if err := r.replaceLoyaltyProgramRewardProducts(ctx, loyaltyProgramID, *req.Reward.ProductIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	return r.GetLoyaltyProgramByID(ctx, merchantID, loyaltyProgramID)
+}
+
+func (r *CustomersRepository) DeleteLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE customer_loyalty_programs
+		SET enabled = 0
+		WHERE id = ? AND merchant_id = ?
+	`, loyaltyProgramID, merchantID)
+
+	return err
+}
+
+func (r *CustomersRepository) replaceLoyaltyProgramTargetProducts(ctx context.Context, loyaltyProgramID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM customer_loyalty_program_target_products WHERE loyalty_program_id = ?`, loyaltyProgramID); err != nil {
+		return err
+	}
+
+	for _, productID := range productIDs {
+		pid := strings.TrimSpace(productID)
+		if pid == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO customer_loyalty_program_target_products (loyalty_program_id, product_id)
+			VALUES (?, ?)
+		`, loyaltyProgramID, pid); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *CustomersRepository) replaceLoyaltyProgramRewardProducts(ctx context.Context, loyaltyProgramID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM customer_loyalty_program_reward_products WHERE loyalty_program_id = ?`, loyaltyProgramID); err != nil {
+		return err
+	}
+
+	for _, productID := range productIDs {
+		pid := strings.TrimSpace(productID)
+		if pid == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO customer_loyalty_program_reward_products (loyalty_program_id, product_id)
+			VALUES (?, ?)
+		`, loyaltyProgramID, pid); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func parseOrderTypes(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -464,9 +781,12 @@ func parseOrderTypes(raw string) []string {
 	}
 
 	parts := strings.Split(raw, ",")
+	if len(parts) == 1 && !strings.Contains(raw, ",") {
+		parts = strings.Fields(raw)
+	}
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		v := strings.TrimSpace(p)
+		v := strings.ToUpper(strings.TrimSpace(p))
 		if v != "" {
 			out = append(out, v)
 		}
@@ -474,8 +794,28 @@ func parseOrderTypes(raw string) []string {
 	return out
 }
 
+func isOrderTypeAllowed(rawOrderTypes, orderType string) bool {
+	allowed := parseOrderTypes(rawOrderTypes)
+	if len(allowed) == 0 {
+		return true
+	}
+
+	normalizedOrderType := strings.ToUpper(strings.TrimSpace(orderType))
+	for _, t := range allowed {
+		if t == normalizedOrderType {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {
 	db := dbutils.GetDB(ctx, r.database)
+
+	if req.CurrentValue < 0 {
+		return 0, fmt.Errorf("current_value must be >= 0")
+	}
 
 	var targetValue int
 	var rewardType string
@@ -492,6 +832,10 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 		return 0, err
 	}
 
+	if targetValue <= 0 {
+		return 0, fmt.Errorf("invalid loyalty program target_value: must be > 0")
+	}
+
 	// 2. fetch progress
 	var progressID string
 	var oldValue int
@@ -502,7 +846,18 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
         WHERE customer_id = ? AND loyalty_program_id = ?
     `, req.CustomerID, req.LoyaltyProgramID).Scan(&progressID, &oldValue)
 
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+
 	exists := (err == nil)
+
+	if exists && req.CurrentValue < oldValue {
+		floorOfCurrentTier := (oldValue / targetValue) * targetValue
+		if req.CurrentValue < floorOfCurrentTier {
+			return 0, fmt.Errorf("current_value cannot go below current tier floor (%d)", floorOfCurrentTier)
+		}
+	}
 
 	oldRewards := oldValue / targetValue
 	newRewards := req.CurrentValue / targetValue
@@ -888,21 +1243,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		defer tx.Rollback() // Se déclenche auto si la fonction crash ou s'arrête sans Commit
 	*/
 
-	// 1. Mise à jour des stats globales du client
-	const qUpdateStats = `
-		UPDATE customer c
-		INNER JOIN orders o ON o.customer_id = c.customer_id
-		SET c.customer_nb_orders = c.customer_nb_orders + 1,
-			c.customer_total_spent = c.customer_total_spent + o.price,
-			c.last_order_date = UTC_TIMESTAMP(),
-			c.loyalty_reminder_count = 0
-		WHERE o.order_id = ?
-	`
-	if _, err := db.ExecContext(ctx, qUpdateStats, orderID); err != nil {
-		return err
-	}
-
-	// 2. Récupérer les infos de la commande
+	// 1. Récupérer les infos de la commande
 	const qGetOrder = `
 		SELECT o.customer_id, o.merchant_id, o.price, o.order_type
 		FROM orders o
@@ -919,9 +1260,23 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		return err
 	}
 
+	// 2. Mise à jour des stats globales du client (uniquement après validation de la commande)
+	const qUpdateStats = `
+		UPDATE customer c
+		INNER JOIN orders o ON o.customer_id = c.customer_id
+		SET c.customer_nb_orders = c.customer_nb_orders + 1,
+			c.customer_total_spent = c.customer_total_spent + o.price,
+			c.last_order_date = UTC_TIMESTAMP(),
+			c.loyalty_reminder_count = 0
+		WHERE o.order_id = ?
+	`
+	if _, err := db.ExecContext(ctx, qUpdateStats, orderID); err != nil {
+		return err
+	}
+
 	// 3. Récupérer les programmes actifs du marchand
 	const qGetPrograms = `
-		SELECT id, type, target_value, reward_type, reward_value, rewards_order_type
+		SELECT id, type, target_value, target_order_type, reward_type, reward_value, rewards_order_type
 		FROM customer_loyalty_programs
 		WHERE merchant_id = ? AND enabled = 1
 	`
@@ -934,7 +1289,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 	var programs []loyaltyProgram
 	for rows.Next() {
 		var p loyaltyProgram
-		if err := rows.Scan(&p.ID, &p.Type, &p.TargetValue, &p.RewardType, &p.RewardValue, &p.RewardsOrderType); err != nil {
+		if err := rows.Scan(&p.ID, &p.Type, &p.TargetValue, &p.TargetOrderType, &p.RewardType, &p.RewardValue, &p.RewardsOrderType); err != nil {
 			return err
 		}
 		programs = append(programs, p)
@@ -943,6 +1298,10 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 
 	// 4. Parcourir et appliquer la logique pour chaque programme
 	for _, p := range programs {
+		if !isOrderTypeAllowed(p.TargetOrderType, orderType) {
+			continue
+		}
+
 		// Vérifier si la commande a déjà été comptée
 		var exists int
 		err := db.QueryRowContext(ctx, "SELECT 1 FROM customer_loyalty_progress_order WHERE order_id = ? AND loyalty_program_id = ? LIMIT 1", orderID, p.ID).Scan(&exists)

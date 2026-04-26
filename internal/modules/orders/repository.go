@@ -774,8 +774,12 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		    cr.reward_value,
 		    cr.loyalty_program_id,
 		    cr.creation_date,
-		    cr.is_used
+		    cr.is_used,
+		    COALESCE(clp.min_order_value, 0) AS min_order_value,
+		    clp.max_discount_value,
+		    COALESCE(clp.max_rewards_per_order, 0) AS max_rewards_per_order
 		FROM customer_rewards cr
+		INNER JOIN customer_loyalty_programs clp ON clp.id = cr.loyalty_program_id
 		WHERE cr.reward_id IN (%s)
 		  AND cr.usage_date IS NULL
 		  AND cr.is_used = FALSE
@@ -797,6 +801,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 
 	for rows.Next() {
 		rw := &models.DBReward{}
+		var maxDiscountValue sql.NullInt64
 		err := rows.Scan(
 			&rw.RewardID,
 			&rw.RewardType,
@@ -805,10 +810,18 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 			&rw.LoyaltyProgramID,
 			&rw.CreationDate,
 			&rw.IsUsed,
+			&rw.MinOrderValue,
+			&maxDiscountValue,
+			&rw.MaxRewardsPerOrder,
 		)
 		if err != nil {
 			logger.FromContext(ctx).Error(err.Error())
 			return nil, err
+		}
+
+		if maxDiscountValue.Valid {
+			v := int(maxDiscountValue.Int64)
+			rw.MaxDiscountValue = &v
 		}
 
 		rw.ProductIDs = []string{}

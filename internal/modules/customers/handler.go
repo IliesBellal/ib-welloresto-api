@@ -57,6 +57,112 @@ func (h *CustomersHandler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Req
 	models.SendJSON(w, http.StatusOK, "customers", "get_loyalty_programs", result)
 }
 
+func (h *CustomersHandler) GetLoyaltyProgram(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "get_loyalty_program", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	loyaltyProgramID := strings.TrimSpace(chi.URLParam(r, "loyalty_program_id"))
+	if loyaltyProgramID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "get_loyalty_program", map[string]string{"error": "missing_loyalty_program_id"})
+		return
+	}
+
+	result, err := h.svc.GetLoyaltyProgramByID(ctx, token, loyaltyProgramID)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "get_loyalty_program", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "customers", "get_loyalty_program", map[string]interface{}{
+		"status":          "success",
+		"loyalty_program": result,
+	})
+}
+
+func (h *CustomersHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "create_loyalty_program", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CreateLoyaltyProgramRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "create_loyalty_program", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	result, err := h.svc.CreateLoyaltyProgram(ctx, token, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "create_loyalty_program", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "customers", "create_loyalty_program", map[string]interface{}{
+		"status":          "success",
+		"loyalty_program": result,
+	})
+}
+
+func (h *CustomersHandler) UpdateLoyaltyProgram(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "update_loyalty_program", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	loyaltyProgramID := strings.TrimSpace(chi.URLParam(r, "loyalty_program_id"))
+	if loyaltyProgramID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_program", map[string]string{"error": "missing_loyalty_program_id"})
+		return
+	}
+
+	var req UpdateLoyaltyProgramRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "update_loyalty_program", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	result, err := h.svc.UpdateLoyaltyProgram(ctx, token, loyaltyProgramID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "update_loyalty_program", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "customers", "update_loyalty_program", map[string]interface{}{
+		"status":          "success",
+		"loyalty_program": result,
+	})
+}
+
+func (h *CustomersHandler) DeleteLoyaltyProgram(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "customers", "delete_loyalty_program", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	loyaltyProgramID := strings.TrimSpace(chi.URLParam(r, "loyalty_program_id"))
+	if loyaltyProgramID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "delete_loyalty_program", map[string]string{"error": "missing_loyalty_program_id"})
+		return
+	}
+
+	if err := h.svc.DeleteLoyaltyProgram(ctx, token, loyaltyProgramID); err != nil {
+		models.SendErrorJSON(w, "customers", "delete_loyalty_program", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *CustomersHandler) UpdateLoyaltyProgress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := helpers.ExtractToken(r)

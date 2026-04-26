@@ -483,9 +483,8 @@ func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
 	if autoRewards {
 		rewardsQuery := `
             SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date,
-                   p.reward_type, p.reward_value
+				   cr.reward_type, cr.reward_value
             FROM customer_rewards cr
-            INNER JOIN customer_loyalty_programs p ON cr.loyalty_program_id = p.id
             WHERE cr.customer_id = $1
             AND cr.usage_date IS NULL;
         `

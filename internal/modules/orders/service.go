@@ -865,16 +865,36 @@ func (s *OrdersService) optionsMatchPromotion(product *models.SelectedProduct, p
 
 func (s *OrdersService) applyRewards(req *models.PricingRequest, products []models.OrderProductPayload, rewards []*models.DBReward) {
 	req.Order.UsedRewards = []*models.UsedReward{}
+	rewardBaseAmount := s.computeRewardBaseAmount(products)
+	if rewardBaseAmount <= 0 {
+		return
+	}
+
+	rewardPaymentAmount := 0
+	usedRewardsCount := 0
 
 	for _, rwd := range rewards {
+		if rwd.RewardValue == nil || *rwd.RewardValue <= 0 {
+			continue
+		}
 
 		if rwd.RewardOrderType != "" && !strings.Contains(rwd.RewardOrderType, req.Order.OrderType) {
 			continue
 		}
 
+		if rwd.MinOrderValue > 0 && rewardBaseAmount < rwd.MinOrderValue {
+			continue
+		}
+
+		if rwd.MaxRewardsPerOrder > 0 && usedRewardsCount >= rwd.MaxRewardsPerOrder {
+			continue
+		}
+
 		switch rwd.RewardType {
 		case "free_product":
-			for _, sp := range products {
+			applied := false
+			for i := range products {
+				sp := &products[i]
 				if sp.DiscountedPrice == nil && s.isProductInList(sp.ProductID, rwd.ProductIDs) {
 					val := rwd.RewardValue
 					sp.DiscountedPrice = val
@@ -883,11 +903,118 @@ func (s *OrdersService) applyRewards(req *models.PricingRequest, products []mode
 					req.Order.UsedRewards = append(req.Order.UsedRewards, &models.UsedReward{
 						RewardID: rwd.RewardID,
 					})
+					usedRewardsCount++
+					applied = true
 					break
 				}
 			}
+			if !applied {
+				continue
+			}
+
+		case "fixed_discount":
+			discountAmount := *rwd.RewardValue
+			if rwd.MaxDiscountValue != nil && discountAmount > *rwd.MaxDiscountValue {
+				discountAmount = *rwd.MaxDiscountValue
+			}
+
+			remaining := rewardBaseAmount - rewardPaymentAmount
+			if remaining <= 0 {
+				continue
+			}
+			if discountAmount > remaining {
+				discountAmount = remaining
+			}
+
+			if discountAmount <= 0 {
+				continue
+			}
+
+			rewardPaymentAmount += discountAmount
+			usedRewardsCount++
+			req.Order.UsedRewards = append(req.Order.UsedRewards, &models.UsedReward{RewardID: rwd.RewardID})
+
+		case "percent_discount", "percentage_discount":
+			discountAmount := (rewardBaseAmount * (*rwd.RewardValue)) / 100
+			if rwd.MaxDiscountValue != nil && discountAmount > *rwd.MaxDiscountValue {
+				discountAmount = *rwd.MaxDiscountValue
+			}
+
+			remaining := rewardBaseAmount - rewardPaymentAmount
+			if remaining <= 0 {
+				continue
+			}
+			if discountAmount > remaining {
+				discountAmount = remaining
+			}
+
+			if discountAmount <= 0 {
+				continue
+			}
+
+			rewardPaymentAmount += discountAmount
+			usedRewardsCount++
+			req.Order.UsedRewards = append(req.Order.UsedRewards, &models.UsedReward{RewardID: rwd.RewardID})
 		}
 	}
+
+	if rewardPaymentAmount > 0 {
+		for i := range req.Order.Payments {
+			if req.Order.Payments[i].MOP == "REWARD" {
+				req.Order.Payments[i].Amount += rewardPaymentAmount
+				return
+			}
+		}
+
+		req.Order.Payments = append(req.Order.Payments, models.PaymentPayload{
+			Amount: rewardPaymentAmount,
+			MOP:    "REWARD",
+		})
+	}
+}
+
+func (s *OrdersService) computeRewardBaseAmount(products []models.OrderProductPayload) int {
+	total := 0
+
+	for _, p := range products {
+		unit := p.Price
+		if p.DiscountedPrice != nil {
+			unit = *p.DiscountedPrice
+		}
+
+		qty := p.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+
+		lineTotal := unit * qty
+
+		for _, e := range p.Extra {
+			lineTotal += e.Price * qty
+		}
+
+		if p.Config != nil && p.Config.Attributes != nil {
+			for _, attr := range p.Config.Attributes {
+				for _, opt := range attr.Options {
+					optionQty := opt.Quantity
+					if opt.Selected && optionQty == 0 {
+						optionQty = 1
+					}
+					if optionQty > 0 {
+						lineTotal += opt.ExtraPrice * optionQty * qty
+					}
+				}
+			}
+		}
+
+		total += lineTotal
+	}
+
+	if total < 0 {
+		return 0
+	}
+
+	return total
 }
 
 func (s *OrdersService) groupProducts(products []models.OrderProductPayload) []models.OrderProductPayload {

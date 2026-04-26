@@ -710,7 +710,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/search", customersH.SearchCustomers)
 		r.Get("/list", customersH.ListCustomers)
 		r.Get("/loyalty-programs", customersH.GetLoyaltyPrograms)
+		r.Get("/loyalty-programs/{loyalty_program_id}", customersH.GetLoyaltyProgram)
+		r.Post("/loyalty-programs", customersH.CreateLoyaltyProgram)
+		r.Patch("/loyalty-programs/{loyalty_program_id}", customersH.UpdateLoyaltyProgram)
+		r.Delete("/loyalty-programs/{loyalty_program_id}", customersH.DeleteLoyaltyProgram)
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)
+
+		r.Use(middleware.RequirePermission(middleware.IsAdmin))
 		r.Patch("/{customer_id}/loyalty/{loyalty_program_id}", customersH.UpdateLoyaltyProgress)
 		r.Patch("/{customer_id}/rewards/{reward_id}", customersH.UpdateLoyaltyReward)
 	})
@@ -722,6 +728,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app
 		r.Get("/loyalty-programs", customersH.GetLoyaltyPrograms)                                // used by: back-office
+		r.Get("/loyalty-programs/{loyalty_program_id}", customersH.GetLoyaltyProgram)            // used by: back-office
+		r.Post("/loyalty-programs", customersH.CreateLoyaltyProgram)                             // used by: back-office
+		r.Patch("/loyalty-programs/{loyalty_program_id}", customersH.UpdateLoyaltyProgram)       // used by: back-office
+		r.Delete("/loyalty-programs/{loyalty_program_id}", customersH.DeleteLoyaltyProgram)      // used by: back-office
 		r.Get("/{customer_id}/loyalty", customersH.GetCustomerLoyalty)                           // used by: back-office
 		r.Patch("/{customer_id}/loyalty/{loyalty_program_id}", customersH.UpdateLoyaltyProgress) // used by: back-office
 		r.Patch("/{customer_id}/rewards/{reward_id}", customersH.UpdateLoyaltyReward)            // used by: back-office

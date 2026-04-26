@@ -372,15 +372,18 @@ type DiscountOptionInfo struct {
 
 // DBReward représente une reward utilisateur (customer reward) et les produits liés.
 type DBReward struct {
-	RewardID         string   `json:"reward_id"`
-	LoyaltyProgramID string   `json:"loyalty_program_id"`
-	RewardType       string   `json:"reward_type,omitempty"`       // e.g. "free_product", "fixed_discount"
-	RewardOrderType  string   `json:"reward_order_type,omitempty"` // order type constraint
-	RewardValue      *int     `json:"reward_value,omitempty"`
-	CreationDate     *string  `json:"creation_date,omitempty"`
-	IsUsed           bool     `json:"is_used"`
-	ProductIDs       []string `json:"products,omitempty"`
-	ProgramName      *string  `json:"program_name,omitempty"` // optional human label
+	RewardID           string   `json:"reward_id"`
+	LoyaltyProgramID   string   `json:"loyalty_program_id"`
+	RewardType         string   `json:"reward_type,omitempty"`       // e.g. "free_product", "fixed_discount"
+	RewardOrderType    string   `json:"reward_order_type,omitempty"` // order type constraint
+	RewardValue        *int     `json:"reward_value,omitempty"`
+	MinOrderValue      int      `json:"min_order_value,omitempty"`
+	MaxDiscountValue   *int     `json:"max_discount_value,omitempty"`
+	MaxRewardsPerOrder int      `json:"max_rewards_per_order,omitempty"`
+	CreationDate       *string  `json:"creation_date,omitempty"`
+	IsUsed             bool     `json:"is_used"`
+	ProductIDs         []string `json:"products,omitempty"`
+	ProgramName        *string  `json:"program_name,omitempty"` // optional human label
 }
 
 type PricingOrder struct {

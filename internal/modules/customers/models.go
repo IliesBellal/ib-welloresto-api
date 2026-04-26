@@ -15,6 +15,7 @@ type loyaltyProgram struct {
 	ID               string
 	Type             string
 	TargetValue      int
+	TargetOrderType  string
 	RewardType       string
 	RewardValue      int
 	RewardsOrderType string
@@ -49,10 +50,13 @@ type LoyaltyProgramTarget struct {
 }
 
 type LoyaltyProgramRewardConfig struct {
-	Type       string                  `json:"type"`
-	Value      int                     `json:"value"`
-	OrderTypes string                  `json:"order_types"`
-	Products   []LoyaltyProgramProduct `json:"products"`
+	Type               string                  `json:"type"`
+	Value              int                     `json:"value"`
+	OrderTypes         string                  `json:"order_types"`
+	MinOrderValue      int                     `json:"min_order_value"`
+	MaxDiscountValue   *int                    `json:"max_discount_value,omitempty"`
+	MaxRewardsPerOrder int                     `json:"max_rewards_per_order"`
+	Products           []LoyaltyProgramProduct `json:"products"`
 }
 
 type LoyaltyProgram struct {
@@ -68,6 +72,56 @@ type LoyaltyProgram struct {
 type LoyaltyProgramsData struct {
 	Status          string           `json:"status"`
 	LoyaltyPrograms []LoyaltyProgram `json:"loyalty_programs"`
+}
+
+type LoyaltyProgramTargetPayload struct {
+	Type       string   `json:"type"`
+	Value      int      `json:"value"`
+	OrderTypes string   `json:"order_types"`
+	ProductIDs []string `json:"product_ids,omitempty"`
+}
+
+type LoyaltyProgramRewardPayload struct {
+	Type               string   `json:"type"`
+	Value              int      `json:"value"`
+	OrderTypes         string   `json:"order_types"`
+	MinOrderValue      int      `json:"min_order_value"`
+	MaxDiscountValue   *int     `json:"max_discount_value,omitempty"`
+	MaxRewardsPerOrder int      `json:"max_rewards_per_order"`
+	ProductIDs         []string `json:"product_ids,omitempty"`
+}
+
+type CreateLoyaltyProgramRequest struct {
+	Name        string                      `json:"name"`
+	Description string                      `json:"description"`
+	Enabled     *bool                       `json:"enabled,omitempty"`
+	Target      LoyaltyProgramTargetPayload `json:"target"`
+	Reward      LoyaltyProgramRewardPayload `json:"reward"`
+}
+
+type LoyaltyProgramTargetUpdatePayload struct {
+	Type       *string   `json:"type,omitempty"`
+	Value      *int      `json:"value,omitempty"`
+	OrderTypes *string   `json:"order_types,omitempty"`
+	ProductIDs *[]string `json:"product_ids,omitempty"`
+}
+
+type LoyaltyProgramRewardUpdatePayload struct {
+	Type               *string   `json:"type,omitempty"`
+	Value              *int      `json:"value,omitempty"`
+	OrderTypes         *string   `json:"order_types,omitempty"`
+	MinOrderValue      *int      `json:"min_order_value,omitempty"`
+	MaxDiscountValue   *int      `json:"max_discount_value,omitempty"`
+	MaxRewardsPerOrder *int      `json:"max_rewards_per_order,omitempty"`
+	ProductIDs         *[]string `json:"product_ids,omitempty"`
+}
+
+type UpdateLoyaltyProgramRequest struct {
+	Name        *string                            `json:"name,omitempty"`
+	Description *string                            `json:"description,omitempty"`
+	Enabled     *bool                              `json:"enabled,omitempty"`
+	Target      *LoyaltyProgramTargetUpdatePayload `json:"target,omitempty"`
+	Reward      *LoyaltyProgramRewardUpdatePayload `json:"reward,omitempty"`
 }
 
 // --- update progress ---

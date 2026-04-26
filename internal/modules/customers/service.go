@@ -2,7 +2,10 @@ package customers
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 )
@@ -49,6 +52,51 @@ func (s *CustomersService) GetLoyaltyPrograms(ctx context.Context, token string)
 		Status:          "success",
 		LoyaltyPrograms: programs,
 	}, nil
+}
+
+func (s *CustomersService) GetLoyaltyProgramByID(ctx context.Context, token, loyaltyProgramID string) (*LoyaltyProgram, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.customerRepo.GetLoyaltyProgramByID(ctx, user.MerchantID, loyaltyProgramID)
+}
+
+func (s *CustomersService) CreateLoyaltyProgram(ctx context.Context, token string, req *CreateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateCreateLoyaltyProgramRequest(req); err != nil {
+		return nil, err
+	}
+
+	loyaltyProgramID := helpers.GeneratePrefixedID("loyalty-program")
+	return s.customerRepo.CreateLoyaltyProgram(ctx, user.MerchantID, loyaltyProgramID, req)
+}
+
+func (s *CustomersService) UpdateLoyaltyProgram(ctx context.Context, token, loyaltyProgramID string, req *UpdateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateUpdateLoyaltyProgramRequest(req); err != nil {
+		return nil, err
+	}
+
+	return s.customerRepo.UpdateLoyaltyProgram(ctx, user.MerchantID, loyaltyProgramID, req)
+}
+
+func (s *CustomersService) DeleteLoyaltyProgram(ctx context.Context, token, loyaltyProgramID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.customerRepo.DeleteLoyaltyProgram(ctx, user.MerchantID, loyaltyProgramID)
 }
 
 func (s *CustomersService) UpdateLoyaltyProgress(ctx context.Context, token string, req *LoyaltyProgressUpdateRequest) (map[string]interface{}, error) {
@@ -142,6 +190,70 @@ func (s *CustomersService) ProcessOrderLoyalty(ctx context.Context, orderID stri
 	err := s.customerRepo.UpdateLoyaltyFromOrder(ctx, orderID)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour de la fidélité pour la commande " + orderID + " : " + err.Error())
+	}
+
+	// On accepte de ne pas faire progresser la fidelité, le cycle de vie de la commande est plus important que la fidélité
+	return nil
+}
+
+func validateCreateLoyaltyProgramRequest(req *CreateLoyaltyProgramRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+
+	if strings.TrimSpace(req.Name) == "" {
+		return fmt.Errorf("name is required")
+	}
+
+	if req.Target.Value <= 0 {
+		return fmt.Errorf("target.value must be > 0")
+	}
+
+	if req.Reward.Value < 0 {
+		return fmt.Errorf("reward.value must be >= 0")
+	}
+
+	if req.Reward.MinOrderValue < 0 {
+		return fmt.Errorf("reward.min_order_value must be >= 0")
+	}
+
+	if req.Reward.MaxRewardsPerOrder < 0 {
+		return fmt.Errorf("reward.max_rewards_per_order must be >= 0")
+	}
+
+	if req.Reward.MaxDiscountValue != nil && *req.Reward.MaxDiscountValue < 0 {
+		return fmt.Errorf("reward.max_discount_value must be >= 0")
+	}
+
+	return nil
+}
+
+func validateUpdateLoyaltyProgramRequest(req *UpdateLoyaltyProgramRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		return fmt.Errorf("name cannot be empty")
+	}
+
+	if req.Target != nil && req.Target.Value != nil && *req.Target.Value <= 0 {
+		return fmt.Errorf("target.value must be > 0")
+	}
+
+	if req.Reward != nil {
+		if req.Reward.Value != nil && *req.Reward.Value < 0 {
+			return fmt.Errorf("reward.value must be >= 0")
+		}
+		if req.Reward.MinOrderValue != nil && *req.Reward.MinOrderValue < 0 {
+			return fmt.Errorf("reward.min_order_value must be >= 0")
+		}
+		if req.Reward.MaxRewardsPerOrder != nil && *req.Reward.MaxRewardsPerOrder < 0 {
+			return fmt.Errorf("reward.max_rewards_per_order must be >= 0")
+		}
+		if req.Reward.MaxDiscountValue != nil && *req.Reward.MaxDiscountValue < 0 {
+			return fmt.Errorf("reward.max_discount_value must be >= 0")
+		}
 	}
 
 	return nil
