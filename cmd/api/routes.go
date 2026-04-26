@@ -197,6 +197,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
 	receiptService := receipt.NewReceiptService(receiptRepo)
 
+	// ---- Stocks (initialized here because ordersLifeCycleService depends on it) ----
+	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
+	stocksService := stocksModule.NewStockService(stocksRepo)
+
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, customersRepo)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
@@ -213,6 +217,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		ordersService,
 		receiptService,
 		mysqlDB,
+		stocksRepo,
 	)
 
 	// ---- ScanNOrder ----
@@ -279,10 +284,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
 	usersService := usersModule.NewUsersService(usersRepo)
-
-	// ---- Stocks ----
-	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
-	stocksService := stocksModule.NewStockService(stocksRepo)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)

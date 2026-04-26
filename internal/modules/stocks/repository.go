@@ -156,10 +156,9 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 	}
 
 	// 4) Insert stock_movements
-	// VALUES(:merchant_id, :user_id, :component_id, '2', '1',:c_quantity*:bc_quantity, :bc_uom, UTC_TIMESTAMP)
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO stock_movements(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, movement_date)
-		VALUES (?, ?, ?, '2', '1', ? * ?, ?, UTC_TIMESTAMP)
+		VALUES (?, ?, ?, 'scan', 'add', ? * ?, ?, UTC_TIMESTAMP)
 	`, merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
 	if err != nil {
 		log.Error(err.Error())
@@ -246,7 +245,7 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 		_, err = db.ExecContext(ctx, `
             INSERT INTO stock_movements
                 (merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment)
-            SELECT u.merchant_id, u.user_id, ?, NULL, 2, 4, ?, ?, NULL, ?
+            SELECT u.merchant_id, u.user_id, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?
             FROM users u
             WHERE u.user_id = ?;
         `, req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
@@ -313,7 +312,7 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
                 INSERT INTO stock_movements(
                     merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment
                 )
-                VALUES (?, ?, ?, ?, 2, 4, ?, ?, NULL, ?);
+                VALUES (?, ?, ?, ?, 'manual', 'loss', ?, ?, NULL, ?);
             `, it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
 			if err != nil {
 				log.Error(err.Error())
@@ -554,13 +553,13 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 	var addToStock bool
 	switch req.Type {
 	case "add":
-		movementCode = "1"
+		movementCode = "add"
 		addToStock = true
 	case "remove":
-		movementCode = "2"
+		movementCode = "remove"
 		addToStock = false
 	case "loss":
-		movementCode = "4"
+		movementCode = "loss"
 		addToStock = false
 	default:
 		return ErrInvalidMovement
@@ -589,13 +588,99 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 	}
 
 	// 5. Insert the stock movement record.
-	// source = '1' (manual), quantity and unit stored as received (not converted).
+	// source = 'manual', quantity and unit stored as received (not converted).
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO stock_movements
 			(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, comment)
-		VALUES (?, ?, ?, '1', ?, ?, ?, ?)
+		VALUES (?, ?, ?, 'manual', ?, ?, ?, ?)
 	`, merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
 	return err
+}
+
+// ConsumeOrderStock deducts components stock for all items in a closed order.
+// Withouts are excluded (the customer removed that ingredient, so no consumption).
+// Extras are ignored for now.
+// Errors are non-fatal: the caller should log and continue.
+func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, userID, orderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// Fetch all component consumptions for this order in one query.
+	// Excludes:
+	//   - components listed in `without` for the same order_item (customer removed them)
+	// unit_of_measure_convert converts recipe quantity to the component's native unit.
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			oi.order_item_id,
+			oi.product_id,
+			c.component_id,
+			ROUND(rq.quantity * uomc.ratio * oi.quantity, 4) AS qty,
+			c.unit_of_measure AS uom_id
+		FROM orderitems oi
+		INNER JOIN recipes r
+			ON r.product_id = oi.product_id
+		INNER JOIN requires rq
+			ON rq.recipe_id = r.recipe_id AND rq.enabled = TRUE
+		INNER JOIN components c
+			ON c.component_id = rq.component_id AND c.merchant_id = ?
+		INNER JOIN unit_of_measure_convert uomc
+			ON uomc.id_from = c.unit_of_measure AND uomc.id_to = rq.unit_of_measure
+		WHERE oi.order_id = ?
+		  AND NOT EXISTS (
+			  SELECT 1 FROM without w
+			  WHERE w.order_item_id = oi.order_item_id
+			    AND w.component_id = rq.component_id
+		  )
+	`, merchantID, orderID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type consumptionRow struct {
+		OrderItemID string
+		ProductID   string
+		ComponentID string
+		Qty         float64
+		UOMID       string
+	}
+
+	var items []consumptionRow
+	for rows.Next() {
+		var cr consumptionRow
+		if err := rows.Scan(&cr.OrderItemID, &cr.ProductID, &cr.ComponentID, &cr.Qty, &cr.UOMID); err != nil {
+			return err
+		}
+		items = append(items, cr)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	for _, cr := range items {
+		// Deduct from component stock.
+		if _, err := db.ExecContext(ctx, `
+			UPDATE components
+			SET stock = ROUND(stock - ?, 4)
+			WHERE component_id = ? AND merchant_id = ?
+		`, cr.Qty, cr.ComponentID, merchantID); err != nil {
+			return err
+		}
+
+		// Record the movement.
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO stock_movements
+				(merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
+			VALUES (?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
+		`, merchantID, userID, cr.ComponentID, cr.ProductID, cr.Qty, cr.UOMID, cr.OrderItemID, orderID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // GetMovements fetches all component stock movements for a merchant between two dates (inclusive, UTC).
@@ -670,18 +755,10 @@ func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, t
 
 		item.Unit = StockMovementUnit{UnitID: unitID, UnitName: unitName}
 
-		// Derive type from movement code + presence of product_id
+		// Direct mapping: movement column now stores explicit text values.
 		switch movementCode {
-		case "1":
-			item.Type = "add"
-		case "2":
-			if productID.Valid && productID.String != "" {
-				item.Type = "consumption"
-			} else {
-				item.Type = "remove"
-			}
-		case "4":
-			item.Type = "loss"
+		case "add", "remove", "loss", "consume":
+			item.Type = movementCode
 		default:
 			item.Type = movementCode
 		}

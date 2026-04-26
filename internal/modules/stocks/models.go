@@ -98,7 +98,7 @@ type StockMovementItem struct {
 	ComponentName string            `json:"component_name"`
 	Unit          StockMovementUnit `json:"unit"`
 	Quantity      float64           `json:"quantity"`
-	// Type is derived: "add" | "remove" | "loss" | "consumption"
+	// Type is one of: "add" | "remove" | "loss" | "consume"
 	Type        string  `json:"type"`
 	ProductName *string `json:"product_name,omitempty"`
 	CreatedAt   string  `json:"created_at"`

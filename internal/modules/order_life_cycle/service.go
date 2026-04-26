@@ -19,6 +19,7 @@ import (
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/receipt"
+	"welloresto-api/internal/modules/stocks"
 	"welloresto-api/internal/modules/ubereats"
 	"welloresto-api/internal/utils/dbutils"
 	receiptUtils "welloresto-api/internal/utils/receipt"
@@ -40,9 +41,10 @@ type OrdersLifeCycleService struct {
 	customersService     *customers.CustomersService
 	redis                *redis.Client
 	receiptService       receipt.ReceiptService
+	stocksRepo           *stocks.StocksRepository
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -57,6 +59,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		auditService:         auditService,
 		db:                   db,
 		ordersService:        orders,
+		stocksRepo:           stocksRepo,
 	}
 }
 
@@ -243,6 +246,18 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return err
+	}
+
+	// Déduction des stocks des composants consommés par la commande.
+	// Non-bloquant : si la déduction échoue (recette absente, composant inconnu, etc.),
+	// la fermeture de commande n'est pas annulée.
+	if s.stocksRepo != nil {
+		if stockErr := s.stocksRepo.ConsumeOrderStock(ctx, MerchantID, UserID, orderID); stockErr != nil {
+			logger.FromContext(ctx).Error("stock consumption failed on order close",
+				zap.String("order_id", orderID),
+				zap.Error(stockErr),
+			)
+		}
 	}
 
 	// 5) Handle integration (Deliveroo, UberEats, etc.)
