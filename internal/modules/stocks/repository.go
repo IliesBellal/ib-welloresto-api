@@ -463,6 +463,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 		SELECT
 			c.component_id,
 			c.name,
+			COALESCE(c.unit_of_measure, ''),
 			COALESCE(uomd.uom_desc, ''),
 			c.stock,
 			c.safety_stock,
@@ -483,13 +484,14 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 	components := make([]models.StockComponentListItem, 0)
 	for rows.Next() {
 		var item models.StockComponentListItem
-		var unitName string
+		var unitID, unitName string
 		var purchasePrice sql.NullInt64
 		var purchasePriceQuantity sql.NullFloat64
 
 		if err := rows.Scan(
 			&item.ComponentID,
 			&item.Name,
+			&unitID,
 			&unitName,
 			&item.Quantity,
 			&item.AlertThreshold,
@@ -499,7 +501,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 			return nil, err
 		}
 
-		item.Unit = models.StockComponentListUnit{UnitName: unitName}
+		item.Unit = models.StockComponentListUnit{UnitID: unitID, UnitName: unitName}
 		item.PurchasingPrice = 0
 		if purchasePrice.Valid && purchasePriceQuantity.Valid && purchasePriceQuantity.Float64 > 0 {
 			item.PurchasingPrice = helpers.RoundToNearestInt(float64(purchasePrice.Int64) / purchasePriceQuantity.Float64)
@@ -594,4 +596,109 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 		VALUES (?, ?, ?, '1', ?, ?, ?, ?)
 	`, merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
 	return err
+}
+
+// GetMovements fetches all component stock movements for a merchant between two dates (inclusive, UTC).
+// Type is derived:
+//   - movement '1'                           → "add"
+//   - movement '2' + product_id IS NULL      → "remove"
+//   - movement '2' + product_id IS NOT NULL  → "consumption"
+//   - movement '4'                           → "loss"
+func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, to string) ([]StockMovementItem, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			sm.id,
+			sm.component_id,
+			COALESCE(c.name, sm.component_id)                   AS component_name,
+			COALESCE(c.unit_of_measure, sm.unit_of_measure)     AS unit_id,
+			COALESCE(uomd.uom_desc, sm.unit_of_measure)         AS unit_name,
+			sm.quantity,
+			sm.movement,
+			sm.product_id,
+			p.name                                               AS product_name,
+			DATE_FORMAT(sm.movement_date, '%Y-%m-%dT%H:%i:%s')  AS created_at,
+			COALESCE(u.name, sm.user_id)                         AS created_by,
+			sm.comment
+		FROM stock_movements sm
+		LEFT JOIN components c
+			ON c.component_id = sm.component_id
+		LEFT JOIN unit_of_measure_desc uomd
+			ON uomd.id = c.unit_of_measure AND uomd.lang = 'FR'
+		LEFT JOIN products p
+			ON p.product_id = sm.product_id
+		LEFT JOIN users u
+			ON u.user_id = sm.user_id
+		WHERE sm.merchant_id = ?
+		  AND sm.component_id IS NOT NULL
+		  AND DATE(sm.movement_date) BETWEEN ? AND ?
+		ORDER BY sm.movement_date DESC
+	`, merchantID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]StockMovementItem, 0)
+	for rows.Next() {
+		var (
+			item         StockMovementItem
+			unitID       string
+			unitName     string
+			movementCode string
+			productID    sql.NullString
+			productName  sql.NullString
+			comment      sql.NullString
+		)
+		if err := rows.Scan(
+			&item.ID,
+			&item.ComponentID,
+			&item.ComponentName,
+			&unitID,
+			&unitName,
+			&item.Quantity,
+			&movementCode,
+			&productID,
+			&productName,
+			&item.CreatedAt,
+			&item.CreatedBy,
+			&comment,
+		); err != nil {
+			return nil, err
+		}
+
+		item.Unit = StockMovementUnit{UnitID: unitID, UnitName: unitName}
+
+		// Derive type from movement code + presence of product_id
+		switch movementCode {
+		case "1":
+			item.Type = "add"
+		case "2":
+			if productID.Valid && productID.String != "" {
+				item.Type = "consumption"
+			} else {
+				item.Type = "remove"
+			}
+		case "4":
+			item.Type = "loss"
+		default:
+			item.Type = movementCode
+		}
+
+		if productName.Valid && productName.String != "" {
+			item.ProductName = &productName.String
+		}
+		if comment.Valid && comment.String != "" {
+			item.Comment = &comment.String
+		}
+
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }

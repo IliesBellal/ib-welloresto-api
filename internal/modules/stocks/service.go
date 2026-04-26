@@ -106,3 +106,12 @@ func (s *StocksService) RecordComponentMovement(ctx context.Context, req StockCo
 
 	return s.stocksRepo.RecordComponentMovement(ctx, user.MerchantID, user.UserID, req)
 }
+
+func (s *StocksService) GetMovements(ctx context.Context, from, to string) ([]StockMovementItem, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.stocksRepo.GetMovements(ctx, user.MerchantID, from, to)
+}

@@ -68,6 +68,7 @@ type UOMEntry struct {
 }
 
 type StockComponentListUnit struct {
+	UnitID   string `json:"unit_id"`
 	UnitName string `json:"unit_name"`
 }
 

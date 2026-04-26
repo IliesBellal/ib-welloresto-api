@@ -84,3 +84,24 @@ type StockComponentMovementRequest struct {
 	Type        string  `json:"type"` // "add", "remove", "loss"
 	Comment     *string `json:"comment,omitempty"`
 }
+
+// StockMovementUnit is the unit object embedded in StockMovementItem
+type StockMovementUnit struct {
+	UnitID   string `json:"unit_id"`
+	UnitName string `json:"unit_name"`
+}
+
+// StockMovementItem is one row returned by GET /stocks/movements
+type StockMovementItem struct {
+	ID            string            `json:"id"`
+	ComponentID   string            `json:"component_id"`
+	ComponentName string            `json:"component_name"`
+	Unit          StockMovementUnit `json:"unit"`
+	Quantity      float64           `json:"quantity"`
+	// Type is derived: "add" | "remove" | "loss" | "consumption"
+	Type        string  `json:"type"`
+	ProductName *string `json:"product_name,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	CreatedBy   string  `json:"created_by"`
+	Comment     *string `json:"comment,omitempty"`
+}

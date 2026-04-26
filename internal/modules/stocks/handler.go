@@ -206,3 +206,26 @@ func (h *StocksHandler) RecordComponentMovement(w http.ResponseWriter, r *http.R
 
 	models.SendJSON(w, http.StatusOK, "stocks", "record_component_movement", map[string]interface{}{"status": "ok"})
 }
+
+// GET /stocks/movements?from=2026-04-26&to=2026-04-26
+func (h *StocksHandler) GetMovements(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	if from == "" || to == "" {
+		models.SendJSON(w, http.StatusBadRequest, "stocks", "movements", map[string]string{"error": "missing_from_or_to"})
+		return
+	}
+
+	items, err := h.stockSvc.GetMovements(ctx, from, to)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "stocks", "movements", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "stocks", "movements", map[string]interface{}{
+		"components": items,
+	})
+}
