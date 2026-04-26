@@ -324,7 +324,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			max_discount_value,
 			COALESCE(max_rewards_per_order, 0)
 		FROM customer_loyalty_programs
-		WHERE merchant_id = ?
+		WHERE merchant_id = ? AND enabled = 1
 		ORDER BY id DESC
 	`
 
@@ -476,7 +476,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 			max_discount_value,
 			COALESCE(max_rewards_per_order, 0)
 		FROM customer_loyalty_programs
-		WHERE merchant_id = ? AND id = ?
+		WHERE merchant_id = ? AND id = ? and enabled = 1
 		LIMIT 1
 	`
 
@@ -563,9 +563,9 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string, req *CreateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
+	available := true
+	if req.Available != nil {
+		available = *req.Available
 	}
 
 	_, err := db.ExecContext(ctx, `
@@ -583,7 +583,7 @@ func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchant
 			min_order_value,
 			max_discount_value,
 			max_rewards_per_order,
-			enabled
+			available
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		loyaltyProgramID,
@@ -599,7 +599,7 @@ func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchant
 		req.Reward.MinOrderValue,
 		req.Reward.MaxDiscountValue,
 		req.Reward.MaxRewardsPerOrder,
-		enabled,
+		available,
 	)
 	if err != nil {
 		return nil, err
@@ -632,9 +632,9 @@ func (r *CustomersRepository) UpdateLoyaltyProgram(ctx context.Context, merchant
 		args = append(args, *req.Description)
 	}
 
-	if req.Enabled != nil {
-		updates = append(updates, "enabled = ?")
-		args = append(args, *req.Enabled)
+	if req.Available != nil {
+		updates = append(updates, "available = ?")
+		args = append(args, *req.Available)
 	}
 
 	if req.Target != nil {
@@ -707,7 +707,7 @@ func (r *CustomersRepository) DeleteLoyaltyProgram(ctx context.Context, merchant
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE customer_loyalty_programs
-		SET enabled = 0
+		SET available = 0
 		WHERE id = ? AND merchant_id = ?
 	`, loyaltyProgramID, merchantID)
 
@@ -826,7 +826,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	err := db.QueryRowContext(ctx, `
         SELECT target_value, reward_type, reward_value, rewards_order_type
         FROM customer_loyalty_programs
-        WHERE id = ? AND merchant_id = ? AND enabled = 1
+        WHERE id = ? AND merchant_id = ? AND available = 1 AND enabled = 1
     `, req.LoyaltyProgramID, merchantID).Scan(&targetValue, &rewardType, &rewardValue, &rewardOrderType)
 	if err != nil {
 		return 0, err

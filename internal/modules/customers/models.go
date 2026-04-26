@@ -94,7 +94,7 @@ type LoyaltyProgramRewardPayload struct {
 type CreateLoyaltyProgramRequest struct {
 	Name        string                      `json:"name"`
 	Description string                      `json:"description"`
-	Enabled     *bool                       `json:"enabled,omitempty"`
+	Available   *bool                       `json:"available,omitempty"`
 	Target      LoyaltyProgramTargetPayload `json:"target"`
 	Reward      LoyaltyProgramRewardPayload `json:"reward"`
 }
@@ -119,7 +119,7 @@ type LoyaltyProgramRewardUpdatePayload struct {
 type UpdateLoyaltyProgramRequest struct {
 	Name        *string                            `json:"name,omitempty"`
 	Description *string                            `json:"description,omitempty"`
-	Enabled     *bool                              `json:"enabled,omitempty"`
+	Available   *bool                              `json:"available,omitempty"`
 	Target      *LoyaltyProgramTargetUpdatePayload `json:"target,omitempty"`
 	Reward      *LoyaltyProgramRewardUpdatePayload `json:"reward,omitempty"`
 }
