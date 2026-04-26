@@ -475,6 +475,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		//// New endpoints, previous were probably never used and can be deleted after some time (today is 2026/04/26)
 		r.Get("/components/list", stocksH.GetComponentsList)
+		r.Put("/components/{component_id}", stocksH.RecordComponentMovement)
 	})
 
 	// --- DEVICES ---

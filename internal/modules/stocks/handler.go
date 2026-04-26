@@ -176,3 +176,33 @@ func (h *StocksHandler) GetComponentsList(w http.ResponseWriter, r *http.Request
 		"components": components,
 	})
 }
+
+// PUT /stocks/components/{component_id}
+func (h *StocksHandler) RecordComponentMovement(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req StockComponentMovementRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "stocks", "record_component_movement", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	req.ComponentID = chi.URLParam(r, "component_id")
+
+	err := h.stockSvc.RecordComponentMovement(ctx, req)
+	if err != nil {
+		switch err {
+		case ErrComponentNotFound:
+			models.SendJSON(w, http.StatusNotFound, "stocks", "record_component_movement", map[string]string{"error": "unknown_component"})
+		case ErrUnitNotFound:
+			models.SendJSON(w, http.StatusUnprocessableEntity, "stocks", "record_component_movement", map[string]string{"error": "unknown_unit"})
+		case ErrInvalidMovement:
+			models.SendJSON(w, http.StatusBadRequest, "stocks", "record_component_movement", map[string]string{"error": "invalid_type"})
+		default:
+			models.SendJSON(w, http.StatusInternalServerError, "stocks", "record_component_movement", map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "stocks", "record_component_movement", map[string]interface{}{"status": "ok"})
+}

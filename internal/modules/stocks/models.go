@@ -1,5 +1,14 @@
 package stocks
 
+import "errors"
+
+// Sentinel errors for RecordComponentMovement
+var (
+	ErrComponentNotFound = errors.New("unknown_component")
+	ErrUnitNotFound      = errors.New("unknown_unit")
+	ErrInvalidMovement   = errors.New("invalid_type")
+)
+
 type ComponentBarcodeInfo struct {
 	ComponentID   string  `json:"component_id"`
 	ComponentName string  `json:"component_name"`
@@ -65,4 +74,13 @@ type StockObject struct {
 type UOMEntry struct {
 	UOMID   string `json:"UOM_id"`
 	UOMDesc string `json:"UOM_desc"`
+}
+
+// StockComponentMovementRequest is the payload for PUT /stocks/components/{component_id}
+type StockComponentMovementRequest struct {
+	ComponentID string  `json:"component_id"`
+	Unit        string  `json:"unit"`
+	Quantity    float64 `json:"quantity"`
+	Type        string  `json:"type"` // "add", "remove", "loss"
+	Comment     *string `json:"comment,omitempty"`
 }

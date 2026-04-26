@@ -514,3 +514,84 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 
 	return components, nil
 }
+
+// RecordComponentMovement inserts a manual stock movement for a component and adjusts its stock.
+func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchantID, userID string, req StockComponentMovementRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	// 1. Validate component belongs to this merchant.
+	var exists int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM components WHERE component_id = ? AND merchant_id = ?`,
+		req.ComponentID, merchantID,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrComponentNotFound
+	}
+
+	// 2. Validate the requested unit has a conversion path for this component.
+	var ratio float64
+	err := db.QueryRowContext(ctx, `
+		SELECT uomc.ratio
+		FROM components c
+		INNER JOIN unit_of_measure_convert uomc
+			ON c.unit_of_measure = uomc.id_from AND uomc.id_to = ?
+		WHERE c.component_id = ?
+	`, req.Unit, req.ComponentID).Scan(&ratio)
+	if err == sql.ErrNoRows {
+		return ErrUnitNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	// 3. Map movement type to its DB code and stock sign.
+	var movementCode string
+	var addToStock bool
+	switch req.Type {
+	case "add":
+		movementCode = "1"
+		addToStock = true
+	case "remove":
+		movementCode = "2"
+		addToStock = false
+	case "loss":
+		movementCode = "4"
+		addToStock = false
+	default:
+		return ErrInvalidMovement
+	}
+
+	// 4. Update component stock (convert quantity to the component's native unit via ratio).
+	if addToStock {
+		_, err = db.ExecContext(ctx, `
+			UPDATE components c
+			INNER JOIN unit_of_measure_convert uomc
+				ON c.unit_of_measure = uomc.id_from AND uomc.id_to = ?
+			SET c.stock = ROUND(c.stock + ROUND(? * uomc.ratio, 4), 4)
+			WHERE c.component_id = ? AND c.merchant_id = ?
+		`, req.Unit, req.Quantity, req.ComponentID, merchantID)
+	} else {
+		_, err = db.ExecContext(ctx, `
+			UPDATE components c
+			INNER JOIN unit_of_measure_convert uomc
+				ON c.unit_of_measure = uomc.id_from AND uomc.id_to = ?
+			SET c.stock = ROUND(c.stock - ROUND(? * uomc.ratio, 4), 4)
+			WHERE c.component_id = ? AND c.merchant_id = ?
+		`, req.Unit, req.Quantity, req.ComponentID, merchantID)
+	}
+	if err != nil {
+		return err
+	}
+
+	// 5. Insert the stock movement record.
+	// source = '1' (manual), quantity and unit stored as received (not converted).
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO stock_movements
+			(merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, comment)
+		VALUES (?, ?, ?, '1', ?, ?, ?, ?)
+	`, merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
+	return err
+}

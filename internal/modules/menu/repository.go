@@ -877,7 +877,15 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	var allComponents []compBasicTmp
 	{
 		step := "all_components"
-		q := `SELECT component_id, name, category_id, status, component_price, unit_of_measure, COALESCE(uomd.uom_desc, '') as uom_desc, purchase_price, purchase_price_quantity, c.purchase_unit_id, COALESCE(puomd.uom_desc, '') as purchase_uom_desc FROM components c LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id WHERE c.merchant_id = ?`
+		q := `
+		SELECT component_id, name, category_id, status, component_price, unit_of_measure, COALESCE(uomd.uom_desc, '') as uom_desc,
+		purchase_price, purchase_price_quantity, c.purchase_unit_id, COALESCE(puomd.uom_desc, '') as purchase_uom_desc
+		FROM components c
+		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
+		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
+		WHERE c.merchant_id = ? AND c.enabled = 1 AND c.available = 1
+		ORDER BY c.display_order ASC
+		`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err

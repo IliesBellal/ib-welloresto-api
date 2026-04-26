@@ -93,3 +93,16 @@ func (s *StocksService) GetComponentsList(ctx context.Context, token string) ([]
 
 	return s.stocksRepo.GetComponentsList(ctx, user.MerchantID)
 }
+
+func (s *StocksService) RecordComponentMovement(ctx context.Context, req StockComponentMovementRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if req.Type != "add" && req.Type != "remove" && req.Type != "loss" {
+		return ErrInvalidMovement
+	}
+
+	return s.stocksRepo.RecordComponentMovement(ctx, user.MerchantID, user.UserID, req)
+}
