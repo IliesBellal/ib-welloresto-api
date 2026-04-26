@@ -64,7 +64,7 @@ type LoyaltyProgram struct {
 	MerchantID  string                     `json:"merchant_id"`
 	Name        string                     `json:"name"`
 	Description string                     `json:"description"`
-	Enabled     bool                       `json:"enabled"`
+	Available   bool                       `json:"available"`
 	Target      LoyaltyProgramTarget       `json:"target"`
 	Reward      LoyaltyProgramRewardConfig `json:"reward"`
 }

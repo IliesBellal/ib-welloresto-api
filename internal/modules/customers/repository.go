@@ -313,7 +313,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			merchant_id,
 			COALESCE(name, ''),
 			COALESCE(description, ''),
-			enabled,
+			available,
 			COALESCE(type, ''),
 			COALESCE(target_value, 0),
 			COALESCE(target_order_type, ''),
@@ -348,7 +348,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			&p.MerchantID,
 			&p.Name,
 			&p.Description,
-			&p.Enabled,
+			&p.Available,
 			&p.Target.Type,
 			&p.Target.Value,
 			&targetOrderTypes,
@@ -465,7 +465,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 			merchant_id,
 			COALESCE(name, ''),
 			COALESCE(description, ''),
-			enabled,
+			COALESCE(available, 0),
 			COALESCE(type, ''),
 			COALESCE(target_value, 0),
 			COALESCE(target_order_type, ''),
@@ -490,7 +490,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 		&p.MerchantID,
 		&p.Name,
 		&p.Description,
-		&p.Enabled,
+		&p.Available,
 		&p.Target.Type,
 		&p.Target.Value,
 		&targetOrderTypes,
@@ -707,7 +707,7 @@ func (r *CustomersRepository) DeleteLoyaltyProgram(ctx context.Context, merchant
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE customer_loyalty_programs
-		SET available = 0
+		SET enabled = 0, available = 0
 		WHERE id = ? AND merchant_id = ?
 	`, loyaltyProgramID, merchantID)
 
