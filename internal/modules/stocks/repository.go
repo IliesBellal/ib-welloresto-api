@@ -357,7 +357,7 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 		qObjects = `
             SELECT component_id, name, category_id, unit_of_measure
             FROM components
-            WHERE merchant_id = ?;
+            WHERE merchant_id = ? AND category_id <> 'UBER_EATS_TEMP';
         `
 	default:
 		return nil, errors.New("invalid type")
@@ -473,6 +473,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 			ON uomd.id = c.unit_of_measure AND uomd.lang = 'FR'
 		WHERE c.merchant_id = ?
 		  AND c.enabled = 1
+		  AND c.category_id <> 'UBER_EATS_TEMP'
 		ORDER BY c.name ASC
 	`, merchantID)
 	if err != nil {
@@ -601,20 +602,24 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 // Withouts are excluded (the customer removed that ingredient, so no consumption).
 // Extras are ignored for now.
 // Errors are non-fatal: the caller should log and continue.
+//
+// Stock deduction is in the component's native unit (required to update components.stock correctly).
+// The movement row is recorded in the recipe unit (rq.unit_of_measure) so that it stays
+// consistent with the recipe definition and is human-readable in stock reports.
 func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, userID, orderID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	// Fetch all component consumptions for this order in one query.
-	// Excludes:
-	//   - components listed in `without` for the same order_item (customer removed them)
-	// unit_of_measure_convert converts recipe quantity to the component's native unit.
+	// Two quantities per row:
+	//   deduct_qty   = rq.quantity * uomc.ratio * oi.quantity  → component native unit (for stock update)
+	//   movement_qty = rq.quantity * oi.quantity               → recipe unit (for movement record)
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			oi.order_item_id,
 			oi.product_id,
 			c.component_id,
-			ROUND(rq.quantity * uomc.ratio * oi.quantity, 4) AS qty,
-			c.unit_of_measure AS uom_id
+			ROUND(rq.quantity * uomc.ratio * oi.quantity, 4) AS deduct_qty,
+			ROUND(rq.quantity * oi.quantity, 4)              AS movement_qty,
+			rq.unit_of_measure                               AS movement_uom
 		FROM orderitems oi
 		INNER JOIN recipes r
 			ON r.product_id = oi.product_id
@@ -640,14 +645,15 @@ func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, us
 		OrderItemID string
 		ProductID   string
 		ComponentID string
-		Qty         float64
-		UOMID       string
+		DeductQty   float64 // in component's native unit — used to update components.stock
+		MovementQty float64 // in recipe unit — stored in stock_movements
+		MovementUOM string  // recipe unit id — stored in stock_movements
 	}
 
 	var items []consumptionRow
 	for rows.Next() {
 		var cr consumptionRow
-		if err := rows.Scan(&cr.OrderItemID, &cr.ProductID, &cr.ComponentID, &cr.Qty, &cr.UOMID); err != nil {
+		if err := rows.Scan(&cr.OrderItemID, &cr.ProductID, &cr.ComponentID, &cr.DeductQty, &cr.MovementQty, &cr.MovementUOM); err != nil {
 			return err
 		}
 		items = append(items, cr)
@@ -661,21 +667,21 @@ func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, us
 	}
 
 	for _, cr := range items {
-		// Deduct from component stock.
+		// Deduct from component stock using the native unit quantity.
 		if _, err := db.ExecContext(ctx, `
 			UPDATE components
 			SET stock = ROUND(stock - ?, 4)
 			WHERE component_id = ? AND merchant_id = ?
-		`, cr.Qty, cr.ComponentID, merchantID); err != nil {
+		`, cr.DeductQty, cr.ComponentID, merchantID); err != nil {
 			return err
 		}
 
-		// Record the movement.
+		// Record the movement in the recipe's unit for human-readable traceability.
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO stock_movements
 				(id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
 			VALUES (?, ?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
-		`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, cr.ComponentID, cr.ProductID, cr.Qty, cr.UOMID, cr.OrderItemID, orderID); err != nil {
+		`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, cr.ComponentID, cr.ProductID, cr.MovementQty, cr.MovementUOM, cr.OrderItemID, orderID); err != nil {
 			return err
 		}
 	}
