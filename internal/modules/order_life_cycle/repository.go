@@ -1747,14 +1747,20 @@ func normalizeEstimatedReady(value string) interface{} {
 		return nil
 	}
 
-	// unix timestamp ?
+	// ISO 8601 (ex: "2026-04-26T18:00:00Z" ou "2026-04-26T20:00:00+02:00")
+	// Format actuel — à conserver une fois la migration terminée.
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.UTC()
+	}
+
+	// TODO: supprimer ce bloc une fois que tous les clients envoient de l'ISO 8601.
+	// Unix timestamp (ex: "1777235400") — ancienne version.
 	if unix, err := strconv.ParseInt(value, 10, 64); err == nil && unix > 1_000_000_000 {
-		// MySQL : conversion unix -> timestamp
 		return time.Unix(unix, 0).UTC()
 	}
 
-	// sinon on considère que c'est déjà un timestamp valide
-	return value
+	// Format non reconnu : on rejette plutôt que de laisser MySQL deviner la timezone.
+	return nil
 }
 
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
@@ -1827,6 +1833,8 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		customerID = req.Order.Customer.CustomerID
 	}
 
+	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
+
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = db.ExecContext(ctx, `
 		UPDATE orders o
@@ -1852,7 +1860,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		req.Order.UseCustomerTemporaryAddress,
 		req.Order.OrderType,
 		req.Order.IsScheduled,
-		req.Order.EstimatedReady,
+		estimatedReady,
 		req.Order.PlacesSettings,
 		customerID,
 		req.Order.OrderID,

@@ -567,12 +567,6 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 		}
 	}
 
-	log.Info("Price validation and sanitization completed successfully",
-		zap.Int("product_count", len(productIDs)),
-		zap.Int("option_count", len(optIDList)),
-		zap.String("merchant_id", merchant.MerchantID),
-	)
-
 	return nil
 }
 

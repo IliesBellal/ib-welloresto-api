@@ -84,3 +84,12 @@ func (s *StocksService) GetStockProducts(ctx context.Context, token, t string) (
 
 	return s.stocksRepo.GetStockProducts(ctx, user.MerchantID, t)
 }
+
+func (s *StocksService) GetComponentsList(ctx context.Context, token string) ([]models.StockComponentListItem, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.stocksRepo.GetComponentsList(ctx, user.MerchantID)
+}

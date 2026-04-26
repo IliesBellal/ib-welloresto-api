@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
@@ -453,4 +454,63 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 	resCateg.Close()
 
 	return cats, nil
+}
+
+func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID string) ([]models.StockComponentListItem, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			c.component_id,
+			c.name,
+			COALESCE(uomd.uom_desc, ''),
+			c.stock,
+			c.safety_stock,
+			c.purchase_price,
+			c.purchase_price_quantity
+		FROM components c
+		LEFT JOIN unit_of_measure_desc uomd
+			ON uomd.id = c.unit_of_measure AND uomd.lang = 'FR'
+		WHERE c.merchant_id = ?
+		  AND c.enabled = 1
+		ORDER BY c.name ASC
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	components := make([]models.StockComponentListItem, 0)
+	for rows.Next() {
+		var item models.StockComponentListItem
+		var unitName string
+		var purchasePrice sql.NullInt64
+		var purchasePriceQuantity sql.NullFloat64
+
+		if err := rows.Scan(
+			&item.ComponentID,
+			&item.Name,
+			&unitName,
+			&item.Quantity,
+			&item.AlertThreshold,
+			&purchasePrice,
+			&purchasePriceQuantity,
+		); err != nil {
+			return nil, err
+		}
+
+		item.Unit = models.StockComponentListUnit{UnitName: unitName}
+		item.PurchasingPrice = 0
+		if purchasePrice.Valid && purchasePriceQuantity.Valid && purchasePriceQuantity.Float64 > 0 {
+			item.PurchasingPrice = helpers.RoundToNearestInt(float64(purchasePrice.Int64) / purchasePriceQuantity.Float64)
+		}
+
+		components = append(components, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return components, nil
 }

@@ -66,3 +66,16 @@ type UOMEntry struct {
 	UOMID   string `json:"UOM_id"`
 	UOMDesc string `json:"UOM_desc"`
 }
+
+type StockComponentListUnit struct {
+	UnitName string `json:"unit_name"`
+}
+
+type StockComponentListItem struct {
+	ComponentID     string                 `json:"component_id"`
+	Name            string                 `json:"name"`
+	Unit            StockComponentListUnit `json:"unit"`
+	Quantity        float64                `json:"quantity"`
+	AlertThreshold  float64                `json:"alert_threshold"`
+	PurchasingPrice int                    `json:"purchasing_price"`
+}

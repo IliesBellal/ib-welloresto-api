@@ -158,3 +158,21 @@ func (h *StocksHandler) GetStockProducts(w http.ResponseWriter, r *http.Request)
 
 	models.SendJSON(w, http.StatusOK, "stocks", "get_stock_products", res)
 }
+
+func (h *StocksHandler) GetComponentsList(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "stocks", "get_components_list", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	components, err := h.stockSvc.GetComponentsList(r.Context(), token)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "stocks", "get_components_list", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "stocks", "get_components_list", map[string]interface{}{
+		"components": components,
+	})
+}

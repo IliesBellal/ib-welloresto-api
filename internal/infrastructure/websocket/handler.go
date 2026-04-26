@@ -152,7 +152,7 @@ func (c *Client) readPump(hub *Hub) {
 				} else {
 					closeReason = websocketCloseText(closeErr.Code)
 				}
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 					logLevel = zap.WarnLevel
 				}
 			} else {

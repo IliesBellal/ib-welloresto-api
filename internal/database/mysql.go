@@ -18,10 +18,10 @@ func NewMySQL(dsn config.DatabaseConfig) (*sql.DB, error) {
 	//db.SetMaxOpenConns(1)
 	//db.SetMaxIdleConns(0)
 
-	db.SetMaxOpenConns(1)                  // Maximum 1 connexion ouverte en même temps
-	db.SetMaxIdleConns(1)                  // Maximum 1 connexion en attente
-	db.SetConnMaxLifetime(time.Minute * 5) // Renouveler la connexion régulièrement
-	db.SetConnMaxIdleTime(1 * time.Minute)
+	db.SetMaxOpenConns(1)                   // Maximum 1 connexion ouverte en même temps
+	db.SetMaxIdleConns(1)                   // Maximum 1 connexion en attente
+	db.SetConnMaxLifetime(time.Minute * 3)  // Renouveler la connexion régulièrement
+	db.SetConnMaxIdleTime(30 * time.Second) // Shorter than Hostinger's ~60s wait_timeout
 
 	if err := db.Ping(); err != nil {
 		return nil, err
