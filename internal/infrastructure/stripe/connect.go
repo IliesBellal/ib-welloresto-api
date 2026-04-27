@@ -137,10 +137,24 @@ func (s *StripeManager) GetConnectBalance(accountID string) (*BalanceInfo, error
 // connectAccountStatus maps a live stripe.Account to our status string.
 // Exported so the webhook can reuse it without an extra API call.
 func connectAccountStatus(acc *stripe.Account) string {
-	if acc.ChargesEnabled && acc.PayoutsEnabled {
-		return "verified"
+	// 1. Si les paiements ou les virements sont déjà désactivés
+	if !acc.ChargesEnabled || !acc.PayoutsEnabled {
+		return "action_required"
 	}
-	return "action_required"
+
+	// 2. Détection du "Prochainement limité" (Soon to be restricted)
+	// On vérifie si Stripe a des exigences en attente (CurrentlyDue)
+	// ou en retard (PastDue).
+	if len(acc.Requirements.CurrentlyDue) > 0 || len(acc.Requirements.PastDue) > 0 {
+		return "action_required"
+	}
+
+	// 3. Optionnel : vérifier si un motif de désactivation est déjà renseigné
+	if acc.Requirements.DisabledReason != "" {
+		return "action_required"
+	}
+
+	return "verified"
 }
 
 // ConnectAccountStatusFromAccount is the public facade over connectAccountStatus,
