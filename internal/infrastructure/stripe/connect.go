@@ -95,6 +95,11 @@ func (s *StripeManager) CreateBankAccountLink(accountID, returnURL, refreshURL s
 		RefreshURL: stripe.String(refreshURL),
 		ReturnURL:  stripe.String(returnURL),
 		Type:       stripe.String("account_update"),
+		Collect:    stripe.String("eventually_due"),
+		CollectionOptions: &stripe.AccountLinkCollectionOptionsParams{
+			Fields:             stripe.String("eventually_due"),
+			FutureRequirements: stripe.String("include"),
+		},
 	}
 	link, err := s.client.AccountLinks.New(params)
 	if err != nil {
