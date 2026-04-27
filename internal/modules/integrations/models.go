@@ -69,7 +69,19 @@ type IntegrationData struct {
 }
 
 // UpdateIntegrationRequest is the body for PATCH /integrations/{platform}.
-type UpdateIntegrationRequest struct {
-	CommissionRate   int  `json:"commission_rate"`
-	AutoAcceptOrders bool `json:"auto_accept_orders"`
+
+// UpdateScanNOrderRequest is the body for PATCH /integrations/scannorder.
+type UpdateScanNOrderRequest struct {
+	Active                *bool   `json:"active,omitempty"`
+	PrimaryColor          *string `json:"primary_color,omitempty"`
+	HeaderTitle           *string `json:"header_title,omitempty"`
+	HeaderText            *string `json:"header_text,omitempty"`
+	CGVLink               *string `json:"cgv_link,omitempty"`
+	ReturnPolicyLink      *string `json:"return_policy_link,omitempty"`
+	LegalNoticesLink      *string `json:"legal_notices_link,omitempty"`
+	TakeawayEnabled       *bool   `json:"takeaway_enabled,omitempty"`
+	TakeawayAutoAccept    *bool   `json:"takeaway_auto_accept,omitempty"`
+	DeliveryEnabled       *bool   `json:"delivery_enabled,omitempty"`
+	DeliveryAutoAccept    *bool   `json:"delivery_auto_accept,omitempty"`
+	DeliveryDistanceLimit *int    `json:"delivery_distance_limit,omitempty"`
 }

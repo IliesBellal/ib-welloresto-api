@@ -218,13 +218,13 @@ func (h *Handler) UpdateDeliveroo(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateScanNOrder(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 
-	var req UpdateIntegrationRequest
+	var req UpdateScanNOrderRequest
 	if err := decodeJSON(r, &req); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "integrations", "update_scannorder", map[string]string{"error": "invalid_body"})
 		return
 	}
 
-	if err := h.svc.UpdateScanNOrderSettings(r.Context(), user.MerchantID, req.CommissionRate, req.AutoAcceptOrders); err != nil {
+	if err := h.svc.UpdateScanNOrderSettings(r.Context(), user.MerchantID, &req); err != nil {
 		models.SendErrorJSON(w, "integrations", "update_scannorder", err)
 		return
 	}

@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -408,17 +409,70 @@ func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) er
 }
 
 // UpdateScanNOrderSettings updates editable settings for the ScanNOrder integration.
-func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
+func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	const q = `
-		UPDATE scannorder_settings
-		SET    commission_rate      = ?,
-		       takeaway_auto_accept = ?,
-		       delivery_auto_accept = ?
-		WHERE  merchant_id = ?`
+	// Build dynamic query and args
+	setClauses := []string{}
+	args := []interface{}{}
 
-	_, err := db.ExecContext(ctx, q, commissionRate, autoAccept, autoAccept, merchantID)
+	if req.Active != nil {
+		setClauses = append(setClauses, "activated = ?")
+		args = append(args, *req.Active)
+	}
+	if req.PrimaryColor != nil {
+		setClauses = append(setClauses, "primary_color = ?")
+		args = append(args, *req.PrimaryColor)
+	}
+	if req.HeaderTitle != nil {
+		setClauses = append(setClauses, "header_title = ?")
+		args = append(args, *req.HeaderTitle)
+	}
+	if req.HeaderText != nil {
+		setClauses = append(setClauses, "header_text = ?")
+		args = append(args, *req.HeaderText)
+	}
+	if req.CGVLink != nil {
+		setClauses = append(setClauses, "cgv_link = ?")
+		args = append(args, *req.CGVLink)
+	}
+	if req.ReturnPolicyLink != nil {
+		setClauses = append(setClauses, "return_policy_link = ?")
+		args = append(args, *req.ReturnPolicyLink)
+	}
+	if req.LegalNoticesLink != nil {
+		setClauses = append(setClauses, "legal_notices_link = ?")
+		args = append(args, *req.LegalNoticesLink)
+	}
+	if req.TakeawayEnabled != nil {
+		setClauses = append(setClauses, "take_away_enabled = ?")
+		args = append(args, *req.TakeawayEnabled)
+	}
+	if req.TakeawayAutoAccept != nil {
+		setClauses = append(setClauses, "takeaway_auto_accept = ?")
+		args = append(args, *req.TakeawayAutoAccept)
+	}
+	if req.DeliveryEnabled != nil {
+		setClauses = append(setClauses, "delivery_enabled = ?")
+		args = append(args, *req.DeliveryEnabled)
+	}
+	if req.DeliveryAutoAccept != nil {
+		setClauses = append(setClauses, "delivery_auto_accept = ?")
+		args = append(args, *req.DeliveryAutoAccept)
+	}
+	if req.DeliveryDistanceLimit != nil {
+		setClauses = append(setClauses, "delivery_distance_limit = ?")
+		args = append(args, *req.DeliveryDistanceLimit)
+	}
+
+	if len(setClauses) == 0 {
+		return nil // nothing to update
+	}
+
+	q := "UPDATE scannorder_settings SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
+	args = append(args, merchantID)
+
+	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
