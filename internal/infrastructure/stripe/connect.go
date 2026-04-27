@@ -44,7 +44,7 @@ func (s *StripeManager) CreateOnboardingLink(accountID, returnURL, refreshURL st
 		Account:    stripe.String(accountID),
 		RefreshURL: stripe.String(refreshURL),
 		ReturnURL:  stripe.String(returnURL),
-		Type:       stripe.String("account_onboarding"),
+		Type:       stripe.String("account_update"),
 	}
 	link, err := s.client.AccountLinks.New(params)
 	if err != nil {
@@ -94,8 +94,7 @@ func (s *StripeManager) CreateBankAccountLink(accountID, returnURL, refreshURL s
 		Account:    stripe.String(accountID),
 		RefreshURL: stripe.String(refreshURL),
 		ReturnURL:  stripe.String(returnURL),
-		Type:       stripe.String("account_update"),
-		Collect:    stripe.String("eventually_due"),
+		Type:       stripe.String("account_onboarding"),
 		CollectionOptions: &stripe.AccountLinkCollectionOptionsParams{
 			Fields:             stripe.String("eventually_due"),
 			FutureRequirements: stripe.String("include"),
