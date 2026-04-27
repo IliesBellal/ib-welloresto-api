@@ -412,17 +412,13 @@ func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) er
 func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	// Build dynamic query and args
+	// --- 1. Update scannorder_settings ---
 	setClauses := []string{}
 	args := []interface{}{}
 
 	if req.Active != nil {
 		setClauses = append(setClauses, "activated = ?")
 		args = append(args, *req.Active)
-	}
-	if req.PrimaryColor != nil {
-		setClauses = append(setClauses, "primary_color = ?")
-		args = append(args, *req.PrimaryColor)
 	}
 	if req.HeaderTitle != nil {
 		setClauses = append(setClauses, "header_title = ?")
@@ -460,20 +456,35 @@ func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID st
 		setClauses = append(setClauses, "delivery_auto_accept = ?")
 		args = append(args, *req.DeliveryAutoAccept)
 	}
+
+	if len(setClauses) > 0 {
+		q := "UPDATE scannorder_settings SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
+		args = append(args, merchantID)
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			return err
+		}
+	}
+
+	// --- 2. Update merchant_parameters (primary_color, delivery_distance_limit) ---
+	mpSetClauses := []string{}
+	mpArgs := []interface{}{}
+	if req.PrimaryColor != nil {
+		mpSetClauses = append(mpSetClauses, "primary_color = ?")
+		mpArgs = append(mpArgs, *req.PrimaryColor)
+	}
 	if req.DeliveryDistanceLimit != nil {
-		setClauses = append(setClauses, "delivery_distance_limit = ?")
-		args = append(args, *req.DeliveryDistanceLimit)
+		mpSetClauses = append(mpSetClauses, "delivery_distance_limit = ?")
+		mpArgs = append(mpArgs, *req.DeliveryDistanceLimit)
+	}
+	if len(mpSetClauses) > 0 {
+		q := "UPDATE merchant_parameters SET " + strings.Join(mpSetClauses, ", ") + " WHERE merchant_id = ?"
+		mpArgs = append(mpArgs, merchantID)
+		if _, err := db.ExecContext(ctx, q, mpArgs...); err != nil {
+			return err
+		}
 	}
 
-	if len(setClauses) == 0 {
-		return nil // nothing to update
-	}
-
-	q := "UPDATE scannorder_settings SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
-	args = append(args, merchantID)
-
-	_, err := db.ExecContext(ctx, q, args...)
-	return err
+	return nil
 }
 
 // ─── Stripe Connect ───────────────────────────────────────────────────────────
