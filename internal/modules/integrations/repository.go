@@ -407,6 +407,21 @@ func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) er
 	return err
 }
 
+// UpdateScanNOrderSettings updates editable settings for the ScanNOrder integration.
+func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	const q = `
+		UPDATE scannorder_settings
+		SET    commission_rate      = ?,
+		       takeaway_auto_accept = ?,
+		       delivery_auto_accept = ?
+		WHERE  merchant_id = ?`
+
+	_, err := db.ExecContext(ctx, q, commissionRate, autoAccept, autoAccept, merchantID)
+	return err
+}
+
 // ─── Stripe Connect ───────────────────────────────────────────────────────────
 
 // GetStripeAccountID returns the Stripe connected account ID for a merchant.

@@ -169,7 +169,13 @@ func (h *Handler) UpdateUberEats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "integrations", "update_uber_eats", map[string]string{"status": "success"})
+	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "update_uber_eats", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "update_uber_eats", IntegrationData{Integration: integration})
 }
 
 // DisableUberEats handles PATCH /integrations/uber-eats/disable
@@ -199,7 +205,37 @@ func (h *Handler) UpdateDeliveroo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "integrations", "update_deliveroo", map[string]string{"status": "success"})
+	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "update_deliveroo", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "update_deliveroo", IntegrationData{Integration: integration})
+}
+
+// UpdateScanNOrder handles PATCH /integrations/scannorder
+func (h *Handler) UpdateScanNOrder(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	var req UpdateIntegrationRequest
+	if err := decodeJSON(r, &req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "integrations", "update_scannorder", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.svc.UpdateScanNOrderSettings(r.Context(), user.MerchantID, req.CommissionRate, req.AutoAcceptOrders); err != nil {
+		models.SendErrorJSON(w, "integrations", "update_scannorder", err)
+		return
+	}
+
+	integration, err := h.svc.GetScanNOrder(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "update_scannorder", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "update_scannorder", IntegrationData{Integration: integration})
 }
 
 // DisableDeliveroo handles PATCH /integrations/deliveroo/disable

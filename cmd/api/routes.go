@@ -812,6 +812,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/uber-eats/disable", integrationsHandler.DisableUberEats)
 			r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
 			r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
+			r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
 
 			// ---- Stripe Connect ----
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)

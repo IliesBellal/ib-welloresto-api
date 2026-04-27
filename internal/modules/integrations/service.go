@@ -61,6 +61,10 @@ func (s *Service) DisableDeliveroo(ctx context.Context, merchantID string) error
 	return s.repo.DisableDeliveroo(ctx, merchantID)
 }
 
+func (s *Service) UpdateScanNOrderSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
+	return s.repo.UpdateScanNOrderSettings(ctx, merchantID, commissionRate, autoAccept)
+}
+
 // ─── Stripe Connect ───────────────────────────────────────────────────────────
 
 // GetStripeStatus returns the live Stripe Connect account status for a merchant.
