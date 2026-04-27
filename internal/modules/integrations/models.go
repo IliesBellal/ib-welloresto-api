@@ -69,6 +69,10 @@ type IntegrationData struct {
 }
 
 // UpdateIntegrationRequest is the body for PATCH /integrations/{platform}.
+type UpdateIntegrationRequest struct {
+	CommissionRate   int  `json:"commission_rate"`
+	AutoAcceptOrders bool `json:"auto_accept_orders"`
+}
 
 // UpdateScanNOrderRequest is the body for PATCH /integrations/scannorder.
 type UpdateScanNOrderRequest struct {
