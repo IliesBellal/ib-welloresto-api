@@ -112,6 +112,15 @@ func GenerateProductKey(merchantID, productID, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/products/%s%s", merchantID, productID, ext)
 }
 
+// GenerateScanNOrderKey génère la clé R2 pour les images de branding ScanNOrder.
+// imageType doit être "logo" ou "banner".
+func GenerateScanNOrderKey(merchantID, imageType, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/scannorder/%s%s", merchantID, imageType, ext)
+}
+
 // GetExtensionFromContentType retourne l'extension depuis le content type
 func GetExtensionFromContentType(contentType string) string {
 	switch contentType {

@@ -38,6 +38,9 @@ type Repository interface {
 	PayInvoice(cdb context.Context, invoiceID string, paidAt int64) error
 
 	GetMerchantByStripeAccountID(cdb context.Context, accountID string) (*PayoutMerchant, error)
+
+	// Connect account status
+	UpdateStripeAccountVerificationStatus(cdb context.Context, accountID, status string) error
 }
 
 type mysqlRepo struct {
@@ -310,5 +313,16 @@ func (r *mysqlRepo) PayInvoice(cdb context.Context, invoiceID string, paidAt int
 
 	query := `UPDATE subscription_invoices SET status = '1', payment_date = FROM_UNIXTIME(?) WHERE invoice_id = ?`
 	_, err := db.ExecContext(cdb, query, paidAt, invoiceID)
+	return err
+}
+
+// UpdateStripeAccountVerificationStatus caches the Connect account status after an account.updated webhook.
+func (r *mysqlRepo) UpdateStripeAccountVerificationStatus(cdb context.Context, accountID, status string) error {
+	db := dbutils.GetDB(cdb, r.database)
+
+	_, err := db.ExecContext(cdb,
+		`UPDATE stripe_accounts SET verification_status = ? WHERE account_id = ?`,
+		status, accountID,
+	)
 	return err
 }

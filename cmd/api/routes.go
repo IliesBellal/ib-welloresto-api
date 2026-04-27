@@ -32,6 +32,7 @@ import (
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	discountsModule "welloresto-api/internal/modules/discounts"
+	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
 	notificationModule "welloresto-api/internal/modules/notification"
@@ -224,6 +225,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	scannRepo := scannorder.NewRepository(mysqlDB)
 	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService)
 	scannHandler := scannorder.NewHandler(scannService)
+
+	// ---- Integrations dashboard ----
+	integrationsService := integrationsModule.NewService(mysqlDB, stripeManager, cfg.Stripe.OnboardingReturnURL, cfg.Stripe.OnboardingRefreshURL)
+	integrationsHandler := integrationsModule.NewHandler(integrationsService, r2Client)
 
 	// 3. Initialiser le StripeWebhookService Stripe
 	stripeWebhookService := webhookstripe.NewStripeWebhookService(
@@ -789,9 +794,32 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	r.Route("/integrations", func(r chi.Router) {
 
+		// OAuth / connection flows (no auth required)
 		r.Get("/uber-eats/connect", uberHandler.GetConnectURL)
 		r.Get("/uber-eats/callback", uberHandler.Callback)
 		r.Get("/uber-eats/disconnect", uberHandler.Disconnect)
+
+		// Dashboard endpoints (auth required)
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware)
+
+			r.Get("/uber-eats", integrationsHandler.GetUberEats)
+			r.Get("/deliveroo", integrationsHandler.GetDeliveroo)
+			r.Get("/scannorder", integrationsHandler.GetScanNOrder)
+			r.Post("/scannorder/logo", integrationsHandler.UploadScanNOrderLogo)
+			r.Post("/scannorder/banner", integrationsHandler.UploadScanNOrderBanner)
+			r.Patch("/uber-eats", integrationsHandler.UpdateUberEats)
+			r.Patch("/uber-eats/disable", integrationsHandler.DisableUberEats)
+			r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
+			r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
+
+			// ---- Stripe Connect ----
+			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)
+			r.Post("/stripe/onboarding-link", integrationsHandler.CreateStripeOnboardingLink)
+			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)
+			r.Post("/stripe/bank-account-link", integrationsHandler.CreateStripeBankAccountLink)
+			r.Get("/stripe/balance", integrationsHandler.GetStripeBalance)
+		})
 	})
 
 	// --- WEBSOCKET ---

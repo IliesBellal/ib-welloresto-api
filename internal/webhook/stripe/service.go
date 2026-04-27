@@ -77,6 +77,9 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 	case "invoice.paid":
 		return s.HandleInvoicePaid(ctx, event.Data.Object)
 
+	case "account.updated":
+		return s.HandleAccountUpdated(ctx, event.Data.Object)
+
 	default:
 		return nil
 	}
@@ -417,6 +420,28 @@ func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.
 	}
 
 	return s.repo.PayInvoice(ctx, invoice.ID, invoice.StatusTransitions.PaidAt)
+}
+
+// HandleAccountUpdated caches the Connect account verification status in stripe_accounts.
+// Triggered by the "account.updated" Stripe webhook event.
+func (s *StripeWebhookService) HandleAccountUpdated(ctx context.Context, data json.RawMessage) error {
+	var acc stripe.Account
+	if err := json.Unmarshal(data, &acc); err != nil {
+		return fmt.Errorf("unmarshal account: %w", err)
+	}
+
+	status := "action_required"
+	if acc.ChargesEnabled && acc.PayoutsEnabled {
+		status = "verified"
+	}
+
+	if err := s.repo.UpdateStripeAccountVerificationStatus(ctx, acc.ID, status); err != nil {
+		log.Printf("[stripe webhook] failed to update verification status for account %s: %v", acc.ID, err)
+		return err
+	}
+
+	log.Printf("[stripe webhook] account %s verification status updated to %s", acc.ID, status)
+	return nil
 }
 
 func (s *StripeWebhookService) VerifySignature(ctx context.Context, header http.Header, body []byte) {
