@@ -464,6 +464,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 			c.name,
 			COALESCE(c.unit_of_measure, ''),
 			COALESCE(uomd.uom_desc, ''),
+			COALESCE(uomd.uom_short_desc, ''),
 			c.stock,
 			c.safety_stock,
 			c.purchase_price,
@@ -484,7 +485,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 	components := make([]models.StockComponentListItem, 0)
 	for rows.Next() {
 		var item models.StockComponentListItem
-		var unitID, unitName string
+		var unitID, unitName, unitShortName string
 		var purchasePrice sql.NullInt64
 		var purchasePriceQuantity sql.NullFloat64
 
@@ -493,6 +494,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 			&item.Name,
 			&unitID,
 			&unitName,
+			&unitShortName,
 			&item.Quantity,
 			&item.AlertThreshold,
 			&purchasePrice,
@@ -501,7 +503,7 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 			return nil, err
 		}
 
-		item.Unit = models.StockComponentListUnit{UnitID: unitID, UnitName: unitName}
+		item.Unit = models.StockComponentListUnit{UnitID: unitID, UnitName: unitName, UnitShortName: unitShortName}
 		item.PurchasingPrice = 0
 		if purchasePrice.Valid && purchasePriceQuantity.Valid && purchasePriceQuantity.Float64 > 0 {
 			item.PurchasingPrice = helpers.RoundToNearestInt(float64(purchasePrice.Int64) / purchasePriceQuantity.Float64)
@@ -705,6 +707,7 @@ func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, t
 			COALESCE(c.name, sm.component_id)                   AS component_name,
 			COALESCE(c.unit_of_measure, sm.unit_of_measure)     AS unit_id,
 			COALESCE(uomd.uom_desc, sm.unit_of_measure)         AS unit_name,
+			COALESCE(uomd.uom_short_desc, sm.unit_of_measure)         AS unit_short_name,
 			sm.quantity,
 			sm.movement,
 			sm.product_id,
@@ -734,13 +737,14 @@ func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, t
 	items := make([]StockMovementItem, 0)
 	for rows.Next() {
 		var (
-			item         StockMovementItem
-			unitID       string
-			unitName     string
-			movementCode string
-			productID    sql.NullString
-			productName  sql.NullString
-			comment      sql.NullString
+			item          StockMovementItem
+			unitID        string
+			unitName      string
+			unitShortName string
+			movementCode  string
+			productID     sql.NullString
+			productName   sql.NullString
+			comment       sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID,
@@ -748,6 +752,7 @@ func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, t
 			&item.ComponentName,
 			&unitID,
 			&unitName,
+			&unitShortName,
 			&item.Quantity,
 			&movementCode,
 			&productID,

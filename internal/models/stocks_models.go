@@ -68,8 +68,9 @@ type UOMEntry struct {
 }
 
 type StockComponentListUnit struct {
-	UnitID   string `json:"unit_id"`
-	UnitName string `json:"unit_name"`
+	UnitID        string `json:"unit_id"`
+	UnitName      string `json:"unit_name"`
+	UnitShortName string `json:"unit_short_name"`
 }
 
 type StockComponentListItem struct {

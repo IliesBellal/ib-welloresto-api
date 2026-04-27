@@ -87,8 +87,9 @@ type StockComponentMovementRequest struct {
 
 // StockMovementUnit is the unit object embedded in StockMovementItem
 type StockMovementUnit struct {
-	UnitID   string `json:"unit_id"`
-	UnitName string `json:"unit_name"`
+	UnitID        string `json:"unit_id"`
+	UnitName      string `json:"unit_name"`
+	UnitShortName string `json:"unit_short_name"`
 }
 
 // StockMovementItem is one row returned by GET /stocks/movements
