@@ -764,7 +764,7 @@ func (r *StocksRepository) GetMovements(ctx context.Context, merchantID, from, t
 			return nil, err
 		}
 
-		item.Unit = StockMovementUnit{UnitID: unitID, UnitName: unitName}
+		item.Unit = StockMovementUnit{UnitID: unitID, UnitName: unitName, UnitShortName: unitShortName}
 
 		// Direct mapping: movement column now stores explicit text values.
 		switch movementCode {
