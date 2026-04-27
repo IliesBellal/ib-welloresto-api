@@ -1552,6 +1552,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		Price                   int
 		UnitOfMeasureID         int
 		UnitOfMeasure           sql.NullString
+		UnitShortName           sql.NullString
 		PurchasePrice           sql.NullInt64
 		PurchasePriceQty        sql.NullFloat64
 		PurchaseUnitOfMeasureID sql.NullInt64
@@ -1569,6 +1570,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				c.component_price,
 				c.unit_of_measure,
 				COALESCE(uomd.uom_desc, '') as uom_desc,
+				COALESCE(uomd.uom_short_desc, '') as uom_short_desc,
 				c.purchase_price,
 				c.purchase_price_quantity,
 				c.purchase_unit_id,
@@ -1585,7 +1587,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		defer rows.Close()
 		for rows.Next() {
 			var cb compBasicTmp
-			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.PurchasePrice, &cb.PurchasePriceQty, &cb.PurchaseUnitOfMeasureID, &cb.PurchaseUnitOfMeasure); err != nil {
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.UnitShortName, &cb.PurchasePrice, &cb.PurchasePriceQty, &cb.PurchaseUnitOfMeasureID, &cb.PurchaseUnitOfMeasure); err != nil {
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
@@ -1673,6 +1675,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 			c.component_price,
 			c.unit_of_measure,
 			COALESCE(uomd.uom_desc, '') as uom_desc,
+			COALESCE(uomd.uom_short_desc, '') as uom_short_desc,
 			c.purchase_price,
 			c.purchase_price_quantity,
 			c.purchase_unit_id,
@@ -1691,6 +1694,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		price                   int
 		unitOfMeasureID         int
 		unitOfMeasure           sql.NullString
+		unitShortName           sql.NullString
 		purchasePrice           sql.NullInt64
 		purchasePriceQty        sql.NullFloat64
 		purchaseUnitOfMeasureID sql.NullInt64
@@ -1698,7 +1702,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 	)
 
 	err := db.QueryRowContext(ctx, q, componentID, merchantID).Scan(
-		&id, &name, &catID, &status, &price, &unitOfMeasureID, &unitOfMeasure, &purchasePrice, &purchasePriceQty, &purchaseUnitOfMeasureID, &purchaseUnitOfMeasure,
+		&id, &name, &catID, &status, &price, &unitOfMeasureID, &unitOfMeasure, &unitShortName, &purchasePrice, &purchasePriceQty, &purchaseUnitOfMeasureID, &purchaseUnitOfMeasure,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
