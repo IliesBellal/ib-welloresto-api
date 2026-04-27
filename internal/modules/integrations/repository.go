@@ -25,7 +25,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 
 	const q = `
 		SELECT
-			iue.is_active,
+			iue.enabled,
 			iue.commission_rate,
 			iue.auto_accept_orders,
 			iue.last_sync,
@@ -55,7 +55,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		LIMIT  1`
 
 	var (
-		active         bool
+		enabled        bool
 		commissionRate int
 		autoAccept     bool
 		lastSync       sql.NullTime
@@ -70,7 +70,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		merchantID, // orders_count subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&active, &commissionRate, &autoAccept, &lastSync,
+		&enabled, &commissionRate, &autoAccept, &lastSync,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -87,7 +87,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 
 	result := &UberEatsIntegration{
 		Platform:         "uber_eats",
-		Active:           active,
+		Active:           enabled,
 		CommissionRate:   commissionRate,
 		AutoAcceptOrders: autoAccept,
 		SyncedItems:      syncedItems,
