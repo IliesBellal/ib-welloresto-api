@@ -1648,6 +1648,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					PurchasePricePerUnit:    purchasePricePerUnit,
 					PurchaseUnitOfMeasureID: purchaseUomID,
 					PurchaseUnitOfMeasure:   purchaseUomName,
+					UnitOfMeasureShortName:  cb.UnitShortName.String,
 				})
 			}
 		}
@@ -1746,6 +1747,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		Status:                  status,
 		UnitOfMeasureID:         uomID,
 		UnitOfMeasure:           uomName,
+		UnitOfMeasureShortName:  unitShortName.String,
 		PurchasePrice:           pp,
 		PurchasePriceQty:        ppq,
 		PurchaseUnitOfMeasureID: purchaseUomID,

@@ -162,6 +162,7 @@ type ComponentBasic struct {
 	Cost                    int64    `json:"cost,omitempty"`
 	UnitOfMeasure           string   `json:"unit_of_measure,omitempty"`
 	UnitOfMeasureID         string   `json:"unit_of_measure_id,omitempty"`
+	UnitOfMeasureShortName  string   `json:"unit_of_measure_short_name,omitempty"`
 	PurchasePrice           *int     `json:"purchase_price,omitempty"`
 	PurchasePriceQty        *float64 `json:"purchase_price_qty,omitempty"`
 	PurchasePricePerUnit    *float64 `json:"purchase_price_per_unit,omitempty"`
