@@ -52,6 +52,7 @@ type UberEatsItem struct {
 	ID               string                   `json:"id"`
 	ExternalData     string                   `json:"external_data,omitempty"`
 	Title            UberEatsI18nValue        `json:"title"`
+	ImageURL         *string                  `json:"image_url,omitempty"`
 	Description      UberEatsI18nValue        `json:"description"`
 	PriceInfo        UberEatsPriceInfo        `json:"price_info"`
 	MediaInfo        *UberEatsMediaInfo       `json:"media_info,omitempty"`
@@ -145,6 +146,7 @@ func ToUberEatsFormat(internal *models.MenuResponse) (*UberEatsMenu, error) {
 				ID:           product.ProductID,
 				ExternalData: product.ProductID,
 				Title:        i18n(product.Name),
+				ImageURL:     product.ImageURL,
 				PriceInfo: UberEatsPriceInfo{
 					Price:     price,
 					CorePrice: price,
