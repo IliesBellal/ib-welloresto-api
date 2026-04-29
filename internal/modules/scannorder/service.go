@@ -247,7 +247,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 		dow = 7
 	}
 
-	rawMenu, err := s.menu.GetMenuFromMerchantId(ctx, merchantID, nil)
+	rawMenu, err := s.menu.GetMenuFromMerchantIdWithMarketing(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}

@@ -429,6 +429,219 @@ func (h *MenuHandler) CreateProductCategory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (h *MenuHandler) GetMarketingCategories(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_marketing_categories", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	list, err := h.service.GetMarketingCategories(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "menu", "get_marketing_categories", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_marketing_categories", map[string]interface{}{
+		"categories": list,
+	})
+}
+
+func (h *MenuHandler) CreateMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "create_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CreateMarketingCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "create_marketing_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	categoryID, err := h.service.CreateMarketingCategory(r.Context(), token, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "menu", "create_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "create_marketing_category", map[string]interface{}{
+		"category_id": categoryID,
+		"status":      "success",
+		"message":     "marketing_category_created",
+	})
+}
+
+func (h *MenuHandler) UpdateMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_marketing_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	var req UpdateMarketingCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_marketing_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.UpdateMarketingCategory(r.Context(), token, categoryID, req); err != nil {
+		models.SendErrorJSON(w, "menu", "update_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_marketing_category", map[string]interface{}{
+		"status":  "success",
+		"message": "marketing_category_updated",
+	})
+}
+
+func (h *MenuHandler) DeleteMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_marketing_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	if err := h.service.DeleteMarketingCategory(r.Context(), token, categoryID); err != nil {
+		models.SendErrorJSON(w, "menu", "delete_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_marketing_category", map[string]interface{}{
+		"status":  "success",
+		"message": "marketing_category_disabled",
+	})
+}
+
+func (h *MenuHandler) UpdateMarketingCategoriesDisplayOrder(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_marketing_categories_display_order", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req UpdateMarketingCategoriesDisplayOrderPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_marketing_categories_display_order", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.UpdateMarketingCategoriesDisplayOrder(r.Context(), token, req.CategoryIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "update_marketing_categories_display_order", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_marketing_categories_display_order", map[string]interface{}{
+		"status":  "success",
+		"message": "marketing_categories_display_order_updated",
+	})
+}
+
+func (h *MenuHandler) BulkAssignProductsToMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_products_to_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_marketing_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	var body BulkAssignProductsPayload
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_products_to_marketing_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if err := h.service.BulkAssignProductsToMarketingCategory(r.Context(), token, categoryID, body.ProductIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_assign_products_to_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_products_to_marketing_category", map[string]interface{}{
+		"status":   "success",
+		"category": categoryID,
+		"products": len(body.ProductIDs),
+	})
+}
+
+func (h *MenuHandler) AssignProductMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "assign_product_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if strings.TrimSpace(productID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "assign_product_marketing_category", map[string]string{"error": "missing_product_id"})
+		return
+	}
+
+	var req AssignProductMarketingCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "assign_product_marketing_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if strings.TrimSpace(req.CategoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "assign_product_marketing_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	if err := h.service.AssignProductMarketingCategory(r.Context(), token, productID, req.CategoryID); err != nil {
+		models.SendErrorJSON(w, "menu", "assign_product_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "assign_product_marketing_category", map[string]interface{}{
+		"status":      "success",
+		"product_id":  productID,
+		"category_id": req.CategoryID,
+	})
+}
+
+func (h *MenuHandler) UnassignProductMarketingCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "unassign_product_marketing_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	productID := chi.URLParam(r, "product_id")
+	if strings.TrimSpace(productID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "unassign_product_marketing_category", map[string]string{"error": "missing_product_id"})
+		return
+	}
+
+	if err := h.service.UnassignProductMarketingCategory(r.Context(), token, productID); err != nil {
+		models.SendErrorJSON(w, "menu", "unassign_product_marketing_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "unassign_product_marketing_category", map[string]interface{}{
+		"status":     "success",
+		"product_id": productID,
+	})
+}
+
 func (h *MenuHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

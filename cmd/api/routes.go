@@ -518,6 +518,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
 		r.Patch("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory) // used by: back-office
 		r.Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
+		r.Patch("/products/{product_id}/marketing-category", menuH.AssignProductMarketingCategory)
+		r.Delete("/products/{product_id}/marketing-category", menuH.UnassignProductMarketingCategory)
 
 		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
 
@@ -559,7 +561,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
 
-		r.Post("/products/categories", menuH.CreateProductCategory)                     // used by: back-office
+		r.Post("/products/categories", menuH.CreateProductCategory) // used by: back-office
+		r.Get("/marketing-categories", menuH.GetMarketingCategories)
+		r.Post("/marketing-categories", menuH.CreateMarketingCategory)
+		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder)
+		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)
+		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)
+		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory)
 		r.Post("/components", menuH.CreateComponent)                                    // used by: back-office
 		r.Post("/components/categories", menuH.CreateComponentCategory)                 // used by: back-office
 		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory) // used by: back-office

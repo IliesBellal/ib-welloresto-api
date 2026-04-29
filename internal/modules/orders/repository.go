@@ -223,6 +223,33 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		}
 	}
 
+	if len(req.Channel) > 0 {
+		placeholders := make([]string, len(req.Channel))
+		for i, v := range req.Channel {
+			placeholders[i] = "?"
+			args = append(args, v)
+		}
+		where += fmt.Sprintf(" AND o.brand IN (%s) ", strings.Join(placeholders, ","))
+	}
+
+	if len(req.OrderType) > 0 {
+		placeholders := make([]string, len(req.OrderType))
+		for i, v := range req.OrderType {
+			placeholders[i] = "?"
+			args = append(args, v)
+		}
+		where += fmt.Sprintf(" AND o.order_type IN (%s) ", strings.Join(placeholders, ","))
+	}
+
+	if len(req.Status) > 0 {
+		placeholders := make([]string, len(req.Status))
+		for i, v := range req.Status {
+			placeholders[i] = "?"
+			args = append(args, v)
+		}
+		where += fmt.Sprintf(" AND o.brand_status IN (%s) ", strings.Join(placeholders, ","))
+	}
+
 	// =========================
 	// 2️⃣ PAGINATION (IDS ONLY)
 	// =========================

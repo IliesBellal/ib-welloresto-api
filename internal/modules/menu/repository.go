@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -3228,6 +3229,391 @@ func (r *MenuRepository) BulkAssignProductsToTag(ctx context.Context, merchantID
 	}
 
 	return nil
+}
+
+func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID string) ([]MarketingCategoryEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT id, name, display_order, available
+		FROM marketing_categories
+		WHERE merchant_id = ? AND enabled = 1
+		ORDER BY display_order ASC, id ASC
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []MarketingCategoryEntry{}
+	for rows.Next() {
+		var row MarketingCategoryEntry
+		if err := rows.Scan(&row.CategoryID, &row.Name, &row.DisplayOrder, &row.Available); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (r *MenuRepository) CreateMarketingCategory(ctx context.Context, merchantID, name string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("category_name_required")
+	}
+
+	if len(name) > 0 {
+		name = strings.ToUpper(string(name[0])) + name[1:]
+	}
+
+	var maxOrder int
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(display_order), 0) FROM marketing_categories WHERE merchant_id = ?`,
+		merchantID,
+	).Scan(&maxOrder)
+	if err != nil {
+		return "", fmt.Errorf("get max order error: %w", err)
+	}
+
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO marketing_categories (merchant_id, name, display_order, enabled, available)
+		 VALUES (?, ?, ?, 1, 1)`,
+		merchantID, name, maxOrder+1,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return "", fmt.Errorf("get last insert id error: %w", err)
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return strconv.FormatInt(id, 10), nil
+}
+
+func (r *MenuRepository) UpdateMarketingCategory(ctx context.Context, merchantID, categoryID string, payload UpdateMarketingCategoryPayload) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	fields := []string{}
+	args := []interface{}{}
+
+	if payload.Name != nil {
+		name := strings.TrimSpace(*payload.Name)
+		if name == "" {
+			return fmt.Errorf("category_name_required")
+		}
+		name = strings.ToUpper(string(name[0])) + name[1:]
+		fields = append(fields, "name = ?")
+		args = append(args, name)
+	}
+
+	if payload.Available != nil {
+		fields = append(fields, "available = ?")
+		args = append(args, *payload.Available)
+	}
+
+	if len(fields) == 0 {
+		return nil
+	}
+
+	args = append(args, categoryID, merchantID)
+	query := fmt.Sprintf(`UPDATE marketing_categories SET %s WHERE id = ? AND merchant_id = ? AND enabled = 1`, strings.Join(fields, ", "))
+
+	if _, err := db.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) DeleteMarketingCategory(ctx context.Context, merchantID, categoryID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE marketing_categories SET enabled = 0 WHERE id = ? AND merchant_id = ?`,
+		categoryID, merchantID,
+	); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) UpdateMarketingCategoriesDisplayOrder(ctx context.Context, merchantID string, categoryIDs []string) error {
+	if len(categoryIDs) == 0 {
+		return nil
+	}
+
+	tx, err := r.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for i, id := range categoryIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE marketing_categories SET display_order = ? WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+			i+1, id, merchantID,
+		); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) AssignProductMarketingCategory(ctx context.Context, merchantID, productID, categoryID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var productCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ? AND enabled = 1`,
+		productID, merchantID,
+	).Scan(&productCount); err != nil {
+		return err
+	}
+	if productCount == 0 {
+		return models.ErrForbidden
+	}
+
+	var categoryCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+		categoryID, merchantID,
+	).Scan(&categoryCount); err != nil {
+		return err
+	}
+	if categoryCount == 0 {
+		return models.ErrForbidden
+	}
+
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id)
+		 VALUES (?, ?, ?)
+		 ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`,
+		productID, categoryID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) UnassignProductMarketingCategory(ctx context.Context, merchantID, productID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM product_marketing_categories WHERE merchant_id = ? AND product_id = ?`,
+		merchantID, productID,
+	); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) BulkAssignProductsToMarketingCategory(ctx context.Context, merchantID, categoryID string, productIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	productIDs = uniqueStrings(productIDs)
+
+	var categoryCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+		categoryID, merchantID,
+	).Scan(&categoryCount); err != nil {
+		return err
+	}
+	if categoryCount == 0 {
+		return models.ErrForbidden
+	}
+
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, len(productIDs)+1)
+	args[0] = merchantID
+	for i, pid := range productIDs {
+		placeholders[i] = "?"
+		args[i+1] = pid
+	}
+
+	query := fmt.Sprintf(
+		"SELECT COUNT(1) FROM products WHERE merchant_id = ? AND enabled = 1 AND product_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+
+	var validCount int
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&validCount); err != nil {
+		return err
+	}
+	if validCount != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	insertValues := make([]string, len(productIDs))
+	insertArgs := make([]interface{}, 0, len(productIDs)*3)
+	for i, pid := range productIDs {
+		insertValues[i] = "(?, ?, ?)"
+		insertArgs = append(insertArgs, pid, categoryID, merchantID)
+	}
+
+	insertQuery := fmt.Sprintf(
+		`INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id) VALUES %s
+		 ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`,
+		strings.Join(insertValues, ","),
+	)
+
+	if _, err := db.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+// GetMenuWithMarketingCategories returns the menu with marketing category overrides applied.
+// Products assigned to a marketing category will appear under that category instead of their
+// standard productcateg category. Products without an assignment keep their original category.
+// This method is intended for external platform sync (ScanNOrder, Uber Eats, Deliveroo) ONLY.
+// GET /menu must always call GetMenu directly.
+func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, merchantID string) (*models.MenuResponse, error) {
+	menu, err := r.GetMenu(ctx, merchantID, nil)
+	if err != nil {
+		return nil, err
+	}
+	if menu.Status != "ok" || len(menu.ProductsTypes) == 0 {
+		return menu, nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	type assignment struct {
+		categoryID   string
+		categoryName string
+		displayOrder int
+	}
+	assignments := make(map[string]assignment) // productID → marketing assignment
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT pmc.product_id, mc.id, mc.name, mc.display_order
+		FROM product_marketing_categories pmc
+		INNER JOIN marketing_categories mc ON mc.id = pmc.marketing_category_id
+		WHERE pmc.merchant_id = ? AND mc.enabled = 1
+	`, merchantID)
+	if err != nil {
+		// On error fall back to standard categories rather than failing
+		return menu, nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var productID, catID, catName string
+		var displayOrder int
+		if err := rows.Scan(&productID, &catID, &catName, &displayOrder); err != nil {
+			continue
+		}
+		assignments[productID] = assignment{catID, catName, displayOrder}
+	}
+
+	if len(assignments) == 0 {
+		return menu, nil
+	}
+
+	// Build two buckets: marketing-mapped and standard categories
+	marketingCatsMap := make(map[string]*models.ProductCategory)
+	standardCatsMap := make(map[string]*models.ProductCategory)
+	var standardCatOrder []string // preserves original display order
+
+	for _, pt := range menu.ProductsTypes {
+		catKey := ""
+		if pt.CategoryID != nil {
+			catKey = *pt.CategoryID
+		}
+		for _, p := range pt.Products {
+			if asgn, ok := assignments[p.ProductID]; ok {
+				if _, exists := marketingCatsMap[asgn.categoryID]; !exists {
+					catIDCopy := asgn.categoryID
+					marketingCatsMap[asgn.categoryID] = &models.ProductCategory{
+						Category:     asgn.categoryName,
+						CategoryName: asgn.categoryName,
+						CategoryID:   &catIDCopy,
+						Order:        asgn.displayOrder,
+						Available:    true,
+						Products:     []models.ProductEntry{},
+					}
+				}
+				marketingCatsMap[asgn.categoryID].Products = append(marketingCatsMap[asgn.categoryID].Products, p)
+			} else {
+				if _, exists := standardCatsMap[catKey]; !exists {
+					standardCatsMap[catKey] = &models.ProductCategory{
+						Category:     pt.Category,
+						CategoryName: pt.CategoryName,
+						CategoryID:   pt.CategoryID,
+						Order:        pt.Order,
+						BgColor:      pt.BgColor,
+						Available:    pt.Available,
+						Products:     []models.ProductEntry{},
+					}
+					standardCatOrder = append(standardCatOrder, catKey)
+				}
+				standardCatsMap[catKey].Products = append(standardCatsMap[catKey].Products, p)
+			}
+		}
+	}
+
+	// Sort marketing categories by display_order
+	var marketingCats []models.ProductCategory
+	for _, mc := range marketingCatsMap {
+		if len(mc.Products) > 0 {
+			marketingCats = append(marketingCats, *mc)
+		}
+	}
+	sort.Slice(marketingCats, func(i, j int) bool {
+		return marketingCats[i].Order < marketingCats[j].Order
+	})
+
+	// Marketing categories first, then standard categories in original order
+	result := make([]models.ProductCategory, 0, len(marketingCats)+len(standardCatOrder))
+	result = append(result, marketingCats...)
+	for _, key := range standardCatOrder {
+		if stdCat, exists := standardCatsMap[key]; exists && len(stdCat.Products) > 0 {
+			result = append(result, *stdCat)
+		}
+	}
+
+	menu.ProductsTypes = result
+	return menu, nil
 }
 
 // Helper pour éviter les doublons d'IDs dans la slice

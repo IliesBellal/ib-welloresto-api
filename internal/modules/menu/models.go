@@ -202,17 +202,18 @@ type AttributeOption struct {
 }
 
 type CreateProductPayload struct {
-	MerchantID     string  `json:"merchant_id"`
-	Name           string  `json:"name"`
-	ProductDesc    string  `json:"description"`
-	Price          float64 `json:"price"`
-	PriceTakeAway  float64 `json:"price_take_away"`
-	PriceDelivery  float64 `json:"price_delivery"`
-	TvaInID        string  `json:"tva_in_id"`
-	TvaDeliveryID  string  `json:"tva_delivery_id"`
-	TvaTakeAwayID  string  `json:"tva_take_away_id"`
-	CategoryID     string  `json:"category_id"`
-	IsProductGroup bool    `json:"is_product_group"`
+	MerchantID          string  `json:"merchant_id"`
+	Name                string  `json:"name"`
+	ProductDesc         string  `json:"description"`
+	Price               float64 `json:"price"`
+	PriceTakeAway       float64 `json:"price_take_away"`
+	PriceDelivery       float64 `json:"price_delivery"`
+	TvaInID             string  `json:"tva_in_id"`
+	TvaDeliveryID       string  `json:"tva_delivery_id"`
+	TvaTakeAwayID       string  `json:"tva_take_away_id"`
+	CategoryID          string  `json:"category_id"`
+	IsProductGroup      bool    `json:"is_product_group"`
+	MarketingCategoryID *string `json:"marketing_category_id,omitempty"`
 }
 
 // ProductComponentUpdate pour mettre à jour les composants d'un produit
@@ -324,4 +325,28 @@ type BulkUpdateProductPrice struct {
 // BulkUpdateProductPricesPayload for bulk updating product prices
 type BulkUpdateProductPricesPayload struct {
 	Products []BulkUpdateProductPrice `json:"products"` // Array of products with prices to update
+}
+
+type MarketingCategoryEntry struct {
+	CategoryID   string `json:"category_id"`
+	Name         string `json:"name"`
+	DisplayOrder int    `json:"display_order"`
+	Available    bool   `json:"available"`
+}
+
+type CreateMarketingCategoryPayload struct {
+	Name string `json:"name"`
+}
+
+type UpdateMarketingCategoryPayload struct {
+	Name      *string `json:"name"`
+	Available *bool   `json:"available"`
+}
+
+type UpdateMarketingCategoriesDisplayOrderPayload struct {
+	CategoryIDs []string `json:"category_ids"`
+}
+
+type AssignProductMarketingCategoryPayload struct {
+	CategoryID string `json:"category_id"`
 }

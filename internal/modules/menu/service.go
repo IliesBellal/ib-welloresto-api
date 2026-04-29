@@ -106,6 +106,13 @@ func (s *MenuService) GetMenuFromMerchantId(ctx context.Context, merchant_id str
 	return s.legacy.GetMenu(ctx, merchant_id, lastMenu)
 }
 
+// GetMenuFromMerchantIdWithMarketing returns the menu with marketing category overrides applied.
+// Use this for external platform integrations (ScanNOrder, Uber Eats, Deliveroo) only.
+// Standard GET /menu must always call GetMenuFromMerchantId instead.
+func (s *MenuService) GetMenuFromMerchantIdWithMarketing(ctx context.Context, merchantID string) (*models.MenuResponse, error) {
+	return s.legacy.GetMenuWithMarketingCategories(ctx, merchantID)
+}
+
 func (s *MenuService) GetProductFromMerchantId(ctx context.Context, merchant_id, product_id string) (*models.ProductEntry, error) {
 	return s.legacy.GetProduct(ctx, merchant_id, product_id)
 }
@@ -120,6 +127,11 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 	productID, err := s.legacy.CreateProduct(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+
+	if req.MarketingCategoryID != nil && *req.MarketingCategoryID != "" {
+		// Best-effort: ignore error so product creation is not rolled back if assignment fails
+		_ = s.legacy.AssignProductMarketingCategory(ctx, req.MerchantID, productID, *req.MarketingCategoryID)
 	}
 
 	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
@@ -430,7 +442,7 @@ func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token string) error
 		return err
 	}
 
-	internalMenu, err := s.legacy.GetMenu(ctx, user.MerchantID, nil)
+	internalMenu, err := s.legacy.GetMenuWithMarketingCategories(ctx, user.MerchantID)
 	if err != nil {
 		return err
 	}
@@ -460,7 +472,7 @@ func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token string) error 
 		return err
 	}
 
-	internalMenu, err := s.legacy.GetMenu(ctx, user.MerchantID, nil)
+	internalMenu, err := s.legacy.GetMenuWithMarketingCategories(ctx, user.MerchantID)
 	if err != nil {
 		return err
 	}
@@ -554,4 +566,76 @@ func (s *MenuService) BulkUpdateProductPrices(ctx context.Context, token string,
 	}
 
 	return s.legacy.BulkUpdateProductPrices(ctx, user.MerchantID, products)
+}
+
+func (s *MenuService) GetMarketingCategories(ctx context.Context, token string) ([]MarketingCategoryEntry, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.legacy.GetMarketingCategories(ctx, user.MerchantID)
+}
+
+func (s *MenuService) CreateMarketingCategory(ctx context.Context, token string, req *CreateMarketingCategoryPayload) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return s.legacy.CreateMarketingCategory(ctx, user.MerchantID, req.Name)
+}
+
+func (s *MenuService) UpdateMarketingCategory(ctx context.Context, token, categoryID string, req UpdateMarketingCategoryPayload) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateMarketingCategory(ctx, user.MerchantID, categoryID, req)
+}
+
+func (s *MenuService) DeleteMarketingCategory(ctx context.Context, token, categoryID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.DeleteMarketingCategory(ctx, user.MerchantID, categoryID)
+}
+
+func (s *MenuService) UpdateMarketingCategoriesDisplayOrder(ctx context.Context, token string, categoryIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateMarketingCategoriesDisplayOrder(ctx, user.MerchantID, categoryIDs)
+}
+
+func (s *MenuService) AssignProductMarketingCategory(ctx context.Context, token, productID, categoryID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.AssignProductMarketingCategory(ctx, user.MerchantID, productID, categoryID)
+}
+
+func (s *MenuService) UnassignProductMarketingCategory(ctx context.Context, token, productID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UnassignProductMarketingCategory(ctx, user.MerchantID, productID)
+}
+
+func (s *MenuService) BulkAssignProductsToMarketingCategory(ctx context.Context, token, categoryID string, productIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.BulkAssignProductsToMarketingCategory(ctx, user.MerchantID, categoryID, productIDs)
 }
