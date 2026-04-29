@@ -503,7 +503,7 @@ func (h *MenuHandler) SetProductStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "menu", "set_product_status", models.AvailabilityResponse{
-		Status: "1",
+		Status: "success",
 	})
 }
 

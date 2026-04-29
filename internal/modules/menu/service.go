@@ -3,25 +3,38 @@ package menu
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/ubereats"
 )
 
+const (
+	defaultExternalStatusSyncTimeout  = 8 * time.Second
+	defaultExternalStatusSyncParallel = 64
+)
+
 type MenuService struct {
 	legacy    *MenuRepository
 	deliveroo *deliveroo.DeliverooService
 	uber      *ubereats.UberEatsService
+
+	statusSyncTimeout time.Duration
+	statusSyncSem     chan struct{}
 }
 
 func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService) *MenuService {
 	return &MenuService{
-		legacy:    legacy,
-		deliveroo: deliverooSvc,
-		uber:      uberSvc,
+		legacy:            legacy,
+		deliveroo:         deliverooSvc,
+		uber:              uberSvc,
+		statusSyncTimeout: defaultExternalStatusSyncTimeout,
+		statusSyncSem:     make(chan struct{}, defaultExternalStatusSyncParallel),
 	}
 }
 
@@ -221,7 +234,84 @@ func (s *MenuService) SetProductStatus(ctx context.Context, token, pid, status s
 		return 0, err
 	}
 
-	return s.legacy.SetProductStatus(ctx, user.MerchantID, pid, status)
+	updated, err := s.legacy.SetProductStatus(ctx, user.MerchantID, pid, status)
+	if err != nil {
+		return 0, err
+	}
+
+	if updated > 0 {
+		s.enqueueProductStatusSync(ctx, user.MerchantID, pid, status)
+	}
+
+	return updated, nil
+}
+
+func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, productID, status string) {
+	available, shouldSync := mapWelloStatusToAvailability(status)
+	if !shouldSync {
+		return
+	}
+
+	log := logger.FromContext(ctx)
+
+	select {
+	case s.statusSyncSem <- struct{}{}:
+	default:
+		log.Warn("[WARN] enqueueProductStatusSync dropped due to full async queue")
+		return
+	}
+
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Error(fmt.Sprintf("[ERROR] panic in product status external sync: %v", rec))
+			}
+			<-s.statusSyncSem
+		}()
+
+		taskCtx, cancel := context.WithTimeout(context.Background(), s.statusSyncTimeout)
+		defer cancel()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			if s.uber == nil {
+				log.Warn("[WARN] UberEats client not initialized, skipping status sync for UberEats")
+				return
+			}
+			if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, productID, available); err != nil {
+				log.Warn("[WARN] Uber status sync failed: " + err.Error())
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			if s.deliveroo == nil {
+				log.Warn("[WARN] Deliveroo client not initialized, skipping status sync for Deliveroo")
+				return
+			}
+			if err := s.deliveroo.ToggleItemAvailability(taskCtx, merchantID, productID, available); err != nil {
+				log.Warn("[WARN] Deliveroo status sync failed: " + err.Error())
+			}
+		}()
+
+		wg.Wait()
+	}()
+}
+
+func mapWelloStatusToAvailability(status string) (bool, bool) {
+	v := strings.ToLower(strings.TrimSpace(status))
+
+	switch v {
+	case "1", "true", "available":
+		return true, true
+	case "0", "false", "out_of_stock", "unavailable":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func (s *MenuService) SetProductCategoryAvailability(ctx context.Context, token, categoryID, status string) (int64, error) {

@@ -640,7 +640,8 @@ func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID
 
 	// Note: Ici j'utilise le token brut de la BDD comme ton PHP ("bearer_token is not null").
 	// Idéalement on utiliserait GetValidToken(tx) pour rafraîchir si besoin.
-	token := store.BearerToken
+
+	token, err := s.GetValidToken(ctx)
 
 	var suspendTimestamp *int64
 

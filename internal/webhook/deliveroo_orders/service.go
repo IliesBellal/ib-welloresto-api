@@ -529,7 +529,7 @@ func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID st
 		// 1. Vérif ID vide
 		if item.PosItemID == "" {
 			// Logique PHP : setSyncStatus failed + reason "pos_item_id_not_found"
-			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
+			// go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
 			return fmt.Errorf("pos_item_id_not_found for item %s", item.Name)
 		}
 
@@ -538,7 +538,7 @@ func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID st
 		mappedItem, err := s.repo.GetProductMapping(ctx, merchantID, item.PosItemID)
 		if err != nil {
 			// Non trouvé en base
-			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
+			// go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_not_found")
 			return fmt.Errorf("pos_item_id_not_found in DB for item %s (id: %s)", item.Name, item.PosItemID)
 		}
 
@@ -546,7 +546,7 @@ func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID st
 		// Le PHP vérifie : if($data['item_name'] != $itm->name)
 		// Attention : mappedItem.ItemName est le nom dans TA base, item.Name est le nom envoyé par Deliveroo
 		if mappedItem.ItemName != item.Name {
-			go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_mismatched")
+			// go s.setSyncStatus(ctx, deliverooOrderID, "failed", "pos_item_id_mismatched")
 			return fmt.Errorf("pos_item_id_mismatched: expected '%s', got '%s'", mappedItem.ItemName, item.Name)
 		}
 	}
