@@ -636,6 +636,12 @@ type UpdatePasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
+type UpdateLocationRequest struct {
+	UserID string  `json:"user_id"`
+	Lat    float64 `json:"lat"`
+	Lng    float64 `json:"lng"`
+}
+
 const (
 	BrandUberEats   = "UBER_EATS"
 	BrandDeliveroo  = "DELIVEROO"

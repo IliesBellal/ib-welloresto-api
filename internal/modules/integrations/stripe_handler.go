@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/middleware"
@@ -18,8 +19,15 @@ func stripeError(err error) (int, string) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return http.StatusNotFound, "account_not_found"
 	}
-	if err.Error() == "already_verified" {
+
+	msg := err.Error()
+	switch {
+	case msg == "already_verified":
 		return http.StatusConflict, "already_verified"
+	case msg == "logo_required":
+		return http.StatusUnprocessableEntity, "logo_required"
+	case strings.HasPrefix(msg, "logo_download_failed"):
+		return http.StatusBadGateway, "logo_download_failed"
 	}
 
 	// Stripe API errors
@@ -126,5 +134,23 @@ func (h *Handler) GetStripeBalance(w http.ResponseWriter, r *http.Request) {
 			"available": balance.Available,
 			"pending":   balance.Pending,
 		},
+	})
+}
+
+// SyncStripeBranding handles POST /integrations/stripe/branding.
+// It downloads the merchant's ScanNOrder logo from R2, uploads it to Stripe Files,
+// and updates the connected account's branding (logo, icon, primary_color).
+func (h *Handler) SyncStripeBranding(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	result, err := h.svc.SyncStripeBranding(r.Context(), user.MerchantID)
+	if err != nil {
+		code, errCode := stripeError(err)
+		models.SendJSON(w, code, "integrations", "sync_stripe_branding", map[string]string{"error": errCode})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "sync_stripe_branding", map[string]interface{}{
+		"data": result,
 	})
 }

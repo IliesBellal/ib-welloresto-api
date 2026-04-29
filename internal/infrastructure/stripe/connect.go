@@ -1,6 +1,8 @@
 package stripeclient
 
 import (
+	"context"
+	"io"
 	"strings"
 
 	"github.com/stripe/stripe-go/v84"
@@ -132,6 +134,47 @@ func (s *StripeManager) GetConnectBalance(accountID string) (*BalanceInfo, error
 		})
 	}
 	return info, nil
+}
+
+// UploadBrandingFile uploads an image to Stripe Files with purpose business_logo.
+// The caller is responsible for closing the reader.
+// Returns the Stripe File ID to be used in UpdateAccountBranding.
+func (s *StripeManager) UploadBrandingFile(ctx context.Context, reader io.Reader, filename string) (string, error) {
+	params := &stripe.FileParams{
+		FileReader: reader,
+		Filename:   stripe.String(filename),
+		Purpose:    stripe.String(string(stripe.FilePurposeBusinessLogo)),
+	}
+	params.Context = ctx
+
+	f, err := s.client.Files.New(params)
+	if err != nil {
+		return "", err
+	}
+	return f.ID, nil
+}
+
+// UpdateAccountBranding updates the branding settings for a Stripe connected account.
+// logoFileID must be a Stripe File ID returned by UploadBrandingFile.
+// primaryColor must be a hex string (e.g. "#FF5733"); pass "" to leave the color unchanged.
+func (s *StripeManager) UpdateAccountBranding(ctx context.Context, accountID, logoFileID, primaryColor string) error {
+	branding := &stripe.AccountSettingsBrandingParams{
+		Logo: stripe.String(logoFileID),
+		Icon: stripe.String(logoFileID),
+	}
+	if primaryColor != "" {
+		branding.PrimaryColor = stripe.String(primaryColor)
+	}
+
+	params := &stripe.AccountParams{
+		Settings: &stripe.AccountSettingsParams{
+			Branding: branding,
+		},
+	}
+	params.Context = ctx
+
+	_, err := s.client.Accounts.Update(accountID, params)
+	return err
 }
 
 // connectAccountStatus maps a live stripe.Account to our status string.

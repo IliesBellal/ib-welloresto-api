@@ -19,6 +19,21 @@ func NewUserRepository(db *sql.DB) *UsersRepository {
 	return &UsersRepository{database: db}
 }
 
+func (r *UsersRepository) SetUserLocation(ctx context.Context, req models.UpdateLocationRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE user_status_view
+		SET lat = ?, lng = ?
+		WHERE user_id = ?
+	`, req.Lat, req.Lng, req.UserID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {
 	if token == "" {
 		return nil, nil

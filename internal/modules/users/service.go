@@ -29,6 +29,19 @@ func (s *UsersService) GetUserLocation(ctx context.Context, token, targetUserID 
 	return s.userRepo.GetUserLocation(ctx, user.MerchantID, targetUserID)
 }
 
+func (s *UsersService) SetUserLocation(ctx context.Context, token string, req models.UpdateLocationRequest) error {
+	// 1. Validate token
+	user, err := s.userRepo.GetUserByToken(ctx, token)
+	if err != nil || user == nil {
+		return errors.New("invalid token")
+	}
+
+	req.UserID = user.UserID
+
+	// 2. Retrieve location
+	return s.userRepo.SetUserLocation(ctx, req)
+}
+
 func HashPassword(password string) (string, error) {
 	if password == "" {
 		return "", models.ErrInvalidInput

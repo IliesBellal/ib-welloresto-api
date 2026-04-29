@@ -489,6 +489,41 @@ func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID st
 
 // ─── Stripe Connect ───────────────────────────────────────────────────────────
 
+// stripeBrandingData groups the data needed to sync branding to Stripe.
+type stripeBrandingData struct {
+	AccountID    string
+	LogoURL      sql.NullString
+	PrimaryColor string
+}
+
+// GetStripeBrandingData fetches the Stripe account ID, logo URL, and primary color
+// for a merchant in a single query. Returns sql.ErrNoRows when either the
+// stripe_accounts or scannorder_settings row is missing.
+func (r *Repository) GetStripeBrandingData(ctx context.Context, merchantID string) (*stripeBrandingData, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	const q = `
+		SELECT sa.account_id,
+		       snos.logo_url,
+		       COALESCE(mp.primary_color, '')
+		FROM   stripe_accounts sa
+		INNER  JOIN scannorder_settings snos ON snos.merchant_id = sa.merchant_id
+		INNER  JOIN merchant_parameters  mp  ON mp.merchant_id  = sa.merchant_id
+		WHERE  sa.merchant_id = ?
+		LIMIT  1`
+
+	var d stripeBrandingData
+	err := db.QueryRowContext(ctx, q, merchantID).Scan(
+		&d.AccountID,
+		&d.LogoURL,
+		&d.PrimaryColor,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // GetStripeAccountID returns the Stripe connected account ID for a merchant.
 // Returns ("", sql.ErrNoRows) when no stripe_accounts row exists.
 func (r *Repository) GetStripeAccountID(ctx context.Context, merchantID string) (string, error) {

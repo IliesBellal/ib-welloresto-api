@@ -397,6 +397,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
+		r.Patch("/location", usersH.SetUserLocation)
 		r.Patch("/{user_id}/settings", usersH.UpdateUserSettings)
 		r.Patch("/{user_id}/reset-password", usersH.UpdatePassword)
 	})
@@ -820,6 +821,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)
 			r.Post("/stripe/bank-account-link", integrationsHandler.CreateStripeBankAccountLink)
 			r.Get("/stripe/balance", integrationsHandler.GetStripeBalance)
+			r.Post("/stripe/branding", integrationsHandler.SyncStripeBranding)
 		})
 	})
 

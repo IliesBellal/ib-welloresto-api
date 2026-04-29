@@ -42,6 +42,30 @@ func (h *UsersHandler) GetUserLocation(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "user", "location", result)
 }
 
+func (h *UsersHandler) SetUserLocation(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "user", "location", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+
+	var req models.UpdateLocationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "user", "update_location", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	err := h.svc.SetUserLocation(ctx, token, req)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "location", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "user", "location", map[string]string{"status": "success"})
+}
+
 func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

@@ -4,9 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"net/http"
+	"path"
+	"strings"
+	"time"
 
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 )
+
+// logoDownloadClient is the HTTP client used to fetch logo images from R2.
+// A dedicated client with a bounded timeout prevents runaway goroutines under load.
+var logoDownloadClient = &http.Client{Timeout: 30 * time.Second}
 
 type Service struct {
 	repo          *Repository
@@ -121,4 +130,73 @@ func (s *Service) GetStripeBalance(ctx context.Context, merchantID string) (*str
 		return nil, err
 	}
 	return s.stripeManager.GetConnectBalance(accountID)
+}
+
+// SyncStripeBranding uploads the merchant's ScanNOrder logo to Stripe Files and updates
+// the connected account's branding (logo, icon, primary color).
+//
+// Returns errors:
+//   - "logo_required"        — no logo URL configured in scannorder_settings
+//   - "logo_download_failed" — the logo could not be fetched from storage
+//   - sql.ErrNoRows          — the merchant has no Stripe account or ScanNOrder settings
+//   - Stripe API errors      — forwarded as-is
+func (s *Service) SyncStripeBranding(ctx context.Context, merchantID string) (*StripeBrandingResult, error) {
+	data, err := s.repo.GetStripeBrandingData(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !data.LogoURL.Valid || data.LogoURL.String == "" {
+		return nil, errors.New("logo_required")
+	}
+
+	// Download logo from R2 using the request context so the download is
+	// cancelled automatically if the client disconnects.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, data.LogoURL.String, nil)
+	if err != nil {
+		return nil, fmt.Errorf("logo_download_failed: %w", err)
+	}
+	resp, err := logoDownloadClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logo_download_failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("logo_download_failed: unexpected status %d", resp.StatusCode)
+	}
+
+	filename := path.Base(data.LogoURL.String)
+	if filename == "" || filename == "." {
+		filename = "logo"
+	}
+
+	fileID, err := s.stripeManager.UploadBrandingFile(ctx, resp.Body, filename)
+	if err != nil {
+		return nil, err
+	}
+
+	primaryColor := normalizeHexColor(data.PrimaryColor)
+
+	if err := s.stripeManager.UpdateAccountBranding(ctx, data.AccountID, fileID, primaryColor); err != nil {
+		return nil, err
+	}
+
+	return &StripeBrandingResult{
+		LogoFileID:   fileID,
+		PrimaryColor: primaryColor,
+	}, nil
+}
+
+// normalizeHexColor ensures the color starts with '#'.
+// Returns "" for empty or non-hex strings to signal Stripe should not update the color.
+func normalizeHexColor(c string) string {
+	c = strings.TrimSpace(c)
+	if c == "" {
+		return ""
+	}
+	if !strings.HasPrefix(c, "#") {
+		c = "#" + c
+	}
+	return c
 }

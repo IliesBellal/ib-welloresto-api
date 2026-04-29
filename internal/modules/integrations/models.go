@@ -74,6 +74,12 @@ type UpdateIntegrationRequest struct {
 	AutoAcceptOrders bool `json:"auto_accept_orders"`
 }
 
+// StripeBrandingResult is the response for POST /integrations/stripe/branding.
+type StripeBrandingResult struct {
+	LogoFileID   string `json:"logo_file_id"`
+	PrimaryColor string `json:"primary_color"`
+}
+
 // UpdateScanNOrderRequest is the body for PATCH /integrations/scannorder.
 type UpdateScanNOrderRequest struct {
 	Active                *bool   `json:"active,omitempty"`
