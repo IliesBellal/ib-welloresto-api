@@ -227,7 +227,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		placeholders := make([]string, len(req.Channel))
 		for i, v := range req.Channel {
 			placeholders[i] = "?"
-			args = append(args, v)
+			args = append(args, strings.ToUpper(v))
 		}
 		where += fmt.Sprintf(" AND o.brand IN (%s) ", strings.Join(placeholders, ","))
 	}
@@ -236,7 +236,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		placeholders := make([]string, len(req.OrderType))
 		for i, v := range req.OrderType {
 			placeholders[i] = "?"
-			args = append(args, v)
+			args = append(args, strings.ToUpper(v))
 		}
 		where += fmt.Sprintf(" AND o.order_type IN (%s) ", strings.Join(placeholders, ","))
 	}
@@ -245,7 +245,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		placeholders := make([]string, len(req.Status))
 		for i, v := range req.Status {
 			placeholders[i] = "?"
-			args = append(args, v)
+			args = append(args, strings.ToUpper(v))
 		}
 		where += fmt.Sprintf(" AND o.brand_status IN (%s) ", strings.Join(placeholders, ","))
 	}

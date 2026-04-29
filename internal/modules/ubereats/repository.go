@@ -277,7 +277,7 @@ func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID st
 
 	query := `
 		UPDATE orders
-		SET brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'DELIVERED' ELSE 'CANCELED' END,
+		SET brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'CLOSED' ELSE 'CANCELED' END,
 		    state = 'CLOSED',
 		    last_update = UTC_TIMESTAMP
 		WHERE brand_order_id = ?`
