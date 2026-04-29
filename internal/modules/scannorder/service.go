@@ -130,7 +130,7 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 				Cash:   false,
 				Online: true,
 			},
-			AdvanceOrdersEnabled: row.EnableAdvanceOrders, // Ou row.EnableAdvanceOrders si tu l'as en base
+			AdvanceOrdersEnabled: row.EnableAdvanceOrders,
 		},
 	}
 	// Mapping des sous-structures refactorisées
