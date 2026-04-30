@@ -11,6 +11,8 @@ import (
 	"time"
 
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
+	deliverooModule "welloresto-api/internal/modules/deliveroo"
+	uberModule "welloresto-api/internal/modules/ubereats"
 )
 
 // logoDownloadClient is the HTTP client used to fetch logo images from R2.
@@ -18,17 +20,28 @@ import (
 var logoDownloadClient = &http.Client{Timeout: 30 * time.Second}
 
 type Service struct {
-	repo          *Repository
-	stripeManager *stripeclient.StripeManager
+	repo             *Repository
+	stripeManager    *stripeclient.StripeManager
+	uberService      *uberModule.UberEatsService
+	deliverooService *deliverooModule.DeliverooService
 	// Stripe Connect redirect URLs (loaded from config).
 	stripeReturnURL  string
 	stripeRefreshURL string
 }
 
-func NewService(db *sql.DB, stripeManager *stripeclient.StripeManager, stripeReturnURL, stripeRefreshURL string) *Service {
+func NewService(
+	db *sql.DB,
+	stripeManager *stripeclient.StripeManager,
+	uberService *uberModule.UberEatsService,
+	deliverooService *deliverooModule.DeliverooService,
+	stripeReturnURL,
+	stripeRefreshURL string,
+) *Service {
 	return &Service{
 		repo:             NewRepository(db),
 		stripeManager:    stripeManager,
+		uberService:      uberService,
+		deliverooService: deliverooService,
 		stripeReturnURL:  stripeReturnURL,
 		stripeRefreshURL: stripeRefreshURL,
 	}
@@ -54,16 +67,36 @@ func (s *Service) UpdateScanNOrderImageURL(ctx context.Context, merchantID, colu
 	return s.repo.UpdateScanNOrderImageURL(ctx, merchantID, column, publicURL)
 }
 
-func (s *Service) UpdateUberEatsSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
-	return s.repo.UpdateUberEatsSettings(ctx, merchantID, commissionRate, autoAccept)
+func (s *Service) UpdateUberEatsSettings(ctx context.Context, merchantID string, req *UpdateIntegrationRequest) error {
+	if req.PreparationTimeMinutes != nil {
+		if *req.PreparationTimeMinutes <= 0 {
+			return fmt.Errorf("preparation_time_minutes must be greater than 0")
+		}
+
+		if err := s.uberService.UpdateReadyForPickupTime(ctx, merchantID, *req.PreparationTimeMinutes, false); err != nil {
+			return fmt.Errorf("failed to update uber eats preparation time: %w", err)
+		}
+	}
+
+	return s.repo.UpdateUberEatsSettings(ctx, merchantID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
 }
 
 func (s *Service) DisableUberEats(ctx context.Context, merchantID string) error {
 	return s.repo.DisableUberEats(ctx, merchantID)
 }
 
-func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
-	return s.repo.UpdateDeliverooSettings(ctx, merchantID, commissionRate, autoAccept)
+func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID string, req *UpdateIntegrationRequest) error {
+	if req.PreparationTimeMinutes != nil {
+		if *req.PreparationTimeMinutes <= 0 {
+			return fmt.Errorf("preparation_time_minutes must be greater than 0")
+		}
+
+		if err := s.deliverooService.UpdatePreparationTime(ctx, merchantID, *req.PreparationTimeMinutes); err != nil {
+			return fmt.Errorf("failed to update deliveroo preparation time: %w", err)
+		}
+	}
+
+	return s.repo.UpdateDeliverooSettings(ctx, merchantID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
 }
 
 func (s *Service) DisableDeliveroo(ctx context.Context, merchantID string) error {
@@ -72,6 +105,61 @@ func (s *Service) DisableDeliveroo(ctx context.Context, merchantID string) error
 
 func (s *Service) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
 	return s.repo.UpdateScanNOrderSettings(ctx, merchantID, req)
+}
+
+func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID string, req *CloseTemporaryIntegrationsRequest) (time.Time, []string, error) {
+	if req.DurationMinutes <= 0 {
+		return time.Time{}, nil, fmt.Errorf("duration_minutes must be greater than 0")
+	}
+	if len(req.AffectedIntegrations) == 0 {
+		return time.Time{}, nil, fmt.Errorf("affected_integrations cannot be empty")
+	}
+
+	closedUntil := time.Now().UTC().Add(time.Duration(req.DurationMinutes) * time.Minute)
+	seen := make(map[string]struct{}, len(req.AffectedIntegrations))
+	processed := make([]string, 0, len(req.AffectedIntegrations))
+
+	for _, rawName := range req.AffectedIntegrations {
+		name := normalizeIntegrationName(rawName)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+
+		switch name {
+		case "uber_eats":
+			if err := s.uberService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
+				return time.Time{}, nil, fmt.Errorf("failed to close uber eats temporarily: %w", err)
+			}
+		case "deliveroo":
+			if err := s.deliverooService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
+				return time.Time{}, nil, fmt.Errorf("failed to close deliveroo temporarily: %w", err)
+			}
+		case "scannorder":
+			if err := s.repo.SetScanNOrderClosedUntil(ctx, merchantID, closedUntil); err != nil {
+				return time.Time{}, nil, fmt.Errorf("failed to close scannorder temporarily: %w", err)
+			}
+		default:
+			return time.Time{}, nil, fmt.Errorf("unsupported integration: %s", rawName)
+		}
+
+		processed = append(processed, name)
+	}
+
+	if len(processed) == 0 {
+		return time.Time{}, nil, fmt.Errorf("affected_integrations cannot be empty")
+	}
+
+	return closedUntil, processed, nil
+}
+
+func normalizeIntegrationName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.ReplaceAll(name, "-", "_")
+	return name
 }
 
 // ─── Stripe Connect ───────────────────────────────────────────────────────────

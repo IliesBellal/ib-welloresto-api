@@ -227,7 +227,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
-	integrationsService := integrationsModule.NewService(mysqlDB, stripeManager, cfg.Stripe.OnboardingReturnURL, cfg.Stripe.OnboardingRefreshURL)
+	integrationsService := integrationsModule.NewService(
+		mysqlDB,
+		stripeManager,
+		uberService,
+		deliverooService,
+		cfg.Stripe.OnboardingReturnURL,
+		cfg.Stripe.OnboardingRefreshURL,
+	)
 	integrationsHandler := integrationsModule.NewHandler(integrationsService, r2Client)
 
 	// 3. Initialiser le StripeWebhookService Stripe
@@ -822,6 +829,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
 			r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
 			r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
+			r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
 
 			// ---- Stripe Connect ----
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)

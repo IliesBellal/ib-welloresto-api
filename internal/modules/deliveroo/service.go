@@ -234,6 +234,27 @@ func (s *DeliverooService) ToggleItemAvailability(ctx context.Context, merchantI
 	return s.client.UpdateUnavailabilities(ctx, brandID, defaultDeliverooMenuID, siteID, payload)
 }
 
+// UpdatePreparationTime updates the site preparation time on Deliveroo.
+func (s *DeliverooService) UpdatePreparationTime(ctx context.Context, merchantID string, preparationTimeMinutes int) error {
+	siteID, err := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+
+	return s.client.UpdateSitePreparationTime(ctx, siteID, preparationTimeMinutes)
+}
+
+// CloseStoreTemporary temporarily closes the Deliveroo site for a fixed duration.
+func (s *DeliverooService) CloseStoreTemporary(ctx context.Context, merchantID string, durationMinutes int) error {
+	siteID, err := s.repo.GetSiteIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+
+	offlineUntil := time.Now().UTC().Add(time.Duration(durationMinutes) * time.Minute)
+	return s.client.CloseSiteTemporary(ctx, siteID, offlineUntil)
+}
+
 // ValidateAndSyncBrandID exécute le scénario de validation du Brand ID
 // Il récupère le site_id en base, appelle Deliveroo, et met à jour le brand_id.
 func (s *DeliverooService) ValidateAndSyncBrandID(ctx context.Context, merchantID string) (string, error) {

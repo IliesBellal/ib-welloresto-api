@@ -164,7 +164,7 @@ func (h *Handler) UpdateUberEats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdateUberEatsSettings(r.Context(), user.MerchantID, req.CommissionRate, req.AutoAcceptOrders); err != nil {
+	if err := h.svc.UpdateUberEatsSettings(r.Context(), user.MerchantID, &req); err != nil {
 		models.SendErrorJSON(w, "integrations", "update_uber_eats", err)
 		return
 	}
@@ -200,7 +200,7 @@ func (h *Handler) UpdateDeliveroo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdateDeliverooSettings(r.Context(), user.MerchantID, req.CommissionRate, req.AutoAcceptOrders); err != nil {
+	if err := h.svc.UpdateDeliverooSettings(r.Context(), user.MerchantID, &req); err != nil {
 		models.SendErrorJSON(w, "integrations", "update_deliveroo", err)
 		return
 	}
@@ -236,6 +236,29 @@ func (h *Handler) UpdateScanNOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "integrations", "update_scannorder", IntegrationData{Integration: integration})
+}
+
+// CloseTemporaryGlobal handles PATCH /integrations/global/close-temporary
+func (h *Handler) CloseTemporaryGlobal(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	var req CloseTemporaryIntegrationsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "integrations", "close_temporary_global", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	closedUntil, affected, err := h.svc.CloseTemporaryIntegrations(r.Context(), user.MerchantID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "close_temporary_global", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "close_temporary_global", CloseTemporaryIntegrationsResponse{
+		Status:               "success",
+		ClosedUntil:          closedUntil,
+		AffectedIntegrations: affected,
+	})
 }
 
 // DisableDeliveroo handles PATCH /integrations/deliveroo/disable

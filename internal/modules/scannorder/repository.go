@@ -276,6 +276,7 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = mp.merchant_id
 	WHERE mp.is_open = true
 	AND snos.activated = true
+	AND (snos.closed_until IS NULL OR snos.closed_until <= UTC_TIMESTAMP())
 	AND mp.merchant_id = ?
 	LIMIT 1`
 

@@ -12,24 +12,26 @@ type IntegrationKPIs struct {
 
 // UberEatsIntegration is the response payload for GET /integrations/uber-eats.
 type UberEatsIntegration struct {
-	Platform         string          `json:"platform"`
-	Active           bool            `json:"active"`
-	CommissionRate   int             `json:"commission_rate"`
-	AutoAcceptOrders bool            `json:"auto_accept_orders"`
-	LastSync         *time.Time      `json:"last_sync"`
-	SyncedItems      int             `json:"synced_items"`
-	KPIs             IntegrationKPIs `json:"kpis"`
+	Platform               string          `json:"platform"`
+	Active                 bool            `json:"active"`
+	CommissionRate         int             `json:"commission_rate"`
+	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
+	PreparationTimeMinutes int             `json:"preparation_time_minutes"`
+	LastSync               *time.Time      `json:"last_sync"`
+	SyncedItems            int             `json:"synced_items"`
+	KPIs                   IntegrationKPIs `json:"kpis"`
 }
 
 // DeliverooIntegration is the response payload for GET /integrations/deliveroo.
 type DeliverooIntegration struct {
-	Platform         string          `json:"platform"`
-	Active           bool            `json:"active"`
-	CommissionRate   int             `json:"commission_rate"`
-	AutoAcceptOrders bool            `json:"auto_accept_orders"`
-	LastSync         *time.Time      `json:"last_sync"`
-	SyncedItems      int             `json:"synced_items"`
-	KPIs             IntegrationKPIs `json:"kpis"`
+	Platform               string          `json:"platform"`
+	Active                 bool            `json:"active"`
+	CommissionRate         int             `json:"commission_rate"`
+	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
+	PreparationTimeMinutes int             `json:"preparation_time_minutes"`
+	LastSync               *time.Time      `json:"last_sync"`
+	SyncedItems            int             `json:"synced_items"`
+	KPIs                   IntegrationKPIs `json:"kpis"`
 }
 
 // ScanNOrderIntegration is the response payload for GET /integrations/scannorder.
@@ -70,8 +72,22 @@ type IntegrationData struct {
 
 // UpdateIntegrationRequest is the body for PATCH /integrations/{platform}.
 type UpdateIntegrationRequest struct {
-	CommissionRate   int  `json:"commission_rate"`
-	AutoAcceptOrders bool `json:"auto_accept_orders"`
+	CommissionRate         *int  `json:"commission_rate,omitempty"`
+	AutoAcceptOrders       *bool `json:"auto_accept_orders,omitempty"`
+	PreparationTimeMinutes *int  `json:"preparation_time_minutes,omitempty"`
+}
+
+// CloseTemporaryIntegrationsRequest is the body for PATCH /integrations/global/close-temporary.
+type CloseTemporaryIntegrationsRequest struct {
+	DurationMinutes      int      `json:"duration_minutes"`
+	AffectedIntegrations []string `json:"affected_integrations"`
+}
+
+// CloseTemporaryIntegrationsResponse is the response for temporary global closure.
+type CloseTemporaryIntegrationsResponse struct {
+	Status               string    `json:"status"`
+	ClosedUntil          time.Time `json:"closed_until"`
+	AffectedIntegrations []string  `json:"affected_integrations"`
 }
 
 // StripeBrandingResult is the response for POST /integrations/stripe/branding.

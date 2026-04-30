@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -29,6 +30,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 			iue.enabled,
 			iue.commission_rate,
 			iue.auto_accept_orders,
+			COALESCE(iue.estimated_preparation_time, 0) AS preparation_time_minutes,
 			iue.last_sync,
 			(
 				SELECT COUNT(*)
@@ -56,13 +58,14 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		LIMIT  1`
 
 	var (
-		enabled        bool
-		commissionRate int
-		autoAccept     bool
-		lastSync       sql.NullTime
-		syncedItems    int
-		revenue        int
-		ordersCount    int
+		enabled                bool
+		commissionRate         int
+		autoAccept             bool
+		preparationTimeMinutes int
+		lastSync               sql.NullTime
+		syncedItems            int
+		revenue                int
+		ordersCount            int
 	)
 
 	err := db.QueryRowContext(ctx, q,
@@ -71,7 +74,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		merchantID, // orders_count subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&enabled, &commissionRate, &autoAccept, &lastSync,
+		&enabled, &commissionRate, &autoAccept, &preparationTimeMinutes, &lastSync,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -87,11 +90,12 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 	}
 
 	result := &UberEatsIntegration{
-		Platform:         "uber_eats",
-		Active:           enabled,
-		CommissionRate:   commissionRate,
-		AutoAcceptOrders: autoAccept,
-		SyncedItems:      syncedItems,
+		Platform:               "uber_eats",
+		Active:                 enabled,
+		CommissionRate:         commissionRate,
+		AutoAcceptOrders:       autoAccept,
+		PreparationTimeMinutes: preparationTimeMinutes,
+		SyncedItems:            syncedItems,
 		KPIs: IntegrationKPIs{
 			Revenue:   revenue,
 			Orders:    ordersCount,
@@ -116,6 +120,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 			ind.enabled,
 			ind.commission_rate,
 			ind.auto_accept_orders,
+			COALESCE(ind.preparation_time_minutes, 0) AS preparation_time_minutes,
 			ind.last_sync,
 			(
 				SELECT COUNT(*)
@@ -143,13 +148,14 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 		LIMIT  1`
 
 	var (
-		active         bool
-		commissionRate int
-		autoAccept     bool
-		lastSync       sql.NullTime
-		syncedItems    int
-		revenue        int
-		ordersCount    int
+		active                 bool
+		commissionRate         int
+		autoAccept             bool
+		preparationTimeMinutes int
+		lastSync               sql.NullTime
+		syncedItems            int
+		revenue                int
+		ordersCount            int
 	)
 
 	err := db.QueryRowContext(ctx, q,
@@ -158,7 +164,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 		merchantID, // orders_count subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&active, &commissionRate, &autoAccept, &lastSync,
+		&active, &commissionRate, &autoAccept, &preparationTimeMinutes, &lastSync,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -174,11 +180,12 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 	}
 
 	result := &DeliverooIntegration{
-		Platform:         "deliveroo",
-		Active:           active,
-		CommissionRate:   commissionRate,
-		AutoAcceptOrders: autoAccept,
-		SyncedItems:      syncedItems,
+		Platform:               "deliveroo",
+		Active:                 active,
+		CommissionRate:         commissionRate,
+		AutoAcceptOrders:       autoAccept,
+		PreparationTimeMinutes: preparationTimeMinutes,
+		SyncedItems:            syncedItems,
 		KPIs: IntegrationKPIs{
 			Revenue:   revenue,
 			Orders:    ordersCount,
@@ -361,16 +368,35 @@ func (r *Repository) UpdateScanNOrderImageURL(ctx context.Context, merchantID, c
 }
 
 // UpdateUberEatsSettings updates editable settings for the Uber Eats integration.
-func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
+func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	const q = `
-		UPDATE integration_uber_eats
-		SET    commission_rate    = ?,
-		       auto_accept_orders = ?
-		WHERE  merchant_id = ?`
+	setClauses := []string{}
+	args := []interface{}{}
 
-	_, err := db.ExecContext(ctx, q, commissionRate, autoAccept, merchantID)
+	if commissionRate != nil {
+		setClauses = append(setClauses, "commission_rate = ?")
+		args = append(args, *commissionRate)
+	}
+	if autoAccept != nil {
+		setClauses = append(setClauses, "auto_accept_orders = ?")
+		args = append(args, *autoAccept)
+	}
+	if preparationTimeMinutes != nil {
+		setClauses = append(setClauses, "estimated_preparation_time = ?")
+		args = append(args, *preparationTimeMinutes)
+		setClauses = append(setClauses, "last_estimated_preparation_time = ?")
+		args = append(args, *preparationTimeMinutes)
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	q := "UPDATE integration_uber_eats SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
+	args = append(args, merchantID)
+
+	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
@@ -385,16 +411,33 @@ func (r *Repository) DisableUberEats(ctx context.Context, merchantID string) err
 }
 
 // UpdateDeliverooSettings updates editable settings for the Deliveroo integration.
-func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID string, commissionRate int, autoAccept bool) error {
+func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	const q = `
-		UPDATE integration_deliveroo
-		SET    commission_rate    = ?,
-		       auto_accept_orders = ?
-		WHERE  merchant_id = ?`
+	setClauses := []string{}
+	args := []interface{}{}
 
-	_, err := db.ExecContext(ctx, q, commissionRate, autoAccept, merchantID)
+	if commissionRate != nil {
+		setClauses = append(setClauses, "commission_rate = ?")
+		args = append(args, *commissionRate)
+	}
+	if autoAccept != nil {
+		setClauses = append(setClauses, "auto_accept_orders = ?")
+		args = append(args, *autoAccept)
+	}
+	if preparationTimeMinutes != nil {
+		setClauses = append(setClauses, "preparation_time_minutes = ?")
+		args = append(args, *preparationTimeMinutes)
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	q := "UPDATE integration_deliveroo SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
+	args = append(args, merchantID)
+
+	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
@@ -405,6 +448,16 @@ func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) er
 	const q = `UPDATE integration_deliveroo SET enabled = 0 WHERE merchant_id = ?`
 
 	_, err := db.ExecContext(ctx, q, merchantID)
+	return err
+}
+
+// SetScanNOrderClosedUntil sets the temporary closure timestamp for ScanNOrder.
+func (r *Repository) SetScanNOrderClosedUntil(ctx context.Context, merchantID string, closedUntil time.Time) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	const q = `UPDATE scannorder_settings SET closed_until = ? WHERE merchant_id = ?`
+
+	_, err := db.ExecContext(ctx, q, closedUntil.UTC(), merchantID)
 	return err
 }
 

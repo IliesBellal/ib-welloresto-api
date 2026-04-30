@@ -232,6 +232,45 @@ func (c *DeliverooClient) ReplaceUnavailabilities(ctx context.Context, brandID, 
 	return nil
 }
 
+// UpdateSitePreparationTime updates preparation_time_minutes at site level.
+func (c *DeliverooClient) UpdateSitePreparationTime(ctx context.Context, siteID string, preparationTimeMinutes int) error {
+	url := fmt.Sprintf("%s/order/v1/sites/%s", c.config.BaseURL, url.PathEscape(siteID))
+	payload := map[string]int{"preparation_time_minutes": preparationTimeMinutes}
+
+	resp, err := c.doRequest(ctx, "PATCH", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+
+	return nil
+}
+
+// CloseSiteTemporary closes the site until the provided timestamp.
+func (c *DeliverooClient) CloseSiteTemporary(ctx context.Context, siteID string, offlineUntil time.Time) error {
+	url := fmt.Sprintf("%s/order/v1/sites/%s", c.config.BaseURL, url.PathEscape(siteID))
+	payload := map[string]interface{}{
+		"is_open":       false,
+		"offline_until": offlineUntil.UTC().Format(time.RFC3339),
+	}
+
+	resp, err := c.doRequest(ctx, "PATCH", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+
+	return nil
+}
+
 // ConfirmOrder correspond à $this->updateOrderStatus(..., ["status" => "confirmed"])
 func (c *DeliverooClient) ConfirmOrder(ctx context.Context, brandOrderID string) error {
 	//url := fmt.Sprintf("https://api-sandbox.developers.deliveroo.com/order/v1/orders/%s", brandOrderID)
