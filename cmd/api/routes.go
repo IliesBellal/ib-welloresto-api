@@ -9,10 +9,12 @@ import (
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
+	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
 	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
+	tasksPkg "welloresto-api/internal/tasks"
 	"welloresto-api/internal/webhook/deliveroo_menu"
 	"welloresto-api/internal/webhook/deliveroo_orders"
 
@@ -50,6 +52,13 @@ import (
 
 	redisclient "welloresto-api/internal/infrastructure/redis"
 	auditModule "welloresto-api/internal/modules/audit"
+	translationModule "welloresto-api/internal/modules/translation"
+	upsellModule "welloresto-api/internal/modules/upsell"
+
+	// ---- AI LAYER ----
+	"welloresto-api/internal/ai"
+	aicache "welloresto-api/internal/ai/cache"
+	"welloresto-api/internal/ai/providers"
 
 	// ---- WEBHOOKS ----
 	webhookstripe "welloresto-api/internal/webhook/stripe"
@@ -77,6 +86,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		log.Error("Erreur lors de l'initialisation du client Redis", zap.Error(err))
 	} else {
 		log.Info("Redis connecté avec succès")
+	}
+
+	// ============================
+	// AI LAYER
+	// ============================
+	aiCache := aicache.New(redisClient)
+
+	aiRegistry, err := buildAIRegistry(cfg.AI)
+	if err != nil {
+		log.Error("Erreur lors de l'initialisation du registre AI", zap.Error(err))
+	} else {
+		log.Info("AI registry initialisé avec succès")
 	}
 
 	// ---- R2 (Cloudflare Storage) ----
@@ -194,6 +215,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
 
+	// ---- Translation ----
+	translationRepo := translationModule.NewRepository(mysqlDB)
+	translationService := translationModule.NewService(translationRepo, aiRegistry, aiCache)
+
+	// ---- Upsell ----
+	upsellRepo := upsellModule.NewRepository(mysqlDB)
+	upsellTracker := upsellModule.NewTracker(upsellRepo, log)
+	upsellService := upsellModule.NewService(upsellRepo, menuRepoLegacy, aiRegistry, aiCache, log)
+
 	// ---- Receipt ----
 	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
 	receiptService := receipt.NewReceiptService(receiptRepo)
@@ -219,6 +249,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		receiptService,
 		mysqlDB,
 		stocksRepo,
+		upsellTracker,
 	)
 
 	// ---- ScanNOrder ----
@@ -324,12 +355,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	authH := authModule.NewAuthHandler(authService)
 	posH := posModule.NewPOSHandler(posService)
 	statsH := statsModule.NewStatsHandler(statsService)
-	menuH := menuModule.NewMenuHandler(menuService, r2Client)
+	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	discountsH := discountsModule.NewHandler(discountsService)
 	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
-	ordersH := ordersModule.NewOrdersHandler(ordersService)
+	ordersH := ordersModule.NewOrdersHandler(ordersService, upsellService)
 	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
 	locationsH := locModule.NewLocationsHandler(locationsService)
@@ -341,11 +372,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	servicesH := servicesModule.NewServicesHandler(servicesService)
 	notificationH := notificationModule.NewNotificationHandler(notificationService)
 
+	// Option A: instantiate a single TasksManager in SetupRoutes and share it with cron wiring and admin manual trigger.
+	taskManager := tasksPkg.NewTasksManager(mysqlDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, log)
+	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
+
 	// ============================================================
 	//                      CRON JOBS
 	// ============================================================
 
-	SetupTasks(log, &mailService, ordersLifeCycleService, stripeManager, bookingsService, mysqlDB)
+	SetupTasks(log, taskManager)
 
 	// ============================================================
 	//                      ROUTING
@@ -510,6 +545,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/", menuH.GetMenu)
+		r.Get("/translation-langs", menuH.GetTranslationLanguages)
+		r.Patch("/translation-langs", menuH.PatchTranslationLanguages)
 
 		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
@@ -673,6 +710,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		// --- 1. ENDPOINTS DE CONSULTATION (Libres) ---
 		// On laisse passer les GET et les POST qui servent uniquement à filtrer/lister
 		r.Post("/pricing", ordersH.GetPricing)
+		r.Post("/upsell", ordersH.GetUpsell)
 		r.Post("/list", ordersH.GetOrders)
 		r.Get("/pending", ordersH.GetPendingOrders)
 		r.Post("/history", ordersH.GetHistory)
@@ -706,6 +744,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
 			})
 		})
+	})
+
+	// TODO(@user): protéger cette route avec un middleware admin dédié quand il sera disponible. Pour l'instant elle utilise authMiddleware seul.
+	r.Route("/admin/upsell", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Post("/recompute-patterns", adminUpsellH.RecomputePatterns)
 	})
 
 	// --- DELIVERY SESSIONS ---
@@ -851,4 +895,28 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 
 	return r
+}
+
+// buildAIRegistry instantiates all declared LLM providers and wires them
+// into a Registry. Add new providers here as they become available.
+func buildAIRegistry(cfg ai.AIConfig) (*ai.Registry, error) {
+	providerMap := make(map[string]ai.LLMProvider)
+
+	for name, provCfg := range cfg.Providers {
+		switch name {
+		case "anthropic":
+			// Model is resolved per-task; use an empty string so the provider falls
+			// back to its built-in default (claude-haiku-4-5).
+			providerMap[name] = providers.NewAnthropicProvider(provCfg, "")
+		case "openai":
+			// Model is resolved per-task; use an empty string so the provider falls
+			// back to its built-in default (gpt-4o-mini).
+			providerMap[name] = providers.NewOpenAIProvider(provCfg, "")
+		default:
+			// Unknown provider names are silently skipped — Validate() would have
+			// already caught any task referencing an unknown provider.
+		}
+	}
+
+	return ai.NewRegistry(cfg, providerMap)
 }

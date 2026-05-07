@@ -2,11 +2,12 @@ package models
 
 // Requête principale envoyée par le POS
 type RequestObject struct {
-	MerchantID  string       `json:"merchant_id"`
-	DeviceID    *string      `json:"device_id"`
-	MerchantLat *float64     `json:"merchant_lat"`
-	MerchantLng *float64     `json:"merchant_lng"`
-	Order       OrderRequest `json:"order"`
+	MerchantID         string       `json:"merchant_id"`
+	DeviceID           *string      `json:"device_id"`
+	MerchantLat        *float64     `json:"merchant_lat"`
+	MerchantLng        *float64     `json:"merchant_lng"`
+	UpsellSuggestionID *string      `json:"upsell_suggestion_id,omitempty"`
+	Order              OrderRequest `json:"order"`
 }
 
 type OrderRequest struct {

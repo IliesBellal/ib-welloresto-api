@@ -1,22 +1,16 @@
 package main
 
 import (
-	"database/sql"
-	"welloresto-api/internal/infrastructure/mailer"
-	stripeclient "welloresto-api/internal/infrastructure/stripe"
-	"welloresto-api/internal/modules/bookings"
-	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/tasks"
 
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
-func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *order_life_cycle.OrdersLifeCycleService, stripeService *stripeclient.StripeManager, bookingService *bookings.BookingsService, mysqlDB *sql.DB) {
-
-	// 2. Initialisation du Gestionnaire de Tâches
-	taskManager := tasks.NewTasksManager(mysqlDB, emailService, orderService, stripeService, bookingService)
-
+func SetupTasks(
+	log *zap.Logger,
+	taskManager *tasks.TasksManager,
+) {
 	// 3. Configuration du Planificateur (Cron)
 	c := cron.New()
 
@@ -41,6 +35,16 @@ func SetupTasks(log *zap.Logger, emailService *mailer.Service, orderService *ord
 	// Toutes les heures
 	c.AddFunc("@monthly", func() {
 		taskManager.UpdatePopularProducts()
+	})
+
+	// Chaque nuit à 3h : recalcul des patterns market basket
+	c.AddFunc("0 3 * * *", func() {
+		taskManager.RecomputeUpsellPatterns()
+	})
+
+	// 1er du mois à 4h : purge des anciennes suggestions
+	c.AddFunc("0 4 1 * *", func() {
+		taskManager.CleanupOldUpsellSuggestions()
 	})
 
 	// Démarrage du Cron en arrière-plan

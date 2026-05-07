@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -12,19 +13,33 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	translationModule "welloresto-api/internal/modules/translation"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
+// validLangCode accepts only lowercase ASCII letters, 2–5 characters (e.g. "en", "fr", "zh-hans" excluded intentionally).
+var validLangCode = regexp.MustCompile(`^[a-z]{2,5}$`)
+
 type MenuHandler struct {
-	service  *MenuService
-	r2Client *r2.Client
+	service            *MenuService
+	r2Client           *r2.Client
+	translationRepo    *translationModule.Repository
+	translationService *translationModule.Service
 }
 
-func NewMenuHandler(s *MenuService, r2Client *r2.Client) *MenuHandler {
+type TranslationLanguagePatchPayload struct {
+	LangCode string `json:"lang_code"`
+	Enabled  bool   `json:"enabled"`
+}
+
+func NewMenuHandler(s *MenuService, r2Client *r2.Client, translationRepo *translationModule.Repository, translationService *translationModule.Service) *MenuHandler {
 	return &MenuHandler{
-		service:  s,
-		r2Client: r2Client,
+		service:            s,
+		r2Client:           r2Client,
+		translationRepo:    translationRepo,
+		translationService: translationService,
 	}
 }
 
@@ -61,7 +76,110 @@ func (h *MenuHandler) GetMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ---- TRANSLATION (optional enhancement — never blocks the response) ----
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang != "" && validLangCode.MatchString(lang) && h.translationRepo != nil && h.translationService != nil {
+		user := middleware.GetUser(r)
+		if user != nil {
+			enabled, checkErr := h.translationRepo.IsLanguageEnabledForMerchant(ctx, user.MerchantID, lang)
+			if checkErr != nil {
+				log.Warn("translation language check failed",
+					zap.String("merchant_id", user.MerchantID),
+					zap.String("lang", lang),
+					zap.Error(checkErr),
+				)
+			} else if enabled {
+				translated, translateErr := h.translationService.TranslateMenu(ctx, user.MerchantID, lang, *menu)
+				if translateErr != nil {
+					log.Warn("translation failed, serving original menu",
+						zap.String("merchant_id", user.MerchantID),
+						zap.String("lang", lang),
+						zap.Error(translateErr),
+					)
+				} else {
+					models.SendJSON(w, http.StatusOK, "menu", "get", &translated)
+					return
+				}
+			}
+		}
+	}
+	// ---- END TRANSLATION ----
+
 	models.SendJSON(w, http.StatusOK, "menu", "get", menu)
+}
+
+func (h *MenuHandler) GetTranslationLanguages(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "get_translation_langs", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	if h.translationService == nil {
+		models.SendJSON(w, http.StatusOK, "menu", "get_translation_langs", []translationModule.MerchantLanguage{})
+		return
+	}
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "menu", "get_translation_langs", models.ErrUnauthorized)
+		return
+	}
+
+	langs, err := h.translationService.ListMerchantLanguages(ctx, user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "menu", "get_translation_langs", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "get_translation_langs", langs)
+}
+
+func (h *MenuHandler) PatchTranslationLanguages(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "patch_translation_langs", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if h.translationService == nil {
+		models.SendErrorJSON(w, "menu", "patch_translation_langs", models.ErrInternalServerError)
+		return
+	}
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "menu", "patch_translation_langs", models.ErrUnauthorized)
+		return
+	}
+
+	var payload TranslationLanguagePatchPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "patch_translation_langs", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	langCode := strings.ToLower(strings.TrimSpace(payload.LangCode))
+	if !validLangCode.MatchString(langCode) {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "patch_translation_langs", map[string]string{"error": "invalid_lang_code"})
+		return
+	}
+
+	if err := h.translationService.SetMerchantLanguage(ctx, user.MerchantID, langCode, payload.Enabled); err != nil {
+		log.Error("[ERROR] PatchTranslationLanguages error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "patch_translation_langs", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "patch_translation_langs", map[string]interface{}{
+		"status":    "success",
+		"lang_code": langCode,
+		"enabled":   payload.Enabled,
+	})
 }
 
 func (h *MenuHandler) GetAllProducts(w http.ResponseWriter, r *http.Request) {

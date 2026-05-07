@@ -134,6 +134,8 @@ var (
 
 	ErrOTPWaitTime = errors.New("otp_wait_time")
 
+	ErrTranslationLanguagesLimitReached = errors.New("translation_languages_limit_reached")
+
 	ErrRedisNotAvailable = errors.New("not_available")
 )
 
@@ -164,6 +166,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "otp_wait_time"
 		errorMsg = "The OTP code was provided too recently. Please try again later."
+
+	case errors.Is(err, ErrTranslationLanguagesLimitReached):
+		status = http.StatusBadRequest
+		errorStatus = "translation_languages_limit_reached"
+		errorMsg = "Maximum of 4 translation languages per merchant reached"
 
 	case errors.Is(err, ErrOTPMismatch):
 		status = http.StatusUnauthorized

@@ -2,10 +2,14 @@ package tasks
 
 import (
 	"database/sql"
+	aicache "welloresto-api/internal/ai/cache"
 	"welloresto-api/internal/infrastructure/mailer"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/bookings"
 	"welloresto-api/internal/modules/order_life_cycle"
+	upsellModule "welloresto-api/internal/modules/upsell"
+
+	"go.uber.org/zap"
 )
 
 // TasksManager centralise toutes les dépendances nécessaires aux tâches CRON
@@ -15,6 +19,9 @@ type TasksManager struct {
 	OrderService   *order_life_cycle.OrdersLifeCycleService
 	StripeService  *stripeclient.StripeManager
 	BookingService *bookings.BookingsService
+	AICache        *aicache.Cache
+	UpsellRepo     *upsellModule.Repository
+	Logger         *zap.Logger
 }
 
 // NewTasksManager crée une nouvelle instance du gestionnaire avec les dépendances injectées
@@ -24,6 +31,9 @@ func NewTasksManager(
 	order *order_life_cycle.OrdersLifeCycleService,
 	stripe *stripeclient.StripeManager,
 	booking *bookings.BookingsService,
+	aiCache *aicache.Cache,
+	upsellRepo *upsellModule.Repository,
+	logger *zap.Logger,
 ) *TasksManager {
 	return &TasksManager{
 		DB:             db,
@@ -31,5 +41,8 @@ func NewTasksManager(
 		OrderService:   order,
 		StripeService:  stripe,
 		BookingService: booking,
+		AICache:        aiCache,
+		UpsellRepo:     upsellRepo,
+		Logger:         logger,
 	}
 }

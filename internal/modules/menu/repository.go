@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -20,6 +21,85 @@ type MenuRepository struct {
 
 func NewMenuRepository(db *sql.DB) *MenuRepository {
 	return &MenuRepository{database: db}
+}
+
+// AvailableProduct is a lightweight product record used for upsell candidate selection.
+// It contains only the fields needed to build a SuggestedItem and to display the
+// suggestion in the front-end — no TVA, no configuration tree.
+type AvailableProduct struct {
+	ProductID    string
+	Name         string
+	Price        int64
+	CategoryID   string
+	CategoryName string
+	ImageURL     *string
+	IsPopular    bool
+}
+
+// ListAvailableProductsForUpsell returns all orderable products for a merchant.
+// Filters applied:
+//   - p.available = 1 AND p.enabled = 1
+//   - p.status IN ('available', '1')    (consistent with scannorder)
+//   - root products only (no sub-products: by_product_of IS NULL)
+//
+// Ordered by category then name for deterministic slicing.
+func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, merchantID string) ([]AvailableProduct, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			p.product_id,
+			p.name,
+			p.price,
+			COALESCE(p.category, '')   AS category_id,
+			COALESCE(pc.categ_name, '') AS category_name,
+			p.image_url,
+			COALESCE(p.is_popular, 0)  AS is_popular
+		FROM products p
+		LEFT JOIN productcateg pc
+			ON pc.merchant_categ_id = p.category
+			AND pc.merchant_id = p.merchant_id
+		WHERE p.merchant_id = ?
+		  AND p.available = 1
+		  AND p.enabled   = 1
+		  AND p.status    IN ('available', '1')
+		  AND (p.by_product_of IS NULL OR p.by_product_of = '')
+		ORDER BY category_id, p.name ASC
+	`, merchantID)
+	if err != nil {
+		log.Error("upsell: ListAvailableProductsForUpsell query failed: " + err.Error())
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]AvailableProduct, 0)
+	for rows.Next() {
+		var ap AvailableProduct
+		var imageURL sql.NullString
+		var isPopular sql.NullBool
+		if err := rows.Scan(
+			&ap.ProductID,
+			&ap.Name,
+			&ap.Price,
+			&ap.CategoryID,
+			&ap.CategoryName,
+			&imageURL,
+			&isPopular,
+		); err != nil {
+			log.Error("upsell: ListAvailableProductsForUpsell scan failed: " + err.Error())
+			return nil, err
+		}
+		if imageURL.Valid {
+			ap.ImageURL = &imageURL.String
+		}
+		if isPopular.Valid {
+			ap.IsPopular = isPopular.Bool
+		}
+		result = append(result, ap)
+	}
+
+	return result, rows.Err()
 }
 
 func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID string) ([]Unit, error) {

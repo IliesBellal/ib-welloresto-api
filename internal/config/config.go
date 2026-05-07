@@ -3,6 +3,8 @@ package config
 import (
 	"log"
 	"os"
+
+	"welloresto-api/internal/ai"
 )
 
 type AppConfig struct {
@@ -15,6 +17,7 @@ type AppConfig struct {
 	Stripe     StripeConfig
 	Brevo      BrevoConfig
 	R2         R2Config
+	AI         ai.AIConfig
 }
 
 type App struct {
@@ -34,6 +37,7 @@ func Load() *AppConfig {
 		Stripe:     loadStripeConfig(),
 		Brevo:      loadBrevoConfig(),
 		R2:         loadR2Config(),
+		AI:         loadAIConfig(),
 	}
 
 	cfg.validate()
@@ -46,6 +50,9 @@ func (c *AppConfig) validate() {
 	}
 	if c.Google.APIKey == "" {
 		log.Fatal("GOOGLE_API_KEY is not set")
+	}
+	if err := c.AI.Validate(); err != nil {
+		log.Fatal(err.Error())
 	}
 }
 

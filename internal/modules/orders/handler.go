@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/upsell"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -13,11 +15,13 @@ import (
 // OrdersHandler handles orders endpoints
 type OrdersHandler struct {
 	ordersService *OrdersService
+	upsellService *upsell.Service
 }
 
-func NewOrdersHandler(ordersService *OrdersService) *OrdersHandler {
+func NewOrdersHandler(ordersService *OrdersService, upsellService *upsell.Service) *OrdersHandler {
 	return &OrdersHandler{
 		ordersService: ordersService,
+		upsellService: upsellService,
 	}
 }
 
@@ -118,4 +122,52 @@ func (h *OrdersHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "orders", "get_pricing", result)
+}
+
+// GetUpsell handles POST /orders/upsell.
+func (h *OrdersHandler) GetUpsell(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req models.PricingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error("GetUpsell bad request: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "orders", "get_upsell", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		models.SendJSON(w, http.StatusUnauthorized, "orders", "get_upsell", map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	if req.Order == nil || len(req.Order.Products) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "orders", "get_upsell", map[string]string{"error": "empty_cart"})
+		return
+	}
+
+	cartProducts := make([]models.ProductEntry, 0, len(req.Order.Products))
+	for _, p := range req.Order.Products {
+		qty := p.Quantity
+		cartProducts = append(cartProducts, models.ProductEntry{
+			ProductID: p.ProductID,
+			Name:      p.ProductName,
+			Price:     int64(p.Price),
+			Quantity:  &qty,
+		})
+	}
+
+	result, err := h.upsellService.GenerateUpsell(ctx, user.MerchantID, cartProducts)
+	if err != nil {
+		log.Error("GetUpsell service error: " + err.Error())
+		models.SendJSON(w, http.StatusOK, "orders", "get_upsell", map[string]interface{}{
+			"suggestion_id": "",
+			"suggestions":   []interface{}{},
+			"source":        "error_fallback",
+		})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "orders", "get_upsell", result)
 }

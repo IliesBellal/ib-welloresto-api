@@ -21,6 +21,7 @@ import (
 	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/stocks"
 	"welloresto-api/internal/modules/ubereats"
+	"welloresto-api/internal/modules/upsell"
 	"welloresto-api/internal/utils/dbutils"
 	receiptUtils "welloresto-api/internal/utils/receipt"
 
@@ -38,13 +39,14 @@ type OrdersLifeCycleService struct {
 	log                  *zap.Logger
 	notificationsService *notification.NotificationService
 	stripeManager        *stripeclient.StripeManager
+	upsellTracker        *upsell.Tracker
 	customersService     *customers.CustomersService
 	redis                *redis.Client
 	receiptService       receipt.ReceiptService
 	stocksRepo           *stocks.StocksRepository
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -53,6 +55,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		log:                  log,
 		notificationsService: notificationsService,
 		stripeManager:        stripeSvc,
+		upsellTracker:        upsellTracker,
 		customersService:     customersService,
 		redis:                redis,
 		receiptService:       receiptService,
@@ -907,6 +910,33 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 	} else {
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
 		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
+
+		// Tracking is fire-and-forget and must never affect CreateOrder response flow.
+		if s.upsellTracker != nil && req.UpsellSuggestionID != nil && *req.UpsellSuggestionID != "" {
+			log.Info("upsell tracking dispatched",
+				zap.String("suggestion_id", *req.UpsellSuggestionID),
+				zap.String("order_id", result.OrderID),
+			)
+
+			finalProducts := make([]models.ProductEntry, 0, len(req.Order.Products))
+			for _, p := range req.Order.Products {
+				qty := p.Quantity
+				finalProducts = append(finalProducts, models.ProductEntry{
+					ProductID: p.ProductID,
+					Name:      p.ProductName,
+					Price:     int64(p.Price),
+					Quantity:  &qty,
+				})
+			}
+
+			s.upsellTracker.TrackAsync(
+				ctx,
+				*req.UpsellSuggestionID,
+				req.MerchantID,
+				result.OrderID,
+				finalProducts,
+			)
+		}
 	}
 
 	return result, err
