@@ -11,8 +11,11 @@ import (
 	"time"
 
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
+	"welloresto-api/internal/logger"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	uberModule "welloresto-api/internal/modules/ubereats"
+
+	"go.uber.org/zap"
 )
 
 // logoDownloadClient is the HTTP client used to fetch logo images from R2.
@@ -92,7 +95,11 @@ func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID string
 		}
 
 		if err := s.deliverooService.UpdatePreparationTime(ctx, merchantID, *req.PreparationTimeMinutes); err != nil {
-			return fmt.Errorf("failed to update deliveroo preparation time: %w", err)
+			logger.FromContext(ctx).Error("failed to update deliveroo preparation time for merchant",
+				zap.String("merchant_id", merchantID),
+				zap.Int("preparation_time_minutes", *req.PreparationTimeMinutes),
+				zap.Error(err),
+			)
 		}
 	}
 
