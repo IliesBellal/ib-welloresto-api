@@ -605,16 +605,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
 
-		r.Post("/products/categories", menuH.CreateProductCategory) // used by: back-office
-		r.Get("/marketing-categories", menuH.GetMarketingCategories)
-		r.Post("/marketing-categories", menuH.CreateMarketingCategory)
-		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder)
-		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)
-		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)
-		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory)
-		r.Post("/components", menuH.CreateComponent)                                    // used by: back-office
-		r.Post("/components/categories", menuH.CreateComponentCategory)                 // used by: back-office
-		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory) // used by: back-office
+		r.Post("/products/categories", menuH.CreateProductCategory)                                             // used by: back-office
+		r.Get("/marketing-categories", menuH.GetMarketingCategories)                                            // used by: back-office
+		r.Post("/marketing-categories", menuH.CreateMarketingCategory)                                          // used by: back-office
+		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder)             // used by: back-office
+		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)                           // used by: back-office
+		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office
+		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
+		r.Post("/components", menuH.CreateComponent)                                                            // used by: back-office
+		r.Post("/components/categories", menuH.CreateComponentCategory)                                         // used by: back-office
+		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory)                         // used by: back-office
 
 		// --- Discounts/Promotions ---
 		r.Get("/discounts", discountsH.ListActiveDiscounts)

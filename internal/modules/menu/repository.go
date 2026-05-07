@@ -3365,9 +3365,9 @@ func (r *MenuRepository) CreateMarketingCategory(ctx context.Context, merchantID
 	}
 
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO marketing_categories (merchant_id, name, display_order, enabled, available)
-		 VALUES (?, ?, ?, 1, 1)`,
-		merchantID, name, maxOrder+1,
+		`INSERT INTO marketing_categories (id, merchant_id, name, display_order, enabled, available)
+		 VALUES (?, ?, ?, ?, 1, 1)`,
+		helpers.GeneratePrefixedID("mark-categ"), merchantID, name, maxOrder+1,
 	)
 	if err != nil {
 		return "", err
