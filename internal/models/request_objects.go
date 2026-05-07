@@ -625,17 +625,44 @@ type UpdateMerchantSettingsRequest struct {
 	Parameters *MerchantParametersSettings `json:"parameters,omitempty"`
 	Marketing  *MerchantMarketingSettings  `json:"marketing,omitempty"`
 	Scannorder *ScannorderSettings         `json:"scannorder,omitempty"`
+	Info       *POSSettingsInfoPatch       `json:"info,omitempty"`
+	Timings    *POSSettingsTimingsPatch    `json:"timings,omitempty"`
+	Ordering   *POSSettingsOrderingPatch   `json:"ordering,omitempty"`
+	ScanOrder  *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
 }
 
 type POSSettingsInfo struct {
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	SIRET        string `json:"siret"`
-	Address      string `json:"address"`
-	Currency     string `json:"currency"`
-	PrimaryColor string `json:"primary_color"`
-	TextColor    string `json:"text_color"`
-	IsOpen       bool   `json:"is_open"`
+	Name         string  `json:"name"`
+	Phone        string  `json:"phone"`
+	SIRET        string  `json:"siret"`
+	Address      string  `json:"address"`
+	Street       string  `json:"street"`
+	City         string  `json:"city"`
+	PostalCode   string  `json:"postal_code"`
+	Country      string  `json:"country"`
+	Lat          float64 `json:"lat"`
+	Lng          float64 `json:"lng"`
+	Currency     string  `json:"currency"`
+	PrimaryColor string  `json:"primary_color"`
+	TextColor    string  `json:"text_color"`
+	IsOpen       bool    `json:"is_open"`
+}
+
+type POSSettingsInfoPatch struct {
+	Name         *string  `json:"name,omitempty"`
+	Phone        *string  `json:"phone,omitempty"`
+	SIRET        *string  `json:"siret,omitempty"`
+	Address      *string  `json:"address,omitempty"`
+	Street       *string  `json:"street,omitempty"`
+	City         *string  `json:"city,omitempty"`
+	PostalCode   *string  `json:"postal_code,omitempty"`
+	Country      *string  `json:"country,omitempty"`
+	Lat          *float64 `json:"lat,omitempty"`
+	Lng          *float64 `json:"lng,omitempty"`
+	Currency     *string  `json:"currency,omitempty"`
+	PrimaryColor *string  `json:"primary_color,omitempty"`
+	TextColor    *string  `json:"text_color,omitempty"`
+	IsOpen       *bool    `json:"is_open,omitempty"`
 }
 
 type POSSettingsTimings struct {
@@ -643,6 +670,13 @@ type POSSettingsTimings struct {
 	WaitTimeMax      int  `json:"wait_time_max"`
 	AutoCloseEnabled bool `json:"auto_close_enabled"`
 	AutoCloseDelay   int  `json:"auto_close_delay"`
+}
+
+type POSSettingsTimingsPatch struct {
+	WaitTimeMin      *int  `json:"wait_time_min,omitempty"`
+	WaitTimeMax      *int  `json:"wait_time_max,omitempty"`
+	AutoCloseEnabled *bool `json:"auto_close_enabled,omitempty"`
+	AutoCloseDelay   *int  `json:"auto_close_delay,omitempty"`
 }
 
 type POSSettingsOrdering struct {
@@ -656,6 +690,17 @@ type POSSettingsOrdering struct {
 	ActiveDelivery     bool   `json:"active_delivery"`
 }
 
+type POSSettingsOrderingPatch struct {
+	PaidOrdersOnly     *bool   `json:"paid_orders_only,omitempty"`
+	ConcurrentCapacity *int    `json:"concurrent_capacity,omitempty"`
+	ServiceRequired    *string `json:"service_required,omitempty"`
+	DisableLowStock    *bool   `json:"disable_low_stock,omitempty"`
+	RegisterRequired   *bool   `json:"register_required,omitempty"`
+	ActiveOnSite       *bool   `json:"active_on_site,omitempty"`
+	ActiveTakeaway     *bool   `json:"active_takeaway,omitempty"`
+	ActiveDelivery     *bool   `json:"active_delivery,omitempty"`
+}
+
 type POSSettingsScanOrder struct {
 	ActiveDelivery     bool `json:"active_delivery"`
 	ActiveTakeaway     bool `json:"active_takeaway"`
@@ -667,6 +712,17 @@ type POSSettingsScanOrder struct {
 	EnableRating       bool `json:"enable_rating"`
 }
 
+type POSSettingsScanOrderPatch struct {
+	ActiveDelivery     *bool `json:"active_delivery,omitempty"`
+	ActiveTakeaway     *bool `json:"active_takeaway,omitempty"`
+	ActiveOnSite       *bool `json:"active_on_site,omitempty"`
+	AutoAcceptDelivery *bool `json:"auto_accept_delivery,omitempty"`
+	AutoAcceptTakeaway *bool `json:"auto_accept_takeaway,omitempty"`
+	AllowScheduled     *bool `json:"allow_scheduled,omitempty"`
+	MaxScheduleDays    *int  `json:"max_schedule_days,omitempty"`
+	EnableRating       *bool `json:"enable_rating,omitempty"`
+}
+
 type POSSettingsResponse struct {
 	Info      POSSettingsInfo      `json:"info"`
 	Timings   POSSettingsTimings   `json:"timings"`
@@ -675,24 +731,36 @@ type POSSettingsResponse struct {
 }
 
 type UserProfileResponse struct {
-	FirstName     string `json:"firstname"`
-	LastName      string `json:"lastname"`
-	Email         string `json:"email"`
-	Phone         string `json:"phone"`
-	Address       string `json:"address"`
-	Avatar        string `json:"avatar"`
-	MFAType       string `json:"mfa_type"`
-	EmailVerified bool   `json:"email_verified"`
-	PhoneVerified bool   `json:"phone_verified"`
+	FirstName     string  `json:"firstname"`
+	LastName      string  `json:"lastname"`
+	Email         string  `json:"email"`
+	Phone         string  `json:"phone"`
+	Address       string  `json:"address"`
+	Street        string  `json:"street"`
+	City          string  `json:"city"`
+	PostalCode    string  `json:"postal_code"`
+	Country       string  `json:"country"`
+	Lat           float64 `json:"lat"`
+	Lng           float64 `json:"lng"`
+	Avatar        string  `json:"avatar"`
+	MFAType       string  `json:"mfa_type"`
+	EmailVerified bool    `json:"email_verified"`
+	PhoneVerified bool    `json:"phone_verified"`
 }
 
 type UpdateUserProfileRequest struct {
-	FirstName *string `json:"firstname,omitempty"`
-	LastName  *string `json:"lastname,omitempty"`
-	Email     *string `json:"email,omitempty"`
-	Phone     *string `json:"phone,omitempty"`
-	Address   *string `json:"address,omitempty"`
-	MFAType   *string `json:"mfa_type,omitempty"`
+	FirstName  *string  `json:"firstname,omitempty"`
+	LastName   *string  `json:"lastname,omitempty"`
+	Email      *string  `json:"email,omitempty"`
+	Phone      *string  `json:"phone,omitempty"`
+	Address    *string  `json:"address,omitempty"`
+	Street     *string  `json:"street,omitempty"`
+	City       *string  `json:"city,omitempty"`
+	PostalCode *string  `json:"postal_code,omitempty"`
+	Country    *string  `json:"country,omitempty"`
+	Lat        *float64 `json:"lat,omitempty"`
+	Lng        *float64 `json:"lng,omitempty"`
+	MFAType    *string  `json:"mfa_type,omitempty"`
 }
 
 type UpdatePasswordRequest struct {

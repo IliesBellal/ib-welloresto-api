@@ -269,14 +269,15 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-		SELECT first_name, last_name, email, tel, address, profile_picture, mfa_type, email_verified_at, tel_verified_at
+		SELECT first_name, last_name, email, tel, address, street, city, zip_code, country, lat, lng, profile_picture, mfa_type, email_verified_at, tel_verified_at
 		FROM users
 		WHERE user_id = ?
 		LIMIT 1
 	`
 
 	var firstName, lastName, email, phone sql.NullString
-	var address, avatar, mfaType sql.NullString
+	var address, street, city, postalCode, country, avatar, mfaType sql.NullString
+	var lat, lng sql.NullFloat64
 	var emailVerifiedAt, phoneVerifiedAt sql.NullTime
 
 	if err := db.QueryRowContext(ctx, query, userID).Scan(
@@ -285,6 +286,12 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 		&email,
 		&phone,
 		&address,
+		&street,
+		&city,
+		&postalCode,
+		&country,
+		&lat,
+		&lng,
 		&avatar,
 		&mfaType,
 		&emailVerifiedAt,
@@ -299,6 +306,12 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 		Email:         nullableString(email),
 		Phone:         nullableString(phone),
 		Address:       nullableString(address),
+		Street:        nullableString(street),
+		City:          nullableString(city),
+		PostalCode:    nullableString(postalCode),
+		Country:       nullableString(country),
+		Lat:           nullableFloat64(lat),
+		Lng:           nullableFloat64(lng),
 		Avatar:        nullableString(avatar),
 		MFAType:       nullableString(mfaType),
 		EmailVerified: emailVerifiedAt.Valid,
@@ -348,6 +361,30 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 	if req.Address != nil {
 		updates = append(updates, "address = ?")
 		args = append(args, *req.Address)
+	}
+	if req.Street != nil {
+		updates = append(updates, "street = ?")
+		args = append(args, *req.Street)
+	}
+	if req.City != nil {
+		updates = append(updates, "city = ?")
+		args = append(args, *req.City)
+	}
+	if req.PostalCode != nil {
+		updates = append(updates, "zip_code = ?")
+		args = append(args, *req.PostalCode)
+	}
+	if req.Country != nil {
+		updates = append(updates, "country = ?")
+		args = append(args, *req.Country)
+	}
+	if req.Lat != nil {
+		updates = append(updates, "lat = ?")
+		args = append(args, *req.Lat)
+	}
+	if req.Lng != nil {
+		updates = append(updates, "lng = ?")
+		args = append(args, *req.Lng)
 	}
 	if req.MFAType != nil {
 		updates = append(updates, "mfa_type = ?")
@@ -405,6 +442,13 @@ func nullableString(v sql.NullString) string {
 		return v.String
 	}
 	return ""
+}
+
+func nullableFloat64(v sql.NullFloat64) float64 {
+	if v.Valid {
+		return v.Float64
+	}
+	return 0
 }
 
 func generateToken() (string, error) {

@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -117,9 +118,14 @@ func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUser
 	}
 
 	if req.Phone != nil {
-		countryCode, err := s.userRepo.GetMerchantCountryCode(ctx, user.MerchantID)
-		if err != nil {
-			return nil, err
+		countryCode := ""
+		if req.Country != nil && strings.TrimSpace(*req.Country) != "" {
+			countryCode = *req.Country
+		} else {
+			countryCode, err = s.userRepo.GetMerchantCountryCode(ctx, user.MerchantID)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		formatted, err := helpers.FormatToE164(*req.Phone, countryCode)

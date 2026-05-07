@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -183,6 +184,142 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 		return nil, models.ErrUnauthorized
 	}
 
+	// Support PATCH payload shaped like GET /pos/settings response:
+	// { info, timings, ordering, scan_order }
+	if req != nil {
+		if req.Info != nil {
+			if req.Merchant == nil {
+				req.Merchant = &models.MerchantSettings{}
+			}
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+
+			if req.Info.Name != nil {
+				req.Merchant.BusinessName = req.Info.Name
+			}
+			if req.Info.Phone != nil {
+				req.Merchant.MerchantTel = req.Info.Phone
+			}
+			if req.Info.Address != nil {
+				req.Merchant.Address = req.Info.Address
+			}
+			if req.Info.Street != nil {
+				req.Merchant.Street = req.Info.Street
+			}
+			if req.Info.City != nil {
+				req.Merchant.City = req.Info.City
+			}
+			if req.Info.PostalCode != nil {
+				req.Merchant.ZipCode = req.Info.PostalCode
+			}
+			if req.Info.Country != nil {
+				req.Merchant.Country = req.Info.Country
+			}
+			if req.Info.Lat != nil {
+				req.Merchant.Lat = req.Info.Lat
+			}
+			if req.Info.Lng != nil {
+				req.Merchant.Lng = req.Info.Lng
+			}
+
+			// Intentionally ignore req.Info.SIRET: SIRET must not be updated from this endpoint.
+
+			if req.Info.Currency != nil {
+				req.Parameters.Currency = req.Info.Currency
+			}
+			if req.Info.PrimaryColor != nil {
+				req.Parameters.PrimaryColor = req.Info.PrimaryColor
+			}
+			if req.Info.TextColor != nil {
+				req.Parameters.TextColorOnPrimaryColor = req.Info.TextColor
+			}
+			if req.Info.IsOpen != nil {
+				req.Parameters.IsOpen = req.Info.IsOpen
+			}
+		}
+
+		if req.Timings != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			if req.Timings.WaitTimeMin != nil {
+				req.Parameters.MinimumPreparationTime = req.Timings.WaitTimeMin
+			}
+			if req.Timings.WaitTimeMax != nil {
+				req.Parameters.MaximumPreparationTime = req.Timings.WaitTimeMax
+			}
+			if req.Timings.AutoCloseEnabled != nil {
+				req.Parameters.AutoCompleteOrders = req.Timings.AutoCloseEnabled
+			}
+			if req.Timings.AutoCloseDelay != nil {
+				req.Parameters.AutoCompleteOrdersDelay = req.Timings.AutoCloseDelay
+			}
+		}
+
+		if req.Ordering != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			if req.Ordering.PaidOrdersOnly != nil {
+				req.Parameters.KitchenShowOnlyPaid = req.Ordering.PaidOrdersOnly
+			}
+			if req.Ordering.ConcurrentCapacity != nil {
+				req.Parameters.ConcurrentPreparationCapacity = req.Ordering.ConcurrentCapacity
+			}
+			if req.Ordering.ServiceRequired != nil {
+				v := strings.ToLower(strings.TrimSpace(*req.Ordering.ServiceRequired))
+				required := v == "table"
+				req.Parameters.ServiceRequiredForOrdering = &required
+			}
+			if req.Ordering.DisableLowStock != nil {
+				req.Parameters.DisableComponentsUnderSafetyStock = req.Ordering.DisableLowStock
+			}
+			if req.Ordering.RegisterRequired != nil {
+				req.Parameters.CashRegisterRequiredForOrdering = req.Ordering.RegisterRequired
+			}
+			if req.Ordering.ActiveOnSite != nil {
+				req.Parameters.ManageOnSite = req.Ordering.ActiveOnSite
+			}
+			if req.Ordering.ActiveTakeaway != nil {
+				req.Parameters.ManageTakeAway = req.Ordering.ActiveTakeaway
+			}
+			if req.Ordering.ActiveDelivery != nil {
+				req.Parameters.ManageDelivery = req.Ordering.ActiveDelivery
+			}
+		}
+
+		if req.ScanOrder != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			if req.ScanOrder.ActiveDelivery != nil {
+				req.Parameters.ManageDelivery = req.ScanOrder.ActiveDelivery
+			}
+			if req.ScanOrder.ActiveTakeaway != nil {
+				req.Parameters.ManageTakeAway = req.ScanOrder.ActiveTakeaway
+			}
+			if req.ScanOrder.ActiveOnSite != nil {
+				req.Parameters.ManageOnSite = req.ScanOrder.ActiveOnSite
+			}
+			if req.ScanOrder.AutoAcceptDelivery != nil {
+				req.Parameters.AutoAcceptSnoDeliveryOrders = req.ScanOrder.AutoAcceptDelivery
+			}
+			if req.ScanOrder.AutoAcceptTakeaway != nil {
+				req.Parameters.AutoAcceptSnoTakeAwayOrders = req.ScanOrder.AutoAcceptTakeaway
+			}
+			if req.ScanOrder.AllowScheduled != nil {
+				req.Parameters.EnableAdvanceOrders = req.ScanOrder.AllowScheduled
+			}
+			if req.ScanOrder.MaxScheduleDays != nil {
+				req.Parameters.AdvanceOrderDays = req.ScanOrder.MaxScheduleDays
+			}
+			if req.ScanOrder.EnableRating != nil {
+				req.Parameters.EnabledRating = req.ScanOrder.EnableRating
+			}
+		}
+	}
+
 	// API contract: wait times are expressed in minutes.
 	// Persistence contract: merchant_parameters stores wait times in seconds.
 	if req != nil && req.Parameters != nil {
@@ -219,6 +356,12 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			Phone:        stringVal(m.MerchantTel),
 			SIRET:        stringVal(m.SIRET),
 			Address:      stringVal(m.Address),
+			Street:       stringVal(m.Street),
+			City:         stringVal(m.City),
+			PostalCode:   stringVal(m.ZipCode),
+			Country:      stringVal(m.Country),
+			Lat:          floatVal(m.Lat),
+			Lng:          floatVal(m.Lng),
 			Currency:     stringVal(params.Currency),
 			PrimaryColor: stringVal(params.PrimaryColor),
 			TextColor:    stringVal(params.TextColorOnPrimaryColor),
@@ -272,6 +415,13 @@ func intVal(v *int) int {
 func stringVal(v *string) string {
 	if v == nil {
 		return ""
+	}
+	return *v
+}
+
+func floatVal(v *float64) float64 {
+	if v == nil {
+		return 0
 	}
 	return *v
 }
