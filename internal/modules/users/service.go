@@ -98,16 +98,6 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 	return s.userRepo.UpdatePassword(ctx, user.UserID, user.MerchantID, hash)
 }
 
-func (s *UsersService) UpdateUserSettings(ctx context.Context, userID, token string, req *models.UserSettingsRequest) error {
-
-	// TODO
-	// Optional validation
-	// Valider qu'il s'agit du même user (user_id = token -> User.UserID)
-	// Sinon, vérifier que token -> User.UserID est Admin de l'établissement
-
-	return s.userRepo.UpdateUserSettings(ctx, userID, req)
-}
-
 func (s *UsersService) GetProfile(ctx context.Context) (*models.UserProfileResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

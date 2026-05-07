@@ -89,39 +89,14 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "user", "update_password", map[string]string{"status": "success"})
 }
 
-func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "user", "update_settings", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	var req models.UserSettingsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "user", "update_settings", map[string]string{"error": "invalid_request"})
-		return
-	}
-
-	userID := chi.URLParam(r, "user_id")
-
-	if err := h.svc.UpdateUserSettings(r.Context(), userID, token, &req); err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "user", "update_settings", map[string]string{"error": err.Error()})
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "user", "update_settings", map[string]string{"status": "success"})
-}
-
 func (h *UsersHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	profile, err := h.svc.GetProfile(r.Context())
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "user", "get_profile", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "user", "get_profile", err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(profile)
+	models.SendJSON(w, http.StatusOK, "user", "get_profile", profile)
 }
 
 func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +107,12 @@ func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.UpdateProfile(r.Context(), &req); err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "user", "update_profile", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "user", "update_profile", err)
+		return
+	}
+
+	if err := h.svc.UpdateProfile(r.Context(), &req); err != nil {
+		models.SendErrorJSON(w, "user", "update_profile", err)
 		return
 	}
 
