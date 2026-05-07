@@ -183,6 +183,13 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 		return nil, models.ErrUnauthorized
 	}
 
+	// API contract: wait times are expressed in minutes.
+	// Persistence contract: merchant_parameters stores wait times in seconds.
+	if req != nil && req.Parameters != nil {
+		req.Parameters.MinimumPreparationTime = minutesToSecondsPtr(req.Parameters.MinimumPreparationTime)
+		req.Parameters.MaximumPreparationTime = minutesToSecondsPtr(req.Parameters.MaximumPreparationTime)
+	}
+
 	if err := s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req); err != nil {
 		return nil, err
 	}
@@ -218,8 +225,8 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			IsOpen:       boolVal(params.IsOpen),
 		},
 		Timings: models.POSSettingsTimings{
-			WaitTimeMin:      intVal(params.MinimumPreparationTime),
-			WaitTimeMax:      intVal(params.MaximumPreparationTime),
+			WaitTimeMin:      secondsToMinutes(intVal(params.MinimumPreparationTime)),
+			WaitTimeMax:      secondsToMinutes(intVal(params.MaximumPreparationTime)),
 			AutoCloseEnabled: boolVal(params.AutoCompleteOrders),
 			AutoCloseDelay:   intVal(params.AutoCompleteOrdersDelay),
 		},
@@ -267,4 +274,19 @@ func stringVal(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func secondsToMinutes(seconds int) int {
+	if seconds <= 0 {
+		return 0
+	}
+	return seconds / 60
+}
+
+func minutesToSecondsPtr(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	seconds := (*v) * 60
+	return &seconds
 }

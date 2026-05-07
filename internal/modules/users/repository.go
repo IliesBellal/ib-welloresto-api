@@ -269,14 +269,14 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-		SELECT first_name, last_name, email, tel, address, profile_picture, email_verified_at, tel_verified_at
+		SELECT first_name, last_name, email, tel, address, profile_picture, mfa_type, email_verified_at, tel_verified_at
 		FROM users
 		WHERE user_id = ?
 		LIMIT 1
 	`
 
 	var firstName, lastName, email, phone sql.NullString
-	var address, avatar sql.NullString
+	var address, avatar, mfaType sql.NullString
 	var emailVerifiedAt, phoneVerifiedAt sql.NullTime
 
 	if err := db.QueryRowContext(ctx, query, userID).Scan(
@@ -286,6 +286,7 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 		&phone,
 		&address,
 		&avatar,
+		&mfaType,
 		&emailVerifiedAt,
 		&phoneVerifiedAt,
 	); err != nil {
@@ -299,6 +300,7 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 		Phone:         nullableString(phone),
 		Address:       nullableString(address),
 		Avatar:        nullableString(avatar),
+		MFAType:       nullableString(mfaType),
 		EmailVerified: emailVerifiedAt.Valid,
 		PhoneVerified: phoneVerifiedAt.Valid,
 	}
@@ -312,6 +314,15 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 	updates := []string{}
 	args := []interface{}{}
 
+	var currentEmail sql.NullString
+	var currentPhone sql.NullString
+	if req.Email != nil || req.Phone != nil {
+		err := db.QueryRowContext(ctx, `SELECT email, tel FROM users WHERE user_id = ? LIMIT 1`, userID).Scan(&currentEmail, &currentPhone)
+		if err != nil {
+			return err
+		}
+	}
+
 	if req.FirstName != nil {
 		updates = append(updates, "first_name = ?")
 		args = append(args, *req.FirstName)
@@ -323,20 +334,24 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 	if req.Email != nil {
 		updates = append(updates, "email = ?")
 		args = append(args, *req.Email)
-		updates = append(updates, "email_verified_at = NULL")
+		if !currentEmail.Valid || currentEmail.String != *req.Email {
+			updates = append(updates, "email_verified_at = NULL")
+		}
 	}
 	if req.Phone != nil {
 		updates = append(updates, "tel = ?")
 		args = append(args, *req.Phone)
-		updates = append(updates, "tel_verified_at = NULL")
+		if !currentPhone.Valid || currentPhone.String != *req.Phone {
+			updates = append(updates, "tel_verified_at = NULL")
+		}
 	}
 	if req.Address != nil {
 		updates = append(updates, "address = ?")
 		args = append(args, *req.Address)
 	}
-	if req.Avatar != nil {
-		updates = append(updates, "profile_picture = ?")
-		args = append(args, *req.Avatar)
+	if req.MFAType != nil {
+		updates = append(updates, "mfa_type = ?")
+		args = append(args, *req.MFAType)
 	}
 
 	if len(updates) == 0 {

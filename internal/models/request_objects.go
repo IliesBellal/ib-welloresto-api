@@ -681,6 +681,7 @@ type UserProfileResponse struct {
 	Phone         string `json:"phone"`
 	Address       string `json:"address"`
 	Avatar        string `json:"avatar"`
+	MFAType       string `json:"mfa_type"`
 	EmailVerified bool   `json:"email_verified"`
 	PhoneVerified bool   `json:"phone_verified"`
 }
@@ -691,7 +692,7 @@ type UpdateUserProfileRequest struct {
 	Email     *string `json:"email,omitempty"`
 	Phone     *string `json:"phone,omitempty"`
 	Address   *string `json:"address,omitempty"`
-	Avatar    *string `json:"avatar,omitempty"`
+	MFAType   *string `json:"mfa_type,omitempty"`
 }
 
 type UpdatePasswordRequest struct {
