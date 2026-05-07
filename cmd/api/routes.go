@@ -367,7 +367,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	cashRegisterH := cashregisterModule.NewCashRegisterHandler(cashRegisterService)
 	bookingsH := bookingsModule.NewBookingsHandler(bookingsService)
 	customersH := customersModule.NewCustomersHandler(customersService)
-	usersH := usersModule.NewUsersHandler(usersService)
+	usersH := usersModule.NewUsersHandler(usersService, r2Client)
 	stocksH := stocksModule.NewStocksHandler(stocksService)
 	servicesH := servicesModule.NewServicesHandler(servicesService)
 	notificationH := notificationModule.NewNotificationHandler(notificationService)

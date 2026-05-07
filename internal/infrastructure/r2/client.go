@@ -145,6 +145,15 @@ func ValidateImageType(contentType string) bool {
 	return allowedTypes[contentType]
 }
 
+// GenerateUserAvatarKey génère la clé R2 pour la photo de profil d'un utilisateur.
+// La clé est déterministe (écrase l'ancienne photo à chaque upload).
+func GenerateUserAvatarKey(userID, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/users/%s/avatar%s", userID, ext)
+}
+
 // GetContentTypeFromExtension retourne le content type depuis l'extension
 func GetContentTypeFromExtension(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))

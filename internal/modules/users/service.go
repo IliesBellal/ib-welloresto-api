@@ -107,11 +107,15 @@ func (s *UsersService) GetProfile(ctx context.Context) (*models.UserProfileRespo
 	return s.userRepo.GetUserProfile(ctx, user.UserID)
 }
 
-func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUserProfileRequest) error {
+func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUserProfileRequest) (*models.UserProfileResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return models.ErrUnauthorized
+		return nil, models.ErrUnauthorized
 	}
 
-	return s.userRepo.UpdateUserProfile(ctx, user.UserID, req)
+	if err := s.userRepo.UpdateUserProfile(ctx, user.UserID, req); err != nil {
+		return nil, err
+	}
+
+	return s.userRepo.GetUserProfile(ctx, user.UserID)
 }

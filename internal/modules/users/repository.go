@@ -323,10 +323,12 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 	if req.Email != nil {
 		updates = append(updates, "email = ?")
 		args = append(args, *req.Email)
+		updates = append(updates, "email_verified_at = NULL")
 	}
 	if req.Phone != nil {
 		updates = append(updates, "tel = ?")
 		args = append(args, *req.Phone)
+		updates = append(updates, "tel_verified_at = NULL")
 	}
 	if req.Address != nil {
 		updates = append(updates, "address = ?")
@@ -350,6 +352,24 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 	`, strings.Join(updates, ", "))
 
 	_, err := db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *UsersRepository) GetUserAvatarURL(ctx context.Context, userID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var avatar sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT profile_picture FROM users WHERE user_id = ?`, userID).Scan(&avatar)
+	if err != nil {
+		return "", err
+	}
+	return nullableString(avatar), nil
+}
+
+func (r *UsersRepository) UpdateUserAvatar(ctx context.Context, userID, avatarURL string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `UPDATE users SET profile_picture = ? WHERE user_id = ?`, avatarURL, userID)
 	return err
 }
 

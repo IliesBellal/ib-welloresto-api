@@ -177,13 +177,17 @@ func (s *POSService) CheckTR(ctx context.Context, token, code string) (*models.T
 	}, nil
 }
 
-func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, req *models.UpdateMerchantSettingsRequest) error {
+func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, req *models.UpdateMerchantSettingsRequest) (*models.POSSettingsResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return models.ErrUnauthorized
+		return nil, models.ErrUnauthorized
 	}
 
-	return s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req)
+	if err := s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req); err != nil {
+		return nil, err
+	}
+
+	return s.GetMerchantSettings(ctx, token)
 }
 
 func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*models.POSSettingsResponse, error) {

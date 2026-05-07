@@ -231,12 +231,13 @@ func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.service.UpdateMerchantSettings(r.Context(), token, &req); err != nil {
+	result, err := h.service.UpdateMerchantSettings(r.Context(), token, &req)
+	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "pos", "update_merchant_settings", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "pos", "update_merchant_settings", map[string]string{"status": "ok"})
+	models.SendJSON(w, http.StatusOK, "pos", "update_merchant_settings", result)
 }
 
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {

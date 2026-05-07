@@ -2,20 +2,24 @@ package users
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/r2"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type UsersHandler struct {
-	svc *UsersService
+	svc      *UsersService
+	r2Client *r2.Client
 }
 
-func NewUsersHandler(s *UsersService) *UsersHandler {
-	return &UsersHandler{svc: s}
+func NewUsersHandler(s *UsersService, r2Client *r2.Client) *UsersHandler {
+	return &UsersHandler{svc: s, r2Client: r2Client}
 }
 
 func (h *UsersHandler) GetUserLocation(w http.ResponseWriter, r *http.Request) {
@@ -106,15 +110,72 @@ func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdateProfile(r.Context(), &req); err != nil {
-		models.SendErrorJSON(w, "user", "update_profile", err)
+	profile, err := h.svc.UpdateProfile(r.Context(), &req)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "update_profile", map[string]string{"error": err.Error()})
 		return
 	}
 
-	if err := h.svc.UpdateProfile(r.Context(), &req); err != nil {
-		models.SendErrorJSON(w, "user", "update_profile", err)
+	models.SendJSON(w, http.StatusOK, "user", "update_profile", profile)
+}
+
+// POST /users/profile/avatar
+// Multipart form-data: field "avatar" (image/jpeg, image/png, image/webp)
+// Taille max: 5 MB
+func (h *UsersHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	const maxSize = 5 << 20 // 5 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+
+	if err := r.ParseMultipartForm(maxSize); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "user", "upload_avatar", map[string]string{"error": "file_too_large"})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "user", "update_profile", map[string]string{"status": "success"})
+	file, header, err := r.FormFile("avatar")
+	if err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "user", "upload_avatar", map[string]string{"error": "missing_avatar_field"})
+		return
+	}
+	defer file.Close()
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r2.GetContentTypeFromExtension(header.Filename)
+	}
+	if !r2.ValidateImageType(contentType) {
+		models.SendJSON(w, http.StatusBadRequest, "user", "upload_avatar", map[string]string{
+			"error":   "invalid_image_type",
+			"message": "Only JPEG, PNG, and WebP images are allowed",
+		})
+		return
+	}
+
+	user, err := middleware.UserFromContext(r.Context())
+	if err != nil {
+		models.SendJSON(w, http.StatusUnauthorized, "user", "upload_avatar", map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	// Supprimer l'ancien avatar (non-bloquant)
+	if oldURL, err := h.svc.userRepo.GetUserAvatarURL(r.Context(), user.UserID); err == nil && oldURL != "" {
+		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" {
+			_ = h.r2Client.DeleteFile(r.Context(), oldKey)
+		}
+	}
+
+	ext := r2.GetExtensionFromContentType(contentType)
+	key := r2.GenerateUserAvatarKey(user.UserID, ext)
+
+	publicURL, err := h.r2Client.UploadFile(r.Context(), key, file, contentType)
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "upload_avatar", map[string]string{"error": fmt.Sprintf("upload_failed: %s", err.Error())})
+		return
+	}
+
+	if err := h.svc.userRepo.UpdateUserAvatar(r.Context(), user.UserID, publicURL); err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "upload_avatar", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "user", "upload_avatar", map[string]string{"avatar_url": publicURL})
 }
