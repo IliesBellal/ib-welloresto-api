@@ -2,6 +2,7 @@ package users
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -112,6 +113,10 @@ func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := h.svc.UpdateProfile(r.Context(), &req)
 	if err != nil {
+		if errors.Is(err, ErrInvalidPhoneFormat) {
+			models.SendJSON(w, http.StatusBadRequest, "user", "update_profile", map[string]string{"error": "invalid_phone_format"})
+			return
+		}
 		models.SendJSON(w, http.StatusInternalServerError, "user", "update_profile", map[string]string{"error": err.Error()})
 		return
 	}

@@ -1,7 +1,10 @@
 package helpers
 
 import (
+	"errors"
 	"strings"
+
+	"github.com/nyaruka/phonenumbers"
 )
 
 // Map des pays limitrophes (et proches)
@@ -53,6 +56,67 @@ func NormalizePhoneNumber(phone string, countryCode string) string {
 	}
 
 	return prefix + clean
+}
+
+func normalizeRegionCode(region string) string {
+	r := strings.ToUpper(strings.TrimSpace(region))
+	if len(r) == 2 {
+		return r
+	}
+
+	fullToISO := map[string]string{
+		"FRANCE":         "FR",
+		"BELGIUM":        "BE",
+		"BELGIQUE":       "BE",
+		"SWITZERLAND":    "CH",
+		"SUISSE":         "CH",
+		"LUXEMBOURG":     "LU",
+		"MONACO":         "MC",
+		"SPAIN":          "ES",
+		"ESPAGNE":        "ES",
+		"ITALY":          "IT",
+		"ITALIE":         "IT",
+		"GERMANY":        "DE",
+		"ALLEMAGNE":      "DE",
+		"UNITED KINGDOM": "GB",
+		"ROYAUME-UNI":    "GB",
+		"GREAT BRITAIN":  "GB",
+	}
+
+	if iso, ok := fullToISO[r]; ok {
+		return iso
+	}
+
+	return ""
+}
+
+// FormatToE164 parses and validates a phone number, then formats it to E.164.
+// If the number is local (no international prefix), defaultRegion is used.
+func FormatToE164(phone string, defaultRegion string) (string, error) {
+	clean := strings.TrimSpace(phone)
+	if clean == "" {
+		return "", errors.New("invalid_phone_format")
+	}
+
+	if strings.HasPrefix(clean, "00") {
+		clean = "+" + strings.TrimPrefix(clean, "00")
+	}
+
+	region := normalizeRegionCode(defaultRegion)
+	if region == "" {
+		region = "ZZ"
+	}
+
+	number, err := phonenumbers.Parse(clean, region)
+	if err != nil {
+		return "", errors.New("invalid_phone_format")
+	}
+
+	if !phonenumbers.IsPossibleNumber(number) || !phonenumbers.IsValidNumber(number) {
+		return "", errors.New("invalid_phone_format")
+	}
+
+	return phonenumbers.Format(number, phonenumbers.E164), nil
 }
 
 func Ucfirst(s string) string {

@@ -366,6 +366,18 @@ func (r *UsersRepository) GetUserAvatarURL(ctx context.Context, userID string) (
 	return nullableString(avatar), nil
 }
 
+func (r *UsersRepository) GetMerchantCountryCode(ctx context.Context, merchantID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var country sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT country FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&country)
+	if err != nil {
+		return "", err
+	}
+
+	return nullableString(country), nil
+}
+
 func (r *UsersRepository) UpdateUserAvatar(ctx context.Context, userID, avatarURL string) error {
 	db := dbutils.GetDB(ctx, r.database)
 

@@ -35,7 +35,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/jung-kurt/gofpdf v1.16.2 // indirect
+	github.com/nyaruka/phonenumbers v1.7.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 require (

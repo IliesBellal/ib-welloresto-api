@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
@@ -12,6 +13,8 @@ import (
 type UsersService struct {
 	userRepo *UsersRepository
 }
+
+var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
 func NewUsersService(u *UsersRepository) *UsersService {
 	return &UsersService{
@@ -111,6 +114,20 @@ func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUser
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
+	}
+
+	if req.Phone != nil {
+		countryCode, err := s.userRepo.GetMerchantCountryCode(ctx, user.MerchantID)
+		if err != nil {
+			return nil, err
+		}
+
+		formatted, err := helpers.FormatToE164(*req.Phone, countryCode)
+		if err != nil {
+			return nil, ErrInvalidPhoneFormat
+		}
+
+		req.Phone = &formatted
 	}
 
 	if err := s.userRepo.UpdateUserProfile(ctx, user.UserID, req); err != nil {
