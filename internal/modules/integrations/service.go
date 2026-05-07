@@ -115,6 +115,8 @@ func (s *Service) UpdateScanNOrderSettings(ctx context.Context, merchantID strin
 }
 
 func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID string, req *CloseTemporaryIntegrationsRequest) (time.Time, []string, error) {
+	log := logger.FromContext(ctx)
+
 	if req.DurationMinutes <= 0 {
 		return time.Time{}, nil, fmt.Errorf("duration_minutes must be greater than 0")
 	}
@@ -139,18 +141,37 @@ func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID str
 		switch name {
 		case "uber_eats":
 			if err := s.uberService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
-				return time.Time{}, nil, fmt.Errorf("failed to close uber eats temporarily: %w", err)
+				log.Error("failed to close uber eats temporarily for merchant",
+					zap.String("merchant_id", merchantID),
+					zap.Int("duration_minutes", req.DurationMinutes),
+					zap.Error(err),
+				)
+				//return time.Time{}, nil, fmt.Errorf("failed to close uber eats temporarily: %w", err)
 			}
 		case "deliveroo":
 			if err := s.deliverooService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
-				return time.Time{}, nil, fmt.Errorf("failed to close deliveroo temporarily: %w", err)
+				log.Error("failed to close deliveroo temporarily for merchant",
+					zap.String("merchant_id", merchantID),
+					zap.Int("duration_minutes", req.DurationMinutes),
+					zap.Error(err),
+				)
+				//return time.Time{}, nil, fmt.Errorf("failed to close deliveroo temporarily: %w", err)
 			}
 		case "scannorder":
 			if err := s.repo.SetScanNOrderClosedUntil(ctx, merchantID, closedUntil); err != nil {
-				return time.Time{}, nil, fmt.Errorf("failed to close scannorder temporarily: %w", err)
+				log.Error("failed to close scannorder temporarily for merchant",
+					zap.String("merchant_id", merchantID),
+					zap.Int("duration_minutes", req.DurationMinutes),
+					zap.Error(err),
+				)
+				//return time.Time{}, nil, fmt.Errorf("failed to close scannorder temporarily: %w", err)
 			}
 		default:
-			return time.Time{}, nil, fmt.Errorf("unsupported integration: %s", rawName)
+			log.Warn("unsupported integration in CloseTemporaryIntegrationsRequest",
+				zap.String("merchant_id", merchantID),
+				zap.String("integration", rawName),
+			)
+			//return time.Time{}, nil, fmt.Errorf("unsupported integration: %s", rawName)
 		}
 
 		processed = append(processed, name)
