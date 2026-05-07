@@ -437,13 +437,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/users", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Get("/profile", usersH.GetProfile)      // used by: back-office
-		r.Patch("/profile", usersH.UpdateProfile) // used by: back-office
+		r.Get("/profile", usersH.GetProfile)           // used by: back-office
+		r.Patch("/profile", usersH.UpdateProfile)      // used by: back-office
+		r.Post("/profile/avatar", usersH.UploadAvatar) // used by: back-office
 
 		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/location", usersH.SetUserLocation)
-		r.Patch("/{user_id}/reset-password", usersH.UpdatePassword)
+		r.Patch("/reset-password", usersH.UpdatePassword)
 	})
 
 	// --- STATS ---
