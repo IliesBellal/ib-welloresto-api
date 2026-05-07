@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/ai"
@@ -133,12 +134,28 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 	}
 
 	return &ai.CompletionResponse{
-		Content:      apiResp.Content[0].Text,
+		Content:      stripMarkdownFences(apiResp.Content[0].Text),
 		InputTokens:  apiResp.Usage.InputTokens,
 		OutputTokens: apiResp.Usage.OutputTokens,
 		Model:        apiResp.Model,
 		LatencyMs:    latencyMs,
 	}, nil
+}
+
+// stripMarkdownFences removes ``` code fences that Anthropic sometimes adds
+// around JSON responses despite explicit instructions not to.
+func stripMarkdownFences(s string) string {
+	cleaned := strings.TrimSpace(s)
+	if !strings.HasPrefix(cleaned, "```") {
+		return cleaned
+	}
+	if idx := strings.Index(cleaned, "\n"); idx != -1 {
+		cleaned = cleaned[idx+1:]
+	}
+	if idx := strings.LastIndex(cleaned, "```"); idx != -1 {
+		cleaned = strings.TrimSpace(cleaned[:idx])
+	}
+	return cleaned
 }
 
 // ---- internal Anthropic API types ----
