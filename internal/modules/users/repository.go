@@ -352,6 +352,101 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 	return nil
 }
 
+func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*models.UserProfileResponse, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT first_name, last_name, email, tel, address, profile_picture, email_verified_at, tel_verified_at
+		FROM users
+		WHERE user_id = ?
+		LIMIT 1
+	`
+
+	var firstName, lastName, email, phone sql.NullString
+	var address, avatar sql.NullString
+	var emailVerifiedAt, phoneVerifiedAt sql.NullTime
+
+	if err := db.QueryRowContext(ctx, query, userID).Scan(
+		&firstName,
+		&lastName,
+		&email,
+		&phone,
+		&address,
+		&avatar,
+		&emailVerifiedAt,
+		&phoneVerifiedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	resp := &models.UserProfileResponse{
+		FirstName:     nullableString(firstName),
+		LastName:      nullableString(lastName),
+		Email:         nullableString(email),
+		Phone:         nullableString(phone),
+		Address:       nullableString(address),
+		Avatar:        nullableString(avatar),
+		EmailVerified: emailVerifiedAt.Valid,
+		PhoneVerified: phoneVerifiedAt.Valid,
+	}
+
+	return resp, nil
+}
+
+func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, req *models.UpdateUserProfileRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	updates := []string{}
+	args := []interface{}{}
+
+	if req.FirstName != nil {
+		updates = append(updates, "first_name = ?")
+		args = append(args, *req.FirstName)
+	}
+	if req.LastName != nil {
+		updates = append(updates, "last_name = ?")
+		args = append(args, *req.LastName)
+	}
+	if req.Email != nil {
+		updates = append(updates, "email = ?")
+		args = append(args, *req.Email)
+	}
+	if req.Phone != nil {
+		updates = append(updates, "tel = ?")
+		args = append(args, *req.Phone)
+	}
+	if req.Address != nil {
+		updates = append(updates, "address = ?")
+		args = append(args, *req.Address)
+	}
+	if req.Avatar != nil {
+		updates = append(updates, "profile_picture = ?")
+		args = append(args, *req.Avatar)
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	args = append(args, userID)
+
+	query := fmt.Sprintf(`
+		UPDATE users
+		SET %s
+		WHERE user_id = ?
+	`, strings.Join(updates, ", "))
+
+	_, err := db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func nullableString(v sql.NullString) string {
+	if v.Valid {
+		return v.String
+	}
+	return ""
+}
+
 func generateToken() (string, error) {
 	b := make([]byte, 64)
 	if _, err := rand.Read(b); err != nil {

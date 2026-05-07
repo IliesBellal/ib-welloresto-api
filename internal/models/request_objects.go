@@ -634,6 +634,73 @@ type MerchantSettingsResponse struct {
 	Scannorder *ScannorderSettings         `json:"scannorder"`
 }
 
+type POSSettingsInfo struct {
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	SIRET        string `json:"siret"`
+	Address      string `json:"address"`
+	Currency     string `json:"currency"`
+	PrimaryColor string `json:"primary_color"`
+	TextColor    string `json:"text_color"`
+	IsOpen       bool   `json:"is_open"`
+}
+
+type POSSettingsTimings struct {
+	WaitTimeMin      int  `json:"wait_time_min"`
+	WaitTimeMax      int  `json:"wait_time_max"`
+	AutoCloseEnabled bool `json:"auto_close_enabled"`
+	AutoCloseDelay   int  `json:"auto_close_delay"`
+}
+
+type POSSettingsOrdering struct {
+	PaidOrdersOnly     bool   `json:"paid_orders_only"`
+	ConcurrentCapacity int    `json:"concurrent_capacity"`
+	ServiceRequired    string `json:"service_required"`
+	DisableLowStock    bool   `json:"disable_low_stock"`
+	RegisterRequired   bool   `json:"register_required"`
+	ActiveOnSite       bool   `json:"active_on_site"`
+	ActiveTakeaway     bool   `json:"active_takeaway"`
+	ActiveDelivery     bool   `json:"active_delivery"`
+}
+
+type POSSettingsScanOrder struct {
+	ActiveDelivery     bool `json:"active_delivery"`
+	ActiveTakeaway     bool `json:"active_takeaway"`
+	ActiveOnSite       bool `json:"active_on_site"`
+	AutoAcceptDelivery bool `json:"auto_accept_delivery"`
+	AutoAcceptTakeaway bool `json:"auto_accept_takeaway"`
+	AllowScheduled     bool `json:"allow_scheduled"`
+	MaxScheduleDays    int  `json:"max_schedule_days"`
+	EnableRating       bool `json:"enable_rating"`
+}
+
+type POSSettingsResponseV2 struct {
+	Info      POSSettingsInfo      `json:"info"`
+	Timings   POSSettingsTimings   `json:"timings"`
+	Ordering  POSSettingsOrdering  `json:"ordering"`
+	ScanOrder POSSettingsScanOrder `json:"scan_order"`
+}
+
+type UserProfileResponse struct {
+	FirstName     string `json:"firstname"`
+	LastName      string `json:"lastname"`
+	Email         string `json:"email"`
+	Phone         string `json:"phone"`
+	Address       string `json:"address"`
+	Avatar        string `json:"avatar"`
+	EmailVerified bool   `json:"email_verified"`
+	PhoneVerified bool   `json:"phone_verified"`
+}
+
+type UpdateUserProfileRequest struct {
+	FirstName *string `json:"firstname,omitempty"`
+	LastName  *string `json:"lastname,omitempty"`
+	Email     *string `json:"email,omitempty"`
+	Phone     *string `json:"phone,omitempty"`
+	Address   *string `json:"address,omitempty"`
+	Avatar    *string `json:"avatar,omitempty"`
+}
+
 type UpdatePasswordRequest struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`

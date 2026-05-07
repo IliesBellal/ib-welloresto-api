@@ -111,3 +111,30 @@ func (h *UsersHandler) UpdateUserSettings(w http.ResponseWriter, r *http.Request
 
 	models.SendJSON(w, http.StatusOK, "user", "update_settings", map[string]string{"status": "success"})
 }
+
+func (h *UsersHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	profile, err := h.svc.GetProfile(r.Context())
+	if err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "get_profile", map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(profile)
+}
+
+func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	var req models.UpdateUserProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "user", "update_profile", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	if err := h.svc.UpdateProfile(r.Context(), &req); err != nil {
+		models.SendJSON(w, http.StatusInternalServerError, "user", "update_profile", map[string]string{"error": err.Error()})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "user", "update_profile", map[string]string{"status": "success"})
+}

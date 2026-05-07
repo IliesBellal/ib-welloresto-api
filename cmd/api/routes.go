@@ -437,6 +437,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/users", func(r chi.Router) {
 		r.Use(authMiddleware)
 
+		r.Get("/profile", usersH.GetProfile)      // used by: back-office
+		r.Patch("/profile", usersH.UpdateProfile) // used by: back-office
+
 		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/location", usersH.SetUserLocation)
@@ -468,8 +471,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/tva_rates", posH.GetTVARates)
 
 		r.Route("/settings", func(r chi.Router) {
-			r.Get("/", posH.GetSettings)
-			r.Patch("/", posH.UpdateMerchantSettings)
+			r.Get("/", posH.GetSettings)              // used by: back-office
+			r.Patch("/", posH.UpdateMerchantSettings) // used by: back-office
 
 			r.Patch("/scannorder", posH.ToggleScanNOrder)
 			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)

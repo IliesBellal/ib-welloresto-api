@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -105,4 +106,22 @@ func (s *UsersService) UpdateUserSettings(ctx context.Context, userID, token str
 	// Sinon, vérifier que token -> User.UserID est Admin de l'établissement
 
 	return s.userRepo.UpdateUserSettings(ctx, userID, req)
+}
+
+func (s *UsersService) GetProfile(ctx context.Context) (*models.UserProfileResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	return s.userRepo.GetUserProfile(ctx, user.UserID)
+}
+
+func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUserProfileRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.ErrUnauthorized
+	}
+
+	return s.userRepo.UpdateUserProfile(ctx, user.UserID, req)
 }

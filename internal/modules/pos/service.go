@@ -204,3 +204,82 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 		Scannorder: scann,
 	}, nil
 }
+
+func (s *POSService) GetMerchantSettingsV2(ctx context.Context, token string) (*models.POSSettingsResponseV2, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	m, params, _, _, err := s.posRepo.GetMerchantSettings(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	serviceRequired := "none"
+	if boolVal(params.ServiceRequiredForOrdering) {
+		serviceRequired = "table"
+	}
+
+	resp := &models.POSSettingsResponseV2{
+		Info: models.POSSettingsInfo{
+			Name:         stringVal(m.BusinessName),
+			Phone:        stringVal(m.MerchantTel),
+			SIRET:        stringVal(m.SIRET),
+			Address:      stringVal(m.Address),
+			Currency:     stringVal(params.Currency),
+			PrimaryColor: stringVal(params.PrimaryColor),
+			TextColor:    stringVal(params.TextColorOnPrimaryColor),
+			IsOpen:       boolVal(params.IsOpen),
+		},
+		Timings: models.POSSettingsTimings{
+			WaitTimeMin:      intVal(params.MinimumPreparationTime),
+			WaitTimeMax:      intVal(params.MaximumPreparationTime),
+			AutoCloseEnabled: boolVal(params.AutoCompleteOrders),
+			AutoCloseDelay:   intVal(params.AutoCompleteOrdersDelay),
+		},
+		Ordering: models.POSSettingsOrdering{
+			PaidOrdersOnly:     boolVal(params.KitchenShowOnlyPaid),
+			ConcurrentCapacity: intVal(params.ConcurrentPreparationCapacity),
+			ServiceRequired:    serviceRequired,
+			DisableLowStock:    boolVal(params.DisableComponentsUnderSafetyStock),
+			RegisterRequired:   boolVal(params.CashRegisterRequiredForOrdering),
+			ActiveOnSite:       boolVal(params.ManageOnSite),
+			ActiveTakeaway:     boolVal(params.ManageTakeAway),
+			ActiveDelivery:     boolVal(params.ManageDelivery),
+		},
+		ScanOrder: models.POSSettingsScanOrder{
+			ActiveDelivery:     boolVal(params.ManageDelivery),
+			ActiveTakeaway:     boolVal(params.ManageTakeAway),
+			ActiveOnSite:       boolVal(params.ManageOnSite),
+			AutoAcceptDelivery: boolVal(params.AutoAcceptSnoDeliveryOrders),
+			AutoAcceptTakeaway: boolVal(params.AutoAcceptSnoTakeAwayOrders),
+			AllowScheduled:     boolVal(params.EnableAdvanceOrders),
+			MaxScheduleDays:    intVal(params.AdvanceOrderDays),
+			EnableRating:       boolVal(params.EnabledRating),
+		},
+	}
+
+	return resp, nil
+}
+
+func boolVal(v *bool) bool {
+	if v == nil {
+		return false
+	}
+	return *v
+}
+
+func intVal(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func stringVal(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
