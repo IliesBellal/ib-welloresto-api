@@ -627,13 +627,6 @@ type UpdateMerchantSettingsRequest struct {
 	Scannorder *ScannorderSettings         `json:"scannorder,omitempty"`
 }
 
-type MerchantSettingsResponse struct {
-	Merchant   *MerchantSettings           `json:"merchant"`
-	Parameters *MerchantParametersSettings `json:"parameters"`
-	Marketing  *MerchantMarketingSettings  `json:"marketing"`
-	Scannorder *ScannorderSettings         `json:"scannorder"`
-}
-
 type POSSettingsInfo struct {
 	Name         string `json:"name"`
 	Phone        string `json:"phone"`
@@ -674,7 +667,7 @@ type POSSettingsScanOrder struct {
 	EnableRating       bool `json:"enable_rating"`
 }
 
-type POSSettingsResponseV2 struct {
+type POSSettingsResponse struct {
 	Info      POSSettingsInfo      `json:"info"`
 	Timings   POSSettingsTimings   `json:"timings"`
 	Ordering  POSSettingsOrdering  `json:"ordering"`

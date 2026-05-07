@@ -186,26 +186,7 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 	return s.posRepo.UpdateMerchantSettings(ctx, user.MerchantID, req)
 }
 
-func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*models.MerchantSettingsResponse, error) {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return nil, models.ErrUnauthorized
-	}
-
-	m, params, marketing, scann, err := s.posRepo.GetMerchantSettings(ctx, user.MerchantID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &models.MerchantSettingsResponse{
-		Merchant:   m,
-		Parameters: params,
-		Marketing:  marketing,
-		Scannorder: scann,
-	}, nil
-}
-
-func (s *POSService) GetMerchantSettingsV2(ctx context.Context, token string) (*models.POSSettingsResponseV2, error) {
+func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*models.POSSettingsResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -221,7 +202,7 @@ func (s *POSService) GetMerchantSettingsV2(ctx context.Context, token string) (*
 		serviceRequired = "table"
 	}
 
-	resp := &models.POSSettingsResponseV2{
+	resp := &models.POSSettingsResponse{
 		Info: models.POSSettingsInfo{
 			Name:         stringVal(m.BusinessName),
 			Phone:        stringVal(m.MerchantTel),
