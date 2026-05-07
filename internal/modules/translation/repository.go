@@ -166,17 +166,10 @@ func (r *Repository) ActivateLanguageForMerchant(ctx context.Context, merchantID
 func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, merchantID string, langCode string, maxLanguages int) error {
 	log := logger.FromContext(ctx)
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	db := dbutils.GetDB(ctx, r.database)
 
 	var alreadyEnabled int
-	err = tx.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM merchant_translation_languages
 		WHERE merchant_id = ? AND lang_code = ? AND enabled = true
@@ -187,15 +180,11 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 	}
 
 	if alreadyEnabled > 0 {
-		if err := tx.Commit(); err != nil {
-			log.Error(err.Error())
-			return err
-		}
 		return nil
 	}
 
 	var beforeCount int
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM merchant_translation_languages
 		WHERE merchant_id = ? AND enabled = true
@@ -209,7 +198,7 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 		return models.ErrTranslationLanguagesLimitReached
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO merchant_translation_languages (merchant_id, lang_code, enabled)
 		VALUES (?, ?, true)
 		ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)
@@ -220,7 +209,7 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 	}
 
 	var afterCount int
-	err = tx.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM merchant_translation_languages
 		WHERE merchant_id = ? AND enabled = true
@@ -232,11 +221,6 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 
 	if afterCount > maxLanguages {
 		return models.ErrTranslationLanguagesLimitReached
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Error(err.Error())
-		return err
 	}
 
 	return nil

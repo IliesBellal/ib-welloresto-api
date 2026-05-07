@@ -109,6 +109,14 @@ type itemCachePlan struct {
 func (s *Service) TranslateMenu(ctx context.Context, merchantID, langCode string, menu Menu) (Menu, error) {
 	log := logger.FromContext(ctx)
 
+	if !s.cache.IsAvailable() {
+		log.Warn("translation: Redis cache unavailable — skipping translation, returning original menu",
+			zap.String("merchant_id", merchantID),
+			zap.String("lang_code", langCode),
+		)
+		return menu, nil
+	}
+
 	menuHash := buildMenuHash(menu)
 	normLang := strings.ToLower(strings.TrimSpace(langCode))
 	l1Key := fmt.Sprintf("translation:menu:%s:%s:%s", merchantID, normLang, menuHash)

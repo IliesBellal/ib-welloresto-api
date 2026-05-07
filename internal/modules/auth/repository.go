@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type AuthRepository struct {
@@ -352,11 +353,7 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 }
 
 func (r *AuthRepository) CheckAppVersion(ctx context.Context, currentVersion int, app, merchantID string) (map[string]interface{}, error) {
-
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
+	db := dbutils.GetDB(ctx, r.database)
 
 	// Step 1: get highest version > currentVersion
 	q1 := `
@@ -368,19 +365,17 @@ WHERE app_id = ?
 ORDER BY version_code DESC
 LIMIT 1;
 `
-	row := tx.QueryRowContext(ctx, q1, app, currentVersion)
+	row := db.QueryRowContext(ctx, q1, app, currentVersion)
 
 	var versionID int
 	var versionCode int
 	var downloadURL string
 
-	err = row.Scan(&versionID, &versionCode, &downloadURL)
+	err := row.Scan(&versionID, &versionCode, &downloadURL)
 	if err == sql.ErrNoRows {
-		tx.Commit()
 		return map[string]interface{}{"status": "no_update"}, nil
 	}
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -391,17 +386,15 @@ WHERE version_code = ?
 LIMIT 1;
 `
 	var restricted int
-	err = tx.QueryRowContext(ctx, q2, versionCode).Scan(&restricted)
+	err = db.QueryRowContext(ctx, q2, versionCode).Scan(&restricted)
 	if err == sql.ErrNoRows {
 		// Not restricted → update available
-		tx.Commit()
 		return map[string]interface{}{
 			"status":       "update_available",
 			"download_url": downloadURL,
 		}, nil
 	}
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -414,18 +407,15 @@ LIMIT 1;
 `
 
 	var allowed int
-	err = tx.QueryRowContext(ctx, q3, versionCode, merchantID).Scan(&allowed)
+	err = db.QueryRowContext(ctx, q3, versionCode, merchantID).Scan(&allowed)
 	if err == sql.ErrNoRows {
-		tx.Commit()
 		return map[string]interface{}{"status": "no_update"}, nil
 	}
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	// Allowed → update available
-	tx.Commit()
 	return map[string]interface{}{
 		"status":       "update_available",
 		"download_url": downloadURL,
@@ -433,11 +423,7 @@ LIMIT 1;
 }
 
 func (r *AuthRepository) SaveDevice(ctx context.Context, userID, merchantID, app, deviceID, fcmToken string) error {
-
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
+	db := dbutils.GetDB(ctx, r.database)
 
 	q := `
 INSERT INTO users_devices
@@ -450,13 +436,12 @@ ON DUPLICATE KEY UPDATE
     merchant_id = VALUES(merchant_id)
 `
 
-	_, execErr := tx.ExecContext(ctx, q, userID, merchantID, app, deviceID, fcmToken)
+	_, execErr := db.ExecContext(ctx, q, userID, merchantID, app, deviceID, fcmToken)
 	if execErr != nil {
-		tx.Rollback()
 		return execErr
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné

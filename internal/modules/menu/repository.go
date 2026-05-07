@@ -3440,23 +3440,15 @@ func (r *MenuRepository) UpdateMarketingCategoriesDisplayOrder(ctx context.Conte
 		return nil
 	}
 
-	tx, err := r.database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	db := dbutils.GetDB(ctx, r.database)
 
 	for i, id := range categoryIDs {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := db.ExecContext(ctx,
 			`UPDATE marketing_categories SET display_order = ? WHERE id = ? AND merchant_id = ? AND enabled = 1`,
 			i+1, id, merchantID,
 		); err != nil {
 			return err
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 
 	_ = r.setMenuUpdated(ctx, merchantID)
