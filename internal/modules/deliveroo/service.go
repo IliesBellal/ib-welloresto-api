@@ -236,12 +236,36 @@ func (s *DeliverooService) ToggleItemAvailability(ctx context.Context, merchantI
 
 // UpdatePreparationTime updates the site preparation time on Deliveroo.
 func (s *DeliverooService) UpdatePreparationTime(ctx context.Context, merchantID string, preparationTimeMinutes int) error {
+	mode := mapPreparationTimeToWorkloadMode(preparationTimeMinutes)
+
 	siteID, err := s.repo.GetSiteIDByMerchant(ctx, merchantID)
 	if err != nil {
 		return err
 	}
 
-	return s.client.UpdateSitePreparationTime(ctx, siteID, preparationTimeMinutes)
+	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		// brand_id may be absent for older rows. Derive it once from site_id and persist it.
+		if strings.Contains(err.Error(), "brand_id not configured") {
+			brandID, err = s.ValidateAndSyncBrandID(ctx, merchantID)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	return s.client.UpdateSiteWorkloadMode(ctx, brandID, siteID, mode)
+}
+
+func mapPreparationTimeToWorkloadMode(preparationTimeMinutes int) string {
+	switch {
+	case preparationTimeMinutes <= 15:
+		return "QUIET"
+	case preparationTimeMinutes <= 30:
+		return "MODERATE"
+	default:
+		return "BUSY"
+	}
 }
 
 // CloseStoreTemporary temporarily closes the Deliveroo site for a fixed duration.

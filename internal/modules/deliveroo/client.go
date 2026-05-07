@@ -232,12 +232,12 @@ func (c *DeliverooClient) ReplaceUnavailabilities(ctx context.Context, brandID, 
 	return nil
 }
 
-// UpdateSitePreparationTime updates preparation_time_minutes at site level.
-func (c *DeliverooClient) UpdateSitePreparationTime(ctx context.Context, siteID string, preparationTimeMinutes int) error {
-	url := fmt.Sprintf("%s/order/v1/sites/%s", c.config.BaseURL, url.PathEscape(siteID))
-	payload := map[string]int{"preparation_time_minutes": preparationTimeMinutes}
+// UpdateSiteWorkloadMode sets the current workload mode for a site.
+func (c *DeliverooClient) UpdateSiteWorkloadMode(ctx context.Context, brandID, siteID, mode string) error {
+	url := fmt.Sprintf("%s/site/v1/brands/%s/sites/%s/workload/mode", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(siteID))
+	payload := map[string]string{"mode": mode}
 
-	resp, err := c.doRequest(ctx, "PATCH", url, payload)
+	resp, err := c.doRequest(ctx, "PUT", url, payload)
 	if err != nil {
 		return err
 	}
