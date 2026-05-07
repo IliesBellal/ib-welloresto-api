@@ -328,10 +328,12 @@ type BulkUpdateProductPricesPayload struct {
 }
 
 type MarketingCategoryEntry struct {
-	CategoryID   string `json:"category_id"`
-	Name         string `json:"name"`
-	DisplayOrder int    `json:"display_order"`
-	Available    bool   `json:"available"`
+	CategoryID   string   `json:"category_id"`
+	Name         string   `json:"name"`
+	DisplayOrder int      `json:"display_order"`
+	Available    bool     `json:"available"`
+	ProductCount int      `json:"product_count"`
+	ProductIDs   []string `json:"product_ids"`
 }
 
 type CreateMarketingCategoryPayload struct {

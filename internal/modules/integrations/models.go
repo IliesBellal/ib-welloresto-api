@@ -17,6 +17,7 @@ type UberEatsIntegration struct {
 	CommissionRate         int             `json:"commission_rate"`
 	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
 	PreparationTimeMinutes int             `json:"preparation_time_minutes"`
+	ClosedUntil            *time.Time      `json:"closed_until"`
 	LastSync               *time.Time      `json:"last_sync"`
 	SyncedItems            int             `json:"synced_items"`
 	KPIs                   IntegrationKPIs `json:"kpis"`
@@ -29,6 +30,7 @@ type DeliverooIntegration struct {
 	CommissionRate         int             `json:"commission_rate"`
 	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
 	PreparationTimeMinutes int             `json:"preparation_time_minutes"`
+	ClosedUntil            *time.Time      `json:"closed_until"`
 	LastSync               *time.Time      `json:"last_sync"`
 	SyncedItems            int             `json:"synced_items"`
 	KPIs                   IntegrationKPIs `json:"kpis"`
@@ -41,6 +43,7 @@ type ScanNOrderIntegration struct {
 	Active           bool            `json:"active"`
 	CommissionRate   int             `json:"commission_rate"`
 	AutoAcceptOrders bool            `json:"auto_accept_orders"`
+	ClosedUntil      *time.Time      `json:"closed_until"`
 	LastSync         *time.Time      `json:"last_sync"`
 	SyncedItems      int             `json:"synced_items"`
 	KPIs             IntegrationKPIs `json:"kpis"`

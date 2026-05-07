@@ -31,6 +31,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 			iue.commission_rate,
 			iue.auto_accept_orders,
 			COALESCE(iue.estimated_preparation_time, 0) AS preparation_time_minutes,
+			iue.closed_until,
 			iue.last_sync,
 			(
 				SELECT COUNT(*)
@@ -62,6 +63,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		commissionRate         int
 		autoAccept             bool
 		preparationTimeMinutes int
+		closedUntil            sql.NullTime
 		lastSync               sql.NullTime
 		syncedItems            int
 		revenue                int
@@ -74,7 +76,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		merchantID, // orders_count subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&enabled, &commissionRate, &autoAccept, &preparationTimeMinutes, &lastSync,
+		&enabled, &commissionRate, &autoAccept, &preparationTimeMinutes, &closedUntil, &lastSync,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -105,6 +107,10 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 	if lastSync.Valid {
 		t := lastSync.Time
 		result.LastSync = &t
+	}
+	if closedUntil.Valid {
+		t := closedUntil.Time
+		result.ClosedUntil = &t
 	}
 
 	return result, nil
@@ -209,6 +215,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		SELECT
 			snos.activated,
 			snos.commission_rate,
+			snos.closed_until,
 			snos.last_sync,
 			snos.synced_items,
 			snos.logo_url,
@@ -250,6 +257,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 	var (
 		activated             bool
 		commissionRate        int
+		closedUntil           sql.NullTime
 		lastSync              sql.NullTime
 		syncedItems           int
 		logoURL               sql.NullString
@@ -274,7 +282,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		merchantID, // orders_count subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&activated, &commissionRate, &lastSync, &syncedItems,
+		&activated, &commissionRate, &closedUntil, &lastSync, &syncedItems,
 		&logoURL, &bannerURL, &primaryColor,
 		&headerTitle, &headerText,
 		&cgvLink, &returnPolicyLink, &legalNoticesLink,
@@ -316,6 +324,10 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 	if lastSync.Valid {
 		t := lastSync.Time
 		result.LastSync = &t
+	}
+	if closedUntil.Valid {
+		t := closedUntil.Time
+		result.ClosedUntil = &t
 	}
 	if logoURL.Valid {
 		result.LogoURL = &logoURL.String

@@ -3315,10 +3315,20 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-		SELECT id, name, display_order, available
-		FROM marketing_categories
-		WHERE merchant_id = ? AND enabled = 1
-		ORDER BY display_order ASC, id ASC
+		SELECT
+			mc.id,
+			mc.name,
+			mc.display_order,
+			mc.available,
+			COUNT(DISTINCT pmc.product_id) AS product_count,
+			COALESCE(GROUP_CONCAT(DISTINCT pmc.product_id ORDER BY pmc.product_id SEPARATOR ','), '') AS product_ids
+		FROM marketing_categories mc
+		LEFT JOIN product_marketing_categories pmc
+			ON pmc.marketing_category_id = mc.id
+			AND pmc.merchant_id = mc.merchant_id
+		WHERE mc.merchant_id = ? AND mc.enabled = 1
+		GROUP BY mc.id, mc.name, mc.display_order, mc.available
+		ORDER BY mc.display_order ASC, mc.id ASC
 	`
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
@@ -3330,8 +3340,14 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 	result := []MarketingCategoryEntry{}
 	for rows.Next() {
 		var row MarketingCategoryEntry
-		if err := rows.Scan(&row.CategoryID, &row.Name, &row.DisplayOrder, &row.Available); err != nil {
+		var productIDsRaw string
+		if err := rows.Scan(&row.CategoryID, &row.Name, &row.DisplayOrder, &row.Available, &row.ProductCount, &productIDsRaw); err != nil {
 			return nil, err
+		}
+
+		row.ProductIDs = []string{}
+		if productIDsRaw != "" {
+			row.ProductIDs = strings.Split(productIDsRaw, ",")
 		}
 		result = append(result, row)
 	}
