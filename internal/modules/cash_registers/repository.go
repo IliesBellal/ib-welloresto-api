@@ -684,7 +684,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	return nil
 }
 
-func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req CashRegisterHistoryRequest) ([]models.CashRegister, error) {
+func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req CashRegisterHistoryRequest) (*CashRegisterHistoryResult, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -722,17 +722,20 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	// ==========================================
 	// 2️⃣ CALCUL DE LA PAGINATION
 	// ==========================================
-	limit := 50
-	if req.Limit != nil && *req.Limit > 0 {
-		limit = *req.Limit
-	}
-
-	page := 1
-	if req.Page != nil && *req.Page > 0 {
-		page = *req.Page
-	}
+	page, limit := req.NormalizedPagination()
 
 	offset := (page - 1) * limit
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM cash_registers cr
+		INNER JOIN cash_desks cd ON cd.cash_desk_id = cr.cash_desk_id
+	` + where
+
+	var totalItems int
+	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return nil, err
+	}
 
 	// ==========================================
 	// 3️⃣ RÉCUPÉRATION DES IDs UNIQUEMENT
@@ -762,8 +765,27 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		registerIDs = append(registerIDs, id)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = (totalItems + limit - 1) / limit
+	}
+
+	result := &CashRegisterHistoryResult{
+		CashRegisters: []models.CashRegister{},
+		Metadata: models.PaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  totalPages,
+			CurrentPage: page,
+			Limit:       limit,
+		},
+	}
+
 	if len(registerIDs) == 0 {
-		return []models.CashRegister{}, nil
+		return result, nil
 	}
 
 	// ==========================================
@@ -821,7 +843,13 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		history = append(history, h)
 	}
 
-	return history, nil
+	if err := fullRows.Err(); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	result.CashRegisters = history
+	return result, nil
 }
 
 func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, merchantID, cashRegisterID string) (*models.CashRegisterDetails, error) {

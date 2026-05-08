@@ -14,8 +14,9 @@ type CashDesk struct {
 }
 
 type CashRegisterHistoryResponse struct {
-	Status        string         `json:"status"`
-	CashRegisters []CashRegister `json:"cash_registers"`
+	Status        string              `json:"status"`
+	Metadata      *PaginationMetadata `json:"metadata,omitempty"`
+	CashRegisters []CashRegister      `json:"cash_registers"`
 }
 
 type CashRegisterDetails struct {

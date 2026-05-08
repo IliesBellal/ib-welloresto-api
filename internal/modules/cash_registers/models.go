@@ -1,5 +1,7 @@
 package cash_registers
 
+import "welloresto-api/internal/models"
+
 type CashRegisterHistoryItem struct {
 	CashRegisterID string              `json:"cash_register_id"`
 	StartDate      string              `json:"start_date"`
@@ -23,6 +25,25 @@ type CashRegisterHistoryRequest struct {
 	Limit    *int    `json:"limit"`
 	DateFrom *string `json:"date_from"`
 	DateTo   *string `json:"date_to"`
+}
+
+func (r CashRegisterHistoryRequest) NormalizedPagination() (int, int) {
+	page := 1
+	if r.Page != nil && *r.Page > 0 {
+		page = *r.Page
+	}
+
+	limit := 50
+	if r.Limit != nil && *r.Limit > 0 {
+		limit = *r.Limit
+	}
+
+	return page, limit
+}
+
+type CashRegisterHistoryResult struct {
+	CashRegisters []models.CashRegister
+	Metadata      models.PaginationMetadata
 }
 
 type CashRegisterDetails struct {
