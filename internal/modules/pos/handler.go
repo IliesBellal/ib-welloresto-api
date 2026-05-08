@@ -251,7 +251,7 @@ func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMerchantSettings(ctx, token)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "pos", "get_settings", map[string]string{"status": "-2", "error": err.Error()})
+		models.SendErrorJSON(w, "pos", "get_settings", err)
 		return
 	}
 

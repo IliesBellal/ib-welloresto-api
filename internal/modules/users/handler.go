@@ -104,6 +104,16 @@ func (h *UsersHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "user", "get_profile", profile)
 }
 
+func (h *UsersHandler) GetNotifications(w http.ResponseWriter, r *http.Request) {
+	data, err := h.svc.GetNotifications(r.Context())
+	if err != nil {
+		models.SendErrorJSON(w, "users", "notifications", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "users", "notifications", data)
+}
+
 func (h *UsersHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	var req models.UpdateUserProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

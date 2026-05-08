@@ -66,6 +66,14 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 		return err
 	}
 
+	// merchant_marketing_settings (PK = merchant_id)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO merchant_marketing_settings (merchant_id) VALUES (?)`, merchantID,
+	); err != nil {
+		log.Error("InitMerchantSatellites: failed to insert merchant marketing settings: " + err.Error())
+		return err
+	}
+
 	// default cash desk
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO cash_desks (merchant_id, name) VALUES (?, 'Caisse principale')`, merchantID,

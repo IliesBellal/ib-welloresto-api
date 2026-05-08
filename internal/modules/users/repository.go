@@ -437,6 +437,83 @@ func (r *UsersRepository) UpdateUserAvatar(ctx context.Context, userID, avatarUR
 	return err
 }
 
+func (r *UsersRepository) GetOutOfStockComponents(ctx context.Context, merchantID string, maxNames int) (int, []string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var count int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM components
+		WHERE merchant_id = ?
+		  AND enabled = 1
+		  AND category_id <> 'UBER_EATS_TEMP'
+		  AND stock <= 0
+	`, merchantID).Scan(&count); err != nil {
+		return 0, nil, err
+	}
+
+	if count == 0 || maxNames <= 0 {
+		return count, []string{}, nil
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT name
+		FROM components
+		WHERE merchant_id = ?
+		  AND enabled = 1
+		  AND category_id <> 'UBER_EATS_TEMP'
+		  AND stock <= 0
+		ORDER BY name ASC
+		LIMIT ?
+	`, merchantID, maxNames)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	names := make([]string, 0, maxNames)
+	for rows.Next() {
+		var name sql.NullString
+		if err := rows.Scan(&name); err != nil {
+			return 0, nil, err
+		}
+		if name.Valid && strings.TrimSpace(name.String) != "" {
+			names = append(names, name.String)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+
+	return count, names, nil
+}
+
+func (r *UsersRepository) GetUserVerificationStatus(ctx context.Context, userID string) (*UserVerificationStatus, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var email sql.NullString
+	var phone sql.NullString
+	var emailVerifiedAt sql.NullTime
+	var phoneVerifiedAt sql.NullTime
+
+	if err := db.QueryRowContext(ctx, `
+		SELECT email, tel, email_verified_at, tel_verified_at
+		FROM users
+		WHERE user_id = ?
+		LIMIT 1
+	`, userID).Scan(&email, &phone, &emailVerifiedAt, &phoneVerifiedAt); err != nil {
+		return nil, err
+	}
+
+	return &UserVerificationStatus{
+		Email:         nullableString(email),
+		Phone:         nullableString(phone),
+		EmailVerified: emailVerifiedAt.Valid,
+		PhoneVerified: phoneVerifiedAt.Valid,
+	}, nil
+}
+
 func nullableString(v sql.NullString) string {
 	if v.Valid {
 		return v.String

@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
@@ -141,4 +142,64 @@ func (s *UsersService) UpdateProfile(ctx context.Context, req *models.UpdateUser
 	}
 
 	return s.userRepo.GetUserProfile(ctx, user.UserID)
+}
+
+func (s *UsersService) GetNotifications(ctx context.Context) (*UserNotificationsData, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	notifications := make([]UserNotification, 0, 3)
+
+	rupturesCount, ruptureNames, err := s.userRepo.GetOutOfStockComponents(ctx, user.MerchantID, 3)
+	if err != nil {
+		return nil, err
+	}
+
+	if rupturesCount > 0 {
+		title := fmt.Sprintf("%d ruptures de stock", rupturesCount)
+		if rupturesCount == 1 {
+			title = "1 rupture de stock"
+		}
+
+		description := strings.Join(ruptureNames, ", ")
+		notifications = append(notifications, UserNotification{
+			ID:          "stock_rupture",
+			Type:        "STOCK_RUPTURE",
+			Title:       title,
+			Description: description,
+			Severity:    "danger",
+			ActionLabel: "Voir les stocks",
+		})
+	}
+
+	verificationStatus, err := s.userRepo.GetUserVerificationStatus(ctx, user.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !verificationStatus.EmailVerified {
+		notifications = append(notifications, UserNotification{
+			ID:          "email_unverified",
+			Type:        "EMAIL_UNVERIFIED",
+			Title:       "Email non verifie",
+			Description: "Verifiez votre adresse email pour securiser votre compte.",
+			Severity:    "warning",
+			ActionLabel: "Verifier",
+		})
+	}
+
+	if strings.TrimSpace(verificationStatus.Phone) == "" || !verificationStatus.PhoneVerified {
+		notifications = append(notifications, UserNotification{
+			ID:          "phone_unverified",
+			Type:        "PHONE_UNVERIFIED",
+			Title:       "Numero de telephone non verifie",
+			Description: "Ajoutez et verifiez votre numero pour activer les alertes SMS.",
+			Severity:    "info",
+			ActionLabel: "Ajouter",
+		})
+	}
+
+	return &UserNotificationsData{Notifications: notifications}, nil
 }

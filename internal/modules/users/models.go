@@ -89,3 +89,23 @@ type MerchantRow struct {
 	Country  string
 	ZipCode  string
 }
+
+type UserNotification struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+	ActionLabel string `json:"actionLabel"`
+}
+
+type UserNotificationsData struct {
+	Notifications []UserNotification `json:"notifications"`
+}
+
+type UserVerificationStatus struct {
+	Email         string
+	Phone         string
+	EmailVerified bool
+	PhoneVerified bool
+}

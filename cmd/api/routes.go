@@ -440,6 +440,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/profile", usersH.GetProfile)           // used by: back-office
 		r.Patch("/profile", usersH.UpdateProfile)      // used by: back-office
 		r.Post("/profile/avatar", usersH.UploadAvatar) // used by: back-office
+		r.Get("/notifications", usersH.GetNotifications)
 
 		r.Post("/create", usersH.CreateUser)
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
