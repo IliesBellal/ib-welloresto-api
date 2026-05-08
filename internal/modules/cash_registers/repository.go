@@ -695,7 +695,6 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	// On garde ta logique complexe de droits (Admin ou propriétaire)
 	where := ` 
         WHERE cd.merchant_id = ? 
-          AND cr.end_date IS NOT NULL 
           AND (
                 cr.user_id = ? 
                 OR EXISTS (
@@ -804,6 +803,10 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
         SELECT cr.cash_register_id,
                cr.start_date,
                cr.end_date,
+		 COALESCE(cr.cash_fund, 0) AS cash_fund,
+		 COALESCE(cr.final_cash_fund, 0) AS final_cash_fund,
+		 cr.closure_comment,
+		 NULLIF(TRIM(CONCAT_WS(' ', cb.first_name, cb.last_name)), '') AS closed_by_name,
                cd.cash_desk_id,
                cd.name,
 		 cr.closed,
@@ -812,6 +815,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		 COALESCE(pstats.total_revenu, 0) AS total_revenu
         FROM cash_registers cr
         INNER JOIN cash_desks cd ON cd.cash_desk_id = cr.cash_desk_id
+		LEFT JOIN users cb ON cb.user_id = cr.closed_by
 		LEFT JOIN (
 			SELECT p.cash_register_id,
 			       COUNT(*) AS transaction_count,
@@ -835,6 +839,8 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	for fullRows.Next() {
 		var h CashRegisterHistoryItem
 		var rawStartDate, rawEndDate sql.NullTime
+		var cashFund, finalCashFund sql.NullInt64
+		var closureComment, closedByName sql.NullString
 		var hash sql.NullString
 		var transactionCount sql.NullInt64
 		var totalRevenu sql.NullInt64
@@ -843,6 +849,10 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			&h.CashRegisterID,
 			&rawStartDate,
 			&rawEndDate,
+			&cashFund,
+			&finalCashFund,
+			&closureComment,
+			&closedByName,
 			&h.CashDesk.CashDeskID,
 			&h.CashDesk.CashDeskName,
 			&h.Closed,
@@ -860,6 +870,24 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		}
 		if rawEndDate.Valid {
 			h.EndDate = rawEndDate.Time.UTC().Format(time.RFC3339)
+		}
+		if cashFund.Valid {
+			h.CashFund = int(cashFund.Int64)
+		}
+		if finalCashFund.Valid {
+			h.FinalCashFund = int(finalCashFund.Int64)
+		}
+		if closureComment.Valid {
+			comment := strings.TrimSpace(closureComment.String)
+			if comment != "" {
+				h.ClosureComment = &comment
+			}
+		}
+		if closedByName.Valid {
+			name := strings.TrimSpace(closedByName.String)
+			if name != "" {
+				h.ClosedByName = &name
+			}
 		}
 		h.Enclosed = h.Closed
 		h.PaymentMethods = []MOPLine{}

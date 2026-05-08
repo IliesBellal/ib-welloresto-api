@@ -6,6 +6,10 @@ type CashRegisterHistoryItem struct {
 	CashRegisterID   string              `json:"cash_register_id"`
 	StartDate        string              `json:"start_date"`
 	EndDate          string              `json:"end_date"`
+	CashFund         int                 `json:"cash_fund"`
+	FinalCashFund    int                 `json:"final_cash_fund"`
+	ClosureComment   *string             `json:"closure_comment,omitempty"`
+	ClosedByName     *string             `json:"closed_by_name,omitempty"`
 	Closed           bool                `json:"closed"`
 	Enclosed         bool                `json:"enclosed"`
 	TotalRevenu      int                 `json:"total_revenu"`
