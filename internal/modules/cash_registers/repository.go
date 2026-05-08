@@ -684,7 +684,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 	return nil
 }
 
-func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req models.OrderHistoryRequest) ([]models.CashRegister, error) {
+func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req CashRegisterHistoryRequest) ([]models.CashRegister, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -709,10 +709,14 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 
 	args := []interface{}{merchantID, userID, userID}
 
-	// Ajout du filtre par date si présent dans la requête
-	if req.DateFrom != nil && req.DateTo != nil {
-		where += " AND cr.start_date BETWEEN ? AND ? "
-		args = append(args, *req.DateFrom, *req.DateTo)
+	// Ajout des filtres par date si présents dans la requête.
+	if req.DateFrom != nil && strings.TrimSpace(*req.DateFrom) != "" {
+		where += " AND cr.start_date >= ? "
+		args = append(args, strings.TrimSpace(*req.DateFrom))
+	}
+	if req.DateTo != nil && strings.TrimSpace(*req.DateTo) != "" {
+		where += " AND cr.start_date <= ? "
+		args = append(args, strings.TrimSpace(*req.DateTo))
 	}
 
 	// ==========================================

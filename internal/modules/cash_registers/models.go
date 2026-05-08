@@ -18,6 +18,13 @@ type CashRegisterHistoryResponse struct {
 	CashRegisters []CashRegisterHistoryItem `json:"cash_registers"`
 }
 
+type CashRegisterHistoryRequest struct {
+	Page     *int    `json:"page"`
+	Limit    *int    `json:"limit"`
+	DateFrom *string `json:"date_from"`
+	DateTo   *string `json:"date_to"`
+}
+
 type CashRegisterDetails struct {
 	Status         int                       `json:"status"`
 	CashReportID   string                    `json:"cash_report_id"`

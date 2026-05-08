@@ -110,7 +110,7 @@ func (s *CashRegisterService) EncloseCashRegister(ctx context.Context, id, token
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, req models.OrderHistoryRequest) ([]models.CashRegister, error) {
+func (s *CashRegisterService) GetCashRegisterHistory(ctx context.Context, req CashRegisterHistoryRequest) ([]models.CashRegister, error) {
 	// Récupérer l'utilisateur depuis le contexte
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

@@ -2,6 +2,7 @@ package cash_registers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -199,8 +200,11 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	var req models.OrderHistoryRequest
-	json.NewDecoder(r.Body).Decode(&req)
+	var req CashRegisterHistoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_history", map[string]string{"error": "invalid_body"})
+		return
+	}
 
 	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, req)
 	if err != nil {
