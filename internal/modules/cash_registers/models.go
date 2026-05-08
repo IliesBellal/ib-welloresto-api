@@ -3,11 +3,16 @@ package cash_registers
 import "welloresto-api/internal/models"
 
 type CashRegisterHistoryItem struct {
-	CashRegisterID string              `json:"cash_register_id"`
-	StartDate      string              `json:"start_date"`
-	EndDate        string              `json:"end_date"`
-	Closed         bool                `json:"closed"`
-	CashDesk       CashRegisterDeskRef `json:"cash_desk"`
+	CashRegisterID   string              `json:"cash_register_id"`
+	StartDate        string              `json:"start_date"`
+	EndDate          string              `json:"end_date"`
+	Closed           bool                `json:"closed"`
+	Enclosed         bool                `json:"enclosed"`
+	TotalRevenu      int                 `json:"total_revenu"`
+	TransactionCount int                 `json:"transaction_count"`
+	PaymentMethods   []MOPLine           `json:"payment_methods"`
+	HashPrefix       *string             `json:"hash_prefix,omitempty"`
+	CashDesk         CashRegisterDeskRef `json:"cash_desk"`
 }
 
 type CashRegisterDeskRef struct {
@@ -16,8 +21,9 @@ type CashRegisterDeskRef struct {
 }
 
 type CashRegisterHistoryResponse struct {
-	Status        string                    `json:"status"`
-	CashRegisters []CashRegisterHistoryItem `json:"cash_registers"`
+	Status        string                     `json:"status"`
+	Metadata      *models.PaginationMetadata `json:"metadata,omitempty"`
+	CashRegisters []CashRegisterHistoryItem  `json:"cash_registers"`
 }
 
 type CashRegisterHistoryRequest struct {
@@ -42,7 +48,7 @@ func (r CashRegisterHistoryRequest) NormalizedPagination() (int, int) {
 }
 
 type CashRegisterHistoryResult struct {
-	CashRegisters []models.CashRegister
+	CashRegisters []CashRegisterHistoryItem
 	Metadata      models.PaginationMetadata
 }
 

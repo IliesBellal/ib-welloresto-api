@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -364,7 +365,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	}
 
 	// 7. LOGIQUE FISCALE : Calcul du nouveau Hash (utilisation de calculatedFinalCash et correction de %.2d en %.2f)
-	dataToHash := fmt.Sprintf("%s|%s|%.2f|%s", cashRegisterID, merchantID, calculatedFinalCash, actualPrevHash)
+	dataToHash := fmt.Sprintf("%s|%s|%.2f|%s", cashRegisterID, merchantID, float64(calculatedFinalCash), actualPrevHash)
 	hashBytes := sha256.Sum256([]byte(dataToHash))
 	newHash := hex.EncodeToString(hashBytes[:])
 
@@ -775,7 +776,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	}
 
 	result := &CashRegisterHistoryResult{
-		CashRegisters: []models.CashRegister{},
+		CashRegisters: []CashRegisterHistoryItem{},
 		Metadata: models.PaginationMetadata{
 			TotalItems:  totalItems,
 			TotalPages:  totalPages,
@@ -805,9 +806,20 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
                cr.end_date,
                cd.cash_desk_id,
                cd.name,
-               cr.closed
+		 cr.closed,
+		 cr.hash,
+		 COALESCE(pstats.transaction_count, 0) AS transaction_count,
+		 COALESCE(pstats.total_revenu, 0) AS total_revenu
         FROM cash_registers cr
         INNER JOIN cash_desks cd ON cd.cash_desk_id = cr.cash_desk_id
+		LEFT JOIN (
+			SELECT p.cash_register_id,
+			       COUNT(*) AS transaction_count,
+			       COALESCE(SUM(p.amount), 0) AS total_revenu
+			FROM payments p
+			WHERE p.enabled = 1
+			GROUP BY p.cash_register_id
+		) pstats ON pstats.cash_register_id = cr.cash_register_id
         WHERE cr.cash_register_id IN (%s)
         ORDER BY cr.start_date DESC
     `, strings.Join(inParts, ","))
@@ -819,10 +831,13 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	}
 	defer fullRows.Close()
 
-	var history []models.CashRegister
+	history := make([]CashRegisterHistoryItem, 0, len(registerIDs))
 	for fullRows.Next() {
-		var h models.CashRegister
+		var h CashRegisterHistoryItem
 		var rawStartDate, rawEndDate sql.NullTime
+		var hash sql.NullString
+		var transactionCount sql.NullInt64
+		var totalRevenu sql.NullInt64
 
 		err := fullRows.Scan(
 			&h.CashRegisterID,
@@ -831,19 +846,90 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			&h.CashDesk.CashDeskID,
 			&h.CashDesk.CashDeskName,
 			&h.Closed,
+			&hash,
+			&transactionCount,
+			&totalRevenu,
 		)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
 		}
 
-		h.StartDate = helpers.NullTimeToNullUnixInt(rawStartDate)
-		h.EndDate = helpers.NullTimeToNullUnixInt(rawEndDate)
+		if rawStartDate.Valid {
+			h.StartDate = rawStartDate.Time.UTC().Format(time.RFC3339)
+		}
+		if rawEndDate.Valid {
+			h.EndDate = rawEndDate.Time.UTC().Format(time.RFC3339)
+		}
+		h.Enclosed = h.Closed
+		h.PaymentMethods = []MOPLine{}
+		if transactionCount.Valid {
+			h.TransactionCount = int(transactionCount.Int64)
+		}
+		if totalRevenu.Valid {
+			h.TotalRevenu = int(totalRevenu.Int64)
+		}
+
+		if hash.Valid {
+			trimmedHash := strings.TrimSpace(hash.String)
+			if trimmedHash != "" {
+				prefix := trimmedHash
+				if len(prefix) > 10 {
+					prefix = prefix[:10]
+				}
+				h.HashPrefix = &prefix
+			}
+		}
 
 		history = append(history, h)
 	}
 
 	if err := fullRows.Err(); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	pmQuery := fmt.Sprintf(`
+		SELECT cri.cash_register_id,
+		       cri.mop,
+		       COALESCE(l.label, cri.mop) AS label,
+		       cri.amount
+		FROM cash_registers_items cri
+		LEFT JOIN labels l ON l.label_value = cri.mop
+		  AND l.lang = 'FR'
+		  AND l.label_type = 'mop'
+		WHERE cri.cash_register_id IN (%s)
+		ORDER BY cri.id ASC
+	`, strings.Join(inParts, ","))
+
+	pmRows, err := db.QueryContext(ctx, pmQuery)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	defer pmRows.Close()
+
+	historyIndex := make(map[string]int, len(history))
+	for i, item := range history {
+		historyIndex[item.CashRegisterID] = i
+	}
+
+	for pmRows.Next() {
+		var cashRegisterID string
+		var method MOPLine
+		if err := pmRows.Scan(&cashRegisterID, &method.MOP, &method.Label, &method.Amount); err != nil {
+			log.Error(err.Error())
+			return nil, err
+		}
+
+		idx, ok := historyIndex[cashRegisterID]
+		if !ok {
+			continue
+		}
+		history[idx].PaymentMethods = append(history[idx].PaymentMethods, method)
+	}
+
+	if err := pmRows.Err(); err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}

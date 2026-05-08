@@ -212,7 +212,7 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_register", "get_history", models.CashRegisterHistoryResponse{
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_history", CashRegisterHistoryResponse{
 		Status:        "success",
 		Metadata:      &result.Metadata,
 		CashRegisters: result.CashRegisters,
