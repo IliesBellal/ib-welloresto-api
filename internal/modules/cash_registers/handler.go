@@ -219,6 +219,39 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (h *CashRegisterHandler) GetCashRegisterHistoryByID(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_history_by_id", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+
+	cashRegisterID := chi.URLParam(r, "cash_register_id")
+	if cashRegisterID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_history_by_id", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	// Construire la requête avec le filtre sur l'ID
+	req := CashRegisterHistoryRequest{
+		CashRegisterID: &cashRegisterID,
+	}
+
+	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, req)
+	if err != nil {
+		models.SendErrorJSON(w, "cash_register", "get_history_by_id", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_history_by_id", CashRegisterHistoryResponse{
+		Status:        "success",
+		Metadata:      &result.Metadata,
+		CashRegisters: result.CashRegisters,
+	})
+}
+
 func (h *CashRegisterHandler) json(w http.ResponseWriter, data interface{}, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

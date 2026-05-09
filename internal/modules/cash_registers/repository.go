@@ -378,7 +378,8 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 			final_cash_fund = ?,
 			previous_hash = ?,
 			hash = ?,
-			signature = ?
+			signature = ?,
+			closed = 1
 		WHERE cash_register_id = ?
 		AND end_date IS NULL
 	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
@@ -717,6 +718,11 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	if req.DateTo != nil && strings.TrimSpace(*req.DateTo) != "" {
 		where += " AND cr.start_date <= ? "
 		args = append(args, strings.TrimSpace(*req.DateTo))
+	}
+	// Filtre par cash_register_id si fourni
+	if req.CashRegisterID != nil && strings.TrimSpace(*req.CashRegisterID) != "" {
+		where += " AND cr.cash_register_id = ? "
+		args = append(args, strings.TrimSpace(*req.CashRegisterID))
 	}
 
 	// ==========================================

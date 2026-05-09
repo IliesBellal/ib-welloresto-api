@@ -31,10 +31,11 @@ type CashRegisterHistoryResponse struct {
 }
 
 type CashRegisterHistoryRequest struct {
-	Page     *int    `json:"page"`
-	Limit    *int    `json:"limit"`
-	DateFrom *string `json:"date_from"`
-	DateTo   *string `json:"date_to"`
+	Page           *int    `json:"page"`
+	Limit          *int    `json:"limit"`
+	DateFrom       *string `json:"date_from"`
+	DateTo         *string `json:"date_to"`
+	CashRegisterID *string `json:"cash_register_id"`
 }
 
 func (r CashRegisterHistoryRequest) NormalizedPagination() (int, int) {
