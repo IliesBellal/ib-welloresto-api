@@ -80,10 +80,14 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 				http.Error(w, `{"error":"token invalide ou expiré"}`, http.StatusUnauthorized)
 				return
 			}
-
-			// --- NOUVELLE LOGIQUE MFA ---
-			// On vérifie si l'accès demande le MFA (ex: via un header ou le path)
 			isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
+
+			if isBackoffice && !user.Rights.Admin {
+				return
+			}
+
+			// --- LOGIQUE MFA ---
+			// On vérifie si l'accès demande le MFA (ex: via un header ou le path)
 
 			// if isBackoffice && user.MFAType != nil && (user.MFAStatus == nil || *user.MFAStatus != models.MFAStatusVerified) {
 			if isBackoffice && service.IsMFAVerificationRequired(r.Context(), user) {
