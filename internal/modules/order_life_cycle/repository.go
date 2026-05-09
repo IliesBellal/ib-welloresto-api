@@ -814,33 +814,22 @@ WHERE order_id = ?
 	}
 
 	// 5) Close delivery_session if last order
-	qCheck := `
-	SELECT o.order_id
-	FROM delivery_session_order dso
-	INNER JOIN delivery_session_order dso2 ON dso.delivery_session_id = dso2.delivery_session_id
-	INNER JOIN orders o ON o.order_id = dso2.order_id AND o.status > 0
-	WHERE dso.order_id = ?
+	const qCloseDS = `
+		UPDATE delivery_session ds
+		JOIN delivery_session_order dso ON dso.delivery_session_id = ds.id
+		SET ds.status = 0
+		WHERE dso.order_id = ?
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM delivery_session_order dso_other
+			  JOIN orders o_other ON o_other.order_id = dso_other.order_id
+			  WHERE dso_other.delivery_session_id = ds.id
+			    AND dso_other.order_id <> ?
+			    AND o_other.state = 'OPEN'
+		  )
 	`
-	rows, err := db.QueryContext(ctx, qCheck, orderID)
-	if err == nil {
-		var tmp []string
-		for rows.Next() {
-			var oid string
-			rows.Scan(&oid)
-			tmp = append(tmp, oid)
-		}
-		rows.Close()
-		if len(tmp) == 0 {
-			const qCloseDS = `
-				UPDATE delivery_session
-				JOIN delivery_session_order ON delivery_session_order.delivery_session_id = delivery_session.id
-				SET delivery_session.status = 0
-				WHERE delivery_session_order.order_id = ?
-			`
-			if _, err := db.ExecContext(ctx, qCloseDS, orderID); err != nil {
-				return nil, err
-			}
-		}
+	if _, err := db.ExecContext(ctx, qCloseDS, orderID, orderID); err != nil {
+		return nil, err
 	}
 
 	// 6) Update orderitems (distributed)
