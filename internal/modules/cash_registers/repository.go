@@ -378,8 +378,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 			final_cash_fund = ?,
 			previous_hash = ?,
 			hash = ?,
-			signature = ?,
-			closed = 1
+			signature = ?
 		WHERE cash_register_id = ?
 		AND end_date IS NULL
 	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
@@ -861,7 +860,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			&closedByName,
 			&h.CashDesk.CashDeskID,
 			&h.CashDesk.CashDeskName,
-			&h.Closed,
+			&h.Enclosed,
 			&hash,
 			&transactionCount,
 			&totalRevenu,
@@ -876,6 +875,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		}
 		if rawEndDate.Valid {
 			h.EndDate = rawEndDate.Time.UTC().Format(time.RFC3339)
+			h.Closed = true
 		}
 		if cashFund.Valid {
 			h.CashFund = int(cashFund.Int64)
@@ -895,7 +895,6 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 				h.ClosedByName = &name
 			}
 		}
-		h.Enclosed = h.Closed
 		h.PaymentMethods = []MOPLine{}
 		if transactionCount.Valid {
 			h.TransactionCount = int(transactionCount.Int64)
