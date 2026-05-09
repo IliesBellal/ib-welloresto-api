@@ -222,7 +222,7 @@ func (h *CashRegisterHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 func (h *CashRegisterHandler) GetCashRegisterHistoryByID(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_history_by_id", map[string]string{"error": "missing_token"})
+		models.SendJSON(w, http.StatusUnauthorized, "cash_register", "get_cash_register", map[string]string{"error": "missing_token"})
 		return
 	}
 
@@ -230,7 +230,7 @@ func (h *CashRegisterHandler) GetCashRegisterHistoryByID(w http.ResponseWriter, 
 
 	cashRegisterID := chi.URLParam(r, "cash_register_id")
 	if cashRegisterID == "" {
-		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_history_by_id", map[string]string{"error": "missing_parameter"})
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_cash_register", map[string]string{"error": "missing_parameter"})
 		return
 	}
 
@@ -241,14 +241,18 @@ func (h *CashRegisterHandler) GetCashRegisterHistoryByID(w http.ResponseWriter, 
 
 	result, err := h.cashRegisterService.GetCashRegisterHistory(ctx, req)
 	if err != nil {
-		models.SendErrorJSON(w, "cash_register", "get_history_by_id", err)
+		models.SendErrorJSON(w, "cash_register", "get_cash_register", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_register", "get_history_by_id", CashRegisterHistoryResponse{
-		Status:        "success",
-		Metadata:      &result.Metadata,
-		CashRegisters: result.CashRegisters,
+	if len(result.CashRegisters) == 0 {
+		models.SendErrorJSON(w, "cash_register", "get_cash_register", models.ErrNotFound)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_cash_register", map[string]interface{}{
+		"status":        "success",
+		"cash_register": result.CashRegisters[0],
 	})
 }
 
