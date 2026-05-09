@@ -290,24 +290,17 @@ func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRe
 
 		monthAgg := monthlyMap[row.Month]
 		if monthAgg == nil {
-			monthAgg = &VATMonthlyBreakdown{Month: row.Month}
+			monthAgg = &VATMonthlyBreakdown{
+				Month:     row.Month,
+				VATByRate: map[string]int64{},
+			}
 			monthlyMap[row.Month] = monthAgg
 		}
 
 		monthAgg.RevenueHT += row.HTCents
 		monthAgg.RevenueTTC += row.TTCCents
 		monthAgg.VATTotal += row.VATCents
-
-		switch normalizeRateForMonthly(row.Rate) {
-		case "10.0":
-			monthAgg.VAT10 += row.VATCents
-		case "5.5":
-			monthAgg.VAT55 += row.VATCents
-		case "20":
-			monthAgg.VAT20 += row.VATCents
-		case "2.1":
-			monthAgg.VAT21 += row.VATCents
-		}
+		monthAgg.VATByRate[rateKey] += row.VATCents
 
 		channelVAT[row.Channel] += row.VATCents
 		orderTypeVAT[row.OrderType] += row.VATCents
@@ -348,10 +341,30 @@ func (s *AccountingService) ExportVATCSV(ctx context.Context, req VATCalculateRe
 		return nil, "", err
 	}
 
+	// Collect all unique rates from all months and sort them
+	rateSet := make(map[string]struct{})
+	for _, month := range resp.MonthlyBreakdown {
+		for rate := range month.VATByRate {
+			rateSet[rate] = struct{}{}
+		}
+	}
+	rates := make([]string, 0, len(rateSet))
+	for rate := range rateSet {
+		rates = append(rates, rate)
+	}
+	sort.Strings(rates)
+
+	// Build header dynamically
+	header := []string{"Période", "CA HT"}
+	for _, rate := range rates {
+		header = append(header, fmt.Sprintf("TVA %s%%", rate))
+	}
+	header = append(header, "TVA Totale", "CA TTC")
+
 	buffer := &bytes.Buffer{}
 	writer := csv.NewWriter(buffer)
 
-	if err := writer.Write([]string{"Période", "CA HT", "TVA 10%", "TVA 5.5%", "TVA 20%", "TVA 2.1%", "TVA Totale", "CA TTC"}); err != nil {
+	if err := writer.Write(header); err != nil {
 		return nil, "", err
 	}
 
@@ -359,13 +372,14 @@ func (s *AccountingService) ExportVATCSV(ctx context.Context, req VATCalculateRe
 		record := []string{
 			formatPeriodFR(row.Month),
 			formatCSVAmount(row.RevenueHT),
-			formatCSVAmount(row.VAT10),
-			formatCSVAmount(row.VAT55),
-			formatCSVAmount(row.VAT20),
-			formatCSVAmount(row.VAT21),
+		}
+		for _, rate := range rates {
+			record = append(record, formatCSVAmount(row.VATByRate[rate]))
+		}
+		record = append(record,
 			formatCSVAmount(row.VATTotal),
 			formatCSVAmount(row.RevenueTTC),
-		}
+		)
 		if err := writer.Write(record); err != nil {
 			return nil, "", err
 		}

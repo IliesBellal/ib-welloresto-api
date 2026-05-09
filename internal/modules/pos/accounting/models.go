@@ -63,14 +63,11 @@ type VATRateBreakdown struct {
 }
 
 type VATMonthlyBreakdown struct {
-	Month      string `json:"month"`
-	RevenueHT  int64  `json:"revenue_ht"`
-	VAT10      int64  `json:"vat_10"`
-	VAT55      int64  `json:"vat_5_5"`
-	VAT20      int64  `json:"vat_20"`
-	VAT21      int64  `json:"vat_2_1"`
-	VATTotal   int64  `json:"vat_total"`
-	RevenueTTC int64  `json:"revenue_ttc"`
+	Month      string           `json:"month"`
+	RevenueHT  int64            `json:"revenue_ht"`
+	VATByRate  map[string]int64 `json:"vat_by_rate"`
+	VATTotal   int64            `json:"vat_total"`
+	RevenueTTC int64            `json:"revenue_ttc"`
 }
 
 type VATShare struct {
