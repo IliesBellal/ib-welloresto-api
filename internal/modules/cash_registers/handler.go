@@ -63,8 +63,8 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 	}
 
 	var req models.CloseCashRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "cash_register", "close", map[string]string{"error": "invalid_body"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && r.Header.Get("X-App-Source") != "backoffice" {
+		models.SendErrorJSON(w, "cash_register", "close", err)
 		return
 	}
 
