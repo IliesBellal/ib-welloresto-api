@@ -705,7 +705,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
                 OR EXISTS (
                     SELECT 1 
                     FROM users u 
-                    INNER JOIN users_rights ur ON ur.id = u.access_id 
+                    INNER JOIN users_rights ur ON ur.user_id = u.user_id 
                     WHERE u.user_id = ? 
                       AND u.merchant_id = cd.merchant_id 
                       AND ur.admin = TRUE
