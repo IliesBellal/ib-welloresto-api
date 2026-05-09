@@ -91,6 +91,7 @@ type CRItem struct {
 
 type CRCustomItem struct {
 	ItemID   string  `json:"item_id"`
+	MOP      string  `json:"mop"`
 	Label    string  `json:"label"`
 	Currency string  `json:"currency"`
 	Amount   float64 `json:"amount"`

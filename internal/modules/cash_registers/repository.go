@@ -486,8 +486,13 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	// CUSTOM ITEMS
 	// ----------------------------------------------------------------
 	customRows, err := db.QueryContext(ctx, `
-		SELECT id, label, amount
-		FROM cash_registers_custom_items
+		SELECT crci.id,
+		       crci.label AS mop,
+		       COALESCE(NULLIF(TRIM(l.label), ''), crci.label) AS label,
+		       crci.amount
+		FROM cash_registers_custom_items crci
+		LEFT JOIN labels l ON l.label_value = crci.label
+			AND l.lang = 'FR'
 		WHERE cash_register_id = ?
 		  AND enabled = 1
 		ORDER BY id ASC
@@ -500,7 +505,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 
 	for customRows.Next() {
 		var ci models.CRCustomItem
-		err := customRows.Scan(&ci.ItemID, &ci.Label, &ci.Amount)
+		err := customRows.Scan(&ci.ItemID, &ci.MOP, &ci.Label, &ci.Amount)
 		if err != nil {
 			return nil, err
 		}
