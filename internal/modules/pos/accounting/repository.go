@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/logger"
@@ -297,6 +298,33 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 	return result, nil
 }
 
+// interpolateQuery replaces query placeholders with actual parameter values for logging/debugging
+func interpolateQuery(query string, args []interface{}) string {
+	argIndex := 0
+	result := ""
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' && argIndex < len(args) {
+			arg := args[argIndex]
+			argIndex++
+			switch v := arg.(type) {
+			case string:
+				result += "'" + strings.ReplaceAll(v, "'", "''") + "'"
+			case int, int64:
+				result += fmt.Sprintf("%v", v)
+			case float64:
+				result += strconv.FormatFloat(v, 'f', -1, 64)
+			case nil:
+				result += "NULL"
+			default:
+				result += fmt.Sprintf("'%v'", v)
+			}
+		} else {
+			result += string(query[i])
+		}
+	}
+	return result
+}
+
 func (r *AccountingRepository) GetVATAggregationRows(
 	ctx context.Context,
 	merchantID string,
@@ -399,6 +427,10 @@ func (r *AccountingRepository) GetVATAggregationRows(
 		GROUP BY month_key, channel, order_type, rate
 		ORDER BY month_key, channel, order_type, rate
 	`, channelClauseItems, orderTypeClauseItems, channelClauseFees, orderTypeClauseFees)
+
+	// Log the fully interpolated query for debugging
+	finalQuery := interpolateQuery(query, args)
+	log.Info(fmt.Sprintf("VAT Query Executed:\n%s", finalQuery))
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

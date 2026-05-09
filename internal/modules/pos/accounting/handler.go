@@ -52,7 +52,7 @@ func (h *AccountingHandler) CalculateVAT(w http.ResponseWriter, r *http.Request)
 
 	var req VATCalculateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "accounting", "vat_calculate", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "accounting", "vat_calculate", err)
 		return
 	}
 
@@ -74,7 +74,7 @@ func (h *AccountingHandler) ExportVATCSV(w http.ResponseWriter, r *http.Request)
 
 	var req VATCalculateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "accounting", "vat_export_csv", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "accounting", "vat_export_csv", err)
 		return
 	}
 
