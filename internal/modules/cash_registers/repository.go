@@ -587,7 +587,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	}
 
 	return &models.CashRegisterSummaryResponse{
-		Status:       "1",
+		Status:       "success",
 		CashRegister: &cr,
 	}, nil
 }

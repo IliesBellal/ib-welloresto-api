@@ -359,7 +359,7 @@ func (h *OrdersLifeCycleHandler) CreateOrder(w http.ResponseWriter, r *http.Requ
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error("PrepareCreateOrder bad request : " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "orders", "create_order", map[string]string{"error": "invalid_body"})
+		models.SendErrorJSON(w, "orders", "create_order", err)
 		return
 	}
 
@@ -379,7 +379,7 @@ func (h *OrdersLifeCycleHandler) UpdateOrder(w http.ResponseWriter, r *http.Requ
 	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error("PrepareCreateOrder bad request : " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "orders", "update_order", map[string]string{"error": "invalid_body"})
+		models.SendErrorJSON(w, "orders", "update_order", err)
 		return
 	}
 
@@ -389,7 +389,7 @@ func (h *OrdersLifeCycleHandler) UpdateOrder(w http.ResponseWriter, r *http.Requ
 	err := h.ordersLifeCycleService.PrepareUpdateOrder(ctx, &req)
 	if err != nil {
 		log.Error("PrepareCreateOrder error : " + err.Error())
-		models.SendJSON(w, http.StatusInternalServerError, "orders", "update_order", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "orders", "update_order", err)
 		return
 	}
 
