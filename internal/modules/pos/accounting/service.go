@@ -277,11 +277,6 @@ func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRe
 		ByOrderType:      map[string]VATShare{},
 	}
 
-	// Keep default keys expected by the clients.
-	for _, key := range []string{"10.0", "5.5", "20", "2.1"} {
-		resp.VATByRate[key] = VATRateBreakdown{}
-	}
-
 	monthlyMap := map[string]*VATMonthlyBreakdown{}
 	channelVAT := map[string]int64{}
 	orderTypeVAT := map[string]int64{}
