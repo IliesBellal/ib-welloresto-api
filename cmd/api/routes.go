@@ -514,6 +514,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/{merchant_slug}/orders/{order_id}", scannHandler.CancelOrderSNO)
 	})
 
+	// --- ACCOUNTING ---
+	r.Route("/accounting", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
+		r.Post("/vat/export-csv", posAccountingHandler.ExportVATCSV)
+	})
+
 	// --- STOCKS ---
 	r.Route("/stocks", func(r chi.Router) {
 		r.Use(authMiddleware)

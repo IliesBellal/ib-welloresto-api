@@ -3,7 +3,10 @@ package accounting
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -230,4 +233,286 @@ func parseUTCDateTime(raw string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("invalid datetime format: %s", value)
+}
+
+func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRequest) (*VATCalculateResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	fromUTC, err := parseUTCDateTime(req.StartDate)
+	if err != nil {
+		return nil, models.ErrInvalidInput
+	}
+	toUTC, err := parseUTCDateTime(req.EndDate)
+	if err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	if toUTC.Before(fromUTC) {
+		return nil, models.ErrInvalidInput
+	}
+
+	channels, err := normalizeChannels(req.Channels)
+	if err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	orderTypes, err := normalizeOrderTypes(req.OrderTypes)
+	if err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	rows, err := s.repo.GetVATAggregationRows(ctx, user.MerchantID, fromUTC, toUTC, channels, orderTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &VATCalculateResponse{
+		TotalVAT:         0,
+		VATByRate:        map[string]VATRateBreakdown{},
+		MonthlyBreakdown: []VATMonthlyBreakdown{},
+		ByChannel:        map[string]VATShare{},
+		ByOrderType:      map[string]VATShare{},
+	}
+
+	// Keep default keys expected by the clients.
+	for _, key := range []string{"10.0", "5.5", "20", "2.1"} {
+		resp.VATByRate[key] = VATRateBreakdown{}
+	}
+
+	monthlyMap := map[string]*VATMonthlyBreakdown{}
+	channelVAT := map[string]int64{}
+	orderTypeVAT := map[string]int64{}
+
+	for _, row := range rows {
+		rateKey := formatVATRateKey(row.Rate)
+		rateAgg := resp.VATByRate[rateKey]
+		rateAgg.Amount += row.VATCents
+		rateAgg.BaseHT += row.HTCents
+		resp.VATByRate[rateKey] = rateAgg
+
+		monthAgg := monthlyMap[row.Month]
+		if monthAgg == nil {
+			monthAgg = &VATMonthlyBreakdown{Month: row.Month}
+			monthlyMap[row.Month] = monthAgg
+		}
+
+		monthAgg.RevenueHT += row.HTCents
+		monthAgg.RevenueTTC += row.TTCCents
+		monthAgg.VATTotal += row.VATCents
+
+		switch normalizeRateForMonthly(row.Rate) {
+		case "10.0":
+			monthAgg.VAT10 += row.VATCents
+		case "5.5":
+			monthAgg.VAT55 += row.VATCents
+		case "20":
+			monthAgg.VAT20 += row.VATCents
+		case "2.1":
+			monthAgg.VAT21 += row.VATCents
+		}
+
+		channelVAT[row.Channel] += row.VATCents
+		orderTypeVAT[row.OrderType] += row.VATCents
+		resp.TotalVAT += row.VATCents
+	}
+
+	monthKeys := make([]string, 0, len(monthlyMap))
+	for month := range monthlyMap {
+		monthKeys = append(monthKeys, month)
+	}
+	sort.Strings(monthKeys)
+	for _, month := range monthKeys {
+		resp.MonthlyBreakdown = append(resp.MonthlyBreakdown, *monthlyMap[month])
+	}
+
+	for _, channel := range channels {
+		vat := channelVAT[channel]
+		resp.ByChannel[channel] = VATShare{
+			VAT:        vat,
+			Percentage: computePercentage(vat, resp.TotalVAT),
+		}
+	}
+
+	for _, orderType := range orderTypes {
+		vat := orderTypeVAT[orderType]
+		resp.ByOrderType[orderType] = VATShare{
+			VAT:        vat,
+			Percentage: computePercentage(vat, resp.TotalVAT),
+		}
+	}
+
+	return resp, nil
+}
+
+func (s *AccountingService) ExportVATCSV(ctx context.Context, req VATCalculateRequest) ([]byte, string, error) {
+	resp, err := s.CalculateVAT(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+
+	buffer := &bytes.Buffer{}
+	writer := csv.NewWriter(buffer)
+
+	if err := writer.Write([]string{"Période", "CA HT", "TVA 10%", "TVA 5.5%", "TVA 20%", "TVA 2.1%", "TVA Totale", "CA TTC"}); err != nil {
+		return nil, "", err
+	}
+
+	for _, row := range resp.MonthlyBreakdown {
+		record := []string{
+			formatPeriodFR(row.Month),
+			formatCSVAmount(row.RevenueHT),
+			formatCSVAmount(row.VAT10),
+			formatCSVAmount(row.VAT55),
+			formatCSVAmount(row.VAT20),
+			formatCSVAmount(row.VAT21),
+			formatCSVAmount(row.VATTotal),
+			formatCSVAmount(row.RevenueTTC),
+		}
+		if err := writer.Write(record); err != nil {
+			return nil, "", err
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, "", err
+	}
+
+	filename := fmt.Sprintf("vat_export_%s_%s.csv", normalizeDateForFilename(req.StartDate), normalizeDateForFilename(req.EndDate))
+	return buffer.Bytes(), filename, nil
+}
+
+func normalizeChannels(values []string) ([]string, error) {
+	allowed := map[string]struct{}{
+		"restaurant": {},
+		"scannorder": {},
+		"ubereats":   {},
+		"deliveroo":  {},
+	}
+
+	if len(values) == 0 {
+		return []string{"restaurant", "scannorder", "ubereats", "deliveroo"}, nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		if _, ok := allowed[v]; !ok {
+			return nil, fmt.Errorf("invalid channel: %s", raw)
+		}
+		if _, exists := seen[v]; exists {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	return out, nil
+}
+
+func normalizeOrderTypes(values []string) ([]string, error) {
+	allowed := map[string]struct{}{
+		"in":        {},
+		"take_away": {},
+		"delivery":  {},
+	}
+
+	if len(values) == 0 {
+		return []string{"in", "take_away", "delivery"}, nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		if _, ok := allowed[v]; !ok {
+			return nil, fmt.Errorf("invalid order_type: %s", raw)
+		}
+		if _, exists := seen[v]; exists {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	return out, nil
+}
+
+func formatVATRateKey(rate float64) string {
+	rounded := math.Round(rate*10) / 10
+	if rounded == 10.0 {
+		return "10.0"
+	}
+	if rounded == math.Trunc(rounded) {
+		return strconv.FormatInt(int64(rounded), 10)
+	}
+	return strconv.FormatFloat(rounded, 'f', 1, 64)
+}
+
+func normalizeRateForMonthly(rate float64) string {
+	// We keep the same key logic but force 10 -> 10.0 for the monthly field mapping.
+	key := formatVATRateKey(rate)
+	if key == "10" {
+		return "10.0"
+	}
+	return key
+}
+
+func computePercentage(part, total int64) int64 {
+	if total <= 0 {
+		return 0
+	}
+	return int64(math.Round((float64(part) * 100.0) / float64(total)))
+}
+
+func formatCSVAmount(v int64) string {
+	return fmt.Sprintf("%.2f", float64(v))
+}
+
+func formatPeriodFR(monthKey string) string {
+	parts := strings.Split(monthKey, "-")
+	if len(parts) != 2 {
+		return monthKey
+	}
+
+	monthNum, err := strconv.Atoi(parts[1])
+	if err != nil || monthNum < 1 || monthNum > 12 {
+		return monthKey
+	}
+
+	months := []string{
+		"janvier",
+		"février",
+		"mars",
+		"avril",
+		"mai",
+		"juin",
+		"juillet",
+		"août",
+		"septembre",
+		"octobre",
+		"novembre",
+		"décembre",
+	}
+
+	return fmt.Sprintf("%s %s", months[monthNum-1], parts[0])
+}
+
+func normalizeDateForFilename(value string) string {
+	v := strings.TrimSpace(value)
+	if t, err := parseUTCDateTime(v); err == nil {
+		return t.Format("2006-01-02")
+	}
+	v = strings.ReplaceAll(v, ":", "-")
+	v = strings.ReplaceAll(v, " ", "_")
+	v = strings.ReplaceAll(v, "T", "_")
+	v = strings.ReplaceAll(v, "/", "-")
+	if v == "" {
+		return "unknown"
+	}
+	return v
 }

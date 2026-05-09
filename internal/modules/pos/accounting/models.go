@@ -49,3 +49,49 @@ type PDFReportData struct {
 	Month    string
 	Year     string
 }
+
+type VATCalculateRequest struct {
+	StartDate  string   `json:"start_date"`
+	EndDate    string   `json:"end_date"`
+	Channels   []string `json:"channels"`
+	OrderTypes []string `json:"order_types"`
+}
+
+type VATRateBreakdown struct {
+	Amount int64 `json:"amount"`
+	BaseHT int64 `json:"base_ht"`
+}
+
+type VATMonthlyBreakdown struct {
+	Month      string `json:"month"`
+	RevenueHT  int64  `json:"revenue_ht"`
+	VAT10      int64  `json:"vat_10"`
+	VAT55      int64  `json:"vat_5_5"`
+	VAT20      int64  `json:"vat_20"`
+	VAT21      int64  `json:"vat_2_1"`
+	VATTotal   int64  `json:"vat_total"`
+	RevenueTTC int64  `json:"revenue_ttc"`
+}
+
+type VATShare struct {
+	VAT        int64 `json:"vat"`
+	Percentage int64 `json:"percentage"`
+}
+
+type VATCalculateResponse struct {
+	TotalVAT         int64                       `json:"total_vat"`
+	VATByRate        map[string]VATRateBreakdown `json:"vat_by_rate"`
+	MonthlyBreakdown []VATMonthlyBreakdown       `json:"monthly_breakdown"`
+	ByChannel        map[string]VATShare         `json:"by_channel"`
+	ByOrderType      map[string]VATShare         `json:"by_order_type"`
+}
+
+type VATAggregationRow struct {
+	Month     string
+	Channel   string
+	OrderType string
+	Rate      float64
+	TTCCents  int64
+	HTCents   int64
+	VATCents  int64
+}
