@@ -289,6 +289,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 			"delay_until":                user.UEDelayUntil,
 			"delay_duration":             user.UEDelayDuration.Int64,
 			"closed_until":               user.UEClosedUntil,
+			"commission_rate":            user.UECommissionRate.Float64,
 		},
 
 		"integration_uber_direct": map[string]interface{}{
@@ -296,7 +297,8 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		},
 
 		"integration_deliveroo": map[string]interface{}{
-			"location_id": user.DrooLocationID.String,
+			"location_id":     user.DrooLocationID.String,
+			"commission_rate": user.DrooCommissionRate.Float64,
 		},
 
 		"scannorder_ready":              user.ScanNOrderReady,
@@ -423,6 +425,7 @@ func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload,
 			"delay_until":                user.UEDelayUntil,
 			"delay_duration":             user.UEDelayDuration.Int64,
 			"closed_until":               user.UEClosedUntil,
+			"commission_rate":            user.UECommissionRate.Float64,
 		},
 
 		"integration_uber_direct": map[string]interface{}{
@@ -430,7 +433,8 @@ func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload,
 		},
 
 		"integration_deliveroo": map[string]interface{}{
-			"location_id": user.DrooLocationID.String,
+			"location_id":     user.DrooLocationID.String,
+			"commission_rate": user.DrooCommissionRate.Float64,
 		},
 
 		"scannorder_ready":              user.ScanNOrderReady,
