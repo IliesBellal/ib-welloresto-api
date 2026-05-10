@@ -91,7 +91,7 @@ SELECT
     iud.customer_id,
 
     ind.location_id,
-	ind.commission_rate,
+	ind.commission_rate
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
@@ -226,7 +226,7 @@ SELECT
     iud.customer_id,
 
     ind.location_id,
-	ind.commission_rate,
+	ind.commission_rate
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
