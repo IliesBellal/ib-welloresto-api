@@ -344,15 +344,18 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 
 		insertOptQuery := `
 			INSERT INTO configurable_attribute_options (
+				id,
 				configurable_attribute_id,
 				title,
 				extra_price,
 				max_quantity,
 				enabled
-			) VALUES (?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?)
 		`
 
+		optionID := helpers.GeneratePrefixedID(helpers.AttributeOptionIDPrefix)
 		_, err = db.ExecContext(ctx, insertOptQuery,
+			optionID,
 			attributeID,
 			opt.Title,
 			price,

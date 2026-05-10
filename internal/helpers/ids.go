@@ -16,6 +16,7 @@ const (
 	DiscountIDPrefix           = "discount"
 	TagIDPrefix                = "tag"
 	AttributeIDPrefix          = "attribute"
+	AttributeOptionIDPrefix    = "attribute-option"
 	ReceiptIDPrefix            = "receipt"
 	UserIDPrefix               = "user"
 )
