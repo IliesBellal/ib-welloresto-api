@@ -11,7 +11,7 @@ import (
 func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "users", "create", map[string]string{"error": "invalid_request_body"})
+		models.SendJSON(w, http.StatusBadRequest, "users", "create", err)
 		return
 	}
 
@@ -19,11 +19,11 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, models.ErrInvalidInput):
-			models.SendJSON(w, http.StatusBadRequest, "users", "create", map[string]string{"error": "invalid_input"})
+			models.SendJSON(w, http.StatusBadRequest, "users", "create", err)
 		case errors.Is(err, models.ErrInvalidInputPasswordTooShort):
-			models.SendJSON(w, http.StatusBadRequest, "users", "create", map[string]string{"error": err.Error()})
+			models.SendJSON(w, http.StatusBadRequest, "users", "create", models.ErrInvalidInputPasswordTooShort)
 		default:
-			models.SendJSON(w, http.StatusInternalServerError, "users", "create", map[string]string{"error": "internal_server_error"})
+			models.SendJSON(w, http.StatusInternalServerError, "users", "create", err)
 		}
 		return
 	}

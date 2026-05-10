@@ -153,17 +153,19 @@ type UserLoginRow struct {
 	SNOActivated bool
 
 	// Integrations: Uber Eats
-	UEStoreID       sql.NullString
-	UEPrepTime      sql.NullString
-	UEDelayUntil    *int
-	UEDelayDuration sql.NullInt64
-	UEClosedUntil   *int
+	UEStoreID        sql.NullString
+	UEPrepTime       sql.NullString
+	UEDelayUntil     *int
+	UEDelayDuration  sql.NullInt64
+	UEClosedUntil    *int
+	UECommissionRate sql.NullFloat64
 
 	// Uber Direct
 	UDCustomerID sql.NullString
 
 	// Deliveroo
-	DrooLocationID sql.NullString
+	DrooLocationID     sql.NullString
+	DrooCommissionRate sql.NullFloat64
 }
 
 // ============================================================

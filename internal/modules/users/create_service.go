@@ -14,7 +14,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	// --- Validation ---
 	if strings.TrimSpace(req.FirstName) == "" ||
 		strings.TrimSpace(req.LastName) == "" ||
-		strings.TrimSpace(req.UserName) == "" ||
+		// strings.TrimSpace(req.UserName) == "" ||
 		strings.TrimSpace(req.Email) == "" {
 		return "", models.ErrInvalidInput
 	}

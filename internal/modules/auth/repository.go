@@ -86,10 +86,12 @@ SELECT
     iue.delay_until,
     iue.delay_duration,
     iue.closed_until,
+	iue.commission_rate,
 
     iud.customer_id,
 
-    ind.location_id
+    ind.location_id,
+	ind.commission_rate,
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
@@ -135,10 +137,11 @@ LIMIT 1;
 
 		&data.SNOActivated,
 
-		&data.UEStoreID, &data.UEPrepTime, &ueDelayUntil, &data.UEDelayDuration, &ueClosedUntil,
+		&data.UEStoreID, &data.UEPrepTime, &ueDelayUntil, &data.UEDelayDuration, &ueClosedUntil, &data.UECommissionRate,
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
+		&data.DrooCommissionRate,
 	)
 
 	data.UEDelayUntil = helpers.NullTimeToNullUnixInt(ueDelayUntil)
@@ -218,10 +221,12 @@ SELECT
     iue.delay_until,
     iue.delay_duration,
     iue.closed_until,
+	iue.commission_rate,
 
     iud.customer_id,
 
-    ind.location_id
+    ind.location_id,
+	ind.commission_rate,
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
@@ -282,13 +287,15 @@ LIMIT 1;
 		&ueDelayUntil,
 		&data.UEDelayDuration,
 		&ueClosedUntil,
+		&data.UECommissionRate,
 
 		&data.UDCustomerID,
 		&data.DrooLocationID,
+		&data.DrooCommissionRate,
 	)
 
 	if err == sql.ErrNoRows {
-		logger.FromContext(ctx).Error("No user found for " + username + " with token " + token)
+		logger.FromContext(ctx).Error("No user found for '" + username + "' with token '" + token + "'")
 		return nil, models.ErrUserNotFound
 	}
 	if err != nil {

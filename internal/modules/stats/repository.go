@@ -137,6 +137,7 @@ func (r *StatsRepository) getOrderCountForPeriod(ctx context.Context, merchantID
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
+	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
 	`
 
@@ -178,6 +179,7 @@ func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchan
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
+	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
 	`
 
@@ -217,6 +219,7 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	WHERE o.merchant_id = ?
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
+	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
 	AND o.isPaid = 1
 	GROUP BY HOUR(CONVERT_TZ(o.creation_date, '+00:00', ?))
