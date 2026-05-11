@@ -28,11 +28,11 @@ func (h *Handler) GetUberEats(w http.ResponseWriter, r *http.Request) {
 
 	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "integrations", "get_uber_eats", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "integrations", "get_uber_eats", err)
 		return
 	}
 	if integration == nil {
-		models.SendJSON(w, http.StatusNotFound, "integrations", "get_uber_eats", map[string]string{"error": "not_configured"})
+		models.SendJSON(w, http.StatusOK, "integrations", "get_uber_eats", map[string]string{"status": "not_configured"})
 		return
 	}
 
@@ -45,11 +45,11 @@ func (h *Handler) GetDeliveroo(w http.ResponseWriter, r *http.Request) {
 
 	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "integrations", "get_deliveroo", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "integrations", "get_deliveroo", err)
 		return
 	}
 	if integration == nil {
-		models.SendJSON(w, http.StatusNotFound, "integrations", "get_deliveroo", map[string]string{"error": "not_configured"})
+		models.SendJSON(w, http.StatusOK, "integrations", "get_deliveroo", map[string]string{"status": "not_configured"})
 		return
 	}
 
@@ -62,11 +62,11 @@ func (h *Handler) GetScanNOrder(w http.ResponseWriter, r *http.Request) {
 
 	integration, err := h.svc.GetScanNOrder(r.Context(), user.MerchantID)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "integrations", "get_scannorder", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "integrations", "get_scannorder", err)
 		return
 	}
 	if integration == nil {
-		models.SendJSON(w, http.StatusNotFound, "integrations", "get_scannorder", map[string]string{"error": "not_configured"})
+		models.SendJSON(w, http.StatusOK, "integrations", "get_scannorder", map[string]string{"status": "not_configured"})
 		return
 	}
 
