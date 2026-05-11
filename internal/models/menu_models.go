@@ -205,7 +205,7 @@ type DelayEntry struct {
 }
 
 type StatusRequest struct {
-	Status string `json:"status"` // "1" or "0"
+	Status string `json:"status"` // "available" or "unavailable"
 }
 
 type AvailabilityResponse struct {
