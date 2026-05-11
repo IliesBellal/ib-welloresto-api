@@ -31,8 +31,8 @@ func (h *Handler) GetUberEats(w http.ResponseWriter, r *http.Request) {
 		models.SendErrorJSON(w, "integrations", "get_uber_eats", err)
 		return
 	}
-	if integration == nil {
-		models.SendJSON(w, http.StatusOK, "integrations", "get_uber_eats", map[string]string{"status": "not_configured"})
+	if integration == nil || !integration.Active {
+		models.SendJSON(w, http.StatusOK, "integrations", "get_uber_eats", IntegrationData{Integration: UberEatsIntegration{Platform: "uber_eats", Active: false}})
 		return
 	}
 
@@ -48,8 +48,8 @@ func (h *Handler) GetDeliveroo(w http.ResponseWriter, r *http.Request) {
 		models.SendErrorJSON(w, "integrations", "get_deliveroo", err)
 		return
 	}
-	if integration == nil {
-		models.SendJSON(w, http.StatusOK, "integrations", "get_deliveroo", map[string]string{"status": "not_configured"})
+	if integration == nil || !integration.Active {
+		models.SendJSON(w, http.StatusOK, "integrations", "get_scannorder", IntegrationData{Integration: DeliverooIntegration{Platform: "deliveroo", Active: false}})
 		return
 	}
 
@@ -65,8 +65,8 @@ func (h *Handler) GetScanNOrder(w http.ResponseWriter, r *http.Request) {
 		models.SendErrorJSON(w, "integrations", "get_scannorder", err)
 		return
 	}
-	if integration == nil {
-		models.SendJSON(w, http.StatusOK, "integrations", "get_scannorder", map[string]string{"status": "not_configured"})
+	if integration == nil || !integration.Active {
+		models.SendJSON(w, http.StatusOK, "integrations", "get_scannorder", IntegrationData{Integration: ScanNOrderIntegration{Platform: "scannorder", Active: false}})
 		return
 	}
 
