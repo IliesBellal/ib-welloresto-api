@@ -161,7 +161,7 @@ func (h *Handler) SyncStripeBranding(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateScanNOrderOnboarding(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 
-	url, err := h.svc.CreateScanNOrderOnboarding(r.Context(), user.MerchantID)
+	url, err := h.svc.CreateScanNOrderOnboarding(r.Context(), user)
 	if err != nil {
 		code, errCode := stripeError(err)
 		models.SendJSON(w, code, "integrations", "scannorder_onboarding", map[string]string{"error": errCode})

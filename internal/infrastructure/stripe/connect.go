@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"welloresto-api/internal/modules/auth"
 
 	"github.com/stripe/stripe-go/v84"
 )
@@ -56,13 +57,16 @@ func (s *StripeManager) CreateOnboardingLink(accountID, returnURL, refreshURL st
 }
 
 // CreateExpressAccount creates a Stripe Connect Express account with required capabilities.
-func (s *StripeManager) CreateExpressAccount(ctx context.Context) (string, error) {
+func (s *StripeManager) CreateExpressAccount(ctx context.Context, user *auth.UserLoginRow) (string, error) {
 	params := &stripe.AccountParams{
-		Type: stripe.String(string(stripe.AccountTypeExpress)),
+		Type:    stripe.String(string(stripe.AccountTypeExpress)),
+		Email:   stripe.String(user.Email),
+		Country: stripe.String("FR"),
 		Capabilities: &stripe.AccountCapabilitiesParams{
 			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{Requested: stripe.Bool(true)},
 			Transfers:    &stripe.AccountCapabilitiesTransfersParams{Requested: stripe.Bool(true)},
 		},
+		BusinessType: stripe.String("company"),
 	}
 	params.Context = ctx
 

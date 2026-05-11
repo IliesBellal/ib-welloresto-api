@@ -12,6 +12,7 @@ import (
 
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/modules/auth"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	uberModule "welloresto-api/internal/modules/ubereats"
 
@@ -223,30 +224,30 @@ func (s *Service) CreateStripeOnboardingLink(ctx context.Context, merchantID str
 
 // CreateScanNOrderOnboarding creates a Stripe Express account when missing and returns
 // an onboarding account link for ScanNOrder activation.
-func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, merchantID string) (string, error) {
-	accountID, err := s.repo.GetStripeAccountID(ctx, merchantID)
+func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, user *auth.UserLoginRow) (string, error) {
+	accountID, err := s.repo.GetStripeAccountID(ctx, user.MerchantID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return "", err
 		}
 
-		accountID, err = s.stripeManager.CreateExpressAccount(ctx)
+		accountID, err = s.stripeManager.CreateExpressAccount(ctx, user)
 		if err != nil {
 			return "", err
 		}
 
-		if err := s.repo.UpsertStripeAccountID(ctx, merchantID, accountID); err != nil {
+		if err := s.repo.UpsertStripeAccountID(ctx, user.MerchantID, accountID); err != nil {
 			return "", err
 		}
 	}
 
 	if strings.TrimSpace(accountID) == "" {
-		accountID, err = s.stripeManager.CreateExpressAccount(ctx)
+		accountID, err = s.stripeManager.CreateExpressAccount(ctx, user)
 		if err != nil {
 			return "", err
 		}
 
-		if err := s.repo.UpsertStripeAccountID(ctx, merchantID, accountID); err != nil {
+		if err := s.repo.UpsertStripeAccountID(ctx, user.MerchantID, accountID); err != nil {
 			return "", err
 		}
 	}
