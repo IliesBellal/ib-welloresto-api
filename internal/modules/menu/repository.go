@@ -620,7 +620,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             LEFT JOIN products subp on subp.product_id = p.by_product_of
             WHERE p.merchant_id = ?
-			AND (subp.product_id IS NULL OR subp.product_id = p.product_id) AND p.status in ("1","available", "out_of_stock", "not_available") AND p.enabled = 1
+			AND (subp.product_id IS NULL OR subp.product_id = p.product_id) AND p.status not in ("removed_from_menu") AND p.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -703,7 +703,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
-            WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL AND p.status in ("1","available", "out_of_stock", "not_available") AND p.enabled = 1
+            WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL AND p.status not in ("removed_from_menu") AND p.enabled = 1
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {

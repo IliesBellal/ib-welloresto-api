@@ -522,7 +522,7 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
        ) a ON a.product_id = p.product_id
        WHERE p.merchant_id = ?
        AND p.product_id IN (%s)
-       HAVING status IN ('0','out_of_stock')
+       HAVING status NOT IN ('available','1')
     `, placeholders)
 
 	// 3. Préparation des arguments (MerchantID + Liste des ProductIDs)
