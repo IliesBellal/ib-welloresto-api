@@ -154,3 +154,21 @@ func (h *Handler) SyncStripeBranding(w http.ResponseWriter, r *http.Request) {
 		"data": result,
 	})
 }
+
+// CreateScanNOrderOnboarding handles POST /integrations/scannorder/onboarding.
+// It ensures a Stripe Express account exists for the merchant and returns
+// an onboarding URL.
+func (h *Handler) CreateScanNOrderOnboarding(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	url, err := h.svc.CreateScanNOrderOnboarding(r.Context(), user.MerchantID)
+	if err != nil {
+		code, errCode := stripeError(err)
+		models.SendJSON(w, code, "integrations", "scannorder_onboarding", map[string]string{"error": errCode})
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "scannorder_onboarding", map[string]string{
+		"url": url,
+	})
+}

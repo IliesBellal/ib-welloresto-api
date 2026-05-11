@@ -886,6 +886,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
 			r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
 			r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
+			r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
 			r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
 
 			// ---- Stripe Connect ----

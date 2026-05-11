@@ -46,13 +46,32 @@ func (s *StripeManager) CreateOnboardingLink(accountID, returnURL, refreshURL st
 		Account:    stripe.String(accountID),
 		RefreshURL: stripe.String(refreshURL),
 		ReturnURL:  stripe.String(returnURL),
-		Type:       stripe.String("account_update"),
+		Type:       stripe.String("account_onboarding"),
 	}
 	link, err := s.client.AccountLinks.New(params)
 	if err != nil {
 		return "", err
 	}
 	return link.URL, nil
+}
+
+// CreateExpressAccount creates a Stripe Connect Express account with required capabilities.
+func (s *StripeManager) CreateExpressAccount(ctx context.Context) (string, error) {
+	params := &stripe.AccountParams{
+		Type: stripe.String(string(stripe.AccountTypeExpress)),
+		Capabilities: &stripe.AccountCapabilitiesParams{
+			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{Requested: stripe.Bool(true)},
+			Transfers:    &stripe.AccountCapabilitiesTransfersParams{Requested: stripe.Bool(true)},
+		},
+	}
+	params.Context = ctx
+
+	acc, err := s.client.Accounts.New(params)
+	if err != nil {
+		return "", err
+	}
+
+	return acc.ID, nil
 }
 
 // GetBankAccounts lists all external bank accounts for a Stripe Connect account.
@@ -96,7 +115,7 @@ func (s *StripeManager) CreateBankAccountLink(accountID, returnURL, refreshURL s
 		Account:    stripe.String(accountID),
 		RefreshURL: stripe.String(refreshURL),
 		ReturnURL:  stripe.String(returnURL),
-		Type:       stripe.String("account_onboarding"),
+		Type:       stripe.String("account_update"),
 		CollectionOptions: &stripe.AccountLinkCollectionOptionsParams{
 			Fields:             stripe.String("eventually_due"),
 			FutureRequirements: stripe.String("include"),

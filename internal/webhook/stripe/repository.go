@@ -41,6 +41,8 @@ type Repository interface {
 
 	// Connect account status
 	UpdateStripeAccountVerificationStatus(cdb context.Context, accountID, status string) error
+	GetMerchantIDByStripeAccountID(cdb context.Context, accountID string) (string, error)
+	SetScanNOrderActivated(cdb context.Context, merchantID string, activated bool) error
 }
 
 type mysqlRepo struct {
@@ -323,6 +325,31 @@ func (r *mysqlRepo) UpdateStripeAccountVerificationStatus(cdb context.Context, a
 	_, err := db.ExecContext(cdb,
 		`UPDATE stripe_accounts SET verification_status = ? WHERE account_id = ?`,
 		status, accountID,
+	)
+	return err
+}
+
+func (r *mysqlRepo) GetMerchantIDByStripeAccountID(cdb context.Context, accountID string) (string, error) {
+	db := dbutils.GetDB(cdb, r.database)
+
+	var merchantID string
+	err := db.QueryRowContext(cdb,
+		`SELECT merchant_id FROM stripe_accounts WHERE account_id = ? LIMIT 1`,
+		accountID,
+	).Scan(&merchantID)
+	if err != nil {
+		return "", err
+	}
+
+	return merchantID, nil
+}
+
+func (r *mysqlRepo) SetScanNOrderActivated(cdb context.Context, merchantID string, activated bool) error {
+	db := dbutils.GetDB(cdb, r.database)
+
+	_, err := db.ExecContext(cdb,
+		`UPDATE scannorder_settings SET activated = ? WHERE merchant_id = ?`,
+		activated, merchantID,
 	)
 	return err
 }

@@ -2,6 +2,7 @@ package stripe
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,8 +19,8 @@ import (
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
 
-	"github.com/stripe/stripe-go/v84"
-	"github.com/stripe/stripe-go/v84/balancetransaction"
+	"github.com/stripe/stripe-go/v78"
+	"github.com/stripe/stripe-go/v78/balancetransaction"
 )
 
 type StripeWebhookService struct {
@@ -425,6 +426,16 @@ func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.
 // HandleAccountUpdated caches the Connect account verification status in stripe_accounts.
 // Triggered by the "account.updated" Stripe webhook event.
 func (s *StripeWebhookService) HandleAccountUpdated(ctx context.Context, data json.RawMessage) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("unmarshal raw account payload: %w", err)
+	}
+
+	accountID, _ := raw["id"].(string)
+	if accountID == "" {
+		return errors.New("missing account id in account.updated payload")
+	}
+
 	var acc stripe.Account
 	if err := json.Unmarshal(data, &acc); err != nil {
 		return fmt.Errorf("unmarshal account: %w", err)
@@ -435,12 +446,27 @@ func (s *StripeWebhookService) HandleAccountUpdated(ctx context.Context, data js
 		status = "verified"
 	}
 
-	if err := s.repo.UpdateStripeAccountVerificationStatus(ctx, acc.ID, status); err != nil {
-		log.Printf("[stripe webhook] failed to update verification status for account %s: %v", acc.ID, err)
+	if err := s.repo.UpdateStripeAccountVerificationStatus(ctx, accountID, status); err != nil {
+		log.Printf("[stripe webhook] failed to update verification status for account %s: %v", accountID, err)
 		return err
 	}
 
-	log.Printf("[stripe webhook] account %s verification status updated to %s", acc.ID, status)
+	merchantID, err := s.repo.GetMerchantIDByStripeAccountID(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[stripe webhook] no merchant found for account %s", accountID)
+			return nil
+		}
+		return fmt.Errorf("resolve merchant by stripe account id: %w", err)
+	}
+
+	if acc.DetailsSubmitted && acc.ChargesEnabled {
+		if err := s.repo.SetScanNOrderActivated(ctx, merchantID, true); err != nil {
+			return fmt.Errorf("activate scannorder for merchant %s: %w", merchantID, err)
+		}
+	}
+
+	log.Printf("[stripe webhook] account %s verification status updated to %s", accountID, status)
 	return nil
 }
 

@@ -602,6 +602,34 @@ func (r *Repository) GetStripeAccountID(ctx context.Context, merchantID string) 
 	return accountID, err
 }
 
+// UpsertStripeAccountID stores the Stripe connected account ID for a merchant.
+// It updates an existing stripe_accounts row first; if none exists, it inserts one.
+func (r *Repository) UpsertStripeAccountID(ctx context.Context, merchantID, accountID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE stripe_accounts SET account_id = ? WHERE merchant_id = ?`,
+		accountID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected > 0 {
+		return nil
+	}
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO stripe_accounts (merchant_id, account_id) VALUES (?, ?)`,
+		merchantID, accountID,
+	)
+	return err
+}
+
 // UpdateStripeVerificationStatus caches the Stripe verification status in stripe_accounts.
 // Called by the webhook handler when an account.updated event arrives.
 func (r *Repository) UpdateStripeVerificationStatus(ctx context.Context, accountID, status string) error {

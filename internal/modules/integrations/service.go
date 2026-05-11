@@ -221,6 +221,44 @@ func (s *Service) CreateStripeOnboardingLink(ctx context.Context, merchantID str
 	return s.stripeManager.CreateOnboardingLink(accountID, s.stripeReturnURL, s.stripeRefreshURL)
 }
 
+// CreateScanNOrderOnboarding creates a Stripe Express account when missing and returns
+// an onboarding account link for ScanNOrder activation.
+func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, merchantID string) (string, error) {
+	accountID, err := s.repo.GetStripeAccountID(ctx, merchantID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+
+		accountID, err = s.stripeManager.CreateExpressAccount(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		if err := s.repo.UpsertStripeAccountID(ctx, merchantID, accountID); err != nil {
+			return "", err
+		}
+	}
+
+	if strings.TrimSpace(accountID) == "" {
+		accountID, err = s.stripeManager.CreateExpressAccount(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		if err := s.repo.UpsertStripeAccountID(ctx, merchantID, accountID); err != nil {
+			return "", err
+		}
+	}
+
+	refreshURL := s.stripeRefreshURL
+	if strings.TrimSpace(refreshURL) == "" {
+		refreshURL = s.stripeReturnURL
+	}
+
+	return s.stripeManager.CreateOnboardingLink(accountID, s.stripeReturnURL, refreshURL)
+}
+
 // GetStripeBankAccounts lists the bank accounts linked to the merchant's Stripe Connect account.
 func (s *Service) GetStripeBankAccounts(ctx context.Context, merchantID string) ([]stripeclient.BankAccountInfo, error) {
 	accountID, err := s.repo.GetStripeAccountID(ctx, merchantID)
