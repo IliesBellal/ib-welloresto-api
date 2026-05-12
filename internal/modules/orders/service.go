@@ -2,9 +2,7 @@ package orders
 
 import (
 	"context"
-	"crypto/md5"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -775,16 +773,15 @@ func (s *OrdersService) generateProductKey(p models.OrderProductPayload) string 
 	withoutJSON, _ := json.Marshal(p.Without)
 	configJSON, _ := json.Marshal(p.Config)
 
-	raw := fmt.Sprintf("%d|%v|%s|%s|%s",
-		p.ProductID,
-		p.DiscountID,
-		string(extraJSON),
-		string(withoutJSON),
-		string(configJSON),
-	)
+	raw := p.ProductID +
+		*p.DiscountID +
+		string(extraJSON) +
+		string(withoutJSON) +
+		string(configJSON)
 
-	hash := md5.Sum([]byte(raw))
-	return hex.EncodeToString(hash[:])
+	//hash := md5.Sum([]byte(raw))
+
+	return raw //hex.EncodeToString(hash[:])
 }
 
 func (s *OrdersService) applyDiscountedOptionsPrice(product *models.SelectedProduct, discount *models.DBDiscount) {
