@@ -86,7 +86,8 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	return cashRegisterID.String, nil
 }
 
-func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment models.Payment) error {
+// Nouvelle version qui retourne l'ID du paiement créé
+func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -102,11 +103,11 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 
 	if err != nil {
 		log.Error("Error checking payment status: " + err.Error())
-		return fmt.Errorf("failed to check order payment status: %w", err)
+		return 0, fmt.Errorf("failed to check order payment status: %w", err)
 	}
 
 	if (alreadyPaid >= totalPrice && payment.OperationType == models.OperationTypeSale) || alreadyPaid+payment.Amount > totalPrice {
-		return &models.OrderNotFullyPaidError{
+		return 0, &models.OrderNotFullyPaidError{
 			OrderID:    payment.OrderID,
 			PaidAmount: alreadyPaid,
 			Price:      totalPrice,
@@ -132,14 +133,14 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 
 	// 3. Insérer le paiement avec son hash
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO payments
-		(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
+	INSERT INTO payments
+	(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())
-		return err
+		return 0, err
 	}
 
 	paymentID, _ := res.LastInsertId()
@@ -153,7 +154,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 		`, payment.MerchantID, paymentID, payment.Code)
 		if err != nil {
 			log.Error("Error inserting TR: " + err.Error())
-			return err
+			return 0, err
 		}
 	} else if payment.MOP == models.StripeMOP {
 
@@ -175,6 +176,12 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 		WHERE o.order_id = ?
 	`, payment.OrderID, payment.OrderID)
 
+	return paymentID, err
+}
+
+// AddPayment inserts a payment and discards the generated ID (for backward compatibility)
+func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment models.Payment) error {
+	_, err := r.AddPaymentAndReturnID(ctx, payment)
 	return err
 }
 

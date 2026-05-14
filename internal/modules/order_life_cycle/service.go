@@ -334,34 +334,33 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 	})
 }
 
-func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) error {
+func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string, req *models.PaymentRequest) (*models.Payment, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !orderStillOpen {
 		s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
-		return nil
+		return nil, nil
 	}
 
 	req.OrderID = orderID
 
 	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, req.DeviceID)
 	if err != nil && req.CashRegisterID == nil {
-		return models.ErrNoCashRegisterOpen
+		return nil, models.ErrNoCashRegisterOpen
 	}
 
 	payment := models.Payment{
-		//PaymentID:     newPaymentID,
 		OrderID:        req.OrderID,
 		MerchantID:     user.MerchantID,
 		UserID:         user.UserID,
-		CashRegisterID: activeRegister, // On l'attache au registre d'AUJOURD'HUI
+		CashRegisterID: activeRegister,
 		MOP:            req.MOP,
 		Amount:         req.Amount,
 		OperationType:  models.OperationTypeSale,
@@ -369,7 +368,28 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 		Code:           &req.Code,
 	}
 
-	return s.CreatePayment(ctx, payment)
+	paymentID, err := s.CreatePaymentAndReturnID(ctx, payment)
+	if err != nil {
+		return nil, err
+	}
+
+	// Charger l'objet payment complet
+	pmt, err := s.ordersLifeCycleRepo.GetPayment(ctx, payment.OrderID, paymentID)
+	if err != nil {
+		return nil, err
+	}
+	return pmt, nil
+}
+
+// Nouvelle méthode pour créer un paiement et retourner son ID
+func (s *OrdersLifeCycleService) CreatePaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
+	var paymentID int64
+	err := s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
+		var err error
+		paymentID, err = s.ordersLifeCycleRepo.AddPaymentAndReturnID(txCtx, payment)
+		return err
+	})
+	return paymentID, err
 }
 
 func (s *OrdersLifeCycleService) CreatePayment(ctx context.Context, payment models.Payment) error {

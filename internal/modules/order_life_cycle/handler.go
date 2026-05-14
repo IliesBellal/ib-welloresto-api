@@ -64,14 +64,15 @@ func (h *OrdersLifeCycleHandler) AddPayment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err := h.ordersLifeCycleService.AddPayment(ctx, orderID, &req)
+	payment, err := h.ordersLifeCycleService.AddPayment(ctx, orderID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "order_life_cycle", "add_payment", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "order_life_cycle", "add_payment", models.HandlerDefaultResponseModelSet{
-		Status: "success",
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "add_payment", map[string]interface{}{
+		"status":  "success",
+		"payment": payment,
 	})
 }
 
