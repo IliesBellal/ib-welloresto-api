@@ -773,8 +773,13 @@ func (s *OrdersService) generateProductKey(p models.OrderProductPayload) string 
 	withoutJSON, _ := json.Marshal(p.Without)
 	configJSON, _ := json.Marshal(p.Config)
 
+	discountID := ""
+	if p.DiscountID != nil {
+		discountID = *p.DiscountID
+	}
+
 	raw := p.ProductID +
-		*p.DiscountID +
+		discountID +
 		string(extraJSON) +
 		string(withoutJSON) +
 		string(configJSON)
