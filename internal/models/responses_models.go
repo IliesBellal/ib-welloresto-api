@@ -203,7 +203,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorMsg = "no cash register opened for this device id"
 
 	case errors.Is(err, ErrCashRegisterStillOpen):
-		status = http.StatusUnauthorized
+		status = http.StatusConflict
 		errorStatus = "cash_register_still_open"
 		errorMsg = "cannot perform this action on an opened cash register"
 
