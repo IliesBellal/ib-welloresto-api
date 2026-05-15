@@ -10,8 +10,8 @@ type CashRegisterHistoryItem struct {
 	FinalCashFund    int                 `json:"final_cash_fund"`
 	ClosureComment   *string             `json:"closure_comment,omitempty"`
 	ClosedByName     *string             `json:"closed_by_name,omitempty"`
-	Closed           bool                `json:"closed"`
-	Enclosed         bool                `json:"enclosed"`
+	Closed           bool                `json:"closed"`   // correspond à la colonne closed
+	Enclosed         bool                `json:"enclosed"` // correspond à la colonne enclosed
 	TotalRevenu      int                 `json:"total_revenu"`
 	TransactionCount int                 `json:"transaction_count"`
 	PaymentMethods   []MOPLine           `json:"payment_methods"`

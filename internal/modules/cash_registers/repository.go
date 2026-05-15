@@ -375,12 +375,13 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	_, err = db.ExecContext(ctx, `
 		UPDATE cash_registers
 		SET end_date = UTC_TIMESTAMP,
+			closed = true,
 			final_cash_fund = ?,
 			previous_hash = ?,
 			hash = ?,
 			signature = ?
 		WHERE cash_register_id = ?
-		AND end_date IS NULL
+			AND closed = false
 	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
 
 	if err != nil {
@@ -406,7 +407,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 			cr.cash_register_id, cr.start_date, cr.end_date,
 			cd.cash_desk_id, cd.name,
 			cr.cash_fund, cr.final_cash_fund,
-			cr.closed, cr.closure_comment,
+			cr.closed, cr.enclosed, cr.closure_comment,
 			u.user_id, u.first_name, u.last_name,
 			mp.currency,
 			cb.user_id as closed_by_user_id,
@@ -422,6 +423,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 
 	var cr models.CashRegisterSummary
 	var start_date_temp, end_date_temp sql.NullTime
+	var closed, enclosed bool
 
 	err := row.Scan(
 		&cr.CashRegisterID,
@@ -431,7 +433,8 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		&cr.CashDesk.CashDeskName,
 		&cr.CashFund,
 		&cr.FinalCashFund,
-		&cr.Closed,
+		&closed,
+		&enclosed,
 		&cr.ClosureComment,
 		&cr.OpenedBy.UserID,
 		&cr.OpenedBy.FirstName,
@@ -441,6 +444,8 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		&cr.ClosedBy.FirstName,
 		&cr.ClosedBy.LastName,
 	)
+	cr.Closed = closed
+	cr.Enclosed = enclosed
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -625,23 +630,19 @@ func (r *CashRegisterRepository) isCashRegisterClosed(ctx context.Context, cashR
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// Check if cash register still open
-	var exists int
+	// Check if cash register is closed (using the closed column)
+	var closed bool
 	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
+		SELECT closed
 		FROM cash_registers
-		WHERE cash_register_id = ? AND end_date is not null
-	`, cashRegisterID).Scan(&exists)
+		WHERE cash_register_id = ?
+	`, cashRegisterID).Scan(&closed)
 
 	if err != nil {
 		log.Error(err.Error())
-		return true
+		return false // If error, consider not closed
 	}
-	if exists == 0 {
-		return false
-	}
-
-	return true
+	return closed
 }
 
 func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string, user *auth.UserLoginRow) error {
@@ -673,10 +674,10 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 		return models.ErrCashRegisterStillOpen
 	}
 
-	// Update
+	// Update: set enclosed (not closed!)
 	_, err := db.ExecContext(ctx, `
 		UPDATE cash_registers
-		SET closed = true,
+		SET enclosed = true,
 		    closed_by = ?,
 		    closure_comment = ?
 		WHERE cash_register_id = ?
@@ -810,15 +811,16 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	// 5️⃣ RÉCUPÉRATION DES DONNÉES COMPLÈTES
 	// ==========================================
 	fullQuery := fmt.Sprintf(`
-        SELECT cr.cash_register_id,
-               cr.start_date,
-               cr.end_date,
+		SELECT cr.cash_register_id,
+		       cr.start_date,
+		       cr.end_date,
 		 COALESCE(cr.cash_fund, 0) AS cash_fund,
 		 COALESCE(cr.final_cash_fund, 0) AS final_cash_fund,
 		 cr.closure_comment,
 		 NULLIF(TRIM(CONCAT_WS(' ', cb.first_name, cb.last_name)), '') AS closed_by_name,
-               cd.cash_desk_id,
-               cd.name,
+	       cd.cash_desk_id,
+	       cd.name,
+		 cr.enclosed,
 		 cr.closed,
 		 cr.hash,
 		 COALESCE(pstats.transaction_count, 0) AS transaction_count,
@@ -866,6 +868,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			&h.CashDesk.CashDeskID,
 			&h.CashDesk.CashDeskName,
 			&h.Enclosed,
+			&h.Closed,
 			&hash,
 			&transactionCount,
 			&totalRevenu,
@@ -880,7 +883,6 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		}
 		if rawEndDate.Valid {
 			h.EndDate = rawEndDate.Time.UTC().Format(time.RFC3339)
-			h.Closed = true
 		}
 		if cashFund.Valid {
 			h.CashFund = int(cashFund.Int64)

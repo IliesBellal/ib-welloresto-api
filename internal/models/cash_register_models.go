@@ -4,7 +4,8 @@ type CashRegister struct {
 	CashRegisterID string   `json:"cash_register_id"`
 	StartDate      *int     `json:"start_date"`
 	EndDate        *int     `json:"end_date"`
-	Closed         bool     `json:"closed"`
+	Closed         bool     `json:"closed"`   // colonne closed
+	Enclosed       bool     `json:"enclosed"` // colonne enclosed
 	CashDesk       CashDesk `json:"cash_desk"`
 }
 

@@ -55,7 +55,8 @@ type CashRegisterSummary struct {
 	CashDesk       CashDeskInfo   `json:"cash_desk"`
 	CashFund       int            `json:"cash_fund"`
 	FinalCashFund  int            `json:"final_cash_fund"`
-	Closed         int            `json:"closed"`
+	Closed         bool           `json:"closed"`   // correspond à la colonne closed
+	Enclosed       bool           `json:"enclosed"` // correspond à la colonne enclosed
 	Currency       string         `json:"currency"`
 	ClosureComment *string        `json:"closure_comment"`
 	OpenedBy       UserBaseInfo   `json:"opened_by"`
