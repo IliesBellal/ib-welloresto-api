@@ -676,11 +676,11 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 
 	// Update: set enclosed (not closed!)
 	_, err := db.ExecContext(ctx, `
-		UPDATE cash_registers
-		SET enclosed = true,
-		    closed_by = ?,
-		    closure_comment = ?
-		WHERE cash_register_id = ?
+		UPDATE cash_registers cr
+		SET cr.enclosed = true,
+		    cr.closed_by = ?,
+		    cr.closure_comment = ?
+		WHERE cr.cash_register_id = ?
 	`, userID, comment, cashRegisterID)
 
 	if err != nil {
