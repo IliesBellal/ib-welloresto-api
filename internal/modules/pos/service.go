@@ -293,15 +293,6 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			if req.Parameters == nil {
 				req.Parameters = &models.MerchantParametersSettings{}
 			}
-			if req.ScanOrder.ActiveDelivery != nil {
-				req.Parameters.ManageDelivery = req.ScanOrder.ActiveDelivery
-			}
-			if req.ScanOrder.ActiveTakeaway != nil {
-				req.Parameters.ManageTakeAway = req.ScanOrder.ActiveTakeaway
-			}
-			if req.ScanOrder.ActiveOnSite != nil {
-				req.Parameters.ManageOnSite = req.ScanOrder.ActiveOnSite
-			}
 			if req.ScanOrder.AutoAcceptDelivery != nil {
 				req.Parameters.AutoAcceptSnoDeliveryOrders = req.ScanOrder.AutoAcceptDelivery
 			}
