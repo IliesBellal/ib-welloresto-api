@@ -1176,8 +1176,18 @@ func (s *Service) GetSlots(ctx context.Context, qr string) (*SlotsResponse, erro
 	}
 	prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
 
+	loc, err := time.LoadLocation(merchant.Timezone)
+	if err != nil {
+		log.Warn("GetSlots: Invalid merchant timezone, fallback to UTC", zap.String("merchant_id", merchant.MerchantID), zap.String("timezone", merchant.Timezone), zap.Error(err))
+		loc = time.UTC
+	}
+
+	now := time.Now().In(loc)
+	localDate := now.Format("2006-01-02")
+	localTime := now.Format("15:04:05")
+
 	// 4️⃣ Récupérer les slots disponibles
-	availableSlots, err := s.repo.GetAvailableSlots(ctx, merchant.MerchantID, prepMinutes)
+	availableSlots, err := s.repo.GetAvailableSlots(ctx, merchant.MerchantID, prepMinutes, localDate, localTime)
 	if err != nil {
 		log.Error("GetSlots: Failed to retrieve slots", zap.String("merchant_id", merchant.MerchantID), zap.Error(err))
 		return nil, err

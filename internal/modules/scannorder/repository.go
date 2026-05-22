@@ -63,7 +63,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	return &row, nil
 }
 
-func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, prepMinutes int) (map[string][]TimeSlot, error) {
+func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, prepMinutes int, localDate string, localTime string) (map[string][]TimeSlot, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// On convertit les minutes en format TIME (HH:MM:SS) pour MySQL
@@ -77,8 +77,8 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
             FROM time_slots
             WHERE time_slot < MAKETIME(23, 30, 0)
         )
-        SELECT 
-            DATE_FORMAT(DATE_ADD(CURDATE(), INTERVAL days_to_add DAY), '%Y-%m-%d') AS open_date,
+		SELECT DISTINCT
+			DATE_FORMAT(DATE_ADD(?, INTERVAL days_to_add DAY), '%Y-%m-%d') AS open_date,
             TIME_FORMAT(time_slots.time_slot, '%H:%i') as slot_time
         FROM (
             SELECT 0 AS days_to_add UNION ALL SELECT 1 UNION ALL SELECT 2
@@ -87,23 +87,37 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
         JOIN hours_of_operation AS hoo
             ON hoo.merchant_id = ?
             AND hoo.enabled = 1
-			AND (CASE WHEN DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) = 1 THEN 7 ELSE DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) - 1 END) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
+			AND (CASE WHEN DAYOFWEEK(DATE_ADD(?, INTERVAL days_to_add DAY)) = 1 THEN 7 ELSE DAYOFWEEK(DATE_ADD(?, INTERVAL days_to_add DAY)) - 1 END) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
             AND time_slots.time_slot > hoo.hour_from
             AND time_slots.time_slot <= hoo.hour_to
         LEFT JOIN merchant_parameters AS mp ON mp.merchant_id = hoo.merchant_id
-        WHERE (hoo.valid_from IS NULL OR hoo.valid_from <= CURDATE() + INTERVAL days_to_add DAY)
-          AND (hoo.valid_to IS NULL OR hoo.valid_to >= CURDATE() + INTERVAL days_to_add DAY)
+		WHERE (hoo.valid_from IS NULL OR hoo.valid_from <= DATE_ADD(?, INTERVAL days_to_add DAY))
+		  AND (hoo.valid_to IS NULL OR hoo.valid_to >= DATE_ADD(?, INTERVAL days_to_add DAY))
           AND days_to_add < COALESCE(mp.advance_order_days, 3)
           AND (
-                DATE_ADD(CURDATE(), INTERVAL days_to_add DAY) > CURDATE() OR 
-                (DATE_ADD(CURDATE(), INTERVAL days_to_add DAY) = CURDATE() AND 
-                 -- ICI : On utilise le délai dynamique au lieu de 30 min fixe
-                 ADDTIME(CURTIME(), ?) <= time_slots.time_slot)
+				DATE_ADD(?, INTERVAL days_to_add DAY) > ? OR 
+				(DATE_ADD(?, INTERVAL days_to_add DAY) = ? AND 
+				 ADDTIME(?, ?) <= time_slots.time_slot)
           )
         ORDER BY open_date, slot_time;
     `
 
-	rows, err := db.QueryContext(ctx, query, merchantID, prepDelay)
+	rows, err := db.QueryContext(
+		ctx,
+		query,
+		localDate,
+		merchantID,
+		localDate,
+		localDate,
+		localDate,
+		localDate,
+		localDate,
+		localDate,
+		localDate,
+		localDate,
+		localTime,
+		prepDelay,
+	)
 	if err != nil {
 		return nil, err
 	}
