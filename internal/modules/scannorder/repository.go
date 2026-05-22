@@ -207,7 +207,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT
+	SELECT DISTINCT
 		d.discount_id,
 		d.discount_order_type,
 		d.discount_code,
@@ -223,7 +223,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 		d.is_cumulative,
 		d.available
 	FROM discounts d
-	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
+	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
 	WHERE d.merchant_id = ?
 	AND d.discount_order_type LIKE ?
 	AND (d.valid_from < UTC_TIMESTAMP()
