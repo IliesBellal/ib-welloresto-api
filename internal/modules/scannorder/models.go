@@ -33,6 +33,11 @@ type TimeSlot struct {
 	Available bool   `json:"available"`
 }
 
+type SlotsByDate struct {
+	Date  string     `json:"date"`
+	Slots []TimeSlot `json:"slots"`
+}
+
 // MerchantData structure containing merchant information and order settings
 type MerchantData struct {
 	MerchantID         string          `json:"merchant_id"`
@@ -61,9 +66,9 @@ type MerchantData struct {
 }
 
 type SlotsResponse struct {
-	Status         string                `json:"status"`
-	AvailableSlots map[string][]TimeSlot `json:"available_slots,omitempty"`
-	Error          string                `json:"error,omitempty"`
+	Status         string        `json:"status"`
+	AvailableSlots []SlotsByDate `json:"available_slots,omitempty"`
+	Error          string        `json:"error,omitempty"`
 }
 
 type OrderTypes struct {

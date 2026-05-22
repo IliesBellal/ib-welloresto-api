@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 	"welloresto-api/internal/config"
@@ -445,9 +446,12 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 
 	pricing, err := s.orderingService.ComputePricing(ctx, req)
 
-	pricing.IsOrderable = pricing.OrderRequest.IsOrderable && pricing.OrderRequest.IsInDeliveryZone
-	if !pricing.OrderRequest.IsInDeliveryZone {
-		pricing.NotOrderableReason = "out_of_delivery_zone"
+	pricing.IsOrderable = pricing.OrderRequest.IsOrderable
+	if pricing.OrderRequest.Order != nil && pricing.OrderRequest.Order.OrderType == "DELIVERY" {
+		pricing.IsOrderable = pricing.OrderRequest.IsOrderable && pricing.OrderRequest.IsInDeliveryZone
+		if !pricing.OrderRequest.IsInDeliveryZone {
+			pricing.NotOrderableReason = "out_of_delivery_zone"
+		}
 	}
 	pricing.OrderRequest.IsSNO = true
 	pricing.OrderRequest.Order.IsPaid = false
@@ -1184,10 +1188,24 @@ func (s *Service) GetSlots(ctx context.Context, qr string) (*SlotsResponse, erro
 		availableSlots = make(map[string][]TimeSlot)
 	}
 
+	availableSlotsList := make([]SlotsByDate, 0, len(availableSlots))
+	dates := make([]string, 0, len(availableSlots))
+	for date := range availableSlots {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	for _, date := range dates {
+		availableSlotsList = append(availableSlotsList, SlotsByDate{
+			Date:  date,
+			Slots: availableSlots[date],
+		})
+	}
+
 	log.Info("GetSlots success", zap.String("merchant_id", merchant.MerchantID), zap.Int("slot_count", len(availableSlots)))
 
 	return &SlotsResponse{
 		Status:         "1",
-		AvailableSlots: availableSlots,
+		AvailableSlots: availableSlotsList,
 	}, nil
 }
