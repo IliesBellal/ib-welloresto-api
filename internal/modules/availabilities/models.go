@@ -19,7 +19,7 @@ type Availability struct {
 type AvailabilitySchedule struct {
 	ScheduleID     string    `json:"schedule_id"`
 	AvailabilityID string    `json:"availability_id"`
-	DayOfWeek      int       `json:"day_of_week"` // 0 = dimanche, 1 = lundi, ..., 6 = samedi
+	DayOfWeek      int       `json:"day_of_week"` // 1 = lundi, ..., 7 = dimanche
 	StartTime      string    `json:"start_time"`  // Format: "HH:MM:SS"
 	EndTime        string    `json:"end_time"`    // Format: "HH:MM:SS"
 	CreatedAt      time.Time `json:"creation_date"`
@@ -37,7 +37,7 @@ type CreateAvailabilityRequest struct {
 // CreateAvailabilityScheduleReq représente un créneau dans la requête de création
 type CreateAvailabilityScheduleReq struct {
 	ScheduleID string `json:"schedule_id"`
-	DayOfWeek  int    `json:"day_of_week"` // 0 = dimanche, 1 = lundi, ..., 6 = samedi
+	DayOfWeek  int    `json:"day_of_week"` // 1 = lundi, ..., 7 = dimanche
 	StartTime  string `json:"start_time"`  // Format: "HH:MM:SS" ou "HH:MM"
 	EndTime    string `json:"end_time"`    // Format: "HH:MM:SS" ou "HH:MM"
 }

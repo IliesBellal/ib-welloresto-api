@@ -232,28 +232,32 @@ type PricingRequest struct {
 }
 
 type MerchantRow struct {
-	MerchantID            string
-	FullName              string
-	Address               string
-	Lat                   float64
-	Lng                   float64
-	DeliveryDistanceLimit float64 // EN MÈTRES (comme en DB)
-	Timezone              string
-	Currency              string
-	PrimaryColor          string
-	TextColor             string
-	DeliveryFees          float64
-	DeliveryFeesLimit     float64
-	MenuOnly              bool
-	UserID                *string
-	LastWaiterCall        *int
-	OrderID               *string
-	LocationID            *string
-	LocationName          *string
-	CreationDate          *int64
-	VariableFees          *float64
-	FixedFees             *int
-	AccountID             *string
+	MerchantID                  string
+	FullName                    string
+	Address                     string
+	Lat                         float64
+	Lng                         float64
+	DeliveryDistanceLimit       float64 // EN MÈTRES (comme en DB)
+	Timezone                    string
+	Phone                       *string
+	Currency                    string
+	PrimaryColor                string
+	TextColor                   string
+	LogoURL                     *string
+	BannerURL                   *string
+	DeliveryFees                float64
+	DeliveryFeesLimit           float64
+	MinimumCartForDeliveryOrder float64
+	MenuOnly                    bool
+	UserID                      *string
+	LastWaiterCall              *int
+	OrderID                     *string
+	LocationID                  *string
+	LocationName                *string
+	CreationDate                *int64
+	VariableFees                *float64
+	FixedFees                   *int
+	AccountID                   *string
 
 	TakeawayEnabled   bool `json:"takeaway_enabled"`
 	TakeawayAvailable bool `json:"takeaway_available"`
@@ -623,14 +627,43 @@ type MerchantSettings struct {
 	WebSite        *string  `json:"web_site,omitempty"`
 }
 type UpdateMerchantSettingsRequest struct {
-	Merchant   *MerchantSettings           `json:"merchant,omitempty"`
-	Parameters *MerchantParametersSettings `json:"parameters,omitempty"`
-	Marketing  *MerchantMarketingSettings  `json:"marketing,omitempty"`
-	Scannorder *ScannorderSettings         `json:"scannorder,omitempty"`
-	Info       *POSSettingsInfoPatch       `json:"info,omitempty"`
-	Timings    *POSSettingsTimingsPatch    `json:"timings,omitempty"`
-	Ordering   *POSSettingsOrderingPatch   `json:"ordering,omitempty"`
-	ScanOrder  *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
+	Merchant          *MerchantSettings           `json:"merchant,omitempty"`
+	Parameters        *MerchantParametersSettings `json:"parameters,omitempty"`
+	Marketing         *MerchantMarketingSettings  `json:"marketing,omitempty"`
+	Scannorder        *ScannorderSettings         `json:"scannorder,omitempty"`
+	Info              *POSSettingsInfoPatch       `json:"info,omitempty"`
+	Timings           *POSSettingsTimingsPatch    `json:"timings,omitempty"`
+	Ordering          *POSSettingsOrderingPatch   `json:"ordering,omitempty"`
+	ScanOrder         *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
+	HoursOfOperations *[]POSHoursOfOperationPatch `json:"hours_of_operations,omitempty"`
+}
+
+type POSHoursOfOperation struct {
+	ID               string  `json:"id"`
+	DayOfWeekFrom    int     `json:"day_of_week_from"`
+	DayOfWeekTo      int     `json:"day_of_week_to"`
+	HourFrom         string  `json:"hour_from"`
+	HourTo           string  `json:"hour_to"`
+	BookingCapacity  *int    `json:"booking_capacity,omitempty"`
+	FirstBookingTime *string `json:"first_booking_time,omitempty"`
+	LastBookingTime  *string `json:"last_booking_time,omitempty"`
+	ValidFrom        *string `json:"valid_from,omitempty"`
+	ValidTo          *string `json:"valid_to,omitempty"`
+	Enabled          bool    `json:"enabled"`
+}
+
+type POSHoursOfOperationPatch struct {
+	ID               *string `json:"id,omitempty"`
+	DayOfWeekFrom    int     `json:"day_of_week_from"`
+	DayOfWeekTo      int     `json:"day_of_week_to"`
+	HourFrom         string  `json:"hour_from"`
+	HourTo           string  `json:"hour_to"`
+	BookingCapacity  *int    `json:"booking_capacity,omitempty"`
+	FirstBookingTime *string `json:"first_booking_time,omitempty"`
+	LastBookingTime  *string `json:"last_booking_time,omitempty"`
+	ValidFrom        *string `json:"valid_from,omitempty"`
+	ValidTo          *string `json:"valid_to,omitempty"`
+	Enabled          *bool   `json:"enabled,omitempty"`
 }
 
 type POSSettingsInfo struct {
@@ -726,10 +759,11 @@ type POSSettingsScanOrderPatch struct {
 }
 
 type POSSettingsResponse struct {
-	Info      POSSettingsInfo      `json:"info"`
-	Timings   POSSettingsTimings   `json:"timings"`
-	Ordering  POSSettingsOrdering  `json:"ordering"`
-	ScanOrder POSSettingsScanOrder `json:"scan_order"`
+	Info              POSSettingsInfo       `json:"info"`
+	Timings           POSSettingsTimings    `json:"timings"`
+	Ordering          POSSettingsOrdering   `json:"ordering"`
+	ScanOrder         POSSettingsScanOrder  `json:"scan_order"`
+	HoursOfOperations []POSHoursOfOperation `json:"hours_of_operations"`
 }
 
 type UserProfileResponse struct {

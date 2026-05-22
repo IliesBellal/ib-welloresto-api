@@ -100,7 +100,7 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 		}
 	}
 
-	openStatus, err := s.IsMerchantOpen(ctx, row.MerchantID)
+	status, err := s.GetMerchantStatus(ctx, row.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +113,8 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 			MerchantID:      row.MerchantID,
 			BusinessName:    row.FullName,
 			Currency:        row.Currency,
-			IsOpen:          openStatus.OpenHours && openStatus.OpenStatus,
-			Status:          openStatus,
+			Phone:           *row.Phone,
+			Status:          status,
 			PreparationTime: prepMinutes,
 
 			OrderTypes: OrderTypes{
@@ -143,12 +143,15 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	resp.Merchant.Design = MerchantDesign{
 		PrimaryColor: row.PrimaryColor,
 		TextColor:    row.TextColor,
+		LogoURL:      row.LogoURL,
+		BannerURL:    row.BannerURL,
 	}
 
 	resp.Merchant.Fee = MerchantFees{
 		DeliveryFees:      row.DeliveryFees,
 		DeliveryFeesLimit: row.DeliveryFeesLimit,
 	}
+	resp.Merchant.MinimumOrderAmount = row.MinimumCartForDeliveryOrder
 
 	resp.Merchant.QRCode.MenuOnly = row.MenuOnly
 	resp.Merchant.QRCode.UserID = row.UserID
@@ -313,7 +316,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 	}, nil
 }
 
-func (s *Service) IsMerchantOpen(ctx context.Context, merchantID string) (*MerchantOpenStatus, error) {
+func (s *Service) GetMerchantStatus(ctx context.Context, merchantID string) (*MerchantStatus, error) {
 
 	// On récupère timezone pour reproduire PHP
 	_, tz, err := s.repo.GetMerchantIDAndTZFromMerchantID(ctx, merchantID)
@@ -325,13 +328,9 @@ func (s *Service) IsMerchantOpen(ctx context.Context, merchantID string) (*Merch
 	now := time.Now().In(loc)
 
 	dow := int(now.Weekday())
-	if dow == 0 {
-		dow = 7
-	}
-
 	currentTime := now.Format("15:04:05")
 
-	return s.repo.GetMerchantOpenStatus(ctx, merchantID, dow, currentTime)
+	return s.repo.GetMerchantStatus(ctx, merchantID, dow, currentTime)
 }
 
 func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*BrandResponse, error) {
@@ -356,10 +355,10 @@ func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*B
 
 	summaries := make([]MerchantSummary, 0, len(merchantRows))
 	for _, row := range merchantRows {
-		openStatus, err := s.IsMerchantOpen(ctx, row.MerchantID)
+		status, err := s.GetMerchantStatus(ctx, row.MerchantID)
 		isOpen := false
 		if err == nil {
-			isOpen = openStatus.OpenHours && openStatus.OpenStatus
+			isOpen = status.IsOpen
 		}
 
 		merchantRow := &models.MerchantRow{
@@ -440,7 +439,7 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 
 	req.MerchantID = merchant.MerchantID
 	req.IsSNO = true
-	// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
+	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 	req.DayOfWeek = int(now.Weekday())
 	req.Time = now.Format("2006-01-02 15:04:05")
 
@@ -687,15 +686,18 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		now := time.Now().In(tz)
 
 		req.DayOfWeek = int(now.Weekday())
-		// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
+		if req.DayOfWeek == 0 {
+			req.DayOfWeek = 7
+		}
+		// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 		req.Time = now.Format("2006-01-02 15:04:05")
 
-		openStatus, err := s.repo.GetMerchantOpenStatus(ctx, req.MerchantID, req.DayOfWeek, req.Time)
+		status, err := s.repo.GetMerchantStatus(ctx, req.MerchantID, req.DayOfWeek, req.Time)
 		if err != nil {
-			log.Error("GetMerchantOpenStatus", zap.Error(err))
+			log.Error("GetMerchantStatus", zap.Error(err))
 			return models.CreateOrderResult{Status: "error_002"}, err
 		}
-		if !openStatus.OpenHours || !openStatus.OpenStatus {
+		if !status.IsOpen {
 			return models.CreateOrderResult{Status: "pos_closed"}, nil
 		}
 	}

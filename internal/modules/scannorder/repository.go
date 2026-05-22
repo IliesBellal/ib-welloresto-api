@@ -22,9 +22,10 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-    SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone,
-           mp.currency, mp.primary_color, mp.text_color_on_primary_color,
-           mp.delivery_fees, mp.delivery_fees_limit, mp.preparation_time_mode, mp.preparation_time, mp.delivery_distance_limit,
+	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone, m.merchantTel,
+		   mp.currency, mp.primary_color, mp.text_color_on_primary_color,
+		   snos.logo_url, snos.banner_url,
+           mp.delivery_fees, mp.delivery_fees_limit, mp.minimum_cart_for_delivery_order, mp.preparation_time_mode, mp.preparation_time, mp.delivery_distance_limit,
            
            qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
            
@@ -46,9 +47,10 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 
 	row := models.MerchantRow{}
 	err := db.QueryRowContext(ctx, query, qr).Scan(
-		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone,
+		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone, &row.Phone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
-		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.PrepTimeMode, &row.PrepTime, &row.DeliveryDistanceLimit,
+		&row.LogoURL, &row.BannerURL,
+		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.MinimumCartForDeliveryOrder, &row.PrepTimeMode, &row.PrepTime, &row.DeliveryDistanceLimit,
 		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
 		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
 		&row.TakeawayEnabled, &row.TakeawayAvailable,
@@ -85,7 +87,7 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
         JOIN hours_of_operation AS hoo
             ON hoo.merchant_id = ?
             AND hoo.enabled = 1
-            AND (DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) - 1) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
+			AND (CASE WHEN DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) = 1 THEN 7 ELSE DAYOFWEEK(CURDATE() + INTERVAL days_to_add DAY) - 1 END) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
             AND time_slots.time_slot > hoo.hour_from
             AND time_slots.time_slot <= hoo.hour_to
         LEFT JOIN merchant_parameters AS mp ON mp.merchant_id = hoo.merchant_id
@@ -264,10 +266,11 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 	return discounts, nil
 }
 
-func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantOpenStatus, error) {
+func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantStatus, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	status := &MerchantOpenStatus{}
+	status := &MerchantStatus{}
+	day := normalizeDayOfWeek(dow)
 
 	// 1️⃣ Global open status
 	query1 := `
@@ -281,8 +284,9 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	LIMIT 1`
 
 	var tmp int
+	var isMerchantEnabled bool
 	if err := db.QueryRowContext(ctx, query1, merchantID).Scan(&tmp); err == nil {
-		status.OpenStatus = true
+		isMerchantEnabled = true
 	}
 
 	// 2️⃣ Opening hours
@@ -292,14 +296,18 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
 	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 	WHERE hoo.merchant_id = ?
-	AND day_of_week_from <= ?
-	AND day_of_week_to >= ?
+	AND (
+		(day_of_week_from <= day_of_week_to AND ? BETWEEN day_of_week_from AND day_of_week_to)
+		OR
+		(day_of_week_from > day_of_week_to AND (? >= day_of_week_from OR ? <= day_of_week_to))
+	)
 	AND hour_from < ?
 	AND hour_to > ?
 	LIMIT 1`
 
-	if err := db.QueryRowContext(ctx, query2, merchantID, dow, dow, currentTime, currentTime).Scan(&tmp); err == nil {
-		status.OpenHours = true
+	var isOpenNow bool
+	if err := db.QueryRowContext(ctx, query2, merchantID, day, day, day, currentTime, currentTime).Scan(&tmp); err == nil {
+		isOpenNow = true
 	}
 
 	// 3️⃣ Timezone
@@ -342,12 +350,130 @@ func (r *Repository) GetMerchantOpenStatus(ctx context.Context, merchantID strin
 		return nil, err
 	}
 
-	status.OpenHours = isOpen.Valid && isOpen.Int64 == 1
+	status.IsOpen = isMerchantEnabled && isOpenNow && isOpen.Valid && isOpen.Int64 == 1
 	if nextStart.Valid {
 		status.NextStart = nextStart.String
 	}
 
+	openHours, err := r.GetMerchantOpenHours(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	status.OpenHours = openHours
+
 	return status, nil
+}
+
+func (r *Repository) GetMerchantOpenHours(ctx context.Context, merchantID string) ([]OpenHoursDay, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	type openHourRow struct {
+		DayFrom  int
+		DayTo    int
+		HourFrom string
+		HourTo   string
+	}
+
+	query := `
+	SELECT
+		hoo.day_of_week_from,
+		hoo.day_of_week_to,
+		hoo.hour_from,
+		hoo.hour_to
+	FROM hours_of_operation hoo
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
+	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
+	WHERE hoo.merchant_id = ?
+	AND hoo.enabled = true
+	AND (hoo.valid_from IS NULL OR hoo.valid_from <= UTC_TIMESTAMP())
+	AND (hoo.valid_to IS NULL OR hoo.valid_to >= UTC_TIMESTAMP())
+	ORDER BY hoo.day_of_week_from, hoo.hour_from`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	dayNames := map[int]string{
+		1: "Lundi",
+		2: "Mardi",
+		3: "Mercredi",
+		4: "Jeudi",
+		5: "Vendredi",
+		6: "Samedi",
+		7: "Dimanche",
+	}
+
+	weekly := make([]OpenHoursDay, 0, 7)
+	for day := 1; day <= 7; day++ {
+		weekly = append(weekly, OpenHoursDay{
+			DayOfWeek: day,
+			DayName:   dayNames[day],
+			Hours:     []OpeningPeriod{},
+		})
+	}
+
+	for rows.Next() {
+		var row openHourRow
+		if err := rows.Scan(&row.DayFrom, &row.DayTo, &row.HourFrom, &row.HourTo); err != nil {
+			return nil, err
+		}
+
+		days := expandDayRange(normalizeDayOfWeek(row.DayFrom), normalizeDayOfWeek(row.DayTo))
+		period := OpeningPeriod{
+			From: formatHour(row.HourFrom),
+			To:   formatHour(row.HourTo),
+		}
+
+		for _, day := range days {
+			if day >= 1 && day <= len(weekly) {
+				weekly[day-1].Hours = append(weekly[day-1].Hours, period)
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return weekly, nil
+}
+
+func normalizeDayOfWeek(day int) int {
+	if day <= 0 {
+		return 7
+	}
+	if day > 7 {
+		day = ((day - 1) % 7) + 1
+	}
+	return day
+}
+
+func expandDayRange(dayFrom, dayTo int) []int {
+	if dayFrom <= dayTo {
+		days := make([]int, 0, dayTo-dayFrom+1)
+		for day := dayFrom; day <= dayTo; day++ {
+			days = append(days, day)
+		}
+		return days
+	}
+
+	days := make([]int, 0, (8-dayFrom)+dayTo)
+	for day := dayFrom; day <= 7; day++ {
+		days = append(days, day)
+	}
+	for day := 1; day <= dayTo; day++ {
+		days = append(days, day)
+	}
+	return days
+}
+
+func formatHour(hour string) string {
+	if len(hour) >= 5 {
+		return hour[:5]
+	}
+	return hour
 }
 
 func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID string, dow int, currentTime string) (map[int64]string, error) {

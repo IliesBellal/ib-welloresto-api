@@ -364,8 +364,11 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 	loc, _ := time.LoadLocation(merchant.Timezone)
 	merchantTime := now.In(loc)
 
-	// 0 = dimanche, 1 = lundi, ..., 6 = samedi (0-6 standard)
+	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 	req.DayOfWeek = int(merchantTime.Weekday())
+	if req.DayOfWeek == 0 {
+		req.DayOfWeek = 7
+	}
 	req.Time = merchantTime.Format("2006-01-02 15:04:05")
 	req.Order.Currency = merchant.Currency
 

@@ -187,21 +187,23 @@ func (s *AvailabilitiesService) IsProductAvailableAt(ctx context.Context, mercha
 
 // ============ Helper Functions ============
 
-// getDayOfWeek retourne le jour de la semaine (0 = dimanche, 1 = lundi, ..., 6 = samedi)
+// getDayOfWeek retourne le jour de la semaine (1 = lundi, ..., 7 = dimanche)
 func getDayOfWeek(t time.Time) int {
 	weekday := t.Weekday()
-	// Go Weekday: 0 = dimanche, 1 = lundi, ..., 6 = samedi
-	// Standard 0-6: 0 = dimanche, 1 = lundi, ..., 6 = samedi
-	// Direct: pas de conversion nécessaire
+	// Go Weekday renvoie 0 pour dimanche
+	// Standard 1-7: 1 = lundi, ..., 7 = dimanche
+	if weekday == time.Sunday {
+		return 7
+	}
 	return int(weekday)
 }
 
 // validateSchedules valide les créneaux horaires
 func validateSchedules(schedules []CreateAvailabilityScheduleReq) error {
 	for i, schedule := range schedules {
-		// Valider le jour de la semaine (0-6)
-		if schedule.DayOfWeek < 0 || schedule.DayOfWeek > 6 {
-			return fmt.Errorf("invalid day_of_week at schedule %d: must be between 0 and 6", i)
+		// Valider le jour de la semaine (1-7)
+		if schedule.DayOfWeek < 1 || schedule.DayOfWeek > 7 {
+			return fmt.Errorf("invalid day_of_week at schedule %d: must be between 1 and 7", i)
 		}
 
 		// Normaliser et valider les heures

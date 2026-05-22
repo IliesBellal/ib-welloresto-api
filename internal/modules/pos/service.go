@@ -185,7 +185,7 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 	}
 
 	// Support PATCH payload shaped like GET /pos/settings response:
-	// { info, timings, ordering, scan_order }
+	// { info, timings, ordering, scan_order, hours_of_operations }
 	if req != nil {
 		if req.Info != nil {
 			if req.Merchant == nil {
@@ -336,6 +336,11 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 		return nil, err
 	}
 
+	hoursOfOperations, err := s.posRepo.GetHoursOfOperations(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	serviceRequired := "none"
 	if boolVal(params.ServiceRequiredForOrdering) {
 		serviceRequired = "table"
@@ -384,6 +389,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			MaxScheduleDays:    intVal(params.AdvanceOrderDays),
 			EnableRating:       boolVal(params.EnabledRating),
 		},
+		HoursOfOperations: hoursOfOperations,
 	}
 
 	return resp, nil
@@ -430,4 +436,43 @@ func minutesToSecondsPtr(v *int) *int {
 	}
 	seconds := (*v) * 60
 	return &seconds
+}
+
+func (s *POSService) CreateHourOfOperation(ctx context.Context, token string, req *models.POSHoursOfOperationPatch) (*models.POSHoursOfOperation, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	return s.posRepo.CreateHourOfOperation(ctx, user.MerchantID, req)
+}
+
+func (s *POSService) UpdateHourOfOperation(ctx context.Context, token string, hourID string, req *models.POSHoursOfOperationPatch) (*models.POSHoursOfOperation, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(hourID) == "" || req == nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	return s.posRepo.UpdateHourOfOperation(ctx, user.MerchantID, hourID, req)
+}
+
+func (s *POSService) DeleteHourOfOperation(ctx context.Context, token string, hourID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(hourID) == "" {
+		return models.ErrInvalidInput
+	}
+
+	return s.posRepo.DeleteHourOfOperation(ctx, user.MerchantID, hourID)
 }

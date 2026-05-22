@@ -257,3 +257,80 @@ func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "pos", "get_settings", resp)
 }
+
+func (h *POSHandler) CreateHourOfOperation(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "create_hour_of_operation", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req models.POSHoursOfOperationPatch
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "pos", "create_hour_of_operation", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	created, err := h.service.CreateHourOfOperation(r.Context(), token, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "create_hour_of_operation", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "pos", "create_hour_of_operation", map[string]interface{}{
+		"hour_of_operation": created,
+	})
+}
+
+func (h *POSHandler) UpdateHourOfOperation(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "update_hour_of_operation", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	hourID := strings.TrimSpace(chi.URLParam(r, "hour_id"))
+	if hourID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "pos", "update_hour_of_operation", map[string]string{"error": "missing_hour_id"})
+		return
+	}
+
+	var req models.POSHoursOfOperationPatch
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "pos", "update_hour_of_operation", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	updated, err := h.service.UpdateHourOfOperation(r.Context(), token, hourID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "update_hour_of_operation", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "update_hour_of_operation", map[string]interface{}{
+		"hour_of_operation": updated,
+	})
+}
+
+func (h *POSHandler) DeleteHourOfOperation(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "delete_hour_of_operation", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	hourID := strings.TrimSpace(chi.URLParam(r, "hour_id"))
+	if hourID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "pos", "delete_hour_of_operation", map[string]string{"error": "missing_hour_id"})
+		return
+	}
+
+	if err := h.service.DeleteHourOfOperation(r.Context(), token, hourID); err != nil {
+		models.SendErrorJSON(w, "pos", "delete_hour_of_operation", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "delete_hour_of_operation", map[string]string{
+		"status": "1",
+	})
+}

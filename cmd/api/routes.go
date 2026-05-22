@@ -474,6 +474,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/settings", func(r chi.Router) {
 			r.Get("/", posH.GetSettings)              // used by: back-office
 			r.Patch("/", posH.UpdateMerchantSettings) // used by: back-office
+			r.Post("/hours_of_operations", posH.CreateHourOfOperation)
+			r.Patch("/hours_of_operations/{hour_id}", posH.UpdateHourOfOperation)
+			r.Delete("/hours_of_operations/{hour_id}", posH.DeleteHourOfOperation)
 
 			r.Patch("/scannorder", posH.ToggleScanNOrder)
 			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)

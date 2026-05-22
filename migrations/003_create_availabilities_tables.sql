@@ -45,7 +45,7 @@ COMMENT='Maps products to their availabilities (many-to-many relationship)';
 CREATE TABLE IF NOT EXISTS availabilities_schedules (
     schedule_id CHAR(36) PRIMARY KEY,
     availability_id CHAR(36) NOT NULL,
-    day_of_week INT NOT NULL COMMENT '0=Sunday, 1=Monday, ..., 6=Saturday',
+    day_of_week INT NOT NULL COMMENT '1=Monday, ..., 7=Sunday',
     start_time TIME NOT NULL COMMENT 'Start time (HH:MM:SS)',
     end_time TIME NOT NULL COMMENT 'End time (HH:MM:SS)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

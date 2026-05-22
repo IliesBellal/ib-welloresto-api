@@ -645,7 +645,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
 		WHERE d.merchant_id = ?
 		  AND (d.valid_from < UTC_TIMESTAMP() AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
-		  AND ((TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to AND DAYOFWEEK(UTC_TIMESTAMP()) = ds.day_of_week)
+		  AND ((TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to AND (CASE WHEN DAYOFWEEK(UTC_TIMESTAMP()) = 1 THEN 7 ELSE DAYOFWEEK(UTC_TIMESTAMP()) - 1 END) = ds.day_of_week)
 		       OR NOT d.is_time_limited)
 		  AND d.available = TRUE
 		ORDER BY d.prefered_order ASC

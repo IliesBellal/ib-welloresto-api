@@ -17,8 +17,10 @@ type Address struct {
 }
 
 type MerchantDesign struct {
-	PrimaryColor string `json:"primary_color"`
-	TextColor    string `json:"text_color_on_primary_color"`
+	PrimaryColor string  `json:"primary_color"`
+	TextColor    string  `json:"text_color_on_primary_color"`
+	LogoURL      *string `json:"logo_url,omitempty"`
+	BannerURL    *string `json:"banner_url,omitempty"`
 }
 
 type MerchantFees struct {
@@ -33,16 +35,16 @@ type TimeSlot struct {
 
 // MerchantData structure containing merchant information and order settings
 type MerchantData struct {
-	MerchantID      string              `json:"merchant_id"`
-	BusinessName    string              `json:"business_name"`
-	Phone           string              `json:"phone"`
-	Currency        string              `json:"currency"`
-	IsOpen          bool                `json:"is_open"`
-	Status          *MerchantOpenStatus `json:"status"`
-	Address         Address             `json:"address"`
-	Design          MerchantDesign      `json:"design"`
-	Fee             MerchantFees        `json:"fees"`
-	PreparationTime int                 `json:"preparation_time"`
+	MerchantID         string          `json:"merchant_id"`
+	BusinessName       string          `json:"business_name"`
+	Phone              string          `json:"phone"`
+	Currency           string          `json:"currency"`
+	Status             *MerchantStatus `json:"status"`
+	Address            Address         `json:"address"`
+	Design             MerchantDesign  `json:"design"`
+	Fee                MerchantFees    `json:"fees"`
+	PreparationTime    int             `json:"preparation_time"`
+	MinimumOrderAmount float64         `json:"minimum_order_amount"`
 
 	OrderTypes           OrderTypes   `json:"order_types"`
 	PaymentTypes         PaymentTypes `json:"payment_types"`
@@ -91,10 +93,21 @@ type MenuData struct {
 	Discounts       []Discount               `json:"discounts,omitempty"`
 }
 
-type MerchantOpenStatus struct {
-	OpenHours  bool   `json:"open_hours"`  // = POS open (procédure stockée)
-	OpenStatus bool   `json:"open_status"` // = merchant enabled + scannorder activated
-	NextStart  string `json:"next_start"`
+type OpeningPeriod struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type OpenHoursDay struct {
+	DayOfWeek int             `json:"day_of_week"`
+	DayName   string          `json:"day_name"`
+	Hours     []OpeningPeriod `json:"hours"`
+}
+
+type MerchantStatus struct {
+	IsOpen    bool           `json:"is_open"`
+	OpenHours []OpenHoursDay `json:"open_hours"`
+	NextStart string         `json:"next_start,omitempty"`
 }
 
 type SNOProduct struct {

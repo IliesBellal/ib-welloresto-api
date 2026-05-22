@@ -66,7 +66,7 @@ Table définissant les créneaux horaires pour chaque disponibilité.
 CREATE TABLE availabilities_schedules (
     schedule_id CHAR(36) PRIMARY KEY,
     availability_id CHAR(36) NOT NULL,
-    day_of_week INT NOT NULL,              -- 0=Dimanche, 1=Lundi, ..., 6=Samedi
+    day_of_week INT NOT NULL,              -- 1=Lundi, ..., 7=Dimanche
     start_time TIME NOT NULL,               -- Format: HH:MM:SS
     end_time TIME NOT NULL,                 -- Format: HH:MM:SS
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -243,13 +243,13 @@ func (s *AvailabilitiesService) IsProductAvailable(ctx context.Context, merchant
 ```
 
 #### Jour de la semaine
-- 0 = Dimanche
 - 1 = Lundi
 - 2 = Mardi
 - 3 = Mercredi
 - 4 = Jeudi
 - 5 = Vendredi
 - 6 = Samedi
+- 7 = Dimanche
 
 #### Format d'heure
 - Format accepté en entrée: `HH:MM` ou `HH:MM:SS`

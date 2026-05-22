@@ -9,6 +9,8 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
+
+	"github.com/google/uuid"
 )
 
 type POSRepository struct {
@@ -124,7 +126,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	currentTime := now.Format("15:04:05")
 	currentDay := int(now.Weekday())
 	if currentDay == 0 {
-		currentDay = 0 // Sunday=0 (0-6 standard)
+		currentDay = 7 // Sunday=7 (1-7 standard)
 	}
 
 	// CALL GET_POS_STATUS
@@ -438,6 +440,462 @@ func (s *POSRepository) UpdateMerchantSettings(ctx context.Context, merchantID s
 		}
 	}
 
+	if req.HoursOfOperations != nil {
+		if err := s.UpsertHoursOfOperations(ctx, merchantID, *req.HoursOfOperations); err != nil {
+			log.Error(fmt.Sprintf("Error updating hours_of_operation for ID %s: %v", merchantID, err))
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *POSRepository) GetHoursOfOperations(ctx context.Context, merchantID string) ([]models.POSHoursOfOperation, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT
+			hoo.id,
+			hoo.day_of_week_from,
+			hoo.day_of_week_to,
+			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
+			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			hoo.booking_capacity,
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
+			hoo.enabled
+		FROM hours_of_operation hoo
+		WHERE hoo.merchant_id = ?
+		AND hoo.enabled
+		ORDER BY hoo.day_of_week_from, hoo.day_of_week_to, hoo.hour_from, hoo.id
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.POSHoursOfOperation, 0)
+	for rows.Next() {
+		var item models.POSHoursOfOperation
+		var bookingCapacity sql.NullInt64
+		var firstBookingTime sql.NullString
+		var lastBookingTime sql.NullString
+		var validFrom sql.NullString
+		var validTo sql.NullString
+		var enabledInt int
+
+		err := rows.Scan(
+			&item.ID,
+			&item.DayOfWeekFrom,
+			&item.DayOfWeekTo,
+			&item.HourFrom,
+			&item.HourTo,
+			&bookingCapacity,
+			&firstBookingTime,
+			&lastBookingTime,
+			&validFrom,
+			&validTo,
+			&enabledInt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if bookingCapacity.Valid {
+			v := int(bookingCapacity.Int64)
+			item.BookingCapacity = &v
+		}
+		if firstBookingTime.Valid {
+			v := firstBookingTime.String
+			item.FirstBookingTime = &v
+		}
+		if lastBookingTime.Valid {
+			v := lastBookingTime.String
+			item.LastBookingTime = &v
+		}
+		if validFrom.Valid {
+			v := validFrom.String
+			item.ValidFrom = &v
+		}
+		if validTo.Valid {
+			v := validTo.String
+			item.ValidTo = &v
+		}
+		item.Enabled = enabledInt == 1
+
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *POSRepository) UpsertHoursOfOperations(ctx context.Context, merchantID string, items []models.POSHoursOfOperationPatch) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbutils.GetDB(txCtx, r.database)
+
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE hours_of_operation
+			SET enabled = 0
+			WHERE merchant_id = ?
+		`, merchantID); err != nil {
+			return err
+		}
+
+		for _, item := range items {
+			if item.DayOfWeekFrom < 1 || item.DayOfWeekFrom > 7 || item.DayOfWeekTo < 1 || item.DayOfWeekTo > 7 {
+				return fmt.Errorf("invalid day_of_week range: from=%d to=%d", item.DayOfWeekFrom, item.DayOfWeekTo)
+			}
+			if strings.TrimSpace(item.HourFrom) == "" || strings.TrimSpace(item.HourTo) == "" {
+				return fmt.Errorf("hour_from and hour_to are required")
+			}
+
+			id := ""
+			if item.ID != nil {
+				id = strings.TrimSpace(*item.ID)
+			}
+
+			enabled := true
+			if item.Enabled != nil {
+				enabled = *item.Enabled
+			}
+
+			var firstBooking interface{}
+			if item.FirstBookingTime != nil && strings.TrimSpace(*item.FirstBookingTime) != "" {
+				firstBooking = strings.TrimSpace(*item.FirstBookingTime)
+			}
+
+			var lastBooking interface{}
+			if item.LastBookingTime != nil && strings.TrimSpace(*item.LastBookingTime) != "" {
+				lastBooking = strings.TrimSpace(*item.LastBookingTime)
+			}
+
+			var validFrom interface{}
+			if item.ValidFrom != nil && strings.TrimSpace(*item.ValidFrom) != "" {
+				validFrom = strings.TrimSpace(*item.ValidFrom)
+			}
+
+			var validTo interface{}
+			if item.ValidTo != nil && strings.TrimSpace(*item.ValidTo) != "" {
+				validTo = strings.TrimSpace(*item.ValidTo)
+			}
+
+			if _, err := db.ExecContext(txCtx, `
+				INSERT INTO hours_of_operation (
+					id,
+					merchant_id,
+					day_of_week_from,
+					day_of_week_to,
+					hour_from,
+					hour_to,
+					booking_capacity,
+					first_booking_time,
+					last_booking_time,
+					valid_from,
+					valid_to,
+					enabled
+				)
+				VALUES (
+					COALESCE(NULLIF(?, ''), UUID()),
+					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+				)
+				ON DUPLICATE KEY UPDATE
+					merchant_id = VALUES(merchant_id),
+					day_of_week_from = VALUES(day_of_week_from),
+					day_of_week_to = VALUES(day_of_week_to),
+					hour_from = VALUES(hour_from),
+					hour_to = VALUES(hour_to),
+					booking_capacity = VALUES(booking_capacity),
+					first_booking_time = VALUES(first_booking_time),
+					last_booking_time = VALUES(last_booking_time),
+					valid_from = VALUES(valid_from),
+					valid_to = VALUES(valid_to),
+					enabled = VALUES(enabled)
+			`,
+				id,
+				merchantID,
+				item.DayOfWeekFrom,
+				item.DayOfWeekTo,
+				strings.TrimSpace(item.HourFrom),
+				strings.TrimSpace(item.HourTo),
+				item.BookingCapacity,
+				firstBooking,
+				lastBooking,
+				validFrom,
+				validTo,
+				enabled,
+			); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func (r *POSRepository) CreateHourOfOperation(ctx context.Context, merchantID string, req *models.POSHoursOfOperationPatch) (*models.POSHoursOfOperation, error) {
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+	if err := validateHourOfOperationPayload(req); err != nil {
+		return nil, err
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	hourID := uuid.NewString()
+	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
+		hourID = strings.TrimSpace(*req.ID)
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	var firstBooking interface{}
+	if req.FirstBookingTime != nil && strings.TrimSpace(*req.FirstBookingTime) != "" {
+		firstBooking = strings.TrimSpace(*req.FirstBookingTime)
+	}
+
+	var lastBooking interface{}
+	if req.LastBookingTime != nil && strings.TrimSpace(*req.LastBookingTime) != "" {
+		lastBooking = strings.TrimSpace(*req.LastBookingTime)
+	}
+
+	var validFrom interface{}
+	if req.ValidFrom != nil && strings.TrimSpace(*req.ValidFrom) != "" {
+		validFrom = strings.TrimSpace(*req.ValidFrom)
+	}
+
+	var validTo interface{}
+	if req.ValidTo != nil && strings.TrimSpace(*req.ValidTo) != "" {
+		validTo = strings.TrimSpace(*req.ValidTo)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO hours_of_operation (
+			id,
+			merchant_id,
+			day_of_week_from,
+			day_of_week_to,
+			hour_from,
+			hour_to,
+			booking_capacity,
+			first_booking_time,
+			last_booking_time,
+			valid_from,
+			valid_to,
+			enabled
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		hourID,
+		merchantID,
+		req.DayOfWeekFrom,
+		req.DayOfWeekTo,
+		strings.TrimSpace(req.HourFrom),
+		strings.TrimSpace(req.HourTo),
+		req.BookingCapacity,
+		firstBooking,
+		lastBooking,
+		validFrom,
+		validTo,
+		enabled,
+	); err != nil {
+		return nil, err
+	}
+
+	return r.GetHourOfOperationByID(ctx, merchantID, hourID)
+}
+
+func (r *POSRepository) UpdateHourOfOperation(ctx context.Context, merchantID string, hourID string, req *models.POSHoursOfOperationPatch) (*models.POSHoursOfOperation, error) {
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+	if err := validateHourOfOperationPayload(req); err != nil {
+		return nil, err
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	var firstBooking interface{}
+	if req.FirstBookingTime != nil && strings.TrimSpace(*req.FirstBookingTime) != "" {
+		firstBooking = strings.TrimSpace(*req.FirstBookingTime)
+	}
+
+	var lastBooking interface{}
+	if req.LastBookingTime != nil && strings.TrimSpace(*req.LastBookingTime) != "" {
+		lastBooking = strings.TrimSpace(*req.LastBookingTime)
+	}
+
+	var validFrom interface{}
+	if req.ValidFrom != nil && strings.TrimSpace(*req.ValidFrom) != "" {
+		validFrom = strings.TrimSpace(*req.ValidFrom)
+	}
+
+	var validTo interface{}
+	if req.ValidTo != nil && strings.TrimSpace(*req.ValidTo) != "" {
+		validTo = strings.TrimSpace(*req.ValidTo)
+	}
+
+	res, err := db.ExecContext(ctx, `
+		UPDATE hours_of_operation
+		SET day_of_week_from = ?,
+			day_of_week_to = ?,
+			hour_from = ?,
+			hour_to = ?,
+			booking_capacity = ?,
+			first_booking_time = ?,
+			last_booking_time = ?,
+			valid_from = ?,
+			valid_to = ?,
+			enabled = ?
+		WHERE id = ? AND merchant_id = ?
+	`,
+		req.DayOfWeekFrom,
+		req.DayOfWeekTo,
+		strings.TrimSpace(req.HourFrom),
+		strings.TrimSpace(req.HourTo),
+		req.BookingCapacity,
+		firstBooking,
+		lastBooking,
+		validFrom,
+		validTo,
+		enabled,
+		hourID,
+		merchantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, models.ErrNotFound
+	}
+
+	return r.GetHourOfOperationByID(ctx, merchantID, hourID)
+}
+
+func (r *POSRepository) DeleteHourOfOperation(ctx context.Context, merchantID string, hourID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx, `
+		UPDATE hours_of_operation
+		SET enabled = 0
+		WHERE id = ? AND merchant_id = ?
+	`, hourID, merchantID)
+	if err != nil {
+		return err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return models.ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *POSRepository) GetHourOfOperationByID(ctx context.Context, merchantID string, hourID string) (*models.POSHoursOfOperation, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+		SELECT
+			hoo.id,
+			hoo.day_of_week_from,
+			hoo.day_of_week_to,
+			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
+			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			hoo.booking_capacity,
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
+			hoo.enabled
+		FROM hours_of_operation hoo
+		WHERE hoo.id = ? AND hoo.merchant_id = ?
+	`
+
+	var item models.POSHoursOfOperation
+	var bookingCapacity sql.NullInt64
+	var firstBookingTime sql.NullString
+	var lastBookingTime sql.NullString
+	var validFrom sql.NullString
+	var validTo sql.NullString
+	var enabledInt int
+
+	err := db.QueryRowContext(ctx, query, hourID, merchantID).Scan(
+		&item.ID,
+		&item.DayOfWeekFrom,
+		&item.DayOfWeekTo,
+		&item.HourFrom,
+		&item.HourTo,
+		&bookingCapacity,
+		&firstBookingTime,
+		&lastBookingTime,
+		&validFrom,
+		&validTo,
+		&enabledInt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, models.ErrNotFound
+		}
+		return nil, err
+	}
+
+	if bookingCapacity.Valid {
+		v := int(bookingCapacity.Int64)
+		item.BookingCapacity = &v
+	}
+	if firstBookingTime.Valid {
+		v := firstBookingTime.String
+		item.FirstBookingTime = &v
+	}
+	if lastBookingTime.Valid {
+		v := lastBookingTime.String
+		item.LastBookingTime = &v
+	}
+	if validFrom.Valid {
+		v := validFrom.String
+		item.ValidFrom = &v
+	}
+	if validTo.Valid {
+		v := validTo.String
+		item.ValidTo = &v
+	}
+	item.Enabled = enabledInt == 1
+
+	return &item, nil
+}
+
+func validateHourOfOperationPayload(req *models.POSHoursOfOperationPatch) error {
+	if req.DayOfWeekFrom < 1 || req.DayOfWeekFrom > 7 || req.DayOfWeekTo < 1 || req.DayOfWeekTo > 7 {
+		return models.ErrInvalidInput
+	}
+	if strings.TrimSpace(req.HourFrom) == "" || strings.TrimSpace(req.HourTo) == "" {
+		return models.ErrInvalidInput
+	}
 	return nil
 }
 
