@@ -203,6 +203,7 @@ func (r *LocationsRepository) CreateTable(ctx context.Context, merchantID, floor
 
 func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locationID string, req UpdateTableRequest) error {
 	db := dbutils.GetDB(ctx, r.db)
+	angle := req.TableAngle()
 
 	query := `
 		UPDATE locations
@@ -212,12 +213,14 @@ func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locat
 			floor_id = COALESCE(?, floor_id),
 			current_x = COALESCE(?, current_x),
 			current_y = COALESCE(?, current_y),
+			current_width = COALESCE(?, current_width),
+			current_height = COALESCE(?, current_height),
 			angle = COALESCE(?, angle)
 		WHERE location_id = ? AND merchant_id = ?
 	`
 
 	_, err := db.ExecContext(ctx, query,
-		req.LocationName, req.LocationOrder, req.FloorID, req.X, req.Y, req.Angle,
+		req.LocationName, req.LocationOrder, req.FloorID, req.X, req.Y, req.Width, req.Height, angle,
 		locationID, merchantID,
 	)
 

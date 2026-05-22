@@ -17,7 +17,18 @@ type UpdateTableRequest struct {
 	FloorID       *string  `json:"floor_id"`
 	X             *float64 `json:"x"`
 	Y             *float64 `json:"y"`
+	Width         *float64 `json:"width"`
+	Height        *float64 `json:"height"`
 	Angle         *float64 `json:"angle"`
+	Rotation      *float64 `json:"rotation"`
+}
+
+func (r UpdateTableRequest) TableAngle() *float64 {
+	if r.Rotation != nil {
+		return r.Rotation
+	}
+
+	return r.Angle
 }
 
 type FloorCreateRequest struct {
