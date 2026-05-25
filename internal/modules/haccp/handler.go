@@ -304,11 +304,13 @@ func (h *Handler) GetCleaningZones(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateCleaningZone(w http.ResponseWriter, r *http.Request) {
-	var req CreateCleaningZoneRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_zone", map[string]string{"error": "invalid_request"})
 		return
 	}
+
+	req := CreateCleaningZoneRequest{Name: extractCleaningZoneName(raw)}
 
 	zone, err := h.svc.CreateCleaningZone(r.Context(), req)
 	if err != nil {
@@ -329,11 +331,13 @@ func (h *Handler) UpdateCleaningZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req UpdateCleaningZoneRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_zone", map[string]string{"error": "invalid_request"})
 		return
 	}
+
+	req := UpdateCleaningZoneRequest{Name: extractCleaningZoneName(raw)}
 
 	zone, err := h.svc.UpdateCleaningZone(r.Context(), id, req)
 	if err != nil {
@@ -494,4 +498,26 @@ func (h *Handler) CreateGoodsReceipt(w http.ResponseWriter, r *http.Request) {
 		"status":        "success",
 		"goods_receipt": receipt,
 	})
+}
+
+func extractCleaningZoneName(raw map[string]interface{}) string {
+	keys := []string{"name", "zone_name", "zone", "label", "title"}
+	for _, key := range keys {
+		if v, ok := raw[key]; ok {
+			if s, ok := v.(string); ok {
+				trimmed := strings.TrimSpace(s)
+				if trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+
+	if zone, ok := raw["zone"].(map[string]interface{}); ok {
+		if v, ok := zone["name"].(string); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+
+	return ""
 }

@@ -338,16 +338,21 @@ func (s *Service) UploadHACCPFile(ctx context.Context, contentType string, fileR
 	return url, nil
 }
 
-func (s *Service) ListCleaningZones(ctx context.Context) ([]CleaningZone, error) {
+func (s *Service) ListCleaningZones(ctx context.Context) ([]CleaningZoneWithSurfaces, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	return s.repo.ListCleaningZones(ctx, user.MerchantID)
+	zones, err := s.repo.ListCleaningZones(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.enrichZonesWithSurfaces(ctx, user.MerchantID, zones)
 }
 
-func (s *Service) CreateCleaningZone(ctx context.Context, req CreateCleaningZoneRequest) (*CleaningZone, error) {
+func (s *Service) CreateCleaningZone(ctx context.Context, req CreateCleaningZoneRequest) (*CleaningZoneWithSurfaces, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -357,10 +362,15 @@ func (s *Service) CreateCleaningZone(ctx context.Context, req CreateCleaningZone
 		return nil, err
 	}
 
-	return s.repo.CreateCleaningZone(ctx, user.MerchantID, req)
+	zone, err := s.repo.CreateCleaningZone(ctx, user.MerchantID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.enrichSingleZoneWithSurfaces(ctx, user.MerchantID, *zone)
 }
 
-func (s *Service) UpdateCleaningZone(ctx context.Context, zoneID string, req UpdateCleaningZoneRequest) (*CleaningZone, error) {
+func (s *Service) UpdateCleaningZone(ctx context.Context, zoneID string, req UpdateCleaningZoneRequest) (*CleaningZoneWithSurfaces, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -377,7 +387,11 @@ func (s *Service) UpdateCleaningZone(ctx context.Context, zoneID string, req Upd
 	if err == sql.ErrNoRows {
 		return nil, models.ErrNotFound
 	}
-	return zone, err
+	if err != nil {
+		return nil, err
+	}
+
+	return s.enrichSingleZoneWithSurfaces(ctx, user.MerchantID, *zone)
 }
 
 func (s *Service) DeleteCleaningZone(ctx context.Context, zoneID string) error {
@@ -395,6 +409,67 @@ func (s *Service) DeleteCleaningZone(ctx context.Context, zoneID string) error {
 		return models.ErrNotFound
 	}
 	return err
+}
+
+func (s *Service) enrichSingleZoneWithSurfaces(ctx context.Context, merchantID string, zone CleaningZone) (*CleaningZoneWithSurfaces, error) {
+	surfaces, err := s.repo.ListCleaningSurfaces(ctx, merchantID, zone.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	for i := range surfaces {
+		dueToday, overdue := computeCleaningComputed(now, surfaces[i].Computed.LastExecutionAt, surfaces[i].FrequencyUnit, surfaces[i].FrequencyCount)
+		surfaces[i].Computed.DueToday = dueToday
+		surfaces[i].Computed.Overdue = overdue
+	}
+
+	return &CleaningZoneWithSurfaces{
+		ID:         zone.ID,
+		MerchantID: zone.MerchantID,
+		Name:       zone.Name,
+		Enabled:    zone.Enabled,
+		CreatedAt:  zone.CreatedAt,
+		UpdatedAt:  zone.UpdatedAt,
+		DeletedAt:  zone.DeletedAt,
+		Surfaces:   surfaces,
+	}, nil
+}
+
+func (s *Service) enrichZonesWithSurfaces(ctx context.Context, merchantID string, zones []CleaningZone) ([]CleaningZoneWithSurfaces, error) {
+	surfaces, err := s.repo.ListCleaningSurfaces(ctx, merchantID, "")
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	byZone := make(map[string][]CleaningSurfaceWithComputed, len(zones))
+	for i := range surfaces {
+		dueToday, overdue := computeCleaningComputed(now, surfaces[i].Computed.LastExecutionAt, surfaces[i].FrequencyUnit, surfaces[i].FrequencyCount)
+		surfaces[i].Computed.DueToday = dueToday
+		surfaces[i].Computed.Overdue = overdue
+		byZone[surfaces[i].ZoneID] = append(byZone[surfaces[i].ZoneID], surfaces[i])
+	}
+
+	out := make([]CleaningZoneWithSurfaces, 0, len(zones))
+	for _, zone := range zones {
+		zoneSurfaces := byZone[zone.ID]
+		if zoneSurfaces == nil {
+			zoneSurfaces = make([]CleaningSurfaceWithComputed, 0)
+		}
+		out = append(out, CleaningZoneWithSurfaces{
+			ID:         zone.ID,
+			MerchantID: zone.MerchantID,
+			Name:       zone.Name,
+			Enabled:    zone.Enabled,
+			CreatedAt:  zone.CreatedAt,
+			UpdatedAt:  zone.UpdatedAt,
+			DeletedAt:  zone.DeletedAt,
+			Surfaces:   zoneSurfaces,
+		})
+	}
+
+	return out, nil
 }
 
 func (s *Service) ListCleaningSurfaces(ctx context.Context, zoneID string) ([]CleaningSurfaceWithComputed, error) {

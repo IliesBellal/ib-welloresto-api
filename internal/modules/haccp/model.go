@@ -124,6 +124,17 @@ type CleaningZone struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
 
+type CleaningZoneWithSurfaces struct {
+	ID         string                        `json:"id"`
+	MerchantID string                        `json:"merchant_id"`
+	Name       string                        `json:"name"`
+	Enabled    bool                          `json:"enabled"`
+	CreatedAt  time.Time                     `json:"created_at"`
+	UpdatedAt  time.Time                     `json:"updated_at"`
+	DeletedAt  *time.Time                    `json:"deleted_at,omitempty"`
+	Surfaces   []CleaningSurfaceWithComputed `json:"surfaces"`
+}
+
 type CreateCleaningZoneRequest struct {
 	Name string `json:"name"`
 }
