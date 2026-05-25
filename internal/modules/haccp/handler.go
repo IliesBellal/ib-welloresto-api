@@ -182,22 +182,22 @@ func (h *Handler) GetTemperatureSession(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (h *Handler) GetCleaningExecution(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetCleaningSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_execution", map[string]string{"error": "missing_id"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_session", map[string]string{"error": "missing_id"})
 		return
 	}
 
-	execution, err := h.svc.GetCleaningExecution(r.Context(), id)
+	session, err := h.svc.GetCleaningSession(r.Context(), id)
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "get_cleaning_execution", err)
+		models.SendErrorJSON(w, "haccp", "get_cleaning_session", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_execution", map[string]interface{}{
-		"status":             "success",
-		"cleaning_execution": execution,
+	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_session", map[string]interface{}{
+		"status":           "success",
+		"cleaning_session": session,
 	})
 }
 
@@ -290,139 +290,190 @@ func (h *Handler) UploadHACCP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) GetCleaningTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.svc.ListCleaningTasks(r.Context())
+func (h *Handler) GetCleaningZones(w http.ResponseWriter, r *http.Request) {
+	zones, err := h.svc.ListCleaningZones(r.Context())
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "get_cleaning_tasks", err)
+		models.SendErrorJSON(w, "haccp", "get_cleaning_zones", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_tasks", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_zones", map[string]interface{}{
 		"status":         "success",
-		"cleaning_tasks": tasks,
+		"cleaning_zones": zones,
 	})
 }
 
-func (h *Handler) CreateCleaningTask(w http.ResponseWriter, r *http.Request) {
-	var req CreateCleaningTaskRequest
+func (h *Handler) CreateCleaningZone(w http.ResponseWriter, r *http.Request) {
+	var req CreateCleaningZoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_task", map[string]string{"error": "invalid_request"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_zone", map[string]string{"error": "invalid_request"})
 		return
 	}
 
-	task, err := h.svc.CreateCleaningTask(r.Context(), req)
+	zone, err := h.svc.CreateCleaningZone(r.Context(), req)
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "create_cleaning_task", err)
+		models.SendErrorJSON(w, "haccp", "create_cleaning_zone", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusCreated, "haccp", "create_cleaning_task", map[string]interface{}{
+	models.SendJSON(w, http.StatusCreated, "haccp", "create_cleaning_zone", map[string]interface{}{
 		"status":        "success",
-		"cleaning_task": task,
+		"cleaning_zone": zone,
 	})
 }
 
-func (h *Handler) UpdateCleaningTask(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) UpdateCleaningZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_task", map[string]string{"error": "missing_id"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_zone", map[string]string{"error": "missing_id"})
 		return
 	}
 
-	var req UpdateCleaningTaskRequest
+	var req UpdateCleaningZoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_task", map[string]string{"error": "invalid_request"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_zone", map[string]string{"error": "invalid_request"})
 		return
 	}
 
-	task, err := h.svc.UpdateCleaningTask(r.Context(), id, req)
+	zone, err := h.svc.UpdateCleaningZone(r.Context(), id, req)
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "update_cleaning_task", err)
+		models.SendErrorJSON(w, "haccp", "update_cleaning_zone", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "haccp", "update_cleaning_task", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "haccp", "update_cleaning_zone", map[string]interface{}{
 		"status":        "success",
-		"cleaning_task": task,
+		"cleaning_zone": zone,
 	})
 }
 
-func (h *Handler) DeleteCleaningTask(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) DeleteCleaningZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_cleaning_task", map[string]string{"error": "missing_id"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_cleaning_zone", map[string]string{"error": "missing_id"})
 		return
 	}
 
-	if err := h.svc.DeleteCleaningTask(r.Context(), id); err != nil {
-		models.SendErrorJSON(w, "haccp", "delete_cleaning_task", err)
+	if err := h.svc.DeleteCleaningZone(r.Context(), id); err != nil {
+		models.SendErrorJSON(w, "haccp", "delete_cleaning_zone", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "haccp", "delete_cleaning_task", map[string]interface{}{
+	models.SendJSON(w, http.StatusOK, "haccp", "delete_cleaning_zone", map[string]interface{}{
 		"status": "success",
 	})
 }
 
-func (h *Handler) GetCleaningExecutions(w http.ResponseWriter, r *http.Request) {
-	params := CleaningExecutionsListParams{
-		TaskID: strings.TrimSpace(r.URL.Query().Get("task_id")),
-	}
-
-	if rawPage := strings.TrimSpace(r.URL.Query().Get("page")); rawPage != "" {
-		parsed, err := strconv.Atoi(rawPage)
-		if err != nil {
-			models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_executions", map[string]string{"error": "invalid_page"})
-			return
-		}
-		params.Page = parsed
-	}
-
-	if rawPageSize := strings.TrimSpace(r.URL.Query().Get("page_size")); rawPageSize != "" {
-		parsed, err := strconv.Atoi(rawPageSize)
-		if err != nil {
-			models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_executions", map[string]string{"error": "invalid_page_size"})
-			return
-		}
-		params.PageSize = parsed
-	}
-
-	resp, err := h.svc.ListCleaningExecutions(r.Context(), params)
+func (h *Handler) GetCleaningSurfaces(w http.ResponseWriter, r *http.Request) {
+	zoneID := strings.TrimSpace(r.URL.Query().Get("zone_id"))
+	surfaces, err := h.svc.ListCleaningSurfaces(r.Context(), zoneID)
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "get_cleaning_executions", err)
+		models.SendErrorJSON(w, "haccp", "get_cleaning_surfaces", err)
 		return
 	}
 
-	pagination := map[string]interface{}{
-		"page":        resp.Page,
-		"page_size":   resp.PageSize,
-		"total_items": resp.TotalItems,
-		"total_pages": resp.TotalPages,
-	}
-
-	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_executions", map[string]interface{}{
-		"status":              "success",
-		"cleaning_executions": resp.CleaningExecutions,
-		"pagination":          pagination,
+	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_surfaces", map[string]interface{}{
+		"status":            "success",
+		"cleaning_surfaces": surfaces,
 	})
 }
 
-func (h *Handler) CreateCleaningExecution(w http.ResponseWriter, r *http.Request) {
-	var req CreateCleaningExecutionRequest
+func (h *Handler) CreateCleaningSurface(w http.ResponseWriter, r *http.Request) {
+	var req CreateCleaningSurfaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_execution", map[string]string{"error": "invalid_request"})
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_surface", map[string]string{"error": "invalid_request"})
 		return
 	}
 
-	exec, err := h.svc.CreateCleaningExecution(r.Context(), req)
+	surface, err := h.svc.CreateCleaningSurface(r.Context(), req)
 	if err != nil {
-		models.SendErrorJSON(w, "haccp", "create_cleaning_execution", err)
+		models.SendErrorJSON(w, "haccp", "create_cleaning_surface", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusCreated, "haccp", "create_cleaning_execution", map[string]interface{}{
-		"status":             "success",
-		"cleaning_execution": exec,
+	models.SendJSON(w, http.StatusCreated, "haccp", "create_cleaning_surface", map[string]interface{}{
+		"status":           "success",
+		"cleaning_surface": surface,
+	})
+}
+
+func (h *Handler) UpdateCleaningSurface(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_surface", map[string]string{"error": "missing_id"})
+		return
+	}
+
+	var req UpdateCleaningSurfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_surface", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	surface, err := h.svc.UpdateCleaningSurface(r.Context(), id, req)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "update_cleaning_surface", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "update_cleaning_surface", map[string]interface{}{
+		"status":           "success",
+		"cleaning_surface": surface,
+	})
+}
+
+func (h *Handler) DeleteCleaningSurface(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_cleaning_surface", map[string]string{"error": "missing_id"})
+		return
+	}
+
+	if err := h.svc.DeleteCleaningSurface(r.Context(), id); err != nil {
+		models.SendErrorJSON(w, "haccp", "delete_cleaning_surface", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "delete_cleaning_surface", map[string]interface{}{
+		"status": "success",
+	})
+}
+
+func (h *Handler) GetCleaningSessions(w http.ResponseWriter, r *http.Request) {
+	params := CleaningSessionsListParams{
+		Date:   strings.TrimSpace(r.URL.Query().Get("date")),
+		ZoneID: strings.TrimSpace(r.URL.Query().Get("zone_id")),
+	}
+
+	sessions, err := h.svc.ListCleaningSessions(r.Context(), params)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_cleaning_sessions", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_sessions", map[string]interface{}{
+		"status":            "success",
+		"cleaning_sessions": sessions,
+	})
+}
+
+func (h *Handler) CreateCleaningSession(w http.ResponseWriter, r *http.Request) {
+	var req CreateCleaningSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_session", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	resp, err := h.svc.CreateCleaningSession(r.Context(), req)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "create_cleaning_session", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "haccp", "create_cleaning_session", map[string]interface{}{
+		"status":              "success",
+		"session_id":          resp.SessionID,
+		"cleaning_executions": resp.Executions,
 	})
 }
 

@@ -43,6 +43,11 @@ type TemperatureSession struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type ActivityPerformedBy struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type TemperatureSessionDetail struct {
 	ID          string              `json:"id"`
 	MerchantID  string              `json:"merchant_id"`
@@ -109,10 +114,29 @@ type BatchCreateReadingsResponse struct {
 	Readings  []Reading `json:"readings"`
 }
 
-type CleaningTask struct {
+type CleaningZone struct {
+	ID         string     `json:"id"`
+	MerchantID string     `json:"merchant_id"`
+	Name       string     `json:"name"`
+	Enabled    bool       `json:"enabled"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+}
+
+type CreateCleaningZoneRequest struct {
+	Name string `json:"name"`
+}
+
+type UpdateCleaningZoneRequest struct {
+	Name string `json:"name"`
+}
+
+type CleaningSurface struct {
 	ID             string     `json:"id"`
 	MerchantID     string     `json:"merchant_id"`
-	Zone           string     `json:"zone"`
+	ZoneID         string     `json:"zone_id"`
+	ZoneName       string     `json:"zone_name"`
 	Name           string     `json:"name"`
 	FrequencyUnit  string     `json:"frequency_unit"`
 	FrequencyCount int        `json:"frequency_count"`
@@ -123,9 +147,10 @@ type CleaningTask struct {
 	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
 }
 
-type CleaningTaskWithComputed struct {
+type CleaningSurfaceWithComputed struct {
 	ID             string `json:"id"`
-	Zone           string `json:"zone"`
+	ZoneID         string `json:"zone_id"`
+	ZoneName       string `json:"zone_name"`
 	Name           string `json:"name"`
 	FrequencyUnit  string `json:"frequency_unit"`
 	FrequencyCount int    `json:"frequency_count"`
@@ -137,9 +162,29 @@ type CleaningTaskWithComputed struct {
 	} `json:"computed"`
 }
 
+type CreateCleaningSurfaceRequest struct {
+	ZoneID         string `json:"zone_id"`
+	Name           string `json:"name"`
+	FrequencyUnit  string `json:"frequency_unit"`
+	FrequencyCount int    `json:"frequency_count"`
+	Active         *bool  `json:"active,omitempty"`
+}
+
+type UpdateCleaningSurfaceRequest struct {
+	ZoneID         string `json:"zone_id"`
+	Name           string `json:"name"`
+	FrequencyUnit  string `json:"frequency_unit"`
+	FrequencyCount int    `json:"frequency_count"`
+	Active         *bool  `json:"active,omitempty"`
+}
+
 type CleaningExecution struct {
 	ID          string              `json:"id"`
-	TaskID      string              `json:"task_id"`
+	SessionID   string              `json:"session_id,omitempty"`
+	SurfaceID   string              `json:"surface_id"`
+	SurfaceName string              `json:"surface_name"`
+	ZoneID      string              `json:"zone_id"`
+	ZoneName    string              `json:"zone_name"`
 	MerchantID  string              `json:"merchant_id"`
 	Comment     *string             `json:"comment,omitempty"`
 	PhotoURL    *string             `json:"photo_url,omitempty"`
@@ -150,58 +195,50 @@ type CleaningExecution struct {
 	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
-type CleaningTaskSummary struct {
-	ID   string `json:"id"`
-	Zone string `json:"zone"`
-	Name string `json:"name"`
+type CleaningSession struct {
+	ID         string    `json:"id"`
+	MerchantID string    `json:"merchant_id"`
+	Status     string    `json:"status"`
+	CreatedBy  string    `json:"created_by"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-type CleaningExecutionDetail struct {
+type CleaningSessionListItem struct {
+	ID              string              `json:"id"`
+	Status          string              `json:"status"`
+	PerformedAt     time.Time           `json:"performed_at"`
+	PerformedBy     ActivityPerformedBy `json:"performed_by"`
+	ExecutionsCount int                 `json:"executions_count"`
+}
+
+type CleaningSessionDetail struct {
 	ID          string              `json:"id"`
-	TaskID      string              `json:"task_id"`
-	Task        CleaningTaskSummary `json:"task"`
 	MerchantID  string              `json:"merchant_id"`
-	Comment     *string             `json:"comment,omitempty"`
-	PhotoURL    *string             `json:"photo_url,omitempty"`
 	Status      string              `json:"status"`
 	PerformedAt time.Time           `json:"performed_at"`
 	PerformedBy ActivityPerformedBy `json:"performed_by"`
+	Executions  []CleaningExecution `json:"executions"`
 }
 
-type CreateCleaningExecutionRequest struct {
-	TaskID   string  `json:"task_id"`
-	Comment  *string `json:"comment"`
-	PhotoURL *string `json:"photo_url"`
+type CreateCleaningSessionRequest struct {
+	Executions []CleaningSessionExecutionInput `json:"executions"`
 }
 
-type CreateCleaningTaskRequest struct {
-	Zone           string `json:"zone"`
-	Name           string `json:"name"`
-	FrequencyUnit  string `json:"frequency_unit"`
-	FrequencyCount int    `json:"frequency_count"`
-	Active         *bool  `json:"active,omitempty"`
+type CleaningSessionExecutionInput struct {
+	SurfaceID string  `json:"surface_id"`
+	Comment   *string `json:"comment,omitempty"`
+	PhotoURL  *string `json:"photo_url,omitempty"`
 }
 
-type UpdateCleaningTaskRequest struct {
-	Zone           string `json:"zone"`
-	Name           string `json:"name"`
-	FrequencyUnit  string `json:"frequency_unit"`
-	FrequencyCount int    `json:"frequency_count"`
-	Active         *bool  `json:"active,omitempty"`
+type BatchCreateCleaningSessionResponse struct {
+	SessionID  string              `json:"session_id"`
+	Executions []CleaningExecution `json:"executions"`
 }
 
-type CleaningExecutionsListParams struct {
-	TaskID   string `json:"task_id"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
-}
-
-type CleaningExecutionsListResponse struct {
-	CleaningExecutions []CleaningExecution `json:"cleaning_executions"`
-	Page               int                 `json:"page"`
-	PageSize           int                 `json:"page_size"`
-	TotalItems         int                 `json:"total_items"`
-	TotalPages         int                 `json:"total_pages"`
+type CleaningSessionsListParams struct {
+	Date   string `json:"date"`
+	ZoneID string `json:"zone_id"`
 }
 
 type ActivitiesListParams struct {
@@ -210,11 +247,6 @@ type ActivitiesListParams struct {
 	Status   string `json:"status"`
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
-}
-
-type ActivityPerformedBy struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
 }
 
 type ActivityItem struct {

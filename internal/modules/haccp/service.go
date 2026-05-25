@@ -338,138 +338,187 @@ func (s *Service) UploadHACCPFile(ctx context.Context, contentType string, fileR
 	return url, nil
 }
 
-func (s *Service) ListCleaningTasks(ctx context.Context) ([]CleaningTaskWithComputed, error) {
+func (s *Service) ListCleaningZones(ctx context.Context) ([]CleaningZone, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	tasks, err := s.repo.ListCleaningTasks(ctx, user.MerchantID)
+	return s.repo.ListCleaningZones(ctx, user.MerchantID)
+}
+
+func (s *Service) CreateCleaningZone(ctx context.Context, req CreateCleaningZoneRequest) (*CleaningZone, error) {
+	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if err := validateCleaningZoneName(req.Name); err != nil {
 		return nil, err
 	}
 
-	now := time.Now().UTC()
-	for i := range tasks {
-		dueToday, overdue := computeCleaningComputed(now, tasks[i].Computed.LastExecutionAt, tasks[i].FrequencyUnit, tasks[i].FrequencyCount)
-		tasks[i].Computed.DueToday = dueToday
-		tasks[i].Computed.Overdue = overdue
-	}
-
-	return tasks, nil
+	return s.repo.CreateCleaningZone(ctx, user.MerchantID, req)
 }
 
-func (s *Service) CreateCleaningTask(ctx context.Context, req CreateCleaningTaskRequest) (*CleaningTask, error) {
+func (s *Service) UpdateCleaningZone(ctx context.Context, zoneID string, req UpdateCleaningZoneRequest) (*CleaningZone, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	if err := validateCleaningTaskFields(req.Zone, req.Name, req.FrequencyUnit, req.FrequencyCount); err != nil {
-		return nil, err
-	}
-
-	return s.repo.CreateCleaningTask(ctx, user.MerchantID, req)
-}
-
-func (s *Service) UpdateCleaningTask(ctx context.Context, taskID string, req UpdateCleaningTaskRequest) (*CleaningTask, error) {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return nil, models.ErrUnauthorized
-	}
-
-	if strings.TrimSpace(taskID) == "" {
+	if strings.TrimSpace(zoneID) == "" {
 		return nil, models.ErrValidationError
 	}
-
-	if err := validateCleaningTaskFields(req.Zone, req.Name, req.FrequencyUnit, req.FrequencyCount); err != nil {
+	if err := validateCleaningZoneName(req.Name); err != nil {
 		return nil, err
 	}
 
-	if req.Active == nil {
-		existingTask, err := s.repo.GetCleaningTaskByID(ctx, user.MerchantID, taskID)
-		if err == sql.ErrNoRows {
-			return nil, models.ErrNotFound
-		}
-		if err != nil {
-			return nil, err
-		}
-		req.Active = &existingTask.Active
-	}
-
-	task, err := s.repo.UpdateCleaningTask(ctx, user.MerchantID, taskID, req)
+	zone, err := s.repo.UpdateCleaningZone(ctx, user.MerchantID, zoneID, req)
 	if err == sql.ErrNoRows {
 		return nil, models.ErrNotFound
 	}
-
-	return task, err
+	return zone, err
 }
 
-func (s *Service) DeleteCleaningTask(ctx context.Context, taskID string) error {
+func (s *Service) DeleteCleaningZone(ctx context.Context, zoneID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return models.ErrUnauthorized
 	}
 
-	if strings.TrimSpace(taskID) == "" {
+	if strings.TrimSpace(zoneID) == "" {
 		return models.ErrValidationError
 	}
 
-	err = s.repo.SoftDeleteCleaningTask(ctx, user.MerchantID, taskID)
+	err = s.repo.SoftDeleteCleaningZone(ctx, user.MerchantID, zoneID)
 	if err == sql.ErrNoRows {
 		return models.ErrNotFound
 	}
-
 	return err
 }
 
-func (s *Service) ListCleaningExecutions(ctx context.Context, params CleaningExecutionsListParams) (*CleaningExecutionsListResponse, error) {
+func (s *Service) ListCleaningSurfaces(ctx context.Context, zoneID string) ([]CleaningSurfaceWithComputed, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	taskID := strings.TrimSpace(params.TaskID)
-	if taskID != "" {
-		if _, err := s.repo.GetCleaningTaskByID(ctx, user.MerchantID, taskID); err == sql.ErrNoRows {
+	zoneID = strings.TrimSpace(zoneID)
+	if zoneID != "" {
+		if _, err := s.repo.GetCleaningZoneByID(ctx, user.MerchantID, zoneID); err == sql.ErrNoRows {
 			return nil, models.ErrNotFound
 		} else if err != nil {
 			return nil, err
 		}
 	}
 
-	page := params.Page
-	if page <= 0 {
-		page = 1
-	}
-
-	pageSize := params.PageSize
-	if pageSize <= 0 {
-		pageSize = 10
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
-
-	items, totalItems, err := s.repo.ListCleaningExecutions(ctx, user.MerchantID, taskID, page, pageSize)
+	surfaces, err := s.repo.ListCleaningSurfaces(ctx, user.MerchantID, zoneID)
 	if err != nil {
 		return nil, err
 	}
 
-	totalPages := 0
-	if totalItems > 0 {
-		totalPages = (totalItems + pageSize - 1) / pageSize
+	now := time.Now().UTC()
+	for i := range surfaces {
+		dueToday, overdue := computeCleaningComputed(now, surfaces[i].Computed.LastExecutionAt, surfaces[i].FrequencyUnit, surfaces[i].FrequencyCount)
+		surfaces[i].Computed.DueToday = dueToday
+		surfaces[i].Computed.Overdue = overdue
 	}
 
-	resp := &CleaningExecutionsListResponse{
-		CleaningExecutions: items,
-		Page:               page,
-		PageSize:           pageSize,
-		TotalItems:         totalItems,
-		TotalPages:         totalPages,
+	return surfaces, nil
+}
+
+func (s *Service) CreateCleaningSurface(ctx context.Context, req CreateCleaningSurfaceRequest) (*CleaningSurface, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
 	}
 
-	return resp, nil
+	if err := validateCleaningSurfaceFields(req.ZoneID, req.Name, req.FrequencyUnit, req.FrequencyCount); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetCleaningZoneByID(ctx, user.MerchantID, req.ZoneID); err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	return s.repo.CreateCleaningSurface(ctx, user.MerchantID, req)
+}
+
+func (s *Service) UpdateCleaningSurface(ctx context.Context, surfaceID string, req UpdateCleaningSurfaceRequest) (*CleaningSurface, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(surfaceID) == "" {
+		return nil, models.ErrValidationError
+	}
+	if err := validateCleaningSurfaceFields(req.ZoneID, req.Name, req.FrequencyUnit, req.FrequencyCount); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetCleaningZoneByID(ctx, user.MerchantID, req.ZoneID); err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	if req.Active == nil {
+		existingSurface, err := s.repo.GetCleaningSurfaceByID(ctx, user.MerchantID, surfaceID)
+		if err == sql.ErrNoRows {
+			return nil, models.ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		req.Active = &existingSurface.Active
+	}
+
+	surface, err := s.repo.UpdateCleaningSurface(ctx, user.MerchantID, surfaceID, req)
+	if err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	}
+	return surface, err
+}
+
+func (s *Service) DeleteCleaningSurface(ctx context.Context, surfaceID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(surfaceID) == "" {
+		return models.ErrValidationError
+	}
+
+	err = s.repo.SoftDeleteCleaningSurface(ctx, user.MerchantID, surfaceID)
+	if err == sql.ErrNoRows {
+		return models.ErrNotFound
+	}
+	return err
+}
+
+func (s *Service) ListCleaningSessions(ctx context.Context, params CleaningSessionsListParams) ([]CleaningSessionListItem, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	zoneID := strings.TrimSpace(params.ZoneID)
+	if zoneID != "" {
+		if _, err := s.repo.GetCleaningZoneByID(ctx, user.MerchantID, zoneID); err == sql.ErrNoRows {
+			return nil, models.ErrNotFound
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	normalizedDate, err := normalizeTemperatureReadingsDate(params.Date, time.Now().UTC(), user.TimeZone)
+	if err != nil {
+		return nil, models.ErrValidationError
+	}
+
+	return s.repo.ListCleaningSessions(ctx, user.MerchantID, normalizedDate, zoneID)
 }
 
 func (s *Service) GetTemperatureSession(ctx context.Context, sessionID string) (*TemperatureSessionDetail, error) {
@@ -494,17 +543,17 @@ func (s *Service) GetTemperatureSession(ctx context.Context, sessionID string) (
 	return session, nil
 }
 
-func (s *Service) GetCleaningExecution(ctx context.Context, executionID string) (*CleaningExecutionDetail, error) {
+func (s *Service) GetCleaningSession(ctx context.Context, sessionID string) (*CleaningSessionDetail, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	if strings.TrimSpace(executionID) == "" {
+	if strings.TrimSpace(sessionID) == "" {
 		return nil, models.ErrValidationError
 	}
 
-	detail, err := s.repo.GetCleaningExecutionDetail(ctx, user.MerchantID, executionID)
+	detail, err := s.repo.GetCleaningSessionDetail(ctx, user.MerchantID, sessionID)
 	if err == sql.ErrNoRows {
 		return nil, models.ErrNotFound
 	}
@@ -515,25 +564,42 @@ func (s *Service) GetCleaningExecution(ctx context.Context, executionID string) 
 	return detail, nil
 }
 
-func (s *Service) CreateCleaningExecution(ctx context.Context, req CreateCleaningExecutionRequest) (*CleaningExecution, error) {
+func (s *Service) CreateCleaningSession(ctx context.Context, req CreateCleaningSessionRequest) (*BatchCreateCleaningSessionResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	if strings.TrimSpace(req.TaskID) == "" {
+	if len(req.Executions) == 0 {
 		return nil, models.ErrValidationError
 	}
 
-	task, err := s.repo.GetCleaningTaskByID(ctx, user.MerchantID, req.TaskID)
-	if err == sql.ErrNoRows {
-		return nil, models.ErrNotFound
+	surfaceIDs := make([]string, 0, len(req.Executions))
+	seen := make(map[string]struct{}, len(req.Executions))
+	for _, execution := range req.Executions {
+		surfaceID := strings.TrimSpace(execution.SurfaceID)
+		if surfaceID == "" {
+			return nil, models.ErrValidationError
+		}
+		if _, exists := seen[surfaceID]; exists {
+			return nil, models.ErrValidationError
+		}
+		seen[surfaceID] = struct{}{}
+		surfaceIDs = append(surfaceIDs, surfaceID)
 	}
+
+	surfaces, err := s.repo.FindCleaningSurfacesByIDs(ctx, user.MerchantID, surfaceIDs)
 	if err != nil {
 		return nil, err
 	}
-	if !task.Active {
+	if len(surfaces) != len(surfaceIDs) {
 		return nil, models.ErrValidationError
+	}
+
+	for _, surface := range surfaces {
+		if !surface.Active {
+			return nil, models.ErrValidationError
+		}
 	}
 
 	settings, err := s.repo.GetOrCreateSettings(ctx, user.MerchantID)
@@ -541,13 +607,60 @@ func (s *Service) CreateCleaningExecution(ctx context.Context, req CreateCleanin
 		return nil, err
 	}
 
-	if settings.CleaningPhoto {
-		if req.PhotoURL == nil || strings.TrimSpace(*req.PhotoURL) == "" {
-			return nil, models.ErrCleaningPhotoRequired
+	toInsert := make([]CleaningExecution, 0, len(req.Executions))
+	for _, input := range req.Executions {
+		if settings.CleaningPhoto {
+			if input.PhotoURL == nil || strings.TrimSpace(*input.PhotoURL) == "" {
+				return nil, models.ErrCleaningPhotoRequired
+			}
 		}
+
+		surface := surfaces[input.SurfaceID]
+		toInsert = append(toInsert, CleaningExecution{
+			SurfaceID:   surface.ID,
+			SurfaceName: surface.Name,
+			ZoneID:      surface.ZoneID,
+			ZoneName:    surface.ZoneName,
+			Comment:     input.Comment,
+			PhotoURL:    input.PhotoURL,
+		})
 	}
 
-	return s.repo.CreateCleaningExecution(ctx, user.MerchantID, user.UserID, req)
+	var session *CleaningSession
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		sess, err := s.repo.CreateCleaningSession(txCtx, user.MerchantID, user.UserID)
+		if err != nil {
+			return err
+		}
+		session = sess
+
+		if err := s.repo.InsertCleaningExecutionsBatch(txCtx, user.MerchantID, user.UserID, session.ID, toInsert); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.auditService.LogChange(ctx, user.MerchantID, user.UserID, "session_validated", "haccp_cleaning_session", session.ID, nil, map[string]interface{}{
+		"session_id": session.ID,
+		"count":      len(toInsert),
+	})
+
+	for i := range toInsert {
+		toInsert[i].SessionID = session.ID
+		toInsert[i].MerchantID = user.MerchantID
+		toInsert[i].Status = "done"
+		toInsert[i].CreatedBy = user.UserID
+		toInsert[i].PerformedBy = ActivityPerformedBy{ID: user.UserID, Name: user.UserID}
+	}
+
+	return &BatchCreateCleaningSessionResponse{
+		SessionID:  session.ID,
+		Executions: toInsert,
+	}, nil
 }
 
 func (s *Service) CreateGoodsReceipt(ctx context.Context, req CreateGoodsReceiptRequest) (*GoodsReceipt, error) {
@@ -618,8 +731,16 @@ func computeCleaningComputed(now time.Time, lastExecutionAt *time.Time, frequenc
 	return false, false
 }
 
-func validateCleaningTaskFields(zone, name, frequencyUnit string, frequencyCount int) error {
-	if strings.TrimSpace(zone) == "" || strings.TrimSpace(name) == "" {
+func validateCleaningZoneName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return models.ErrValidationError
+	}
+
+	return nil
+}
+
+func validateCleaningSurfaceFields(zoneID, name, frequencyUnit string, frequencyCount int) error {
+	if strings.TrimSpace(zoneID) == "" || strings.TrimSpace(name) == "" {
 		return models.ErrValidationError
 	}
 

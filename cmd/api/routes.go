@@ -664,6 +664,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/haccp", func(r chi.Router) {
 		r.Use(authMiddleware)
 
+		r.Get("/settings", haccpH.GetSettings)
+		r.Put("/settings", haccpH.PutSettings)
+
+		r.Get("/activities", haccpH.GetActivities)
+
 		r.Get("/temperature-zones", haccpH.GetTemperatureZones)
 		r.Post("/temperature-zones", haccpH.CreateTemperatureZone)
 		r.Patch("/temperature-zones/{id}", haccpH.ReplaceTemperatureZone)
@@ -671,22 +676,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/temperature-readings", haccpH.GetTemperatureReadings)
 		r.Post("/temperature-readings/batch", haccpH.CreateTemperatureReadingsBatch)
-		r.Get("/activities", haccpH.GetActivities)
 		r.Get("/temperature-sessions/{id}", haccpH.GetTemperatureSession)
 
-		r.Get("/cleaning-tasks", haccpH.GetCleaningTasks)
-		r.Post("/cleaning-tasks", haccpH.CreateCleaningTask)
-		r.Patch("/cleaning-tasks/{id}", haccpH.UpdateCleaningTask)
-		r.Delete("/cleaning-tasks/{id}", haccpH.DeleteCleaningTask)
+		r.Get("/cleaning-zones", haccpH.GetCleaningZones)
+		r.Post("/cleaning-zones", haccpH.CreateCleaningZone)
+		r.Patch("/cleaning-zones/{id}", haccpH.UpdateCleaningZone)
+		r.Delete("/cleaning-zones/{id}", haccpH.DeleteCleaningZone)
 
-		r.Get("/cleaning-executions", haccpH.GetCleaningExecutions)
-		r.Get("/cleaning-executions/{id}", haccpH.GetCleaningExecution)
-		r.Post("/cleaning-executions", haccpH.CreateCleaningExecution)
+		r.Get("/cleaning-surfaces", haccpH.GetCleaningSurfaces)
+		r.Post("/cleaning-surfaces", haccpH.CreateCleaningSurface)
+		r.Patch("/cleaning-surfaces/{id}", haccpH.UpdateCleaningSurface)
+		r.Delete("/cleaning-surfaces/{id}", haccpH.DeleteCleaningSurface)
+
+		r.Get("/cleaning-sessions", haccpH.GetCleaningSessions)
+		r.Get("/cleaning-sessions/{id}", haccpH.GetCleaningSession)
+		r.Post("/cleaning-sessions", haccpH.CreateCleaningSession)
 
 		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)
-
-		r.Get("/settings", haccpH.GetSettings)
-		r.Put("/settings", haccpH.PutSettings)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
