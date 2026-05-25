@@ -24,6 +24,7 @@ type Reading struct {
 	SessionID  string    `json:"session_id,omitempty"`
 	MerchantID string    `json:"merchant_id"`
 	ZoneID     string    `json:"zone_id"`
+	ZoneName   *string   `json:"zone_name,omitempty"`
 	Value      float64   `json:"value"`
 	Status     string    `json:"status"`
 	PhotoURL   *string   `json:"photo_url,omitempty"`

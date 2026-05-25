@@ -718,12 +718,13 @@ func (r *Repository) GetTemperatureSessionDetail(ctx context.Context, merchantID
 	}
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, session_id, merchant_id, zone_id, value, status, photo_url, signature, comment, created_by, created_at, updated_at
-		FROM temperature_readings
-		WHERE merchant_id = ?
-		  AND session_id = ?
-		  AND enabled = 1
-		ORDER BY created_at ASC, id ASC
+		SELECT tr.id, tr.session_id, tr.merchant_id, tr.zone_id, tz.name, tr.value, tr.status, tr.photo_url, tr.signature, tr.comment, tr.created_by, tr.created_at, tr.updated_at
+		FROM temperature_readings tr
+		LEFT JOIN temperature_zones tz ON tz.id = tr.zone_id
+		WHERE tr.merchant_id = ?
+		  AND tr.session_id = ?
+		  AND tr.enabled = 1
+		ORDER BY tr.created_at ASC, tr.id ASC
 	`, merchantID, sessionID)
 	if err != nil {
 		return nil, err
@@ -733,11 +734,13 @@ func (r *Repository) GetTemperatureSessionDetail(ctx context.Context, merchantID
 	readings := make([]Reading, 0)
 	for rows.Next() {
 		var rd Reading
+		var zoneName sql.NullString
 		if err := rows.Scan(
 			&rd.ID,
 			&rd.SessionID,
 			&rd.MerchantID,
 			&rd.ZoneID,
+			&zoneName,
 			&rd.Value,
 			&rd.Status,
 			&rd.PhotoURL,
@@ -748,6 +751,10 @@ func (r *Repository) GetTemperatureSessionDetail(ctx context.Context, merchantID
 			&rd.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if zoneName.Valid {
+			name := zoneName.String
+			rd.ZoneName = &name
 		}
 		readings = append(readings, rd)
 	}
