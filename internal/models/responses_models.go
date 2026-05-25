@@ -89,6 +89,9 @@ var (
 	// ErrCleaningPhotoRequired indique qu'une photo est requise par la configuration HACCP (422)
 	ErrCleaningPhotoRequired = errors.New("cleaning_photo_required")
 
+	// ErrTemperatureFailurePhotoRequired indique qu'une photo est requise pour un relevé de température en écart (422)
+	ErrTemperatureFailurePhotoRequired = errors.New("temperature_failure_photo_required")
+
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInputPasswordTooShort = errors.New("le mot de passe doit faire au minimum 8 charactères")
 
@@ -237,6 +240,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnprocessableEntity
 		errorStatus = "CLEANING_PHOTO_REQUIRED"
 		errorMsg = "photo_url is required when cleaning_photo setting is enabled"
+
+	case errors.Is(err, ErrTemperatureFailurePhotoRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "TEMPERATURE_FAILURE_PHOTO_REQUIRED"
+		errorMsg = "temperature_failure_photo_required"
 
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest

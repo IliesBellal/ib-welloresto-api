@@ -61,6 +61,7 @@ type HACCPSettings struct {
 	MerchantID                 string `json:"merchant_id"`
 	TempEntryRequired          bool   `json:"temp_entry_required"`
 	TempCorrectiveActions      bool   `json:"temp_corrective_actions"`
+	TempFailurePhotoRequired   bool   `json:"temp_failure_photo_required"`
 	TempBlockPastDates         bool   `json:"temp_block_past_dates"`
 	TraceabilityProductName    bool   `json:"traceability_product_name"`
 	TraceabilityBlockPastDates bool   `json:"traceability_block_past_dates"`

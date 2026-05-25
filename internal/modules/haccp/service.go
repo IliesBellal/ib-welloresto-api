@@ -260,6 +260,11 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 				return nil, models.ErrValidationError
 			}
 		}
+		if settings.TempFailurePhotoRequired && status != "ok" {
+			if input.PhotoURL == nil || strings.TrimSpace(*input.PhotoURL) == "" {
+				return nil, models.ErrTemperatureFailurePhotoRequired
+			}
+		}
 
 		toInsert = append(toInsert, Reading{
 			ZoneID:    input.ZoneID,
