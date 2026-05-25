@@ -167,14 +167,12 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 		return nil, err
 	}
 
-	dueSurfaceIDs := make(map[string]struct{})
 	cleaningDueCount := 0
 	cleaningOverdueCount := 0
 	for i := range surfaces {
 		dueToday, overdue := computeCleaningComputed(refNowUTC, surfaces[i].Computed.LastExecutionAt, surfaces[i].FrequencyUnit, surfaces[i].FrequencyCount)
 		if dueToday || overdue {
 			cleaningDueCount++
-			dueSurfaceIDs[surfaces[i].ID] = struct{}{}
 		}
 		if overdue {
 			cleaningOverdueCount++
@@ -186,12 +184,8 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 		return nil, err
 	}
 
-	cleaningCompletedCount := 0
-	for _, id := range completedSurfaceIDs {
-		if _, ok := dueSurfaceIDs[id]; ok {
-			cleaningCompletedCount++
-		}
-	}
+	cleaningCompletedCount := len(completedSurfaceIDs)
+	cleaningTotalCount := cleaningDueCount + cleaningCompletedCount
 
 	globalStatus := "ok"
 	if temperatureOverdue || cleaningOverdueCount > 0 {
@@ -213,7 +207,7 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 				Enabled:        true,
 				CompletedCount: cleaningCompletedCount,
 				DueCount:       cleaningDueCount,
-				TotalCount:     cleaningDueCount,
+				TotalCount:     cleaningTotalCount,
 				OverdueCount:   cleaningOverdueCount,
 			},
 			Reception:           HubPlaceholder{Enabled: false},
