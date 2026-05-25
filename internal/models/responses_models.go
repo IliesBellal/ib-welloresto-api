@@ -83,6 +83,12 @@ var (
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInput = errors.New("invalid input")
 
+	// ErrValidationError indique une erreur de validation métier/payload HACCP (400)
+	ErrValidationError = errors.New("validation_error")
+
+	// ErrCleaningPhotoRequired indique qu'une photo est requise par la configuration HACCP (422)
+	ErrCleaningPhotoRequired = errors.New("cleaning_photo_required")
+
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInputPasswordTooShort = errors.New("le mot de passe doit faire au minimum 8 charactères")
 
@@ -221,6 +227,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "invalid_input"
 		errorMsg = "Invalid input. Please check payloads and path parameters."
+
+	case errors.Is(err, ErrValidationError):
+		status = http.StatusBadRequest
+		errorStatus = "VALIDATION_ERROR"
+		errorMsg = "validation_error"
+
+	case errors.Is(err, ErrCleaningPhotoRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "CLEANING_PHOTO_REQUIRED"
+		errorMsg = "photo_url is required when cleaning_photo setting is enabled"
 
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest

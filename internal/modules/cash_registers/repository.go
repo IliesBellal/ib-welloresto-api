@@ -257,13 +257,21 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	return res, nil
 }
 
-func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) error {
+func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) (bool, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	alreadyClosed, err := r.isCashRegisterClosedForMerchant(ctx, cashRegisterID, merchantID)
+	if err != nil {
+		return false, err
+	}
+	if alreadyClosed {
+		return true, nil
+	}
+
 	// 1. Vérifier commandes encore ouvertes
 	var tmp string
-	err := db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT o.order_id
 		FROM orders o
 		WHERE o.cash_register_id = ?
@@ -274,9 +282,9 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 
 	if err == nil {
 		log.Warn("Orders still opened, cannot close cash register", zap.String("cash_register_id", cashRegisterID))
-		return models.ErrOrdersStillOpened
+		return false, models.ErrOrdersStillOpened
 	} else if err != sql.ErrNoRows {
-		return err
+		return false, err
 	}
 
 	// 2. Associer paiements (STRIPE)
@@ -290,7 +298,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		  AND p.merchant_id = ?
 	`, cashRegisterID, merchantID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// 3. Associer paiements Uber / Deliveroo
@@ -304,13 +312,13 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		  AND p.merchant_id = ?
 	`, cashRegisterID, merchantID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// 4. Récupérer rapport caisse
 	report, err := r.GetCashRegisterReport(ctx, cashRegisterID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// -------------------------------------------------------------
@@ -323,7 +331,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		WHERE cash_register_id = ?
 	`, cashRegisterID).Scan(&initialCashFund)
 	if err != nil {
-		return fmt.Errorf("erreur récupération fond de caisse initial: %w", err)
+		return false, fmt.Errorf("erreur récupération fond de caisse initial: %w", err)
 	}
 
 	// B. Isoler les ventes en espèces depuis le rapport et insérer les items
@@ -334,7 +342,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 			VALUES (?, ?, ?)
 		`, cashRegisterID, mopLine.MOP, mopLine.Amount)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		// Remplacer "CASH" par l'ID exact que tu utilises pour l'espèce (ex: "ESPECES")
@@ -356,7 +364,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	`, merchantID, cashRegisterID).Scan(&prevHash)
 
 	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("erreur récupération prev_hash: %w", err)
+		return false, fmt.Errorf("erreur récupération prev_hash: %w", err)
 	}
 
 	actualPrevHash := "GENESIS_HASH"
@@ -385,10 +393,32 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return false, nil
+}
+
+func (r *CashRegisterRepository) isCashRegisterClosedForMerchant(ctx context.Context, cashRegisterID, merchantID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var closed bool
+	err := db.QueryRowContext(ctx, `
+		SELECT closed
+		FROM cash_registers
+		WHERE cash_register_id = ?
+		  AND merchant_id = ?
+		LIMIT 1
+	`, cashRegisterID, merchantID).Scan(&closed)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return closed, nil
 }
 
 func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cashRegisterID string, merchantID string) (*models.CashRegisterSummaryResponse, error) {

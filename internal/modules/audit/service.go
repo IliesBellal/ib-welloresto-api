@@ -22,12 +22,17 @@ func NewAuditService(repo AuditRepository) AuditService {
 
 func (s *auditService) LogChange(ctx context.Context, MerchantID, UserID, action, resourceType, resourceID string, oldState, newState interface{}) error {
 	// Marshalling des données
-	var oldJSON, newJSON []byte
+	oldJSON := []byte("null")
+	newJSON := []byte("null")
 	if oldState != nil {
-		oldJSON, _ = json.Marshal(oldState)
+		if b, err := json.Marshal(oldState); err == nil {
+			oldJSON = b
+		}
 	}
 	if newState != nil {
-		newJSON, _ = json.Marshal(newState)
+		if b, err := json.Marshal(newState); err == nil {
+			newJSON = b
+		}
 	}
 
 	// Création de l'entrée (sans les hashs, le repo s'en charge)

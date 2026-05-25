@@ -68,9 +68,17 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
+	alreadyClosed, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "cash_register", "close", err)
+		return
+	}
+
+	if alreadyClosed {
+		models.SendJSON(w, http.StatusOK, "cash_register", "close", map[string]string{
+			"status":  "success",
+			"message": "Le registre de caisse est deja ferme.",
+		})
 		return
 	}
 

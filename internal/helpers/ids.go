@@ -9,16 +9,24 @@ import (
 )
 
 const (
-	AuditLogIDPrefix           = "audit-log"
-	AvailabilityIDPrefix       = "avail"
-	AvailabilitySchedulePrefix = "avail-sc"
-	AvailabilityProductPrefix  = "avail-prod"
-	DiscountIDPrefix           = "discount"
-	TagIDPrefix                = "tag"
-	AttributeIDPrefix          = "attribute"
-	AttributeOptionIDPrefix    = "attribute-option"
-	ReceiptIDPrefix            = "receipt"
-	UserIDPrefix               = "user"
+	AuditLogIDPrefix                = "audit-log"
+	AvailabilityIDPrefix            = "avail"
+	AvailabilitySchedulePrefix      = "avail-sc"
+	AvailabilityProductPrefix       = "avail-prod"
+	DiscountIDPrefix                = "discount"
+	TagIDPrefix                     = "tag"
+	AttributeIDPrefix               = "attribute"
+	AttributeOptionIDPrefix         = "attribute-option"
+	ReceiptIDPrefix                 = "receipt"
+	UserIDPrefix                    = "user"
+	HACCPTemperatureZoneIDPrefix    = "haccp-tz"
+	HACCPTemperatureReadingIDPrefix = "haccp-tr"
+	HACCPTemperatureSessionIDPrefix = "haccp-ts"
+	HACCPSettingsIDPrefix           = "haccp-settings"
+	HACCPUploadRecordIDPrefix       = "haccp-file"
+	HACCPCleaningTaskIDPrefix       = "haccp-ct"
+	HACCPCleaningExecutionIDPrefix  = "haccp-ce"
+	HACCPGoodsReceiptIDPrefix       = "haccp-gr"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

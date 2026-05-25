@@ -34,6 +34,7 @@ import (
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	discountsModule "welloresto-api/internal/modules/discounts"
+	haccpModule "welloresto-api/internal/modules/haccp"
 	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
@@ -348,6 +349,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(mysqlDB)
 	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
 
+	// ---- HACCP ----
+	haccpRepo := haccpModule.NewRepository(mysqlDB)
+	haccpService := haccpModule.NewService(haccpRepo, auditService, mysqlDB, r2Client)
+
 	// =============================
 	//  HANDLERS
 	// =============================
@@ -360,6 +365,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	tagsH := tagsModule.NewHandler(tagsService)
 	discountsH := discountsModule.NewHandler(discountsService)
 	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
+	haccpH := haccpModule.NewHandler(haccpService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService, upsellService)
 	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
@@ -555,6 +561,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/version/check", authH.CheckAppVersion)
 	})
 
+	// --- UPLOADS ---
+	r.Route("/uploads", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Post("/haccp", haccpH.UploadHACCP)
+	})
+
 	// --- MENU ---
 	r.Route("/menu", func(r chi.Router) {
 		r.Use(authMiddleware)
@@ -645,6 +658,33 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/availabilities/{id}", availabilitiesH.UpdateAvailability)
 		r.Delete("/availabilities/{id}", availabilitiesH.DeleteAvailability)
 		r.Get("/availabilities/check", availabilitiesH.CheckProductAvailability)
+	})
+
+	// --- HACCP ---
+	r.Route("/haccp", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/temperature-zones", haccpH.GetTemperatureZones)
+		r.Post("/temperature-zones", haccpH.CreateTemperatureZone)
+		r.Patch("/temperature-zones/{id}", haccpH.ReplaceTemperatureZone)
+		r.Delete("/temperature-zones/{id}", haccpH.DeleteTemperatureZone)
+
+		r.Get("/temperature-readings", haccpH.GetTemperatureReadings)
+		r.Post("/temperature-readings/batch", haccpH.CreateTemperatureReadingsBatch)
+		r.Get("/activities", haccpH.GetActivities)
+
+		r.Get("/cleaning-tasks", haccpH.GetCleaningTasks)
+		r.Post("/cleaning-tasks", haccpH.CreateCleaningTask)
+		r.Patch("/cleaning-tasks/{id}", haccpH.UpdateCleaningTask)
+		r.Delete("/cleaning-tasks/{id}", haccpH.DeleteCleaningTask)
+
+		r.Get("/cleaning-executions", haccpH.GetCleaningExecutions)
+		r.Post("/cleaning-executions", haccpH.CreateCleaningExecution)
+
+		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)
+
+		r.Get("/settings", haccpH.GetSettings)
+		r.Put("/settings", haccpH.PutSettings)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
