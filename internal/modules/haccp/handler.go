@@ -163,6 +163,23 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) GetHub(w http.ResponseWriter, r *http.Request) {
+	dateValue := strings.TrimSpace(r.URL.Query().Get("date"))
+
+	resp, err := h.svc.GetHub(r.Context(), dateValue)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_hub", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_hub", map[string]interface{}{
+		"status":       "success",
+		"date":         resp.Date,
+		"generated_at": resp.GeneratedAt,
+		"hub":          resp.Hub,
+	})
+}
+
 func (h *Handler) GetTemperatureSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {

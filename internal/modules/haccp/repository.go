@@ -310,6 +310,78 @@ func (r *Repository) ListTemperatureReadings(ctx context.Context, merchantID, da
 	return readings, rows.Err()
 }
 
+func (r *Repository) GetLatestTemperatureSessionSummary(ctx context.Context, merchantID string, startAt, endAt time.Time) (*TemperatureSessionSummary, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	var summary TemperatureSessionSummary
+	err := db.QueryRowContext(ctx, `
+		SELECT
+			ts.id,
+			ts.created_at,
+			CASE
+				WHEN SUM(CASE WHEN tr.status = 'critical' THEN 1 ELSE 0 END) > 0 THEN 'critical'
+				WHEN SUM(CASE WHEN tr.status = 'alert' THEN 1 ELSE 0 END) > 0 THEN 'alert'
+				ELSE 'ok'
+			END AS status
+		FROM temperature_sessions ts
+		JOIN temperature_readings tr
+			ON tr.session_id = ts.id
+			AND tr.merchant_id = ts.merchant_id
+			AND tr.enabled = 1
+		WHERE ts.merchant_id = ?
+		  AND ts.enabled = 1
+		  AND ts.created_at >= ?
+		  AND ts.created_at < ?
+		GROUP BY ts.id, ts.created_at
+		ORDER BY ts.created_at DESC, ts.id DESC
+		LIMIT 1
+	`, merchantID, startAt.UTC(), endAt.UTC()).Scan(&summary.ID, &summary.PerformedAt, &summary.Status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &summary, nil
+}
+
+func (r *Repository) ListCompletedCleaningSurfaceIDs(ctx context.Context, merchantID string, startAt, endAt time.Time) ([]string, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT ce.surface_id
+		FROM cleaning_sessions cs
+		JOIN cleaning_executions ce
+			ON ce.session_id = cs.id
+			AND ce.merchant_id = cs.merchant_id
+			AND ce.enabled = 1
+		JOIN cleaning_surfaces s
+			ON s.id = ce.surface_id
+			AND s.merchant_id = ce.merchant_id
+			AND s.enabled = 1
+		WHERE cs.merchant_id = ?
+		  AND cs.enabled = 1
+		  AND cs.created_at >= ?
+		  AND cs.created_at < ?
+	`, merchantID, startAt.UTC(), endAt.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, rows.Err()
+}
+
 func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string) (*HACCPSettings, error) {
 	db := dbutils.GetDB(ctx, r.db)
 

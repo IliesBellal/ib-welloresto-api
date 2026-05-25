@@ -106,6 +106,122 @@ func (s *Service) ListTemperatureReadings(ctx context.Context, dateValue, zoneID
 	return s.repo.ListTemperatureReadings(ctx, user.MerchantID, normalizedDate, zoneID)
 }
 
+func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	loc := time.UTC
+	if user.TimeZone != "" {
+		if l, loadErr := time.LoadLocation(user.TimeZone); loadErr == nil {
+			loc = l
+		}
+	}
+
+	now := time.Now().In(loc)
+	responseDate := strings.TrimSpace(dateValue)
+	if responseDate == "" {
+		responseDate = now.Format("2006-01-02")
+	}
+
+	normalizedDate, err := normalizeTemperatureReadingsDate(responseDate, now.UTC(), user.TimeZone)
+	if err != nil {
+		return nil, models.ErrValidationError
+	}
+
+	startAt, err := time.Parse("2006-01-02 15:04:05", normalizedDate)
+	if err != nil {
+		return nil, err
+	}
+	endAt := startAt.Add(24 * time.Hour)
+
+	lastTemperatureSession, err := s.repo.GetLatestTemperatureSessionSummary(ctx, user.MerchantID, startAt, endAt)
+	if err != nil {
+		return nil, err
+	}
+
+	queryDay := startAt.In(loc)
+	queryDay = time.Date(queryDay.Year(), queryDay.Month(), queryDay.Day(), 0, 0, 0, 0, loc)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	temperatureDue := lastTemperatureSession == nil
+	temperatureOverdue := false
+	if temperatureDue {
+		switch {
+		case queryDay.Before(today):
+			temperatureOverdue = true
+		case queryDay.Equal(today):
+			temperatureOverdueThreshold := time.Date(today.Year(), today.Month(), today.Day(), 14, 0, 0, 0, loc)
+			temperatureOverdue = now.After(temperatureOverdueThreshold)
+		}
+	}
+
+	refNowUTC := now.UTC()
+	if !queryDay.Equal(today) {
+		refNowUTC = queryDay.Add(12 * time.Hour).UTC()
+	}
+
+	surfaces, err := s.repo.ListCleaningSurfaces(ctx, user.MerchantID, "")
+	if err != nil {
+		return nil, err
+	}
+
+	dueSurfaceIDs := make(map[string]struct{})
+	cleaningDueCount := 0
+	cleaningOverdueCount := 0
+	for i := range surfaces {
+		dueToday, overdue := computeCleaningComputed(refNowUTC, surfaces[i].Computed.LastExecutionAt, surfaces[i].FrequencyUnit, surfaces[i].FrequencyCount)
+		if dueToday || overdue {
+			cleaningDueCount++
+			dueSurfaceIDs[surfaces[i].ID] = struct{}{}
+		}
+		if overdue {
+			cleaningOverdueCount++
+		}
+	}
+
+	completedSurfaceIDs, err := s.repo.ListCompletedCleaningSurfaceIDs(ctx, user.MerchantID, startAt, endAt)
+	if err != nil {
+		return nil, err
+	}
+
+	cleaningCompletedCount := 0
+	for _, id := range completedSurfaceIDs {
+		if _, ok := dueSurfaceIDs[id]; ok {
+			cleaningCompletedCount++
+		}
+	}
+
+	globalStatus := "ok"
+	if temperatureOverdue || cleaningOverdueCount > 0 {
+		globalStatus = "warning"
+	}
+
+	return &HubResponse{
+		Date:        responseDate,
+		GeneratedAt: time.Now().UTC(),
+		Hub: HubData{
+			GlobalStatus: globalStatus,
+			Temperatures: HubTemperatures{
+				Enabled:     true,
+				LastSession: lastTemperatureSession,
+				Due:         temperatureDue,
+				Overdue:     temperatureOverdue,
+			},
+			Cleaning: HubCleaning{
+				Enabled:        true,
+				CompletedCount: cleaningCompletedCount,
+				DueCount:       cleaningDueCount,
+				TotalCount:     cleaningDueCount,
+				OverdueCount:   cleaningOverdueCount,
+			},
+			Reception:           HubPlaceholder{Enabled: false},
+			IngredientsLabeling: HubPlaceholder{Enabled: false},
+		},
+	}, nil
+}
+
 func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParams) (*ActivitiesListResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

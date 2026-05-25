@@ -666,6 +666,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/settings", haccpH.GetSettings)
 		r.Put("/settings", haccpH.PutSettings)
+		r.Get("/hub", haccpH.GetHub)
 
 		r.Get("/activities", haccpH.GetActivities)
 

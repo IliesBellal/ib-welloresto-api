@@ -57,6 +57,45 @@ type TemperatureSessionDetail struct {
 	Readings    []Reading           `json:"readings"`
 }
 
+type TemperatureSessionSummary struct {
+	ID          string    `json:"id"`
+	PerformedAt time.Time `json:"performed_at"`
+	Status      string    `json:"status"`
+}
+
+type HubTemperatures struct {
+	Enabled     bool                       `json:"enabled"`
+	LastSession *TemperatureSessionSummary `json:"last_session"`
+	Due         bool                       `json:"due"`
+	Overdue     bool                       `json:"overdue"`
+}
+
+type HubCleaning struct {
+	Enabled        bool `json:"enabled"`
+	CompletedCount int  `json:"completed_count"`
+	DueCount       int  `json:"due_count"`
+	TotalCount     int  `json:"total_count"`
+	OverdueCount   int  `json:"overdue_count"`
+}
+
+type HubPlaceholder struct {
+	Enabled bool `json:"enabled"`
+}
+
+type HubData struct {
+	GlobalStatus        string          `json:"global_status"`
+	Temperatures        HubTemperatures `json:"temperatures"`
+	Cleaning            HubCleaning     `json:"cleaning"`
+	Reception           HubPlaceholder  `json:"reception"`
+	IngredientsLabeling HubPlaceholder  `json:"ingredients_labeling"`
+}
+
+type HubResponse struct {
+	Date        string    `json:"date"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Hub         HubData   `json:"hub"`
+}
+
 type HACCPSettings struct {
 	MerchantID                 string `json:"merchant_id"`
 	TempEntryRequired          bool   `json:"temp_entry_required"`
