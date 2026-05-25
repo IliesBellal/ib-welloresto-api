@@ -672,6 +672,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/temperature-readings", haccpH.GetTemperatureReadings)
 		r.Post("/temperature-readings/batch", haccpH.CreateTemperatureReadingsBatch)
 		r.Get("/activities", haccpH.GetActivities)
+		r.Get("/temperature-sessions/{id}", haccpH.GetTemperatureSession)
 
 		r.Get("/cleaning-tasks", haccpH.GetCleaningTasks)
 		r.Post("/cleaning-tasks", haccpH.CreateCleaningTask)
@@ -679,6 +680,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/cleaning-tasks/{id}", haccpH.DeleteCleaningTask)
 
 		r.Get("/cleaning-executions", haccpH.GetCleaningExecutions)
+		r.Get("/cleaning-executions/{id}", haccpH.GetCleaningExecution)
 		r.Post("/cleaning-executions", haccpH.CreateCleaningExecution)
 
 		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)

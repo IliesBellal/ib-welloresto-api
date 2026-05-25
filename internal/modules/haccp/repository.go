@@ -634,10 +634,11 @@ func (r *Repository) ListCleaningExecutions(ctx context.Context, merchantID, tas
 	}
 
 	query := `
-		SELECT id, task_id, merchant_id, comment, photo_url, status, created_by, created_at, updated_at
-		FROM cleaning_executions
-		WHERE merchant_id = ?
-		  AND enabled = 1
+		SELECT ce.id, ce.task_id, ce.merchant_id, ce.comment, ce.photo_url, ce.status, ce.created_by, COALESCE(u.name, ce.created_by), ce.created_at, ce.updated_at
+		FROM cleaning_executions ce
+		LEFT JOIN users u ON u.user_id = ce.created_by
+		WHERE ce.merchant_id = ?
+		  AND ce.enabled = 1
 	`
 	args := []interface{}{merchantID}
 
@@ -648,7 +649,7 @@ func (r *Repository) ListCleaningExecutions(ctx context.Context, merchantID, tas
 	offset := (page - 1) * pageSize
 
 	query += `
-		ORDER BY created_at DESC, id DESC
+		ORDER BY ce.created_at DESC, ce.id DESC
 		LIMIT ? OFFSET ?
 	`
 	args = append(args, pageSize, offset)
@@ -662,6 +663,7 @@ func (r *Repository) ListCleaningExecutions(ctx context.Context, merchantID, tas
 	out := make([]CleaningExecution, 0, pageSize)
 	for rows.Next() {
 		var e CleaningExecution
+		var performedByName sql.NullString
 		if err := rows.Scan(
 			&e.ID,
 			&e.TaskID,
@@ -670,10 +672,17 @@ func (r *Repository) ListCleaningExecutions(ctx context.Context, merchantID, tas
 			&e.PhotoURL,
 			&e.Status,
 			&e.CreatedBy,
+			&performedByName,
 			&e.CreatedAt,
 			&e.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
+		}
+		e.PerformedBy = ActivityPerformedBy{ID: e.CreatedBy}
+		if performedByName.Valid {
+			e.PerformedBy.Name = performedByName.String
+		} else {
+			e.PerformedBy.Name = e.CreatedBy
 		}
 		out = append(out, e)
 	}
@@ -685,7 +694,106 @@ func (r *Repository) ListCleaningExecutions(ctx context.Context, merchantID, tas
 	return out, totalItems, nil
 }
 
-func (r *Repository) ListActivities(ctx context.Context, merchantID string, startAt, endAt time.Time, activityType string, page, pageSize int) ([]ActivityItem, int, error) {
+func (r *Repository) GetTemperatureSessionDetail(ctx context.Context, merchantID, sessionID string) (*TemperatureSessionDetail, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	var session TemperatureSessionDetail
+	err := db.QueryRowContext(ctx, `
+		SELECT ts.id, ts.merchant_id, ts.created_by, COALESCE(u.name, ts.created_by), ts.created_at
+		FROM temperature_sessions ts
+		LEFT JOIN users u ON u.user_id = ts.created_by
+		WHERE ts.merchant_id = ?
+		  AND ts.id = ?
+		  AND ts.enabled = 1
+		LIMIT 1
+	`, merchantID, sessionID).Scan(
+		&session.ID,
+		&session.MerchantID,
+		&session.PerformedBy.ID,
+		&session.PerformedBy.Name,
+		&session.PerformedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, session_id, merchant_id, zone_id, value, status, photo_url, signature, comment, created_by, created_at, updated_at
+		FROM temperature_readings
+		WHERE merchant_id = ?
+		  AND session_id = ?
+		  AND enabled = 1
+		ORDER BY created_at ASC, id ASC
+	`, merchantID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	readings := make([]Reading, 0)
+	for rows.Next() {
+		var rd Reading
+		if err := rows.Scan(
+			&rd.ID,
+			&rd.SessionID,
+			&rd.MerchantID,
+			&rd.ZoneID,
+			&rd.Value,
+			&rd.Status,
+			&rd.PhotoURL,
+			&rd.Signature,
+			&rd.Comment,
+			&rd.CreatedBy,
+			&rd.CreatedAt,
+			&rd.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		readings = append(readings, rd)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	session.Readings = readings
+	return &session, nil
+}
+
+func (r *Repository) GetCleaningExecutionDetail(ctx context.Context, merchantID, executionID string) (*CleaningExecutionDetail, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	var detail CleaningExecutionDetail
+	err := db.QueryRowContext(ctx, `
+		SELECT ce.id, ce.task_id, ce.merchant_id, ce.comment, ce.photo_url, ce.status, ce.created_at, ce.created_by, COALESCE(u.name, ce.created_by), ct.id, ct.zone, ct.name
+		FROM cleaning_executions ce
+		JOIN cleaning_tasks ct ON ct.id = ce.task_id
+		LEFT JOIN users u ON u.user_id = ce.created_by
+		WHERE ce.merchant_id = ?
+		  AND ce.id = ?
+		  AND ce.enabled = 1
+		LIMIT 1
+	`, merchantID, executionID).Scan(
+		&detail.ID,
+		&detail.TaskID,
+		&detail.MerchantID,
+		&detail.Comment,
+		&detail.PhotoURL,
+		&detail.Status,
+		&detail.PerformedAt,
+		&detail.PerformedBy.ID,
+		&detail.PerformedBy.Name,
+		&detail.Task.ID,
+		&detail.Task.Zone,
+		&detail.Task.Name,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &detail, nil
+}
+
+func (r *Repository) ListActivities(ctx context.Context, merchantID string, startAt, endAt time.Time, activityType, activityStatus string, page, pageSize int) ([]ActivityItem, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
 
 	temperatureQuery := `
@@ -761,16 +869,24 @@ func (r *Repository) ListActivities(ctx context.Context, merchantID string, star
 	}
 
 	baseQuery := strings.Join(unionParts, " UNION ALL ")
-	countQuery := "SELECT COUNT(*) FROM (" + baseQuery + ") AS haccp_activities"
+	wrappedBaseQuery := "SELECT * FROM (" + baseQuery + ") AS haccp_activities"
+
+	countArgs := append([]interface{}{}, args...)
+	if strings.TrimSpace(activityStatus) != "" {
+		wrappedBaseQuery += " WHERE status = ?"
+		countArgs = append(countArgs, activityStatus)
+	}
+
+	countQuery := "SELECT COUNT(*) FROM (" + wrappedBaseQuery + ") AS filtered_haccp_activities"
 
 	var totalItems int
-	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+	if err := db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&totalItems); err != nil {
 		return nil, 0, err
 	}
 
 	offset := (page - 1) * pageSize
-	dataQuery := "SELECT * FROM (" + baseQuery + ") AS haccp_activities ORDER BY performed_at DESC, id DESC LIMIT ? OFFSET ?"
-	dataArgs := append(append([]interface{}{}, args...), pageSize, offset)
+	dataQuery := wrappedBaseQuery + " ORDER BY performed_at DESC, id DESC LIMIT ? OFFSET ?"
+	dataArgs := append(countArgs, pageSize, offset)
 
 	rows, err := db.QueryContext(ctx, dataQuery, dataArgs...)
 	if err != nil {

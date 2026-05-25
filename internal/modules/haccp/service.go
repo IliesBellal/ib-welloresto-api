@@ -117,6 +117,15 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		return nil, models.ErrValidationError
 	}
 
+	activityStatus := strings.ToLower(strings.TrimSpace(params.Status))
+	if activityStatus != "" {
+		switch activityStatus {
+		case "ok", "alert", "critical", "done":
+		default:
+			return nil, models.ErrValidationError
+		}
+	}
+
 	responseDate := strings.TrimSpace(params.Date)
 	if responseDate == "" {
 		loc := time.UTC
@@ -152,7 +161,7 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		pageSize = 100
 	}
 
-	items, totalItems, err := s.repo.ListActivities(ctx, user.MerchantID, startAt.UTC(), endAt.UTC(), activityType, page, pageSize)
+	items, totalItems, err := s.repo.ListActivities(ctx, user.MerchantID, startAt.UTC(), endAt.UTC(), activityType, activityStatus, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -463,6 +472,49 @@ func (s *Service) ListCleaningExecutions(ctx context.Context, params CleaningExe
 	return resp, nil
 }
 
+func (s *Service) GetTemperatureSession(ctx context.Context, sessionID string) (*TemperatureSessionDetail, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, models.ErrValidationError
+	}
+
+	session, err := s.repo.GetTemperatureSessionDetail(ctx, user.MerchantID, sessionID)
+	if err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	session.Status = computeTemperatureSessionStatus(session.Readings)
+	return session, nil
+}
+
+func (s *Service) GetCleaningExecution(ctx context.Context, executionID string) (*CleaningExecutionDetail, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if strings.TrimSpace(executionID) == "" {
+		return nil, models.ErrValidationError
+	}
+
+	detail, err := s.repo.GetCleaningExecutionDetail(ctx, user.MerchantID, executionID)
+	if err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return detail, nil
+}
+
 func (s *Service) CreateCleaningExecution(ctx context.Context, req CreateCleaningExecutionRequest) (*CleaningExecution, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -581,4 +633,19 @@ func validateCleaningTaskFields(zone, name, frequencyUnit string, frequencyCount
 	}
 
 	return nil
+}
+
+func computeTemperatureSessionStatus(readings []Reading) string {
+	status := "ok"
+	for _, rd := range readings {
+		switch rd.Status {
+		case "critical":
+			return "critical"
+		case "alert":
+			if status != "critical" {
+				status = "alert"
+			}
+		}
+	}
+	return status
 }

@@ -111,8 +111,9 @@ func (h *Handler) GetTemperatureReadings(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	params := ActivitiesListParams{
-		Date: strings.TrimSpace(r.URL.Query().Get("date")),
-		Type: strings.TrimSpace(r.URL.Query().Get("type")),
+		Date:   strings.TrimSpace(r.URL.Query().Get("date")),
+		Type:   strings.TrimSpace(r.URL.Query().Get("type")),
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
 	}
 
 	if rawPage := strings.TrimSpace(r.URL.Query().Get("page")); rawPage != "" {
@@ -145,6 +146,9 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	if resp.Type != "" {
 		filters["type"] = resp.Type
 	}
+	if params.Status != "" {
+		filters["status"] = strings.ToLower(params.Status)
+	}
 
 	models.SendJSON(w, http.StatusOK, "haccp", "get_activities", map[string]interface{}{
 		"status":     "success",
@@ -156,6 +160,44 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 			"total_items": resp.TotalItems,
 			"total_pages": resp.TotalPages,
 		},
+	})
+}
+
+func (h *Handler) GetTemperatureSession(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_temperature_session", map[string]string{"error": "missing_id"})
+		return
+	}
+
+	session, err := h.svc.GetTemperatureSession(r.Context(), id)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_temperature_session", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_temperature_session", map[string]interface{}{
+		"status":              "success",
+		"temperature_session": session,
+	})
+}
+
+func (h *Handler) GetCleaningExecution(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_execution", map[string]string{"error": "missing_id"})
+		return
+	}
+
+	execution, err := h.svc.GetCleaningExecution(r.Context(), id)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_cleaning_execution", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_cleaning_execution", map[string]interface{}{
+		"status":             "success",
+		"cleaning_execution": execution,
 	})
 }
 

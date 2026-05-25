@@ -42,6 +42,15 @@ type TemperatureSession struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type TemperatureSessionDetail struct {
+	ID          string              `json:"id"`
+	MerchantID  string              `json:"merchant_id"`
+	Status      string              `json:"status"`
+	PerformedAt time.Time           `json:"performed_at"`
+	PerformedBy ActivityPerformedBy `json:"performed_by"`
+	Readings    []Reading           `json:"readings"`
+}
+
 type HACCPSettings struct {
 	MerchantID                 string `json:"merchant_id"`
 	TempEntryRequired          bool   `json:"temp_entry_required"`
@@ -128,15 +137,34 @@ type CleaningTaskWithComputed struct {
 }
 
 type CleaningExecution struct {
-	ID         string    `json:"id"`
-	TaskID     string    `json:"task_id"`
-	MerchantID string    `json:"merchant_id"`
-	Comment    *string   `json:"comment,omitempty"`
-	PhotoURL   *string   `json:"photo_url,omitempty"`
-	Status     string    `json:"status"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID          string              `json:"id"`
+	TaskID      string              `json:"task_id"`
+	MerchantID  string              `json:"merchant_id"`
+	Comment     *string             `json:"comment,omitempty"`
+	PhotoURL    *string             `json:"photo_url,omitempty"`
+	Status      string              `json:"status"`
+	CreatedBy   string              `json:"created_by"`
+	PerformedBy ActivityPerformedBy `json:"performed_by,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
+}
+
+type CleaningTaskSummary struct {
+	ID   string `json:"id"`
+	Zone string `json:"zone"`
+	Name string `json:"name"`
+}
+
+type CleaningExecutionDetail struct {
+	ID          string              `json:"id"`
+	TaskID      string              `json:"task_id"`
+	Task        CleaningTaskSummary `json:"task"`
+	MerchantID  string              `json:"merchant_id"`
+	Comment     *string             `json:"comment,omitempty"`
+	PhotoURL    *string             `json:"photo_url,omitempty"`
+	Status      string              `json:"status"`
+	PerformedAt time.Time           `json:"performed_at"`
+	PerformedBy ActivityPerformedBy `json:"performed_by"`
 }
 
 type CreateCleaningExecutionRequest struct {
@@ -178,6 +206,7 @@ type CleaningExecutionsListResponse struct {
 type ActivitiesListParams struct {
 	Date     string `json:"date"`
 	Type     string `json:"type"`
+	Status   string `json:"status"`
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
 }
