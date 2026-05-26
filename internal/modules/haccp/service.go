@@ -46,10 +46,10 @@ func (s *Service) CreateTemperatureZone(ctx context.Context, req CreateZoneReque
 	}
 
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, models.ErrValidationError
+		return nil, models.ErrTemperatureZoneNameRequired
 	}
 	if req.TargetTempMin > req.TargetTempMax {
-		return nil, models.ErrValidationError
+		return nil, models.ErrTemperatureZoneInvalidRange
 	}
 
 	return s.repo.CreateTemperatureZone(ctx, user.MerchantID, req)
@@ -61,11 +61,14 @@ func (s *Service) ReplaceTemperatureZone(ctx context.Context, zoneID string, req
 		return nil, models.ErrUnauthorized
 	}
 
-	if strings.TrimSpace(zoneID) == "" || strings.TrimSpace(req.Name) == "" {
-		return nil, models.ErrValidationError
+	if strings.TrimSpace(zoneID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, models.ErrTemperatureZoneNameRequired
 	}
 	if req.TargetTempMin > req.TargetTempMax {
-		return nil, models.ErrValidationError
+		return nil, models.ErrTemperatureZoneInvalidRange
 	}
 
 	zone, err := s.repo.ReplaceTemperatureZone(ctx, user.MerchantID, zoneID, req)
@@ -82,7 +85,7 @@ func (s *Service) DeleteTemperatureZone(ctx context.Context, zoneID string) erro
 	}
 
 	if strings.TrimSpace(zoneID) == "" {
-		return models.ErrValidationError
+		return models.ErrMissingResourceID
 	}
 
 	err = s.repo.SoftDeleteTemperatureZone(ctx, user.MerchantID, zoneID)
@@ -224,7 +227,7 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 
 	activityType := strings.ToLower(strings.TrimSpace(params.Type))
 	if activityType != "" && activityType != ActivityTypeTemperatures && activityType != ActivityTypeCleanings {
-		return nil, models.ErrValidationError
+		return nil, models.ErrInvalidActivityType
 	}
 
 	activityStatus := strings.ToLower(strings.TrimSpace(params.Status))
@@ -232,7 +235,7 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		switch activityStatus {
 		case "ok", "alert", "critical", "done":
 		default:
-			return nil, models.ErrValidationError
+			return nil, models.ErrInvalidActivityStatus
 		}
 	}
 
@@ -316,7 +319,7 @@ func normalizeTemperatureReadingsDate(raw string, now time.Time, tz string) (str
 		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
 			base = t.In(loc)
 		} else {
-			return "", models.ErrValidationError
+			return "", models.ErrInvalidHACCPDate
 		}
 	}
 
@@ -332,14 +335,14 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 	}
 
 	if len(req.Readings) == 0 {
-		return nil, models.ErrValidationError
+		return nil, models.ErrTemperatureReadingsRequired
 	}
 
 	zoneIDs := make([]string, 0, len(req.Readings))
 	seen := make(map[string]struct{}, len(req.Readings))
 	for _, rd := range req.Readings {
 		if strings.TrimSpace(rd.ZoneID) == "" {
-			return nil, models.ErrValidationError
+			return nil, models.ErrTemperatureZoneReferenceInvalid
 		}
 		if _, ok := seen[rd.ZoneID]; !ok {
 			zoneIDs = append(zoneIDs, rd.ZoneID)
@@ -352,7 +355,7 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 		return nil, err
 	}
 	if len(zones) != len(zoneIDs) {
-		return nil, models.ErrValidationError
+		return nil, models.ErrTemperatureZoneReferenceInvalid
 	}
 
 	settings, err := s.repo.GetOrCreateSettings(ctx, user.MerchantID)
@@ -367,7 +370,7 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 
 		if settings.TempCorrectiveActions && status != "ok" {
 			if input.Comment == nil || strings.TrimSpace(*input.Comment) == "" {
-				return nil, models.ErrValidationError
+				return nil, models.ErrTemperatureCorrectiveActionRequired
 			}
 		}
 		if settings.TempFailurePhotoRequired && status != "ok" {
@@ -492,7 +495,7 @@ func (s *Service) UpdateCleaningZone(ctx context.Context, zoneID string, req Upd
 	}
 
 	if strings.TrimSpace(zoneID) == "" {
-		return nil, models.ErrValidationError
+		return nil, models.ErrMissingResourceID
 	}
 	if err := validateCleaningZoneName(req.Name); err != nil {
 		return nil, err
@@ -516,7 +519,7 @@ func (s *Service) DeleteCleaningZone(ctx context.Context, zoneID string) error {
 	}
 
 	if strings.TrimSpace(zoneID) == "" {
-		return models.ErrValidationError
+		return models.ErrMissingResourceID
 	}
 
 	err = s.repo.SoftDeleteCleaningZone(ctx, user.MerchantID, zoneID)
@@ -642,7 +645,7 @@ func (s *Service) UpdateCleaningSurface(ctx context.Context, surfaceID string, r
 	}
 
 	if strings.TrimSpace(surfaceID) == "" {
-		return nil, models.ErrValidationError
+		return nil, models.ErrMissingResourceID
 	}
 	if err := validateCleaningSurfaceFields(req.ZoneID, req.Name, req.FrequencyUnit, req.FrequencyCount); err != nil {
 		return nil, err
@@ -678,7 +681,7 @@ func (s *Service) DeleteCleaningSurface(ctx context.Context, surfaceID string) e
 	}
 
 	if strings.TrimSpace(surfaceID) == "" {
-		return models.ErrValidationError
+		return models.ErrMissingResourceID
 	}
 
 	err = s.repo.SoftDeleteCleaningSurface(ctx, user.MerchantID, surfaceID)
@@ -718,7 +721,7 @@ func (s *Service) GetTemperatureSession(ctx context.Context, sessionID string) (
 	}
 
 	if strings.TrimSpace(sessionID) == "" {
-		return nil, models.ErrValidationError
+		return nil, models.ErrMissingResourceID
 	}
 
 	session, err := s.repo.GetTemperatureSessionDetail(ctx, user.MerchantID, sessionID)
@@ -740,7 +743,7 @@ func (s *Service) GetCleaningSession(ctx context.Context, sessionID string) (*Cl
 	}
 
 	if strings.TrimSpace(sessionID) == "" {
-		return nil, models.ErrValidationError
+		return nil, models.ErrMissingResourceID
 	}
 
 	detail, err := s.repo.GetCleaningSessionDetail(ctx, user.MerchantID, sessionID)
@@ -761,7 +764,7 @@ func (s *Service) CreateCleaningSession(ctx context.Context, req CreateCleaningS
 	}
 
 	if len(req.Executions) == 0 {
-		return nil, models.ErrValidationError
+		return nil, models.ErrCleaningExecutionsRequired
 	}
 
 	surfaceIDs := make([]string, 0, len(req.Executions))
@@ -769,10 +772,10 @@ func (s *Service) CreateCleaningSession(ctx context.Context, req CreateCleaningS
 	for _, execution := range req.Executions {
 		surfaceID := strings.TrimSpace(execution.SurfaceID)
 		if surfaceID == "" {
-			return nil, models.ErrValidationError
+			return nil, models.ErrCleaningSurfaceReferenceInvalid
 		}
 		if _, exists := seen[surfaceID]; exists {
-			return nil, models.ErrValidationError
+			return nil, models.ErrDuplicateCleaningSurfaceExecution
 		}
 		seen[surfaceID] = struct{}{}
 		surfaceIDs = append(surfaceIDs, surfaceID)
@@ -783,12 +786,12 @@ func (s *Service) CreateCleaningSession(ctx context.Context, req CreateCleaningS
 		return nil, err
 	}
 	if len(surfaces) != len(surfaceIDs) {
-		return nil, models.ErrValidationError
+		return nil, models.ErrCleaningSurfaceReferenceInvalid
 	}
 
 	for _, surface := range surfaces {
 		if !surface.Active {
-			return nil, models.ErrValidationError
+			return nil, models.ErrCleaningSurfaceInactive
 		}
 	}
 
@@ -859,8 +862,14 @@ func (s *Service) CreateGoodsReceipt(ctx context.Context, req CreateGoodsReceipt
 		return nil, models.ErrUnauthorized
 	}
 
-	if strings.TrimSpace(req.Supplier) == "" || strings.TrimSpace(req.ProductType) == "" || strings.TrimSpace(req.BatchNumber) == "" {
-		return nil, models.ErrValidationError
+	if strings.TrimSpace(req.Supplier) == "" {
+		return nil, models.ErrGoodsReceiptSupplierRequired
+	}
+	if strings.TrimSpace(req.ProductType) == "" {
+		return nil, models.ErrGoodsReceiptProductTypeRequired
+	}
+	if strings.TrimSpace(req.BatchNumber) == "" {
+		return nil, models.ErrGoodsReceiptBatchNumberRequired
 	}
 
 	settings, err := s.repo.GetOrCreateSettings(ctx, user.MerchantID)
@@ -870,17 +879,17 @@ func (s *Service) CreateGoodsReceipt(ctx context.Context, req CreateGoodsReceipt
 
 	if settings.ReceptionControlSample {
 		if req.ControlSample == nil || strings.TrimSpace(*req.ControlSample) == "" {
-			return nil, models.ErrValidationError
+			return nil, models.ErrReceptionControlSampleRequired
 		}
 	}
 
 	if settings.ReceptionNonConformities && len(req.NonConformities) == 0 {
-		return nil, models.ErrValidationError
+		return nil, models.ErrReceptionNonConformitiesRequired
 	}
 
 	if settings.ReceptionPhoto {
 		if req.InvoiceURL == nil || strings.TrimSpace(*req.InvoiceURL) == "" {
-			return nil, models.ErrValidationError
+			return nil, models.ErrReceptionInvoiceRequired
 		}
 	}
 
@@ -923,24 +932,28 @@ func computeCleaningComputed(now time.Time, lastExecutionAt *time.Time, frequenc
 
 func validateCleaningZoneName(name string) error {
 	if strings.TrimSpace(name) == "" {
-		return models.ErrValidationError
+		return models.ErrCleaningZoneNameRequired
 	}
 
 	return nil
 }
 
 func validateCleaningSurfaceFields(zoneID, name, frequencyUnit string, frequencyCount int) error {
-	if strings.TrimSpace(zoneID) == "" || strings.TrimSpace(name) == "" {
-		return models.ErrValidationError
+	if strings.TrimSpace(zoneID) == "" {
+		return models.ErrCleaningSurfaceZoneRequired
+	}
+
+	if strings.TrimSpace(name) == "" {
+		return models.ErrCleaningSurfaceNameRequired
 	}
 
 	unit := strings.ToLower(strings.TrimSpace(frequencyUnit))
 	if unit != "day" && unit != "week" && unit != "month" {
-		return models.ErrValidationError
+		return models.ErrCleaningSurfaceInvalidFrequencyUnit
 	}
 
 	if frequencyCount <= 0 {
-		return models.ErrValidationError
+		return models.ErrCleaningSurfaceInvalidFrequencyCount
 	}
 
 	return nil

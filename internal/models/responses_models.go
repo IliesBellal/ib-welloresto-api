@@ -40,9 +40,10 @@ type HandlerDefaultResponse struct {
 }
 
 type HandlerDefaultResponseModelSet struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-	Data1  string `json:"data1,omitempty"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Data1   string `json:"data1,omitempty"`
 }
 
 // SendJSON envoie une réponse JSON standardisée avec la structure HandlerDefaultResponse
@@ -86,11 +87,71 @@ var (
 	// ErrValidationError indique une erreur de validation métier/payload HACCP (400)
 	ErrValidationError = errors.New("validation_error")
 
+	ErrInvalidRequestBody = errors.New("invalid_request_body")
+
+	ErrMissingResourceID = errors.New("missing_resource_id")
+
+	ErrInvalidPage = errors.New("invalid_page")
+
+	ErrInvalidPageSize = errors.New("invalid_page_size")
+
+	ErrInvalidHACCPDate = errors.New("invalid_haccp_date")
+
+	ErrInvalidActivityType = errors.New("invalid_activity_type")
+
+	ErrInvalidActivityStatus = errors.New("invalid_activity_status")
+
+	ErrTemperatureZoneNameRequired = errors.New("temperature_zone_name_required")
+
+	ErrTemperatureZoneInvalidRange = errors.New("temperature_zone_invalid_range")
+
+	ErrTemperatureReadingsRequired = errors.New("temperature_readings_required")
+
+	ErrTemperatureZoneReferenceInvalid = errors.New("temperature_zone_reference_invalid")
+
+	ErrTemperatureCorrectiveActionRequired = errors.New("temperature_corrective_action_required")
+
 	// ErrCleaningPhotoRequired indique qu'une photo est requise par la configuration HACCP (422)
 	ErrCleaningPhotoRequired = errors.New("cleaning_photo_required")
 
+	ErrCleaningZoneNameRequired = errors.New("cleaning_zone_name_required")
+
+	ErrCleaningSurfaceZoneRequired = errors.New("cleaning_surface_zone_required")
+
+	ErrCleaningSurfaceNameRequired = errors.New("cleaning_surface_name_required")
+
+	ErrCleaningSurfaceInvalidFrequencyUnit = errors.New("cleaning_surface_invalid_frequency_unit")
+
+	ErrCleaningSurfaceInvalidFrequencyCount = errors.New("cleaning_surface_invalid_frequency_count")
+
+	ErrCleaningExecutionsRequired = errors.New("cleaning_executions_required")
+
+	ErrCleaningSurfaceReferenceInvalid = errors.New("cleaning_surface_reference_invalid")
+
+	ErrDuplicateCleaningSurfaceExecution = errors.New("duplicate_cleaning_surface_execution")
+
+	ErrCleaningSurfaceInactive = errors.New("cleaning_surface_inactive")
+
 	// ErrTemperatureFailurePhotoRequired indique qu'une photo est requise pour un relevé de température en écart (422)
 	ErrTemperatureFailurePhotoRequired = errors.New("temperature_failure_photo_required")
+
+	ErrGoodsReceiptSupplierRequired = errors.New("goods_receipt_supplier_required")
+
+	ErrGoodsReceiptProductTypeRequired = errors.New("goods_receipt_product_type_required")
+
+	ErrGoodsReceiptBatchNumberRequired = errors.New("goods_receipt_batch_number_required")
+
+	ErrReceptionControlSampleRequired = errors.New("reception_control_sample_required")
+
+	ErrReceptionNonConformitiesRequired = errors.New("reception_non_conformities_required")
+
+	ErrReceptionInvoiceRequired = errors.New("reception_invoice_required")
+
+	ErrUploadFileTooLargeOrInvalid = errors.New("upload_file_too_large_or_invalid")
+
+	ErrUploadFileMissing = errors.New("upload_file_missing")
+
+	ErrInvalidImageType = errors.New("invalid_image_type")
 
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInputPasswordTooShort = errors.New("le mot de passe doit faire au minimum 8 charactères")
@@ -151,11 +212,71 @@ var (
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
 func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err error) {
 	status := http.StatusInternalServerError
-	errorStatus := "internal serveur error"
+	errorStatus := "internal_server_error"
 	errorMsg := "internal_server_error"
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
+	case errors.Is(err, ErrInvalidRequestBody):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_request_body"
+		errorMsg = "The request body is invalid or malformed."
+
+	case errors.Is(err, ErrMissingResourceID):
+		status = http.StatusBadRequest
+		errorStatus = "missing_resource_id"
+		errorMsg = "A required resource id is missing."
+
+	case errors.Is(err, ErrInvalidPage):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_page"
+		errorMsg = "The page parameter must be a valid integer."
+
+	case errors.Is(err, ErrInvalidPageSize):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_page_size"
+		errorMsg = "The page_size parameter must be a valid integer."
+
+	case errors.Is(err, ErrInvalidHACCPDate):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_haccp_date"
+		errorMsg = "The provided HACCP date is invalid."
+
+	case errors.Is(err, ErrInvalidActivityType):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_activity_type"
+		errorMsg = "The activity type is invalid."
+
+	case errors.Is(err, ErrInvalidActivityStatus):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_activity_status"
+		errorMsg = "The activity status is invalid."
+
+	case errors.Is(err, ErrTemperatureZoneNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "temperature_zone_name_required"
+		errorMsg = "The temperature zone name is required."
+
+	case errors.Is(err, ErrTemperatureZoneInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "temperature_zone_invalid_range"
+		errorMsg = "The minimum temperature cannot be greater than the maximum temperature."
+
+	case errors.Is(err, ErrTemperatureReadingsRequired):
+		status = http.StatusBadRequest
+		errorStatus = "temperature_readings_required"
+		errorMsg = "At least one temperature reading is required."
+
+	case errors.Is(err, ErrTemperatureZoneReferenceInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "temperature_zone_reference_invalid"
+		errorMsg = "One or more temperature zone references are invalid."
+
+	case errors.Is(err, ErrTemperatureCorrectiveActionRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "temperature_corrective_action_required"
+		errorMsg = "A corrective action comment is required for an out-of-range temperature."
+
 	case errors.Is(err, ErrTooLateToDeleteOrder):
 		status = http.StatusForbidden
 		errorStatus = "too_late_to_delete_order"
@@ -233,18 +354,108 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	case errors.Is(err, ErrValidationError):
 		status = http.StatusBadRequest
-		errorStatus = "VALIDATION_ERROR"
-		errorMsg = "validation_error"
+		errorStatus = "validation_error"
+		errorMsg = "The request data is invalid."
+
+	case errors.Is(err, ErrCleaningZoneNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_zone_name_required"
+		errorMsg = "The cleaning zone name is required."
+
+	case errors.Is(err, ErrCleaningSurfaceZoneRequired):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_surface_zone_required"
+		errorMsg = "A cleaning surface must reference a zone."
+
+	case errors.Is(err, ErrCleaningSurfaceNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_surface_name_required"
+		errorMsg = "The cleaning surface name is required."
+
+	case errors.Is(err, ErrCleaningSurfaceInvalidFrequencyUnit):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_surface_invalid_frequency_unit"
+		errorMsg = "The cleaning surface frequency unit must be day, week, or month."
+
+	case errors.Is(err, ErrCleaningSurfaceInvalidFrequencyCount):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_surface_invalid_frequency_count"
+		errorMsg = "The cleaning surface frequency count must be greater than zero."
+
+	case errors.Is(err, ErrCleaningExecutionsRequired):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_executions_required"
+		errorMsg = "At least one cleaning execution is required."
+
+	case errors.Is(err, ErrCleaningSurfaceReferenceInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "cleaning_surface_reference_invalid"
+		errorMsg = "One or more cleaning surface references are invalid."
+
+	case errors.Is(err, ErrDuplicateCleaningSurfaceExecution):
+		status = http.StatusBadRequest
+		errorStatus = "duplicate_cleaning_surface_execution"
+		errorMsg = "A cleaning surface cannot be submitted more than once in the same session."
+
+	case errors.Is(err, ErrCleaningSurfaceInactive):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "cleaning_surface_inactive"
+		errorMsg = "Cleaning session cannot be created with an inactive surface."
 
 	case errors.Is(err, ErrCleaningPhotoRequired):
 		status = http.StatusUnprocessableEntity
-		errorStatus = "CLEANING_PHOTO_REQUIRED"
-		errorMsg = "photo_url is required when cleaning_photo setting is enabled"
+		errorStatus = "cleaning_photo_required"
+		errorMsg = "A photo is required when the cleaning_photo setting is enabled."
 
 	case errors.Is(err, ErrTemperatureFailurePhotoRequired):
 		status = http.StatusUnprocessableEntity
-		errorStatus = "TEMPERATURE_FAILURE_PHOTO_REQUIRED"
-		errorMsg = "temperature_failure_photo_required"
+		errorStatus = "temperature_failure_photo_required"
+		errorMsg = "A photo is required for an out-of-range temperature reading."
+
+	case errors.Is(err, ErrGoodsReceiptSupplierRequired):
+		status = http.StatusBadRequest
+		errorStatus = "goods_receipt_supplier_required"
+		errorMsg = "The supplier field is required."
+
+	case errors.Is(err, ErrGoodsReceiptProductTypeRequired):
+		status = http.StatusBadRequest
+		errorStatus = "goods_receipt_product_type_required"
+		errorMsg = "The product type field is required."
+
+	case errors.Is(err, ErrGoodsReceiptBatchNumberRequired):
+		status = http.StatusBadRequest
+		errorStatus = "goods_receipt_batch_number_required"
+		errorMsg = "The batch number field is required."
+
+	case errors.Is(err, ErrReceptionControlSampleRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "reception_control_sample_required"
+		errorMsg = "A control sample is required by the current HACCP settings."
+
+	case errors.Is(err, ErrReceptionNonConformitiesRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "reception_non_conformities_required"
+		errorMsg = "At least one non-conformity is required by the current HACCP settings."
+
+	case errors.Is(err, ErrReceptionInvoiceRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "reception_invoice_required"
+		errorMsg = "An invoice photo is required by the current HACCP settings."
+
+	case errors.Is(err, ErrUploadFileTooLargeOrInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "upload_file_too_large_or_invalid"
+		errorMsg = "The uploaded file is too large or invalid."
+
+	case errors.Is(err, ErrUploadFileMissing):
+		status = http.StatusBadRequest
+		errorStatus = "upload_file_missing"
+		errorMsg = "The file field is required."
+
+	case errors.Is(err, ErrInvalidImageType):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_image_type"
+		errorMsg = "The uploaded image type is not supported."
 
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest
@@ -296,11 +507,6 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "mop_missing"
 		errorMsg = "Mean of payment missing"
 
-	case errors.Is(err, ErrMOPMissing):
-		status = http.StatusBadRequest
-		errorStatus = "mop_missing"
-		errorMsg = "Mean of payment missing"
-
 	case errors.Is(err, ErrRefoundMustBeLowerThanOriginalReceipt):
 		status = http.StatusBadRequest
 		errorStatus = "refund_amount_must_be_lower_than_original_receipt"
@@ -318,5 +524,5 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 
 	logger.FromContext(context.Background()).Warn("error " + strconv.Itoa(status) + " " + module + "." + fnName + ": " + errorMsg + " - " + errorStatus)
 
-	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "error": errorMsg})
+	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "message": errorMsg, "error": errorMsg})
 }

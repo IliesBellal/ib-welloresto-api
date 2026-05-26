@@ -35,7 +35,7 @@ func (h *Handler) GetTemperatureZones(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateTemperatureZone(w http.ResponseWriter, r *http.Request) {
 	var req CreateZoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_temperature_zone", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_temperature_zone", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -54,13 +54,13 @@ func (h *Handler) CreateTemperatureZone(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) ReplaceTemperatureZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "replace_temperature_zone", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "replace_temperature_zone", models.ErrMissingResourceID)
 		return
 	}
 
 	var req ReplaceZoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "replace_temperature_zone", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "replace_temperature_zone", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *Handler) ReplaceTemperatureZone(w http.ResponseWriter, r *http.Request)
 func (h *Handler) DeleteTemperatureZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_temperature_zone", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "delete_temperature_zone", models.ErrMissingResourceID)
 		return
 	}
 
@@ -119,7 +119,7 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	if rawPage := strings.TrimSpace(r.URL.Query().Get("page")); rawPage != "" {
 		parsed, err := strconv.Atoi(rawPage)
 		if err != nil {
-			models.SendJSON(w, http.StatusBadRequest, "haccp", "get_activities", map[string]string{"error": "invalid_page"})
+			models.SendErrorJSON(w, "haccp", "get_activities", models.ErrInvalidPage)
 			return
 		}
 		params.Page = parsed
@@ -128,7 +128,7 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	if rawPageSize := strings.TrimSpace(r.URL.Query().Get("page_size")); rawPageSize != "" {
 		parsed, err := strconv.Atoi(rawPageSize)
 		if err != nil {
-			models.SendJSON(w, http.StatusBadRequest, "haccp", "get_activities", map[string]string{"error": "invalid_page_size"})
+			models.SendErrorJSON(w, "haccp", "get_activities", models.ErrInvalidPageSize)
 			return
 		}
 		params.PageSize = parsed
@@ -183,7 +183,7 @@ func (h *Handler) GetHub(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetTemperatureSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_temperature_session", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "get_temperature_session", models.ErrMissingResourceID)
 		return
 	}
 
@@ -202,7 +202,7 @@ func (h *Handler) GetTemperatureSession(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) GetCleaningSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "get_cleaning_session", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "get_cleaning_session", models.ErrMissingResourceID)
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *Handler) GetCleaningSession(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateTemperatureReadingsBatch(w http.ResponseWriter, r *http.Request) {
 	var req BatchCreateReadingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_temperature_readings_batch", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_temperature_readings_batch", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -254,7 +254,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	var req HACCPSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "put_settings", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "put_settings", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -275,13 +275,13 @@ func (h *Handler) UploadHACCP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
 
 	if err := r.ParseMultipartForm(maxSize); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "uploads", "haccp", map[string]string{"error": "file_too_large_or_invalid"})
+		models.SendErrorJSON(w, "uploads", "haccp", models.ErrUploadFileTooLargeOrInvalid)
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "uploads", "haccp", map[string]string{"error": "missing_file_field"})
+		models.SendErrorJSON(w, "uploads", "haccp", models.ErrUploadFileMissing)
 		return
 	}
 	defer file.Close()
@@ -291,7 +291,7 @@ func (h *Handler) UploadHACCP(w http.ResponseWriter, r *http.Request) {
 		contentType = r2.GetContentTypeFromExtension(header.Filename)
 	}
 	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "uploads", "haccp", map[string]string{"error": "invalid_image_type"})
+		models.SendErrorJSON(w, "uploads", "haccp", models.ErrInvalidImageType)
 		return
 	}
 
@@ -323,7 +323,7 @@ func (h *Handler) GetCleaningZones(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateCleaningZone(w http.ResponseWriter, r *http.Request) {
 	var raw map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_zone", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_cleaning_zone", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -344,13 +344,13 @@ func (h *Handler) CreateCleaningZone(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateCleaningZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_zone", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "update_cleaning_zone", models.ErrMissingResourceID)
 		return
 	}
 
 	var raw map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_zone", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "update_cleaning_zone", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -371,7 +371,7 @@ func (h *Handler) UpdateCleaningZone(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteCleaningZone(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_cleaning_zone", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "delete_cleaning_zone", models.ErrMissingResourceID)
 		return
 	}
 
@@ -402,7 +402,7 @@ func (h *Handler) GetCleaningSurfaces(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateCleaningSurface(w http.ResponseWriter, r *http.Request) {
 	var req CreateCleaningSurfaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_surface", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_cleaning_surface", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -421,13 +421,13 @@ func (h *Handler) CreateCleaningSurface(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) UpdateCleaningSurface(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_surface", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "update_cleaning_surface", models.ErrMissingResourceID)
 		return
 	}
 
 	var req UpdateCleaningSurfaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "update_cleaning_surface", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "update_cleaning_surface", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -446,7 +446,7 @@ func (h *Handler) UpdateCleaningSurface(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) DeleteCleaningSurface(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "delete_cleaning_surface", map[string]string{"error": "missing_id"})
+		models.SendErrorJSON(w, "haccp", "delete_cleaning_surface", models.ErrMissingResourceID)
 		return
 	}
 
@@ -481,7 +481,7 @@ func (h *Handler) GetCleaningSessions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateCleaningSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateCleaningSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_cleaning_session", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_cleaning_session", models.ErrInvalidRequestBody)
 		return
 	}
 
@@ -501,7 +501,7 @@ func (h *Handler) CreateCleaningSession(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) CreateGoodsReceipt(w http.ResponseWriter, r *http.Request) {
 	var req CreateGoodsReceiptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "haccp", "create_goods_receipt", map[string]string{"error": "invalid_request"})
+		models.SendErrorJSON(w, "haccp", "create_goods_receipt", models.ErrInvalidRequestBody)
 		return
 	}
 
