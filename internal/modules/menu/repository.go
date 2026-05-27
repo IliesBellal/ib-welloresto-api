@@ -2536,7 +2536,7 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 	}
 
 	if updates.PurchaseUnitID != nil && *updates.PurchaseUnitID != "" {
-		updateFields = append(updateFields, "unit_of_measure = ?")
+		updateFields = append(updateFields, "purchase_unit_id = ?")
 		updateArgs = append(updateArgs, *updates.PurchaseUnitID)
 	}
 
@@ -2615,7 +2615,7 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 	}
 
 	// Déterminer les valeurs optionnelles d'achat
-	var purchaseCost interface{} = nil
+	var purchaseCost interface{} = 0
 	if p.PurchaseCost != nil {
 		purchaseCost = *p.PurchaseCost
 	}
@@ -2625,10 +2625,11 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		purchaseCostQty = *p.PurchaseCostQty
 	}
 
-	// Déterminer l'unité de mesure d'achat (par défaut = unit_id de vente)
-	unitOfMeasure := p.UnitID
+	// Conserver l'unité de vente et déduire séparément l'unité d'achat.
+	saleUnitOfMeasure := p.UnitID
+	purchaseUnitID := p.UnitID
 	if p.PurchaseUnitID != nil && *p.PurchaseUnitID != "" {
-		unitOfMeasure = p.PurchaseUnitID
+		purchaseUnitID = p.PurchaseUnitID
 	}
 
 	// Insérer le composant
@@ -2639,11 +2640,12 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 			category_id,
 			component_price,
 			unit_of_measure,
+			purchase_unit_id,
 			purchase_price,
 			purchase_price_quantity,
 			enabled,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
 	`
 
 	res, err := db.ExecContext(
@@ -2653,7 +2655,8 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		name,
 		p.CategoryID,
 		p.Price,
-		unitOfMeasure,
+		saleUnitOfMeasure,
+		purchaseUnitID,
 		purchaseCost,
 		purchaseCostQty,
 	)

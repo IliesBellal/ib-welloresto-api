@@ -51,6 +51,9 @@ func (c *AppConfig) validate() {
 	if c.Google.APIKey == "" {
 		log.Fatal("GOOGLE_API_KEY is not set")
 	}
+	if c.R2.PrivateBucket == "" {
+		log.Fatal("R2_PRIVATE_BUCKET is not set")
+	}
 	if err := c.AI.Validate(); err != nil {
 		log.Fatal(err.Error())
 	}

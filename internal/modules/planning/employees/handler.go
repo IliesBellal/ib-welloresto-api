@@ -1,0 +1,90 @@
+package employees
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"welloresto-api/internal/models"
+)
+
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
+	activeRaw := strings.TrimSpace(r.URL.Query().Get("active"))
+	var active *bool
+	if activeRaw != "" {
+		parsed := activeRaw == "1" || strings.EqualFold(activeRaw, "true")
+		active = &parsed
+	}
+	items, err := h.svc.ListEmployees(r.Context(), EmployeeListFilters{
+		Search:       strings.TrimSpace(r.URL.Query().Get("search")),
+		Active:       active,
+		Position:     strings.TrimSpace(r.URL.Query().Get("position")),
+		ContractType: strings.TrimSpace(r.URL.Query().Get("contract")),
+	})
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_employees", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_employees", map[string]interface{}{"status": "success", "employees": items})
+}
+
+func (h *Handler) GetEmployee(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	item, err := h.svc.GetEmployee(r.Context(), employeeID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "get_employee", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "get_employee", map[string]interface{}{"status": "success", "employee": item})
+}
+
+func (h *Handler) CreateEmployee(w http.ResponseWriter, r *http.Request) {
+	var req EmployeeCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "create_employee", models.ErrInvalidRequestBody)
+		return
+	}
+	item, err := h.svc.CreateEmployee(r.Context(), req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "create_employee", err)
+		return
+	}
+	models.SendJSON(w, http.StatusCreated, "planning", "create_employee", map[string]interface{}{"status": "success", "employee": item})
+}
+
+func (h *Handler) UpdateEmployee(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req EmployeeUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "update_employee", models.ErrInvalidRequestBody)
+		return
+	}
+	if err := RequireAtLeastOneEmployeeField(req); err != nil {
+		models.SendErrorJSON(w, "planning", "update_employee", models.ErrValidationError)
+		return
+	}
+	item, err := h.svc.UpdateEmployee(r.Context(), employeeID, req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "update_employee", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "update_employee", map[string]interface{}{"status": "success", "employee": item})
+}
+
+func (h *Handler) DeleteEmployee(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if err := h.svc.DeleteEmployee(r.Context(), employeeID); err != nil {
+		models.SendErrorJSON(w, "planning", "delete_employee", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "delete_employee", map[string]interface{}{"status": "success"})
+}

@@ -41,6 +41,7 @@ import (
 	notificationModule "welloresto-api/internal/modules/notification"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
+	planningModule "welloresto-api/internal/modules/planning"
 	posModule "welloresto-api/internal/modules/pos"
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
@@ -113,6 +114,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		log.Error("Erreur lors de l'initialisation du client R2", zap.Error(err))
 	} else {
 		log.Info("R2 client connecté avec succès")
+	}
+	r2PrivateClient, err := r2.NewClient(r2.UploadConfig{
+		AccessKeyID:     cfg.R2.AccessKeyID,
+		SecretAccessKey: cfg.R2.SecretAccessKey,
+		Endpoint:        cfg.R2.Endpoint,
+		Bucket:          cfg.R2.PrivateBucket,
+		PublicBaseURL:   cfg.R2.PublicBaseURL,
+	})
+	if err != nil {
+		log.Error("Erreur lors de l'initialisation du client R2 privé", zap.Error(err))
+	} else {
+		log.Info("R2 private client connecté avec succès")
 	}
 
 	// =============================
@@ -353,6 +366,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	haccpRepo := haccpModule.NewRepository(mysqlDB)
 	haccpService := haccpModule.NewService(haccpRepo, auditService, mysqlDB, r2Client)
 
+	// ---- Planning ----
+	planningRepo := planningModule.NewRepository(mysqlDB)
+	planningService := planningModule.NewService(planningRepo, r2PrivateClient)
+
 	// =============================
 	//  HANDLERS
 	// =============================
@@ -366,6 +383,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	discountsH := discountsModule.NewHandler(discountsService)
 	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
 	haccpH := haccpModule.NewHandler(haccpService)
+	planningH := planningModule.NewHandler(planningService)
 	ordersH := ordersModule.NewOrdersHandler(ordersService, upsellService)
 	ordersLifeCycleH := ordersLCModule.NewOrdersLifeCycleHandler(ordersLifeCycleService, deliverySessionsService, notificationService)
 	deliverySessionsH := deliverysessionsModule.NewDeliverySessionsHandler(deliverySessionsService)
@@ -694,6 +712,58 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/cleaning-sessions", haccpH.CreateCleaningSession)
 
 		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)
+	})
+
+	// --- PLANNING ---
+	r.Route("/planning", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/settings", planningH.GetSettings)
+		r.Put("/settings", planningH.UpdateSettings)
+
+		r.Get("/contract-types", planningH.ListContractTypes)
+		r.Get("/time-tracking-modes", planningH.ListTimeTrackingModes)
+		r.Get("/event-types", planningH.ListPlanningEventTypes)
+
+		r.Get("/employees", planningH.ListEmployees)
+		r.Post("/employees", planningH.CreateEmployee)
+		r.Get("/employees/{id}", planningH.GetEmployee)
+		r.Patch("/employees/{id}", planningH.UpdateEmployee)
+		r.Delete("/employees/{id}", planningH.DeleteEmployee)
+		r.Get("/employees/{id}/documents", planningH.ListEmployeeDocuments)
+		r.Post("/employees/{id}/documents", planningH.CreateEmployeeDocument)
+		r.Get("/employees/{id}/time-entries", planningH.ListEmployeeTimeEntries)
+		r.Get("/employees/{id}/time-entries/current", planningH.GetCurrentEmployeeTimeEntry)
+		r.Post("/employees/{id}/time-entries/start", planningH.StartEmployeeTimeEntry)
+		r.Post("/employees/{id}/time-entries/stop", planningH.StopEmployeeTimeEntry)
+		r.Route("/uploads", func(r chi.Router) {
+			r.Post("/employee-documents", planningH.UploadEmployeeDocument)
+		})
+		r.Get("/employees/{id}/documents/{document_id}/download", planningH.GetEmployeeDocumentDownloadURL)
+		r.Delete("/employees/{id}/documents/{document_id}", planningH.DeleteEmployeeDocument)
+
+		r.Get("/weeks", planningH.ListPlanningWeeks)
+		r.Post("/weeks", planningH.CreatePlanningWeek)
+		r.Get("/weeks/{id}", planningH.GetPlanningWeek)
+		r.Patch("/weeks/{id}", planningH.UpdatePlanningWeek)
+		r.Delete("/weeks/{id}", planningH.DeletePlanningWeek)
+		r.Get("/weeks/{id}/shifts", planningH.ListPlanningShifts)
+		r.Post("/weeks/{id}/shifts", planningH.CreatePlanningShift)
+		r.Get("/shifts/{id}", planningH.GetPlanningShift)
+		r.Patch("/shifts/{id}", planningH.UpdatePlanningShift)
+		r.Delete("/shifts/{id}", planningH.DeletePlanningShift)
+
+		r.Get("/leave-requests", planningH.ListPlanningLeaveRequests)
+		r.Post("/leave-requests", planningH.CreatePlanningLeaveRequest)
+		r.Get("/leave-requests/{id}", planningH.GetPlanningLeaveRequest)
+		r.Patch("/leave-requests/{id}", planningH.UpdatePlanningLeaveRequest)
+		r.Delete("/leave-requests/{id}", planningH.DeletePlanningLeaveRequest)
+
+		r.Get("/shift-swap-requests", planningH.ListPlanningShiftSwapRequests)
+		r.Post("/shift-swap-requests", planningH.CreatePlanningShiftSwapRequest)
+		r.Get("/shift-swap-requests/{id}", planningH.GetPlanningShiftSwapRequest)
+		r.Patch("/shift-swap-requests/{id}", planningH.UpdatePlanningShiftSwapRequest)
+		r.Delete("/shift-swap-requests/{id}", planningH.DeletePlanningShiftSwapRequest)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---

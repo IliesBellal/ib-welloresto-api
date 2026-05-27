@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -16,6 +17,7 @@ import (
 
 type Client struct {
 	s3Client      *s3.Client
+	presignClient *s3.PresignClient
 	bucket        string
 	publicBaseURL string
 }
@@ -56,6 +58,7 @@ func NewClient(cfg UploadConfig) (*Client, error) {
 
 	return &Client{
 		s3Client:      s3Client,
+		presignClient: s3.NewPresignClient(s3Client),
 		bucket:        cfg.Bucket,
 		publicBaseURL: cfg.PublicBaseURL,
 	}, nil
@@ -79,6 +82,38 @@ func (c *Client) UploadFile(ctx context.Context, key string, file io.Reader, con
 	publicURL := strings.TrimRight(c.publicBaseURL, "/") + "/" + key
 
 	return publicURL, nil
+}
+
+// UploadPrivateFile uploade un fichier vers un bucket privé R2.
+func (c *Client) UploadPrivateFile(ctx context.Context, key string, file io.Reader, contentType string) (string, error) {
+	_, err := c.s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload private file to R2: %w", err)
+	}
+
+	return c.GenerateSignedURL(ctx, key, time.Hour)
+}
+
+// GenerateSignedURL retourne une URL signée de lecture pour un objet privé.
+func (c *Client) GenerateSignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if c.presignClient == nil {
+		return "", fmt.Errorf("presign client not initialized")
+	}
+	resp, err := c.presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = ttl
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to presign R2 url: %w", err)
+	}
+	return resp.URL, nil
 }
 
 // DeleteFile supprime un fichier de R2

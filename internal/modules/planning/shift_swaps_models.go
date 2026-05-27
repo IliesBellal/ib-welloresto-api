@@ -1,0 +1,8 @@
+package planning
+
+import swapspkg "welloresto-api/internal/modules/planning/swaps"
+
+type PlanningShiftSwapRequest = swapspkg.PlanningShiftSwapRequest
+type PlanningShiftSwapRequestListFilters = swapspkg.PlanningShiftSwapRequestListFilters
+type PlanningShiftSwapRequestCreateRequest = swapspkg.PlanningShiftSwapRequestCreateRequest
+type PlanningShiftSwapRequestUpdateRequest = swapspkg.PlanningShiftSwapRequestUpdateRequest

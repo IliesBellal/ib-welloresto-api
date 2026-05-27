@@ -1,0 +1,8 @@
+package planning
+
+import leavepkg "welloresto-api/internal/modules/planning/leave"
+
+type PlanningLeaveRequest = leavepkg.PlanningLeaveRequest
+type PlanningLeaveRequestListFilters = leavepkg.PlanningLeaveRequestListFilters
+type PlanningLeaveRequestCreateRequest = leavepkg.PlanningLeaveRequestCreateRequest
+type PlanningLeaveRequestUpdateRequest = leavepkg.PlanningLeaveRequestUpdateRequest

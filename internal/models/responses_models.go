@@ -206,6 +206,44 @@ var (
 
 	ErrTranslationLanguagesLimitReached = errors.New("translation_languages_limit_reached")
 
+	ErrPlanningSettingsNotFound                = errors.New("planning_settings_not_found")
+	ErrPlanningEmployeeNotFound                = errors.New("planning_employee_not_found")
+	ErrPlanningEmployeeNameRequired            = errors.New("planning_employee_name_required")
+	ErrPlanningEmployeeLastNameRequired        = errors.New("planning_employee_last_name_required")
+	ErrPlanningEmployeePositionRequired        = errors.New("planning_employee_position_required")
+	ErrPlanningEmployeeContractTypeInvalid     = errors.New("planning_employee_contract_type_invalid")
+	ErrPlanningEmployeeTimeTrackingModeInvalid = errors.New("planning_employee_time_tracking_mode_invalid")
+	ErrPlanningEmployeeUserLinkInvalid         = errors.New("planning_employee_user_link_invalid")
+	ErrPlanningEmployeeDocumentNotFound        = errors.New("planning_employee_document_not_found")
+	ErrPlanningEmployeeDocumentTypeInvalid     = errors.New("planning_employee_document_type_invalid")
+	ErrPlanningEmployeeDocumentNameRequired    = errors.New("planning_employee_document_name_required")
+	ErrPlanningEmployeeDocumentFileRequired    = errors.New("planning_employee_document_file_required")
+	ErrPlanningEmployeeDocumentUploadFailed    = errors.New("planning_employee_document_upload_failed")
+	ErrPlanningEmployeeDocumentUrlFailed       = errors.New("planning_employee_document_url_failed")
+	ErrPlanningWeekNotFound                    = errors.New("planning_week_not_found")
+	ErrPlanningShiftNotFound                   = errors.New("planning_shift_not_found")
+	ErrPlanningShiftConflict                   = errors.New("planning_shift_conflict")
+	ErrPlanningShiftInvalidRange               = errors.New("planning_shift_invalid_range")
+	ErrPlanningTimeEntryNotFound               = errors.New("planning_time_entry_not_found")
+	ErrPlanningTimeEntryAlreadyOpen            = errors.New("planning_time_entry_already_open")
+	ErrPlanningTimeEntryNotOpen                = errors.New("planning_time_entry_not_open")
+	ErrPlanningTimeEntryInvalidRange           = errors.New("planning_time_entry_invalid_range")
+	ErrPlanningTimeEntryModeInvalid            = errors.New("planning_time_entry_mode_invalid")
+	ErrPlanningTimeEntryShiftInvalid           = errors.New("planning_time_entry_shift_invalid")
+	ErrPlanningLeaveRequestNotFound            = errors.New("planning_leave_request_not_found")
+	ErrPlanningLeaveTypeInvalid                = errors.New("planning_leave_type_invalid")
+	ErrPlanningLeaveStatusInvalid              = errors.New("planning_leave_status_invalid")
+	ErrPlanningLeaveInvalidRange               = errors.New("planning_leave_invalid_range")
+	ErrPlanningLeaveShiftConflict              = errors.New("planning_leave_shift_conflict")
+	ErrPlanningShiftSwapRequestNotFound        = errors.New("planning_shift_swap_request_not_found")
+	ErrPlanningShiftSwapStatusInvalid          = errors.New("planning_shift_swap_status_invalid")
+	ErrPlanningShiftSwapInvalid                = errors.New("planning_shift_swap_invalid")
+	ErrPlanningShiftSwapConflict               = errors.New("planning_shift_swap_conflict")
+	ErrPlanningLaborRuleNotFound               = errors.New("planning_labor_rule_not_found")
+	ErrPlanningInvalidCountryCode              = errors.New("planning_invalid_country_code")
+	ErrPlanningInvalidDate                     = errors.New("planning_invalid_date")
+	ErrPlanningInvalidHours                    = errors.New("planning_invalid_hours")
+
 	ErrRedisNotAvailable = errors.New("not_available")
 )
 
@@ -301,6 +339,191 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "translation_languages_limit_reached"
 		errorMsg = "Maximum of 4 translation languages per merchant reached"
+
+	case errors.Is(err, ErrPlanningSettingsNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_settings_not_found"
+		errorMsg = "Planning settings not found"
+
+	case errors.Is(err, ErrPlanningEmployeeNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_employee_not_found"
+		errorMsg = "Planning employee not found"
+
+	case errors.Is(err, ErrPlanningEmployeeNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_name_required"
+		errorMsg = "The employee first name is required."
+
+	case errors.Is(err, ErrPlanningEmployeeLastNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_last_name_required"
+		errorMsg = "The employee last name is required."
+
+	case errors.Is(err, ErrPlanningEmployeePositionRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_position_required"
+		errorMsg = "The employee position is required."
+
+	case errors.Is(err, ErrPlanningEmployeeContractTypeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_contract_type_invalid"
+		errorMsg = "The employee contract type is invalid."
+
+	case errors.Is(err, ErrPlanningEmployeeTimeTrackingModeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_time_tracking_mode_invalid"
+		errorMsg = "The employee time tracking mode is invalid."
+
+	case errors.Is(err, ErrPlanningEmployeeUserLinkInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_user_link_invalid"
+		errorMsg = "The linked user is invalid."
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_employee_document_not_found"
+		errorMsg = "Planning employee document not found"
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentTypeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_document_type_invalid"
+		errorMsg = "The employee document type is invalid."
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_document_name_required"
+		errorMsg = "The employee document name is required."
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentFileRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_document_file_required"
+		errorMsg = "The employee document file is required."
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentUploadFailed):
+		status = http.StatusInternalServerError
+		errorStatus = "planning_employee_document_upload_failed"
+		errorMsg = "The employee document upload failed."
+
+	case errors.Is(err, ErrPlanningEmployeeDocumentUrlFailed):
+		status = http.StatusInternalServerError
+		errorStatus = "planning_employee_document_url_failed"
+		errorMsg = "The employee document URL could not be generated."
+
+	case errors.Is(err, ErrPlanningWeekNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_week_not_found"
+		errorMsg = "Planning week not found"
+
+	case errors.Is(err, ErrPlanningShiftNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_shift_not_found"
+		errorMsg = "Planning shift not found"
+
+	case errors.Is(err, ErrPlanningShiftConflict):
+		status = http.StatusConflict
+		errorStatus = "planning_shift_conflict"
+		errorMsg = "The shift conflicts with an existing assignment."
+
+	case errors.Is(err, ErrPlanningShiftInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_invalid_range"
+		errorMsg = "The shift time range is invalid."
+
+	case errors.Is(err, ErrPlanningTimeEntryNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_time_entry_not_found"
+		errorMsg = "Planning time entry not found"
+
+	case errors.Is(err, ErrPlanningTimeEntryAlreadyOpen):
+		status = http.StatusConflict
+		errorStatus = "planning_time_entry_already_open"
+		errorMsg = "A time entry is already open for this employee."
+
+	case errors.Is(err, ErrPlanningTimeEntryNotOpen):
+		status = http.StatusConflict
+		errorStatus = "planning_time_entry_not_open"
+		errorMsg = "No open time entry was found for this employee."
+
+	case errors.Is(err, ErrPlanningTimeEntryInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "planning_time_entry_invalid_range"
+		errorMsg = "The time entry range is invalid."
+
+	case errors.Is(err, ErrPlanningTimeEntryModeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_time_entry_mode_invalid"
+		errorMsg = "The time entry mode is invalid."
+
+	case errors.Is(err, ErrPlanningTimeEntryShiftInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_time_entry_shift_invalid"
+		errorMsg = "The linked shift is invalid for this time entry."
+
+	case errors.Is(err, ErrPlanningLeaveRequestNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_leave_request_not_found"
+		errorMsg = "Planning leave request not found"
+
+	case errors.Is(err, ErrPlanningLeaveTypeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_leave_type_invalid"
+		errorMsg = "The leave type is invalid."
+
+	case errors.Is(err, ErrPlanningLeaveStatusInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_leave_status_invalid"
+		errorMsg = "The leave request status is invalid."
+
+	case errors.Is(err, ErrPlanningLeaveInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "planning_leave_invalid_range"
+		errorMsg = "The leave date range is invalid."
+
+	case errors.Is(err, ErrPlanningLeaveShiftConflict):
+		status = http.StatusConflict
+		errorStatus = "planning_leave_shift_conflict"
+		errorMsg = "The leave overlaps assigned shifts that must be resolved first."
+
+	case errors.Is(err, ErrPlanningShiftSwapRequestNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_shift_swap_request_not_found"
+		errorMsg = "Planning shift swap request not found"
+
+	case errors.Is(err, ErrPlanningShiftSwapStatusInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_swap_status_invalid"
+		errorMsg = "The shift swap request status is invalid."
+
+	case errors.Is(err, ErrPlanningShiftSwapInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_swap_invalid"
+		errorMsg = "The shift swap request is invalid."
+
+	case errors.Is(err, ErrPlanningShiftSwapConflict):
+		status = http.StatusConflict
+		errorStatus = "planning_shift_swap_conflict"
+		errorMsg = "The shift swap would create a scheduling conflict."
+
+	case errors.Is(err, ErrPlanningLaborRuleNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_labor_rule_not_found"
+		errorMsg = "Planning labor rule not found"
+
+	case errors.Is(err, ErrPlanningInvalidCountryCode):
+		status = http.StatusBadRequest
+		errorStatus = "planning_invalid_country_code"
+		errorMsg = "The country code is invalid."
+
+	case errors.Is(err, ErrPlanningInvalidDate):
+		status = http.StatusBadRequest
+		errorStatus = "planning_invalid_date"
+		errorMsg = "The date is invalid."
+
+	case errors.Is(err, ErrPlanningInvalidHours):
+		status = http.StatusBadRequest
+		errorStatus = "planning_invalid_hours"
+		errorMsg = "The hours value is invalid."
 
 	case errors.Is(err, ErrOTPMismatch):
 		status = http.StatusUnauthorized
