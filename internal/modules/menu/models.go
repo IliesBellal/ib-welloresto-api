@@ -171,10 +171,10 @@ type AvailabilityResponse struct {
 }
 
 type Unit struct {
-	ID         string           `json:"id"`
-	Name       string           `json:"name"`
-	ShortName  string           `json:"short_name,omitempty"`
-	Conversion []UnitConversion `json:"conversion"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	ShortName   string           `json:"short_name,omitempty"`
+	Conversions []UnitConversion `json:"conversions"`
 }
 
 type UnitConversion struct {

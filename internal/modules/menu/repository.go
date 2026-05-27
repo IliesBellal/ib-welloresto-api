@@ -128,7 +128,7 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 		if err := rows.Scan(&u.ID, &u.Name, &u.ShortName); err != nil {
 			return nil, err
 		}
-		u.Conversion = []UnitConversion{{
+		u.Conversions = []UnitConversion{{
 			ToUnitID:        u.ID,
 			ToUnitName:      u.Name,
 			ToUnitShortName: u.ShortName,
@@ -172,7 +172,7 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 		// En base, ratio convertit de l'unité cible vers l'unité source.
 		// L'API expose donc un multiplicateur direct: source * multiplier = cible.
 		if unit, ok := unitsMap[from]; ok {
-			unit.Conversion = append(unit.Conversion, UnitConversion{
+			unit.Conversions = append(unit.Conversions, UnitConversion{
 				ToUnitID:        to,
 				ToUnitName:      toName,
 				ToUnitShortName: toShortName,
