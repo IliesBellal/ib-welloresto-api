@@ -106,12 +106,12 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 	db := dbutils.GetDB(ctx, r.database)
 
 	// 1. Récupérer les unités et leurs descriptions (en français par défaut ici)
-	// On utilise CAST ou on scanne directement en string car l'ID est un int en DB mais voulu en string
 	unitsQuery := `
-		SELECT CAST(u.id AS CHAR) as id, d.uom_desc 
+		SELECT CAST(u.id AS CHAR) as id, d.uom_desc, COALESCE(d.uom_short_desc, '') as uom_short_desc
 		FROM unit_of_measure u
 		JOIN unit_of_measure_desc d ON u.id = d.id
-		WHERE d.lang = 'FR'`
+		WHERE d.lang = 'FR'
+		ORDER BY u.id`
 
 	rows, err := db.QueryContext(ctx, unitsQuery)
 	if err != nil {
@@ -125,33 +125,63 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 
 	for rows.Next() {
 		var u Unit
-		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.ShortName); err != nil {
 			return nil, err
 		}
-		u.CompatibleWith = []string{}
+		u.Conversion = []UnitConversion{{
+			ToUnitID:        u.ID,
+			ToUnitName:      u.Name,
+			ToUnitShortName: u.ShortName,
+			Multiplier:      1,
+		}}
 		unitsMap[u.ID] = &u
 		unitOrder = append(unitOrder, u.ID)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	// 2. Récupérer les règles de compatibilité
-	// On considère que si id_from -> id_to existe, ils sont compatibles
-	compatQuery := `SELECT CAST(id_from AS CHAR), CAST(id_to AS CHAR) FROM unit_of_measure_convert`
+	// 2. Récupérer les conversions dans un format directement exploitable par les applications.
+	conversionQuery := `
+		SELECT
+			CAST(conv.id_from AS CHAR),
+			CAST(conv.id_to AS CHAR),
+			COALESCE(target.uom_desc, ''),
+			COALESCE(target.uom_short_desc, ''),
+			conv.ratio
+		FROM unit_of_measure_convert conv
+		JOIN unit_of_measure_desc target ON target.id = conv.id_to AND target.lang = 'FR'
+		ORDER BY conv.id_from, conv.id_to`
 
-	compatRows, err := db.QueryContext(ctx, compatQuery)
+	compatRows, err := db.QueryContext(ctx, conversionQuery)
 	if err != nil {
 		return nil, err
 	}
 	defer compatRows.Close()
 
 	for compatRows.Next() {
-		var from, to string
-		if err := compatRows.Scan(&from, &to); err != nil {
+		var from, to, toName, toShortName string
+		var ratio float64
+		if err := compatRows.Scan(&from, &to, &toName, &toShortName, &ratio); err != nil {
 			return nil, err
 		}
-		// Si l'unité existe dans notre map, on ajoute la compatibilité
-		if unit, ok := unitsMap[from]; ok {
-			unit.CompatibleWith = append(unit.CompatibleWith, to)
+		if ratio == 0 {
+			return nil, fmt.Errorf("invalid unit conversion ratio for %s -> %s", from, to)
 		}
+
+		// En base, ratio convertit de l'unité cible vers l'unité source.
+		// L'API expose donc un multiplicateur direct: source * multiplier = cible.
+		if unit, ok := unitsMap[from]; ok {
+			unit.Conversion = append(unit.Conversion, UnitConversion{
+				ToUnitID:        to,
+				ToUnitName:      toName,
+				ToUnitShortName: toShortName,
+				Multiplier:      1 / ratio,
+			})
+		}
+	}
+	if err := compatRows.Err(); err != nil {
+		return nil, err
 	}
 
 	// 3. Convertir la map en slice pour le retour

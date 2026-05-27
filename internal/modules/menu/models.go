@@ -171,15 +171,17 @@ type AvailabilityResponse struct {
 }
 
 type Unit struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	CompatibleWith []string `json:"compatible_with"`
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	ShortName  string           `json:"short_name,omitempty"`
+	Conversion []UnitConversion `json:"conversion"`
 }
 
-// UnitConversion est utilisé uniquement en interne pour le mapping
 type UnitConversion struct {
-	IDFrom string
-	IDTo   string
+	ToUnitID        string  `json:"to_unit_id"`
+	ToUnitName      string  `json:"to_unit_name"`
+	ToUnitShortName string  `json:"to_unit_short_name,omitempty"`
+	Multiplier      float64 `json:"multiplier"`
 }
 
 // Temporaire, à remplacer par les vraies struct
