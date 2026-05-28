@@ -57,6 +57,8 @@ type EmployeeListFilters struct {
 	Active       *bool
 	PositionID   string
 	ContractType string
+	Page         int
+	PageSize     int
 }
 
 type EmployeeCreateRequest struct {

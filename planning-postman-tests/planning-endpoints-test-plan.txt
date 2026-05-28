@@ -15,10 +15,12 @@ PREREQUISITES
    - migrations/017_planning_time_entries.sql
    - migrations/018_planning_leave_and_swaps.sql
   - migrations/022_planning_positions.sql
+  - migrations/023_planning_shift_swap_approval_mode.sql
 
 2. Prepare Postman variables:
    - {{baseUrl}}
    - {{token}}
+  - {{tokenTargetEmployee}} optional, only if you test target_employee_required with a user linked to the target employee
   - {{positionIdServeuse}}
   - {{positionIdCuisinier}}
   - {{positionIdManager}}
@@ -59,6 +61,7 @@ Expected:
 - HTTP 200
 - payload key: settings
 - settings.labor_country_code should default to FR on a fresh merchant
+- settings.shift_swap_approval_mode should default to manager_required
 
 1.2 PUT /planning/settings
 Happy path payload:
@@ -71,12 +74,21 @@ Happy path payload:
   "night_shift_multiplier": 1.5,
   "holiday_multiplier": 2,
   "allow_override_warnings": true,
-  "attendance_source": "pointage"
+  "attendance_source": "pointage",
+  "shift_swap_approval_mode": "manager_required"
 }
 Expected:
 - HTTP 200
 - payload key: settings
 - returned settings reflect the submitted values
+
+Alternative payload to test target-employee validation mode:
+{
+  "shift_swap_approval_mode": "target_employee_required"
+}
+Expected:
+- HTTP 200
+- returned settings.shift_swap_approval_mode should be target_employee_required
 
 Validation payload to test:
 {
@@ -250,6 +262,7 @@ Expected:
 3.4 GET /planning/employees
 Try:
 - /planning/employees
+- /planning/employees?page=1&page_size=20
 - /planning/employees?search=Alice
 - /planning/employees?active=true
 - /planning/employees?position_id={{positionIdServeuse}}
@@ -257,6 +270,7 @@ Try:
 Expected:
 - HTTP 200
 - payload key: employees
+- payload key: pagination
 - employee.position_id should match the chosen position
 - employee.position should contain the resolved label
 
@@ -344,6 +358,7 @@ Expected:
 Expected:
 - HTTP 200
 - payload key: documents
+- payload key: pagination
 - document list contains {{documentId}}
 
 4.6 GET /planning/employees/{{employeeId}}/documents/{{documentId}}/download
@@ -578,6 +593,7 @@ Expected:
 Expected:
 - HTTP 200
 - payload key: time_entries
+- payload key: pagination
 
 7.3.b PUT /planning/settings
 Precondition payload for time entries:
@@ -656,6 +672,7 @@ Expected:
 Expected:
 - HTTP 200
 - payload key: leave_requests
+- payload key: pagination
 
 8.2 POST /planning/leave-requests
 Happy path payload:
@@ -735,10 +752,12 @@ Expected:
 8.9 GET /planning/leave-requests?employee_id={{employeeId}}
 Expected:
 - HTTP 200
+- payload key: pagination
 
 8.10 GET /planning/leave-requests?status=approved
 Expected:
 - HTTP 200
+- payload key: pagination
 
 8.11 DELETE /planning/leave-requests/{{leaveRequestId}}
 Expected:
@@ -752,6 +771,7 @@ Expected:
 Expected:
 - HTTP 200
 - payload key: shift_swap_requests
+- payload key: pagination
 
 9.2 Preconditions for swap tests
 - Need two active employees
@@ -795,6 +815,8 @@ Approve payload:
   "status": "approved",
   "manager_note": "Echange valide"
 }
+Precondition:
+- settings.shift_swap_approval_mode = manager_required
 Expected:
 - HTTP 200
 - payload key: shift_swap_request
@@ -836,16 +858,28 @@ Expected:
 9.11 GET /planning/shift-swap-requests?requester_employee_id={{employeeId}}
 Expected:
 - HTTP 200
+- payload key: pagination
 
 9.12 GET /planning/shift-swap-requests?target_employee_id={{employeeId2}}
 Expected:
 - HTTP 200
+- payload key: pagination
 
 9.13 GET /planning/shift-swap-requests?status=approved
 Expected:
 - HTTP 200
+- payload key: pagination
 
-9.14 DELETE /planning/shift-swap-requests/{{swapRequestId}}
+9.14 Optional target_employee_required validation flow
+Steps:
+- PUT /planning/settings with {"shift_swap_approval_mode": "target_employee_required"}
+- create a fresh pending swap request
+- call PATCH /planning/shift-swap-requests/{new_id} with Authorization: Bearer {{tokenTargetEmployee}} and payload {"status": "approved"}
+Expected:
+- HTTP 200 only when {{tokenTargetEmployee}} belongs to the user linked to target_employee_id
+- the same PATCH with the default manager token should return HTTP 403 with error status planning_shift_swap_approval_forbidden
+
+9.15 DELETE /planning/shift-swap-requests/{{swapRequestId}}
 Expected:
 - HTTP 200
 
@@ -893,3 +927,4 @@ NOTES
 - If you need a clean test pass, keep one Postman collection run for happy paths only, and a second one for validation and regression cases.
 - For file upload tests, prefer a small PDF first, then one JPG, then one invalid MIME case.
 - For time entry and swap tests, be careful to recreate fresh shifts when previous scenarios intentionally delete weeks or change assignments.
+- All paginated planning endpoints now accept page and page_size, and successful responses include a pagination block with total_items, total_pages, current_page and limit.

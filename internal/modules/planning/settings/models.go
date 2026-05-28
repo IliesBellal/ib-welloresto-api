@@ -6,8 +6,10 @@ import (
 )
 
 const (
-	AttendanceSourcePointage = "pointage"
-	AttendanceSourcePlanning = "planning"
+	AttendanceSourcePointage                    = "pointage"
+	AttendanceSourcePlanning                    = "planning"
+	ShiftSwapApprovalModeManagerRequired        = "manager_required"
+	ShiftSwapApprovalModeTargetEmployeeRequired = "target_employee_required"
 )
 
 func NormalizeAttendanceSource(source string) string {
@@ -17,6 +19,19 @@ func NormalizeAttendanceSource(source string) string {
 func IsValidAttendanceSource(source string) bool {
 	switch NormalizeAttendanceSource(source) {
 	case AttendanceSourcePointage, AttendanceSourcePlanning:
+		return true
+	default:
+		return false
+	}
+}
+
+func NormalizeShiftSwapApprovalMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func IsValidShiftSwapApprovalMode(mode string) bool {
+	switch NormalizeShiftSwapApprovalMode(mode) {
+	case ShiftSwapApprovalModeManagerRequired, ShiftSwapApprovalModeTargetEmployeeRequired:
 		return true
 	default:
 		return false
@@ -35,6 +50,7 @@ type PlanningSettings struct {
 	HolidayMultiplier     float64   `json:"holiday_multiplier"`
 	AllowOverrideWarnings bool      `json:"allow_override_warnings"`
 	AttendanceSource      string    `json:"attendance_source"`
+	ShiftSwapApprovalMode string    `json:"shift_swap_approval_mode"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
@@ -49,6 +65,7 @@ type PlanningSettingsUpdateRequest struct {
 	HolidayMultiplier     *float64 `json:"holiday_multiplier,omitempty"`
 	AllowOverrideWarnings *bool    `json:"allow_override_warnings,omitempty"`
 	AttendanceSource      *string  `json:"attendance_source,omitempty"`
+	ShiftSwapApprovalMode *string  `json:"shift_swap_approval_mode,omitempty"`
 }
 
 type PlanningHoliday struct {

@@ -30,6 +30,11 @@ type EmployeeDocumentUploadResponse struct {
 	FileName    string `json:"file_name"`
 }
 
+type EmployeeDocumentListFilters struct {
+	Page     int
+	PageSize int
+}
+
 var allowedDocumentTypes = map[string]struct{}{
 	"contract": {},
 	"id":       {},

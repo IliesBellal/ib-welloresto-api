@@ -8,6 +8,7 @@ import (
 
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
 
 type Service struct {
@@ -18,12 +19,19 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) ListEmployees(ctx context.Context, filters EmployeeListFilters) ([]Employee, error) {
+func (s *Service) ListEmployees(ctx context.Context, filters EmployeeListFilters) ([]Employee, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
-	return s.repo.ListEmployees(ctx, user.MerchantID, filters)
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	items, totalItems, err := s.repo.ListEmployees(ctx, user.MerchantID, filters)
+	if err != nil {
+		return nil, models.PaginationMetadata{}, err
+	}
+	return items, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) GetEmployee(ctx context.Context, employeeID string) (*Employee, error) {

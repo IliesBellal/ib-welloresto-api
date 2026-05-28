@@ -23,6 +23,8 @@ type PlanningLeaveRequest struct {
 type PlanningLeaveRequestListFilters struct {
 	EmployeeID string
 	Status     string
+	Page       int
+	PageSize   int
 }
 
 type PlanningLeaveRequestCreateRequest struct {

@@ -46,6 +46,6 @@ func NewService(repo *PlanningRepository, privateR2 *r2.Client) *PlanningService
 		ScheduleService:      scheduleService,
 		TimeEntriesService:   timeentriespkg.NewService(repo.TimeEntriesRepository, repo.EmployeesRepository, repo.ScheduleRepository, repo.SettingsRepository),
 		LeaveRequestsService: leavepkg.NewService(repo.LeaveRepository, repo.EmployeesRepository),
-		ShiftSwapsService:    swapspkg.NewService(repo.ShiftSwapsRepository, repo.EmployeesRepository, repo.ScheduleRepository, scheduleService),
+		ShiftSwapsService:    swapspkg.NewService(repo.ShiftSwapsRepository, repo.EmployeesRepository, repo.ScheduleRepository, scheduleService, repo.SettingsRepository),
 	}
 }

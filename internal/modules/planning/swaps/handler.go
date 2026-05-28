@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"welloresto-api/internal/models"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -18,16 +20,23 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) ListPlanningShiftSwapRequests(w http.ResponseWriter, r *http.Request) {
-	items, err := h.svc.ListPlanningShiftSwapRequests(r.Context(), PlanningShiftSwapRequestListFilters{
+	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_shift_swap_requests", err)
+		return
+	}
+	items, metadata, err := h.svc.ListPlanningShiftSwapRequests(r.Context(), PlanningShiftSwapRequestListFilters{
 		RequesterEmployeeID: strings.TrimSpace(r.URL.Query().Get("requester_employee_id")),
 		TargetEmployeeID:    strings.TrimSpace(r.URL.Query().Get("target_employee_id")),
 		Status:              strings.TrimSpace(r.URL.Query().Get("status")),
+		Page:                pagination.Page,
+		PageSize:            pagination.PageSize,
 	})
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_planning_shift_swap_requests", err)
 		return
 	}
-	models.SendJSON(w, http.StatusOK, "planning", "list_planning_shift_swap_requests", map[string]interface{}{"status": "success", "shift_swap_requests": items})
+	models.SendJSON(w, http.StatusOK, "planning", "list_planning_shift_swap_requests", map[string]interface{}{"status": "success", "shift_swap_requests": items, "pagination": metadata})
 }
 
 func (h *Handler) GetPlanningShiftSwapRequest(w http.ResponseWriter, r *http.Request) {

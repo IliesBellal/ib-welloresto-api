@@ -13,6 +13,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
 
 const EmployeeDocumentMaxSize = 10 << 20
@@ -61,25 +62,28 @@ func (s *Service) UploadEmployeeDocument(ctx context.Context, fileHeader *multip
 	}, nil
 }
 
-func (s *Service) ListEmployeeDocuments(ctx context.Context, employeeID string) ([]EmployeeDocument, error) {
+func (s *Service) ListEmployeeDocuments(ctx context.Context, employeeID string, filters EmployeeDocumentListFilters) ([]EmployeeDocument, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
-	docs, err := s.repo.ListEmployeeDocuments(ctx, user.MerchantID, employeeID)
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	docs, totalItems, err := s.repo.ListEmployeeDocuments(ctx, user.MerchantID, employeeID, filters)
 	if err != nil {
-		return nil, err
+		return nil, models.PaginationMetadata{}, err
 	}
 	for i := range docs {
 		if docs[i].FileKey != "" {
 			signed, signErr := s.privateR2.GenerateSignedURL(ctx, docs[i].FileKey, time.Hour)
 			if signErr != nil {
-				return nil, fmt.Errorf("%w: %v", models.ErrPlanningEmployeeDocumentUrlFailed, signErr)
+				return nil, models.PaginationMetadata{}, fmt.Errorf("%w: %v", models.ErrPlanningEmployeeDocumentUrlFailed, signErr)
 			}
 			docs[i].FileURL = signed
 		}
 	}
-	return docs, nil
+	return docs, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) CreateEmployeeDocument(ctx context.Context, employeeID string, req EmployeeDocumentCreateRequest) (*EmployeeDocument, error) {

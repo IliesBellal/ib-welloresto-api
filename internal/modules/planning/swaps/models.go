@@ -24,6 +24,8 @@ type PlanningShiftSwapRequestListFilters struct {
 	RequesterEmployeeID string
 	TargetEmployeeID    string
 	Status              string
+	Page                int
+	PageSize            int
 }
 
 type PlanningShiftSwapRequestCreateRequest struct {

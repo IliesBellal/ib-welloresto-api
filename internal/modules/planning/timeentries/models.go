@@ -28,3 +28,8 @@ type PlanningTimeEntryStopRequest struct {
 	ClockOutAt   *string `json:"clock_out_at,omitempty"`
 	ClockOutNote *string `json:"clock_out_note,omitempty"`
 }
+
+type PlanningTimeEntryListFilters struct {
+	Page     int
+	PageSize int
+}

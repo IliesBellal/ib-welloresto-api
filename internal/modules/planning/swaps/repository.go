@@ -18,31 +18,51 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchantID string, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, error) {
+func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchantID string, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
+	countQuery := `
+		SELECT COUNT(1)
+		FROM planning_shift_swap_requests
+		WHERE merchant_id = ? AND enabled = 1
+	`
+	args := []interface{}{merchantID}
+	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
+		countQuery += ` AND requester_employee_id = ?`
+		args = append(args, strings.TrimSpace(filters.RequesterEmployeeID))
+	}
+	if strings.TrimSpace(filters.TargetEmployeeID) != "" {
+		countQuery += ` AND target_employee_id = ?`
+		args = append(args, strings.TrimSpace(filters.TargetEmployeeID))
+	}
+	if strings.TrimSpace(filters.Status) != "" {
+		countQuery += ` AND status = ?`
+		args = append(args, strings.TrimSpace(filters.Status))
+	}
+	var totalItems int
+	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
 	query := `
 		SELECT id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_shift_swap_requests
 		WHERE merchant_id = ? AND enabled = 1
 	`
-	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
 		query += ` AND requester_employee_id = ?`
-		args = append(args, strings.TrimSpace(filters.RequesterEmployeeID))
 	}
 	if strings.TrimSpace(filters.TargetEmployeeID) != "" {
 		query += ` AND target_employee_id = ?`
-		args = append(args, strings.TrimSpace(filters.TargetEmployeeID))
 	}
 	if strings.TrimSpace(filters.Status) != "" {
 		query += ` AND status = ?`
-		args = append(args, strings.TrimSpace(filters.Status))
 	}
-	query += ` ORDER BY created_at DESC`
-	rows, err := db.QueryContext(ctx, query, args...)
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	dataArgs := append([]interface{}{}, args...)
+	dataArgs = append(dataArgs, filters.PageSize, (filters.Page-1)*filters.PageSize)
+	rows, err := db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -50,11 +70,11 @@ func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchant
 	for rows.Next() {
 		item, scanErr := scanPlanningShiftSwapRequest(rows)
 		if scanErr != nil {
-			return nil, scanErr
+			return nil, 0, scanErr
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	return items, totalItems, rows.Err()
 }
 
 func (r *Repository) GetPlanningShiftSwapRequestByID(ctx context.Context, merchantID, requestID string) (*PlanningShiftSwapRequest, error) {

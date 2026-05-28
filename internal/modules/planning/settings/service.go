@@ -41,5 +41,8 @@ func (s *Service) UpdateSettings(ctx context.Context, req PlanningSettingsUpdate
 	if req.AttendanceSource != nil && !IsValidAttendanceSource(*req.AttendanceSource) {
 		return nil, models.ErrPlanningAttendanceSourceInvalid
 	}
+	if req.ShiftSwapApprovalMode != nil && !IsValidShiftSwapApprovalMode(*req.ShiftSwapApprovalMode) {
+		return nil, models.ErrPlanningShiftSwapApprovalModeInvalid
+	}
 	return s.repo.UpdateSettings(ctx, user.MerchantID, req)
 }

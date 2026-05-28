@@ -17,16 +17,25 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) ListEmployeeDocuments(ctx context.Context, merchantID, employeeID string) ([]EmployeeDocument, error) {
+func (r *Repository) ListEmployeeDocuments(ctx context.Context, merchantID, employeeID string, filters EmployeeDocumentListFilters) ([]EmployeeDocument, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
+	var totalItems int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM employee_documents
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
+	`, merchantID, employeeID).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, employee_id, document_type, name, file_key, content_type, created_at, updated_at, deleted_at
 		FROM employee_documents
 		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
 		ORDER BY created_at DESC
-	`, merchantID, employeeID)
+		LIMIT ? OFFSET ?
+	`, merchantID, employeeID, filters.PageSize, (filters.Page-1)*filters.PageSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -34,11 +43,11 @@ func (r *Repository) ListEmployeeDocuments(ctx context.Context, merchantID, empl
 	for rows.Next() {
 		doc, err := scanEmployeeDocument(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		docs = append(docs, *doc)
 	}
-	return docs, rows.Err()
+	return docs, totalItems, rows.Err()
 }
 
 func (r *Repository) GetEmployeeDocumentByID(ctx context.Context, merchantID, documentID string) (*EmployeeDocument, error) {

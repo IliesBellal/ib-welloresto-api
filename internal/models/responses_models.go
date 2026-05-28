@@ -216,6 +216,7 @@ var (
 
 	ErrPlanningSettingsNotFound                = errors.New("planning_settings_not_found")
 	ErrPlanningAttendanceSourceInvalid         = errors.New("planning_attendance_source_invalid")
+	ErrPlanningShiftSwapApprovalModeInvalid    = errors.New("planning_shift_swap_approval_mode_invalid")
 	ErrPlanningHolidayOverrideNotFound         = errors.New("planning_holiday_override_not_found")
 	ErrPlanningPositionNotFound                = errors.New("planning_position_not_found")
 	ErrPlanningPositionLabelRequired           = errors.New("planning_position_label_required")
@@ -252,6 +253,7 @@ var (
 	ErrPlanningLeaveInvalidRange               = errors.New("planning_leave_invalid_range")
 	ErrPlanningLeaveShiftConflict              = errors.New("planning_leave_shift_conflict")
 	ErrPlanningShiftSwapRequestNotFound        = errors.New("planning_shift_swap_request_not_found")
+	ErrPlanningShiftSwapApprovalForbidden      = errors.New("planning_shift_swap_approval_forbidden")
 	ErrPlanningShiftSwapStatusInvalid          = errors.New("planning_shift_swap_status_invalid")
 	ErrPlanningShiftSwapInvalid                = errors.New("planning_shift_swap_invalid")
 	ErrPlanningShiftSwapConflict               = errors.New("planning_shift_swap_conflict")
@@ -431,6 +433,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "planning_attendance_source_invalid"
 		errorMsg = "The planning attendance source is invalid."
 
+	case errors.Is(err, ErrPlanningShiftSwapApprovalModeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_swap_approval_mode_invalid"
+		errorMsg = "The planning shift swap approval mode is invalid."
+
 	case errors.Is(err, ErrPlanningHolidayOverrideNotFound):
 		status = http.StatusNotFound
 		errorStatus = "planning_holiday_override_not_found"
@@ -565,6 +572,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "planning_shift_swap_request_not_found"
 		errorMsg = "Planning shift swap request not found"
+
+	case errors.Is(err, ErrPlanningShiftSwapApprovalForbidden):
+		status = http.StatusForbidden
+		errorStatus = "planning_shift_swap_approval_forbidden"
+		errorMsg = "The current user cannot validate this shift swap request."
 
 	case errors.Is(err, ErrPlanningShiftSwapStatusInvalid):
 		status = http.StatusBadRequest

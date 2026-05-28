@@ -10,11 +10,13 @@ import (
 	"welloresto-api/internal/models"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
 
 type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
+	GetEmployeeByUserID(ctx context.Context, merchantID, userID string) (*employeespkg.Employee, error)
 }
 
 type ShiftReader interface {
@@ -25,36 +27,48 @@ type ConflictChecker interface {
 	EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate time.Time, startTime string, endTime string) error
 }
 
+type SettingsReader interface {
+	GetOrCreateSettings(ctx context.Context, merchantID string) (*settingspkg.PlanningSettings, error)
+}
+
 type Service struct {
 	repo            *Repository
 	employeeRepo    EmployeeReader
 	shiftRepo       ShiftReader
 	conflictChecker ConflictChecker
+	settingsRepo    SettingsReader
 }
 
-func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, conflictChecker ConflictChecker) *Service {
-	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, conflictChecker: conflictChecker}
+func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, conflictChecker ConflictChecker, settingsRepo SettingsReader) *Service {
+	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, conflictChecker: conflictChecker, settingsRepo: settingsRepo}
 }
 
-func (s *Service) ListPlanningShiftSwapRequests(ctx context.Context, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, error) {
+func (s *Service) ListPlanningShiftSwapRequests(ctx context.Context, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.RequesterEmployeeID)); err != nil {
-			return nil, models.ErrPlanningEmployeeNotFound
+			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
 	}
 	if strings.TrimSpace(filters.TargetEmployeeID) != "" {
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.TargetEmployeeID)); err != nil {
-			return nil, models.ErrPlanningEmployeeNotFound
+			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
 	}
 	if strings.TrimSpace(filters.Status) != "" && !sharedpkg.IsValidPlanningShiftSwapStatus(strings.TrimSpace(filters.Status)) {
-		return nil, models.ErrPlanningShiftSwapStatusInvalid
+		return nil, models.PaginationMetadata{}, models.ErrPlanningShiftSwapStatusInvalid
 	}
-	return s.repo.ListPlanningShiftSwapRequests(ctx, user.MerchantID, filters)
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	items, totalItems, err := s.repo.ListPlanningShiftSwapRequests(ctx, user.MerchantID, filters)
+	if err != nil {
+		return nil, models.PaginationMetadata{}, err
+	}
+	return items, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) GetPlanningShiftSwapRequest(ctx context.Context, requestID string) (*PlanningShiftSwapRequest, error) {
@@ -147,6 +161,15 @@ func (s *Service) UpdatePlanningShiftSwapRequest(ctx context.Context, requestID 
 	if !sharedpkg.IsValidPlanningShiftSwapStatus(status) {
 		return nil, models.ErrPlanningShiftSwapStatusInvalid
 	}
+	approvalMode, err := s.getShiftSwapApprovalMode(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if approvalMode == settingspkg.ShiftSwapApprovalModeTargetEmployeeRequired && (status == "approved" || status == "rejected") {
+		if err := s.ensureTargetEmployeeApproval(ctx, user.MerchantID, current.TargetEmployeeID, user.UserID); err != nil {
+			return nil, err
+		}
+	}
 	if current.Status == "approved" && status != "approved" {
 		return nil, models.ErrPlanningShiftSwapStatusInvalid
 	}
@@ -193,6 +216,38 @@ func (s *Service) UpdatePlanningShiftSwapRequest(ctx context.Context, requestID 
 		current.ProcessedAt = &processedAt
 	}
 	return s.repo.UpdatePlanningShiftSwapRequest(ctx, user.MerchantID, requestID, *current)
+}
+
+func (s *Service) getShiftSwapApprovalMode(ctx context.Context, merchantID string) (string, error) {
+	settings, err := s.settingsRepo.GetOrCreateSettings(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+	mode := settingspkg.NormalizeShiftSwapApprovalMode(settings.ShiftSwapApprovalMode)
+	if mode == "" {
+		mode = settingspkg.ShiftSwapApprovalModeManagerRequired
+	}
+	if !settingspkg.IsValidShiftSwapApprovalMode(mode) {
+		return "", models.ErrPlanningShiftSwapApprovalModeInvalid
+	}
+	return mode, nil
+}
+
+func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID, currentUserID string) error {
+	if strings.TrimSpace(currentUserID) == "" {
+		return models.ErrPlanningShiftSwapApprovalForbidden
+	}
+	employee, err := s.employeeRepo.GetEmployeeByUserID(ctx, merchantID, currentUserID)
+	if err == sql.ErrNoRows || employee == nil {
+		return models.ErrPlanningShiftSwapApprovalForbidden
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(employee.ID) != strings.TrimSpace(targetEmployeeID) {
+		return models.ErrPlanningShiftSwapApprovalForbidden
+	}
+	return nil
 }
 
 func (s *Service) DeletePlanningShiftSwapRequest(ctx context.Context, requestID string) error {

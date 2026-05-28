@@ -18,41 +18,53 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filters EmployeeListFilters) ([]Employee, error) {
+func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filters EmployeeListFilters) ([]Employee, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
-	query := `
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
-			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
-			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
-			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
-			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
+	baseQuery := `
 		FROM employees e
 		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
 		WHERE e.merchant_id = ? AND e.enabled = 1
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.Search) != "" {
-		query += ` AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR p.label LIKE ?)`
+		baseQuery += ` AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR p.label LIKE ?)`
 		search := "%" + strings.TrimSpace(filters.Search) + "%"
 		args = append(args, search, search, search, search, search)
 	}
 	if filters.Active != nil {
-		query += ` AND e.active = ?`
+		baseQuery += ` AND e.active = ?`
 		args = append(args, *filters.Active)
 	}
 	if strings.TrimSpace(filters.PositionID) != "" {
-		query += ` AND e.position_id = ?`
+		baseQuery += ` AND e.position_id = ?`
 		args = append(args, strings.TrimSpace(filters.PositionID))
 	}
 	if strings.TrimSpace(filters.ContractType) != "" {
-		query += ` AND e.contract_type_code = ?`
+		baseQuery += ` AND e.contract_type_code = ?`
 		args = append(args, strings.TrimSpace(filters.ContractType))
 	}
-	query += ` ORDER BY e.last_name ASC, e.first_name ASC`
 
-	rows, err := db.QueryContext(ctx, query, args...)
+	countQuery := `SELECT COUNT(1) ` + baseQuery
+	var totalItems int
+	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
+
+	selectQuery := `
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
+			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
+			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
+			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
+			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
+	`
+	query := selectQuery + baseQuery
+	query += ` ORDER BY e.last_name ASC, e.first_name ASC LIMIT ? OFFSET ?`
+	dataArgs := append([]interface{}{}, args...)
+	dataArgs = append(dataArgs, filters.PageSize, (filters.Page-1)*filters.PageSize)
+
+	rows, err := db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -60,11 +72,27 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 	for rows.Next() {
 		item, err := scanEmployee(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	return items, totalItems, rows.Err()
+}
+
+func (r *Repository) GetEmployeeByUserID(ctx context.Context, merchantID, userID string) (*Employee, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	row := db.QueryRowContext(ctx, `
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
+			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
+			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
+			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
+			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
+		FROM employees e
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
+		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = 1
+		LIMIT 1
+	`, merchantID, strings.TrimSpace(userID))
+	return scanEmployeeRow(row)
 }
 
 func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*Employee, error) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"welloresto-api/internal/models"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -29,17 +30,24 @@ func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 		parsed := activeRaw == "1" || strings.EqualFold(activeRaw, "true")
 		active = &parsed
 	}
-	items, err := h.svc.ListEmployees(r.Context(), EmployeeListFilters{
+	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_employees", err)
+		return
+	}
+	items, metadata, err := h.svc.ListEmployees(r.Context(), EmployeeListFilters{
 		Search:       strings.TrimSpace(r.URL.Query().Get("search")),
 		Active:       active,
 		PositionID:   positionID,
 		ContractType: strings.TrimSpace(r.URL.Query().Get("contract")),
+		Page:         pagination.Page,
+		PageSize:     pagination.PageSize,
 	})
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_employees", err)
 		return
 	}
-	models.SendJSON(w, http.StatusOK, "planning", "list_employees", map[string]interface{}{"status": "success", "employees": items})
+	models.SendJSON(w, http.StatusOK, "planning", "list_employees", map[string]interface{}{"status": "success", "employees": items, "pagination": metadata})
 }
 
 func (h *Handler) GetEmployee(w http.ResponseWriter, r *http.Request) {

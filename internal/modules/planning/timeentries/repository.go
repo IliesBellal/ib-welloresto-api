@@ -17,17 +17,26 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) ListEmployeeTimeEntries(ctx context.Context, merchantID, employeeID string) ([]PlanningTimeEntry, error) {
+func (r *Repository) ListEmployeeTimeEntries(ctx context.Context, merchantID, employeeID string, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
+	var totalItems int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM planning_time_entries
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
+	`, merchantID, employeeID).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, created_at, updated_at, deleted_at
 		FROM planning_time_entries
 		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
 		ORDER BY clock_in_at DESC, created_at DESC
-	`, merchantID, employeeID)
+		LIMIT ? OFFSET ?
+	`, merchantID, employeeID, filters.PageSize, (filters.Page-1)*filters.PageSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -35,11 +44,11 @@ func (r *Repository) ListEmployeeTimeEntries(ctx context.Context, merchantID, em
 	for rows.Next() {
 		item, scanErr := scanPlanningTimeEntry(rows)
 		if scanErr != nil {
-			return nil, scanErr
+			return nil, 0, scanErr
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	return items, totalItems, rows.Err()
 }
 
 func (r *Repository) GetPlanningTimeEntryByID(ctx context.Context, merchantID, entryID string) (*PlanningTimeEntry, error) {

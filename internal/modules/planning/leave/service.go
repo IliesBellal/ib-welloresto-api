@@ -25,20 +25,27 @@ func NewService(repo *Repository, employeeRepo EmployeeReader) *Service {
 	return &Service{repo: repo, employeeRepo: employeeRepo}
 }
 
-func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, error) {
+func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	if strings.TrimSpace(filters.EmployeeID) != "" {
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.EmployeeID)); err != nil {
-			return nil, models.ErrPlanningEmployeeNotFound
+			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
 	}
 	if strings.TrimSpace(filters.Status) != "" && !sharedpkg.IsValidPlanningLeaveStatus(strings.TrimSpace(filters.Status)) {
-		return nil, models.ErrPlanningLeaveStatusInvalid
+		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveStatusInvalid
 	}
-	return s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, filters)
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	items, totalItems, err := s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, filters)
+	if err != nil {
+		return nil, models.PaginationMetadata{}, err
+	}
+	return items, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) GetPlanningLeaveRequest(ctx context.Context, requestID string) (*PlanningLeaveRequest, error) {

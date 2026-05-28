@@ -37,18 +37,25 @@ func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftRe
 	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, settingsRepo: settingsRepo}
 }
 
-func (s *Service) ListEmployeeTimeEntries(ctx context.Context, employeeID string) ([]PlanningTimeEntry, error) {
+func (s *Service) ListEmployeeTimeEntries(ctx context.Context, employeeID string, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	if strings.TrimSpace(employeeID) == "" {
-		return nil, models.ErrMissingResourceID
+		return nil, models.PaginationMetadata{}, models.ErrMissingResourceID
 	}
 	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err != nil {
-		return nil, models.ErrPlanningEmployeeNotFound
+		return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 	}
-	return s.repo.ListEmployeeTimeEntries(ctx, user.MerchantID, employeeID)
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	items, totalItems, err := s.repo.ListEmployeeTimeEntries(ctx, user.MerchantID, employeeID, filters)
+	if err != nil {
+		return nil, models.PaginationMetadata{}, err
+	}
+	return items, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) GetCurrentEmployeeTimeEntry(ctx context.Context, employeeID string) (*PlanningTimeEntry, error) {

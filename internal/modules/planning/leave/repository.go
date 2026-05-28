@@ -18,27 +18,44 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID string, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, error) {
+func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID string, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
+	countQuery := `
+		SELECT COUNT(1)
+		FROM planning_leave_requests
+		WHERE merchant_id = ? AND enabled = 1
+	`
+	args := []interface{}{merchantID}
+	if strings.TrimSpace(filters.EmployeeID) != "" {
+		countQuery += ` AND employee_id = ?`
+		args = append(args, strings.TrimSpace(filters.EmployeeID))
+	}
+	if strings.TrimSpace(filters.Status) != "" {
+		countQuery += ` AND status = ?`
+		args = append(args, strings.TrimSpace(filters.Status))
+	}
+	var totalItems int
+	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
 	query := `
 		SELECT id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason,
 			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_leave_requests
 		WHERE merchant_id = ? AND enabled = 1
 	`
-	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.EmployeeID) != "" {
 		query += ` AND employee_id = ?`
-		args = append(args, strings.TrimSpace(filters.EmployeeID))
 	}
 	if strings.TrimSpace(filters.Status) != "" {
 		query += ` AND status = ?`
-		args = append(args, strings.TrimSpace(filters.Status))
 	}
-	query += ` ORDER BY start_date DESC, created_at DESC`
-	rows, err := db.QueryContext(ctx, query, args...)
+	query += ` ORDER BY start_date DESC, created_at DESC LIMIT ? OFFSET ?`
+	dataArgs := append([]interface{}{}, args...)
+	dataArgs = append(dataArgs, filters.PageSize, (filters.Page-1)*filters.PageSize)
+	rows, err := db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -46,11 +63,11 @@ func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID s
 	for rows.Next() {
 		item, scanErr := scanPlanningLeaveRequest(rows)
 		if scanErr != nil {
-			return nil, scanErr
+			return nil, 0, scanErr
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	return items, totalItems, rows.Err()
 }
 
 func (r *Repository) GetPlanningLeaveRequestByID(ctx context.Context, merchantID, requestID string) (*PlanningLeaveRequest, error) {
