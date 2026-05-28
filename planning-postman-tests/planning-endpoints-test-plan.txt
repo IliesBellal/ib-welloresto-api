@@ -65,7 +65,8 @@ Happy path payload:
   "night_shift_end": "06:00",
   "night_shift_multiplier": 1.5,
   "holiday_multiplier": 2,
-  "allow_override_warnings": true
+  "allow_override_warnings": true,
+  "attendance_source": "pointage"
 }
 Expected:
 - HTTP 200
@@ -89,11 +90,11 @@ Expected:
 - payload key: contract_types
 - should contain at least CDI, CDD, Extra, Stage, Apprenti
 
-2.2 GET /planning/time-tracking-modes
+2.2 GET /planning/attendance-sources
 Expected:
 - HTTP 200
-- payload key: time_tracking_modes
-- should contain at least standard, badge, mobile, kiosk
+- payload key: attendance_sources
+- should contain pointage and planning
 
 2.3 GET /planning/event-types
 Expected:
@@ -112,7 +113,6 @@ Happy path payload:
   "position": "Serveuse",
   "role": "employee",
   "contract_type_code": "CDI",
-  "time_tracking_mode_code": "standard",
   "contract_hours": 35,
   "max_weekly_hours": 35,
   "required_rest_days": 2,
@@ -139,7 +139,6 @@ Second employee payload:
   "position": "Cuisinier",
   "role": "employee",
   "contract_type_code": "CDD",
-  "time_tracking_mode_code": "standard",
   "contract_hours": 39,
   "max_weekly_hours": 39,
   "required_rest_days": 2,
@@ -158,8 +157,7 @@ Invalid payload:
 {
   "last_name": "MissingFirstName",
   "position": "Serveuse",
-  "contract_type_code": "CDI",
-  "time_tracking_mode_code": "standard"
+  "contract_type_code": "CDI"
 }
 Expected:
 - HTTP 400
@@ -386,7 +384,6 @@ Payload:
   "position": "Cuisinier",
   "role": "employee",
   "contract_type_code": "CDD",
-  "time_tracking_mode_code": "standard",
   "active": true
 }
 Expected:
@@ -493,6 +490,14 @@ Expected:
 - HTTP 200
 - payload key: time_entries
 
+7.3.b PUT /planning/settings
+Precondition payload for time entries:
+{
+  "attendance_source": "pointage"
+}
+Expected:
+- HTTP 200
+
 7.4 GET /planning/employees/{{employeeId}}/time-entries/current
 Expected:
 - HTTP 200
@@ -503,7 +508,6 @@ Expected:
 Happy path payload with shift:
 {
   "shift_id": "{{shiftId1}}",
-  "entry_mode_code": "standard",
   "clock_in_at": "2026-06-16T09:05:00Z",
   "clock_in_note": "Debut de service"
 }
@@ -514,9 +518,7 @@ Expected:
 
 7.6 POST /planning/employees/{{employeeId}}/time-entries/start
 Duplicate open entry payload:
-{
-  "entry_mode_code": "standard"
-}
+{}
 Expected:
 - HTTP 409
 - error status planning_time_entry_already_open
@@ -541,6 +543,21 @@ Invalid range payload:
 }
 Expected:
 - HTTP 400 or 409 depending on current entry state
+
+7.9 PUT /planning/settings
+Switch source to planning:
+{
+  "attendance_source": "planning"
+}
+Expected:
+- HTTP 200
+
+7.10 POST /planning/employees/{{employeeId}}/time-entries/start
+Pointage disabled payload:
+{}
+Expected:
+- HTTP 409
+- error status planning_time_entry_source_disabled
 
 ====================================================================
 8. LEAVE REQUESTS

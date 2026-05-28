@@ -23,7 +23,7 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 	query := `
 		SELECT id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
-			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium, time_tracking_mode_code,
+			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at, deleted_at
 		FROM employees
@@ -71,7 +71,7 @@ func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
-			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium, time_tracking_mode_code,
+			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at, deleted_at
 		FROM employees
@@ -117,7 +117,6 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 		RequiredRestDays:       2,
 		SundayPremium:          false,
 		NightPremium:           false,
-		TimeTrackingModeCode:   strings.TrimSpace(req.TimeTrackingModeCode),
 		HourlyRate:             0,
 		GrossMonthlySalary:     0,
 		EmployerChargesPct:     45,
@@ -163,11 +162,11 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 		INSERT INTO employees (
 			id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
-			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium, time_tracking_mode_code,
+			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.TimeTrackingModeCode, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -182,11 +181,11 @@ func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID 
 		UPDATE employees
 		SET user_id = ?, first_name = ?, last_name = ?, position = ?, job_title = ?, email = ?, phone = ?, role = ?,
 			contract_type_code = ?, contract_start_date = ?, contract_end_date = ?, probation_end_date = ?, last_medical_checkup_date = ?,
-			contract_hours = ?, max_weekly_hours = ?, required_rest_days = ?, sunday_premium = ?, night_premium = ?, time_tracking_mode_code = ?,
+			contract_hours = ?, max_weekly_hours = ?, required_rest_days = ?, sunday_premium = ?, night_premium = ?,
 			hourly_rate = ?, gross_monthly_salary = ?, employer_charges_pct = ?, transport_cost = ?, birth_date = ?, gender = ?, nationality = ?,
 			address = ?, hr_comment = ?, active = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.TimeTrackingModeCode, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.UpdatedAt, merchantID, employeeID)
+	`, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.UpdatedAt, merchantID, employeeID)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +234,7 @@ func scanEmployeeRow(row scannable) (*Employee, error) {
 	if err := row.Scan(
 		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.Position, &jobTitle, &email, &phone, &item.Role,
 		&item.ContractTypeCode, &contractStartDate, &contractEndDate, &probationEndDate, &medicalDate,
-		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium, &item.TimeTrackingModeCode,
+		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium,
 		&hourlyRate, &grossMonthlySalary, &employerChargesPct, &transportCost, &birthDate, &gender, &nationality,
 		&address, &hrComment, &active, &item.CreatedAt, &item.UpdatedAt, &deletedAt,
 	); err != nil {
@@ -314,7 +313,7 @@ func scanEmployee(rows scannableRows) (*Employee, error) {
 	if err := rows.Scan(
 		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.Position, &jobTitle, &email, &phone, &item.Role,
 		&item.ContractTypeCode, &contractStartDate, &contractEndDate, &probationEndDate, &medicalDate,
-		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium, &item.TimeTrackingModeCode,
+		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium,
 		&hourlyRate, &grossMonthlySalary, &employerChargesPct, &transportCost, &birthDate, &gender, &nationality,
 		&address, &hrComment, &active, &item.CreatedAt, &item.UpdatedAt, &deletedAt,
 	); err != nil {

@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/models"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
 
@@ -21,19 +22,19 @@ type ShiftReader interface {
 	GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*schedulepkg.PlanningShift, error)
 }
 
-type TimeTrackingModeReader interface {
-	TimeTrackingModeExists(ctx context.Context, code string) (bool, error)
+type SettingsReader interface {
+	GetOrCreateSettings(ctx context.Context, merchantID string) (*settingspkg.PlanningSettings, error)
 }
 
 type Service struct {
 	repo         *Repository
 	employeeRepo EmployeeReader
 	shiftRepo    ShiftReader
-	refsRepo     TimeTrackingModeReader
+	settingsRepo SettingsReader
 }
 
-func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, refsRepo TimeTrackingModeReader) *Service {
-	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, refsRepo: refsRepo}
+func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, settingsRepo SettingsReader) *Service {
+	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, settingsRepo: settingsRepo}
 }
 
 func (s *Service) ListEmployeeTimeEntries(ctx context.Context, employeeID string) ([]PlanningTimeEntry, error) {
@@ -76,8 +77,7 @@ func (s *Service) StartEmployeeTimeEntry(ctx context.Context, employeeID string,
 	if strings.TrimSpace(employeeID) == "" {
 		return nil, models.ErrMissingResourceID
 	}
-	employee, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, employeeID)
-	if err != nil {
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err != nil {
 		return nil, models.ErrPlanningEmployeeNotFound
 	}
 	if openEntry, openErr := s.repo.GetOpenPlanningTimeEntryForEmployee(ctx, user.MerchantID, employeeID); openErr == nil && openEntry != nil {
@@ -85,16 +85,12 @@ func (s *Service) StartEmployeeTimeEntry(ctx context.Context, employeeID string,
 	} else if openErr != nil && openErr != sql.ErrNoRows {
 		return nil, openErr
 	}
-	entryModeCode := strings.TrimSpace(employee.TimeTrackingModeCode)
-	if req.EntryModeCode != nil && strings.TrimSpace(*req.EntryModeCode) != "" {
-		entryModeCode = strings.TrimSpace(*req.EntryModeCode)
-	}
-	entryModeExists, err := s.refsRepo.TimeTrackingModeExists(ctx, entryModeCode)
+	planningSettings, err := s.settingsRepo.GetOrCreateSettings(ctx, user.MerchantID)
 	if err != nil {
 		return nil, err
 	}
-	if !entryModeExists {
-		return nil, models.ErrPlanningTimeEntryModeInvalid
+	if planningSettings.AttendanceSource != settingspkg.AttendanceSourcePointage {
+		return nil, models.ErrPlanningTimeEntrySourceDisabled
 	}
 	clockInAt := time.Now().UTC()
 	if req.ClockInAt != nil && strings.TrimSpace(*req.ClockInAt) != "" {
@@ -120,11 +116,11 @@ func (s *Service) StartEmployeeTimeEntry(ctx context.Context, employeeID string,
 		}
 	}
 	entry := PlanningTimeEntry{
-		EmployeeID:    employeeID,
-		ShiftID:       shiftID,
-		EntryModeCode: entryModeCode,
-		ClockInAt:     clockInAt,
-		ClockInNote:   sharedpkg.TrimOptionalString(req.ClockInNote),
+		EmployeeID:       employeeID,
+		ShiftID:          shiftID,
+		AttendanceSource: planningSettings.AttendanceSource,
+		ClockInAt:        clockInAt,
+		ClockInNote:      sharedpkg.TrimOptionalString(req.ClockInNote),
 	}
 	return s.repo.CreatePlanningTimeEntry(ctx, user.MerchantID, entry)
 }

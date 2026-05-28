@@ -21,15 +21,15 @@ func (r *Repository) ListContractTypes(ctx context.Context) ([]SystemRef, error)
 	return r.listSystemRefs(ctx, "sys_contract_types")
 }
 
-func (r *Repository) ListTimeTrackingModes(ctx context.Context) ([]SystemRef, error) {
-	return r.listSystemRefs(ctx, "sys_time_tracking_modes")
+func (r *Repository) ListAttendanceSources(ctx context.Context) ([]SystemRef, error) {
+	return r.listSystemRefs(ctx, "sys_attendance_sources")
 }
 
-func (r *Repository) TimeTrackingModeExists(ctx context.Context, code string) (bool, error) {
+func (r *Repository) AttendanceSourceExists(ctx context.Context, code string) (bool, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
 		SELECT COUNT(1)
-		FROM sys_time_tracking_modes
+		FROM sys_attendance_sources
 		WHERE code = ? AND active = 1
 	`
 	var count int

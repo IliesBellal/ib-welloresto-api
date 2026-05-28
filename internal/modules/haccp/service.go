@@ -432,11 +432,6 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 			}
 		}
 
-		if settings.TempCorrectiveActions && status != "ok" {
-			if input.Comment == nil || strings.TrimSpace(*input.Comment) == "" {
-				return nil, models.ErrTemperatureCorrectiveActionRequired
-			}
-		}
 		if settings.TempFailurePhotoRequired && status != "ok" {
 			if input.PhotoURL == nil || strings.TrimSpace(*input.PhotoURL) == "" {
 				return nil, models.ErrTemperatureFailurePhotoRequired

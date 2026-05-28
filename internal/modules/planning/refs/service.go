@@ -22,11 +22,11 @@ func (s *Service) ListContractTypes(ctx context.Context) ([]SystemRef, error) {
 	return s.repo.ListContractTypes(ctx)
 }
 
-func (s *Service) ListTimeTrackingModes(ctx context.Context) ([]SystemRef, error) {
+func (s *Service) ListAttendanceSources(ctx context.Context) ([]SystemRef, error) {
 	if _, err := middleware.UserFromContext(ctx); err != nil {
 		return nil, models.ErrUnauthorized
 	}
-	return s.repo.ListTimeTrackingModes(ctx)
+	return s.repo.ListAttendanceSources(ctx)
 }
 
 func (s *Service) ListPlanningEventTypes(ctx context.Context) ([]SystemRef, error) {

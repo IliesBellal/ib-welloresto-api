@@ -43,9 +43,9 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 		INSERT INTO planning_settings (
 			id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
 			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
-			allow_override_warnings, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, true, now, now)
+			allow_override_warnings, attendance_source, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, true, AttendanceSourcePointage, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +61,7 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 		NightShiftMultiplier:  rule.NightShiftMultiplier,
 		HolidayMultiplier:     rule.HolidayMultiplier,
 		AllowOverrideWarnings: true,
+		AttendanceSource:      AttendanceSourcePointage,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}, nil
@@ -71,7 +72,7 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
 			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
-			allow_override_warnings, created_at, updated_at
+			allow_override_warnings, attendance_source, created_at, updated_at
 		FROM planning_settings
 		WHERE merchant_id = ? AND enabled = 1
 		LIMIT 1
@@ -89,6 +90,7 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 		&item.NightShiftMultiplier,
 		&item.HolidayMultiplier,
 		&item.AllowOverrideWarnings,
+		&item.AttendanceSource,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
@@ -129,15 +131,18 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 	if req.AllowOverrideWarnings != nil {
 		current.AllowOverrideWarnings = *req.AllowOverrideWarnings
 	}
+	if req.AttendanceSource != nil {
+		current.AttendanceSource = NormalizeAttendanceSource(*req.AttendanceSource)
+	}
 
 	current.UpdatedAt = time.Now().UTC()
 	_, err = db.ExecContext(ctx, `
 		UPDATE planning_settings
 		SET labor_country_code = ?, min_daily_rest_hours = ?, min_break_minutes = ?,
 			night_shift_start = ?, night_shift_end = ?, night_shift_multiplier = ?,
-			holiday_multiplier = ?, allow_override_warnings = ?, updated_at = ?
+			holiday_multiplier = ?, allow_override_warnings = ?, attendance_source = ?, updated_at = ?
 		WHERE merchant_id = ? AND enabled = 1
-	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.UpdatedAt, merchantID)
+	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.UpdatedAt, merchantID)
 	if err != nil {
 		return nil, err
 	}

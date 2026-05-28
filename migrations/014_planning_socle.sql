@@ -47,7 +47,7 @@ INSERT INTO sys_contract_types (code, label, sort_order, active) VALUES
 ('Apprenti', 'Apprenti', 50, 1)
 ON DUPLICATE KEY UPDATE label = VALUES(label), sort_order = VALUES(sort_order), active = VALUES(active);
 
-CREATE TABLE IF NOT EXISTS sys_time_tracking_modes (
+CREATE TABLE IF NOT EXISTS sys_attendance_sources (
   code VARCHAR(32) NOT NULL,
   label VARCHAR(80) NOT NULL,
   sort_order INT NOT NULL DEFAULT 0,
@@ -55,11 +55,9 @@ CREATE TABLE IF NOT EXISTS sys_time_tracking_modes (
   PRIMARY KEY (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO sys_time_tracking_modes (code, label, sort_order, active) VALUES
-('standard', 'Standard', 10, 1),
-('badge', 'Badgeuse', 20, 1),
-('mobile', 'Mobile', 30, 1),
-('kiosk', 'Borne', 40, 1)
+INSERT INTO sys_attendance_sources (code, label, sort_order, active) VALUES
+('pointage', 'Pointage', 10, 1),
+('planning', 'Planning', 20, 1)
 ON DUPLICATE KEY UPDATE label = VALUES(label), sort_order = VALUES(sort_order), active = VALUES(active);
 
 CREATE TABLE IF NOT EXISTS sys_planning_event_types (
@@ -87,6 +85,7 @@ CREATE TABLE IF NOT EXISTS planning_settings (
   night_shift_multiplier DECIMAL(4,2) NOT NULL DEFAULT 1.25,
   holiday_multiplier DECIMAL(4,2) NOT NULL DEFAULT 2.00,
   allow_override_warnings TINYINT(1) NOT NULL DEFAULT 1,
+  attendance_source VARCHAR(32) NOT NULL DEFAULT 'pointage',
   enabled TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -117,7 +116,6 @@ CREATE TABLE IF NOT EXISTS employees (
   required_rest_days INT NOT NULL DEFAULT 2,
   sunday_premium TINYINT(1) NOT NULL DEFAULT 0,
   night_premium TINYINT(1) NOT NULL DEFAULT 0,
-  time_tracking_mode_code VARCHAR(32) NOT NULL DEFAULT 'standard',
   hourly_rate BIGINT NOT NULL DEFAULT 0,
   gross_monthly_salary BIGINT NOT NULL DEFAULT 0,
   employer_charges_pct DECIMAL(5,2) NOT NULL DEFAULT 45.00,
@@ -136,8 +134,7 @@ CREATE TABLE IF NOT EXISTS employees (
   UNIQUE KEY uq_employees_merchant_user (merchant_id, user_id),
   KEY idx_employees_merchant_active (merchant_id, active),
   KEY idx_employees_merchant (merchant_id),
-  KEY idx_employees_contract_type (contract_type_code),
-  KEY idx_employees_time_tracking (time_tracking_mode_code)
+  KEY idx_employees_contract_type (contract_type_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS hours_amendments (

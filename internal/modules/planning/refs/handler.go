@@ -23,13 +23,13 @@ func (h *Handler) ListContractTypes(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "planning", "list_contract_types", map[string]interface{}{"status": "success", "contract_types": refs})
 }
 
-func (h *Handler) ListTimeTrackingModes(w http.ResponseWriter, r *http.Request) {
-	refs, err := h.svc.ListTimeTrackingModes(r.Context())
+func (h *Handler) ListAttendanceSources(w http.ResponseWriter, r *http.Request) {
+	refs, err := h.svc.ListAttendanceSources(r.Context())
 	if err != nil {
-		models.SendErrorJSON(w, "planning", "list_time_tracking_modes", err)
+		models.SendErrorJSON(w, "planning", "list_attendance_sources", err)
 		return
 	}
-	models.SendJSON(w, http.StatusOK, "planning", "list_time_tracking_modes", map[string]interface{}{"status": "success", "time_tracking_modes": refs})
+	models.SendJSON(w, http.StatusOK, "planning", "list_attendance_sources", map[string]interface{}{"status": "success", "attendance_sources": refs})
 }
 
 func (h *Handler) ListPlanningEventTypes(w http.ResponseWriter, r *http.Request) {

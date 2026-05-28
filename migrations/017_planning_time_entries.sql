@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS planning_time_entries (
   merchant_id VARCHAR(64) NOT NULL,
   employee_id VARCHAR(64) NOT NULL,
   shift_id VARCHAR(64) NULL,
-  entry_mode_code VARCHAR(32) NOT NULL,
+  attendance_source VARCHAR(32) NOT NULL,
   clock_in_at DATETIME NOT NULL,
   clock_out_at DATETIME NULL,
   clock_in_note TEXT NULL,
@@ -17,5 +17,5 @@ CREATE TABLE IF NOT EXISTS planning_time_entries (
   KEY idx_planning_time_entries_open (employee_id, clock_out_at),
   KEY idx_planning_time_entries_shift (shift_id),
   KEY idx_planning_time_entries_clock_in (clock_in_at),
-  KEY idx_planning_time_entries_mode (entry_mode_code)
+  KEY idx_planning_time_entries_attendance_source (attendance_source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

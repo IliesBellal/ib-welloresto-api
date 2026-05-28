@@ -58,9 +58,6 @@ func (s *Service) CreateEmployee(ctx context.Context, req EmployeeCreateRequest)
 	if strings.TrimSpace(req.ContractTypeCode) == "" {
 		return nil, models.ErrPlanningEmployeeContractTypeInvalid
 	}
-	if strings.TrimSpace(req.TimeTrackingModeCode) == "" {
-		return nil, models.ErrPlanningEmployeeTimeTrackingModeInvalid
-	}
 	if req.UserID != nil && strings.TrimSpace(*req.UserID) == "" {
 		return nil, models.ErrPlanningEmployeeUserLinkInvalid
 	}
@@ -102,12 +99,6 @@ func (s *Service) UpdateEmployee(ctx context.Context, employeeID string, req Emp
 			return nil, models.ErrPlanningEmployeeContractTypeInvalid
 		}
 		current.ContractTypeCode = strings.TrimSpace(*req.ContractTypeCode)
-	}
-	if req.TimeTrackingModeCode != nil {
-		if strings.TrimSpace(*req.TimeTrackingModeCode) == "" {
-			return nil, models.ErrPlanningEmployeeTimeTrackingModeInvalid
-		}
-		current.TimeTrackingModeCode = strings.TrimSpace(*req.TimeTrackingModeCode)
 	}
 	if req.UserID != nil {
 		if strings.TrimSpace(*req.UserID) == "" {
@@ -203,7 +194,7 @@ func (s *Service) DeleteEmployee(ctx context.Context, employeeID string) error {
 }
 
 func RequireAtLeastOneEmployeeField(req EmployeeUpdateRequest) error {
-	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.Position == nil && req.JobTitle == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.TimeTrackingModeCode == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
+	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.Position == nil && req.JobTitle == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
 		return fmt.Errorf("at least one field must be provided")
 	}
 	return nil

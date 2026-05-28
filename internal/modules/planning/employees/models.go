@@ -23,7 +23,6 @@ type Employee struct {
 	RequiredRestDays       int        `json:"required_rest_days"`
 	SundayPremium          bool       `json:"sunday_premium"`
 	NightPremium           bool       `json:"night_premium"`
-	TimeTrackingModeCode   string     `json:"time_tracking_mode_code"`
 	HourlyRate             int64      `json:"hourly_rate"`
 	GrossMonthlySalary     int64      `json:"gross_monthly_salary"`
 	EmployerChargesPct     float64    `json:"employer_charges_pct"`
@@ -65,7 +64,6 @@ type EmployeeCreateRequest struct {
 	RequiredRestDays       *int       `json:"required_rest_days,omitempty"`
 	SundayPremium          *bool      `json:"sunday_premium,omitempty"`
 	NightPremium           *bool      `json:"night_premium,omitempty"`
-	TimeTrackingModeCode   string     `json:"time_tracking_mode_code"`
 	HourlyRate             *int64     `json:"hourly_rate,omitempty"`
 	GrossMonthlySalary     *int64     `json:"gross_monthly_salary,omitempty"`
 	EmployerChargesPct     *float64   `json:"employer_charges_pct,omitempty"`
@@ -97,7 +95,6 @@ type EmployeeUpdateRequest struct {
 	RequiredRestDays       *int       `json:"required_rest_days,omitempty"`
 	SundayPremium          *bool      `json:"sunday_premium,omitempty"`
 	NightPremium           *bool      `json:"night_premium,omitempty"`
-	TimeTrackingModeCode   *string    `json:"time_tracking_mode_code,omitempty"`
 	HourlyRate             *int64     `json:"hourly_rate,omitempty"`
 	GrossMonthlySalary     *int64     `json:"gross_monthly_salary,omitempty"`
 	EmployerChargesPct     *float64   `json:"employer_charges_pct,omitempty"`

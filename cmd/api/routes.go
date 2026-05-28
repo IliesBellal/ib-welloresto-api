@@ -723,7 +723,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Put("/settings", planningH.UpdateSettings)
 
 		r.Get("/contract-types", planningH.ListContractTypes)
-		r.Get("/time-tracking-modes", planningH.ListTimeTrackingModes)
+		r.Get("/attendance-sources", planningH.ListAttendanceSources)
 		r.Get("/event-types", planningH.ListPlanningEventTypes)
 
 		r.Get("/employees", planningH.ListEmployees)

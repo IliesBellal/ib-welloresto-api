@@ -38,5 +38,8 @@ func (s *Service) UpdateSettings(ctx context.Context, req PlanningSettingsUpdate
 	if req.MinBreakMinutes != nil && *req.MinBreakMinutes < 0 {
 		return nil, models.ErrPlanningInvalidHours
 	}
+	if req.AttendanceSource != nil && !IsValidAttendanceSource(*req.AttendanceSource) {
+		return nil, models.ErrPlanningAttendanceSourceInvalid
+	}
 	return s.repo.UpdateSettings(ctx, user.MerchantID, req)
 }

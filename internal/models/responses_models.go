@@ -215,6 +215,7 @@ var (
 	ErrTranslationLanguagesLimitReached = errors.New("translation_languages_limit_reached")
 
 	ErrPlanningSettingsNotFound                = errors.New("planning_settings_not_found")
+	ErrPlanningAttendanceSourceInvalid         = errors.New("planning_attendance_source_invalid")
 	ErrPlanningEmployeeNotFound                = errors.New("planning_employee_not_found")
 	ErrPlanningEmployeeNameRequired            = errors.New("planning_employee_name_required")
 	ErrPlanningEmployeeLastNameRequired        = errors.New("planning_employee_last_name_required")
@@ -237,6 +238,7 @@ var (
 	ErrPlanningTimeEntryAlreadyOpen            = errors.New("planning_time_entry_already_open")
 	ErrPlanningTimeEntryNotOpen                = errors.New("planning_time_entry_not_open")
 	ErrPlanningTimeEntryInvalidRange           = errors.New("planning_time_entry_invalid_range")
+	ErrPlanningTimeEntrySourceDisabled         = errors.New("planning_time_entry_source_disabled")
 	ErrPlanningTimeEntryModeInvalid            = errors.New("planning_time_entry_mode_invalid")
 	ErrPlanningTimeEntryShiftInvalid           = errors.New("planning_time_entry_shift_invalid")
 	ErrPlanningLeaveRequestNotFound            = errors.New("planning_leave_request_not_found")
@@ -399,6 +401,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "planning_employee_contract_type_invalid"
 		errorMsg = "The employee contract type is invalid."
 
+	case errors.Is(err, ErrPlanningAttendanceSourceInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_attendance_source_invalid"
+		errorMsg = "The planning attendance source is invalid."
+
 	case errors.Is(err, ErrPlanningEmployeeTimeTrackingModeInvalid):
 		status = http.StatusBadRequest
 		errorStatus = "planning_employee_time_tracking_mode_invalid"
@@ -483,6 +490,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "planning_time_entry_invalid_range"
 		errorMsg = "The time entry range is invalid."
+
+	case errors.Is(err, ErrPlanningTimeEntrySourceDisabled):
+		status = http.StatusConflict
+		errorStatus = "planning_time_entry_source_disabled"
+		errorMsg = "Time entries are disabled when the planning attendance source is set to planning."
 
 	case errors.Is(err, ErrPlanningTimeEntryModeInvalid):
 		status = http.StatusBadRequest
