@@ -72,6 +72,11 @@ type UserLoginRow struct {
 	ScanNOrderReady      bool
 	StockManagement      int
 	HrManagement         bool
+	PlanningEnabled      bool
+	HACCPEnabled         bool
+	StockEnabled         bool
+	ScanNOrderEnabled    bool
+	BookingsEnabled      bool
 
 	// SNO
 	SNOActivated bool

@@ -37,7 +37,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Si le MFA est requis, on renvoie un code 202 Accepted au lieu de 200 OK
-	if resp["status"] == "MFA_REQUIRED" {
+	if resp.Status == "MFA_REQUIRED" {
 		models.SendJSON(w, http.StatusAccepted, "auth", "login", resp)
 		return
 	}

@@ -78,6 +78,11 @@ SELECT
     p.scannorder_ready,
     p.stock_management,
     p.hr_management,
+	COALESCE(s.planning_enabled, p.planning_enabled, p.hr_management, FALSE) AS planning_enabled,
+	COALESCE(s.haccp_enabled, p.haccp_enabled, TRUE) AS haccp_enabled,
+	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
+	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
+	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
 
     sset.activated,
 
@@ -134,6 +139,7 @@ LIMIT 1;
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
+		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
 
 		&data.SNOActivated,
 
@@ -213,6 +219,11 @@ SELECT
     p.scannorder_ready,
     p.stock_management,
     p.hr_management,
+	COALESCE(s.planning_enabled, p.planning_enabled, p.hr_management, FALSE) AS planning_enabled,
+	COALESCE(s.haccp_enabled, p.haccp_enabled, TRUE) AS haccp_enabled,
+	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
+	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
+	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
 
     sset.activated,
 
@@ -279,6 +290,7 @@ LIMIT 1;
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
+		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
 
 		&data.SNOActivated,
 

@@ -177,7 +177,7 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 	return false
 }
 
-func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (map[string]interface{}, error) {
+func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (*LoginResponse, error) {
 	//appID := convertApp(payload.App)
 	username := payload.Username + payload.Email
 
@@ -191,10 +191,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	}
 
 	if !user.Enabled {
-		return map[string]interface{}{
-			"status":  "account_disabled", // 3
-			"enabled": "false",
-		}, nil
+		return newLoginStatusResponse("account_disabled", "false"), nil
 	}
 
 	// Vérification des droits Mobile
@@ -231,98 +228,23 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 			if s.canSendMFAOTP(ctx, user) {
 				s.SendMFACode(ctx, user, false)
 			}
+
+			pendingStatus := models.MFAStatusPending
+			user.MFAStatus = &pendingStatus
 		}
 	} else {
 		s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
+		verifiedStatus := models.MFAStatusVerified
+		user.MFAStatus = &verifiedStatus
 	}
 
 	// MULTI-MERCHANT
 	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
 
-	// JSON EXACT (Identique à ton code original)
-	return map[string]interface{}{
-		"status":           "1",
-		"device_cash_desk": nil,
-		"enabled":          "true",
-
-		"name":                  user.Name,
-		"first_name":            user.FirstName,
-		"last_name":             user.LastName,
-		"userId":                user.UserID,
-		"user_mail":             user.Email,
-		"user_tel":              user.Tel,
-		"open_cash_drawer":      user.Rights.OpenCashDrawer,
-		"terms_of_use_accepted": user.TermsOfUseAccepted,
-		"admin":                 user.Rights.Admin,
-
-		"merchantId":                          user.MerchantID,
-		"merchant_id":                         user.MerchantID,
-		"merchantName":                        user.MerchantName,
-		"business_name":                       user.MerchantName,
-		"merchantTel":                         user.MerchantTel,
-		"merchant_tel":                        user.MerchantTel,
-		"delivery_fees":                       user.DeliveryFees,
-		"delivery_fees_limit":                 user.DeliveryFeesLimit,
-		"kitchen_show_only_paid":              user.KitchenShowOnlyPaid,
-		"allow_waiter_account":                user.AllowWaiterAccount,
-		"print_merchant_cash_report":          user.Rights.PrintMerchantCashReport,
-		"merchantAd":                          user.MerchantAddress,
-		"merchant_address":                    user.MerchantAddress,
-		"merchant_lat":                        user.MerchantLat,
-		"delivery_distance_limit":             user.DeliveryDistanceLimit,
-		"kitchen_distribution_mode":           user.KitchenDistributionMode,
-		"production_display_mode":             user.ProductionDisplayMode,
-		"pager_number_required":               user.PagerNumberRequired,
-		"cash_register_required_for_ordering": user.CashRegisterRequiredForOrdering,
-		"merchant_lng":                        user.MerchantLng,
-		"timezone":                            user.TimeZone,
-		"mfa_status":                          user.MFAStatus,
-		"mfa_type":                            user.MFAType,
-
-		"SNOSettings": map[string]interface{}{
-			"activated": user.SNOActivated,
-		},
-
-		"integration_uber_eats": map[string]interface{}{
-			"store_id":                   user.UEStoreID.String,
-			"estimated_preparation_time": user.UEPrepTime.String,
-			"delay_until":                user.UEDelayUntil,
-			"delay_duration":             user.UEDelayDuration.Int64,
-			"closed_until":               user.UEClosedUntil,
-			"commission_rate":            user.UECommissionRate.Float64,
-		},
-
-		"integration_uber_direct": map[string]interface{}{
-			"customer_id": user.UDCustomerID.String,
-		},
-
-		"integration_deliveroo": map[string]interface{}{
-			"location_id":     user.DrooLocationID.String,
-			"commission_rate": user.DrooCommissionRate.Float64,
-		},
-
-		"scannorder_ready":              user.ScanNOrderReady,
-		"manage_on_site":                user.ManageOnSite,
-		"manage_take_away":              user.ManageTakeAway,
-		"manage_delivery":               user.ManageDelivery,
-		"stock_management":              user.StockManagement,
-		"hr_management":                 user.HrManagement,
-		"service_required_for_ordering": user.ServiceRequiredForOrdering,
-		"safety_stock_active":           user.DisableSafetyStock,
-		"warning_new_order_not_paid":    user.WarningNewOrderNotPaid,
-
-		"currency":          user.Currency,
-		"is_open":           user.IsOpen,
-		"pin_code":          user.PinCode.String,
-		"merchant_web_site": user.WebSite.String,
-		"token":             user.Token,
-		"profile_picture":   user.ProfilePicture.String,
-
-		"merchants": merchants,
-	}, nil
+	return buildLoginResponse(user, merchants), nil
 }
 
-func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload, token string) (map[string]interface{}, error) {
+func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload, token string) (*LoginResponse, error) {
 
 	appID := convertApp(payload.App)
 
@@ -336,126 +258,255 @@ func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload,
 		return nil, err
 	}
 	if user == nil {
-		return map[string]interface{}{
-			"status":  "user_not_found", // 0
-			"enabled": "no user found",
-		}, nil
+		return newLoginStatusResponse("user_not_found", "no user found"), nil
 	}
 
 	if !user.Enabled {
-		return map[string]interface{}{
-			"status":  "account_disabled", //3
-			"enabled": "false",
-		}, nil
+		return newLoginStatusResponse("account_disabled", "false"), nil
 	}
 
 	switch appID {
 	case "WR_RECEPTION":
 		if !user.Rights.AccessReception {
-			return map[string]interface{}{
-				"status":  "user_not_allowed",
-				"enabled": "User can't access this app",
-			}, nil
+			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
 		}
 	case "WR_DELIVERY":
 		if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
-			return map[string]interface{}{
-				"status":  "user_not_allowed",
-				"enabled": "User can't access this app",
-			}, nil
+			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
 		}
 	case "WR_WAITER":
 		if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
-			return map[string]interface{}{
-				"status":  "user_not_allowed",
-				"enabled": "User can't access this app",
-			}, nil
+			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
 		}
 	}
 
 	// MULTI-MERCHANT
 	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
 
-	// JSON EXACT
-	return map[string]interface{}{
-		"status":           "1",
-		"device_cash_desk": nil, // à implémenter plus tard
-		"enabled":          "true",
+	return buildLoginResponse(user, merchants), nil
+}
 
-		"name":                  user.Name,
-		"first_name":            user.FirstName,
-		"last_name":             user.LastName,
-		"userId":                user.UserID,
-		"user_mail":             user.Email,
-		"user_tel":              user.Tel,
-		"open_cash_drawer":      user.Rights.OpenCashDrawer,
-		"terms_of_use_accepted": user.TermsOfUseAccepted,
-		"admin":                 user.Rights.Admin,
-
-		"merchantId":                          user.MerchantID,
-		"merchant_id":                         user.MerchantID,
-		"merchantName":                        user.MerchantName,
-		"business_name":                       user.MerchantName,
-		"merchantTel":                         user.MerchantTel,
-		"merchant_tel":                        user.MerchantTel,
-		"delivery_fees":                       user.DeliveryFees,
-		"delivery_fees_limit":                 user.DeliveryFeesLimit,
-		"kitchen_show_only_paid":              user.KitchenShowOnlyPaid,
-		"allow_waiter_account":                user.AllowWaiterAccount,
-		"print_merchant_cash_report":          user.Rights.PrintMerchantCashReport,
-		"merchantAd":                          user.MerchantAddress,
-		"merchant_address":                    user.MerchantAddress,
-		"merchant_lat":                        user.MerchantLat,
-		"delivery_distance_limit":             user.DeliveryDistanceLimit,
-		"kitchen_distribution_mode":           user.KitchenDistributionMode,
-		"production_display_mode":             user.ProductionDisplayMode,
-		"pager_number_required":               user.PagerNumberRequired,
-		"cash_register_required_for_ordering": user.CashRegisterRequiredForOrdering,
-		"merchant_lng":                        user.MerchantLng,
-		"timezone":                            user.TimeZone,
-		//"merchantLogo":                        user.MerchantLogo.String,
-
-		"SNOSettings": map[string]interface{}{
-			"activated": user.SNOActivated,
+func newLoginStatusResponse(status string, enabled string) *LoginResponse {
+	return &LoginResponse{
+		Status:         status,
+		DeviceCashDesk: nil,
+		Enabled:        enabled,
+		Session: &LoginSessionResponse{
+			Enabled: enabled == "true",
 		},
+	}
+}
 
-		"integration_uber_eats": map[string]interface{}{
-			"store_id":                   user.UEStoreID.String,
-			"estimated_preparation_time": user.UEPrepTime.String,
-			"delay_until":                user.UEDelayUntil,
-			"delay_duration":             user.UEDelayDuration.Int64,
-			"closed_until":               user.UEClosedUntil,
-			"commission_rate":            user.UECommissionRate.Float64,
+func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginResponse {
+	uberEats := LoginUberEatsIntegrationResponse{
+		StoreID:                  user.UEStoreID.String,
+		EstimatedPreparationTime: user.UEPrepTime.String,
+		DelayUntil:               user.UEDelayUntil,
+		DelayDuration:            user.UEDelayDuration.Int64,
+		ClosedUntil:              user.UEClosedUntil,
+		CommissionRate:           user.UECommissionRate.Float64,
+	}
+
+	uberDirect := LoginUberDirectIntegrationResponse{
+		CustomerID: user.UDCustomerID.String,
+	}
+
+	deliveroo := LoginDeliverooIntegrationResponse{
+		LocationID:     user.DrooLocationID.String,
+		CommissionRate: user.DrooCommissionRate.Float64,
+	}
+
+	access := &LoginAccessResponse{
+		Admin: user.Rights.Admin,
+		Apps: LoginAccessAppsResponse{
+			Reception: user.Rights.AccessReception,
+			Delivery:  user.Rights.AccessDelivery,
+			Waiter:    user.Rights.AccessWaiter,
 		},
-
-		"integration_uber_direct": map[string]interface{}{
-			"customer_id": user.UDCustomerID.String,
+		Permissions: LoginAccessPermissionsResponse{
+			PrintMerchantCashReport: user.Rights.PrintMerchantCashReport,
+			OpenCashDrawer:          user.Rights.OpenCashDrawer,
+			ManageMenu:              user.Rights.CanManageMenu,
+			ManagePlannings:         user.Rights.CanManagePlannings,
+			ManageUsers:             user.Rights.CanManageUsers,
+			ManageSettings:          user.Rights.CanManageSettings,
+			ManageHACCP:             user.Rights.CanManageHACCP,
+			ViewReports:             user.Rights.CanViewReports,
+			ExportReports:           user.Rights.CanExportReports,
+			ViewFinancials:          user.Rights.CanViewFinancials,
+			ExportFinancials:        user.Rights.CanExportFinancials,
+			ManageCustomers:         user.Rights.CanManageCustomers,
+			ExportCustomers:         user.Rights.CanExportCustomers,
 		},
+	}
 
-		"integration_deliveroo": map[string]interface{}{
-			"location_id":     user.DrooLocationID.String,
-			"commission_rate": user.DrooCommissionRate.Float64,
+	capabilities := &LoginCapabilitiesResponse{
+		Apps: LoginCapabilityAppsResponse{
+			Reception: user.HasAccessReception(),
+			Delivery:  user.HasAccessDelivery() && user.AllowDeliveryAccount,
+			Waiter:    user.HasAccessWaiter() && user.AllowWaiterAccount,
 		},
+		Modules: LoginCapabilityModulesResponse{
+			Menu:       user.HasMenuAccess(),
+			Planning:   user.HasPlanningAccess() && user.PlanningEnabled,
+			Users:      user.HasUserManagementAccess(),
+			Settings:   user.HasSettingsAccess(),
+			HACCP:      user.HasHACCPAccess() && user.HACCPEnabled,
+			Bookings:   user.BookingsEnabled,
+			Reports:    user.HasReportsViewAccess() || user.HasReportsExportAccess(),
+			Financials: user.HasFinancialsViewAccess() || user.HasFinancialsExportAccess(),
+			Customers:  user.HasCustomerManagementAccess() || user.HasCustomerExportAccess(),
+			Stock:      user.StockEnabled,
+			HR:         user.HrManagement,
+			ScanNOrder: user.ScanNOrderEnabled,
+		},
+		OrderTypes: LoginCapabilityOrderTypesResponse{
+			OnSite:   user.ManageOnSite,
+			TakeAway: user.ManageTakeAway,
+			Delivery: user.ManageDelivery,
+		},
+		Actions: LoginCapabilityActionsResponse{
+			OpenCashDrawer:          user.CanOpenCashDrawer(),
+			PrintMerchantCashReport: user.CanPrintCashReport(),
+			ManageMenu:              user.HasMenuAccess(),
+			ManagePlannings:         user.HasPlanningAccess() && user.PlanningEnabled,
+			ManageUsers:             user.HasUserManagementAccess(),
+			ManageSettings:          user.HasSettingsAccess(),
+			ManageHACCP:             user.HasHACCPAccess() && user.HACCPEnabled,
+			ViewReports:             user.HasReportsViewAccess(),
+			ExportReports:           user.HasReportsExportAccess(),
+			ViewFinancials:          user.HasFinancialsViewAccess(),
+			ExportFinancials:        user.HasFinancialsExportAccess(),
+			ManageCustomers:         user.HasCustomerManagementAccess(),
+			ExportCustomers:         user.HasCustomerExportAccess(),
+		},
+		Integrations: LoginCapabilityIntegrationsResponse{
+			UberEats:   user.UEStoreID.Valid && user.UEStoreID.String != "",
+			UberDirect: user.UDCustomerID.Valid && user.UDCustomerID.String != "",
+			Deliveroo:  user.DrooLocationID.Valid && user.DrooLocationID.String != "",
+			ScanNOrder: user.SNOActivated && user.ScanNOrderEnabled,
+		},
+	}
 
-		"scannorder_ready":              user.ScanNOrderReady,
-		"manage_on_site":                user.ManageOnSite,
-		"manage_take_away":              user.ManageTakeAway,
-		"manage_delivery":               user.ManageDelivery,
-		"stock_management":              user.StockManagement,
-		"hr_management":                 user.HrManagement,
-		"service_required_for_ordering": user.ServiceRequiredForOrdering,
-		"safety_stock_active":           user.DisableSafetyStock,
-		"warning_new_order_not_paid":    user.WarningNewOrderNotPaid,
+	// Deprecated compatibility payload for existing clients.
+	// Do not use these flat fields in new code; migrate consumers to session, merchant, access, integrations and capabilities.
+	legacy := &LoginLegacyFields{
+		Name:                            user.Name,
+		FirstName:                       user.FirstName,
+		LastName:                        user.LastName,
+		UserID:                          user.UserID,
+		UserMail:                        user.Email,
+		UserTel:                         user.Tel,
+		OpenCashDrawer:                  user.Rights.OpenCashDrawer,
+		TermsOfUseAccepted:              user.TermsOfUseAccepted,
+		Admin:                           user.Rights.Admin,
+		MerchantID:                      user.MerchantID,
+		MerchantIDLegacy:                user.MerchantID,
+		MerchantName:                    user.MerchantName,
+		BusinessName:                    user.MerchantName,
+		MerchantTel:                     user.MerchantTel,
+		MerchantTelLegacy:               user.MerchantTel,
+		DeliveryFees:                    user.DeliveryFees,
+		DeliveryFeesLimit:               user.DeliveryFeesLimit,
+		KitchenShowOnlyPaid:             user.KitchenShowOnlyPaid,
+		AllowWaiterAccount:              user.AllowWaiterAccount,
+		PrintCashReport:                 user.Rights.PrintMerchantCashReport,
+		MerchantAd:                      user.MerchantAddress,
+		MerchantAddress:                 user.MerchantAddress,
+		MerchantLat:                     user.MerchantLat,
+		DeliveryDistanceLimit:           user.DeliveryDistanceLimit,
+		KitchenDistributionMode:         user.KitchenDistributionMode,
+		ProductionDisplayMode:           user.ProductionDisplayMode,
+		PagerNumberRequired:             user.PagerNumberRequired,
+		CashRegisterRequiredForOrdering: user.CashRegisterRequiredForOrdering,
+		MerchantLng:                     user.MerchantLng,
+		TimeZone:                        user.TimeZone,
+		MFAStatus:                       user.MFAStatus,
+		MFAType:                         user.MFAType,
+		IntegrationUberEats:             uberEats,
+		IntegrationUberDirect:           uberDirect,
+		IntegrationDeliveroo:            deliveroo,
+		ScanNOrderReady:                 user.ScanNOrderReady,
+		ManageOnSite:                    user.ManageOnSite,
+		ManageTakeAway:                  user.ManageTakeAway,
+		ManageDelivery:                  user.ManageDelivery,
+		StockManagement:                 user.StockManagement,
+		HRManagement:                    user.HrManagement,
+		ServiceRequiredForOrdering:      user.ServiceRequiredForOrdering,
+		SafetyStockActive:               user.DisableSafetyStock,
+		WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
+		Currency:                        user.Currency,
+		IsOpen:                          user.IsOpen,
+		PinCode:                         user.PinCode.String,
+		MerchantWebSite:                 user.WebSite.String,
+		Token:                           user.Token,
+		ProfilePicture:                  user.ProfilePicture.String,
+		Merchants:                       merchants,
+		SNOSettings:                     LoginSNOSettingsResponse{Activated: user.SNOActivated},
+	}
 
-		"currency":          user.Currency,
-		"is_open":           user.IsOpen,
-		"pin_code":          user.PinCode.String,
-		"merchant_web_site": user.WebSite.String,
-		"token":             user.Token,
-		"profile_picture":   user.ProfilePicture.String,
-
-		"merchants": merchants,
-	}, nil
+	return &LoginResponse{
+		Status:         "1",
+		DeviceCashDesk: nil,
+		Enabled:        "true",
+		Session: &LoginSessionResponse{
+			Enabled:    true,
+			MerchantID: user.MerchantID,
+			Token:      user.Token,
+			MFAStatus:  user.MFAStatus,
+			MFAType:    user.MFAType,
+			Merchants:  merchants,
+		},
+		User: &LoginUserResponse{
+			ID:                 user.UserID,
+			Name:               user.Name,
+			FirstName:          user.FirstName,
+			LastName:           user.LastName,
+			Email:              user.Email,
+			Tel:                user.Tel,
+			TermsOfUseAccepted: user.TermsOfUseAccepted,
+			PinCode:            user.PinCode.String,
+			ProfilePicture:     user.ProfilePicture.String,
+		},
+		Merchant: &LoginMerchantResponse{
+			ID:           user.MerchantID,
+			Name:         user.MerchantName,
+			BusinessName: user.MerchantName,
+			Tel:          user.MerchantTel,
+			Address:      user.MerchantAddress,
+			Lat:          user.MerchantLat,
+			Lng:          user.MerchantLng,
+			TimeZone:     user.TimeZone,
+			WebSite:      user.WebSite.String,
+			Currency:     user.Currency,
+			IsOpen:       user.IsOpen,
+			Settings: LoginMerchantSettingsResponse{
+				DeliveryFees:                    user.DeliveryFees,
+				DeliveryFeesLimit:               user.DeliveryFeesLimit,
+				DeliveryDistanceLimit:           user.DeliveryDistanceLimit,
+				ManageOnSite:                    user.ManageOnSite,
+				ManageTakeAway:                  user.ManageTakeAway,
+				ManageDelivery:                  user.ManageDelivery,
+				KitchenShowOnlyPaid:             user.KitchenShowOnlyPaid,
+				KitchenDistributionMode:         user.KitchenDistributionMode,
+				ProductionDisplayMode:           user.ProductionDisplayMode,
+				PagerNumberRequired:             user.PagerNumberRequired,
+				ServiceRequiredForOrdering:      user.ServiceRequiredForOrdering,
+				CashRegisterRequiredForOrdering: user.CashRegisterRequiredForOrdering,
+				WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
+				DisableSafetyStock:              user.DisableSafetyStock,
+			},
+		},
+		Access:       access,
+		Capabilities: capabilities,
+		Integrations: &LoginIntegrationsResponse{
+			UberEats:   uberEats,
+			UberDirect: uberDirect,
+			Deliveroo:  deliveroo,
+		},
+		SNOSettings: &LoginSNOSettingsResponse{Activated: user.SNOActivated},
+		Legacy:      legacy,
+	}
 }
 
 func (s *AuthService) CheckAppVersion(ctx context.Context, token, versionCodeString, app string) (map[string]interface{}, error) {
