@@ -11,11 +11,9 @@ CREATE TABLE IF NOT EXISTS planning_weeks (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_planning_weeks_merchant_start (merchant_id, start_date, enabled),
+  KEY idx_planning_weeks_merchant_start (merchant_id, start_date, enabled),
   KEY idx_planning_weeks_merchant (merchant_id),
-  KEY idx_planning_weeks_range (start_date, end_date),
-  CONSTRAINT fk_planning_weeks_merchant FOREIGN KEY (merchant_id)
-    REFERENCES merchants(merchant_id)
+  KEY idx_planning_weeks_range (start_date, end_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS planning_shifts (
@@ -40,9 +38,5 @@ CREATE TABLE IF NOT EXISTS planning_shifts (
   KEY idx_planning_shifts_merchant (merchant_id),
   KEY idx_planning_shifts_week (week_id),
   KEY idx_planning_shifts_employee_date (employee_id, shift_date),
-  KEY idx_planning_shifts_date (shift_date),
-  CONSTRAINT fk_planning_shifts_week FOREIGN KEY (week_id)
-    REFERENCES planning_weeks(id) ON DELETE CASCADE,
-  CONSTRAINT fk_planning_shifts_employee FOREIGN KEY (employee_id)
-    REFERENCES employees(id) ON DELETE SET NULL
+  KEY idx_planning_shifts_date (shift_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

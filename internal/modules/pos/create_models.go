@@ -13,6 +13,7 @@ type CreateMerchantRequest struct {
 	Tel          string `json:"tel"`
 	WebSite      string `json:"web_site"`
 	Email        string `json:"email"`
+	PackageID    string `json:"package_id"`
 	// Optional: if set the user is linked to the new merchant in the same transaction.
 	UserID string `json:"user_id,omitempty"`
 	// Rights to grant when linking. Ignored if UserID is empty.

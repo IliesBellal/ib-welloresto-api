@@ -32,6 +32,19 @@ func (h *Handler) GetTemperatureZones(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) GetCorrectiveActions(w http.ResponseWriter, r *http.Request) {
+	actions, err := h.svc.ListCorrectiveActions(r.Context())
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_corrective_actions", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_corrective_actions", map[string]interface{}{
+		"status":             "success",
+		"corrective_actions": actions,
+	})
+}
+
 func (h *Handler) CreateTemperatureZone(w http.ResponseWriter, r *http.Request) {
 	var req CreateZoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

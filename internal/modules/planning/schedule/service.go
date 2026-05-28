@@ -49,6 +49,11 @@ func (s *Service) CreatePlanningWeek(ctx context.Context, req PlanningWeekCreate
 	if !sharedpkg.IsValidPlanningWeekStatus(status) {
 		return nil, models.ErrValidationError
 	}
+	if existing, existingErr := s.repo.GetPlanningWeekByStartDate(ctx, user.MerchantID, startDate, ""); existingErr == nil && existing != nil {
+		return nil, models.ErrPlanningWeekAlreadyExists
+	} else if existingErr != nil && existingErr != sql.ErrNoRows {
+		return nil, existingErr
+	}
 	week := PlanningWeek{Label: req.Label, StartDate: startDate, EndDate: endDate, Status: status, Notes: req.Notes}
 	return s.repo.CreatePlanningWeek(ctx, user.MerchantID, week)
 }
@@ -122,6 +127,15 @@ func (s *Service) UpdatePlanningWeek(ctx context.Context, weekID string, req Pla
 		if end.Before(start) {
 			return nil, models.ErrPlanningInvalidDate
 		}
+	}
+	startDate := current.StartDate
+	if !updated.StartDate.IsZero() {
+		startDate = updated.StartDate
+	}
+	if existing, existingErr := s.repo.GetPlanningWeekByStartDate(ctx, user.MerchantID, startDate, weekID); existingErr == nil && existing != nil {
+		return nil, models.ErrPlanningWeekAlreadyExists
+	} else if existingErr != nil && existingErr != sql.ErrNoRows {
+		return nil, existingErr
 	}
 	return s.repo.UpdatePlanningWeek(ctx, user.MerchantID, weekID, updated)
 }

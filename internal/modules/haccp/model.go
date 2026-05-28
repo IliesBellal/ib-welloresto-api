@@ -20,19 +20,39 @@ type Zone struct {
 }
 
 type Reading struct {
-	ID         string    `json:"id"`
-	SessionID  string    `json:"session_id,omitempty"`
-	MerchantID string    `json:"merchant_id"`
-	ZoneID     string    `json:"zone_id"`
-	ZoneName   *string   `json:"zone_name,omitempty"`
-	Value      float64   `json:"value"`
-	Status     string    `json:"status"`
-	PhotoURL   *string   `json:"photo_url,omitempty"`
-	Signature  *string   `json:"signature,omitempty"`
-	Comment    *string   `json:"comment,omitempty"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID                string                    `json:"id"`
+	SessionID         string                    `json:"session_id,omitempty"`
+	MerchantID        string                    `json:"merchant_id"`
+	ZoneID            string                    `json:"zone_id"`
+	ZoneName          *string                   `json:"zone_name,omitempty"`
+	Value             float64                   `json:"value"`
+	Status            string                    `json:"status"`
+	PhotoURL          *string                   `json:"photo_url,omitempty"`
+	Signature         *string                   `json:"signature,omitempty"`
+	Comment           *string                   `json:"comment,omitempty"`
+	CorrectiveActions []ReadingCorrectiveAction `json:"corrective_actions,omitempty"`
+	CreatedBy         string                    `json:"created_by"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+}
+
+type CorrectiveAction struct {
+	ID            string `json:"id"`
+	Code          string `json:"code"`
+	Label         string `json:"label"`
+	Description   string `json:"description,omitempty"`
+	SeverityScope string `json:"severity_scope,omitempty"`
+	Active        bool   `json:"active"`
+}
+
+type ReadingCorrectiveAction struct {
+	ID            string   `json:"id"`
+	ActionID      string   `json:"action_id"`
+	Code          string   `json:"code"`
+	Label         string   `json:"label"`
+	Note          *string  `json:"note,omitempty"`
+	PhotoURL      *string  `json:"photo_url,omitempty"`
+	FollowUpValue *float64 `json:"follow_up_value,omitempty"`
 }
 
 type TemperatureSession struct {
@@ -142,11 +162,15 @@ type BatchCreateReadingsRequest struct {
 }
 
 type BatchReadingInput struct {
-	ZoneID    string  `json:"zone_id"`
-	Value     float64 `json:"value"`
-	PhotoURL  *string `json:"photo_url"`
-	Signature *string `json:"signature"`
-	Comment   *string `json:"comment,omitempty"`
+	ZoneID                   string   `json:"zone_id"`
+	Value                    float64  `json:"value"`
+	PhotoURL                 *string  `json:"photo_url"`
+	Signature                *string  `json:"signature"`
+	Comment                  *string  `json:"comment,omitempty"`
+	CorrectiveActionIDs      []string `json:"corrective_action_ids,omitempty"`
+	CorrectiveActionNote     *string  `json:"corrective_action_note,omitempty"`
+	CorrectiveActionPhotoURL *string  `json:"corrective_action_photo_url,omitempty"`
+	CorrectiveFollowUpValue  *float64 `json:"corrective_follow_up_value,omitempty"`
 }
 
 type BatchCreateReadingsResponse struct {

@@ -34,6 +34,22 @@ func (r *POSRepository) InsertMerchant(ctx context.Context, req CreateMerchantRe
 	return strconv.FormatInt(id, 10), err
 }
 
+// InsertSubscription creates the effective merchant subscription for the selected package.
+func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, packageID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO subscriptions (merchant_id, package_id) VALUES (?, ?)`,
+		merchantID, packageID,
+	); err != nil {
+		log.Error("InsertSubscription: failed to insert subscription: " + err.Error())
+		return err
+	}
+
+	return nil
+}
+
 // InitMerchantSatellites creates the companion rows expected for every new merchant.
 func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID string) error {
 	db := dbutils.GetDB(ctx, r.database)
@@ -71,6 +87,22 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 		`INSERT INTO merchant_marketing_settings (merchant_id) VALUES (?)`, merchantID,
 	); err != nil {
 		log.Error("InitMerchantSatellites: failed to insert merchant marketing settings: " + err.Error())
+		return err
+	}
+
+	// haccp_settings (bootstrapped with defaults by merchant_id)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO haccp_settings (merchant_id, created_at, updated_at) VALUES (?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, merchantID,
+	); err != nil {
+		log.Error("InitMerchantSatellites: failed to insert haccp settings: " + err.Error())
+		return err
+	}
+
+	// bookings_settings (relies on DB defaults for the rest of the configuration)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO bookings_settings (merchant_id) VALUES (?)`, merchantID,
+	); err != nil {
+		log.Error("InitMerchantSatellites: failed to insert bookings settings: " + err.Error())
 		return err
 	}
 

@@ -111,6 +111,14 @@ var (
 
 	ErrTemperatureCorrectiveActionRequired = errors.New("temperature_corrective_action_required")
 
+	ErrCorrectiveActionRequired = errors.New("corrective_action_required")
+
+	ErrInvalidCorrectiveAction = errors.New("invalid_corrective_action")
+
+	ErrDuplicateCorrectiveAction = errors.New("duplicate_corrective_action")
+
+	ErrCorrectiveActionNoteRequired = errors.New("corrective_action_note_required")
+
 	// ErrCleaningPhotoRequired indique qu'une photo est requise par la configuration HACCP (422)
 	ErrCleaningPhotoRequired = errors.New("cleaning_photo_required")
 
@@ -220,6 +228,7 @@ var (
 	ErrPlanningEmployeeDocumentFileRequired    = errors.New("planning_employee_document_file_required")
 	ErrPlanningEmployeeDocumentUploadFailed    = errors.New("planning_employee_document_upload_failed")
 	ErrPlanningEmployeeDocumentUrlFailed       = errors.New("planning_employee_document_url_failed")
+	ErrPlanningWeekAlreadyExists               = errors.New("planning_week_already_exists")
 	ErrPlanningWeekNotFound                    = errors.New("planning_week_not_found")
 	ErrPlanningShiftNotFound                   = errors.New("planning_shift_not_found")
 	ErrPlanningShiftConflict                   = errors.New("planning_shift_conflict")
@@ -315,6 +324,26 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "temperature_corrective_action_required"
 		errorMsg = "A corrective action comment is required for an out-of-range temperature."
 
+	case errors.Is(err, ErrCorrectiveActionRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "corrective_action_required"
+		errorMsg = "At least one corrective action is required for an out-of-range temperature."
+
+	case errors.Is(err, ErrInvalidCorrectiveAction):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_corrective_action"
+		errorMsg = "One or more corrective actions are invalid."
+
+	case errors.Is(err, ErrDuplicateCorrectiveAction):
+		status = http.StatusBadRequest
+		errorStatus = "duplicate_corrective_action"
+		errorMsg = "A corrective action cannot be selected more than once for the same reading."
+
+	case errors.Is(err, ErrCorrectiveActionNoteRequired):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "corrective_action_note_required"
+		errorMsg = "A corrective action note is required for the selected action."
+
 	case errors.Is(err, ErrTooLateToDeleteOrder):
 		status = http.StatusForbidden
 		errorStatus = "too_late_to_delete_order"
@@ -409,6 +438,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusInternalServerError
 		errorStatus = "planning_employee_document_url_failed"
 		errorMsg = "The employee document URL could not be generated."
+
+	case errors.Is(err, ErrPlanningWeekAlreadyExists):
+		status = http.StatusConflict
+		errorStatus = "planning_week_already_exists"
+		errorMsg = "An active planning week already exists for this start date."
 
 	case errors.Is(err, ErrPlanningWeekNotFound):
 		status = http.StatusNotFound

@@ -689,6 +689,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/activities", haccpH.GetActivities)
 
 		r.Get("/temperature-zones", haccpH.GetTemperatureZones)
+		r.Get("/corrective-actions", haccpH.GetCorrectiveActions)
 		r.Post("/temperature-zones", haccpH.CreateTemperatureZone)
 		r.Patch("/temperature-zones/{id}", haccpH.ReplaceTemperatureZone)
 		r.Delete("/temperature-zones/{id}", haccpH.DeleteTemperatureZone)

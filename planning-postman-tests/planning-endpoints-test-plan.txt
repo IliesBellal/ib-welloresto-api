@@ -1,0 +1,782 @@
+PLANNING MODULE - POSTMAN TEST PLAN
+
+Location:
+- Base route: /planning
+- Auth: all endpoints below require the auth token middleware
+- Wrapper: expect the usual API wrapper, with HTTP status matching the case and a business payload containing status=success on successful calls
+
+PREREQUISITES
+
+1. Run the SQL scripts before testing this module.
+   Minimum order:
+   - migrations/014_planning_socle.sql
+   - migrations/015_planning_employee_documents.sql
+   - migrations/016_planning_shifts_core.sql
+   - migrations/017_planning_time_entries.sql
+   - migrations/018_planning_leave_and_swaps.sql
+
+2. Prepare Postman variables:
+   - {{baseUrl}}
+   - {{token}}
+   - {{employeeId}}
+   - {{employeeId2}}
+   - {{uploadFileKey}}
+   - {{documentId}}
+   - {{weekId}}
+   - {{weekId2}}
+   - {{shiftId1}}
+   - {{shiftId2}}
+   - {{timeEntryId}}
+   - {{leaveRequestId}}
+   - {{swapRequestId}}
+
+3. Common headers for JSON requests:
+   - Authorization: Bearer {{token}}
+   - Content-Type: application/json
+
+4. Suggested execution order:
+   - References and settings
+   - Employees
+   - Documents
+   - Weeks and shifts
+   - Time entries
+   - Leave requests
+   - Shift swap requests
+
+====================================================================
+1. SETTINGS
+====================================================================
+
+1.1 GET /planning/settings
+Purpose:
+- Fetch current settings, or the default merchant settings if not initialized yet.
+Expected:
+- HTTP 200
+- payload key: settings
+- settings.labor_country_code should default to FR on a fresh merchant
+
+1.2 PUT /planning/settings
+Happy path payload:
+{
+  "labor_country_code": "FR",
+  "min_daily_rest_hours": 11,
+  "min_break_minutes": 30,
+  "night_shift_start": "22:00",
+  "night_shift_end": "06:00",
+  "night_shift_multiplier": 1.5,
+  "holiday_multiplier": 2,
+  "allow_override_warnings": true
+}
+Expected:
+- HTTP 200
+- payload key: settings
+- returned settings reflect the submitted values
+
+Validation payload to test:
+{
+  "night_shift_start": "not-a-time"
+}
+Expected:
+- HTTP 400
+
+====================================================================
+2. REFERENCE TABLES
+====================================================================
+
+2.1 GET /planning/contract-types
+Expected:
+- HTTP 200
+- payload key: contract_types
+- should contain at least CDI, CDD, Extra, Stage, Apprenti
+
+2.2 GET /planning/time-tracking-modes
+Expected:
+- HTTP 200
+- payload key: time_tracking_modes
+- should contain at least standard, badge, mobile, kiosk
+
+2.3 GET /planning/event-types
+Expected:
+- HTTP 200
+- payload key: planning_event_types
+
+====================================================================
+3. EMPLOYEES
+====================================================================
+
+3.1 POST /planning/employees
+Happy path payload:
+{
+  "first_name": "Alice",
+  "last_name": "Martin",
+  "position": "Serveuse",
+  "role": "employee",
+  "contract_type_code": "CDI",
+  "time_tracking_mode_code": "standard",
+  "contract_hours": 35,
+  "max_weekly_hours": 35,
+  "required_rest_days": 2,
+  "sunday_premium": false,
+  "night_premium": false,
+  "hourly_rate": 1250,
+  "gross_monthly_salary": 210000,
+  "employer_charges_pct": 45,
+  "transport_cost": 0,
+  "email": "alice.planning@example.com",
+  "phone": "+33600000001",
+  "active": true
+}
+Expected:
+- HTTP 201
+- payload key: employee
+- save employee.id as {{employeeId}}
+
+3.2 POST /planning/employees
+Second employee payload:
+{
+  "first_name": "Bob",
+  "last_name": "Durand",
+  "position": "Cuisinier",
+  "role": "employee",
+  "contract_type_code": "CDD",
+  "time_tracking_mode_code": "standard",
+  "contract_hours": 39,
+  "max_weekly_hours": 39,
+  "required_rest_days": 2,
+  "hourly_rate": 1300,
+  "gross_monthly_salary": 220000,
+  "employer_charges_pct": 45,
+  "transport_cost": 0,
+  "active": true
+}
+Expected:
+- HTTP 201
+- save employee.id as {{employeeId2}}
+
+3.3 POST /planning/employees
+Invalid payload:
+{
+  "last_name": "MissingFirstName",
+  "position": "Serveuse",
+  "contract_type_code": "CDI",
+  "time_tracking_mode_code": "standard"
+}
+Expected:
+- HTTP 400
+- error about missing employee name
+
+3.4 GET /planning/employees
+Try:
+- /planning/employees
+- /planning/employees?search=Alice
+- /planning/employees?active=true
+- /planning/employees?position=Serveuse
+- /planning/employees?contract=CDI
+Expected:
+- HTTP 200
+- payload key: employees
+
+3.5 GET /planning/employees/{{employeeId}}
+Expected:
+- HTTP 200
+- payload key: employee
+
+3.6 PATCH /planning/employees/{{employeeId}}
+Happy path partial payload:
+{
+  "position": "Manager de salle",
+  "night_premium": true,
+  "transport_cost": 1500
+}
+Expected:
+- HTTP 200
+- payload key: employee
+- only the submitted fields should change
+
+3.7 PATCH /planning/employees/{{employeeId}}
+Invalid payload:
+{}
+Expected:
+- HTTP 400
+
+3.8 DELETE /planning/employees/{{employeeId2}}
+Expected:
+- HTTP 200
+
+3.9 GET /planning/employees/{{employeeId2}}
+Expected:
+- HTTP 404
+Reason:
+- verifies the soft delete fix: deleted employees must no longer be readable as active records
+
+====================================================================
+4. DOCUMENT UPLOADS AND EMPLOYEE DOCUMENTS
+====================================================================
+
+4.1 POST /planning/uploads/employee-documents
+Body:
+- form-data
+- key: file
+- file types to test: PDF, JPG, PNG
+Expected:
+- HTTP 200
+- payload key: upload
+- save upload.file_key as {{uploadFileKey}}
+
+4.2 POST /planning/uploads/employee-documents
+Negative upload:
+- form-data with no file
+Expected:
+- HTTP 400
+
+4.3 POST /planning/employees/{{employeeId}}/documents
+Happy path payload:
+{
+  "document_type": "contract",
+  "name": "Contrat CDI Alice",
+  "file_key": "{{uploadFileKey}}",
+  "content_type": "application/pdf"
+}
+Expected:
+- HTTP 201
+- payload key: document
+- save document.id as {{documentId}}
+
+4.4 POST /planning/employees/{{employeeId}}/documents
+Invalid payload:
+{
+  "document_type": "unknown",
+  "name": "Invalid doc",
+  "file_key": "{{uploadFileKey}}",
+  "content_type": "application/pdf"
+}
+Expected:
+- HTTP 400
+
+4.5 GET /planning/employees/{{employeeId}}/documents
+Expected:
+- HTTP 200
+- payload key: documents
+- document list contains {{documentId}}
+
+4.6 GET /planning/employees/{{employeeId}}/documents/{{documentId}}/download
+Expected:
+- HTTP 200
+- payload key: url
+- returned URL should be a signed URL
+
+4.7 DELETE /planning/employees/{{employeeId}}/documents/{{documentId}}
+Expected:
+- HTTP 200
+
+4.8 GET /planning/employees/{{employeeId}}/documents/{{documentId}}/download
+Expected:
+- HTTP 404
+
+====================================================================
+5. PLANNING WEEKS
+====================================================================
+
+5.1 POST /planning/weeks
+Happy path payload:
+{
+  "label": "Semaine 23",
+  "start_date": "2026-06-01",
+  "end_date": "2026-06-07",
+  "status": "draft",
+  "notes": "Premiere semaine de test planning"
+}
+Expected:
+- HTTP 201
+- payload key: week
+- save week.id as {{weekId}}
+
+5.2 POST /planning/weeks
+Duplicate start_date payload:
+{
+  "label": "Semaine 23 Bis",
+  "start_date": "2026-06-01",
+  "end_date": "2026-06-07",
+  "status": "draft"
+}
+Expected:
+- HTTP 409
+- error status planning_week_already_exists
+Reason:
+- verifies the fix that moved uniqueness from SQL into service logic
+
+5.3 GET /planning/weeks
+Expected:
+- HTTP 200
+- payload key: weeks
+
+5.4 GET /planning/weeks/{{weekId}}
+Expected:
+- HTTP 200
+- payload key: week
+
+5.5 PATCH /planning/weeks/{{weekId}}
+Happy path partial payload:
+{
+  "label": "Semaine 23 finale",
+  "status": "published"
+}
+Expected:
+- HTTP 200
+
+5.6 PATCH /planning/weeks/{{weekId}}
+Invalid date range payload:
+{
+  "start_date": "2026-06-08",
+  "end_date": "2026-06-02"
+}
+Expected:
+- HTTP 400
+
+5.7 POST /planning/weeks
+Second week payload:
+{
+  "label": "Semaine 24",
+  "start_date": "2026-06-08",
+  "end_date": "2026-06-14",
+  "status": "draft"
+}
+Expected:
+- HTTP 201
+- save week.id as {{weekId2}}
+
+5.8 PATCH /planning/weeks/{{weekId2}}
+Conflicting start_date payload:
+{
+  "start_date": "2026-06-01"
+}
+Expected:
+- HTTP 409
+- error status planning_week_already_exists
+
+====================================================================
+6. SHIFTS
+====================================================================
+
+6.1 POST /planning/weeks/{{weekId}}/shifts
+Happy path payload for employee 1:
+{
+  "employee_id": "{{employeeId}}",
+  "title": "Service midi",
+  "shift_date": "2026-06-02",
+  "start_time": "12:00",
+  "end_time": "15:00",
+  "break_minutes": 0,
+  "position": "Salle",
+  "location": "Restaurant",
+  "notes": "Ouverture du service",
+  "status": "planned"
+}
+Expected:
+- HTTP 201
+- payload key: shift
+- save shift.id as {{shiftId1}}
+
+6.2 POST /planning/employees
+Recreate employee 2 if needed
+Payload:
+{
+  "first_name": "Bob",
+  "last_name": "Durand",
+  "position": "Cuisinier",
+  "role": "employee",
+  "contract_type_code": "CDD",
+  "time_tracking_mode_code": "standard",
+  "active": true
+}
+Expected:
+- HTTP 201
+- save as {{employeeId2}} if you deleted the earlier one
+
+6.3 POST /planning/weeks/{{weekId}}/shifts
+Happy path payload for employee 2:
+{
+  "employee_id": "{{employeeId2}}",
+  "title": "Preparation soir",
+  "shift_date": "2026-06-02",
+  "start_time": "18:00",
+  "end_time": "22:00",
+  "break_minutes": 15,
+  "position": "Cuisine",
+  "status": "planned"
+}
+Expected:
+- HTTP 201
+- save shift.id as {{shiftId2}}
+
+6.4 POST /planning/weeks/{{weekId}}/shifts
+Conflict payload:
+{
+  "employee_id": "{{employeeId}}",
+  "title": "Conflit service",
+  "shift_date": "2026-06-02",
+  "start_time": "14:00",
+  "end_time": "16:00",
+  "status": "planned"
+}
+Expected:
+- HTTP 409
+- error status planning_shift_conflict
+
+6.5 GET /planning/weeks/{{weekId}}/shifts
+Expected:
+- HTTP 200
+- payload key: shifts
+
+6.6 GET /planning/shifts/{{shiftId1}}
+Expected:
+- HTTP 200
+- payload key: shift
+
+6.7 PATCH /planning/shifts/{{shiftId1}}
+Happy path payload:
+{
+  "start_time": "11:30",
+  "end_time": "15:30",
+  "status": "confirmed"
+}
+Expected:
+- HTTP 200
+
+6.8 DELETE /planning/weeks/{{weekId}}
+Expected:
+- HTTP 200
+
+6.9 GET /planning/weeks/{{weekId}}
+Expected:
+- HTTP 404
+
+6.10 GET /planning/shifts/{{shiftId1}}
+Expected:
+- HTTP 404
+Reason:
+- verifies the recent fix: deleting a week must also hide its shifts
+
+====================================================================
+7. TIME ENTRIES
+====================================================================
+
+7.1 Recreate a fresh week and one shift before testing time entries
+POST /planning/weeks
+Payload:
+{
+  "label": "Semaine time entries",
+  "start_date": "2026-06-15",
+  "end_date": "2026-06-21",
+  "status": "draft"
+}
+Expected:
+- HTTP 201
+- reuse or overwrite {{weekId}}
+
+7.2 POST /planning/weeks/{{weekId}}/shifts
+Payload:
+{
+  "employee_id": "{{employeeId}}",
+  "title": "Shift badge",
+  "shift_date": "2026-06-16",
+  "start_time": "09:00",
+  "end_time": "17:00",
+  "status": "planned"
+}
+Expected:
+- HTTP 201
+- reuse or overwrite {{shiftId1}}
+
+7.3 GET /planning/employees/{{employeeId}}/time-entries
+Expected:
+- HTTP 200
+- payload key: time_entries
+
+7.4 GET /planning/employees/{{employeeId}}/time-entries/current
+Expected:
+- HTTP 200
+- payload key: time_entry
+- should be null if no entry is open yet
+
+7.5 POST /planning/employees/{{employeeId}}/time-entries/start
+Happy path payload with shift:
+{
+  "shift_id": "{{shiftId1}}",
+  "entry_mode_code": "standard",
+  "clock_in_at": "2026-06-16T09:05:00Z",
+  "clock_in_note": "Debut de service"
+}
+Expected:
+- HTTP 201
+- payload key: time_entry
+- save time_entry.id as {{timeEntryId}}
+
+7.6 POST /planning/employees/{{employeeId}}/time-entries/start
+Duplicate open entry payload:
+{
+  "entry_mode_code": "standard"
+}
+Expected:
+- HTTP 409
+- error status planning_time_entry_already_open
+
+7.7 POST /planning/employees/{{employeeId}}/time-entries/stop
+Happy path payload:
+{
+  "entry_id": "{{timeEntryId}}",
+  "clock_out_at": "2026-06-16T17:02:00Z",
+  "clock_out_note": "Fin de service"
+}
+Expected:
+- HTTP 200
+- payload key: time_entry
+- clock_out_at should now be filled
+
+7.8 POST /planning/employees/{{employeeId}}/time-entries/stop
+Invalid range payload:
+{
+  "entry_id": "{{timeEntryId}}",
+  "clock_out_at": "2026-06-16T08:00:00Z"
+}
+Expected:
+- HTTP 400 or 409 depending on current entry state
+
+====================================================================
+8. LEAVE REQUESTS
+====================================================================
+
+8.1 GET /planning/leave-requests
+Expected:
+- HTTP 200
+- payload key: leave_requests
+
+8.2 POST /planning/leave-requests
+Happy path payload:
+{
+  "employee_id": "{{employeeId}}",
+  "leave_type": "paid",
+  "start_date": "2026-06-20",
+  "end_date": "2026-06-21",
+  "reason": "Weekend prolonge"
+}
+Expected:
+- HTTP 201
+- payload key: leave_request
+- save leave_request.id as {{leaveRequestId}}
+
+8.3 POST /planning/leave-requests
+Invalid payload:
+{
+  "employee_id": "{{employeeId}}",
+  "leave_type": "invalid-type",
+  "start_date": "2026-06-20",
+  "end_date": "2026-06-21"
+}
+Expected:
+- HTTP 400
+
+8.4 GET /planning/leave-requests/{{leaveRequestId}}
+Expected:
+- HTTP 200
+- payload key: leave_request
+
+8.5 PATCH /planning/leave-requests/{{leaveRequestId}}
+Happy path payload:
+{
+  "manager_note": "Valide",
+  "status": "approved"
+}
+Expected:
+- HTTP 200
+
+8.6 POST /planning/weeks/{{weekId}}/shifts
+Create a shift that overlaps a leave range for the same employee
+Payload:
+{
+  "employee_id": "{{employeeId}}",
+  "title": "Shift overlapping leave",
+  "shift_date": "2026-06-21",
+  "start_time": "10:00",
+  "end_time": "14:00",
+  "status": "planned"
+}
+Expected:
+- HTTP 201
+
+8.7 POST /planning/leave-requests
+Create a second leave request on the overlapping date
+Payload:
+{
+  "employee_id": "{{employeeId}}",
+  "leave_type": "paid",
+  "start_date": "2026-06-21",
+  "end_date": "2026-06-21"
+}
+Expected:
+- HTTP 201
+- save new id manually
+
+8.8 PATCH /planning/leave-requests/{new_id}
+Payload:
+{
+  "status": "approved"
+}
+Expected:
+- HTTP 409
+- error status planning_leave_shift_conflict
+
+8.9 GET /planning/leave-requests?employee_id={{employeeId}}
+Expected:
+- HTTP 200
+
+8.10 GET /planning/leave-requests?status=approved
+Expected:
+- HTTP 200
+
+8.11 DELETE /planning/leave-requests/{{leaveRequestId}}
+Expected:
+- HTTP 200
+
+====================================================================
+9. SHIFT SWAP REQUESTS
+====================================================================
+
+9.1 GET /planning/shift-swap-requests
+Expected:
+- HTTP 200
+- payload key: shift_swap_requests
+
+9.2 Preconditions for swap tests
+- Need two active employees
+- Need two active shifts on the same merchant
+- Each shift must be assigned to the matching employee
+
+9.3 POST /planning/shift-swap-requests
+Happy path payload:
+{
+  "requester_employee_id": "{{employeeId}}",
+  "requester_shift_id": "{{shiftId1}}",
+  "target_employee_id": "{{employeeId2}}",
+  "target_shift_id": "{{shiftId2}}",
+  "reason": "Echange de service"
+}
+Expected:
+- HTTP 201
+- payload key: shift_swap_request
+- save request id as {{swapRequestId}}
+
+9.4 POST /planning/shift-swap-requests
+Invalid payload with same requester and target:
+{
+  "requester_employee_id": "{{employeeId}}",
+  "requester_shift_id": "{{shiftId1}}",
+  "target_employee_id": "{{employeeId}}",
+  "target_shift_id": "{{shiftId1}}"
+}
+Expected:
+- HTTP 400
+- error status planning_shift_swap_invalid
+
+9.5 GET /planning/shift-swap-requests/{{swapRequestId}}
+Expected:
+- HTTP 200
+- payload key: shift_swap_request
+
+9.6 PATCH /planning/shift-swap-requests/{{swapRequestId}}
+Approve payload:
+{
+  "status": "approved",
+  "manager_note": "Echange valide"
+}
+Expected:
+- HTTP 200
+- payload key: shift_swap_request
+- then GET both shifts and verify employee assignments were swapped
+
+9.7 GET /planning/shifts/{{shiftId1}}
+Expected after approval:
+- HTTP 200
+- shift.employee_id should now be {{employeeId2}}
+
+9.8 GET /planning/shifts/{{shiftId2}}
+Expected after approval:
+- HTTP 200
+- shift.employee_id should now be {{employeeId}}
+
+9.9 POST /planning/shift-swap-requests
+Create a new pending swap and reject it
+Payload:
+{
+  "requester_employee_id": "{{employeeId2}}",
+  "requester_shift_id": "{{shiftId1}}",
+  "target_employee_id": "{{employeeId}}",
+  "target_shift_id": "{{shiftId2}}",
+  "reason": "Test rejet"
+}
+Expected:
+- HTTP 201
+
+9.10 PATCH /planning/shift-swap-requests/{new_id}
+Reject payload:
+{
+  "status": "rejected",
+  "manager_note": "Refuse"
+}
+Expected:
+- HTTP 200
+- shift assignments remain unchanged
+
+9.11 GET /planning/shift-swap-requests?requester_employee_id={{employeeId}}
+Expected:
+- HTTP 200
+
+9.12 GET /planning/shift-swap-requests?target_employee_id={{employeeId2}}
+Expected:
+- HTTP 200
+
+9.13 GET /planning/shift-swap-requests?status=approved
+Expected:
+- HTTP 200
+
+9.14 DELETE /planning/shift-swap-requests/{{swapRequestId}}
+Expected:
+- HTTP 200
+
+====================================================================
+10. MAJOR REGRESSION CHECKS AFTER THE BUG FIXES
+====================================================================
+
+10.1 Employee delete regression check
+Steps:
+- DELETE /planning/employees/{id}
+- GET /planning/employees/{id}
+Expected:
+- first call HTTP 200
+- second call HTTP 404
+
+10.2 Week delete regression check
+Steps:
+- create one week
+- create one shift in that week
+- DELETE /planning/weeks/{id}
+- GET /planning/weeks/{id}
+- GET /planning/shifts/{shift_id}
+Expected:
+- delete HTTP 200
+- week GET HTTP 404
+- shift GET HTTP 404
+
+10.3 Duplicate week regression check
+Steps:
+- create one week with start_date X
+- create another week with same start_date X
+Expected:
+- first call HTTP 201
+- second call HTTP 409 with planning_week_already_exists
+
+NOTES
+
+- If you need a clean test pass, keep one Postman collection run for happy paths only, and a second one for validation and regression cases.
+- For file upload tests, prefer a small PDF first, then one JPG, then one invalid MIME case.
+- For time entry and swap tests, be careful to recreate fresh shifts when previous scenarios intentionally delete weeks or change assignments.

@@ -93,8 +93,7 @@ CREATE TABLE IF NOT EXISTS planning_settings (
   PRIMARY KEY (id),
   UNIQUE KEY uq_planning_settings_merchant (merchant_id),
   KEY idx_planning_settings_merchant (merchant_id),
-  CONSTRAINT fk_planning_settings_labor_rule FOREIGN KEY (labor_country_code)
-    REFERENCES labor_rules(country_code)
+  KEY idx_planning_settings_labor_country_code (labor_country_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS employees (
@@ -138,13 +137,7 @@ CREATE TABLE IF NOT EXISTS employees (
   KEY idx_employees_merchant_active (merchant_id, active),
   KEY idx_employees_merchant (merchant_id),
   KEY idx_employees_contract_type (contract_type_code),
-  KEY idx_employees_time_tracking (time_tracking_mode_code),
-  CONSTRAINT fk_employees_contract_type FOREIGN KEY (contract_type_code)
-    REFERENCES sys_contract_types(code),
-  CONSTRAINT fk_employees_time_tracking FOREIGN KEY (time_tracking_mode_code)
-    REFERENCES sys_time_tracking_modes(code),
-  CONSTRAINT fk_employees_user FOREIGN KEY (user_id)
-    REFERENCES users(user_id) ON DELETE SET NULL
+  KEY idx_employees_time_tracking (time_tracking_mode_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS hours_amendments (
@@ -161,7 +154,5 @@ CREATE TABLE IF NOT EXISTS hours_amendments (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_hours_amendments_merchant (merchant_id),
-  KEY idx_hours_amendments_employee (employee_id),
-  CONSTRAINT fk_hours_amendments_employee FOREIGN KEY (employee_id)
-    REFERENCES employees(id) ON DELETE CASCADE
+  KEY idx_hours_amendments_employee (employee_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

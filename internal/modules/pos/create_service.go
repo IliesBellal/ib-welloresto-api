@@ -5,6 +5,7 @@ import (
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 // CreateMerchant creates a new merchant with its satellite tables inside a single
@@ -12,7 +13,8 @@ import (
 func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantRequest) (CreateMerchantResponse, error) {
 	if strings.TrimSpace(req.FullName) == "" ||
 		strings.TrimSpace(req.SIRET) == "" ||
-		strings.TrimSpace(req.Tel) == "" {
+		strings.TrimSpace(req.Tel) == "" ||
+		strings.TrimSpace(req.PackageID) == "" {
 		return CreateMerchantResponse{}, models.ErrInvalidInput
 	}
 
@@ -21,22 +23,35 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 		return CreateMerchantResponse{}, err
 	}
 
-	// Step 1 — create merchant row
-	merchantID, err := s.posRepo.InsertMerchant(ctx, req, merchantToken)
+	var merchantID string
+	err = dbutils.RunInTx(ctx, s.posRepo.database, func(txCtx context.Context) error {
+		// Step 1 — create merchant row
+		merchantID, err = s.posRepo.InsertMerchant(txCtx, req, merchantToken)
+		if err != nil {
+			return err
+		}
+
+		// Step 2 — create subscription from the requested package
+		if err := s.posRepo.InsertSubscription(txCtx, merchantID, strings.TrimSpace(req.PackageID)); err != nil {
+			return err
+		}
+
+		// Step 3 — initialise companion tables
+		if err := s.posRepo.InitMerchantSatellites(txCtx, merchantID); err != nil {
+			return err
+		}
+
+		// Step 4 — optional user linkage
+		if strings.TrimSpace(req.UserID) != "" {
+			if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
 		return CreateMerchantResponse{}, err
-	}
-
-	// Step 2 — initialise companion tables
-	if err := s.posRepo.InitMerchantSatellites(ctx, merchantID); err != nil {
-		return CreateMerchantResponse{}, err
-	}
-
-	// Step 3 — optional user linkage (within same transaction)
-	if strings.TrimSpace(req.UserID) != "" {
-		if _, _, err := s.insertUserRightsTx(ctx, req.UserID, merchantID, req.Admin); err != nil {
-			return CreateMerchantResponse{}, err
-		}
 	}
 
 	return CreateMerchantResponse{MerchantID: merchantID}, nil

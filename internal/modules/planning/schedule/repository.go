@@ -53,6 +53,23 @@ func (r *Repository) GetPlanningWeekByID(ctx context.Context, merchantID, weekID
 	return scanPlanningWeekRow(row)
 }
 
+func (r *Repository) GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*PlanningWeek, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	query := `
+		SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+	`
+	args := []interface{}{merchantID, startDate.Format("2006-01-02")}
+	if strings.TrimSpace(excludeWeekID) != "" {
+		query += ` AND id <> ?`
+		args = append(args, strings.TrimSpace(excludeWeekID))
+	}
+	query += ` ORDER BY created_at DESC LIMIT 1`
+	row := db.QueryRowContext(ctx, query, args...)
+	return scanPlanningWeekRow(row)
+}
+
 func (r *Repository) CreatePlanningWeek(ctx context.Context, merchantID string, week PlanningWeek) (*PlanningWeek, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	now := time.Now().UTC()
@@ -105,20 +122,29 @@ func (r *Repository) UpdatePlanningWeek(ctx context.Context, merchantID, weekID 
 }
 
 func (r *Repository) SoftDeletePlanningWeek(ctx context.Context, merchantID, weekID string) error {
-	db := dbutils.GetDB(ctx, r.db)
-	now := time.Now().UTC()
-	res, err := db.ExecContext(ctx, `
-		UPDATE planning_weeks
-		SET enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, now, now, merchantID, weekID)
-	if err != nil {
+	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
+		db := dbutils.GetDB(txCtx, r.db)
+		now := time.Now().UTC()
+
+		res, err := db.ExecContext(txCtx, `
+			UPDATE planning_weeks
+			SET enabled = 0, deleted_at = ?, updated_at = ?
+			WHERE merchant_id = ? AND id = ? AND enabled = 1
+		`, now, now, merchantID, weekID)
+		if err != nil {
+			return err
+		}
+		if affected, _ := res.RowsAffected(); affected == 0 {
+			return sql.ErrNoRows
+		}
+
+		_, err = db.ExecContext(txCtx, `
+			UPDATE planning_shifts
+			SET enabled = 0, deleted_at = ?, updated_at = ?
+			WHERE merchant_id = ? AND week_id = ? AND enabled = 1
+		`, now, now, merchantID, weekID)
 		return err
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	})
 }
 
 func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]PlanningShift, error) {

@@ -17,10 +17,5 @@ CREATE TABLE IF NOT EXISTS planning_time_entries (
   KEY idx_planning_time_entries_open (employee_id, clock_out_at),
   KEY idx_planning_time_entries_shift (shift_id),
   KEY idx_planning_time_entries_clock_in (clock_in_at),
-  CONSTRAINT fk_planning_time_entries_employee FOREIGN KEY (employee_id)
-    REFERENCES employees(id) ON DELETE CASCADE,
-  CONSTRAINT fk_planning_time_entries_shift FOREIGN KEY (shift_id)
-    REFERENCES planning_shifts(id) ON DELETE SET NULL,
-  CONSTRAINT fk_planning_time_entries_mode FOREIGN KEY (entry_mode_code)
-    REFERENCES sys_time_tracking_modes(code)
+  KEY idx_planning_time_entries_mode (entry_mode_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

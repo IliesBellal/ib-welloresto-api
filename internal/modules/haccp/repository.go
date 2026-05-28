@@ -15,6 +15,14 @@ type Repository struct {
 	db *sql.DB
 }
 
+type readingCorrectiveActionCreate struct {
+	ReadingID     string
+	ActionID      string
+	Note          *string
+	PhotoURL      *string
+	FollowUpValue *float64
+}
+
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -187,6 +195,87 @@ func (r *Repository) FindZonesByIDs(ctx context.Context, merchantID string, zone
 	return result, rows.Err()
 }
 
+func (r *Repository) ListCorrectiveActions(ctx context.Context) ([]CorrectiveAction, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, code, label, description, severity_scope, active
+		FROM haccp_corrective_actions
+		WHERE active = 1
+		ORDER BY label ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]CorrectiveAction, 0)
+	for rows.Next() {
+		var action CorrectiveAction
+		var description sql.NullString
+		var severityScope sql.NullString
+		if err := rows.Scan(&action.ID, &action.Code, &action.Label, &description, &severityScope, &action.Active); err != nil {
+			return nil, err
+		}
+		if description.Valid {
+			action.Description = description.String
+		}
+		if severityScope.Valid {
+			action.SeverityScope = severityScope.String
+		}
+		out = append(out, action)
+	}
+
+	return out, rows.Err()
+}
+
+func (r *Repository) FindCorrectiveActionsByIDs(ctx context.Context, actionIDs []string) (map[string]CorrectiveAction, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	if len(actionIDs) == 0 {
+		return map[string]CorrectiveAction{}, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(actionIDs))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+
+	args := make([]interface{}, 0, len(actionIDs))
+	for _, id := range actionIDs {
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, code, label, description, severity_scope, active
+		FROM haccp_corrective_actions
+		WHERE active = 1 AND id IN (%s)
+	`, placeholders)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]CorrectiveAction, len(actionIDs))
+	for rows.Next() {
+		var action CorrectiveAction
+		var description sql.NullString
+		var severityScope sql.NullString
+		if err := rows.Scan(&action.ID, &action.Code, &action.Label, &description, &severityScope, &action.Active); err != nil {
+			return nil, err
+		}
+		if description.Valid {
+			action.Description = description.String
+		}
+		if severityScope.Valid {
+			action.SeverityScope = severityScope.String
+		}
+		out[action.ID] = action
+	}
+
+	return out, rows.Err()
+}
+
 func (r *Repository) CreateTemperatureSession(ctx context.Context, merchantID, createdBy string) (*TemperatureSession, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	id := helpers.GeneratePrefixedID(helpers.HACCPTemperatureSessionIDPrefix)
@@ -242,6 +331,42 @@ func (r *Repository) InsertTemperatureReadingsBatch(ctx context.Context, merchan
 			readings[i].PhotoURL,
 			readings[i].Signature,
 			readings[i].Comment,
+			createdBy,
+			now,
+			now,
+		)
+	}
+
+	query := prefix + strings.Join(values, ",")
+	_, err := db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *Repository) InsertTemperatureReadingCorrectiveActionsBatch(ctx context.Context, merchantID, createdBy string, entries []readingCorrectiveActionCreate) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	prefix := `INSERT INTO temperature_reading_corrective_actions (
+		id, reading_id, action_id, merchant_id, note, photo_url, follow_up_value, created_by, created_at, updated_at, enabled
+	) VALUES `
+
+	values := make([]string, 0, len(entries))
+	args := make([]interface{}, 0, len(entries)*11)
+	now := time.Now().UTC()
+
+	for i := range entries {
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)")
+		args = append(args,
+			helpers.GeneratePrefixedID(helpers.HACCPReadingCorrectiveActionIDPrefix),
+			entries[i].ReadingID,
+			entries[i].ActionID,
+			merchantID,
+			entries[i].Note,
+			entries[i].PhotoURL,
+			entries[i].FollowUpValue,
 			createdBy,
 			now,
 			now,
@@ -1107,6 +1232,67 @@ func (r *Repository) GetTemperatureSessionDetail(ctx context.Context, merchantID
 	}
 
 	session.Readings = readings
+
+	if len(session.Readings) == 0 {
+		return &session, nil
+	}
+
+	correctiveRows, err := db.QueryContext(ctx, `
+		SELECT
+			rca.id,
+			rca.reading_id,
+			rca.action_id,
+			ca.code,
+			ca.label,
+			rca.note,
+			rca.photo_url,
+			rca.follow_up_value
+		FROM temperature_reading_corrective_actions rca
+		JOIN haccp_corrective_actions ca
+			ON ca.id = rca.action_id
+		WHERE rca.merchant_id = ?
+		  AND rca.enabled = 1
+		  AND rca.reading_id IN (
+			SELECT tr.id
+			FROM temperature_readings tr
+			WHERE tr.merchant_id = ?
+			  AND tr.session_id = ?
+			  AND tr.enabled = 1
+		  )
+		ORDER BY rca.created_at ASC, rca.id ASC
+	`, merchantID, merchantID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer correctiveRows.Close()
+
+	byReading := make(map[string][]ReadingCorrectiveAction)
+	for correctiveRows.Next() {
+		var item ReadingCorrectiveAction
+		var readingID string
+		var note sql.NullString
+		var followUp sql.NullFloat64
+		if err := correctiveRows.Scan(&item.ID, &readingID, &item.ActionID, &item.Code, &item.Label, &note, &item.PhotoURL, &followUp); err != nil {
+			return nil, err
+		}
+		if note.Valid {
+			v := note.String
+			item.Note = &v
+		}
+		if followUp.Valid {
+			v := followUp.Float64
+			item.FollowUpValue = &v
+		}
+		byReading[readingID] = append(byReading[readingID], item)
+	}
+	if err := correctiveRows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range session.Readings {
+		session.Readings[i].CorrectiveActions = byReading[session.Readings[i].ID]
+	}
+
 	return &session, nil
 }
 

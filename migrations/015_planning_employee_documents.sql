@@ -12,7 +12,5 @@ CREATE TABLE IF NOT EXISTS employee_documents (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_empdocs_merchant (merchant_id),
-  KEY idx_empdocs_employee (employee_id),
-  CONSTRAINT fk_empdocs_employee FOREIGN KEY (employee_id)
-    REFERENCES employees(id) ON DELETE CASCADE
+  KEY idx_empdocs_employee (employee_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

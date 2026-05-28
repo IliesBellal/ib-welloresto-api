@@ -39,6 +39,15 @@ func (s *Service) ListTemperatureZones(ctx context.Context) ([]Zone, error) {
 	return s.repo.ListTemperatureZones(ctx, user.MerchantID)
 }
 
+func (s *Service) ListCorrectiveActions(ctx context.Context) ([]CorrectiveAction, error) {
+	_, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	return s.repo.ListCorrectiveActions(ctx)
+}
+
 func (s *Service) CreateTemperatureZone(ctx context.Context, req CreateZoneRequest) (*Zone, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -363,10 +372,65 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 		return nil, err
 	}
 
+	actionIDsSet := make(map[string]struct{})
+	for _, input := range req.Readings {
+		for _, actionID := range input.CorrectiveActionIDs {
+			id := strings.TrimSpace(actionID)
+			if id != "" {
+				actionIDsSet[id] = struct{}{}
+			}
+		}
+	}
+
+	actionIDs := make([]string, 0, len(actionIDsSet))
+	for id := range actionIDsSet {
+		actionIDs = append(actionIDs, id)
+	}
+
+	actionsByID, err := s.repo.FindCorrectiveActionsByIDs(ctx, actionIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(actionsByID) != len(actionIDs) {
+		return nil, models.ErrInvalidCorrectiveAction
+	}
+
 	toInsert := make([]Reading, 0, len(req.Readings))
+	correctiveByReadingIndex := make([][]readingCorrectiveActionCreate, 0, len(req.Readings))
 	for _, input := range req.Readings {
 		zone := zones[input.ZoneID]
 		status := computeStatus(input.Value, zone.TargetTempMin, zone.TargetTempMax)
+
+		hasDeviation := status != "ok"
+		selectedActionIDs := make([]string, 0, len(input.CorrectiveActionIDs))
+		seenActionIDs := make(map[string]struct{}, len(input.CorrectiveActionIDs))
+		for _, rawActionID := range input.CorrectiveActionIDs {
+			actionID := strings.TrimSpace(rawActionID)
+			if actionID == "" {
+				continue
+			}
+			if _, exists := seenActionIDs[actionID]; exists {
+				return nil, models.ErrDuplicateCorrectiveAction
+			}
+			seenActionIDs[actionID] = struct{}{}
+			selectedActionIDs = append(selectedActionIDs, actionID)
+		}
+
+		if hasDeviation && settings.TempCorrectiveActions && len(selectedActionIDs) == 0 {
+			return nil, models.ErrCorrectiveActionRequired
+		}
+
+		for _, actionID := range selectedActionIDs {
+			action, ok := actionsByID[actionID]
+			if !ok {
+				return nil, models.ErrInvalidCorrectiveAction
+			}
+			if action.Code == "other" {
+				if input.CorrectiveActionNote == nil || strings.TrimSpace(*input.CorrectiveActionNote) == "" {
+					return nil, models.ErrCorrectiveActionNoteRequired
+				}
+			}
+		}
 
 		if settings.TempCorrectiveActions && status != "ok" {
 			if input.Comment == nil || strings.TrimSpace(*input.Comment) == "" {
@@ -387,6 +451,17 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 			Signature: input.Signature,
 			Comment:   input.Comment,
 		})
+
+		links := make([]readingCorrectiveActionCreate, 0, len(selectedActionIDs))
+		for _, actionID := range selectedActionIDs {
+			links = append(links, readingCorrectiveActionCreate{
+				ActionID:      actionID,
+				Note:          input.CorrectiveActionNote,
+				PhotoURL:      input.CorrectiveActionPhotoURL,
+				FollowUpValue: input.CorrectiveFollowUpValue,
+			})
+		}
+		correctiveByReadingIndex = append(correctiveByReadingIndex, links)
 	}
 
 	var session *TemperatureSession
@@ -398,6 +473,20 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 		session = sess
 
 		if err := s.repo.InsertTemperatureReadingsBatch(txCtx, user.MerchantID, user.UserID, session.ID, toInsert); err != nil {
+			return err
+		}
+
+		allLinks := make([]readingCorrectiveActionCreate, 0)
+		for i := range toInsert {
+			if len(correctiveByReadingIndex[i]) == 0 {
+				continue
+			}
+			for _, item := range correctiveByReadingIndex[i] {
+				item.ReadingID = toInsert[i].ID
+				allLinks = append(allLinks, item)
+			}
+		}
+		if err := s.repo.InsertTemperatureReadingCorrectiveActionsBatch(txCtx, user.MerchantID, user.UserID, allLinks); err != nil {
 			return err
 		}
 

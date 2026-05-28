@@ -203,7 +203,7 @@ func (r *Repository) SoftDeleteEmployee(ctx context.Context, merchantID, employe
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
-		SET active = 0, deleted_at = ?, updated_at = ?
+		SET active = 0, enabled = 0, deleted_at = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
 	`, now, now, merchantID, employeeID)
 	if err != nil {
