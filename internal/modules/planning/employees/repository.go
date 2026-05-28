@@ -21,33 +21,34 @@ func NewRepository(db *sql.DB) *Repository {
 func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filters EmployeeListFilters) ([]Employee, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
 			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at, deleted_at
-		FROM employees
-		WHERE merchant_id = ? AND enabled = 1
+		FROM employees e
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
+		WHERE e.merchant_id = ? AND e.enabled = 1
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.Search) != "" {
-		query += ` AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?)`
+		query += ` AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR p.label LIKE ?)`
 		search := "%" + strings.TrimSpace(filters.Search) + "%"
-		args = append(args, search, search, search, search)
+		args = append(args, search, search, search, search, search)
 	}
 	if filters.Active != nil {
-		query += ` AND active = ?`
+		query += ` AND e.active = ?`
 		args = append(args, *filters.Active)
 	}
-	if strings.TrimSpace(filters.Position) != "" {
-		query += ` AND position = ?`
-		args = append(args, strings.TrimSpace(filters.Position))
+	if strings.TrimSpace(filters.PositionID) != "" {
+		query += ` AND e.position_id = ?`
+		args = append(args, strings.TrimSpace(filters.PositionID))
 	}
 	if strings.TrimSpace(filters.ContractType) != "" {
-		query += ` AND contract_type_code = ?`
+		query += ` AND e.contract_type_code = ?`
 		args = append(args, strings.TrimSpace(filters.ContractType))
 	}
-	query += ` ORDER BY last_name ASC, first_name ASC`
+	query += ` ORDER BY e.last_name ASC, e.first_name ASC`
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -69,13 +70,14 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*Employee, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
-		SELECT id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
 			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at, deleted_at
-		FROM employees
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		FROM employees e
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
+		WHERE e.merchant_id = ? AND e.id = ? AND e.enabled = 1
 	`, merchantID, employeeID)
 	item, err := scanEmployeeRow(row)
 	if err != nil {
@@ -102,7 +104,8 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 		UserID:                 req.UserID,
 		FirstName:              strings.TrimSpace(req.FirstName),
 		LastName:               strings.TrimSpace(req.LastName),
-		Position:               strings.TrimSpace(req.Position),
+		PositionID:             strings.TrimSpace(req.PositionID),
+		PositionNote:           req.PositionNote,
 		JobTitle:               req.JobTitle,
 		Email:                  req.Email,
 		Phone:                  req.Phone,
@@ -157,16 +160,19 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 	if req.TransportCost != nil {
 		employee.TransportCost = *req.TransportCost
 	}
+	if position, err := r.GetEmployeePositionByID(ctx, merchantID, employee.PositionID); err == nil && position != nil {
+		employee.Position = position.Label
+	}
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO employees (
-			id, merchant_id, user_id, first_name, last_name, position, job_title, email, phone, role,
+			id, merchant_id, user_id, first_name, last_name, position_id, position_note, job_title, email, phone, role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
 			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.PositionID, employee.PositionNote, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -179,13 +185,13 @@ func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID 
 	employee.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
-		SET user_id = ?, first_name = ?, last_name = ?, position = ?, job_title = ?, email = ?, phone = ?, role = ?,
+		SET user_id = ?, first_name = ?, last_name = ?, position_id = ?, position_note = ?, job_title = ?, email = ?, phone = ?, role = ?,
 			contract_type_code = ?, contract_start_date = ?, contract_end_date = ?, probation_end_date = ?, last_medical_checkup_date = ?,
 			contract_hours = ?, max_weekly_hours = ?, required_rest_days = ?, sunday_premium = ?, night_premium = ?,
 			hourly_rate = ?, gross_monthly_salary = ?, employer_charges_pct = ?, transport_cost = ?, birth_date = ?, gender = ?, nationality = ?,
 			address = ?, hr_comment = ?, active = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, employee.UserID, employee.FirstName, employee.LastName, employee.Position, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.UpdatedAt, merchantID, employeeID)
+	`, employee.UserID, employee.FirstName, employee.LastName, employee.PositionID, employee.PositionNote, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.UpdatedAt, merchantID, employeeID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +230,7 @@ type scannableRows interface {
 
 func scanEmployeeRow(row scannable) (*Employee, error) {
 	item := &Employee{}
-	var userID, jobTitle, email, phone, gender, nationality, address, hrComment sql.NullString
+	var userID, positionLabel, positionNote, jobTitle, email, phone, gender, nationality, address, hrComment sql.NullString
 	var contractStartDate, contractEndDate, probationEndDate, medicalDate, birthDate sql.NullTime
 	var contractHours, maxWeeklyHours, employerChargesPct sql.NullFloat64
 	var hourlyRate, grossMonthlySalary, transportCost sql.NullInt64
@@ -232,7 +238,7 @@ func scanEmployeeRow(row scannable) (*Employee, error) {
 	var sundayPremium, nightPremium, active sql.NullBool
 	var deletedAt sql.NullTime
 	if err := row.Scan(
-		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.Position, &jobTitle, &email, &phone, &item.Role,
+		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.PositionID, &positionLabel, &positionNote, &jobTitle, &email, &phone, &item.Role,
 		&item.ContractTypeCode, &contractStartDate, &contractEndDate, &probationEndDate, &medicalDate,
 		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium,
 		&hourlyRate, &grossMonthlySalary, &employerChargesPct, &transportCost, &birthDate, &gender, &nationality,
@@ -242,6 +248,12 @@ func scanEmployeeRow(row scannable) (*Employee, error) {
 	}
 	if userID.Valid {
 		item.UserID = &userID.String
+	}
+	if positionLabel.Valid {
+		item.Position = positionLabel.String
+	}
+	if positionNote.Valid {
+		item.PositionNote = &positionNote.String
 	}
 	if jobTitle.Valid {
 		item.JobTitle = &jobTitle.String
@@ -303,7 +315,7 @@ func scanEmployeeRow(row scannable) (*Employee, error) {
 
 func scanEmployee(rows scannableRows) (*Employee, error) {
 	item := &Employee{}
-	var userID, jobTitle, email, phone, gender, nationality, address, hrComment sql.NullString
+	var userID, positionLabel, positionNote, jobTitle, email, phone, gender, nationality, address, hrComment sql.NullString
 	var contractStartDate, contractEndDate, probationEndDate, medicalDate, birthDate sql.NullTime
 	var contractHours, maxWeeklyHours, employerChargesPct sql.NullFloat64
 	var hourlyRate, grossMonthlySalary, transportCost sql.NullInt64
@@ -311,7 +323,7 @@ func scanEmployee(rows scannableRows) (*Employee, error) {
 	var sundayPremium, nightPremium, active sql.NullBool
 	var deletedAt sql.NullTime
 	if err := rows.Scan(
-		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.Position, &jobTitle, &email, &phone, &item.Role,
+		&item.ID, &item.MerchantID, &userID, &item.FirstName, &item.LastName, &item.PositionID, &positionLabel, &positionNote, &jobTitle, &email, &phone, &item.Role,
 		&item.ContractTypeCode, &contractStartDate, &contractEndDate, &probationEndDate, &medicalDate,
 		&contractHours, &maxWeeklyHours, &requiredRestDays, &sundayPremium, &nightPremium,
 		&hourlyRate, &grossMonthlySalary, &employerChargesPct, &transportCost, &birthDate, &gender, &nationality,
@@ -321,6 +333,12 @@ func scanEmployee(rows scannableRows) (*Employee, error) {
 	}
 	if userID.Valid {
 		item.UserID = &userID.String
+	}
+	if positionLabel.Valid {
+		item.Position = positionLabel.String
+	}
+	if positionNote.Valid {
+		item.PositionNote = &positionNote.String
 	}
 	if jobTitle.Valid {
 		item.JobTitle = &jobTitle.String

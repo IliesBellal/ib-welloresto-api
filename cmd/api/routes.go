@@ -498,6 +498,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/settings", func(r chi.Router) {
 			r.Get("/", posH.GetSettings)              // used by: back-office
 			r.Patch("/", posH.UpdateMerchantSettings) // used by: back-office
+			r.Get("/holidays", posH.ListPlanningHolidays)
+			r.Patch("/holidays/{date}", posH.PatchPlanningHolidayOverride)
+			r.Delete("/holidays/{date}", posH.DeletePlanningHolidayOverride)
 			r.Post("/hours_of_operations", posH.CreateHourOfOperation)
 			r.Patch("/hours_of_operations/{hour_id}", posH.UpdateHourOfOperation)
 			r.Delete("/hours_of_operations/{hour_id}", posH.DeleteHourOfOperation)
@@ -725,6 +728,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/contract-types", planningH.ListContractTypes)
 		r.Get("/attendance-sources", planningH.ListAttendanceSources)
 		r.Get("/event-types", planningH.ListPlanningEventTypes)
+		r.Get("/positions", planningH.ListEmployeePositions)
+		r.Post("/positions", planningH.CreateEmployeePosition)
+		r.Get("/positions/{id}", planningH.GetEmployeePosition)
+		r.Patch("/positions/{id}", planningH.UpdateEmployeePosition)
+		r.Delete("/positions/{id}", planningH.DeleteEmployeePosition)
 
 		r.Get("/employees", planningH.ListEmployees)
 		r.Post("/employees", planningH.CreateEmployee)

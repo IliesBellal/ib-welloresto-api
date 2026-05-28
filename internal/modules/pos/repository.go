@@ -8,6 +8,7 @@ import (
 	"time"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/google/uuid"
@@ -128,6 +129,13 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	if currentDay == 0 {
 		currentDay = 7 // Sunday=7 (1-7 standard)
 	}
+	holidayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	holiday, err := settingspkg.NewRepository(r.database).ResolvePlanningHoliday(ctx, merchantID, holidayDate)
+	if err != nil {
+		log.Error(fmt.Sprintf("Error resolving holiday override for ID %s: %v", merchantID, err))
+		return nil, err
+	}
+	forcedClosed := holiday.IsOpen != nil && !*holiday.IsOpen
 
 	// CALL GET_POS_STATUS
 	_, err = db.ExecContext(ctx,
@@ -169,6 +177,9 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	if err != nil {
 		status = "CLOSED" // default
 	}
+	if forcedClosed {
+		status = "CLOSED"
+	}
 
 	// Full POS Status Query
 	var result models.POSStatus
@@ -204,6 +215,18 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	// Next schedules
 	result.Wello.NextStart = nextStart.String
 	result.Wello.NextEnd = nextEnd.String
+	effectiveOpen := result.Wello.IsOpen == 1 && status == "OPEN" && isOpen == 1 && !forcedClosed
+	if effectiveOpen {
+		result.Wello.IsOpen = 1
+		result.Wello.Status = "OPEN"
+	} else {
+		result.Wello.IsOpen = 0
+		result.Wello.Status = "CLOSED"
+		if forcedClosed {
+			result.Wello.NextStart = ""
+			result.Wello.NextEnd = ""
+		}
+	}
 
 	return &result, nil
 }

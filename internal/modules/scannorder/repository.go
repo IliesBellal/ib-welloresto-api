@@ -7,6 +7,7 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -285,6 +286,7 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 
 	status := &MerchantStatus{}
 	day := normalizeDayOfWeek(dow)
+	holidayRepo := settingspkg.NewRepository(r.database)
 
 	// 1️⃣ Global open status
 	query1 := `
@@ -334,7 +336,14 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 	}
 
 	loc, _ := time.LoadLocation(timezone)
-	now := time.Now().In(loc).Format("2006-01-02 15:04:05")
+	localNow := time.Now().In(loc)
+	now := localNow.Format("2006-01-02 15:04:05")
+	holidayDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
+	holiday, err := holidayRepo.ResolvePlanningHoliday(ctx, merchantID, holidayDate)
+	if err != nil {
+		return nil, err
+	}
+	forcedClosed := holiday.IsOpen != nil && !*holiday.IsOpen
 
 	// 4️⃣ Stored procedure
 	if _, err := db.ExecContext(ctx,
@@ -364,8 +373,8 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 		return nil, err
 	}
 
-	status.IsOpen = isMerchantEnabled && isOpenNow && isOpen.Valid && isOpen.Int64 == 1
-	if nextStart.Valid {
+	status.IsOpen = isMerchantEnabled && isOpenNow && isOpen.Valid && isOpen.Int64 == 1 && !forcedClosed
+	if nextStart.Valid && !forcedClosed {
 		status.NextStart = nextStart.String
 	}
 

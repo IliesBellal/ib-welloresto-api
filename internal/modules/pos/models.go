@@ -1,5 +1,11 @@
 package pos
 
+import settingspkg "welloresto-api/internal/modules/planning/settings"
+
+type PlanningHoliday = settingspkg.PlanningHoliday
+type PlanningHolidayListFilters = settingspkg.PlanningHolidayListFilters
+type PlanningHolidayOverridePatchRequest = settingspkg.PlanningHolidayOverridePatchRequest
+
 type DeletionReason struct {
 	DeletionReasonID     string  `json:"deletion_reason_id"`
 	DeletionReasonType   *string `json:"deletion_reason_type"`

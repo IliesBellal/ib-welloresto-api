@@ -14,10 +14,15 @@ PREREQUISITES
    - migrations/016_planning_shifts_core.sql
    - migrations/017_planning_time_entries.sql
    - migrations/018_planning_leave_and_swaps.sql
+  - migrations/022_planning_positions.sql
 
 2. Prepare Postman variables:
    - {{baseUrl}}
    - {{token}}
+  - {{positionIdServeuse}}
+  - {{positionIdCuisinier}}
+  - {{positionIdManager}}
+  - {{positionIdTemp}}
    - {{employeeId}}
    - {{employeeId2}}
    - {{uploadFileKey}}
@@ -35,7 +40,7 @@ PREREQUISITES
    - Content-Type: application/json
 
 4. Suggested execution order:
-   - References and settings
+  - References, positions and settings
    - Employees
    - Documents
    - Weeks and shifts
@@ -101,6 +106,84 @@ Expected:
 - HTTP 200
 - payload key: planning_event_types
 
+2.4 GET /planning/positions
+Expected:
+- HTTP 200
+- payload key: positions
+
+2.5 POST /planning/positions
+Create position payload:
+{
+  "label": "Serveuse",
+  "sort_order": 10,
+  "active": true
+}
+Expected:
+- HTTP 201
+- payload key: position
+- save position.id as {{positionIdServeuse}}
+
+2.6 POST /planning/positions
+Create second position payload:
+{
+  "label": "Cuisinier",
+  "sort_order": 20,
+  "active": true
+}
+Expected:
+- HTTP 201
+- save position.id as {{positionIdCuisinier}}
+
+2.7 POST /planning/positions
+Create third position payload:
+{
+  "label": "Manager de salle",
+  "sort_order": 30,
+  "active": true
+}
+Expected:
+- HTTP 201
+- save position.id as {{positionIdManager}}
+
+2.8 POST /planning/positions
+Duplicate label payload:
+{
+  "label": "Serveuse"
+}
+Expected:
+- HTTP 409
+- error status planning_position_already_exists
+
+2.9 GET /planning/positions/{{positionIdServeuse}}
+Expected:
+- HTTP 200
+- payload key: position
+
+2.10 PATCH /planning/positions/{{positionIdManager}}
+Happy path partial payload:
+{
+  "sort_order": 25
+}
+Expected:
+- HTTP 200
+
+2.11 POST /planning/positions
+Create temporary position payload:
+{
+  "label": "Runner"
+}
+Expected:
+- HTTP 201
+- save position.id as {{positionIdTemp}}
+
+2.12 DELETE /planning/positions/{{positionIdTemp}}
+Expected:
+- HTTP 200
+
+2.13 Holiday overrides note
+Expected:
+- merchant holiday override management is now exposed under /pos/settings/holidays, not under /planning
+
 ====================================================================
 3. EMPLOYEES
 ====================================================================
@@ -110,7 +193,8 @@ Happy path payload:
 {
   "first_name": "Alice",
   "last_name": "Martin",
-  "position": "Serveuse",
+  "position_id": "{{positionIdServeuse}}",
+  "position_note": "Référente ouverture",
   "role": "employee",
   "contract_type_code": "CDI",
   "contract_hours": 35,
@@ -136,7 +220,7 @@ Second employee payload:
 {
   "first_name": "Bob",
   "last_name": "Durand",
-  "position": "Cuisinier",
+  "position_id": "{{positionIdCuisinier}}",
   "role": "employee",
   "contract_type_code": "CDD",
   "contract_hours": 39,
@@ -156,7 +240,7 @@ Expected:
 Invalid payload:
 {
   "last_name": "MissingFirstName",
-  "position": "Serveuse",
+  "position_id": "{{positionIdServeuse}}",
   "contract_type_code": "CDI"
 }
 Expected:
@@ -168,21 +252,26 @@ Try:
 - /planning/employees
 - /planning/employees?search=Alice
 - /planning/employees?active=true
-- /planning/employees?position=Serveuse
+- /planning/employees?position_id={{positionIdServeuse}}
 - /planning/employees?contract=CDI
 Expected:
 - HTTP 200
 - payload key: employees
+- employee.position_id should match the chosen position
+- employee.position should contain the resolved label
 
 3.5 GET /planning/employees/{{employeeId}}
 Expected:
 - HTTP 200
 - payload key: employee
+- employee.position_id should be {{positionIdServeuse}}
+- employee.position should be Serveuse
 
 3.6 PATCH /planning/employees/{{employeeId}}
 Happy path partial payload:
 {
-  "position": "Manager de salle",
+  "position_id": "{{positionIdManager}}",
+  "position_note": "Polyvalente salle",
   "night_premium": true,
   "transport_cost": 1500
 }
@@ -381,7 +470,7 @@ Payload:
 {
   "first_name": "Bob",
   "last_name": "Durand",
-  "position": "Cuisinier",
+  "position_id": "{{positionIdCuisinier}}",
   "role": "employee",
   "contract_type_code": "CDD",
   "active": true
@@ -791,6 +880,13 @@ Steps:
 Expected:
 - first call HTTP 201
 - second call HTTP 409 with planning_week_already_exists
+
+10.4 Holiday override impacts opening status
+Steps:
+- PATCH /pos/settings/holidays/{today} with {"is_open": false}
+- call the endpoint that reads merchant opening status in your POS or ScannOrder flow
+Expected:
+- merchant status is CLOSED for that date even if normal hours would otherwise be open
 
 NOTES
 

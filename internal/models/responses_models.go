@@ -216,6 +216,11 @@ var (
 
 	ErrPlanningSettingsNotFound                = errors.New("planning_settings_not_found")
 	ErrPlanningAttendanceSourceInvalid         = errors.New("planning_attendance_source_invalid")
+	ErrPlanningHolidayOverrideNotFound         = errors.New("planning_holiday_override_not_found")
+	ErrPlanningPositionNotFound                = errors.New("planning_position_not_found")
+	ErrPlanningPositionLabelRequired           = errors.New("planning_position_label_required")
+	ErrPlanningPositionAlreadyExists           = errors.New("planning_position_already_exists")
+	ErrPlanningPositionInUse                   = errors.New("planning_position_in_use")
 	ErrPlanningEmployeeNotFound                = errors.New("planning_employee_not_found")
 	ErrPlanningEmployeeNameRequired            = errors.New("planning_employee_name_required")
 	ErrPlanningEmployeeLastNameRequired        = errors.New("planning_employee_last_name_required")
@@ -381,6 +386,26 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "planning_employee_not_found"
 		errorMsg = "Planning employee not found"
 
+	case errors.Is(err, ErrPlanningPositionNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_position_not_found"
+		errorMsg = "Planning position not found"
+
+	case errors.Is(err, ErrPlanningPositionLabelRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_position_label_required"
+		errorMsg = "The planning position label is required."
+
+	case errors.Is(err, ErrPlanningPositionAlreadyExists):
+		status = http.StatusConflict
+		errorStatus = "planning_position_already_exists"
+		errorMsg = "An active planning position already exists with this label."
+
+	case errors.Is(err, ErrPlanningPositionInUse):
+		status = http.StatusConflict
+		errorStatus = "planning_position_in_use"
+		errorMsg = "The planning position is still assigned to employees."
+
 	case errors.Is(err, ErrPlanningEmployeeNameRequired):
 		status = http.StatusBadRequest
 		errorStatus = "planning_employee_name_required"
@@ -405,6 +430,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "planning_attendance_source_invalid"
 		errorMsg = "The planning attendance source is invalid."
+
+	case errors.Is(err, ErrPlanningHolidayOverrideNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_holiday_override_not_found"
+		errorMsg = "Planning holiday override not found."
 
 	case errors.Is(err, ErrPlanningEmployeeTimeTrackingModeInvalid):
 		status = http.StatusBadRequest

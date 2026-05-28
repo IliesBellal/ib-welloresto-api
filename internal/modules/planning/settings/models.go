@@ -51,6 +51,29 @@ type PlanningSettingsUpdateRequest struct {
 	AttendanceSource      *string  `json:"attendance_source,omitempty"`
 }
 
+type PlanningHoliday struct {
+	OverrideID     *string   `json:"override_id,omitempty"`
+	Date           time.Time `json:"date"`
+	Label          *string   `json:"label,omitempty"`
+	IsLegalHoliday bool      `json:"is_legal_holiday"`
+	CountAsHoliday bool      `json:"count_as_holiday"`
+	IsOpen         *bool     `json:"is_open,omitempty"`
+}
+
+type PlanningHolidayListFilters struct {
+	StartDate string
+	EndDate   string
+}
+
+type PlanningHolidayOverridePatchRequest struct {
+	Label               *string `json:"label,omitempty"`
+	IsOpen              *bool   `json:"is_open,omitempty"`
+	CountAsHoliday      *bool   `json:"count_as_holiday,omitempty"`
+	ClearLabel          *bool   `json:"clear_label,omitempty"`
+	ClearIsOpen         *bool   `json:"clear_is_open,omitempty"`
+	ClearCountAsHoliday *bool   `json:"clear_count_as_holiday,omitempty"`
+}
+
 type LaborRule struct {
 	CountryCode          string    `json:"country_code"`
 	Label                string    `json:"label"`

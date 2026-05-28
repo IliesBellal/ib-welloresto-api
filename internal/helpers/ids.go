@@ -33,6 +33,7 @@ const (
 	HACCPCleaningExecutionIDPrefix       = "haccp-ce"
 	HACCPGoodsReceiptIDPrefix            = "haccp-gr"
 	PlanningSettingsIDPrefix             = "plan-set"
+	PlanningPositionIDPrefix             = "plan-pos"
 	PlanningEmployeeIDPrefix             = "plan-emp"
 	PlanningEmployeeDocumentIDPrefix     = "plan-doc"
 	PlanningWeekIDPrefix                 = "plan-week"

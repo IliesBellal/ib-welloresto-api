@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -27,7 +28,7 @@ func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.ListEmployees(r.Context(), EmployeeListFilters{
 		Search:       strings.TrimSpace(r.URL.Query().Get("search")),
 		Active:       active,
-		Position:     strings.TrimSpace(r.URL.Query().Get("position")),
+		PositionID:   strings.TrimSpace(r.URL.Query().Get("position_id")),
 		ContractType: strings.TrimSpace(r.URL.Query().Get("contract")),
 	})
 	if err != nil {

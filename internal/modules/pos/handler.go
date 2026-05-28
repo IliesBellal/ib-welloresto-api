@@ -240,6 +240,64 @@ func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Reque
 	models.SendJSON(w, http.StatusOK, "pos", "update_merchant_settings", result)
 }
 
+func (h *POSHandler) ListPlanningHolidays(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "list_holidays", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	items, err := h.service.ListPlanningHolidays(r.Context(), token, PlanningHolidayListFilters{
+		StartDate: strings.TrimSpace(r.URL.Query().Get("start_date")),
+		EndDate:   strings.TrimSpace(r.URL.Query().Get("end_date")),
+	})
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "list_holidays", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "list_holidays", map[string]interface{}{"status": "success", "holidays": items})
+}
+
+func (h *POSHandler) PatchPlanningHolidayOverride(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "patch_holiday", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	holidayDate := strings.TrimSpace(chi.URLParam(r, "date"))
+	var req PlanningHolidayOverridePatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "pos", "patch_holiday", models.ErrInvalidRequestBody)
+		return
+	}
+
+	item, err := h.service.PatchPlanningHolidayOverride(r.Context(), token, holidayDate, req)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "patch_holiday", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "patch_holiday", map[string]interface{}{"status": "success", "holiday": item})
+}
+
+func (h *POSHandler) DeletePlanningHolidayOverride(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "delete_holiday", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	holidayDate := strings.TrimSpace(chi.URLParam(r, "date"))
+	if err := h.service.DeletePlanningHolidayOverride(r.Context(), token, holidayDate); err != nil {
+		models.SendErrorJSON(w, "pos", "delete_holiday", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "delete_holiday", map[string]interface{}{"status": "success"})
+}
+
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

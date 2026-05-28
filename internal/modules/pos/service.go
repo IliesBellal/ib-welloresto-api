@@ -8,14 +8,19 @@ import (
 	"time"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 )
 
 type POSService struct {
-	posRepo *POSRepository
+	posRepo        *POSRepository
+	holidayService *settingspkg.Service
 }
 
 func NewPOSService(p *POSRepository) *POSService {
-	return &POSService{posRepo: p}
+	return &POSService{
+		posRepo:        p,
+		holidayService: settingspkg.NewService(settingspkg.NewRepository(p.database)),
+	}
 }
 
 func (s *POSService) GetPOSStatus(ctx context.Context, token string) (*models.POSStatus, error) {
@@ -74,6 +79,18 @@ func (s *POSService) GetTVARates(ctx context.Context, token string) ([]Consumpti
 	}
 
 	return s.posRepo.GetTVARates(ctx, user.MerchantID)
+}
+
+func (s *POSService) ListPlanningHolidays(ctx context.Context, token string, filters PlanningHolidayListFilters) ([]PlanningHoliday, error) {
+	return s.holidayService.ListPlanningHolidays(ctx, filters)
+}
+
+func (s *POSService) PatchPlanningHolidayOverride(ctx context.Context, token, holidayDate string, req PlanningHolidayOverridePatchRequest) (*PlanningHoliday, error) {
+	return s.holidayService.PatchPlanningHolidayOverride(ctx, holidayDate, req)
+}
+
+func (s *POSService) DeletePlanningHolidayOverride(ctx context.Context, token, holidayDate string) error {
+	return s.holidayService.DeletePlanningHolidayOverride(ctx, holidayDate)
 }
 
 func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string) (int64, error) {

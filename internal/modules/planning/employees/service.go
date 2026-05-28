@@ -52,7 +52,7 @@ func (s *Service) CreateEmployee(ctx context.Context, req EmployeeCreateRequest)
 	if strings.TrimSpace(req.LastName) == "" {
 		return nil, models.ErrPlanningEmployeeLastNameRequired
 	}
-	if strings.TrimSpace(req.Position) == "" {
+	if strings.TrimSpace(req.PositionID) == "" {
 		return nil, models.ErrPlanningEmployeePositionRequired
 	}
 	if strings.TrimSpace(req.ContractTypeCode) == "" {
@@ -61,6 +61,14 @@ func (s *Service) CreateEmployee(ctx context.Context, req EmployeeCreateRequest)
 	if req.UserID != nil && strings.TrimSpace(*req.UserID) == "" {
 		return nil, models.ErrPlanningEmployeeUserLinkInvalid
 	}
+	position, err := s.repo.GetEmployeePositionByID(ctx, user.MerchantID, strings.TrimSpace(req.PositionID))
+	if err == sql.ErrNoRows || position == nil || !position.Active {
+		return nil, models.ErrPlanningPositionNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	req.PositionID = position.ID
+	req.PositionNote = normalizeOptionalString(req.PositionNote)
 	return s.repo.CreateEmployee(ctx, user.MerchantID, req)
 }
 
@@ -88,11 +96,21 @@ func (s *Service) UpdateEmployee(ctx context.Context, employeeID string, req Emp
 		}
 		current.LastName = strings.TrimSpace(*req.LastName)
 	}
-	if req.Position != nil {
-		if strings.TrimSpace(*req.Position) == "" {
+	if req.PositionID != nil {
+		if strings.TrimSpace(*req.PositionID) == "" {
 			return nil, models.ErrPlanningEmployeePositionRequired
 		}
-		current.Position = strings.TrimSpace(*req.Position)
+		position, positionErr := s.repo.GetEmployeePositionByID(ctx, user.MerchantID, strings.TrimSpace(*req.PositionID))
+		if positionErr == sql.ErrNoRows || position == nil || !position.Active {
+			return nil, models.ErrPlanningPositionNotFound
+		} else if positionErr != nil {
+			return nil, positionErr
+		}
+		current.PositionID = position.ID
+		current.Position = position.Label
+	}
+	if req.PositionNote != nil {
+		current.PositionNote = normalizeOptionalString(req.PositionNote)
 	}
 	if req.ContractTypeCode != nil {
 		if strings.TrimSpace(*req.ContractTypeCode) == "" {
@@ -194,8 +212,19 @@ func (s *Service) DeleteEmployee(ctx context.Context, employeeID string) error {
 }
 
 func RequireAtLeastOneEmployeeField(req EmployeeUpdateRequest) error {
-	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.Position == nil && req.JobTitle == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
+	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.PositionID == nil && req.PositionNote == nil && req.JobTitle == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
 		return fmt.Errorf("at least one field must be provided")
 	}
 	return nil
+}
+
+func normalizeOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
