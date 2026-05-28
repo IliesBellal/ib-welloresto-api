@@ -22,10 +22,10 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
 		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
-			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
-			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
-			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
-			address, hr_comment, active, created_at, updated_at, deleted_at
+			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
+			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
+			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
+			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 		FROM employees e
 		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
 		WHERE e.merchant_id = ? AND e.enabled = 1
@@ -71,10 +71,10 @@ func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
-			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
-			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
-			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
-			address, hr_comment, active, created_at, updated_at, deleted_at
+			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
+			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
+			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
+			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 		FROM employees e
 		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
 		WHERE e.merchant_id = ? AND e.id = ? AND e.enabled = 1

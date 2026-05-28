@@ -20,6 +20,10 @@ func NewHandler(svc *Service) *Handler {
 
 func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 	activeRaw := strings.TrimSpace(r.URL.Query().Get("active"))
+	positionID := strings.TrimSpace(r.URL.Query().Get("position_id"))
+	if positionID == "" {
+		positionID = strings.TrimSpace(r.URL.Query().Get("position"))
+	}
 	var active *bool
 	if activeRaw != "" {
 		parsed := activeRaw == "1" || strings.EqualFold(activeRaw, "true")
@@ -28,7 +32,7 @@ func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.ListEmployees(r.Context(), EmployeeListFilters{
 		Search:       strings.TrimSpace(r.URL.Query().Get("search")),
 		Active:       active,
-		PositionID:   strings.TrimSpace(r.URL.Query().Get("position_id")),
+		PositionID:   positionID,
 		ContractType: strings.TrimSpace(r.URL.Query().Get("contract")),
 	})
 	if err != nil {
