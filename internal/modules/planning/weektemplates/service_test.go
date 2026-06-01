@@ -117,7 +117,7 @@ func (s *weekSourceReaderStub) CreatePlanningShift(ctx context.Context, merchant
 		return nil, s.createShiftErr
 	}
 	if strings.TrimSpace(shift.ID) == "" {
-		shift.ID = "sh-created-" + shift.ShiftDate.Format("20060102") + "-" + shift.StartTime
+		shift.ID = "sh-created-" + shift.ShiftDate.Time().Format("20060102") + "-" + shift.StartTime
 	}
 	created := shift
 	s.createdShifts = append(s.createdShifts, created)
@@ -327,7 +327,7 @@ func TestCreateWeekTemplateFromWeekMapsDayAndPreservesEmployees(t *testing.T) {
 		week: &schedulepkg.PlanningWeek{ID: "w-current", MerchantID: "m-1"},
 		shifts: []schedulepkg.PlanningShift{
 			{
-				ShiftDate:    time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC),
+				ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)),
 				EmployeeID:   strPtr("emp-1"),
 				PositionID:   strPtr("pos-1"),
 				Title:        "",
@@ -338,7 +338,7 @@ func TestCreateWeekTemplateFromWeekMapsDayAndPreservesEmployees(t *testing.T) {
 				Notes:        nil,
 			},
 			{
-				ShiftDate:    time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+				ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)),
 				EmployeeID:   nil,
 				PositionID:   nil,
 				Position:     strPtr("bar"),
@@ -438,7 +438,7 @@ func TestPreviewWeekTemplateInstantiationDistinctAndAutoUnassigned(t *testing.T)
 			"2026-06-01": {ID: "wk-1", MerchantID: "m-1", StartDate: weekStart},
 		},
 		shifts: []schedulepkg.PlanningShift{
-			{ID: "sh-overlap", EmployeeID: strPtr("emp-1"), ShiftDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), StartTime: "09:30:00", EndTime: "12:00:00"},
+			{ID: "sh-overlap", EmployeeID: strPtr("emp-1"), ShiftDate: models.NewDateOnly(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)), StartTime: "09:30:00", EndTime: "12:00:00"},
 		},
 	}
 	leaves := []leavepkg.PlanningLeaveRequest{
@@ -510,7 +510,7 @@ func TestInstantiateWeekTemplate_OverlapModes(t *testing.T) {
 			weekStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 			weekSource := &weekSourceReaderStub{
 				weeksByStart: map[string]*schedulepkg.PlanningWeek{"2026-06-01": {ID: "wk-1", MerchantID: "m-1", StartDate: weekStart}},
-				shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: weekStart, StartTime: "09:30:00", EndTime: "10:30:00"}},
+				shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: models.NewDateOnly(weekStart), StartTime: "09:30:00", EndTime: "10:30:00"}},
 			}
 			svc := NewService(NewRepository(db), &employeeReaderStub{employees: map[string]bool{"emp-1": true}}, weekSource, &leaveReaderStub{}, nil)
 
@@ -632,7 +632,7 @@ func TestInstantiateWeekTemplate_IdempotentAndMultiWeekAggregate(t *testing.T) {
 			"2026-06-01": {ID: "wk-1", MerchantID: "m-1", StartDate: week1},
 			"2026-06-08": {ID: "wk-2", MerchantID: "m-1", StartDate: week2},
 		},
-		shifts: []schedulepkg.PlanningShift{{ID: "same", EmployeeID: &empID, ShiftDate: week1, StartTime: "09:00:00", EndTime: "11:00:00"}},
+		shifts: []schedulepkg.PlanningShift{{ID: "same", EmployeeID: &empID, ShiftDate: models.NewDateOnly(week1), StartTime: "09:00:00", EndTime: "11:00:00"}},
 	}
 	svc := NewService(NewRepository(db), &employeeReaderStub{employees: map[string]bool{"emp-1": true}}, weekSource, &leaveReaderStub{}, nil)
 

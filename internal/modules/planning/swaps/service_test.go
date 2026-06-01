@@ -58,7 +58,7 @@ func (s stubShiftReader) GetPlanningShiftByID(ctx context.Context, merchantID, s
 
 type stubConflictChecker struct{}
 
-func (stubConflictChecker) EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate time.Time, startTime string, endTime string) error {
+func (stubConflictChecker) EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate models.DateOnly, startTime string, endTime string) error {
 	return nil
 }
 

@@ -49,7 +49,7 @@ func TestPlanningShiftJSONIncludesExplicitNullFields(t *testing.T) {
 		EmployeeID:   nil,
 		PositionID:   nil,
 		Title:        "Ouverture",
-		ShiftDate:    time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
 		StartTime:    "09:00:00",
 		EndTime:      "17:00:00",
 		BreakMinutes: 30,
@@ -150,11 +150,11 @@ func TestServiceCreatePlanningShiftNormalizesUnassignedEmployeeID(t *testing.T) 
 
 			mock.ExpectExec(regexp.QuoteMeta(`
 				INSERT INTO planning_shifts (
-					id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+					id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
 					position, location, notes, status, enabled, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 			`)).
-				WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, nil, "Ouverture", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
+				WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, nil, "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
 				WillReturnResult(sqlmock.NewResult(0, 1))
 
 			item, err := svc.CreatePlanningShift(ctx, "week_1", PlanningShiftCreateRequest{
@@ -193,11 +193,11 @@ func TestServiceCreatePlanningShiftResolvesPositionID(t *testing.T) {
 	expectWeekLookup(mock, now)
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO planning_shifts (
-			id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 	`)).
-		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, "pos_1", "Ouverture", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", 0, "Serveur", nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, "pos_1", "2026-06-01", "09:00:00", "17:00:00", 0, "Serveur", nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	item, err := svc.CreatePlanningShift(ctx, "week_1", PlanningShiftCreateRequest{
@@ -251,7 +251,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 						position = ?, location = ?, notes = ?, status = ?, updated_at = ?
 					WHERE merchant_id = ? AND id = ? AND enabled = 1
 				`)).
-					WithArgs("week_1", "emp_1", nil, "Service soir", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
+					WithArgs("week_1", "emp_1", nil, "Service soir", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantEmployee: stringPtr("emp_1"),
@@ -268,7 +268,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 						position = ?, location = ?, notes = ?, status = ?, updated_at = ?
 					WHERE merchant_id = ? AND id = ? AND enabled = 1
 				`)).
-					WithArgs("week_1", nil, nil, "Ouverture", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
+					WithArgs("week_1", nil, nil, "Ouverture", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantEmployee: nil,
@@ -348,7 +348,7 @@ func TestEnsureShiftHasNoConflictsSkipsUnassignedShifts(t *testing.T) {
 	repo := NewRepository(db)
 	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
 
-	err = svc.EnsureShiftHasNoConflicts(context.Background(), "merchant_1", nil, "", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00")
+	err = svc.EnsureShiftHasNoConflicts(context.Background(), "merchant_1", nil, "", models.NewDateOnly(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)), "09:00:00", "17:00:00")
 	if err != nil {
 		t.Fatalf("EnsureShiftHasNoConflicts() error = %v, want nil", err)
 	}

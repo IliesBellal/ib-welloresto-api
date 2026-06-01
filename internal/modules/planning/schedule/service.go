@@ -208,15 +208,12 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 	} else if err != nil {
 		return nil, err
 	}
-	// Title filter is too restrictive and shouldn't be required
-	if strings.TrimSpace(req.Title) == "" {
-		//return nil, models.ErrValidationError
-	}
 	shiftDate, err := sharedpkg.ParsePlanningDate(req.ShiftDate)
 	if err != nil {
 		return nil, err
 	}
-	if shiftDate.Before(week.StartDate) || shiftDate.After(week.EndDate) {
+	shiftDateOnly := models.NewDateOnly(shiftDate)
+	if shiftDateOnly.Before(week.StartDate) || shiftDateOnly.After(week.EndDate) {
 		return nil, models.ErrPlanningInvalidDate
 	}
 	startTime, endTime, err := sharedpkg.ParsePlanningTimeRange(req.StartTime, req.EndTime)
@@ -228,7 +225,7 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, *normalizedEmployeeID); err != nil {
 			return nil, models.ErrPlanningEmployeeNotFound
 		}
-		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, nil, *normalizedEmployeeID, shiftDate, startTime, endTime); conflictErr != nil {
+		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, nil, *normalizedEmployeeID, shiftDateOnly, startTime, endTime); conflictErr != nil {
 			return nil, conflictErr
 		}
 	}
@@ -252,7 +249,7 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 		EmployeeID:   normalizedEmployeeID,
 		PositionID:   resolvedPositionID,
 		Title:        strings.TrimSpace(req.Title),
-		ShiftDate:    shiftDate,
+		ShiftDate:    shiftDateOnly,
 		StartTime:    startTime,
 		EndTime:      endTime,
 		BreakMinutes: breakMinutes,
@@ -321,7 +318,7 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		current.ShiftDate = shiftDate
+		current.ShiftDate = models.NewDateOnly(shiftDate)
 	}
 	if req.StartTime != nil {
 		current.StartTime = strings.TrimSpace(*req.StartTime)
@@ -388,11 +385,11 @@ func (s *Service) DeletePlanningShift(ctx context.Context, shiftID string) error
 	}
 }
 
-func (s *Service) EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate time.Time, startTime string, endTime string) error {
+func (s *Service) EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate models.DateOnly, startTime string, endTime string) error {
 	if strings.TrimSpace(employeeID) == "" {
 		return nil
 	}
-	existing, err := s.repo.ListEmployeeShiftsByDate(ctx, merchantID, employeeID, shiftDate, sharedpkg.DerefString(excludeShiftID))
+	existing, err := s.repo.ListEmployeeShiftsByDate(ctx, merchantID, employeeID, shiftDate.Time(), sharedpkg.DerefString(excludeShiftID))
 	if err != nil {
 		return err
 	}

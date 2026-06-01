@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
 	authpkg "welloresto-api/internal/modules/auth"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
@@ -559,7 +560,7 @@ func TestWeekTemplatesHTTPContract_PostFromWeekReturnsContractShape(t *testing.T
 		week: &schedulepkg.PlanningWeek{ID: "w-current", MerchantID: "m-1"},
 		shifts: []schedulepkg.PlanningShift{
 			{
-				ShiftDate:    time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
 				EmployeeID:   ptrString("emp-1"),
 				PositionID:   ptrString("pos-2"),
 				Title:        "",
@@ -633,7 +634,7 @@ func TestWeekTemplatesHTTPContract_PreviewReturnsContractShape(t *testing.T) {
 		map[string]bool{},
 		&contractWeekSourceReaderStub{
 			weeksByStart: map[string]*schedulepkg.PlanningWeek{"2026-06-01": {ID: "wk-1", MerchantID: "m-1", StartDate: weekStart}},
-			shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: ptrString("emp-1"), ShiftDate: weekStart, StartTime: "09:30:00", EndTime: "11:30:00"}},
+			shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: ptrString("emp-1"), ShiftDate: models.NewDateOnly(weekStart), StartTime: "09:30:00", EndTime: "11:30:00"}},
 		},
 		&contractLeaveReaderStub{},
 	)
@@ -693,7 +694,7 @@ func TestWeekTemplatesHTTPContract_InstantiateReturnsContractShape(t *testing.T)
 		map[string]bool{},
 		&contractWeekSourceReaderStub{
 			weeksByStart: map[string]*schedulepkg.PlanningWeek{"2026-06-01": {ID: "wk-1", MerchantID: "m-1", StartDate: weekStart}},
-			shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: ptrString("emp-1"), ShiftDate: weekStart, StartTime: "09:30:00", EndTime: "11:30:00"}},
+			shifts:       []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: ptrString("emp-1"), ShiftDate: models.NewDateOnly(weekStart), StartTime: "09:30:00", EndTime: "11:30:00"}},
 		},
 		&contractLeaveReaderStub{},
 	)

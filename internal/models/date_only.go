@@ -2,6 +2,7 @@ package models
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -39,6 +40,14 @@ func (d DateOnly) Time() time.Time {
 	return d.value
 }
 
+func (d DateOnly) Before(other time.Time) bool {
+	return d.value.Before(NewDateOnly(other).value)
+}
+
+func (d DateOnly) After(other time.Time) bool {
+	return d.value.After(NewDateOnly(other).value)
+}
+
 func (d DateOnly) MarshalJSON() ([]byte, error) {
 	if d.value.IsZero() {
 		return []byte("null"), nil
@@ -57,6 +66,40 @@ func (d *DateOnly) UnmarshalJSON(data []byte) error {
 	}
 	d.value = parsed.value
 	return nil
+}
+
+func (d DateOnly) Value() (driver.Value, error) {
+	if d.value.IsZero() {
+		return nil, nil
+	}
+	return d.value.Format(dateOnlyLayout), nil
+}
+
+func (d *DateOnly) Scan(value any) error {
+	switch typed := value.(type) {
+	case nil:
+		d.value = time.Time{}
+		return nil
+	case time.Time:
+		d.value = NewDateOnly(typed).value
+		return nil
+	case []byte:
+		parsed, err := ParseDateOnly(string(typed))
+		if err != nil {
+			return err
+		}
+		d.value = parsed.value
+		return nil
+	case string:
+		parsed, err := ParseDateOnly(typed)
+		if err != nil {
+			return err
+		}
+		d.value = parsed.value
+		return nil
+	default:
+		return fmt.Errorf("cannot scan %T into DateOnly", value)
+	}
 }
 
 // NullableDateOnlyPatchField distinguishes between an absent field,

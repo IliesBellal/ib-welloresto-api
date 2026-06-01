@@ -162,7 +162,7 @@ func (s *Service) StartEmployeeTimeEntry(ctx context.Context, employeeID string,
 		if shift.EmployeeID == nil || strings.TrimSpace(*shift.EmployeeID) != strings.TrimSpace(employeeID) {
 			return nil, models.ErrPlanningTimeEntryShiftInvalid
 		}
-		if !sharedpkg.SamePlanningDay(shift.ShiftDate, clockInAt) {
+		if !sharedpkg.SamePlanningDay(shift.ShiftDate.Time(), clockInAt) {
 			return nil, models.ErrPlanningTimeEntryShiftInvalid
 		}
 	}
@@ -459,7 +459,7 @@ func (s *Service) validateTimeEntryShift(ctx context.Context, merchantID, employ
 	if shift.EmployeeID == nil || strings.TrimSpace(*shift.EmployeeID) != strings.TrimSpace(employeeID) {
 		return models.ErrPlanningTimeEntryShiftInvalid
 	}
-	if !sharedpkg.SamePlanningDay(shift.ShiftDate, clockInAt) {
+	if !sharedpkg.SamePlanningDay(shift.ShiftDate.Time(), clockInAt) {
 		return models.ErrPlanningTimeEntryShiftInvalid
 	}
 	return nil

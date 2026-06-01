@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"welloresto-api/internal/models"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
@@ -33,7 +34,7 @@ func TestClassifyConflict_OnLeaveAndContractEndedPriority(t *testing.T) {
 	empID := "emp-1"
 	shift := WeekTemplateShift{DayOfWeek: 1, EmployeeID: &empID, StartTime: "09:00", EndTime: "11:00"}
 	projected := ProjectedTemplateShift{ShiftDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), TemplateShift: shift}
-	existing := []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: projected.ShiftDate, StartTime: "09:30", EndTime: "10:30"}}
+	existing := []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: models.NewDateOnly(projected.ShiftDate), StartTime: "09:30", EndTime: "10:30"}}
 	leaves := []leavepkg.PlanningLeaveRequest{{EmployeeID: empID, Status: "approved", StartDate: projected.ShiftDate, EndDate: projected.ShiftDate}}
 	contractEnd := projected.ShiftDate.AddDate(0, 0, -1)
 	employee := &employeespkg.Employee{ID: empID, ContractEndDate: &contractEnd}
@@ -56,7 +57,7 @@ func TestClassifyConflict_OverlapAndNeed(t *testing.T) {
 	empID := "emp-1"
 	projectedDate := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	projected := ProjectedTemplateShift{ShiftDate: projectedDate, TemplateShift: WeekTemplateShift{DayOfWeek: 1, EmployeeID: &empID, StartTime: "09:00", EndTime: "11:00"}}
-	existing := []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: projectedDate, StartTime: "10:00", EndTime: "12:00"}}
+	existing := []schedulepkg.PlanningShift{{ID: "sh-overlap", EmployeeID: &empID, ShiftDate: models.NewDateOnly(projectedDate), StartTime: "10:00", EndTime: "12:00"}}
 
 	classification := classifyConflict(projected, existing, nil, nil)
 	if classification.Reason == nil || *classification.Reason != ConflictReasonOverlap {
@@ -78,7 +79,7 @@ func TestClassifyConflict_IdempotentSkipped(t *testing.T) {
 	posID := "pos-1"
 	projectedDate := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	projected := ProjectedTemplateShift{ShiftDate: projectedDate, TemplateShift: WeekTemplateShift{EmployeeID: &empID, PositionID: &posID, StartTime: "09:00", EndTime: "11:00"}}
-	existing := []schedulepkg.PlanningShift{{ID: "same", EmployeeID: &empID, PositionID: &posID, ShiftDate: projectedDate, StartTime: "09:00:00", EndTime: "11:00:00"}}
+	existing := []schedulepkg.PlanningShift{{ID: "same", EmployeeID: &empID, PositionID: &posID, ShiftDate: models.NewDateOnly(projectedDate), StartTime: "09:00:00", EndTime: "11:00:00"}}
 
 	classification := classifyConflict(projected, existing, nil, nil)
 	if !classification.Idempotent {
@@ -96,8 +97,8 @@ func TestBuildPreview_MultiWeeksDistinctAndCounters(t *testing.T) {
 		{DayOfWeek: 3, EmployeeID: nil, StartTime: "09:00", EndTime: "11:00"},
 	}
 	existingByWeek := map[string][]schedulepkg.PlanningShift{
-		"2026-06-01": {{ID: "overlap-1", EmployeeID: &empID, ShiftDate: week1, StartTime: "10:00", EndTime: "12:00"}},
-		"2026-06-08": {{ID: "overlap-2", EmployeeID: &empID, ShiftDate: week2.AddDate(0, 0, 1), StartTime: "09:30", EndTime: "10:30"}},
+		"2026-06-01": {{ID: "overlap-1", EmployeeID: &empID, ShiftDate: models.NewDateOnly(week1), StartTime: "10:00", EndTime: "12:00"}},
+		"2026-06-08": {{ID: "overlap-2", EmployeeID: &empID, ShiftDate: models.NewDateOnly(week2.AddDate(0, 0, 1)), StartTime: "09:30", EndTime: "10:30"}},
 	}
 	leaves := []leavepkg.PlanningLeaveRequest{{EmployeeID: empID, Status: "approved", StartDate: week1.AddDate(0, 0, 1), EndDate: week1.AddDate(0, 0, 1)}}
 	employees := map[string]*employeespkg.Employee{empID: {ID: empID, FirstName: "Alice", LastName: "Martin"}}

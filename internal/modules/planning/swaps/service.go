@@ -24,7 +24,7 @@ type ShiftReader interface {
 }
 
 type ConflictChecker interface {
-	EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate time.Time, startTime string, endTime string) error
+	EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate models.DateOnly, startTime string, endTime string) error
 }
 
 type SettingsReader interface {

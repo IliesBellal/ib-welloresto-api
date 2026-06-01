@@ -292,7 +292,7 @@ func (s *Service) CreateWeekTemplateFromWeek(ctx context.Context, req WeekTempla
 		shift := WeekTemplateShift{
 			ID:             helpers.GeneratePrefixedID(helpers.PlanningWeekTemplateShiftIDPrefix),
 			WeekTemplateID: tpl.ID,
-			DayOfWeek:      planningShiftDateToDayOfWeek(sourceShift.ShiftDate),
+			DayOfWeek:      planningShiftDateToDayOfWeek(sourceShift.ShiftDate.Time()),
 			EmployeeID:     sourceShift.EmployeeID,
 			PositionID:     positionID,
 			Title:          trimOrNil(sourceShift.Title),
@@ -649,7 +649,7 @@ func (s *Service) createInstantiatedShift(ctx context.Context, merchantID, weekI
 		EmployeeID:   employeeID,
 		PositionID:   templateShift.PositionID,
 		Title:        title,
-		ShiftDate:    shiftDate,
+		ShiftDate:    models.NewDateOnly(shiftDate),
 		StartTime:    templateShift.StartTime,
 		EndTime:      templateShift.EndTime,
 		BreakMinutes: templateShift.BreakMinutes,

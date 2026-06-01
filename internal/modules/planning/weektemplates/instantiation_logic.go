@@ -55,7 +55,7 @@ func classifyConflict(projectedShift ProjectedTemplateShift, existingShifts []sc
 		if !sameEmployee(existing.EmployeeID, *templateEmployeeID) {
 			continue
 		}
-		if !sameDate(existing.ShiftDate, projectedShift.ShiftDate) {
+		if !sameDate(existing.ShiftDate.Time(), projectedShift.ShiftDate) {
 			continue
 		}
 		existingStart := normalizeClock(existing.StartTime)
@@ -87,7 +87,7 @@ func classifyConflict(projectedShift ProjectedTemplateShift, existingShifts []sc
 		if !sameEmployee(existing.EmployeeID, *templateEmployeeID) {
 			continue
 		}
-		if !sameDate(existing.ShiftDate, projectedShift.ShiftDate) {
+		if !sameDate(existing.ShiftDate.Time(), projectedShift.ShiftDate) {
 			continue
 		}
 		if timesOverlap(templateStart, templateEnd, normalizeClock(existing.StartTime), normalizeClock(existing.EndTime)) {
