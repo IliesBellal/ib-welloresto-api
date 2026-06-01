@@ -3,6 +3,8 @@ package leave
 import (
 	"encoding/json"
 	"time"
+
+	modelspkg "welloresto-api/internal/models"
 )
 
 type PlanningLeaveRequest struct {
@@ -73,6 +75,16 @@ type PlanningLeaveRequestListFilters struct {
 	Status     string
 	Page       int
 	PageSize   int
+}
+
+type PlanningLeaveConflictingShift struct {
+	ID         string             `json:"id"`
+	WeekID     string             `json:"week_id"`
+	ShiftDate  modelspkg.DateOnly `json:"shift_date"`
+	StartTime  string             `json:"start_time"`
+	EndTime    string             `json:"end_time"`
+	PositionID *string            `json:"position_id"`
+	Position   *string            `json:"position"`
 }
 
 type PlanningLeaveRequestCreateRequest struct {

@@ -190,3 +190,28 @@ func (s *Service) DeletePlanningLeaveRequest(ctx context.Context, requestID stri
 		return err
 	}
 }
+
+func (s *Service) ListPlanningLeaveRequestConflictingShifts(ctx context.Context, requestID string) ([]PlanningLeaveConflictingShift, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(requestID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+
+	leaveRequest, err := s.repo.GetPlanningLeaveRequestByID(ctx, user.MerchantID, requestID)
+	if err == sql.ErrNoRows || leaveRequest == nil {
+		return nil, models.ErrPlanningLeaveRequestNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.repo.ListEmployeeAssignedShiftsInRange(ctx, user.MerchantID, leaveRequest.EmployeeID, leaveRequest.StartDate, leaveRequest.EndDate)
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}

@@ -85,3 +85,13 @@ func (h *Handler) DeletePlanningLeaveRequest(w http.ResponseWriter, r *http.Requ
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "delete_planning_leave_request", map[string]interface{}{"status": "success"})
 }
+
+func (h *Handler) ListPlanningLeaveRequestConflictingShifts(w http.ResponseWriter, r *http.Request) {
+	requestID := strings.TrimSpace(chi.URLParam(r, "id"))
+	items, err := h.svc.ListPlanningLeaveRequestConflictingShifts(r.Context(), requestID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_leave_request_conflicting_shifts", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_planning_leave_request_conflicting_shifts", map[string]interface{}{"status": "success", "conflicting_shifts": items})
+}

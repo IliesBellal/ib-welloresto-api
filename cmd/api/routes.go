@@ -792,6 +792,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/leave-requests", planningH.ListPlanningLeaveRequests)
 		r.Post("/leave-requests", planningH.CreatePlanningLeaveRequest)
 		r.Get("/leave-requests/{id}", planningH.GetPlanningLeaveRequest)
+		r.Get("/leave-requests/{id}/conflicting-shifts", planningH.ListPlanningLeaveRequestConflictingShifts)
 		r.Patch("/leave-requests/{id}", planningH.UpdatePlanningLeaveRequest)
 		r.Delete("/leave-requests/{id}", planningH.DeletePlanningLeaveRequest)
 

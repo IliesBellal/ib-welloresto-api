@@ -137,18 +137,69 @@ func (r *Repository) SoftDeletePlanningLeaveRequest(ctx context.Context, merchan
 }
 
 func (r *Repository) CountEmployeeAssignedShiftsInRange(ctx context.Context, merchantID, employeeID string, startDate, endDate time.Time) (int, error) {
-	db := dbutils.GetDB(ctx, r.db)
 	query := `
 		SELECT COUNT(1)
 		FROM planning_shifts
-		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1 AND status <> 'cancelled'
-			AND shift_date >= ? AND shift_date <= ?
-	`
+	` + assignedShiftsInRangeWhereClause()
+	args := assignedShiftsInRangeArgs(merchantID, employeeID, startDate, endDate)
+
+	db := dbutils.GetDB(ctx, r.db)
 	var count int
-	if err := db.QueryRowContext(ctx, query, merchantID, employeeID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *Repository) ListEmployeeAssignedShiftsInRange(ctx context.Context, merchantID, employeeID string, startDate, endDate time.Time) ([]PlanningLeaveConflictingShift, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	query := `
+		SELECT id, week_id, shift_date, start_time, end_time, position_id, position
+		FROM planning_shifts
+	` + assignedShiftsInRangeWhereClause() + `
+		ORDER BY shift_date ASC, start_time ASC
+	`
+	args := assignedShiftsInRangeArgs(merchantID, employeeID, startDate, endDate)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningLeaveConflictingShift, 0)
+	for rows.Next() {
+		item := PlanningLeaveConflictingShift{}
+		var positionID sql.NullString
+		var position sql.NullString
+		if err := rows.Scan(&item.ID, &item.WeekID, &item.ShiftDate, &item.StartTime, &item.EndTime, &positionID, &position); err != nil {
+			return nil, err
+		}
+		if positionID.Valid {
+			item.PositionID = &positionID.String
+		}
+		if position.Valid {
+			item.Position = &position.String
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func assignedShiftsInRangeWhereClause() string {
+	return `
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1 AND status <> 'cancelled'
+			AND shift_date >= ? AND shift_date <= ?
+	`
+}
+
+func assignedShiftsInRangeArgs(merchantID, employeeID string, startDate, endDate time.Time) []interface{} {
+	return []interface{}{merchantID, employeeID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")}
 }
 
 func (r *Repository) ListApprovedLeavesOverlappingRange(ctx context.Context, merchantID string, employeeIDs []string, startDate, endDate time.Time) ([]PlanningLeaveRequest, error) {
