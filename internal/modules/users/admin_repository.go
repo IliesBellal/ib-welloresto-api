@@ -380,7 +380,8 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 			view_financials = ?,
 			export_financials = ?,
 			manage_customers = ?,
-			export_customers = ?
+			export_customers = ?,
+			login_enabled = ?
 		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
 	`, rights.Admin,
 		rights.Permissions.AccessReception,
@@ -399,6 +400,7 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 		rights.Permissions.ExportFinancials,
 		rights.Permissions.ManageCustomers,
 		rights.Permissions.ExportCustomers,
+		rights.LoginEnabled,
 		merchantID,
 		userID,
 	)

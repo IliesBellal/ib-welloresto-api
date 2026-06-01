@@ -31,8 +31,9 @@ type MerchantUserRights struct {
 }
 
 type MerchantUserRightsUpsertRequest struct {
-	Admin       bool                    `json:"admin"`
-	Permissions MerchantUserPermissions `json:"permissions"`
+	Admin        bool                    `json:"admin"`
+	Permissions  MerchantUserPermissions `json:"permissions"`
+	LoginEnabled bool                    `json:"login_enabled"`
 }
 
 type MerchantUserListFilters struct {
