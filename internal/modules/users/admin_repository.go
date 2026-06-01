@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -216,6 +217,7 @@ func (r *UsersRepository) GetMerchantUserRights(ctx context.Context, merchantID,
 			merchant_id,
 			user_id,
 			admin,
+			COALESCE(login_enabled, TRUE),
 			access_wrreception,
 			access_wrdelivery,
 			access_wrwaiter,
@@ -358,7 +360,7 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 
 func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchantID, userID string, rights MerchantUserRightsUpsertRequest) error {
 	db := dbutils.GetDB(ctx, r.database)
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE users_rights
 		SET admin = ?,
 			access_wrreception = ?,
@@ -401,18 +403,13 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 	if err != nil {
 		return err
 	}
-	// This is commented because we want to avoid sending error if no row is affected,
-	// which can happen if the user is already disabled, and the admin is just updating
-	// the rights without changing the enabled status
-	/*
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected == 0 {
-			return models.ErrMerchantUserNotFound
-		}
-	*/
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return models.ErrMerchantUserNotFound
+	}
 	return nil
 }
 
@@ -440,7 +437,7 @@ func (r *UsersRepository) MerchantUserLinkExists(ctx context.Context, merchantID
 
 func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantID, userID string) (bool, error) {
 	db := dbutils.GetDB(ctx, r.database)
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE users_rights
 		SET enabled = 0
 		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
@@ -448,16 +445,11 @@ func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantI
 	if err != nil {
 		return false, err
 	}
-	// We consider the operation successful even if no row is affected, to allow idempotent unlinking
-	// and avoid errors when the user is already disabled
-	/*
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return false, err
-		}
-	*/
-	//return affected > 0, nil
-	return true, nil
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 func (r *UsersRepository) ClearMerchantEmployeeLinks(ctx context.Context, merchantID, userID string) (int, error) {
@@ -556,6 +548,7 @@ func scanMerchantUserRights(scanner merchantUserScanner) (*MerchantUserRights, e
 		&rights.MerchantID,
 		&rights.UserID,
 		&rights.Admin,
+		&rights.LoginEnabled,
 		&rights.Permissions.AccessReception,
 		&rights.Permissions.AccessDelivery,
 		&rights.Permissions.AccessWaiter,

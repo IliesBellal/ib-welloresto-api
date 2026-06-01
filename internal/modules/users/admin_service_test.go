@@ -136,8 +136,8 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 			merchant_id,`)).
 		WithArgs("merchant_1", "user_9").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "user_id", "admin", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
-		}).AddRow(77, "merchant_1", "user_9", false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
+		}).AddRow(77, "merchant_1", "user_9", false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE users
@@ -210,8 +210,8 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 			merchant_id,`)).
 		WithArgs("merchant_1", "user_4").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "user_id", "admin", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
-		}).AddRow(11, "merchant_1", "user_4", true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false))
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
+		}).AddRow(11, "merchant_1", "user_4", true, true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false))
 
 	req := httptest.NewRequest(http.MethodPut, "/users/user_4/rights", bytes.NewReader(body))
 	req = req.WithContext(middleware.WithUser(req.Context(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"}))

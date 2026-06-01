@@ -27,6 +27,7 @@ type MerchantUserRights struct {
 	UserID           string                  `json:"user_id"`
 	Admin            bool                    `json:"admin"`
 	Permissions      MerchantUserPermissions `json:"permissions"`
+	LoginEnabled     bool                    `json:"login_enabled"`
 }
 
 type MerchantUserRightsUpsertRequest struct {
