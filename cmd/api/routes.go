@@ -474,6 +474,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
 		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}/rights", usersH.GetMerchantUserRights)
 		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}/member", usersH.GetMerchantUserMember)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Patch("/{id}/member", usersH.PatchMerchantUserMember)
 		r.With(middleware.RequirePermission(middleware.IsAdmin)).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
 		r.With(middleware.RequirePermission(middleware.IsAdmin)).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
 

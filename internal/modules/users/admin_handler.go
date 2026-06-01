@@ -57,6 +57,29 @@ func (h *UsersHandler) GetMerchantUserRights(w http.ResponseWriter, r *http.Requ
 	models.SendJSON(w, http.StatusOK, "users", "get_rights", map[string]interface{}{"status": "success", "rights": rights})
 }
 
+func (h *UsersHandler) GetMerchantUserMember(w http.ResponseWriter, r *http.Request) {
+	member, err := h.svc.GetMerchantUserMember(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		models.SendErrorJSON(w, "users", "get_member", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "users", "get_member", map[string]interface{}{"status": "success", "member": member})
+}
+
+func (h *UsersHandler) PatchMerchantUserMember(w http.ResponseWriter, r *http.Request) {
+	var req MerchantUserMemberPatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "users", "patch_member", models.ErrInvalidRequestBody)
+		return
+	}
+	member, err := h.svc.PatchMerchantUserMember(r.Context(), chi.URLParam(r, "id"), req)
+	if err != nil {
+		models.SendErrorJSON(w, "users", "patch_member", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "users", "patch_member", map[string]interface{}{"status": "success", "member": member})
+}
+
 func (h *UsersHandler) UpdateMerchantUserRights(w http.ResponseWriter, r *http.Request) {
 	var req MerchantUserRightsUpsertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -236,6 +236,7 @@ var (
 	ErrPlanningEmployeeNameRequired             = errors.New("planning_employee_name_required")
 	ErrPlanningEmployeeLastNameRequired         = errors.New("planning_employee_last_name_required")
 	ErrPlanningEmployeePositionRequired         = errors.New("planning_employee_position_required")
+	ErrPlanningEmployeeContractTypeRequired     = errors.New("planning_employee_contract_type_required")
 	ErrPlanningEmployeeContractTypeInvalid      = errors.New("planning_employee_contract_type_invalid")
 	ErrPlanningEmployeeTimeTrackingModeInvalid  = errors.New("planning_employee_time_tracking_mode_invalid")
 	ErrPlanningEmployeeUserLinkInvalid          = errors.New("planning_employee_user_link_invalid")
@@ -476,6 +477,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "planning_employee_position_required"
 		errorMsg = "The employee position is required."
+
+	case errors.Is(err, ErrPlanningEmployeeContractTypeRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_employee_contract_type_required"
+		errorMsg = "The employee contract type is required."
 
 	case errors.Is(err, ErrPlanningEmployeeContractTypeInvalid):
 		status = http.StatusBadRequest

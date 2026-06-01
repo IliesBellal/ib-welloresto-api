@@ -102,6 +102,48 @@ type MerchantUserUnlinkResult struct {
 	EmployeeLinksCleared int  `json:"employee_links_cleared"`
 }
 
+type MerchantUserMember struct {
+	PositionID             string     `json:"position_id"`
+	JobTitle               *string    `json:"job_title"`
+	Role                   string     `json:"role"`
+	ContractTypeCode       string     `json:"contract_type_code"`
+	ContractStartDate      *time.Time `json:"contract_start_date"`
+	ContractEndDate        *time.Time `json:"contract_end_date"`
+	ProbationEndDate       *time.Time `json:"probation_end_date"`
+	LastMedicalCheckupDate *time.Time `json:"last_medical_checkup_date"`
+	ContractHours          float64    `json:"contract_hours"`
+	MaxWeeklyHours         float64    `json:"max_weekly_hours"`
+	RequiredRestDays       int        `json:"required_rest_days"`
+	SundayPremium          bool       `json:"sunday_premium"`
+	NightPremium           bool       `json:"night_premium"`
+	EmployerChargesPct     float64    `json:"employer_charges_pct"`
+	HourlyRate             int64      `json:"hourly_rate"`
+	GrossMonthlySalary     int64      `json:"gross_monthly_salary"`
+	TransportCost          int64      `json:"transport_cost"`
+	HrComment              *string    `json:"hr_comment"`
+}
+
+type MerchantUserMemberPatchRequest struct {
+	PositionID             *string    `json:"position_id,omitempty"`
+	JobTitle               *string    `json:"job_title,omitempty"`
+	Role                   *string    `json:"role,omitempty"`
+	ContractTypeCode       *string    `json:"contract_type_code,omitempty"`
+	ContractStartDate      *time.Time `json:"contract_start_date,omitempty"`
+	ContractEndDate        *time.Time `json:"contract_end_date,omitempty"`
+	ProbationEndDate       *time.Time `json:"probation_end_date,omitempty"`
+	LastMedicalCheckupDate *time.Time `json:"last_medical_checkup_date,omitempty"`
+	ContractHours          *float64   `json:"contract_hours,omitempty"`
+	MaxWeeklyHours         *float64   `json:"max_weekly_hours,omitempty"`
+	RequiredRestDays       *int       `json:"required_rest_days,omitempty"`
+	SundayPremium          *bool      `json:"sunday_premium,omitempty"`
+	NightPremium           *bool      `json:"night_premium,omitempty"`
+	EmployerChargesPct     *float64   `json:"employer_charges_pct,omitempty"`
+	HourlyRate             *int64     `json:"hourly_rate,omitempty"`
+	GrossMonthlySalary     *int64     `json:"gross_monthly_salary,omitempty"`
+	TransportCost          *int64     `json:"transport_cost,omitempty"`
+	HrComment              *string    `json:"hr_comment,omitempty"`
+}
+
 func defaultMerchantUserRights(admin bool) MerchantUserRightsUpsertRequest {
 	return MerchantUserRightsUpsertRequest{Admin: admin}
 }

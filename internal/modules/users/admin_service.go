@@ -3,11 +3,13 @@ package users
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	planningemployees "welloresto-api/internal/modules/planning/employees"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -198,6 +200,158 @@ func (s *UsersService) UnlinkMerchantUser(ctx context.Context, userID string) (*
 		_ = s.audit.LogChange(ctx, currentUser.MerchantID, currentUser.UserID, "unlink_merchant_user", "merchant_user", userID, oldState, map[string]any{"enabled": false, "employee_links_cleared": result.EmployeeLinksCleared})
 	}
 	return result, nil
+}
+
+func (s *UsersService) GetMerchantUserMember(ctx context.Context, userID string) (*MerchantUserMember, error) {
+	currentUser, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	if _, err := s.userRepo.GetMerchantUserByID(ctx, currentUser.MerchantID, userID); err == sql.ErrNoRows {
+		return nil, models.ErrMerchantUserNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	employee, err := s.memberEmployee.GetActiveEmployeeByUserID(ctx, currentUser.MerchantID, userID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return mapMemberFromEmployee(employee), nil
+}
+
+func (s *UsersService) PatchMerchantUserMember(ctx context.Context, userID string, req MerchantUserMemberPatchRequest) (*MerchantUserMember, error) {
+	currentUser, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	userDetail, err := s.userRepo.GetMerchantUserByID(ctx, currentUser.MerchantID, userID)
+	if err == sql.ErrNoRows {
+		return nil, models.ErrMerchantUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := requireAtLeastOneMemberField(req); err != nil {
+		return nil, err
+	}
+
+	var output *MerchantUserMember
+	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
+		existing, existingErr := s.memberEmployee.GetActiveEmployeeByUserID(txCtx, currentUser.MerchantID, userID)
+		if existingErr != nil && existingErr != sql.ErrNoRows {
+			return existingErr
+		}
+
+		updateReq := memberPatchToEmployeeUpdate(req)
+
+		if existingErr == sql.ErrNoRows || existing == nil {
+			if req.PositionID == nil || strings.TrimSpace(*req.PositionID) == "" {
+				return models.ErrPlanningEmployeePositionRequired
+			}
+			if req.ContractTypeCode == nil || strings.TrimSpace(*req.ContractTypeCode) == "" {
+				return models.ErrPlanningEmployeeContractTypeRequired
+			}
+
+			created, createErr := s.memberEmployee.CreateEmployee(txCtx, planningemployees.EmployeeCreateRequest{
+				FirstName:        strings.TrimSpace(userDetail.FirstName),
+				LastName:         strings.TrimSpace(userDetail.LastName),
+				PositionID:       strings.TrimSpace(*req.PositionID),
+				ContractTypeCode: strings.TrimSpace(*req.ContractTypeCode),
+			})
+			if createErr != nil {
+				return createErr
+			}
+			linked, linkErr := s.memberEmployee.LinkEmployeeUser(txCtx, created.ID, planningemployees.EmployeeUserLinkRequest{UserID: userID})
+			if linkErr != nil {
+				return linkErr
+			}
+			updated, updateErr := s.memberEmployee.UpdateEmployee(txCtx, linked.ID, updateReq)
+			if updateErr != nil {
+				return updateErr
+			}
+			output = mapMemberFromEmployee(updated)
+			return nil
+		}
+
+		updated, updateErr := s.memberEmployee.UpdateEmployee(txCtx, existing.ID, updateReq)
+		if updateErr != nil {
+			return updateErr
+		}
+		output = mapMemberFromEmployee(updated)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return output, nil
+}
+
+func requireAtLeastOneMemberField(req MerchantUserMemberPatchRequest) error {
+	if req.PositionID == nil && req.JobTitle == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.EmployerChargesPct == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.TransportCost == nil && req.HrComment == nil {
+		return fmt.Errorf("at least one field must be provided")
+	}
+	return nil
+}
+
+func memberPatchToEmployeeUpdate(req MerchantUserMemberPatchRequest) planningemployees.EmployeeUpdateRequest {
+	return planningemployees.EmployeeUpdateRequest{
+		PositionID:             req.PositionID,
+		JobTitle:               req.JobTitle,
+		Role:                   req.Role,
+		ContractTypeCode:       req.ContractTypeCode,
+		ContractStartDate:      req.ContractStartDate,
+		ContractEndDate:        req.ContractEndDate,
+		ProbationEndDate:       req.ProbationEndDate,
+		LastMedicalCheckupDate: req.LastMedicalCheckupDate,
+		ContractHours:          req.ContractHours,
+		MaxWeeklyHours:         req.MaxWeeklyHours,
+		RequiredRestDays:       req.RequiredRestDays,
+		SundayPremium:          req.SundayPremium,
+		NightPremium:           req.NightPremium,
+		EmployerChargesPct:     req.EmployerChargesPct,
+		HourlyRate:             req.HourlyRate,
+		GrossMonthlySalary:     req.GrossMonthlySalary,
+		TransportCost:          req.TransportCost,
+		HrComment:              req.HrComment,
+	}
+}
+
+func mapMemberFromEmployee(employee *planningemployees.Employee) *MerchantUserMember {
+	if employee == nil {
+		return nil
+	}
+	return &MerchantUserMember{
+		PositionID:             employee.PositionID,
+		JobTitle:               employee.JobTitle,
+		Role:                   employee.Role,
+		ContractTypeCode:       employee.ContractTypeCode,
+		ContractStartDate:      employee.ContractStartDate,
+		ContractEndDate:        employee.ContractEndDate,
+		ProbationEndDate:       employee.ProbationEndDate,
+		LastMedicalCheckupDate: employee.LastMedicalCheckupDate,
+		ContractHours:          employee.ContractHours,
+		MaxWeeklyHours:         employee.MaxWeeklyHours,
+		RequiredRestDays:       employee.RequiredRestDays,
+		SundayPremium:          employee.SundayPremium,
+		NightPremium:           employee.NightPremium,
+		EmployerChargesPct:     employee.EmployerChargesPct,
+		HourlyRate:             employee.HourlyRate,
+		GrossMonthlySalary:     employee.GrossMonthlySalary,
+		TransportCost:          employee.TransportCost,
+		HrComment:              employee.HrComment,
+	}
 }
 
 func normalizeUsersPagination(page, pageSize int) models.PaginationMetadata {

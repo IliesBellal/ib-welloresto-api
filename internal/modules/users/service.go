@@ -9,22 +9,32 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	auditpkg "welloresto-api/internal/modules/audit"
+	planningemployees "welloresto-api/internal/modules/planning/employees"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type UsersService struct {
-	userRepo *UsersRepository
-	audit    auditpkg.AuditService
+	userRepo       *UsersRepository
+	audit          auditpkg.AuditService
+	memberEmployee memberEmployeeFacade
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
 func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService) *UsersService {
 	return &UsersService{
-		userRepo: u,
-		audit:    auditService,
+		userRepo:       u,
+		audit:          auditService,
+		memberEmployee: newMemberEmployeeFacade(u.database),
 	}
+}
+
+type memberEmployeeFacade interface {
+	GetActiveEmployeeByUserID(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error)
+	CreateEmployee(ctx context.Context, req planningemployees.EmployeeCreateRequest) (*planningemployees.Employee, error)
+	LinkEmployeeUser(ctx context.Context, employeeID string, req planningemployees.EmployeeUserLinkRequest) (*planningemployees.Employee, error)
+	UpdateEmployee(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error)
 }
 
 func (s *UsersService) GetUserLocation(ctx context.Context, token, targetUserID string) (*models.OrderUser, error) {

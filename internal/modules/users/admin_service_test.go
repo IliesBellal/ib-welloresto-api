@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	planningemployees "welloresto-api/internal/modules/planning/employees"
 )
 
 func TestUsersHandlerListMerchantUsers(t *testing.T) {
@@ -204,7 +206,7 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE users_rights
 		SET admin = ?,`)).
-		WithArgs(true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, "merchant_1", "user_4").
+		WithArgs(true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, "merchant_1", "user_4").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
@@ -301,4 +303,239 @@ func withChiParam(req *http.Request, key, value string) *http.Request {
 
 func testingContext() context.Context {
 	return context.Background()
+}
+
+type memberEmployeeStub struct {
+	getActiveByUserIDFn func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error)
+	createEmployeeFn    func(ctx context.Context, req planningemployees.EmployeeCreateRequest) (*planningemployees.Employee, error)
+	linkEmployeeUserFn  func(ctx context.Context, employeeID string, req planningemployees.EmployeeUserLinkRequest) (*planningemployees.Employee, error)
+	updateEmployeeFn    func(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error)
+}
+
+func (s *memberEmployeeStub) GetActiveEmployeeByUserID(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+	if s.getActiveByUserIDFn != nil {
+		return s.getActiveByUserIDFn(ctx, merchantID, userID)
+	}
+	return nil, nil
+}
+
+func (s *memberEmployeeStub) CreateEmployee(ctx context.Context, req planningemployees.EmployeeCreateRequest) (*planningemployees.Employee, error) {
+	if s.createEmployeeFn != nil {
+		return s.createEmployeeFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (s *memberEmployeeStub) LinkEmployeeUser(ctx context.Context, employeeID string, req planningemployees.EmployeeUserLinkRequest) (*planningemployees.Employee, error) {
+	if s.linkEmployeeUserFn != nil {
+		return s.linkEmployeeUserFn(ctx, employeeID, req)
+	}
+	return nil, nil
+}
+
+func (s *memberEmployeeStub) UpdateEmployee(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error) {
+	if s.updateEmployeeFn != nil {
+		return s.updateEmployeeFn(ctx, employeeID, req)
+	}
+	return nil, nil
+}
+
+func TestUsersServiceGetMerchantUserMemberNilWhenNotLinked(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return nil, sql.ErrNoRows
+		},
+	}
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+
+	member, err := svc.GetMerchantUserMember(ctx, "user_1")
+	if err != nil {
+		t.Fatalf("GetMerchantUserMember() error = %v", err)
+	}
+	if member != nil {
+		t.Fatalf("GetMerchantUserMember() = %#v, want nil", member)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersServicePatchMerchantUserMemberCreateRequiresPositionAndContract(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return nil, sql.ErrNoRows
+		},
+	}
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	_, err = svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{ContractTypeCode: stringPtr("cdi")})
+	if !errors.Is(err, models.ErrPlanningEmployeePositionRequired) {
+		t.Fatalf("PatchMerchantUserMember() error = %v, want %v", err, models.ErrPlanningEmployeePositionRequired)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersServicePatchMerchantUserMemberCreateAndUpdateFlow(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+
+	callOrder := make([]string, 0, 4)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			callOrder = append(callOrder, "get")
+			return nil, sql.ErrNoRows
+		},
+		createEmployeeFn: func(ctx context.Context, req planningemployees.EmployeeCreateRequest) (*planningemployees.Employee, error) {
+			callOrder = append(callOrder, "create")
+			if req.FirstName != "John" || req.LastName != "Doe" {
+				t.Fatalf("unexpected identity in create request: %#v", req)
+			}
+			return &planningemployees.Employee{ID: "emp_1"}, nil
+		},
+		linkEmployeeUserFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUserLinkRequest) (*planningemployees.Employee, error) {
+			callOrder = append(callOrder, "link")
+			if employeeID != "emp_1" || req.UserID != "user_1" {
+				t.Fatalf("unexpected link request: employee=%s req=%#v", employeeID, req)
+			}
+			return &planningemployees.Employee{ID: "emp_1"}, nil
+		},
+		updateEmployeeFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error) {
+			callOrder = append(callOrder, "update")
+			if employeeID != "emp_1" {
+				t.Fatalf("unexpected update employee ID: %s", employeeID)
+			}
+			if req.HourlyRate == nil || *req.HourlyRate != 1299 {
+				t.Fatalf("hourly_rate not propagated in cents: %#v", req.HourlyRate)
+			}
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", Role: "manager", ContractTypeCode: "cdi", HourlyRate: 1299}, nil
+		},
+	}
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+
+	hourlyRate := int64(1299)
+	member, err := svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{
+		PositionID:       stringPtr("pos_1"),
+		ContractTypeCode: stringPtr("cdi"),
+		Role:             stringPtr("manager"),
+		HourlyRate:       &hourlyRate,
+	})
+	if err != nil {
+		t.Fatalf("PatchMerchantUserMember() error = %v", err)
+	}
+	if member == nil || member.HourlyRate != 1299 {
+		t.Fatalf("PatchMerchantUserMember() member = %#v, want hourly_rate=1299", member)
+	}
+	if got := strings.Join(callOrder, ","); got != "get,create,link,update" {
+		t.Fatalf("call order = %s, want get,create,link,update", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersServicePatchMerchantUserMemberRollbackOnLinkFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return nil, sql.ErrNoRows
+		},
+		createEmployeeFn: func(ctx context.Context, req planningemployees.EmployeeCreateRequest) (*planningemployees.Employee, error) {
+			return &planningemployees.Employee{ID: "emp_1"}, nil
+		},
+		linkEmployeeUserFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUserLinkRequest) (*planningemployees.Employee, error) {
+			return nil, errors.New("link failed")
+		},
+	}
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	_, err = svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{
+		PositionID:       stringPtr("pos_1"),
+		ContractTypeCode: stringPtr("cdi"),
+	})
+	if err == nil || err.Error() != "link failed" {
+		t.Fatalf("PatchMerchantUserMember() error = %v, want link failed", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func merchantUserDetailRows(userID, firstName, lastName string) *sqlmock.Rows {
+	now := time.Now().UTC()
+	return sqlmock.NewRows([]string{
+		"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
+		"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
+	}).AddRow(
+		userID, firstName, lastName, "john@example.com", "+33000000000", nil, now, now, true, true, int64(1), false,
+		false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, nil, nil,
+	)
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
