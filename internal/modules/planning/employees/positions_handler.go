@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func (h *Handler) ListEmployeePositions(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +59,7 @@ func (h *Handler) UpdateEmployeePosition(w http.ResponseWriter, r *http.Request)
 		models.SendErrorJSON(w, "planning", "update_employee_position", models.ErrInvalidRequestBody)
 		return
 	}
-	if req.Label == nil && req.SortOrder == nil && req.Active == nil {
+	if req.Label == nil && req.Color == nil && req.SortOrder == nil && req.Active == nil {
 		models.SendErrorJSON(w, "planning", "update_employee_position", models.ErrValidationError)
 		return
 	}

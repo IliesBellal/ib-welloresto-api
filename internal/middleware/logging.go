@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"database/sql"
 	"net/http"
 	"os"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"welloresto-api/internal/logger"
 )
 
-func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
+func LoggingMiddleware(baseLog *zap.Logger, db *sql.DB) func(http.Handler) http.Handler {
 	env := os.Getenv("ENV")
 
 	logPayload := os.Getenv("LOG_PAYLOAD") != "false"
@@ -34,7 +35,7 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 			endpoint := r.Method + " " + routePattern
 
 			// Logger enrichi UNE FOIS ICI
-			log := log.With(
+			reqLog := baseLog.With(
 				zap.String("request_id", requestID),
 				zap.String("endpoint", endpoint),
 				zap.String("method", r.Method),
@@ -43,6 +44,7 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 			)
 
 			ctx := logger.WithRequestID(r.Context(), requestID)
+			ctx = logger.WithLogger(ctx, reqLog)
 			r = r.WithContext(ctx)
 
 			rw := &responseWriter{ResponseWriter: w}
@@ -54,7 +56,7 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 				}
 			}
 
-			log.Debug("request started",
+			reqLog.Debug("request started",
 				//zap.String("request_id", requestID),
 				//zap.String("method", r.Method),
 				//zap.String("path", r.URL.Path),
@@ -66,8 +68,7 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Error("panic recovered",
-						zap.String("request_id", requestID),
+					reqLog.Error("panic recovered",
 						zap.Any("panic", rec),
 						zap.Stack("stack"),
 					)
@@ -89,12 +90,23 @@ func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 				level = zap.InfoLevel
 			}
 
-			log.Log(level, "request completed",
-				zap.String("request_id", requestID),
+			reqLog.Log(level, "request completed",
 				zap.Int("status", rw.status),
 				zap.Int("response_size", rw.size),
 				zap.Duration("duration", duration),
 			)
+
+			if db != nil && (rw.status >= http.StatusInternalServerError || duration > verySlowThreshold) {
+				fields := []zap.Field{
+					zap.Int("status", rw.status),
+					zap.Int("response_size", rw.size),
+					zap.Duration("duration", duration),
+					zap.Bool("server_error", rw.status >= http.StatusInternalServerError),
+					zap.Bool("very_slow", duration > verySlowThreshold),
+				}
+				fields = append(fields, logger.DBStatsFields(db)...)
+				reqLog.Warn("request incident diagnostics", fields...)
+			}
 		})
 	}
 }

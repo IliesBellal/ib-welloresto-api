@@ -3,6 +3,7 @@ module welloresto-api
 go 1.25.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
@@ -11,6 +12,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/nyaruka/phonenumbers v1.7.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/cors v1.11.1
 	github.com/stripe/stripe-go/v84 v84.2.0
@@ -35,7 +37,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/jung-kurt/gofpdf v1.16.2 // indirect
-	github.com/nyaruka/phonenumbers v1.7.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/stripe/stripe-go/v78 v78.12.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

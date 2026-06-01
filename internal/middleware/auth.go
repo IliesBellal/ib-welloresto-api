@@ -122,6 +122,12 @@ func UserFromContext(ctx context.Context) (*auth.UserLoginRow, error) {
 	return user, nil
 }
 
+// WithUser injecte un utilisateur authentifié dans le contexte.
+// Utile pour les tests et les appels internes qui veulent réutiliser les services.
+func WithUser(ctx context.Context, user *auth.UserLoginRow) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
 // MustGetUser récupère le user et envoie une erreur HTTP si absent
 // Simplifie la gestion d'erreurs dans les handlers
 func MustGetUser(w http.ResponseWriter, r *http.Request) (*auth.UserLoginRow, bool) {

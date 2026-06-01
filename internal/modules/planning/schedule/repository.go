@@ -150,7 +150,7 @@ func (r *Repository) SoftDeletePlanningWeek(ctx context.Context, merchantID, wee
 func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]PlanningShift, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, merchant_id, week_id, employee_id, title, shift_date, start_time, end_time, break_minutes,
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
 		WHERE merchant_id = ? AND week_id = ? AND enabled = 1
@@ -175,7 +175,7 @@ func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID 
 func (r *Repository) GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*PlanningShift, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
-		SELECT id, merchant_id, week_id, employee_id, title, shift_date, start_time, end_time, break_minutes,
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
@@ -187,7 +187,7 @@ func (r *Repository) GetPlanningShiftByID(ctx context.Context, merchantID, shift
 func (r *Repository) ListEmployeeShiftsByDate(ctx context.Context, merchantID, employeeID string, shiftDate time.Time, excludeShiftID string) ([]PlanningShift, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT id, merchant_id, week_id, employee_id, title, shift_date, start_time, end_time, break_minutes,
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
 		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
@@ -224,10 +224,10 @@ func (r *Repository) CreatePlanningShift(ctx context.Context, merchantID string,
 	shift.UpdatedAt = now
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_shifts (
-			id, merchant_id, week_id, employee_id, title, shift_date, start_time, end_time, break_minutes,
+			id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.CreatedAt, shift.UpdatedAt)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.CreatedAt, shift.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -239,10 +239,10 @@ func (r *Repository) UpdatePlanningShift(ctx context.Context, merchantID, shiftI
 	shift.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shifts
-		SET week_id = ?, employee_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
+		SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
 			position = ?, location = ?, notes = ?, status = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, shift.WeekID, shift.EmployeeID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.UpdatedAt, merchantID, shiftID)
+	`, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.UpdatedAt, merchantID, shiftID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,13 +303,16 @@ func scanPlanningWeek(rows scannableRows) (*PlanningWeek, error) {
 
 func scanPlanningShiftRow(row scannable) (*PlanningShift, error) {
 	shift := &PlanningShift{}
-	var employeeID, position, location, notes sql.NullString
+	var employeeID, positionID, position, location, notes sql.NullString
 	var deletedAt sql.NullTime
-	if err := row.Scan(&shift.ID, &shift.MerchantID, &shift.WeekID, &employeeID, &shift.Title, &shift.ShiftDate, &shift.StartTime, &shift.EndTime, &shift.BreakMinutes, &position, &location, &notes, &shift.Status, &shift.CreatedAt, &shift.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&shift.ID, &shift.MerchantID, &shift.WeekID, &employeeID, &positionID, &shift.Title, &shift.ShiftDate, &shift.StartTime, &shift.EndTime, &shift.BreakMinutes, &position, &location, &notes, &shift.Status, &shift.CreatedAt, &shift.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
 	if employeeID.Valid {
 		shift.EmployeeID = &employeeID.String
+	}
+	if positionID.Valid {
+		shift.PositionID = &positionID.String
 	}
 	if position.Valid {
 		shift.Position = &position.String

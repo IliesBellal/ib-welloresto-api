@@ -111,8 +111,10 @@ type UserLoginRow struct {
 	MFAOTPSentAt  *string
 
 	// Token de droits
-	Token      string
-	MerchantID string
+	Token            string
+	MerchantID       string
+	MerchantRightsID int64
+	LoginEnabled     bool
 
 	// Merchant Info
 	MerchantName    string

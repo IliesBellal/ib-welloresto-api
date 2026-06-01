@@ -45,6 +45,18 @@ SELECT
     ur.access_wrwaiter,
     ur.print_merchant_cash_report,
     ur.open_cash_drawer,
+    ur.admin,
+	COALESCE(ur.manage_menu, FALSE),
+	COALESCE(ur.manage_plannings, FALSE),
+	COALESCE(ur.manage_users, FALSE),
+	COALESCE(ur.manage_settings, FALSE),
+	COALESCE(ur.manage_haccp, FALSE),
+	COALESCE(ur.view_reports, FALSE),
+	COALESCE(ur.export_reports, FALSE),
+	COALESCE(ur.view_financials, FALSE),
+	COALESCE(ur.export_financials, FALSE),
+	COALESCE(ur.manage_customers, FALSE),
+	COALESCE(ur.export_customers, FALSE),
     ur.merchant_id,
 	u.mfa_type,
 	u.mfa_status,
@@ -125,7 +137,11 @@ LIMIT 1;
 		&data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
-		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID,
+		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.Rights.Admin,
+		&data.Rights.CanManageMenu, &data.Rights.CanManagePlannings, &data.Rights.CanManageUsers,
+		&data.Rights.CanManageSettings, &data.Rights.CanManageHACCP, &data.Rights.CanViewReports,
+		&data.Rights.CanExportReports, &data.Rights.CanViewFinancials, &data.Rights.CanExportFinancials,
+		&data.Rights.CanManageCustomers, &data.Rights.CanExportCustomers, &data.MerchantID,
 		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt, &data.MFAOTPSentAt,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
@@ -181,8 +197,19 @@ SELECT
     ur.access_wrwaiter,
     ur.print_merchant_cash_report,
     ur.open_cash_drawer,
-    ur.merchant_id,
     ur.admin,
+	COALESCE(ur.manage_menu, FALSE),
+	COALESCE(ur.manage_plannings, FALSE),
+	COALESCE(ur.manage_users, FALSE),
+	COALESCE(ur.manage_settings, FALSE),
+	COALESCE(ur.manage_haccp, FALSE),
+	COALESCE(ur.view_reports, FALSE),
+	COALESCE(ur.export_reports, FALSE),
+	COALESCE(ur.view_financials, FALSE),
+	COALESCE(ur.export_financials, FALSE),
+	COALESCE(ur.manage_customers, FALSE),
+	COALESCE(ur.export_customers, FALSE),
+	ur.merchant_id,
 	u.mfa_type,
 	u.mfa_status,
 	u.mfa_verified_at,
@@ -276,7 +303,11 @@ LIMIT 1;
 		&data.TermsOfUseAccepted, &data.Password, &data.EmailVerifiedAt,
 
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
-		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.MerchantID, &data.Rights.Admin,
+		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.Rights.Admin,
+		&data.Rights.CanManageMenu, &data.Rights.CanManagePlannings, &data.Rights.CanManageUsers,
+		&data.Rights.CanManageSettings, &data.Rights.CanManageHACCP, &data.Rights.CanViewReports,
+		&data.Rights.CanExportReports, &data.Rights.CanViewFinancials, &data.Rights.CanExportFinancials,
+		&data.Rights.CanManageCustomers, &data.Rights.CanExportCustomers, &data.MerchantID,
 		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt, &data.MFAOTPSentAt,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
@@ -503,6 +534,11 @@ func (r *AuthRepository) MarkAsMFAVerified(ctx context.Context, userID string) e
 	}
 
 	return nil
+}
+
+func (r *AuthRepository) MarkLastLoginAt(ctx context.Context, userID string) error {
+	_, err := r.database.ExecContext(ctx, `UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE user_id = ?`, userID)
+	return err
 }
 
 // MarkAsVerified met à jour la date de validation pour l'email ou le téléphone

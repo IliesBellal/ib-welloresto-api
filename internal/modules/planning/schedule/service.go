@@ -8,6 +8,7 @@ import (
 
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	auditpkg "welloresto-api/internal/modules/audit"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
@@ -16,13 +17,20 @@ type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
 }
 
+type PositionReader interface {
+	GetEmployeePositionByID(ctx context.Context, merchantID, positionID string) (*employeespkg.EmployeePosition, error)
+	GetEmployeePositionByLabel(ctx context.Context, merchantID, label, excludeID string) (*employeespkg.EmployeePosition, error)
+}
+
 type Service struct {
 	repo         *Repository
 	employeeRepo EmployeeReader
+	positionRepo PositionReader
+	auditService auditpkg.AuditService
 }
 
-func NewService(repo *Repository, employeeRepo EmployeeReader) *Service {
-	return &Service{repo: repo, employeeRepo: employeeRepo}
+func NewService(repo *Repository, employeeRepo EmployeeReader, positionRepo PositionReader, auditService auditpkg.AuditService) *Service {
+	return &Service{repo: repo, employeeRepo: employeeRepo, positionRepo: positionRepo, auditService: auditService}
 }
 
 func (s *Service) ListPlanningWeeks(ctx context.Context) ([]PlanningWeek, error) {
@@ -214,13 +222,18 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 	if err != nil {
 		return nil, err
 	}
-	if req.EmployeeID != nil && strings.TrimSpace(*req.EmployeeID) != "" {
-		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(*req.EmployeeID)); err != nil {
+	normalizedEmployeeID := normalizeShiftEmployeeID(req.EmployeeID)
+	if normalizedEmployeeID != nil {
+		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, *normalizedEmployeeID); err != nil {
 			return nil, models.ErrPlanningEmployeeNotFound
 		}
-		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, nil, strings.TrimSpace(*req.EmployeeID), shiftDate, startTime, endTime); conflictErr != nil {
+		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, nil, *normalizedEmployeeID, shiftDate, startTime, endTime); conflictErr != nil {
 			return nil, conflictErr
 		}
+	}
+	resolvedPositionID, resolvedPositionLabel, err := s.resolveShiftPosition(ctx, user.MerchantID, req.PositionID, req.Position)
+	if err != nil {
+		return nil, err
 	}
 	status := "planned"
 	if req.Status != nil && strings.TrimSpace(*req.Status) != "" {
@@ -235,18 +248,24 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 	}
 	shift := PlanningShift{
 		WeekID:       weekID,
-		EmployeeID:   req.EmployeeID,
+		EmployeeID:   normalizedEmployeeID,
+		PositionID:   resolvedPositionID,
 		Title:        strings.TrimSpace(req.Title),
 		ShiftDate:    shiftDate,
 		StartTime:    startTime,
 		EndTime:      endTime,
 		BreakMinutes: breakMinutes,
-		Position:     req.Position,
+		Position:     resolvedPositionLabel,
 		Location:     req.Location,
 		Notes:        req.Notes,
 		Status:       status,
 	}
-	return s.repo.CreatePlanningShift(ctx, user.MerchantID, shift)
+	createdShift, err := s.repo.CreatePlanningShift(ctx, user.MerchantID, shift)
+	if err != nil {
+		return nil, err
+	}
+	s.logShiftAssignmentChange(ctx, user.MerchantID, user.UserID, createdShift.ID, nil, createdShift.EmployeeID)
+	return createdShift, nil
 }
 
 func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req PlanningShiftUpdateRequest) (*PlanningShift, error) {
@@ -263,22 +282,38 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 	} else if err != nil {
 		return nil, err
 	}
+	previousEmployeeID := normalizeShiftEmployeeID(current.EmployeeID)
 	if req.Title != nil {
 		if strings.TrimSpace(*req.Title) == "" {
 			return nil, models.ErrValidationError
 		}
 		current.Title = strings.TrimSpace(*req.Title)
 	}
-	if req.EmployeeID != nil {
-		trimmedEmployeeID := strings.TrimSpace(*req.EmployeeID)
-		if trimmedEmployeeID == "" {
+	if req.EmployeeID.Present {
+		normalizedEmployeeID := normalizeShiftEmployeeID(req.EmployeeID.Value)
+		if normalizedEmployeeID == nil {
 			current.EmployeeID = nil
 		} else {
-			if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, trimmedEmployeeID); err != nil {
+			if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, *normalizedEmployeeID); err != nil {
 				return nil, models.ErrPlanningEmployeeNotFound
 			}
-			current.EmployeeID = &trimmedEmployeeID
+			current.EmployeeID = normalizedEmployeeID
 		}
+	}
+	if req.PositionID.Present {
+		resolvedPositionID, resolvedPositionLabel, resolveErr := s.resolveShiftPosition(ctx, user.MerchantID, req.PositionID.Value, nil)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		current.PositionID = resolvedPositionID
+		current.Position = resolvedPositionLabel
+	} else if req.Position != nil {
+		resolvedPositionID, resolvedPositionLabel, resolveErr := s.resolveShiftPosition(ctx, user.MerchantID, nil, req.Position)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		current.PositionID = resolvedPositionID
+		current.Position = resolvedPositionLabel
 	}
 	if req.ShiftDate != nil {
 		shiftDate, parseErr := sharedpkg.ParsePlanningDate(*req.ShiftDate)
@@ -295,9 +330,6 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 	}
 	if req.BreakMinutes != nil {
 		current.BreakMinutes = *req.BreakMinutes
-	}
-	if req.Position != nil {
-		current.Position = req.Position
 	}
 	if req.Location != nil {
 		current.Location = req.Location
@@ -327,12 +359,17 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 	if current.ShiftDate.Before(week.StartDate) || current.ShiftDate.After(week.EndDate) {
 		return nil, models.ErrPlanningInvalidDate
 	}
-	if current.EmployeeID != nil && strings.TrimSpace(*current.EmployeeID) != "" {
-		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, &shiftID, strings.TrimSpace(*current.EmployeeID), current.ShiftDate, current.StartTime, current.EndTime); conflictErr != nil {
+	if normalizedCurrentEmployeeID := normalizeShiftEmployeeID(current.EmployeeID); normalizedCurrentEmployeeID != nil {
+		if conflictErr := s.EnsureShiftHasNoConflicts(ctx, user.MerchantID, &shiftID, *normalizedCurrentEmployeeID, current.ShiftDate, current.StartTime, current.EndTime); conflictErr != nil {
 			return nil, conflictErr
 		}
 	}
-	return s.repo.UpdatePlanningShift(ctx, user.MerchantID, shiftID, *current)
+	updatedShift, err := s.repo.UpdatePlanningShift(ctx, user.MerchantID, shiftID, *current)
+	if err != nil {
+		return nil, err
+	}
+	s.logShiftAssignmentChange(ctx, user.MerchantID, user.UserID, shiftID, previousEmployeeID, updatedShift.EmployeeID)
+	return updatedShift, nil
 }
 
 func (s *Service) DeletePlanningShift(ctx context.Context, shiftID string) error {
@@ -351,6 +388,9 @@ func (s *Service) DeletePlanningShift(ctx context.Context, shiftID string) error
 }
 
 func (s *Service) EnsureShiftHasNoConflicts(ctx context.Context, merchantID string, excludeShiftID *string, employeeID string, shiftDate time.Time, startTime string, endTime string) error {
+	if strings.TrimSpace(employeeID) == "" {
+		return nil
+	}
 	existing, err := s.repo.ListEmployeeShiftsByDate(ctx, merchantID, employeeID, shiftDate, sharedpkg.DerefString(excludeShiftID))
 	if err != nil {
 		return err
@@ -380,4 +420,81 @@ func (s *Service) EnsureShiftHasNoConflicts(ctx context.Context, merchantID stri
 		}
 	}
 	return nil
+}
+
+func normalizeShiftEmployeeID(value *string) *string {
+	return normalizeShiftOptionalString(value)
+}
+
+func normalizeShiftOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func (s *Service) resolveShiftPosition(ctx context.Context, merchantID string, positionIDValue, legacyPositionValue *string) (*string, *string, error) {
+	normalizedPositionID := normalizeShiftOptionalString(positionIDValue)
+	if normalizedPositionID != nil {
+		if s.positionRepo == nil {
+			return nil, nil, models.ErrPlanningPositionNotFound
+		}
+		position, err := s.positionRepo.GetEmployeePositionByID(ctx, merchantID, *normalizedPositionID)
+		if err == sql.ErrNoRows || position == nil {
+			return nil, nil, models.ErrPlanningPositionNotFound
+		} else if err != nil {
+			return nil, nil, err
+		}
+		resolvedPositionID := position.ID
+		resolvedPositionLabel := position.Label
+		return &resolvedPositionID, &resolvedPositionLabel, nil
+	}
+
+	normalizedLegacyPosition := normalizeShiftOptionalString(legacyPositionValue)
+	if normalizedLegacyPosition != nil {
+		if s.positionRepo == nil {
+			return nil, nil, models.ErrPlanningPositionNotFound
+		}
+		position, err := s.positionRepo.GetEmployeePositionByLabel(ctx, merchantID, *normalizedLegacyPosition, "")
+		if err == sql.ErrNoRows || position == nil {
+			return nil, nil, models.ErrPlanningPositionNotFound
+		} else if err != nil {
+			return nil, nil, err
+		}
+		resolvedPositionID := position.ID
+		resolvedPositionLabel := position.Label
+		return &resolvedPositionID, &resolvedPositionLabel, nil
+	}
+
+	return nil, nil, nil
+}
+
+func (s *Service) logShiftAssignmentChange(ctx context.Context, merchantID, userID, shiftID string, previousEmployeeID, currentEmployeeID *string) {
+	if s.auditService == nil {
+		return
+	}
+	if sameNormalizedEmployeeID(previousEmployeeID, currentEmployeeID) {
+		return
+	}
+	_ = s.auditService.LogChange(ctx, merchantID, userID, "update", "planning_shift", shiftID,
+		map[string]any{"employee_id": normalizeShiftEmployeeID(previousEmployeeID)},
+		map[string]any{"employee_id": normalizeShiftEmployeeID(currentEmployeeID)},
+	)
+}
+
+func sameNormalizedEmployeeID(left, right *string) bool {
+	normalizedLeft := normalizeShiftEmployeeID(left)
+	normalizedRight := normalizeShiftEmployeeID(right)
+	switch {
+	case normalizedLeft == nil && normalizedRight == nil:
+		return true
+	case normalizedLeft == nil || normalizedRight == nil:
+		return false
+	default:
+		return *normalizedLeft == *normalizedRight
+	}
 }

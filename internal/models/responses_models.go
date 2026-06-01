@@ -84,6 +84,8 @@ var (
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInput = errors.New("invalid input")
 
+	ErrInvalidData = errors.New("invalid_data")
+
 	// ErrValidationError indique une erreur de validation métier/payload HACCP (400)
 	ErrValidationError = errors.New("validation_error")
 
@@ -214,53 +216,65 @@ var (
 
 	ErrTranslationLanguagesLimitReached = errors.New("translation_languages_limit_reached")
 
-	ErrPlanningSettingsNotFound                = errors.New("planning_settings_not_found")
-	ErrPlanningAttendanceSourceInvalid         = errors.New("planning_attendance_source_invalid")
-	ErrPlanningShiftSwapApprovalModeInvalid    = errors.New("planning_shift_swap_approval_mode_invalid")
-	ErrPlanningHolidayOverrideNotFound         = errors.New("planning_holiday_override_not_found")
-	ErrPlanningPositionNotFound                = errors.New("planning_position_not_found")
-	ErrPlanningPositionLabelRequired           = errors.New("planning_position_label_required")
-	ErrPlanningPositionAlreadyExists           = errors.New("planning_position_already_exists")
-	ErrPlanningPositionInUse                   = errors.New("planning_position_in_use")
-	ErrPlanningEmployeeNotFound                = errors.New("planning_employee_not_found")
-	ErrPlanningEmployeeNameRequired            = errors.New("planning_employee_name_required")
-	ErrPlanningEmployeeLastNameRequired        = errors.New("planning_employee_last_name_required")
-	ErrPlanningEmployeePositionRequired        = errors.New("planning_employee_position_required")
-	ErrPlanningEmployeeContractTypeInvalid     = errors.New("planning_employee_contract_type_invalid")
-	ErrPlanningEmployeeTimeTrackingModeInvalid = errors.New("planning_employee_time_tracking_mode_invalid")
-	ErrPlanningEmployeeUserLinkInvalid         = errors.New("planning_employee_user_link_invalid")
-	ErrPlanningEmployeeDocumentNotFound        = errors.New("planning_employee_document_not_found")
-	ErrPlanningEmployeeDocumentTypeInvalid     = errors.New("planning_employee_document_type_invalid")
-	ErrPlanningEmployeeDocumentNameRequired    = errors.New("planning_employee_document_name_required")
-	ErrPlanningEmployeeDocumentFileRequired    = errors.New("planning_employee_document_file_required")
-	ErrPlanningEmployeeDocumentUploadFailed    = errors.New("planning_employee_document_upload_failed")
-	ErrPlanningEmployeeDocumentUrlFailed       = errors.New("planning_employee_document_url_failed")
-	ErrPlanningWeekAlreadyExists               = errors.New("planning_week_already_exists")
-	ErrPlanningWeekNotFound                    = errors.New("planning_week_not_found")
-	ErrPlanningShiftNotFound                   = errors.New("planning_shift_not_found")
-	ErrPlanningShiftConflict                   = errors.New("planning_shift_conflict")
-	ErrPlanningShiftInvalidRange               = errors.New("planning_shift_invalid_range")
-	ErrPlanningTimeEntryNotFound               = errors.New("planning_time_entry_not_found")
-	ErrPlanningTimeEntryAlreadyOpen            = errors.New("planning_time_entry_already_open")
-	ErrPlanningTimeEntryNotOpen                = errors.New("planning_time_entry_not_open")
-	ErrPlanningTimeEntryInvalidRange           = errors.New("planning_time_entry_invalid_range")
-	ErrPlanningTimeEntrySourceDisabled         = errors.New("planning_time_entry_source_disabled")
-	ErrPlanningTimeEntryModeInvalid            = errors.New("planning_time_entry_mode_invalid")
-	ErrPlanningTimeEntryShiftInvalid           = errors.New("planning_time_entry_shift_invalid")
-	ErrPlanningLeaveRequestNotFound            = errors.New("planning_leave_request_not_found")
-	ErrPlanningLeaveTypeInvalid                = errors.New("planning_leave_type_invalid")
-	ErrPlanningLeaveStatusInvalid              = errors.New("planning_leave_status_invalid")
-	ErrPlanningLeaveInvalidRange               = errors.New("planning_leave_invalid_range")
-	ErrPlanningLeaveShiftConflict              = errors.New("planning_leave_shift_conflict")
-	ErrPlanningShiftSwapRequestNotFound        = errors.New("planning_shift_swap_request_not_found")
-	ErrPlanningShiftSwapApprovalForbidden      = errors.New("planning_shift_swap_approval_forbidden")
-	ErrPlanningShiftSwapStatusInvalid          = errors.New("planning_shift_swap_status_invalid")
-	ErrPlanningShiftSwapInvalid                = errors.New("planning_shift_swap_invalid")
-	ErrPlanningShiftSwapConflict               = errors.New("planning_shift_swap_conflict")
-	ErrPlanningLaborRuleNotFound               = errors.New("planning_labor_rule_not_found")
-	ErrPlanningInvalidCountryCode              = errors.New("planning_invalid_country_code")
-	ErrPlanningInvalidDate                     = errors.New("planning_invalid_date")
-	ErrPlanningInvalidHours                    = errors.New("planning_invalid_hours")
+	ErrPlanningSettingsNotFound                 = errors.New("planning_settings_not_found")
+	ErrPlanningAttendanceSourceInvalid          = errors.New("planning_attendance_source_invalid")
+	ErrPlanningShiftSwapApprovalModeInvalid     = errors.New("planning_shift_swap_approval_mode_invalid")
+	ErrPlanningHolidayOverrideNotFound          = errors.New("planning_holiday_override_not_found")
+	ErrPlanningPositionNotFound                 = errors.New("planning_position_not_found")
+	ErrPlanningPositionLabelRequired            = errors.New("planning_position_label_required")
+	ErrPlanningPositionAlreadyExists            = errors.New("planning_position_already_exists")
+	ErrPlanningPositionInUse                    = errors.New("planning_position_in_use")
+	ErrPlanningWeekTemplateNotFound             = errors.New("planning_week_template_not_found")
+	ErrPlanningWeekTemplateLabelRequired        = errors.New("planning_week_template_label_required")
+	ErrPlanningWeekTemplateInvalidDayOfWeek     = errors.New("planning_week_template_invalid_day_of_week")
+	ErrPlanningWeekTemplateInvalidConflictMode  = errors.New("planning_week_template_invalid_conflict_mode")
+	ErrPlanningWeekTemplatePreviewRangeTooLarge = errors.New("planning_week_template_preview_range_too_large")
+	ErrPlanningShiftTemplateNotFound            = errors.New("planning_shift_template_not_found")
+	ErrPlanningShiftTemplateLabelRequired       = errors.New("planning_shift_template_label_required")
+	ErrPlanningShiftTemplateInvalidRange        = errors.New("planning_shift_template_invalid_range")
+	ErrPlanningEmployeeNotFound                 = errors.New("planning_employee_not_found")
+	ErrPlanningEmployeeNameRequired             = errors.New("planning_employee_name_required")
+	ErrPlanningEmployeeLastNameRequired         = errors.New("planning_employee_last_name_required")
+	ErrPlanningEmployeePositionRequired         = errors.New("planning_employee_position_required")
+	ErrPlanningEmployeeContractTypeInvalid      = errors.New("planning_employee_contract_type_invalid")
+	ErrPlanningEmployeeTimeTrackingModeInvalid  = errors.New("planning_employee_time_tracking_mode_invalid")
+	ErrPlanningEmployeeUserLinkInvalid          = errors.New("planning_employee_user_link_invalid")
+	ErrPlanningEmployeeDocumentNotFound         = errors.New("planning_employee_document_not_found")
+	ErrPlanningEmployeeDocumentTypeInvalid      = errors.New("planning_employee_document_type_invalid")
+	ErrPlanningEmployeeDocumentNameRequired     = errors.New("planning_employee_document_name_required")
+	ErrPlanningEmployeeDocumentFileRequired     = errors.New("planning_employee_document_file_required")
+	ErrPlanningEmployeeDocumentUploadFailed     = errors.New("planning_employee_document_upload_failed")
+	ErrPlanningEmployeeDocumentUrlFailed        = errors.New("planning_employee_document_url_failed")
+	ErrPlanningEmployeeUserNotLinkedToMerchant  = errors.New("planning_employee_user_not_linked_to_merchant")
+	ErrPlanningEmployeeUserAlreadyAssigned      = errors.New("planning_employee_user_already_assigned")
+	ErrPlanningWeekAlreadyExists                = errors.New("planning_week_already_exists")
+	ErrPlanningWeekNotFound                     = errors.New("planning_week_not_found")
+	ErrPlanningShiftNotFound                    = errors.New("planning_shift_not_found")
+	ErrPlanningShiftConflict                    = errors.New("planning_shift_conflict")
+	ErrPlanningShiftInvalidRange                = errors.New("planning_shift_invalid_range")
+	ErrPlanningTimeEntryNotFound                = errors.New("planning_time_entry_not_found")
+	ErrPlanningTimeEntryAlreadyOpen             = errors.New("planning_time_entry_already_open")
+	ErrPlanningTimeEntryNotOpen                 = errors.New("planning_time_entry_not_open")
+	ErrPlanningTimeEntryInvalidRange            = errors.New("planning_time_entry_invalid_range")
+	ErrPlanningTimeEntrySourceDisabled          = errors.New("planning_time_entry_source_disabled")
+	ErrPlanningTimeEntryModeInvalid             = errors.New("planning_time_entry_mode_invalid")
+	ErrPlanningTimeEntryShiftInvalid            = errors.New("planning_time_entry_shift_invalid")
+	ErrPlanningLeaveRequestNotFound             = errors.New("planning_leave_request_not_found")
+	ErrPlanningLeaveTypeInvalid                 = errors.New("planning_leave_type_invalid")
+	ErrPlanningLeaveStatusInvalid               = errors.New("planning_leave_status_invalid")
+	ErrPlanningLeaveInvalidRange                = errors.New("planning_leave_invalid_range")
+	ErrPlanningLeaveShiftConflict               = errors.New("planning_leave_shift_conflict")
+	ErrPlanningShiftSwapRequestNotFound         = errors.New("planning_shift_swap_request_not_found")
+	ErrPlanningShiftSwapApprovalForbidden       = errors.New("planning_shift_swap_approval_forbidden")
+	ErrPlanningShiftSwapStatusInvalid           = errors.New("planning_shift_swap_status_invalid")
+	ErrPlanningShiftSwapInvalid                 = errors.New("planning_shift_swap_invalid")
+	ErrPlanningShiftSwapConflict                = errors.New("planning_shift_swap_conflict")
+	ErrPlanningLaborRuleNotFound                = errors.New("planning_labor_rule_not_found")
+	ErrPlanningInvalidCountryCode               = errors.New("planning_invalid_country_code")
+	ErrPlanningInvalidDate                      = errors.New("planning_invalid_date")
+	ErrPlanningInvalidHours                     = errors.New("planning_invalid_hours")
+	ErrMerchantUserNotFound                     = errors.New("merchant_user_not_found")
+	ErrMerchantUserAlreadyLinked                = errors.New("merchant_user_already_linked")
 
 	ErrRedisNotAvailable = errors.New("not_available")
 )
@@ -408,6 +422,46 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "planning_position_in_use"
 		errorMsg = "The planning position is still assigned to employees."
 
+	case errors.Is(err, ErrPlanningWeekTemplateNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_week_template_not_found"
+		errorMsg = "Planning week template not found"
+
+	case errors.Is(err, ErrPlanningWeekTemplateLabelRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_week_template_label_required"
+		errorMsg = "The week template label is required."
+
+	case errors.Is(err, ErrPlanningWeekTemplateInvalidDayOfWeek):
+		status = http.StatusBadRequest
+		errorStatus = "planning_week_template_invalid_day_of_week"
+		errorMsg = "The week template shift day_of_week must be between 0 and 6."
+
+	case errors.Is(err, ErrPlanningWeekTemplateInvalidConflictMode):
+		status = http.StatusBadRequest
+		errorStatus = "planning_week_template_invalid_conflict_mode"
+		errorMsg = "The conflict_mode must be one of: keep_existing, replace, template_to_unassigned."
+
+	case errors.Is(err, ErrPlanningWeekTemplatePreviewRangeTooLarge):
+		status = http.StatusBadRequest
+		errorStatus = "planning_week_template_preview_range_too_large"
+		errorMsg = "Preview target range is too large. Maximum is 26 weeks."
+
+	case errors.Is(err, ErrPlanningShiftTemplateNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_shift_template_not_found"
+		errorMsg = "Planning shift template not found"
+
+	case errors.Is(err, ErrPlanningShiftTemplateLabelRequired):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_template_label_required"
+		errorMsg = "The shift template label is required."
+
+	case errors.Is(err, ErrPlanningShiftTemplateInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "planning_shift_template_invalid_range"
+		errorMsg = "The shift template time range is invalid."
+
 	case errors.Is(err, ErrPlanningEmployeeNameRequired):
 		status = http.StatusBadRequest
 		errorStatus = "planning_employee_name_required"
@@ -482,6 +536,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusInternalServerError
 		errorStatus = "planning_employee_document_url_failed"
 		errorMsg = "The employee document URL could not be generated."
+
+	case errors.Is(err, ErrPlanningEmployeeUserNotLinkedToMerchant):
+		status = http.StatusConflict
+		errorStatus = "planning_employee_user_not_linked_to_merchant"
+		errorMsg = "The selected user is not linked to the current merchant."
+
+	case errors.Is(err, ErrPlanningEmployeeUserAlreadyAssigned):
+		status = http.StatusConflict
+		errorStatus = "planning_employee_user_already_assigned"
+		errorMsg = "The selected user is already linked to another active employee."
 
 	case errors.Is(err, ErrPlanningWeekAlreadyExists):
 		status = http.StatusConflict
@@ -613,6 +677,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "planning_invalid_hours"
 		errorMsg = "The hours value is invalid."
 
+	case errors.Is(err, ErrMerchantUserNotFound):
+		status = http.StatusNotFound
+		errorStatus = "merchant_user_not_found"
+		errorMsg = "The merchant user link was not found."
+
+	case errors.Is(err, ErrMerchantUserAlreadyLinked):
+		status = http.StatusConflict
+		errorStatus = "merchant_user_already_linked"
+		errorMsg = "The user is already linked to the current merchant."
+
 	case errors.Is(err, ErrOTPMismatch):
 		status = http.StatusUnauthorized
 		errorStatus = "otp_mismatch"
@@ -662,6 +736,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "invalid_input"
 		errorMsg = "Invalid input. Please check payloads and path parameters."
+
+	case errors.Is(err, ErrInvalidData):
+		status = http.StatusBadRequest
+		errorStatus = "error_invalid_data"
+		errorMsg = "The request data is invalid."
 
 	case errors.Is(err, ErrValidationError):
 		status = http.StatusBadRequest

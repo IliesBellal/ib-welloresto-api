@@ -10,6 +10,7 @@ type ctxKey string
 
 const (
 	RequestIDKey  ctxKey = "request_id"
+	LoggerKey     ctxKey = "logger"
 	UserIDKey     ctxKey = "user_id"
 	MerchantIDKey ctxKey = "merchant_id"
 )
@@ -25,10 +26,10 @@ func RequestID(ctx context.Context) string {
 	return ""
 }
 func WithLogger(ctx context.Context, log *zap.Logger) context.Context {
-	return context.WithValue(ctx, RequestIDKey, log)
+	return context.WithValue(ctx, LoggerKey, log)
 }
 func FromContext(ctx context.Context) *zap.Logger {
-	if log, ok := ctx.Value(RequestIDKey).(*zap.Logger); ok {
+	if log, ok := ctx.Value(LoggerKey).(*zap.Logger); ok && log != nil {
 		return log
 	}
 	return zap.L() // fallback

@@ -43,6 +43,17 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 		baseQuery += ` AND e.contract_type_code = ?`
 		args = append(args, strings.TrimSpace(filters.ContractType))
 	}
+	if strings.TrimSpace(filters.UserID) != "" {
+		baseQuery += ` AND e.user_id = ?`
+		args = append(args, strings.TrimSpace(filters.UserID))
+	}
+	if filters.Unlinked != nil {
+		if *filters.Unlinked {
+			baseQuery += ` AND e.user_id IS NULL`
+		} else {
+			baseQuery += ` AND e.user_id IS NOT NULL`
+		}
+	}
 
 	countQuery := `SELECT COUNT(1) ` + baseQuery
 	var totalItems int
@@ -93,6 +104,51 @@ func (r *Repository) GetEmployeeByUserID(ctx context.Context, merchantID, userID
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 	return scanEmployeeRow(row)
+}
+
+func (r *Repository) GetActiveEmployeeByUserID(ctx context.Context, merchantID, userID string) (*Employee, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	row := db.QueryRowContext(ctx, `
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
+			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
+			e.contract_hours, e.max_weekly_hours, e.required_rest_days, e.sunday_premium, e.night_premium,
+			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
+			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
+		FROM employees e
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
+		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = 1 AND e.active = 1
+		LIMIT 1
+	`, merchantID, strings.TrimSpace(userID))
+	return scanEmployeeRow(row)
+}
+
+func (r *Repository) IsMerchantUserLinked(ctx context.Context, merchantID, userID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	var count int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM users_rights ur
+		INNER JOIN users u ON u.user_id = ur.user_id
+		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = 1 AND u.enabled = 1
+	`, merchantID, strings.TrimSpace(userID)).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *Repository) GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	var employeeID string
+	err := db.QueryRowContext(ctx, `
+		SELECT id
+		FROM employees
+		WHERE merchant_id = ? AND member_id = ? AND enabled = 1
+		LIMIT 1
+	`, merchantID, memberID).Scan(&employeeID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(employeeID), nil
 }
 
 func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*Employee, error) {
@@ -229,6 +285,23 @@ func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID 
 	employee.ID = employeeID
 	employee.MerchantID = merchantID
 	return &employee, nil
+}
+
+func (r *Repository) UpdateEmployeeUserLink(ctx context.Context, merchantID, employeeID string, userID *string) (*Employee, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	now := time.Now().UTC()
+	res, err := db.ExecContext(ctx, `
+		UPDATE employees
+		SET user_id = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`, userID, now, merchantID, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetEmployeeByID(ctx, merchantID, employeeID)
 }
 
 func (r *Repository) SoftDeleteEmployee(ctx context.Context, merchantID, employeeID string) error {

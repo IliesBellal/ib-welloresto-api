@@ -13,7 +13,7 @@ import (
 func (r *Repository) ListEmployeePositions(ctx context.Context, merchantID string, filters EmployeePositionListFilters) ([]EmployeePosition, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT p.id, p.merchant_id, p.label, p.sort_order, p.active, COUNT(e.id) AS employee_count,
+		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
 		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
@@ -28,7 +28,7 @@ func (r *Repository) ListEmployeePositions(ctx context.Context, merchantID strin
 		query += ` AND p.active = ?`
 		args = append(args, *filters.Active)
 	}
-	query += ` GROUP BY p.id, p.merchant_id, p.label, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at`
+	query += ` GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at`
 	query += ` ORDER BY p.sort_order ASC, p.label ASC`
 
 	rows, err := db.QueryContext(ctx, query, args...)
@@ -51,12 +51,12 @@ func (r *Repository) ListEmployeePositions(ctx context.Context, merchantID strin
 func (r *Repository) GetEmployeePositionByID(ctx context.Context, merchantID, positionID string) (*EmployeePosition, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
-		SELECT p.id, p.merchant_id, p.label, p.sort_order, p.active, COUNT(e.id) AS employee_count,
+		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
 		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
 		WHERE p.merchant_id = ? AND p.id = ? AND p.enabled = 1
-		GROUP BY p.id, p.merchant_id, p.label, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at
+		GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at
 	`, merchantID, positionID)
 	return scanEmployeePositionRow(row)
 }
@@ -64,7 +64,7 @@ func (r *Repository) GetEmployeePositionByID(ctx context.Context, merchantID, po
 func (r *Repository) GetEmployeePositionByLabel(ctx context.Context, merchantID, label, excludeID string) (*EmployeePosition, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT p.id, p.merchant_id, p.label, p.sort_order, p.active, COUNT(e.id) AS employee_count,
+		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
 		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
@@ -75,7 +75,7 @@ func (r *Repository) GetEmployeePositionByLabel(ctx context.Context, merchantID,
 		query += ` AND p.id <> ?`
 		args = append(args, strings.TrimSpace(excludeID))
 	}
-	query += ` GROUP BY p.id, p.merchant_id, p.label, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at`
+	query += ` GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at`
 	row := db.QueryRowContext(ctx, query, args...)
 	return scanEmployeePositionRow(row)
 }
@@ -100,6 +100,7 @@ func (r *Repository) CreateEmployeePosition(ctx context.Context, merchantID stri
 		ID:         helpers.GeneratePrefixedID(helpers.PlanningPositionIDPrefix),
 		MerchantID: merchantID,
 		Label:      strings.TrimSpace(req.Label),
+		Color:      req.Color,
 		SortOrder:  0,
 		Active:     true,
 		CreatedAt:  now,
@@ -113,9 +114,9 @@ func (r *Repository) CreateEmployeePosition(ctx context.Context, merchantID stri
 	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_positions (
-			id, merchant_id, label, sort_order, active, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, position.ID, position.MerchantID, position.Label, position.SortOrder, position.Active, position.CreatedAt, position.UpdatedAt)
+			id, merchant_id, label, color, sort_order, active, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, position.ID, position.MerchantID, position.Label, position.Color, position.SortOrder, position.Active, position.CreatedAt, position.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +128,9 @@ func (r *Repository) UpdateEmployeePosition(ctx context.Context, merchantID, pos
 	position.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_positions
-		SET label = ?, sort_order = ?, active = ?, updated_at = ?
+		SET label = ?, color = ?, sort_order = ?, active = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, position.Label, position.SortOrder, position.Active, position.UpdatedAt, merchantID, positionID)
+	`, position.Label, position.Color, position.SortOrder, position.Active, position.UpdatedAt, merchantID, positionID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func scanEmployeePositionRow(row scannable) (*EmployeePosition, error) {
 	var active sql.NullBool
 	var employeeCount sql.NullInt64
 	var deletedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.MerchantID, &item.Label, &item.SortOrder, &active, &employeeCount, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.MerchantID, &item.Label, &item.Color, &item.SortOrder, &active, &employeeCount, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
 	item.Active = active.Bool
@@ -194,7 +195,7 @@ func scanEmployeePosition(rows scannableRows) (*EmployeePosition, error) {
 	var active sql.NullBool
 	var employeeCount sql.NullInt64
 	var deletedAt sql.NullTime
-	if err := rows.Scan(&item.ID, &item.MerchantID, &item.Label, &item.SortOrder, &active, &employeeCount, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
+	if err := rows.Scan(&item.ID, &item.MerchantID, &item.Label, &item.Color, &item.SortOrder, &active, &employeeCount, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
 	item.Active = active.Bool

@@ -1017,29 +1017,32 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	}
 
 	// --- BUILD: attach sub-products to parents & attach components & configuration like PHP ---
+	// enrich root products and sub-products before attachment so nested entries include same details
+	for _, bucket := range []map[string]*models.ProductEntry{products, subProducts} {
+		for _, p := range bucket {
+			if comps, ok := compMap[p.ProductID]; ok {
+				p.Components = comps
+			}
+			if attrs, ok := attrMap[p.ProductID]; ok {
+				p.Configuration = models.ConfigurableResponse{Attributes: attrs}
+			} else {
+				p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
+			}
+			if allergens, ok := allergenMap[p.ProductID]; ok {
+				p.Allergens = allergens
+			}
+			if tags, ok := tagMap[p.ProductID]; ok {
+				p.Tags = tags
+			}
+		}
+	}
+
 	// attach subproducts
 	for _, sp := range subProducts {
 		if sp.ByProductOf != nil {
 			if parent, ok := products[*sp.ByProductOf]; ok && parent != nil {
 				parent.SubProducts = append(parent.SubProducts, *sp)
 			}
-		}
-	}
-	// attach components, configuration, allergens, tags
-	for _, p := range products {
-		if comps, ok := compMap[p.ProductID]; ok {
-			p.Components = comps
-		}
-		if attrs, ok := attrMap[p.ProductID]; ok {
-			p.Configuration = models.ConfigurableResponse{Attributes: attrs}
-		} else {
-			p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
-		}
-		if allergens, ok := allergenMap[p.ProductID]; ok {
-			p.Allergens = allergens
-		}
-		if tags, ok := tagMap[p.ProductID]; ok {
-			p.Tags = tags
 		}
 	}
 
@@ -1571,29 +1574,32 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	}
 
 	// --- BUILD: attach sub-products to parents & attach components & configuration (same as GetMenu) ---
+	// enrich root products and sub-products before attachment so nested entries include same details
+	for _, bucket := range []map[string]*models.ProductEntry{products, subProducts} {
+		for _, p := range bucket {
+			if comps, ok := compMap[p.ProductID]; ok {
+				p.Components = comps
+			}
+			if attrs, ok := attrMap[p.ProductID]; ok {
+				p.Configuration = models.ConfigurableResponse{Attributes: attrs}
+			} else {
+				p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
+			}
+			if allergens, ok := allergenMap[p.ProductID]; ok {
+				p.Allergens = allergens
+			}
+			if tags, ok := tagMap[p.ProductID]; ok {
+				p.Tags = tags
+			}
+		}
+	}
+
 	// attach subproducts
 	for _, sp := range subProducts {
 		if sp.ByProductOf != nil {
 			if parent, ok := products[*sp.ByProductOf]; ok && parent != nil {
 				parent.SubProducts = append(parent.SubProducts, *sp)
 			}
-		}
-	}
-	// attach components, configuration, allergens, tags
-	for _, p := range products {
-		if comps, ok := compMap[p.ProductID]; ok {
-			p.Components = comps
-		}
-		if attrs, ok := attrMap[p.ProductID]; ok {
-			p.Configuration = models.ConfigurableResponse{Attributes: attrs}
-		} else {
-			p.Configuration = models.ConfigurableResponse{Attributes: []models.ConfigurableAttribute{}}
-		}
-		if allergens, ok := allergenMap[p.ProductID]; ok {
-			p.Allergens = allergens
-		}
-		if tags, ok := tagMap[p.ProductID]; ok {
-			p.Tags = tags
 		}
 	}
 

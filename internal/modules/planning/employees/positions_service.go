@@ -7,6 +7,7 @@ import (
 
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
 )
 
 func (s *Service) ListEmployeePositions(ctx context.Context, filters EmployeePositionListFilters) ([]EmployeePosition, error) {
@@ -41,12 +42,17 @@ func (s *Service) CreateEmployeePosition(ctx context.Context, req EmployeePositi
 	if label == "" {
 		return nil, models.ErrPlanningPositionLabelRequired
 	}
+	color := sharedpkg.NormalizePlanningHexColor(req.Color)
+	if !sharedpkg.IsValidPlanningHexColor(color) {
+		return nil, models.ErrInvalidData
+	}
 	if existing, existingErr := s.repo.GetEmployeePositionByLabel(ctx, user.MerchantID, label, ""); existingErr == nil && existing != nil {
 		return nil, models.ErrPlanningPositionAlreadyExists
 	} else if existingErr != nil && existingErr != sql.ErrNoRows {
 		return nil, existingErr
 	}
 	req.Label = label
+	req.Color = color
 	if req.SortOrder == nil {
 		nextSortOrder, sortErr := s.repo.NextEmployeePositionSortOrder(ctx, user.MerchantID)
 		if sortErr != nil {
@@ -86,12 +92,18 @@ func (s *Service) UpdateEmployeePosition(ctx context.Context, positionID string,
 	if req.SortOrder != nil {
 		current.SortOrder = *req.SortOrder
 	}
+	if req.Color != nil {
+		color := sharedpkg.NormalizePlanningHexColor(*req.Color)
+		if !sharedpkg.IsValidPlanningHexColor(color) {
+			return nil, models.ErrInvalidData
+		}
+		current.Color = color
+	}
 	if req.Active != nil {
 		current.Active = *req.Active
 	}
 	return s.repo.UpdateEmployeePosition(ctx, user.MerchantID, positionID, *current)
 }
-
 func (s *Service) DeleteEmployeePosition(ctx context.Context, positionID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

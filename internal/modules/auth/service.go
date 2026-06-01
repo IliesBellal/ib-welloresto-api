@@ -233,9 +233,14 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 			user.MFAStatus = &pendingStatus
 		}
 	} else {
-		s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified)
+		if err := s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusVerified); err != nil {
+			return nil, err
+		}
 		verifiedStatus := models.MFAStatusVerified
 		user.MFAStatus = &verifiedStatus
+		if err := s.repo.MarkLastLoginAt(ctx, user.UserID); err != nil {
+			return nil, err
+		}
 	}
 
 	// MULTI-MERCHANT
@@ -640,6 +645,10 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	err = s.repo.MarkAsMFAVerified(ctx, user.UserID)
 	if err != nil {
 		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+		return errors.New("erreur interne lors de la validation")
+	}
+	if err := s.repo.MarkLastLoginAt(ctx, user.UserID); err != nil {
+		log.Error("Erreur lors de la mise à jour de la dernière connexion: " + err.Error())
 		return errors.New("erreur interne lors de la validation")
 	}
 

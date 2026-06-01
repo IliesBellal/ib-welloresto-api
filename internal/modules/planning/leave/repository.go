@@ -151,6 +151,66 @@ func (r *Repository) CountEmployeeAssignedShiftsInRange(ctx context.Context, mer
 	return count, nil
 }
 
+func (r *Repository) ListApprovedLeavesOverlappingRange(ctx context.Context, merchantID string, employeeIDs []string, startDate, endDate time.Time) ([]PlanningLeaveRequest, error) {
+	if len(employeeIDs) == 0 {
+		return []PlanningLeaveRequest{}, nil
+	}
+
+	ids := make([]string, 0, len(employeeIDs))
+	seen := map[string]struct{}{}
+	for _, employeeID := range employeeIDs {
+		trimmed := strings.TrimSpace(employeeID)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		ids = append(ids, trimmed)
+	}
+	if len(ids) == 0 {
+		return []PlanningLeaveRequest{}, nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	query := `
+		SELECT id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason,
+			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
+		FROM planning_leave_requests
+		WHERE merchant_id = ?
+			AND enabled = 1
+			AND status = 'approved'
+			AND start_date <= ?
+			AND end_date >= ?
+			AND employee_id IN (` + placeholders + `)
+		ORDER BY start_date ASC, employee_id ASC
+	`
+
+	args := make([]interface{}, 0, len(ids)+3)
+	args = append(args, merchantID, endDate.Format("2006-01-02"), startDate.Format("2006-01-02"))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	db := dbutils.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningLeaveRequest, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningLeaveRequest(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }

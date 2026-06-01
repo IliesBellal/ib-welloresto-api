@@ -9,8 +9,10 @@ import (
 	refspkg "welloresto-api/internal/modules/planning/refs"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
+	shifttemplatespkg "welloresto-api/internal/modules/planning/shifttemplates"
 	swapspkg "welloresto-api/internal/modules/planning/swaps"
 	timeentriespkg "welloresto-api/internal/modules/planning/timeentries"
+	weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
 )
 
 type DocumentsRepository = documentspkg.Repository
@@ -18,6 +20,8 @@ type SettingsRepository = settingspkg.Repository
 type RefsRepository = refspkg.Repository
 type EmployeesRepository = employeespkg.Repository
 type ScheduleRepository = schedulepkg.Repository
+type ShiftTemplatesRepository = shifttemplatespkg.Repository
+type WeekTemplatesRepository = weektemplatespkg.Repository
 type TimeEntriesRepository = timeentriespkg.Repository
 type LeaveRepository = leavepkg.Repository
 type ShiftSwapsRepository = swapspkg.Repository
@@ -29,6 +33,8 @@ type PlanningRepository struct {
 	*RefsRepository
 	*EmployeesRepository
 	*ScheduleRepository
+	*ShiftTemplatesRepository
+	*WeekTemplatesRepository
 	*TimeEntriesRepository
 	*LeaveRepository
 	*ShiftSwapsRepository
@@ -36,15 +42,17 @@ type PlanningRepository struct {
 
 func NewRepository(db *sql.DB) *PlanningRepository {
 	return &PlanningRepository{
-		db:                    db,
-		DocumentsRepository:   documentspkg.NewRepository(db),
-		SettingsRepository:    settingspkg.NewRepository(db),
-		RefsRepository:        refspkg.NewRepository(db),
-		EmployeesRepository:   employeespkg.NewRepository(db),
-		ScheduleRepository:    schedulepkg.NewRepository(db),
-		TimeEntriesRepository: timeentriespkg.NewRepository(db),
-		LeaveRepository:       leavepkg.NewRepository(db),
-		ShiftSwapsRepository:  swapspkg.NewRepository(db),
+		db:                       db,
+		DocumentsRepository:      documentspkg.NewRepository(db),
+		SettingsRepository:       settingspkg.NewRepository(db),
+		RefsRepository:           refspkg.NewRepository(db),
+		EmployeesRepository:      employeespkg.NewRepository(db),
+		ScheduleRepository:       schedulepkg.NewRepository(db),
+		ShiftTemplatesRepository: shifttemplatespkg.NewRepository(db),
+		WeekTemplatesRepository:  weektemplatespkg.NewRepository(db),
+		TimeEntriesRepository:    timeentriespkg.NewRepository(db),
+		LeaveRepository:          leavepkg.NewRepository(db),
+		ShiftSwapsRepository:     swapspkg.NewRepository(db),
 	}
 }
 

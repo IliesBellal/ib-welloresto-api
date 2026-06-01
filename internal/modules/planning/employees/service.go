@@ -69,6 +69,13 @@ func (s *Service) CreateEmployee(ctx context.Context, req EmployeeCreateRequest)
 	if req.UserID != nil && strings.TrimSpace(*req.UserID) == "" {
 		return nil, models.ErrPlanningEmployeeUserLinkInvalid
 	}
+	if req.UserID != nil {
+		normalizedUserID := strings.TrimSpace(*req.UserID)
+		if err := s.validateEmployeeUserLink(ctx, user.MerchantID, normalizedUserID, ""); err != nil {
+			return nil, err
+		}
+		req.UserID = &normalizedUserID
+	}
 	position, err := s.repo.GetEmployeePositionByID(ctx, user.MerchantID, strings.TrimSpace(req.PositionID))
 	if err == sql.ErrNoRows || position == nil || !position.Active {
 		return nil, models.ErrPlanningPositionNotFound
@@ -130,7 +137,11 @@ func (s *Service) UpdateEmployee(ctx context.Context, employeeID string, req Emp
 		if strings.TrimSpace(*req.UserID) == "" {
 			return nil, models.ErrPlanningEmployeeUserLinkInvalid
 		}
-		current.UserID = req.UserID
+		normalizedUserID := strings.TrimSpace(*req.UserID)
+		if err := s.validateEmployeeUserLink(ctx, user.MerchantID, normalizedUserID, employeeID); err != nil {
+			return nil, err
+		}
+		current.UserID = &normalizedUserID
 	}
 	if req.JobTitle != nil {
 		current.JobTitle = req.JobTitle
@@ -219,6 +230,45 @@ func (s *Service) DeleteEmployee(ctx context.Context, employeeID string) error {
 	}
 }
 
+func (s *Service) LinkEmployeeUser(ctx context.Context, employeeID string, req EmployeeUserLinkRequest) (*Employee, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(employeeID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	normalizedUserID := strings.TrimSpace(req.UserID)
+	if normalizedUserID == "" {
+		return nil, models.ErrPlanningEmployeeUserLinkInvalid
+	}
+	if _, err := s.repo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err == sql.ErrNoRows {
+		return nil, models.ErrPlanningEmployeeNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	if err := s.validateEmployeeUserLink(ctx, user.MerchantID, normalizedUserID, employeeID); err != nil {
+		return nil, err
+	}
+	return s.repo.UpdateEmployeeUserLink(ctx, user.MerchantID, employeeID, &normalizedUserID)
+}
+
+func (s *Service) UnlinkEmployeeUser(ctx context.Context, employeeID string) (*Employee, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(employeeID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	if _, err := s.repo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err == sql.ErrNoRows {
+		return nil, models.ErrPlanningEmployeeNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return s.repo.UpdateEmployeeUserLink(ctx, user.MerchantID, employeeID, nil)
+}
+
 func RequireAtLeastOneEmployeeField(req EmployeeUpdateRequest) error {
 	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.PositionID == nil && req.PositionNote == nil && req.JobTitle == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
 		return fmt.Errorf("at least one field must be provided")
@@ -235,4 +285,22 @@ func normalizeOptionalString(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func (s *Service) validateEmployeeUserLink(ctx context.Context, merchantID, userID, excludedEmployeeID string) error {
+	linked, err := s.repo.IsMerchantUserLinked(ctx, merchantID, userID)
+	if err != nil {
+		return err
+	}
+	if !linked {
+		return models.ErrPlanningEmployeeUserNotLinkedToMerchant
+	}
+	existingEmployee, err := s.repo.GetActiveEmployeeByUserID(ctx, merchantID, userID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if existingEmployee != nil && existingEmployee.ID != excludedEmployeeID {
+		return models.ErrPlanningEmployeeUserAlreadyAssigned
+	}
+	return nil
 }

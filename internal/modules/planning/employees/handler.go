@@ -22,6 +22,8 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 	activeRaw := strings.TrimSpace(r.URL.Query().Get("active"))
 	positionID := strings.TrimSpace(r.URL.Query().Get("position_id"))
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	unlinked := parseOptionalEmployeeBool(r.URL.Query().Get("unlinked"))
 	if positionID == "" {
 		positionID = strings.TrimSpace(r.URL.Query().Get("position"))
 	}
@@ -40,6 +42,8 @@ func (h *Handler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 		Active:       active,
 		PositionID:   positionID,
 		ContractType: strings.TrimSpace(r.URL.Query().Get("contract")),
+		UserID:       userID,
+		Unlinked:     unlinked,
 		Page:         pagination.Page,
 		PageSize:     pagination.PageSize,
 	})
@@ -100,4 +104,38 @@ func (h *Handler) DeleteEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "delete_employee", map[string]interface{}{"status": "success"})
+}
+
+func (h *Handler) LinkEmployeeUser(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req EmployeeUserLinkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "link_employee_user", models.ErrInvalidRequestBody)
+		return
+	}
+	item, err := h.svc.LinkEmployeeUser(r.Context(), employeeID, req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "link_employee_user", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "link_employee_user", map[string]interface{}{"status": "success", "employee": item})
+}
+
+func (h *Handler) UnlinkEmployeeUser(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	item, err := h.svc.UnlinkEmployeeUser(r.Context(), employeeID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "unlink_employee_user", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "unlink_employee_user", map[string]interface{}{"status": "success", "employee": item})
+}
+
+func parseOptionalEmployeeBool(raw string) *bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parsed := raw == "1" || strings.EqualFold(raw, "true")
+	return &parsed
 }

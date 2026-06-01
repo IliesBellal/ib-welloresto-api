@@ -1,11 +1,20 @@
 package shared
 
 import (
+	"context"
+	"database/sql"
+	"regexp"
 	"strings"
 	"time"
 
 	"welloresto-api/internal/models"
 )
+
+var planningHexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+type PlanningMemberEmployeeIDResolver interface {
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
+}
 
 func ParsePlanningDateRange(startDateRaw, endDateRaw string) (time.Time, time.Time, error) {
 	startDate, err := ParsePlanningDate(startDateRaw)
@@ -85,6 +94,14 @@ func TrimOptionalString(value *string) *string {
 	return &trimmed
 }
 
+func NormalizePlanningHexColor(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func IsValidPlanningHexColor(value string) bool {
+	return planningHexColorPattern.MatchString(value)
+}
+
 func SamePlanningDay(left time.Time, right time.Time) bool {
 	leftUTC := left.UTC()
 	rightUTC := right.UTC()
@@ -141,4 +158,26 @@ func IsValidPlanningShiftSwapStatus(value string) bool {
 	default:
 		return false
 	}
+}
+
+func IsCurrentPlanningEmployeeReference(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "me")
+}
+
+func ResolvePlanningEmployeeID(ctx context.Context, resolver PlanningMemberEmployeeIDResolver, merchantID, requestedEmployeeID string, currentMemberID int64) (string, error) {
+	employeeID := strings.TrimSpace(requestedEmployeeID)
+	if !IsCurrentPlanningEmployeeReference(employeeID) {
+		return employeeID, nil
+	}
+	if currentMemberID == 0 {
+		return "", models.ErrPlanningEmployeeNotFound
+	}
+	resolvedEmployeeID, err := resolver.GetEmployeeIDByMemberID(ctx, merchantID, currentMemberID)
+	if err == sql.ErrNoRows || strings.TrimSpace(resolvedEmployeeID) == "" {
+		return "", models.ErrPlanningEmployeeNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolvedEmployeeID), nil
 }

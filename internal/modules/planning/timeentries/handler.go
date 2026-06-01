@@ -19,6 +19,26 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+func (h *Handler) ListPlanningTimeEntries(w http.ResponseWriter, r *http.Request) {
+	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_time_entries", err)
+		return
+	}
+	items, metadata, err := h.svc.ListPlanningTimeEntries(r.Context(), PlanningTimeEntryListFilters{
+		From:       strings.TrimSpace(r.URL.Query().Get("from")),
+		To:         strings.TrimSpace(r.URL.Query().Get("to")),
+		EmployeeID: strings.TrimSpace(r.URL.Query().Get("employee_id")),
+		Page:       pagination.Page,
+		PageSize:   pagination.PageSize,
+	})
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_time_entries", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_planning_time_entries", map[string]interface{}{"status": "success", "time_entries": items, "pagination": metadata})
+}
+
 func (h *Handler) ListEmployeeTimeEntries(w http.ResponseWriter, r *http.Request) {
 	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
 	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
@@ -72,4 +92,50 @@ func (h *Handler) StopEmployeeTimeEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "stop_employee_time_entry", map[string]interface{}{"status": "success", "time_entry": entry})
+}
+
+func (h *Handler) CreateEmployeeTimeEntry(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req PlanningTimeEntryManualCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "create_employee_time_entry", models.ErrInvalidRequestBody)
+		return
+	}
+	entry, err := h.svc.CreateEmployeeTimeEntry(r.Context(), employeeID, req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "create_employee_time_entry", err)
+		return
+	}
+	models.SendJSON(w, http.StatusCreated, "planning", "create_employee_time_entry", map[string]interface{}{"status": "success", "time_entry": entry})
+}
+
+func (h *Handler) UpdateEmployeeTimeEntry(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	entryID := strings.TrimSpace(chi.URLParam(r, "entry_id"))
+	var req PlanningTimeEntryCorrectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "update_employee_time_entry", models.ErrInvalidRequestBody)
+		return
+	}
+	entry, err := h.svc.UpdateEmployeeTimeEntry(r.Context(), employeeID, entryID, req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "update_employee_time_entry", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "update_employee_time_entry", map[string]interface{}{"status": "success", "time_entry": entry})
+}
+
+func (h *Handler) DeleteEmployeeTimeEntry(w http.ResponseWriter, r *http.Request) {
+	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
+	entryID := strings.TrimSpace(chi.URLParam(r, "entry_id"))
+	var req PlanningTimeEntryDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "delete_employee_time_entry", models.ErrInvalidRequestBody)
+		return
+	}
+	if err := h.svc.DeleteEmployeeTimeEntry(r.Context(), employeeID, entryID, req); err != nil {
+		models.SendErrorJSON(w, "planning", "delete_employee_time_entry", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "delete_employee_time_entry", map[string]interface{}{"status": "success"})
 }

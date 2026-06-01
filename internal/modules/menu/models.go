@@ -260,7 +260,7 @@ type UpdateComponentPayload struct {
 	Price           *int    `json:"price"`             // Prix de vente en centimes (optionnel)
 	PurchaseCost    *int    `json:"purchase_cost"`     // Coût d'achat en centimes (optionnel)
 	PurchaseUnitID  *string `json:"purchase_unit_id"`  // ID unité de mesure d'achat (optionnel)
-	PurchaseCostQty *int    `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
+	PurchaseCostQty *float64 `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
 	MerchantID      string  `json:"-"`                 // ID du marchand, à récupérer du token
 	CategoryID      *string `json:"category_id"`       // ID de la catégorie
 	UnitID          *string `json:"unit_id"`           // ID de l'unité de mesure

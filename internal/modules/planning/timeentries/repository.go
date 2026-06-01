@@ -3,6 +3,7 @@ package timeentries
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/helpers"
@@ -17,6 +18,78 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
+func (r *Repository) ListPlanningTimeEntries(ctx context.Context, merchantID string, fromDate, toExclusive time.Time, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, int, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	employeeID := strings.TrimSpace(filters.EmployeeID)
+	if employeeID != "" {
+		return r.listPlanningTimeEntriesByEmployee(ctx, db, merchantID, employeeID, fromDate, toExclusive, filters)
+	}
+
+	var totalItems int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM planning_time_entries
+		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+	`, merchantID, fromDate, toExclusive).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
+		FROM planning_time_entries
+		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		ORDER BY clock_in_at DESC, created_at DESC
+		LIMIT ? OFFSET ?
+	`, merchantID, fromDate, toExclusive, filters.PageSize, (filters.Page-1)*filters.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningTimeEntry, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningTimeEntry(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, totalItems, rows.Err()
+}
+
+func (r *Repository) listPlanningTimeEntriesByEmployee(ctx context.Context, db dbutils.DBTX, merchantID, employeeID string, fromDate, toExclusive time.Time, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, int, error) {
+	var totalItems int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM planning_time_entries
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+	`, merchantID, employeeID, fromDate, toExclusive).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
+		FROM planning_time_entries
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		ORDER BY clock_in_at DESC, created_at DESC
+		LIMIT ? OFFSET ?
+	`, merchantID, employeeID, fromDate, toExclusive, filters.PageSize, (filters.Page-1)*filters.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningTimeEntry, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningTimeEntry(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, totalItems, rows.Err()
+}
+
 func (r *Repository) ListEmployeeTimeEntries(ctx context.Context, merchantID, employeeID string, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, int, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	var totalItems int
@@ -29,7 +102,7 @@ func (r *Repository) ListEmployeeTimeEntries(ctx context.Context, merchantID, em
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
-			clock_in_note, clock_out_note, created_at, updated_at, deleted_at
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
 		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
 		ORDER BY clock_in_at DESC, created_at DESC
@@ -55,7 +128,7 @@ func (r *Repository) GetPlanningTimeEntryByID(ctx context.Context, merchantID, e
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
-			clock_in_note, clock_out_note, created_at, updated_at, deleted_at
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
 		LIMIT 1
@@ -67,7 +140,7 @@ func (r *Repository) GetOpenPlanningTimeEntryForEmployee(ctx context.Context, me
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
-			clock_in_note, clock_out_note, created_at, updated_at, deleted_at
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
 		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
 		ORDER BY clock_in_at DESC, created_at DESC
@@ -86,11 +159,29 @@ func (r *Repository) CreatePlanningTimeEntry(ctx context.Context, merchantID str
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_time_entries (
 			id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
-			clock_in_note, clock_out_note, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, entry.ID, entry.MerchantID, entry.EmployeeID, entry.ShiftID, entry.AttendanceSource, entry.ClockInAt, entry.ClockOutAt, entry.ClockInNote, entry.ClockOutNote, entry.CreatedAt, entry.UpdatedAt)
+			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, entry.ID, entry.MerchantID, entry.EmployeeID, entry.ShiftID, entry.AttendanceSource, entry.ClockInAt, entry.ClockOutAt, entry.ClockInNote, entry.ClockOutNote, entry.ModifiedBy, entry.ModifiedAt, entry.ModificationReason, entry.CreatedAt, entry.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+	return &entry, nil
+}
+
+func (r *Repository) UpdatePlanningTimeEntry(ctx context.Context, merchantID, entryID string, entry PlanningTimeEntry) (*PlanningTimeEntry, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	entry.UpdatedAt = time.Now().UTC()
+	res, err := db.ExecContext(ctx, `
+		UPDATE planning_time_entries
+		SET clock_in_at = ?, clock_out_at = ?, clock_in_note = ?, clock_out_note = ?,
+			modified_by = ?, modified_at = ?, modification_reason = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`, entry.ClockInAt, entry.ClockOutAt, entry.ClockInNote, entry.ClockOutNote, entry.ModifiedBy, entry.ModifiedAt, entry.ModificationReason, entry.UpdatedAt, merchantID, entryID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, sql.ErrNoRows
 	}
 	return &entry, nil
 }
@@ -119,6 +210,22 @@ func (r *Repository) ClosePlanningTimeEntry(ctx context.Context, merchantID, ent
 	return current, nil
 }
 
+func (r *Repository) SoftDeletePlanningTimeEntry(ctx context.Context, merchantID, entryID string, modifiedBy *string, modifiedAt time.Time, modificationReason *string) error {
+	db := dbutils.GetDB(ctx, r.db)
+	res, err := db.ExecContext(ctx, `
+		UPDATE planning_time_entries
+		SET enabled = 0, deleted_at = ?, updated_at = ?, modified_by = ?, modified_at = ?, modification_reason = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`, modifiedAt, modifiedAt, modifiedBy, modifiedAt, modificationReason, merchantID, entryID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }
@@ -129,10 +236,11 @@ type scannableRows interface {
 
 func scanPlanningTimeEntryRow(row scannable) (*PlanningTimeEntry, error) {
 	item := &PlanningTimeEntry{}
-	var shiftID, clockInNote, clockOutNote sql.NullString
+	var shiftID, clockInNote, clockOutNote, modifiedBy, modificationReason sql.NullString
 	var clockOutAt sql.NullTime
+	var modifiedAt sql.NullTime
 	var deletedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.MerchantID, &item.EmployeeID, &shiftID, &item.AttendanceSource, &item.ClockInAt, &clockOutAt, &clockInNote, &clockOutNote, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.MerchantID, &item.EmployeeID, &shiftID, &item.AttendanceSource, &item.ClockInAt, &clockOutAt, &clockInNote, &clockOutNote, &modifiedBy, &modifiedAt, &modificationReason, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
 	if shiftID.Valid {
@@ -147,6 +255,16 @@ func scanPlanningTimeEntryRow(row scannable) (*PlanningTimeEntry, error) {
 	}
 	if clockOutNote.Valid {
 		item.ClockOutNote = &clockOutNote.String
+	}
+	if modifiedBy.Valid {
+		item.ModifiedBy = &modifiedBy.String
+	}
+	if modifiedAt.Valid {
+		t := modifiedAt.Time
+		item.ModifiedAt = &t
+	}
+	if modificationReason.Valid {
+		item.ModificationReason = &modificationReason.String
 	}
 	if deletedAt.Valid {
 		t := deletedAt.Time

@@ -32,8 +32,8 @@ func (r *UsersRepository) InsertUserRights(ctx context.Context, userID, merchant
 
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO users_rights
-			(user_id, merchant_id, token, admin, enabled)
-		VALUES (?, ?, ?, ?, 1)`,
+			(user_id, merchant_id, token, admin, enabled, login_enabled)
+		VALUES (?, ?, ?, ?, 1, 1)`,
 		userID, merchantID, rightsToken, adminVal,
 	)
 	if err != nil {

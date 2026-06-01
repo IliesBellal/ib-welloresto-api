@@ -76,9 +76,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	//  GLOBAL MIDDLEWARES
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
-	r.Use(middleware.LoggingMiddleware(log))
+	r.Use(middleware.LoggingMiddleware(log, mysqlDB))
 	// Il semblerait que ce middleware cause des timeout lors d'appels d'API uber eats, désactivé temporairement
-	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, 1000)))
+	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, log, 1000)))
 
 	// ============================
 	// REDIS
@@ -340,7 +340,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
-	usersService := usersModule.NewUsersService(usersRepo)
+	usersService := usersModule.NewUsersService(usersRepo, auditService)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
@@ -368,7 +368,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Planning ----
 	planningRepo := planningModule.NewRepository(mysqlDB)
-	planningService := planningModule.NewService(planningRepo, r2PrivateClient)
+	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService)
 
 	// =============================
 	//  HANDLERS
@@ -466,7 +466,17 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/profile/avatar", usersH.UploadAvatar) // used by: back-office
 		r.Get("/notifications", usersH.GetNotifications)
 
-		r.Post("/create", usersH.CreateUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/", usersH.ListMerchantUsers)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/", usersH.CreateUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/create", usersH.CreateUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/linkable-search", usersH.SearchLinkableUsers)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}", usersH.GetMerchantUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}/rights", usersH.GetMerchantUserRights)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
+		r.With(middleware.RequirePermission(middleware.IsAdmin)).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
+		r.With(middleware.RequirePermission(middleware.IsAdmin)).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
+
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/location", usersH.SetUserLocation)
 		r.Patch("/reset-password", usersH.UpdatePassword)
@@ -486,7 +496,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Post("/create", posH.CreateMerchant)
-		r.Post("/link-user", posH.LinkUser)
+		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/link-user", posH.LinkUser)
 		r.Get("/status", posH.GetPOSStatus)
 		r.Patch("/status", posH.UpdatePOSStatus)
 
@@ -721,6 +731,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// --- PLANNING ---
 	r.Route("/planning", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(middleware.RequirePermission(middleware.HasPlanningAccess))
 
 		r.Get("/settings", planningH.GetSettings)
 		r.Put("/settings", planningH.UpdateSettings)
@@ -733,12 +744,26 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/positions/{id}", planningH.GetEmployeePosition)
 		r.Patch("/positions/{id}", planningH.UpdateEmployeePosition)
 		r.Delete("/positions/{id}", planningH.DeleteEmployeePosition)
+		r.Get("/shift-templates", planningH.ListShiftTemplates)
+		r.Post("/shift-templates", planningH.CreateShiftTemplate)
+		r.Patch("/shift-templates/{id}", planningH.UpdateShiftTemplate)
+		r.Delete("/shift-templates/{id}", planningH.DeleteShiftTemplate)
+		r.Get("/week-templates", planningH.ListWeekTemplates)
+		r.Get("/week-templates/{id}", planningH.GetWeekTemplate)
+		r.Post("/week-templates", planningH.CreateWeekTemplate)
+		r.Post("/week-templates/from-week", planningH.CreateWeekTemplateFromWeek)
+		r.Post("/week-templates/{id}/preview", planningH.PreviewWeekTemplateInstantiation)
+		r.Post("/week-templates/{id}/instantiate", planningH.InstantiateWeekTemplate)
+		r.Patch("/week-templates/{id}", planningH.UpdateWeekTemplate)
+		r.Delete("/week-templates/{id}", planningH.DeleteWeekTemplate)
 
 		r.Get("/employees", planningH.ListEmployees)
 		r.Post("/employees", planningH.CreateEmployee)
 		r.Get("/employees/{id}", planningH.GetEmployee)
 		r.Patch("/employees/{id}", planningH.UpdateEmployee)
 		r.Delete("/employees/{id}", planningH.DeleteEmployee)
+		r.Post("/employees/{id}/user-link", planningH.LinkEmployeeUser)
+		r.Delete("/employees/{id}/user-link", planningH.UnlinkEmployeeUser)
 		r.Get("/employees/{id}/documents", planningH.ListEmployeeDocuments)
 		r.Post("/employees/{id}/documents", planningH.CreateEmployeeDocument)
 		r.Get("/employees/{id}/time-entries", planningH.ListEmployeeTimeEntries)

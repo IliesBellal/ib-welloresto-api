@@ -17,82 +17,82 @@ func IsAdmin(user *auth.UserLoginRow) bool {
 
 // HasAccessReception vérifie que l'utilisateur a accès à la réception
 func HasAccessReception(user *auth.UserLoginRow) bool {
-	return user.HasAccessReception()
+	return user.HasAccessReception() || user.IsAdmin()
 }
 
 // HasAccessDelivery vérifie que l'utilisateur a accès à la livraison
 func HasAccessDelivery(user *auth.UserLoginRow) bool {
-	return user.HasAccessDelivery()
+	return user.HasAccessDelivery() || user.IsAdmin()
 }
 
 // HasAccessWaiter vérifie que l'utilisateur a accès au module serveur
 func HasAccessWaiter(user *auth.UserLoginRow) bool {
-	return user.HasAccessWaiter()
+	return user.HasAccessWaiter() || user.IsAdmin()
 }
 
 // CanPrintCashReport vérifie que l'utilisateur peut imprimer les rapports de caisse
 func CanPrintCashReport(user *auth.UserLoginRow) bool {
-	return user.CanPrintCashReport()
+	return user.CanPrintCashReport() || user.IsAdmin()
 }
 
 // CanOpenCashDrawer vérifie que l'utilisateur peut ouvrir le tiroir-caisse
 func CanOpenCashDrawer(user *auth.UserLoginRow) bool {
-	return user.CanOpenCashDrawer()
+	return user.CanOpenCashDrawer() || user.IsAdmin()
 }
 
 // HasMenuAccess vérifie que l'utilisateur peut gérer le menu
 func HasMenuAccess(user *auth.UserLoginRow) bool {
-	return user.HasMenuAccess()
+	return user.HasMenuAccess() || user.IsAdmin()
 }
 
 // HasPlanningAccess vérifie que l'utilisateur peut gérer les plannings
 func HasPlanningAccess(user *auth.UserLoginRow) bool {
-	return user.HasPlanningAccess()
+	return user.HasPlanningAccess() || user.IsAdmin()
 }
 
 // HasUserManagementAccess vérifie que l'utilisateur peut gérer les utilisateurs
 func HasUserManagementAccess(user *auth.UserLoginRow) bool {
-	return user.HasUserManagementAccess()
+	return user.HasUserManagementAccess() || user.IsAdmin()
 }
 
 // HasSettingsAccess vérifie que l'utilisateur peut gérer les paramètres
 func HasSettingsAccess(user *auth.UserLoginRow) bool {
-	return user.HasSettingsAccess()
+	return user.HasSettingsAccess() || user.IsAdmin()
 }
 
 // HasHACCPAccess vérifie que l'utilisateur peut gérer le HACCP
 func HasHACCPAccess(user *auth.UserLoginRow) bool {
-	return user.HasHACCPAccess()
+	return user.HasHACCPAccess() || user.IsAdmin()
 }
 
 // HasReportsViewAccess vérifie que l'utilisateur peut consulter les rapports
 func HasReportsViewAccess(user *auth.UserLoginRow) bool {
-	return user.HasReportsViewAccess()
+	return user.HasReportsViewAccess() || user.IsAdmin()
 }
 
 // HasReportsExportAccess vérifie que l'utilisateur peut exporter les rapports
 func HasReportsExportAccess(user *auth.UserLoginRow) bool {
-	return user.HasReportsExportAccess()
+	return user.HasReportsExportAccess() || user.IsAdmin()
 }
 
 // HasFinancialsViewAccess vérifie que l'utilisateur peut consulter les données financières
 func HasFinancialsViewAccess(user *auth.UserLoginRow) bool {
-	return user.HasFinancialsViewAccess()
+	return user.HasFinancialsViewAccess() || user.IsAdmin()
 }
 
 // HasFinancialsExportAccess vérifie que l'utilisateur peut exporter les données financières
 func HasFinancialsExportAccess(user *auth.UserLoginRow) bool {
-	return user.HasFinancialsExportAccess()
+	return user.HasFinancialsExportAccess() || user.IsAdmin()
 }
 
 // HasCustomerManagementAccess vérifie que l'utilisateur peut gérer les clients
 func HasCustomerManagementAccess(user *auth.UserLoginRow) bool {
-	return user.HasCustomerManagementAccess()
+	return user.HasCustomerManagementAccess() || user.IsAdmin()
 }
 
 // HasCustomerExportAccess vérifie que l'utilisateur peut exporter les clients
 func HasCustomerExportAccess(user *auth.UserLoginRow) bool {
-	return user.HasCustomerExportAccess()
+	return user.HasCustomerExportAccess() || user.IsAdmin()
 }
 
 // IsEmailVerified vérifie si l'email est validé OU si le compte a moins d'une heure

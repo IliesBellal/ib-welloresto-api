@@ -14,6 +14,7 @@ import (
 
 type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
 }
 
 type Service struct {
@@ -31,6 +32,10 @@ func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters Plannin
 		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	if strings.TrimSpace(filters.EmployeeID) != "" {
+		filters.EmployeeID, err = sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, filters.EmployeeID, user.MerchantRightsID)
+		if err != nil {
+			return nil, models.PaginationMetadata{}, err
+		}
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.EmployeeID)); err != nil {
 			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
@@ -71,7 +76,11 @@ func (s *Service) CreatePlanningLeaveRequest(ctx context.Context, req PlanningLe
 	if strings.TrimSpace(req.EmployeeID) == "" {
 		return nil, models.ErrMissingResourceID
 	}
-	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(req.EmployeeID)); err != nil {
+	resolvedEmployeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, req.EmployeeID, user.MerchantRightsID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, resolvedEmployeeID); err != nil {
 		return nil, models.ErrPlanningEmployeeNotFound
 	}
 	leaveType := strings.ToLower(strings.TrimSpace(req.LeaveType))
@@ -84,7 +93,7 @@ func (s *Service) CreatePlanningLeaveRequest(ctx context.Context, req PlanningLe
 	}
 	requestedByUserID := user.UserID
 	request := PlanningLeaveRequest{
-		EmployeeID:        strings.TrimSpace(req.EmployeeID),
+		EmployeeID:        resolvedEmployeeID,
 		LeaveType:         leaveType,
 		StartDate:         startDate,
 		EndDate:           endDate,

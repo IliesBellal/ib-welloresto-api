@@ -8,19 +8,22 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	auditpkg "welloresto-api/internal/modules/audit"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type UsersService struct {
 	userRepo *UsersRepository
+	audit    auditpkg.AuditService
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
-func NewUsersService(u *UsersRepository) *UsersService {
+func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService) *UsersService {
 	return &UsersService{
 		userRepo: u,
+		audit:    auditService,
 	}
 }
 

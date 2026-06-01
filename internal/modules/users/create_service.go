@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 // CreateUser validates the request, opens a transaction, and persists the new user.
@@ -40,19 +42,36 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	// name column = first_name + " " + last_name (legacy field)
 	fullName := strings.TrimSpace(req.FirstName) + " " + strings.TrimSpace(req.LastName)
 
-	if err := s.userRepo.CreateUser(ctx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); err != nil {
-		return "", err
+	merchantID := ""
+	if currentUser, err := middleware.UserFromContext(ctx); err == nil {
+		merchantID = strings.TrimSpace(currentUser.MerchantID)
+	} else if req.MerchantID != nil {
+		merchantID = strings.TrimSpace(*req.MerchantID)
+	}
+	rights := defaultMerchantUserRights(req.Admin)
+	if req.Rights != nil {
+		rights = req.Rights.Normalize(defaultMerchantUserRights(req.Admin))
 	}
 
-	// Link to merchant if provided
-	if req.MerchantID != nil {
-		rightsToken, err := helpers.GenerateToken(30) // 30-char token → VARCHAR(255)
-		if err != nil {
-			return "", err
+	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
+		if createErr := s.userRepo.CreateUser(txCtx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); createErr != nil {
+			return createErr
 		}
-		if _, err := s.userRepo.InsertUserRights(ctx, userID, *req.MerchantID, req.Admin, rightsToken); err != nil {
-			return "", err
+
+		if merchantID == "" {
+			return nil
 		}
+
+		rightsToken, tokenErr := helpers.GenerateToken(30) // 30-char token → VARCHAR(255)
+		if tokenErr != nil {
+			return tokenErr
+		}
+
+		_, insertErr := s.userRepo.UpsertMerchantUserRights(txCtx, userID, merchantID, rightsToken, rights)
+		return insertErr
+	})
+	if err != nil {
+		return "", err
 	}
 
 	return userID, nil

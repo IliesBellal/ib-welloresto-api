@@ -1,0 +1,16 @@
+package planning
+
+import weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
+
+type WeekTemplate = weektemplatespkg.WeekTemplate
+type WeekTemplateShift = weektemplatespkg.WeekTemplateShift
+type WeekTemplateCreateRequest = weektemplatespkg.WeekTemplateCreateRequest
+type WeekTemplateUpdateRequest = weektemplatespkg.WeekTemplateUpdateRequest
+type WeekTemplateFromWeekRequest = weektemplatespkg.WeekTemplateFromWeekRequest
+type WeekTemplateShiftInput = weektemplatespkg.WeekTemplateShiftInput
+type WeekTemplatePreviewRequest = weektemplatespkg.WeekTemplatePreviewRequest
+type WeekTemplateInstantiateRequest = weektemplatespkg.WeekTemplateInstantiateRequest
+type InstantiationPreview = weektemplatespkg.InstantiationPreview
+type InstantiationConflict = weektemplatespkg.InstantiationConflict
+type InstantiationResult = weektemplatespkg.InstantiationResult
+type InstantiationPerWeekResult = weektemplatespkg.InstantiationPerWeekResult

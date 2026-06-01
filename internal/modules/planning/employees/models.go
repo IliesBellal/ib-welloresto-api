@@ -6,6 +6,7 @@ type EmployeePosition struct {
 	ID            string     `json:"id"`
 	MerchantID    string     `json:"merchant_id"`
 	Label         string     `json:"label"`
+	Color         string     `json:"color"`
 	SortOrder     int        `json:"sort_order"`
 	Active        bool       `json:"active"`
 	EmployeeCount int        `json:"employee_count"`
@@ -18,6 +19,7 @@ type Employee struct {
 	ID                     string     `json:"id"`
 	MerchantID             string     `json:"merchant_id"`
 	UserID                 *string    `json:"user_id,omitempty"`
+	MemberID               *int64     `json:"-"`
 	FirstName              string     `json:"first_name"`
 	LastName               string     `json:"last_name"`
 	PositionID             string     `json:"position_id"`
@@ -57,12 +59,19 @@ type EmployeeListFilters struct {
 	Active       *bool
 	PositionID   string
 	ContractType string
+	UserID       string
+	Unlinked     *bool
 	Page         int
 	PageSize     int
 }
 
+type EmployeeUserLinkRequest struct {
+	UserID string `json:"user_id"`
+}
+
 type EmployeeCreateRequest struct {
 	UserID                 *string    `json:"user_id,omitempty"`
+	MemberID               *int64     `json:"-"`
 	FirstName              string     `json:"first_name"`
 	LastName               string     `json:"last_name"`
 	PositionID             string     `json:"position_id"`
@@ -132,12 +141,14 @@ type EmployeePositionListFilters struct {
 
 type EmployeePositionCreateRequest struct {
 	Label     string `json:"label"`
+	Color     string `json:"color"`
 	SortOrder *int   `json:"sort_order,omitempty"`
 	Active    *bool  `json:"active,omitempty"`
 }
 
 type EmployeePositionUpdateRequest struct {
 	Label     *string `json:"label,omitempty"`
+	Color     *string `json:"color,omitempty"`
 	SortOrder *int    `json:"sort_order,omitempty"`
 	Active    *bool   `json:"active,omitempty"`
 }

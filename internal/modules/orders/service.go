@@ -57,6 +57,21 @@ func NewOrdersService(ordersRepo *OrdersRepository, notificationsService *notifi
 	}
 }
 
+func (s *OrdersService) logPricingStageError(ctx context.Context, stage string, err error, fields ...zap.Field) {
+	if err == nil {
+		return
+	}
+
+	logFields := []zap.Field{
+		zap.String("pricing_stage", stage),
+		zap.Error(err),
+	}
+	logFields = append(logFields, logger.DBFailureFields(s.db, err)...)
+	logFields = append(logFields, fields...)
+
+	logger.FromContext(ctx).Error("pricing dependency failed", logFields...)
+}
+
 /*
 func (s *OrdersService) ReopenClosedOrder(ctx context.Context, orderID string) error {
 	user, err := middleware.UserFromContext(ctx)
@@ -554,7 +569,9 @@ func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, prod
 	// Repo fetch
 	priceMap, err := s.ordersRepo.GetConfigurationOptionPrices(ctx, ids)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
+		s.logPricingStageError(ctx, "load_configuration_option_prices", err,
+			zap.Int("configuration_option_count", len(ids)),
+		)
 		return err
 	}
 
@@ -579,22 +596,28 @@ func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, prod
 }
 
 func (s *OrdersService) loadDiscountStructures(ctx context.Context, req *models.PricingRequest) ([]*models.DBDiscount, map[string]map[string]*models.DiscountProductInfo, map[string]map[string][]models.DiscountOptionInfo, error) {
+	pricingFields := []zap.Field{
+		zap.String("merchant_id", req.MerchantID),
+		zap.String("order_type", req.Order.OrderType),
+		zap.Int("product_count", len(req.Order.Products)),
+		zap.Bool("discount_code_present", req.DiscountCode != ""),
+	}
 
 	discounts, err := s.ordersRepo.GetDiscounts(ctx, req)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
+		s.logPricingStageError(ctx, "load_discounts", err, pricingFields...)
 		return nil, nil, nil, err
 	}
 
 	dp, err := s.ordersRepo.GetDiscountProducts(ctx, req.MerchantID)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
+		s.logPricingStageError(ctx, "load_discount_products", err, pricingFields...)
 		return nil, nil, nil, err
 	}
 
 	do, err := s.ordersRepo.GetDiscountProductOptions(ctx, req.MerchantID)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
+		s.logPricingStageError(ctx, "load_discount_product_options", err, pricingFields...)
 		return nil, nil, nil, err
 	}
 

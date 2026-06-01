@@ -1,0 +1,576 @@
+PLANNING MEMBERS + SELF-SERVICE DELTA - POSTMAN TEST PLAN
+
+Purpose:
+- This plan is the delta to run after the original planning test plan already passed.
+- It covers the new backend surface added since the previous run:
+  - users_rights as the establishment member profile
+  - PATCH /users/{id}/member
+  - login_enabled behavior in users/auth
+  - employee/member bridge through employees.member_id
+  - self-service planning references using me in leave, time entries, and shift swaps
+
+Location:
+- Main routes used here:
+  - /users
+  - /auth/login
+  - /planning
+- Auth:
+  - all /users and /planning endpoints require the auth middleware
+  - /auth/login is used to validate login behavior after member updates
+- Wrapper:
+  - expect the usual API wrapper with HTTP status matching the case
+  - successful business payloads should still contain status=success unless the auth login flow intentionally returns another business status like user_not_allowed
+
+PREREQUISITES
+
+1. Assume the previous file planning-postman-tests/planning-endpoints-test-plan.txt already passed.
+   Reuse its saved Postman requests and variables when possible.
+
+2. Run the SQL scripts needed by this delta before testing.
+   Minimum order for the new slice:
+   - migrations/024_add_users_last_login_at.sql
+   - migrations/025_add_users_rights_login_enabled.sql
+
+3. Prepare Postman variables:
+   - {{baseUrl}}
+   - {{tokenAdmin}}
+   - {{tokenTargetEmployee}} optional, only if you want to recheck target_employee_required with a second login
+   - {{userIdMemberA}}
+   - {{memberPasswordA}}
+   - {{memberEmailA}}
+   - {{userIdExistingLinkable}} optional, only if you want to test merchant-link on an already existing global user
+   - {{positionIdServeuse}}
+   - {{positionIdManager}}
+   - {{employeeId}}
+   - {{employeeId2}}
+   - {{weekId}}
+   - {{shiftId1}}
+   - {{shiftId2}}
+   - {{leaveRequestIdMe}}
+   - {{timeEntryIdMe}}
+   - {{swapRequestIdMe}}
+
+4. Common headers for JSON requests:
+   - Authorization: Bearer {{tokenAdmin}} for admin/backoffice management checks
+   - Content-Type: application/json
+
+5. Suggested execution order:
+   - Create one merchant member user from /users
+   - Validate list/detail/rights/member payloads
+   - Validate login_enabled and login behavior
+   - Validate self-service planning references using me
+   - Optionally validate merchant-link on an existing global user
+
+====================================================================
+1. CREATE A MEMBER THROUGH /USERS
+====================================================================
+
+1.1 POST /users
+Purpose:
+- Create a new global user and merchant member in one call.
+- Validate the new planning/member fields stored on users_rights.
+- Validate that password may be omitted.
+
+Payload:
+{
+  "first_name": "Camille",
+  "last_name": "Bernard",
+  "username": "camille.member",
+  "email": "camille.member@example.com",
+  "password": "",
+  "tel": "+33600000021",
+  "admin": false,
+  "rights": {
+    "admin": false,
+    "login_enabled": true,
+    "permissions": {
+      "access_reception": true,
+      "access_delivery": false,
+      "access_waiter": true,
+      "print_merchant_cash_report": false,
+      "open_cash_drawer": false,
+      "manage_menu": false,
+      "manage_plannings": true,
+      "manage_users": false,
+      "manage_settings": false,
+      "manage_haccp": false,
+      "view_reports": false,
+      "export_reports": false,
+      "view_financials": false,
+      "export_financials": false,
+      "manage_customers": false,
+      "export_customers": false
+    }
+  },
+  "planning": {
+    "position_id": "{{positionIdServeuse}}",
+    "position_note": "Equipe ouverture",
+    "job_title": "Serveuse polyvalente",
+    "role": "employee",
+    "contract_type_code": "CDI",
+    "contract_start_date": "2026-06-01T00:00:00Z",
+    "contract_hours": 35,
+    "max_weekly_hours": 35,
+    "required_rest_days": 2,
+    "sunday_premium": false,
+    "night_premium": false,
+    "hourly_rate": 1250,
+    "gross_monthly_salary": 210000,
+    "employer_charges_pct": 45,
+    "transport_cost": 0,
+    "hr_comment": "Cree via API delta plan"
+  }
+}
+
+Expected:
+- HTTP 201
+- payload key: user_id
+- save returned user_id as {{userIdMemberA}}
+- save email as {{memberEmailA}} manually if needed
+
+Notes:
+- Password is intentionally blank here to validate random-password generation.
+- No plaintext password is returned by the API; use force reset in the next step to define a known password for login tests.
+
+1.2 POST /users/{{userIdMemberA}}/force-reset-password
+Purpose:
+- Assign a known password to the newly created member so login can be tested deterministically.
+
+Payload:
+{
+  "new_password": "MemberTest123!"
+}
+
+Expected:
+- HTTP 200
+- payload contains status=success
+- tokens_invalidated should be true
+- save MemberTest123! as {{memberPasswordA}}
+
+====================================================================
+2. USERS LIST / DETAIL / RIGHTS / MEMBER PROFILE
+====================================================================
+
+2.1 GET /users?page=1&page_size=20
+Expected:
+- HTTP 200
+- payload key: users
+- payload key: pagination
+- the new member {{userIdMemberA}} is present
+- user.login_enabled should be true
+- user.status should be active
+
+2.2 GET /users?search=Camille
+Expected:
+- HTTP 200
+- the list contains {{userIdMemberA}}
+
+2.3 GET /users/{{userIdMemberA}}
+Expected:
+- HTTP 200
+- payload key: user
+- user.user_id should be {{userIdMemberA}}
+- user.login_enabled should be true
+- user.planning.position_id should be {{positionIdServeuse}}
+- user.planning.position should contain the resolved position label
+- user.planning.contract_type_code should be CDI
+- user.planning.job_title should be Serveuse polyvalente
+
+2.4 GET /users/{{userIdMemberA}}/rights
+Expected:
+- HTTP 200
+- payload key: rights
+- rights.login_enabled should be true
+- rights.permissions.manage_plannings should be true
+
+2.5 PATCH /users/{{userIdMemberA}}/member
+Purpose:
+- Validate partial update of the member profile stored on users_rights.
+
+Payload:
+{
+  "position_id": "{{positionIdManager}}",
+  "position_note": "Passe en supervision",
+  "job_title": "Manager de salle",
+  "night_premium": true,
+  "transport_cost": 1500,
+  "hr_comment": "Maj partielle via API"
+}
+
+Expected:
+- HTTP 200
+- payload key: user
+- only submitted planning fields changed
+- user.planning.position_id should now be {{positionIdManager}}
+- user.planning.position should resolve to the new label
+- user.planning.night_premium should be true
+
+2.6 PATCH /users/{{userIdMemberA}}/member
+Invalid payload:
+{}
+
+Expected:
+- HTTP 400
+
+2.7 PUT /users/{{userIdMemberA}}/rights
+Purpose:
+- Validate login_enabled and merchant permissions update.
+
+Payload:
+{
+  "admin": false,
+  "login_enabled": false,
+  "permissions": {
+    "access_reception": true,
+    "access_delivery": false,
+    "access_waiter": true,
+    "print_merchant_cash_report": false,
+    "open_cash_drawer": false,
+    "manage_menu": false,
+    "manage_plannings": true,
+    "manage_users": false,
+    "manage_settings": false,
+    "manage_haccp": false,
+    "view_reports": false,
+    "export_reports": false,
+    "view_financials": false,
+    "export_financials": false,
+    "manage_customers": false,
+    "export_customers": false
+  }
+}
+
+Expected:
+- HTTP 200
+- payload key: rights
+- rights.login_enabled should now be false
+
+2.8 GET /users/{{userIdMemberA}}
+Expected after login_enabled=false:
+- HTTP 200
+- user remains visible in the API
+- user.status should now be login_disabled
+- user.enabled should still be true
+- user.login_enabled should be false
+
+2.9 GET /users?search=Camille
+Expected:
+- HTTP 200
+- the user is still listed
+- status should still be login_disabled
+
+2.10 PUT /users/{{userIdMemberA}}/rights
+Re-enable login payload:
+{
+  "admin": false,
+  "login_enabled": true,
+  "permissions": {
+    "access_reception": true,
+    "access_delivery": false,
+    "access_waiter": true,
+    "print_merchant_cash_report": false,
+    "open_cash_drawer": false,
+    "manage_menu": false,
+    "manage_plannings": true,
+    "manage_users": false,
+    "manage_settings": false,
+    "manage_haccp": false,
+    "view_reports": false,
+    "export_reports": false,
+    "view_financials": false,
+    "export_financials": false,
+    "manage_customers": false,
+    "export_customers": false
+  }
+}
+
+Expected:
+- HTTP 200
+- rights.login_enabled should be true again
+
+====================================================================
+3. AUTH / LOGIN ENABLED CHECKS
+====================================================================
+
+3.1 POST /auth/login
+Purpose:
+- Validate that the re-enabled member can log in.
+
+Headers:
+- Content-Type: application/json
+- X-App-Source: backoffice optional; omit it if you want to avoid MFA-specific behavior during this check
+
+Payload:
+{
+  "email": "{{memberEmailA}}",
+  "password": "{{memberPasswordA}}"
+}
+
+Expected:
+- HTTP 200 or HTTP 202 only if MFA is configured for that user
+- if HTTP 200, login payload should represent a successful session
+
+3.2 PUT /users/{{userIdMemberA}}/rights
+Disable login again with the same payload as step 2.7.
+
+Expected:
+- HTTP 200
+
+3.3 POST /auth/login
+Payload:
+{
+  "email": "{{memberEmailA}}",
+  "password": "{{memberPasswordA}}"
+}
+
+Expected:
+- HTTP 200 from the endpoint itself
+- business payload should indicate login refusal for the user, typically status=user_not_allowed
+- this confirms login_enabled=false blocks login without hiding the member from /users
+
+3.4 PUT /users/{{userIdMemberA}}/rights
+Re-enable login one last time with the same payload as step 2.10.
+
+Expected:
+- HTTP 200
+
+====================================================================
+4. EMPLOYEE / MEMBER BRIDGE CHECKS
+====================================================================
+
+4.1 GET /planning/employees/{{employeeId}}
+Expected:
+- HTTP 200
+- payload key: employee
+
+Reason:
+- this confirms the pre-existing planning employee still resolves after migration 025.
+
+4.2 POST /planning/employees/{{employeeId}}/user-link
+Optional bridge check if {{employeeId}} is currently unlinked.
+
+Payload:
+{
+  "user_id": "{{userIdMemberA}}"
+}
+
+Expected:
+- HTTP 200
+- payload key: employee
+- employee.user_id should now be {{userIdMemberA}}
+
+Notes:
+- If {{employeeId}} is already linked to another user in your DB, skip this step and instead create a fresh employee first.
+- This step exercises the new employees.member_id bridge indirectly.
+
+====================================================================
+5. PLANNING SELF-SERVICE USING me - TIME ENTRIES
+====================================================================
+
+5.1 PUT /planning/settings
+Precondition payload:
+{
+  "attendance_source": "pointage"
+}
+
+Expected:
+- HTTP 200
+
+5.2 GET /planning/employees/me/time-entries
+Purpose:
+- Validate that the route parameter id=me resolves through the member bridge.
+
+Headers:
+- Authorization: Bearer token of the member account if available, otherwise use an admin token only if it authenticates as the same member context in your environment.
+
+Expected:
+- HTTP 200
+- payload key: time_entries
+- payload key: pagination
+
+5.2.a GET /planning/time-entries?from=2026-06-16&to=2026-06-16&employee_id=me
+Purpose:
+- Validate the new merchant-scoped time entry listing endpoint with employee_id=me.
+
+Headers:
+- Authorization: Bearer token of the member account if available, otherwise use an admin token only if it authenticates as the same member context in your environment.
+
+Expected:
+- HTTP 200
+- payload key: time_entries
+- payload key: pagination
+
+5.3 GET /planning/employees/me/time-entries/current
+Expected:
+- HTTP 200
+- payload key: time_entry
+
+5.4 POST /planning/employees/me/time-entries/start
+Payload:
+{
+  "shift_id": "{{shiftId1}}",
+  "clock_in_at": "2026-06-16T09:05:00Z",
+  "clock_in_note": "Pointage via me"
+}
+
+Expected:
+- HTTP 201
+- payload key: time_entry
+- save time_entry.id as {{timeEntryIdMe}}
+
+5.5 POST /planning/employees/me/time-entries/stop
+Payload:
+{
+  "entry_id": "{{timeEntryIdMe}}",
+  "clock_out_at": "2026-06-16T17:02:00Z",
+  "clock_out_note": "Fin via me"
+}
+
+Expected:
+- HTTP 200
+- payload key: time_entry
+- clock_out_at should now be filled
+
+====================================================================
+6. PLANNING SELF-SERVICE USING me - LEAVE REQUESTS
+====================================================================
+
+6.1 GET /planning/leave-requests?employee_id=me
+Expected:
+- HTTP 200
+- payload key: leave_requests
+- payload key: pagination
+
+6.2 POST /planning/leave-requests
+Payload:
+{
+  "employee_id": "me",
+  "leave_type": "paid",
+  "start_date": "2026-06-22",
+  "end_date": "2026-06-22",
+  "reason": "Test self service me"
+}
+
+Expected:
+- HTTP 201
+- payload key: leave_request
+- leave_request.employee_id should resolve to the member employee, not remain equal to me
+- save leave_request.id as {{leaveRequestIdMe}}
+
+6.3 GET /planning/leave-requests/{{leaveRequestIdMe}}
+Expected:
+- HTTP 200
+
+====================================================================
+7. PLANNING SELF-SERVICE USING me - SHIFT SWAPS
+====================================================================
+
+7.1 GET /planning/shift-swap-requests?requester_employee_id=me
+Expected:
+- HTTP 200
+- payload key: shift_swap_requests
+- payload key: pagination
+
+7.2 POST /planning/shift-swap-requests
+Payload:
+{
+  "requester_employee_id": "me",
+  "requester_shift_id": "{{shiftId1}}",
+  "target_employee_id": "{{employeeId2}}",
+  "target_shift_id": "{{shiftId2}}",
+  "reason": "Echange cree avec requester=me"
+}
+
+Expected:
+- HTTP 201
+- payload key: shift_swap_request
+- shift_swap_request.requester_employee_id should be the resolved employee id, not me
+- save request id as {{swapRequestIdMe}}
+
+7.3 GET /planning/shift-swap-requests/{{swapRequestIdMe}}
+Expected:
+- HTTP 200
+- payload key: shift_swap_request
+
+7.4 Optional second self-service variant
+If you have a second user token linked to the target employee:
+- POST /planning/shift-swap-requests with target_employee_id=me using that second token
+Expected:
+- HTTP 201
+- target_employee_id should resolve to the linked employee id
+
+====================================================================
+8. OPTIONAL EXISTING GLOBAL USER LINK FLOW
+====================================================================
+
+8.1 GET /users/linkable-search?search=
+Expected:
+- HTTP 200
+- payload key: users
+- use this only if you want to link an already existing global user not yet attached to the merchant
+
+8.2 POST /users/{{userIdExistingLinkable}}/merchant-link
+Payload:
+{
+  "admin": false,
+  "rights": {
+    "admin": false,
+    "login_enabled": true,
+    "permissions": {
+      "access_reception": false,
+      "access_delivery": false,
+      "access_waiter": true,
+      "print_merchant_cash_report": false,
+      "open_cash_drawer": false,
+      "manage_menu": false,
+      "manage_plannings": true,
+      "manage_users": false,
+      "manage_settings": false,
+      "manage_haccp": false,
+      "view_reports": false,
+      "export_reports": false,
+      "view_financials": false,
+      "export_financials": false,
+      "manage_customers": false,
+      "export_customers": false
+    }
+  },
+  "planning": {
+    "position_id": "{{positionIdServeuse}}",
+    "role": "employee",
+    "contract_type_code": "CDD"
+  }
+}
+
+Expected:
+- HTTP 201
+- payload key: rights
+
+====================================================================
+9. FINAL REGRESSION CHECKS FOR THIS DELTA
+====================================================================
+
+9.1 GET /users/{{userIdMemberA}}
+Expected:
+- HTTP 200
+- user.planning fields remain coherent after all tests
+
+9.2 GET /planning/leave-requests?employee_id=me
+Expected:
+- HTTP 200
+- confirms the employee/member bridge still resolves after all member updates
+
+9.3 GET /planning/employees/me/time-entries
+Expected:
+- HTTP 200
+
+9.4 GET /planning/shift-swap-requests?requester_employee_id=me
+Expected:
+- HTTP 200
+
+NOTES
+
+- This file is intentionally a delta plan. Keep planning-postman-tests/planning-endpoints-test-plan.txt as the baseline core-planning pass, and use this file for the newer member/self-service slice.
+- If your Postman collection already stores the original planning requests, the quickest setup is to duplicate the relevant requests and only change variables/payloads for the new member flows.
+- For the me scenarios, use a token belonging to a user whose merchant membership is linked to a planning employee through employees.member_id. An admin token that is not linked to an employee will not validate the self-service path correctly.
+- For auth/login checks, HTTP status alone is not enough. Read the business payload too: login_enabled=false is expected to block access via a user_not_allowed-style status while the member remains visible in /users.

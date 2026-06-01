@@ -2,7 +2,6 @@ package users
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"welloresto-api/internal/models"
 )
@@ -11,20 +10,13 @@ import (
 func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "users", "create", err)
+		models.SendErrorJSON(w, "users", "create", models.ErrInvalidRequestBody)
 		return
 	}
 
 	userID, err := h.svc.CreateUser(r.Context(), req)
 	if err != nil {
-		switch {
-		case errors.Is(err, models.ErrInvalidInput):
-			models.SendJSON(w, http.StatusBadRequest, "users", "create", err)
-		case errors.Is(err, models.ErrInvalidInputPasswordTooShort):
-			models.SendJSON(w, http.StatusBadRequest, "users", "create", models.ErrInvalidInputPasswordTooShort)
-		default:
-			models.SendJSON(w, http.StatusInternalServerError, "users", "create", err)
-		}
+		models.SendErrorJSON(w, "users", "create", err)
 		return
 	}
 

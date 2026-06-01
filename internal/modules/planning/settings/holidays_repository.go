@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -174,10 +175,16 @@ type planningHolidayScannable interface {
 func scanPlanningHolidayRow(row planningHolidayScannable) (*PlanningHoliday, error) {
 	item := &PlanningHoliday{}
 	var overrideID, label sql.NullString
+	var holidayDateRaw any
 	var isOpen sql.NullBool
-	if err := row.Scan(&overrideID, &item.Date, &label, &item.IsLegalHoliday, &item.CountAsHoliday, &isOpen); err != nil {
+	if err := row.Scan(&overrideID, &holidayDateRaw, &label, &item.IsLegalHoliday, &item.CountAsHoliday, &isOpen); err != nil {
 		return nil, err
 	}
+	holidayDate, err := parsePlanningHolidayDate(holidayDateRaw)
+	if err != nil {
+		return nil, err
+	}
+	item.Date = holidayDate
 	if overrideID.Valid {
 		item.OverrideID = &overrideID.String
 	}
@@ -197,11 +204,17 @@ func scanPlanningHoliday(rows planningHolidayScannable) (*PlanningHoliday, error
 func scanPlanningHolidayOverrideRow(row planningHolidayScannable) (*planningHolidayOverrideRecord, error) {
 	item := &planningHolidayOverrideRecord{}
 	var label sql.NullString
+	var holidayDateRaw any
 	var isOpen, countAsHoliday sql.NullBool
 	var deletedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.MerchantID, &item.HolidayDate, &label, &isOpen, &countAsHoliday, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.MerchantID, &holidayDateRaw, &label, &isOpen, &countAsHoliday, &item.CreatedAt, &item.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
+	holidayDate, err := parsePlanningHolidayDate(holidayDateRaw)
+	if err != nil {
+		return nil, err
+	}
+	item.HolidayDate = holidayDate
 	if label.Valid {
 		item.Label = &label.String
 	}
@@ -216,4 +229,27 @@ func scanPlanningHolidayOverrideRow(row planningHolidayScannable) (*planningHoli
 		item.DeletedAt = &t
 	}
 	return item, nil
+}
+
+func parsePlanningHolidayDate(raw any) (time.Time, error) {
+	switch value := raw.(type) {
+	case time.Time:
+		return value.UTC(), nil
+	case []byte:
+		return parsePlanningHolidayDateString(string(value))
+	case string:
+		return parsePlanningHolidayDateString(value)
+	case nil:
+		return time.Time{}, fmt.Errorf("scan planning holiday date: unexpected NULL value")
+	default:
+		return time.Time{}, fmt.Errorf("scan planning holiday date: unsupported type %T", raw)
+	}
+}
+
+func parsePlanningHolidayDateString(raw string) (time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(raw))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("scan planning holiday date: %w", err)
+	}
+	return parsed.UTC(), nil
 }

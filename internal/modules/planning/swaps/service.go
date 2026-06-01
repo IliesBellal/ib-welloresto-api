@@ -16,7 +16,7 @@ import (
 
 type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
-	GetEmployeeByUserID(ctx context.Context, merchantID, userID string) (*employeespkg.Employee, error)
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
 }
 
 type ShiftReader interface {
@@ -49,11 +49,19 @@ func (s *Service) ListPlanningShiftSwapRequests(ctx context.Context, filters Pla
 		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
+		filters.RequesterEmployeeID, err = sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, filters.RequesterEmployeeID, user.MerchantRightsID)
+		if err != nil {
+			return nil, models.PaginationMetadata{}, err
+		}
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.RequesterEmployeeID)); err != nil {
 			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
 	}
 	if strings.TrimSpace(filters.TargetEmployeeID) != "" {
+		filters.TargetEmployeeID, err = sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, filters.TargetEmployeeID, user.MerchantRightsID)
+		if err != nil {
+			return nil, models.PaginationMetadata{}, err
+		}
 		if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(filters.TargetEmployeeID)); err != nil {
 			return nil, models.PaginationMetadata{}, models.ErrPlanningEmployeeNotFound
 		}
@@ -94,13 +102,21 @@ func (s *Service) CreatePlanningShiftSwapRequest(ctx context.Context, req Planni
 	if strings.TrimSpace(req.RequesterEmployeeID) == "" || strings.TrimSpace(req.RequesterShiftID) == "" || strings.TrimSpace(req.TargetEmployeeID) == "" || strings.TrimSpace(req.TargetShiftID) == "" {
 		return nil, models.ErrMissingResourceID
 	}
-	if strings.TrimSpace(req.RequesterEmployeeID) == strings.TrimSpace(req.TargetEmployeeID) || strings.TrimSpace(req.RequesterShiftID) == strings.TrimSpace(req.TargetShiftID) {
+	requesterEmployeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, req.RequesterEmployeeID, user.MerchantRightsID)
+	if err != nil {
+		return nil, err
+	}
+	targetEmployeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, req.TargetEmployeeID, user.MerchantRightsID)
+	if err != nil {
+		return nil, err
+	}
+	if requesterEmployeeID == targetEmployeeID || strings.TrimSpace(req.RequesterShiftID) == strings.TrimSpace(req.TargetShiftID) {
 		return nil, models.ErrPlanningShiftSwapInvalid
 	}
-	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(req.RequesterEmployeeID)); err != nil {
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, requesterEmployeeID); err != nil {
 		return nil, models.ErrPlanningEmployeeNotFound
 	}
-	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, strings.TrimSpace(req.TargetEmployeeID)); err != nil {
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, targetEmployeeID); err != nil {
 		return nil, models.ErrPlanningEmployeeNotFound
 	}
 	requesterShift, err := s.shiftRepo.GetPlanningShiftByID(ctx, user.MerchantID, strings.TrimSpace(req.RequesterShiftID))
@@ -115,17 +131,17 @@ func (s *Service) CreatePlanningShiftSwapRequest(ctx context.Context, req Planni
 	} else if err != nil {
 		return nil, err
 	}
-	if requesterShift.EmployeeID == nil || strings.TrimSpace(*requesterShift.EmployeeID) != strings.TrimSpace(req.RequesterEmployeeID) {
+	if requesterShift.EmployeeID == nil || strings.TrimSpace(*requesterShift.EmployeeID) != requesterEmployeeID {
 		return nil, models.ErrPlanningShiftSwapInvalid
 	}
-	if targetShift.EmployeeID == nil || strings.TrimSpace(*targetShift.EmployeeID) != strings.TrimSpace(req.TargetEmployeeID) {
+	if targetShift.EmployeeID == nil || strings.TrimSpace(*targetShift.EmployeeID) != targetEmployeeID {
 		return nil, models.ErrPlanningShiftSwapInvalid
 	}
 	requestedByUserID := user.UserID
 	request := PlanningShiftSwapRequest{
-		RequesterEmployeeID: strings.TrimSpace(req.RequesterEmployeeID),
+		RequesterEmployeeID: requesterEmployeeID,
 		RequesterShiftID:    strings.TrimSpace(req.RequesterShiftID),
-		TargetEmployeeID:    strings.TrimSpace(req.TargetEmployeeID),
+		TargetEmployeeID:    targetEmployeeID,
 		TargetShiftID:       strings.TrimSpace(req.TargetShiftID),
 		Status:              "pending",
 		Reason:              sharedpkg.TrimOptionalString(req.Reason),
@@ -166,7 +182,7 @@ func (s *Service) UpdatePlanningShiftSwapRequest(ctx context.Context, requestID 
 		return nil, err
 	}
 	if approvalMode == settingspkg.ShiftSwapApprovalModeTargetEmployeeRequired && (status == "approved" || status == "rejected") {
-		if err := s.ensureTargetEmployeeApproval(ctx, user.MerchantID, current.TargetEmployeeID, user.UserID); err != nil {
+		if err := s.ensureTargetEmployeeApproval(ctx, user.MerchantID, current.TargetEmployeeID, user.MerchantRightsID); err != nil {
 			return nil, err
 		}
 	}
@@ -233,18 +249,18 @@ func (s *Service) getShiftSwapApprovalMode(ctx context.Context, merchantID strin
 	return mode, nil
 }
 
-func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID, currentUserID string) error {
-	if strings.TrimSpace(currentUserID) == "" {
+func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID string, currentMemberID int64) error {
+	if currentMemberID == 0 {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
-	employee, err := s.employeeRepo.GetEmployeeByUserID(ctx, merchantID, currentUserID)
+	employee, err := s.employeeRepo.GetEmployeeByID(ctx, merchantID, targetEmployeeID)
 	if err == sql.ErrNoRows || employee == nil {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(employee.ID) != strings.TrimSpace(targetEmployeeID) {
+	if employee.MemberID == nil || *employee.MemberID != currentMemberID {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
 	return nil

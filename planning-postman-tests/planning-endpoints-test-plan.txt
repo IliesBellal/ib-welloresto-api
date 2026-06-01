@@ -589,13 +589,31 @@ Expected:
 - HTTP 201
 - reuse or overwrite {{shiftId1}}
 
-7.3 GET /planning/employees/{{employeeId}}/time-entries
+7.3 GET /planning/time-entries?from=2026-06-15&to=2026-06-21
+Purpose:
+- Validate the new merchant-scoped listing endpoint on a date range without employee filter.
+
 Expected:
 - HTTP 200
 - payload key: time_entries
 - payload key: pagination
 
-7.3.b PUT /planning/settings
+7.4 GET /planning/time-entries?from=2026-06-15&to=2026-06-21&employee_id={{employeeId}}
+Purpose:
+- Validate the same listing endpoint with an explicit employee filter.
+
+Expected:
+- HTTP 200
+- payload key: time_entries
+- payload key: pagination
+
+7.5 GET /planning/employees/{{employeeId}}/time-entries
+Expected:
+- HTTP 200
+- payload key: time_entries
+- payload key: pagination
+
+7.5.b PUT /planning/settings
 Precondition payload for time entries:
 {
   "attendance_source": "pointage"
@@ -603,13 +621,13 @@ Precondition payload for time entries:
 Expected:
 - HTTP 200
 
-7.4 GET /planning/employees/{{employeeId}}/time-entries/current
+7.6 GET /planning/employees/{{employeeId}}/time-entries/current
 Expected:
 - HTTP 200
 - payload key: time_entry
 - should be null if no entry is open yet
 
-7.5 POST /planning/employees/{{employeeId}}/time-entries/start
+7.7 POST /planning/employees/{{employeeId}}/time-entries/start
 Happy path payload with shift:
 {
   "shift_id": "{{shiftId1}}",
@@ -621,14 +639,23 @@ Expected:
 - payload key: time_entry
 - save time_entry.id as {{timeEntryId}}
 
-7.6 POST /planning/employees/{{employeeId}}/time-entries/start
+7.8 GET /planning/time-entries?from=2026-06-16&to=2026-06-16&employee_id={{employeeId}}
+Purpose:
+- Validate the new range endpoint after a pointage was created.
+
+Expected:
+- HTTP 200
+- payload key: time_entries
+- payload should contain the newly created {{timeEntryId}}
+
+7.9 POST /planning/employees/{{employeeId}}/time-entries/start
 Duplicate open entry payload:
 {}
 Expected:
 - HTTP 409
 - error status planning_time_entry_already_open
 
-7.7 POST /planning/employees/{{employeeId}}/time-entries/stop
+7.10 POST /planning/employees/{{employeeId}}/time-entries/stop
 Happy path payload:
 {
   "entry_id": "{{timeEntryId}}",
@@ -640,7 +667,7 @@ Expected:
 - payload key: time_entry
 - clock_out_at should now be filled
 
-7.8 POST /planning/employees/{{employeeId}}/time-entries/stop
+7.11 POST /planning/employees/{{employeeId}}/time-entries/stop
 Invalid range payload:
 {
   "entry_id": "{{timeEntryId}}",
@@ -649,7 +676,7 @@ Invalid range payload:
 Expected:
 - HTTP 400 or 409 depending on current entry state
 
-7.9 PUT /planning/settings
+7.12 PUT /planning/settings
 Switch source to planning:
 {
   "attendance_source": "planning"
@@ -657,7 +684,7 @@ Switch source to planning:
 Expected:
 - HTTP 200
 
-7.10 POST /planning/employees/{{employeeId}}/time-entries/start
+7.13 POST /planning/employees/{{employeeId}}/time-entries/start
 Pointage disabled payload:
 {}
 Expected:

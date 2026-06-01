@@ -204,13 +204,17 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 
 func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, merchantID string, hash string) error {
 	db := dbutils.GetDB(ctx, r.database)
+	newUserToken, err := generateToken()
+	if err != nil {
+		return err
+	}
 
 	// 1. Update password
 	res, err := db.ExecContext(ctx, `
 		UPDATE users
-		SET password = ?
+		SET password = ?, token = ?
 		WHERE user_id = ?
-	`, hash, userID)
+	`, hash, newUserToken, userID)
 	if err != nil {
 		return err
 	}
