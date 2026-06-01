@@ -123,3 +123,24 @@ func TestBuildPreview_MultiWeeksDistinctAndCounters(t *testing.T) {
 		t.Fatalf("expected 3 conflicts, got %d", len(preview.Conflicts))
 	}
 }
+
+func TestDateInRange_InclusiveLeaveBoundaries(t *testing.T) {
+	start := time.Date(2026, 6, 5, 8, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 6, 10, 20, 0, 0, 0, time.UTC)
+
+	if !dateInRange(time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC), start, end) {
+		t.Fatal("expected range to include start day")
+	}
+	if !dateInRange(time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC), start, end) {
+		t.Fatal("expected range to include middle day")
+	}
+	if !dateInRange(time.Date(2026, 6, 10, 23, 59, 0, 0, time.UTC), start, end) {
+		t.Fatal("expected range to include end day")
+	}
+	if dateInRange(time.Date(2026, 6, 4, 23, 59, 0, 0, time.UTC), start, end) {
+		t.Fatal("expected day before range to be excluded")
+	}
+	if dateInRange(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC), start, end) {
+		t.Fatal("expected day after range to be excluded")
+	}
+}
