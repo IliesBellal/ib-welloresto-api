@@ -47,6 +47,41 @@ type PlanningWeek struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
 
+func (w PlanningWeek) MarshalJSON() ([]byte, error) {
+	type planningWeekJSON struct {
+		ID         string     `json:"id"`
+		MerchantID string     `json:"merchant_id"`
+		Label      *string    `json:"label,omitempty"`
+		StartDate  string     `json:"start_date"`
+		EndDate    string     `json:"end_date"`
+		Status     string     `json:"status"`
+		Notes      *string    `json:"notes,omitempty"`
+		CreatedAt  time.Time  `json:"created_at"`
+		UpdatedAt  time.Time  `json:"updated_at"`
+		DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+	}
+
+	return json.Marshal(planningWeekJSON{
+		ID:         w.ID,
+		MerchantID: w.MerchantID,
+		Label:      w.Label,
+		StartDate:  formatPlanningWeekDateOnly(w.StartDate),
+		EndDate:    formatPlanningWeekDateOnly(w.EndDate),
+		Status:     w.Status,
+		Notes:      w.Notes,
+		CreatedAt:  w.CreatedAt,
+		UpdatedAt:  w.UpdatedAt,
+		DeletedAt:  w.DeletedAt,
+	})
+}
+
+func formatPlanningWeekDateOnly(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format("2006-01-02")
+}
+
 type PlanningWeekCreateRequest struct {
 	Label     *string `json:"label,omitempty"`
 	StartDate string  `json:"start_date"`
