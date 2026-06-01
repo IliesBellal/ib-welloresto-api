@@ -361,7 +361,7 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 
 func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchantID, userID string, rights MerchantUserRightsUpsertRequest) error {
 	db := dbutils.GetDB(ctx, r.database)
-	res, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE users_rights
 		SET admin = ?,
 			access_wrreception = ?,
