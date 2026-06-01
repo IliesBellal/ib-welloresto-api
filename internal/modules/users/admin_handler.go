@@ -6,9 +6,11 @@ import (
 	"strconv"
 	"strings"
 
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap/zapcore"
 )
 
 func (h *UsersHandler) ListMerchantUsers(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +72,7 @@ func (h *UsersHandler) PatchMerchantUserMember(w http.ResponseWriter, r *http.Re
 	var req MerchantUserMemberPatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendErrorJSON(w, "users", "patch_member", models.ErrInvalidRequestBody)
+		logger.FromContext(r.Context()).Log(zapcore.ErrorLevel, err.Error())
 		return
 	}
 	member, err := h.svc.PatchMerchantUserMember(r.Context(), chi.URLParam(r, "id"), req)
