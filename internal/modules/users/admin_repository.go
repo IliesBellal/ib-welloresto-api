@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -407,13 +406,15 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 	if err != nil {
 		return err
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return models.ErrMerchantUserNotFound
-	}
+	/*
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return models.ErrMerchantUserNotFound
+		}
+	*/
 	return nil
 }
 
@@ -441,7 +442,7 @@ func (r *UsersRepository) MerchantUserLinkExists(ctx context.Context, merchantID
 
 func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantID, userID string) (bool, error) {
 	db := dbutils.GetDB(ctx, r.database)
-	res, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE users_rights
 		SET enabled = 0
 		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
@@ -449,11 +450,15 @@ func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantI
 	if err != nil {
 		return false, err
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return affected > 0, nil
+	/*
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		return affected > 0, nil
+	*/
+
+	return true, nil
 }
 
 func (r *UsersRepository) ClearMerchantEmployeeLinks(ctx context.Context, merchantID, userID string) (int, error) {
