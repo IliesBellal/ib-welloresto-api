@@ -1,8 +1,9 @@
 package users
 
-import "time"
-
-import "welloresto-api/internal/models"
+import (
+	"time"
+	"welloresto-api/internal/models"
+)
 
 type MerchantUserPermissions struct {
 	AccessReception         bool `json:"access_reception"`
