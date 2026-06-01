@@ -42,10 +42,10 @@ func TestUsersHandlerListMerchantUsers(t *testing.T) {
 			u.user_id,`)).
 		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", true, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "rights_id", "admin",
+			"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
 			"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
 		}).AddRow(
-			"user_1", "John", "Doe", "john@example.com", "+33123456789", "https://cdn/avatar.png", createdAt, lastLoginAt, true, 12, true,
+			"user_1", "John", "Doe", "john@example.com", "+33123456789", "https://cdn/avatar.png", createdAt, lastLoginAt, true, true, 12, true,
 			true, false, false, true, true, true, true, true, false, false, true, false, false, false, false, false, "emp_1", "John Doe",
 		))
 
@@ -77,6 +77,9 @@ func TestUsersHandlerListMerchantUsers(t *testing.T) {
 	}
 	if response.Data.Users[0].Permissions.ManageUsers != true {
 		t.Fatalf("manage_users = %v, want true", response.Data.Users[0].Permissions.ManageUsers)
+	}
+	if response.Data.Users[0].LoginEnabled != true {
+		t.Fatalf("login_enabled = %v, want true", response.Data.Users[0].LoginEnabled)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

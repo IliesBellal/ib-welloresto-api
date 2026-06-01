@@ -60,6 +60,7 @@ type MerchantUserListItem struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	LastLoginAt      *time.Time              `json:"last_login_at,omitempty"`
 	Enabled          bool                    `json:"enabled"`
+	LoginEnabled     bool                    `json:"login_enabled"`
 	Status           string                  `json:"status"`
 	MerchantRightsID int64                   `json:"merchant_rights_id"`
 	Admin            bool                    `json:"admin"`
