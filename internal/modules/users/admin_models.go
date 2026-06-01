@@ -172,5 +172,6 @@ func (req MerchantUserRightsUpsertRequest) Normalize(defaults MerchantUserRights
 			ManageCustomers:         req.Permissions.ManageCustomers,
 			ExportCustomers:         req.Permissions.ExportCustomers,
 		},
+		LoginEnabled: req.LoginEnabled,
 	}
 }

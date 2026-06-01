@@ -15,7 +15,7 @@ func NewServicesRepository(db *sql.DB) *ServicesRepository {
 	return &ServicesRepository{database: db}
 }
 
-func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID string, deviceID string) (*models.CurrentServiceResponse, error) {
+func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merchantID, deviceID string) (*models.CurrentServiceResponse, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	// ------------------------------------------------------
@@ -96,15 +96,13 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID strin
 		       CASE WHEN cr.cash_register_id IS NULL THEN 0 ELSE 1 END AS active,
 		       opened_by.first_name, opened_by.last_name, opened_by.user_id
 		FROM cash_desks cd
-		INNER JOIN users u ON u.merchant_id = cd.merchant_id
 		LEFT JOIN cash_registers cr ON cr.cash_desk_id = cd.cash_desk_id AND cr.end_date IS NULL
 		LEFT JOIN users opened_by ON opened_by.user_id = cr.user_id
-		WHERE u.user_id = ?
-		AND u.enabled = 1
+		WHERE cd.merchant_id = ?
 		AND cd.enabled = 1
 	`
 
-	rows, err := db.QueryContext(ctx, qDesks, userID)
+	rows, err := db.QueryContext(ctx, qDesks, merchantID)
 	if err != nil {
 		return nil, err
 	}

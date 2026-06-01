@@ -20,5 +20,5 @@ func (s *ServicesService) GetCurrentService(ctx context.Context, token string, d
 		return nil, err
 	}
 
-	return s.servicesRepo.GetCurrentService(ctx, user.UserID, deviceID)
+	return s.servicesRepo.GetCurrentService(ctx, user.UserID, user.MerchantID, deviceID)
 }
