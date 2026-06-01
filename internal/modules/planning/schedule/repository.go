@@ -224,10 +224,10 @@ func (r *Repository) CreatePlanningShift(ctx context.Context, merchantID string,
 	shift.UpdatedAt = now
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_shifts (
-			id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.CreatedAt, shift.UpdatedAt)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.CreatedAt, shift.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

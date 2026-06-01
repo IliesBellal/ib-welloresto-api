@@ -126,7 +126,7 @@ func IsValidPlanningWeekStatus(status string) bool {
 
 func IsValidPlanningShiftStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "planned", "confirmed", "done", "cancelled":
+	case "draft", "planned", "confirmed", "done", "cancelled":
 		return true
 	default:
 		return false

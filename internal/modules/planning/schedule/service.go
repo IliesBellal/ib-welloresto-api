@@ -208,8 +208,9 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 	} else if err != nil {
 		return nil, err
 	}
+	// Title filter is too restrictive and shouldn't be required
 	if strings.TrimSpace(req.Title) == "" {
-		return nil, models.ErrValidationError
+		//return nil, models.ErrValidationError
 	}
 	shiftDate, err := sharedpkg.ParsePlanningDate(req.ShiftDate)
 	if err != nil {
