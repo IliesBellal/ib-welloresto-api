@@ -525,6 +525,194 @@ func TestUsersServicePatchMerchantUserMemberRollbackOnLinkFailure(t *testing.T) 
 	}
 }
 
+func TestUsersHandlerPatchMerchantUserMemberAcceptsDateOnlyJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+
+	var capturedDate *time.Time
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return &planningemployees.Employee{ID: "emp_1", ContractTypeCode: "cdi", PositionID: "pos_1"}, nil
+		},
+		updateEmployeeFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error) {
+			capturedDate = req.ContractStartDate
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi", ContractStartDate: req.ContractStartDate}, nil
+		},
+	}
+	handler := NewUsersHandler(svc, nil)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+
+	body := bytes.NewBufferString(`{"contract_start_date":"2026-06-01"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/users/user_1/member", body)
+	req = withChiParam(req, "id", "user_1")
+	req = req.WithContext(middleware.WithUser(req.Context(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"}))
+	rec := httptest.NewRecorder()
+
+	handler.PatchMerchantUserMember(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PatchMerchantUserMember() status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if capturedDate == nil || capturedDate.Format("2006-01-02") != "2026-06-01" {
+		t.Fatalf("captured contract_start_date = %#v, want 2026-06-01", capturedDate)
+	}
+	if capturedDate != nil {
+		y, m, d := capturedDate.Date()
+		if capturedDate.Hour() != 0 || capturedDate.Minute() != 0 || capturedDate.Second() != 0 || y != 2026 || m != 6 || d != 1 {
+			t.Fatalf("captured date must stay pure day without shift, got %v", capturedDate)
+		}
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersServicePatchMerchantUserMemberDateAbsentNotModified(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
+		},
+		updateEmployeeFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error) {
+			if req.ContractStartDate != nil {
+				t.Fatalf("contract_start_date should be nil when absent")
+			}
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
+		},
+	}
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+
+	_, err = svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{Role: stringPtr("manager")})
+	if err != nil {
+		t.Fatalf("PatchMerchantUserMember() error = %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersHandlerPatchMerchantUserMemberDateNullHandled(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
+		},
+		updateEmployeeFn: func(ctx context.Context, employeeID string, req planningemployees.EmployeeUpdateRequest) (*planningemployees.Employee, error) {
+			if req.ContractStartDate != nil {
+				t.Fatalf("contract_start_date should be nil when JSON null is provided")
+			}
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
+		},
+	}
+	handler := NewUsersHandler(svc, nil)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+
+	body := bytes.NewBufferString(`{"contract_start_date":null,"role":"manager"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/users/user_1/member", body)
+	req = withChiParam(req, "id", "user_1")
+	req = req.WithContext(middleware.WithUser(req.Context(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"}))
+	rec := httptest.NewRecorder()
+
+	handler.PatchMerchantUserMember(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PatchMerchantUserMember() status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUsersHandlerGetMerchantUserMemberSerializesDateOnly(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil)
+	svc.memberEmployee = &memberEmployeeStub{
+		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
+			start := time.Date(2026, 6, 1, 18, 42, 0, 0, time.FixedZone("UTC+3", 3*3600))
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi", ContractStartDate: &start}, nil
+		},
+	}
+	handler := NewUsersHandler(svc, nil)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
+			u.user_id,`)).
+		WithArgs("merchant_1", "user_1").
+		WillReturnRows(merchantUserDetailRows("user_1", "John", "Doe"))
+
+	req := httptest.NewRequest(http.MethodGet, "/users/user_1/member", nil)
+	req = withChiParam(req, "id", "user_1")
+	req = req.WithContext(middleware.WithUser(req.Context(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"}))
+	rec := httptest.NewRecorder()
+
+	handler.GetMerchantUserMember(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetMerchantUserMember() status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var response map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response error = %v", err)
+	}
+	data, _ := response["data"].(map[string]any)
+	member, _ := data["member"].(map[string]any)
+	if member["contract_start_date"] != "2026-06-01" {
+		t.Fatalf("contract_start_date = %#v, want 2026-06-01", member["contract_start_date"])
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func merchantUserDetailRows(userID, firstName, lastName string) *sqlmock.Rows {
 	now := time.Now().UTC()
 	return sqlmock.NewRows([]string{

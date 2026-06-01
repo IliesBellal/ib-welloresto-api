@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
@@ -299,7 +300,7 @@ func (s *UsersService) PatchMerchantUserMember(ctx context.Context, userID strin
 }
 
 func requireAtLeastOneMemberField(req MerchantUserMemberPatchRequest) error {
-	if req.PositionID == nil && req.JobTitle == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.EmployerChargesPct == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.TransportCost == nil && req.HrComment == nil {
+	if req.PositionID == nil && req.JobTitle == nil && req.Role == nil && req.ContractTypeCode == nil && !req.ContractStartDate.Present && !req.ContractEndDate.Present && !req.ProbationEndDate.Present && !req.LastMedicalCheckupDate.Present && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.EmployerChargesPct == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.TransportCost == nil && req.HrComment == nil {
 		return fmt.Errorf("at least one field must be provided")
 	}
 	return nil
@@ -311,10 +312,10 @@ func memberPatchToEmployeeUpdate(req MerchantUserMemberPatchRequest) planningemp
 		JobTitle:               req.JobTitle,
 		Role:                   req.Role,
 		ContractTypeCode:       req.ContractTypeCode,
-		ContractStartDate:      req.ContractStartDate,
-		ContractEndDate:        req.ContractEndDate,
-		ProbationEndDate:       req.ProbationEndDate,
-		LastMedicalCheckupDate: req.LastMedicalCheckupDate,
+		ContractStartDate:      dateOnlyPatchFieldToTimePtr(req.ContractStartDate),
+		ContractEndDate:        dateOnlyPatchFieldToTimePtr(req.ContractEndDate),
+		ProbationEndDate:       dateOnlyPatchFieldToTimePtr(req.ProbationEndDate),
+		LastMedicalCheckupDate: dateOnlyPatchFieldToTimePtr(req.LastMedicalCheckupDate),
 		ContractHours:          req.ContractHours,
 		MaxWeeklyHours:         req.MaxWeeklyHours,
 		RequiredRestDays:       req.RequiredRestDays,
@@ -337,10 +338,10 @@ func mapMemberFromEmployee(employee *planningemployees.Employee) *MerchantUserMe
 		JobTitle:               employee.JobTitle,
 		Role:                   employee.Role,
 		ContractTypeCode:       employee.ContractTypeCode,
-		ContractStartDate:      employee.ContractStartDate,
-		ContractEndDate:        employee.ContractEndDate,
-		ProbationEndDate:       employee.ProbationEndDate,
-		LastMedicalCheckupDate: employee.LastMedicalCheckupDate,
+		ContractStartDate:      timePtrToDateOnlyPtr(employee.ContractStartDate),
+		ContractEndDate:        timePtrToDateOnlyPtr(employee.ContractEndDate),
+		ProbationEndDate:       timePtrToDateOnlyPtr(employee.ProbationEndDate),
+		LastMedicalCheckupDate: timePtrToDateOnlyPtr(employee.LastMedicalCheckupDate),
 		ContractHours:          employee.ContractHours,
 		MaxWeeklyHours:         employee.MaxWeeklyHours,
 		RequiredRestDays:       employee.RequiredRestDays,
@@ -352,6 +353,22 @@ func mapMemberFromEmployee(employee *planningemployees.Employee) *MerchantUserMe
 		TransportCost:          employee.TransportCost,
 		HrComment:              employee.HrComment,
 	}
+}
+
+func dateOnlyPatchFieldToTimePtr(field models.NullableDateOnlyPatchField) *time.Time {
+	if !field.Present || field.Value == nil {
+		return nil
+	}
+	value := field.Value.Time()
+	return &value
+}
+
+func timePtrToDateOnlyPtr(value *time.Time) *models.DateOnly {
+	if value == nil {
+		return nil
+	}
+	dateOnly := models.NewDateOnly(*value)
+	return &dateOnly
 }
 
 func normalizeUsersPagination(page, pageSize int) models.PaginationMetadata {
