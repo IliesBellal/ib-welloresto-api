@@ -84,6 +84,7 @@ type LinkableUser struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	LastLoginAt    *time.Time `json:"last_login_at,omitempty"`
 	Enabled        bool       `json:"enabled"`
+	LoginEnabled   bool       `json:"login_enabled"`
 	Status         string     `json:"status"`
 }
 

@@ -525,7 +525,7 @@ func scanMerchantUserListItem(scanner merchantUserScanner) (*MerchantUserListIte
 	item.LastLoginAt = nullableTimePtr(lastLoginAt)
 	item.EmployeeID = nullableStringPtr(employeeID)
 	item.EmployeeName = nullableStringPtr(employeeName)
-	item.Status = userStatus(item.Enabled)
+	item.Status = userStatus(item)
 	return item, nil
 }
 
@@ -535,6 +535,7 @@ func scanLinkableUser(scanner merchantUserScanner) (*LinkableUser, error) {
 	var tel sql.NullString
 	var profilePicture sql.NullString
 	var lastLoginAt sql.NullTime
+
 	if err := scanner.Scan(&item.UserID, &item.FirstName, &item.LastName, &email, &tel, &profilePicture, &item.CreatedAt, &lastLoginAt, &item.Enabled); err != nil {
 		return nil, err
 	}
@@ -542,7 +543,8 @@ func scanLinkableUser(scanner merchantUserScanner) (*LinkableUser, error) {
 	item.Tel = nullableStringPtr(tel)
 	item.ProfilePicture = nullableStringPtr(profilePicture)
 	item.LastLoginAt = nullableTimePtr(lastLoginAt)
-	item.Status = userStatus(item.Enabled)
+	item.LoginEnabled = item.Enabled && item.LoginEnabled
+	item.Status = linkableUserStatus(item)
 	return item, nil
 }
 
@@ -595,9 +597,20 @@ func nullableTimePtr(value sql.NullTime) *time.Time {
 	return &timestamp
 }
 
-func userStatus(enabled bool) string {
-	if enabled {
+func userStatus(item *MerchantUserListItem) string {
+	if item.Enabled && item.LoginEnabled {
 		return "active"
+	} else if item.Enabled && !item.LoginEnabled {
+		return "login_disabled"
+	}
+	return "disabled"
+}
+
+func linkableUserStatus(item *LinkableUser) string {
+	if item.Enabled && item.LoginEnabled {
+		return "active"
+	} else if item.Enabled && !item.LoginEnabled {
+		return "login_disabled"
 	}
 	return "disabled"
 }
