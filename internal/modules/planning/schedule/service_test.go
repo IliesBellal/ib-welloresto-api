@@ -358,6 +358,71 @@ func TestEnsureShiftHasNoConflictsSkipsUnassignedShifts(t *testing.T) {
 	}
 }
 
+func TestServiceListPlanningShiftsByDateRangeReturnsMultiWeekShifts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	now := time.Now().UTC()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			position, location, notes, status, created_at, updated_at, deleted_at
+		FROM planning_shifts
+		WHERE merchant_id = ? AND enabled = 1 AND shift_date >= ? AND shift_date <= ?
+		ORDER BY shift_date ASC, start_time ASC, created_at ASC
+	`)).
+		WithArgs("merchant_1", "2026-06-01", "2026-06-21").
+		WillReturnRows(shiftRows().
+			AddRow("shift_w1", "merchant_1", "week_1", "emp_1", nil, "Matin", time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC), "08:00:00", "12:00:00", 0, nil, nil, nil, "planned", now, now, nil).
+			AddRow("shift_w2", "merchant_1", "week_2", nil, nil, "Besoin", time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC), "10:00:00", "14:00:00", 0, nil, nil, nil, "planned", now, now, nil).
+			AddRow("shift_w3", "merchant_1", "week_3", "emp_2", "pos_1", "Soir", time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC), "17:00:00", "22:00:00", 0, "Serveur", nil, nil, "planned", now, now, nil))
+
+	items, err := svc.ListPlanningShiftsByDateRange(ctx, "2026-06-01", "2026-06-21")
+	if err != nil {
+		t.Fatalf("ListPlanningShiftsByDateRange() error = %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("ListPlanningShiftsByDateRange() len = %d, want 3", len(items))
+	}
+	if items[0].WeekID != "week_1" || items[1].WeekID != "week_2" || items[2].WeekID != "week_3" {
+		t.Fatalf("unexpected weeks returned: %#v", items)
+	}
+	if items[1].EmployeeID != nil {
+		t.Fatalf("expected unassigned shift to be included with employee_id=nil, got %#v", items[1].EmployeeID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestServiceListPlanningShiftsByDateRangeRejectsTooWideRange(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+
+	_, err = svc.ListPlanningShiftsByDateRange(ctx, "2026-06-01", "2026-08-05")
+	if !errors.Is(err, models.ErrPlanningInvalidDate) {
+		t.Fatalf("ListPlanningShiftsByDateRange() error = %v, want %v", err, models.ErrPlanningInvalidDate)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unexpected SQL expectations: %v", err)
+	}
+}
+
 func expectShiftLookup(mock sqlmock.Sqlmock, now time.Time, employeeID any, positionID any, position any) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,

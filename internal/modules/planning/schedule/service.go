@@ -29,6 +29,8 @@ type Service struct {
 	auditService auditpkg.AuditService
 }
 
+const maxShiftRangeDays = 62
+
 func NewService(repo *Repository, employeeRepo EmployeeReader, positionRepo PositionReader, auditService auditpkg.AuditService) *Service {
 	return &Service{repo: repo, employeeRepo: employeeRepo, positionRepo: positionRepo, auditService: auditService}
 }
@@ -177,6 +179,25 @@ func (s *Service) ListPlanningShifts(ctx context.Context, weekID string) ([]Plan
 		return nil, err
 	}
 	return s.repo.ListPlanningShifts(ctx, user.MerchantID, weekID)
+}
+
+func (s *Service) ListPlanningShiftsByDateRange(ctx context.Context, startDateRaw, endDateRaw string) ([]PlanningShift, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	startDate, endDate, err := sharedpkg.ParsePlanningDateRange(startDateRaw, endDateRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	rangeDays := int(endDate.Sub(startDate).Hours()/24) + 1
+	if rangeDays > maxShiftRangeDays {
+		return nil, models.ErrPlanningInvalidDate
+	}
+
+	return s.repo.ListPlanningShiftsByDateRange(ctx, user.MerchantID, startDate, endDate)
 }
 
 func (s *Service) GetPlanningShift(ctx context.Context, shiftID string) (*PlanningShift, error) {

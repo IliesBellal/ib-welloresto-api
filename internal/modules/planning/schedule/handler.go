@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -82,6 +83,17 @@ func (h *Handler) ListPlanningShifts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "list_planning_shifts", map[string]interface{}{"status": "success", "shifts": items})
+}
+
+func (h *Handler) ListPlanningShiftsByDateRange(w http.ResponseWriter, r *http.Request) {
+	startDate := strings.TrimSpace(r.URL.Query().Get("start_date"))
+	endDate := strings.TrimSpace(r.URL.Query().Get("end_date"))
+	items, err := h.svc.ListPlanningShiftsByDateRange(r.Context(), startDate, endDate)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_shifts_by_date_range", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_planning_shifts_by_date_range", map[string]interface{}{"status": "success", "shifts": items})
 }
 
 func (h *Handler) GetPlanningShift(w http.ResponseWriter, r *http.Request) {

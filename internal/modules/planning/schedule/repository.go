@@ -172,6 +172,31 @@ func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID 
 	return items, rows.Err()
 }
 
+func (r *Repository) ListPlanningShiftsByDateRange(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]PlanningShift, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			position, location, notes, status, created_at, updated_at, deleted_at
+		FROM planning_shifts
+		WHERE merchant_id = ? AND enabled = 1 AND shift_date >= ? AND shift_date <= ?
+		ORDER BY shift_date ASC, start_time ASC, created_at ASC
+	`, merchantID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningShift, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningShift(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*PlanningShift, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
