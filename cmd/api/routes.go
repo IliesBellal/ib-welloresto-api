@@ -770,6 +770,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/employees/{id}/documents", planningH.CreateEmployeeDocument)
 		r.Get("/employees/{id}/time-entries", planningH.ListEmployeeTimeEntries)
 		r.Get("/employees/{id}/time-entries/current", planningH.GetCurrentEmployeeTimeEntry)
+		r.Post("/employees/{id}/time-entries", planningH.CreateEmployeeTimeEntry)
+		r.Patch("/employees/{id}/time-entries/{entry_id}", planningH.UpdateEmployeeTimeEntry)
+		r.Delete("/employees/{id}/time-entries/{entry_id}", planningH.DeleteEmployeeTimeEntry)
 		r.Post("/employees/{id}/time-entries/start", planningH.StartEmployeeTimeEntry)
 		r.Post("/employees/{id}/time-entries/stop", planningH.StopEmployeeTimeEntry)
 		r.Route("/uploads", func(r chi.Router) {
