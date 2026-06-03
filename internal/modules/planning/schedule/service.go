@@ -65,6 +65,10 @@ func (s *Service) CreatePlanningWeek(ctx context.Context, req PlanningWeekCreate
 		return nil, existingErr
 	}
 	week := PlanningWeek{Label: req.Label, StartDate: startDate, EndDate: endDate, Status: status, Notes: req.Notes}
+	if status == "published" {
+		now := time.Now().UTC()
+		week.PublishedAt = &now
+	}
 	return s.repo.CreatePlanningWeek(ctx, user.MerchantID, week)
 }
 
@@ -121,6 +125,13 @@ func (s *Service) UpdatePlanningWeek(ctx context.Context, weekID string, req Pla
 			return nil, models.ErrValidationError
 		}
 		updated.Status = status
+		if status == "published" {
+			now := time.Now().UTC()
+			updated.PublishedAt = &now
+		}
+		if status == "draft" {
+			updated.PublishedAt = nil
+		}
 	}
 	if req.Notes != nil {
 		updated.Notes = req.Notes
@@ -148,6 +159,37 @@ func (s *Service) UpdatePlanningWeek(ctx context.Context, weekID string, req Pla
 		return nil, existingErr
 	}
 	return s.repo.UpdatePlanningWeek(ctx, user.MerchantID, weekID, updated)
+}
+
+func (s *Service) PublishPlanningWeek(ctx context.Context, weekID string) (*PlanningWeek, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(weekID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	publishedAt := time.Now().UTC()
+	week, err := s.repo.PublishPlanningWeek(ctx, user.MerchantID, weekID, publishedAt)
+	if err == sql.ErrNoRows || week == nil {
+		return nil, models.ErrPlanningWeekNotFound
+	}
+	return week, err
+}
+
+func (s *Service) UnpublishPlanningWeek(ctx context.Context, weekID string) (*PlanningWeek, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(weekID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+	week, err := s.repo.UnpublishPlanningWeek(ctx, user.MerchantID, weekID)
+	if err == sql.ErrNoRows || week == nil {
+		return nil, models.ErrPlanningWeekNotFound
+	}
+	return week, err
 }
 
 func (s *Service) DeletePlanningWeek(ctx context.Context, weekID string) error {

@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -138,14 +139,14 @@ func TestServiceCreatePlanningShiftNormalizesUnassignedEmployeeID(t *testing.T) 
 			now := time.Now().UTC()
 
 			mock.ExpectQuery(regexp.QuoteMeta(`
-				SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+				SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 				FROM planning_weeks
 				WHERE merchant_id = ? AND id = ? AND enabled = 1
 				LIMIT 1
 			`)).
 				WithArgs("merchant_1", "week_1").
-				WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
-					"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, now, now, nil,
+				WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+					"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
 				))
 
 			mock.ExpectExec(regexp.QuoteMeta(`
@@ -423,6 +424,241 @@ func TestServiceListPlanningShiftsByDateRangeRejectsTooWideRange(t *testing.T) {
 	}
 }
 
+func TestServicePublishPlanningWeek(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	now := time.Now().UTC()
+
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE planning_weeks
+		SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`)).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		LIMIT 1
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "published", now, nil, now, now, nil,
+		))
+
+	week, err := svc.PublishPlanningWeek(ctx, "week_1")
+	if err != nil {
+		t.Fatalf("PublishPlanningWeek() error = %v", err)
+	}
+	if week.Status != "published" {
+		t.Fatalf("PublishPlanningWeek() status = %q, want published", week.Status)
+	}
+	if week.PublishedAt == nil {
+		t.Fatal("PublishPlanningWeek() expected published_at to be set")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestServiceCreatePlanningWeekDefaultsToDraft(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+		ORDER BY created_at DESC LIMIT 1
+	`)).
+		WithArgs("merchant_1", "2026-06-01").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(`
+		INSERT INTO planning_weeks (
+			id, merchant_id, label, start_date, end_date, status, published_at, notes, enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`)).
+		WithArgs(sqlmock.AnyArg(), "merchant_1", nil, sqlmock.AnyArg(), sqlmock.AnyArg(), "draft", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	week, err := svc.CreatePlanningWeek(ctx, PlanningWeekCreateRequest{StartDate: "2026-06-01", EndDate: "2026-06-07"})
+	if err != nil {
+		t.Fatalf("CreatePlanningWeek() error = %v", err)
+	}
+	if week.Status != "draft" {
+		t.Fatalf("CreatePlanningWeek() status = %q, want draft", week.Status)
+	}
+	if week.PublishedAt != nil {
+		t.Fatalf("CreatePlanningWeek() published_at = %v, want nil", week.PublishedAt)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestServiceUnpublishPlanningWeek(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	now := time.Now().UTC()
+
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE planning_weeks
+		SET status = 'draft', published_at = NULL, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`)).
+		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		LIMIT 1
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
+		))
+
+	week, err := svc.UnpublishPlanningWeek(ctx, "week_1")
+	if err != nil {
+		t.Fatalf("UnpublishPlanningWeek() error = %v", err)
+	}
+	if week.Status != "draft" {
+		t.Fatalf("UnpublishPlanningWeek() status = %q, want draft", week.Status)
+	}
+	if week.PublishedAt != nil {
+		t.Fatalf("UnpublishPlanningWeek() published_at = %v, want nil", week.PublishedAt)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestServicePublishPlanningWeekIdempotent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	publishedAt := time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
+
+	for i := 0; i < 2; i++ {
+		mock.ExpectExec(regexp.QuoteMeta(`
+			UPDATE planning_weeks
+			SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
+			WHERE merchant_id = ? AND id = ? AND enabled = 1
+		`)).
+			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+			FROM planning_weeks
+			WHERE merchant_id = ? AND id = ? AND enabled = 1
+			LIMIT 1
+		`)).
+			WithArgs("merchant_1", "week_1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+				"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "published", publishedAt, nil, now, now, nil,
+			))
+
+		week, callErr := svc.PublishPlanningWeek(ctx, "week_1")
+		if callErr != nil {
+			t.Fatalf("PublishPlanningWeek() call %d error = %v", i+1, callErr)
+		}
+		if week.Status != "published" || week.PublishedAt == nil {
+			t.Fatalf("PublishPlanningWeek() call %d returned unexpected week: %#v", i+1, week)
+		}
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestServiceUpdatePlanningShiftInPublishedWeekStillAllowed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	now := time.Now().UTC()
+
+	expectShiftLookup(mock, now, "emp_1", nil, nil)
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		LIMIT 1
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "published", now, nil, now, now, nil,
+		))
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			position, location, notes, status, created_at, updated_at, deleted_at
+		FROM planning_shifts
+		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
+		 AND id <> ? ORDER BY start_time ASC, created_at ASC
+	`)).
+		WithArgs("merchant_1", "emp_1", "2026-06-01", "shift_1").
+		WillReturnRows(shiftRows())
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE planning_shifts
+		SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
+			position = ?, location = ?, notes = ?, status = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`)).
+		WithArgs("week_1", "emp_1", nil, "Service soir", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	item, err := svc.UpdatePlanningShift(ctx, "shift_1", PlanningShiftUpdateRequest{Title: stringPtr("Service soir")})
+	if err != nil {
+		t.Fatalf("UpdatePlanningShift() error = %v", err)
+	}
+	if item == nil || item.Title != "Service soir" {
+		t.Fatalf("UpdatePlanningShift() returned unexpected item: %#v", item)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func expectShiftLookup(mock sqlmock.Sqlmock, now time.Time, employeeID any, positionID any, position any) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
@@ -439,14 +675,14 @@ func expectShiftLookup(mock sqlmock.Sqlmock, now time.Time, employeeID any, posi
 
 func expectWeekLookup(mock sqlmock.Sqlmock, now time.Time) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
-			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, now, now, nil,
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
 		))
 }
 

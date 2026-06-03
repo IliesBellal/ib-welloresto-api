@@ -35,43 +35,46 @@ func (f NullableStringPatchField) IsZero() bool {
 }
 
 type PlanningWeek struct {
-	ID         string     `json:"id"`
-	MerchantID string     `json:"merchant_id"`
-	Label      *string    `json:"label,omitempty"`
-	StartDate  time.Time  `json:"start_date"`
-	EndDate    time.Time  `json:"end_date"`
-	Status     string     `json:"status"`
-	Notes      *string    `json:"notes,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+	ID          string     `json:"id"`
+	MerchantID  string     `json:"merchant_id"`
+	Label       *string    `json:"label,omitempty"`
+	StartDate   time.Time  `json:"start_date"`
+	EndDate     time.Time  `json:"end_date"`
+	Status      string     `json:"status"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+	Notes       *string    `json:"notes,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 func (w PlanningWeek) MarshalJSON() ([]byte, error) {
 	type planningWeekJSON struct {
-		ID         string     `json:"id"`
-		MerchantID string     `json:"merchant_id"`
-		Label      *string    `json:"label,omitempty"`
-		StartDate  string     `json:"start_date"`
-		EndDate    string     `json:"end_date"`
-		Status     string     `json:"status"`
-		Notes      *string    `json:"notes,omitempty"`
-		CreatedAt  time.Time  `json:"created_at"`
-		UpdatedAt  time.Time  `json:"updated_at"`
-		DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+		ID          string     `json:"id"`
+		MerchantID  string     `json:"merchant_id"`
+		Label       *string    `json:"label,omitempty"`
+		StartDate   string     `json:"start_date"`
+		EndDate     string     `json:"end_date"`
+		Status      string     `json:"status"`
+		PublishedAt *time.Time `json:"published_at,omitempty"`
+		Notes       *string    `json:"notes,omitempty"`
+		CreatedAt   time.Time  `json:"created_at"`
+		UpdatedAt   time.Time  `json:"updated_at"`
+		DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 	}
 
 	return json.Marshal(planningWeekJSON{
-		ID:         w.ID,
-		MerchantID: w.MerchantID,
-		Label:      w.Label,
-		StartDate:  formatPlanningWeekDateOnly(w.StartDate),
-		EndDate:    formatPlanningWeekDateOnly(w.EndDate),
-		Status:     w.Status,
-		Notes:      w.Notes,
-		CreatedAt:  w.CreatedAt,
-		UpdatedAt:  w.UpdatedAt,
-		DeletedAt:  w.DeletedAt,
+		ID:          w.ID,
+		MerchantID:  w.MerchantID,
+		Label:       w.Label,
+		StartDate:   formatPlanningWeekDateOnly(w.StartDate),
+		EndDate:     formatPlanningWeekDateOnly(w.EndDate),
+		Status:      w.Status,
+		PublishedAt: w.PublishedAt,
+		Notes:       w.Notes,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
+		DeletedAt:   w.DeletedAt,
 	})
 }
 

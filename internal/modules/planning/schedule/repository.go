@@ -21,7 +21,7 @@ func NewRepository(db *sql.DB) *Repository {
 func (r *Repository) ListPlanningWeeks(ctx context.Context, merchantID string) ([]PlanningWeek, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
 		WHERE merchant_id = ? AND enabled = 1
 		ORDER BY start_date DESC, created_at DESC
@@ -45,7 +45,7 @@ func (r *Repository) ListPlanningWeeks(ctx context.Context, merchantID string) (
 func (r *Repository) GetPlanningWeekByID(ctx context.Context, merchantID, weekID string) (*PlanningWeek, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
-		SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
 		LIMIT 1
@@ -56,7 +56,7 @@ func (r *Repository) GetPlanningWeekByID(ctx context.Context, merchantID, weekID
 func (r *Repository) GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*PlanningWeek, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT id, merchant_id, label, start_date, end_date, status, notes, created_at, updated_at, deleted_at
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
 		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
 	`
@@ -79,9 +79,9 @@ func (r *Repository) CreatePlanningWeek(ctx context.Context, merchantID string, 
 	week.UpdatedAt = now
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_weeks (
-			id, merchant_id, label, start_date, end_date, status, notes, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, week.ID, week.MerchantID, week.Label, week.StartDate, week.EndDate, week.Status, week.Notes, week.CreatedAt, week.UpdatedAt)
+			id, merchant_id, label, start_date, end_date, status, published_at, notes, enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, week.ID, week.MerchantID, week.Label, week.StartDate, week.EndDate, week.Status, week.PublishedAt, week.Notes, week.CreatedAt, week.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -106,19 +106,63 @@ func (r *Repository) UpdatePlanningWeek(ctx context.Context, merchantID, weekID 
 	if strings.TrimSpace(week.Status) != "" {
 		current.Status = strings.TrimSpace(week.Status)
 	}
+	if week.Status == "draft" {
+		current.PublishedAt = nil
+	}
+	if week.Status == "published" {
+		if week.PublishedAt != nil {
+			current.PublishedAt = week.PublishedAt
+		} else if current.PublishedAt == nil {
+			now := time.Now().UTC()
+			current.PublishedAt = &now
+		}
+	}
 	if week.Notes != nil {
 		current.Notes = week.Notes
 	}
 	current.UpdatedAt = time.Now().UTC()
 	_, err = db.ExecContext(ctx, `
 		UPDATE planning_weeks
-		SET label = ?, start_date = ?, end_date = ?, status = ?, notes = ?, updated_at = ?
+		SET label = ?, start_date = ?, end_date = ?, status = ?, published_at = ?, notes = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = 1
-	`, current.Label, current.StartDate, current.EndDate, current.Status, current.Notes, current.UpdatedAt, merchantID, weekID)
+	`, current.Label, current.StartDate, current.EndDate, current.Status, current.PublishedAt, current.Notes, current.UpdatedAt, merchantID, weekID)
 	if err != nil {
 		return nil, err
 	}
 	return current, nil
+}
+
+func (r *Repository) PublishPlanningWeek(ctx context.Context, merchantID, weekID string, publishedAt time.Time) (*PlanningWeek, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	res, err := db.ExecContext(ctx, `
+		UPDATE planning_weeks
+		SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`, publishedAt, publishedAt, merchantID, weekID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetPlanningWeekByID(ctx, merchantID, weekID)
+}
+
+func (r *Repository) UnpublishPlanningWeek(ctx context.Context, merchantID, weekID string) (*PlanningWeek, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	now := time.Now().UTC()
+	res, err := db.ExecContext(ctx, `
+		UPDATE planning_weeks
+		SET status = 'draft', published_at = NULL, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+	`, now, merchantID, weekID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetPlanningWeekByID(ctx, merchantID, weekID)
 }
 
 func (r *Repository) SoftDeletePlanningWeek(ctx context.Context, merchantID, weekID string) error {
@@ -305,12 +349,17 @@ type scannableRows interface {
 func scanPlanningWeekRow(row scannable) (*PlanningWeek, error) {
 	week := &PlanningWeek{}
 	var label, notes sql.NullString
+	var publishedAt sql.NullTime
 	var deletedAt sql.NullTime
-	if err := row.Scan(&week.ID, &week.MerchantID, &label, &week.StartDate, &week.EndDate, &week.Status, &notes, &week.CreatedAt, &week.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&week.ID, &week.MerchantID, &label, &week.StartDate, &week.EndDate, &week.Status, &publishedAt, &notes, &week.CreatedAt, &week.UpdatedAt, &deletedAt); err != nil {
 		return nil, err
 	}
 	if label.Valid {
 		week.Label = &label.String
+	}
+	if publishedAt.Valid {
+		t := publishedAt.Time
+		week.PublishedAt = &t
 	}
 	if notes.Valid {
 		week.Notes = &notes.String

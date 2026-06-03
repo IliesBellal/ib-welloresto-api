@@ -75,6 +75,26 @@ func (h *Handler) DeletePlanningWeek(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "planning", "delete_planning_week", map[string]interface{}{"status": "success"})
 }
 
+func (h *Handler) PublishPlanningWeek(w http.ResponseWriter, r *http.Request) {
+	weekID := strings.TrimSpace(chi.URLParam(r, "id"))
+	week, err := h.svc.PublishPlanningWeek(r.Context(), weekID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "publish_planning_week", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "publish_planning_week", map[string]interface{}{"status": "success", "week": week})
+}
+
+func (h *Handler) UnpublishPlanningWeek(w http.ResponseWriter, r *http.Request) {
+	weekID := strings.TrimSpace(chi.URLParam(r, "id"))
+	week, err := h.svc.UnpublishPlanningWeek(r.Context(), weekID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "unpublish_planning_week", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "unpublish_planning_week", map[string]interface{}{"status": "success", "week": week})
+}
+
 func (h *Handler) ListPlanningShifts(w http.ResponseWriter, r *http.Request) {
 	weekID := strings.TrimSpace(chi.URLParam(r, "id"))
 	items, err := h.svc.ListPlanningShifts(r.Context(), weekID)

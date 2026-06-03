@@ -786,6 +786,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/weeks/{id}", planningH.GetPlanningWeek)
 		r.Patch("/weeks/{id}", planningH.UpdatePlanningWeek)
 		r.Delete("/weeks/{id}", planningH.DeletePlanningWeek)
+		r.Post("/weeks/{id}/publish", planningH.PublishPlanningWeek)
+		r.Post("/weeks/{id}/unpublish", planningH.UnpublishPlanningWeek)
 		r.Get("/weeks/{id}/shifts", planningH.ListPlanningShifts)
 		r.Post("/weeks/{id}/shifts", planningH.CreatePlanningShift)
 		r.Get("/shifts", planningH.ListPlanningShiftsByDateRange)
