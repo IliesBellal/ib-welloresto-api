@@ -26,6 +26,60 @@ func NewService(repo *Repository, employeeRepo EmployeeReader) *Service {
 	return &Service{repo: repo, employeeRepo: employeeRepo}
 }
 
+func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", models.ErrUnauthorized
+	}
+	employeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, "me", user.MerchantRightsID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err != nil {
+		return "", models.ErrPlanningEmployeeNotFound
+	}
+	return employeeID, nil
+}
+
+func (s *Service) ListCurrentUserLeaveRequests(ctx context.Context, status string) ([]PlanningLeaveRequestSelfView, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	employeeID, err := s.ResolveCurrentEmployeeID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(status) != "" && !sharedpkg.IsValidPlanningLeaveStatus(strings.TrimSpace(status)) {
+		return nil, models.ErrPlanningLeaveStatusInvalid
+	}
+	items, _, err := s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, PlanningLeaveRequestListFilters{
+		EmployeeID: employeeID,
+		Status:     strings.TrimSpace(status),
+		Page:       1,
+		PageSize:   200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]PlanningLeaveRequestSelfView, len(items))
+	for i, item := range items {
+		result[i] = PlanningLeaveRequestSelfView{
+			ID:          item.ID,
+			EmployeeID:  item.EmployeeID,
+			LeaveType:   item.LeaveType,
+			StartDate:   item.StartDate,
+			EndDate:     item.EndDate,
+			Status:      item.Status,
+			Reason:      item.Reason,
+			ManagerNote: item.ManagerNote,
+			ProcessedAt: item.ProcessedAt,
+			CreatedAt:   item.CreatedAt,
+		}
+	}
+	return result, nil
+}
+
 func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

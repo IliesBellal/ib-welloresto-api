@@ -19,6 +19,16 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+func (h *Handler) ListCurrentUserLeaveRequests(w http.ResponseWriter, r *http.Request) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	items, err := h.svc.ListCurrentUserLeaveRequests(r.Context(), status)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_current_user_leave_requests", map[string]interface{}{"status": "success", "leave_requests": items})
+}
+
 func (h *Handler) ListPlanningLeaveRequests(w http.ResponseWriter, r *http.Request) {
 	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
 	if err != nil {

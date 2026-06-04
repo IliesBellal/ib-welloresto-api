@@ -103,3 +103,53 @@ type PlanningLeaveRequestUpdateRequest struct {
 	Reason      *string `json:"reason,omitempty"`
 	ManagerNote *string `json:"manager_note,omitempty"`
 }
+
+// PlanningLeaveRequestSelfView is the employee-facing DTO for /planning/me/leave-requests.
+// It deliberately omits internal user IDs (requested_by_user_id, processed_by_user_id)
+// and exposes manager_note only when the request has been processed (approved/rejected).
+type PlanningLeaveRequestSelfView struct {
+	ID          string     `json:"id"`
+	EmployeeID  string     `json:"employee_id"`
+	LeaveType   string     `json:"leave_type"`
+	StartDate   time.Time  `json:"-"`
+	EndDate     time.Time  `json:"-"`
+	Status      string     `json:"status"`
+	Reason      *string    `json:"reason,omitempty"`
+	ManagerNote *string    `json:"-"` // conditionally exposed via MarshalJSON
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+func (v PlanningLeaveRequestSelfView) MarshalJSON() ([]byte, error) {
+	type selfViewJSON struct {
+		ID          string     `json:"id"`
+		EmployeeID  string     `json:"employee_id"`
+		LeaveType   string     `json:"leave_type"`
+		StartDate   string     `json:"start_date"`
+		EndDate     string     `json:"end_date"`
+		Status      string     `json:"status"`
+		Reason      *string    `json:"reason,omitempty"`
+		ManagerNote *string    `json:"manager_note,omitempty"`
+		ProcessedAt *time.Time `json:"processed_at,omitempty"`
+		CreatedAt   time.Time  `json:"created_at"`
+	}
+
+	// Expose manager_note only when the request has been processed.
+	var managerNote *string
+	if v.Status == "approved" || v.Status == "rejected" {
+		managerNote = v.ManagerNote
+	}
+
+	return json.Marshal(selfViewJSON{
+		ID:          v.ID,
+		EmployeeID:  v.EmployeeID,
+		LeaveType:   v.LeaveType,
+		StartDate:   formatPlanningLeaveDateOnly(v.StartDate),
+		EndDate:     formatPlanningLeaveDateOnly(v.EndDate),
+		Status:      v.Status,
+		Reason:      v.Reason,
+		ManagerNote: managerNote,
+		ProcessedAt: v.ProcessedAt,
+		CreatedAt:   v.CreatedAt,
+	})
+}
