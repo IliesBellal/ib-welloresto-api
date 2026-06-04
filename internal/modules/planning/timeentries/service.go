@@ -22,6 +22,9 @@ type EmployeeReader interface {
 
 type ShiftReader interface {
 	GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*schedulepkg.PlanningShift, error)
+	GetPlanningWeekByID(ctx context.Context, merchantID, weekID string) (*schedulepkg.PlanningWeek, error)
+	GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*schedulepkg.PlanningWeek, error)
+	ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShift, error)
 }
 
 type SettingsReader interface {
@@ -53,6 +56,65 @@ func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) 
 		return "", models.ErrPlanningEmployeeNotFound
 	}
 	return employeeID, nil
+}
+
+func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRaw, weekIDRaw string) (string, string, []schedulepkg.PlanningShift, error) {
+	currentEmployeeID, err := s.ResolveCurrentEmployeeID(ctx)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	if s.shiftRepo == nil {
+		return "", "", nil, models.ErrInternalServerError
+	}
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", "", nil, models.ErrUnauthorized
+	}
+
+	weekID := strings.TrimSpace(weekIDRaw)
+	weekStart := strings.TrimSpace(weekStartRaw)
+
+	var week *schedulepkg.PlanningWeek
+	if weekID != "" {
+		week, err = s.shiftRepo.GetPlanningWeekByID(ctx, user.MerchantID, weekID)
+		if err == sql.ErrNoRows {
+			return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+		}
+		if err != nil {
+			return "", "", nil, err
+		}
+	} else {
+		if weekStart == "" {
+			return "", "", nil, models.ErrPlanningInvalidDate
+		}
+		startDate, parseErr := sharedpkg.ParsePlanningDate(weekStart)
+		if parseErr != nil {
+			return "", "", nil, parseErr
+		}
+		week, err = s.shiftRepo.GetPlanningWeekByStartDate(ctx, user.MerchantID, startDate, "")
+		if err == sql.ErrNoRows {
+			return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+		}
+		if err != nil {
+			return "", "", nil, err
+		}
+	}
+
+	if week == nil || strings.TrimSpace(week.ID) == "" {
+		return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(week.Status), "published") {
+		return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+	}
+
+	items, err := s.shiftRepo.ListPlanningShifts(ctx, user.MerchantID, week.ID)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	return currentEmployeeID, week.ID, items, nil
 }
 
 func (s *Service) ListPlanningTimeEntries(ctx context.Context, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, models.PaginationMetadata, error) {

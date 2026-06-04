@@ -738,6 +738,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/time-entries/current", planningH.GetCurrentUserTimeEntry)
 		r.Post("/time-entries/start", planningH.StartCurrentUserTimeEntry)
 		r.Post("/time-entries/stop", planningH.StopCurrentUserTimeEntry)
+		r.Get("/team-week", planningH.ListCurrentUserTeamWeekShifts)
 	})
 
 	r.Route("/planning", func(r chi.Router) {

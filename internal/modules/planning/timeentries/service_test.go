@@ -2,6 +2,7 @@ package timeentries
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
+	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 )
 
@@ -40,6 +42,122 @@ type stubSettingsReader struct {
 
 func (s stubSettingsReader) GetOrCreateSettings(ctx context.Context, merchantID string) (*settingspkg.PlanningSettings, error) {
 	return s.settings, s.err
+}
+
+type stubShiftReader struct {
+	weekByID       *schedulepkg.PlanningWeek
+	weekByIDErr    error
+	weekByStart    *schedulepkg.PlanningWeek
+	weekByStartErr error
+	shifts         []schedulepkg.PlanningShift
+	shiftsErr      error
+}
+
+func (s stubShiftReader) GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*schedulepkg.PlanningShift, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s stubShiftReader) GetPlanningWeekByID(ctx context.Context, merchantID, weekID string) (*schedulepkg.PlanningWeek, error) {
+	return s.weekByID, s.weekByIDErr
+}
+
+func (s stubShiftReader) GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*schedulepkg.PlanningWeek, error) {
+	return s.weekByStart, s.weekByStartErr
+}
+
+func (s stubShiftReader) ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShift, error) {
+	return s.shifts, s.shiftsErr
+}
+
+func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *testing.T) {
+	repo := NewRepository(nil)
+	svc := NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp_me"},
+		memberEmployeeID: "emp_me",
+	}, stubShiftReader{
+		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "published"},
+		shifts: []schedulepkg.PlanningShift{
+			{ID: "shift_1", WeekID: "week_1", EmployeeID: stringPtr("emp_me"), Title: "Ouverture", StartTime: "09:00:00", EndTime: "12:00:00", Status: "planned"},
+			{ID: "shift_2", WeekID: "week_1", EmployeeID: stringPtr("emp_2"), Title: "Service", StartTime: "12:00:00", EndTime: "16:00:00", Status: "planned"},
+		},
+	}, nil, nil)
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
+	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	if err != nil {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
+	}
+	if currentEmployeeID != "emp_me" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() currentEmployeeID = %q, want emp_me", currentEmployeeID)
+	}
+	if weekID != "week_1" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() weekID = %q, want week_1", weekID)
+	}
+	if len(items) != 2 {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() len = %d, want 2", len(items))
+	}
+}
+
+func TestServiceListCurrentUserTeamWeekShiftsDraftWeekReturnsEmpty(t *testing.T) {
+	repo := NewRepository(nil)
+	svc := NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp_me"},
+		memberEmployeeID: "emp_me",
+	}, stubShiftReader{
+		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "draft"},
+		shifts: []schedulepkg.PlanningShift{
+			{ID: "shift_1", WeekID: "week_1", Title: "Ouverture"},
+		},
+	}, nil, nil)
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
+	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	if err != nil {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
+	}
+	if currentEmployeeID != "emp_me" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() currentEmployeeID = %q, want emp_me", currentEmployeeID)
+	}
+	if weekID != "" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() weekID = %q, want empty", weekID)
+	}
+	if len(items) != 0 {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() len = %d, want 0", len(items))
+	}
+}
+
+func TestServiceListCurrentUserTeamWeekShiftsMissingWeekReturnsEmpty(t *testing.T) {
+	repo := NewRepository(nil)
+	svc := NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp_me"},
+		memberEmployeeID: "emp_me",
+	}, stubShiftReader{weekByStartErr: sql.ErrNoRows}, nil, nil)
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
+	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	if err != nil {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
+	}
+	if currentEmployeeID != "emp_me" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() currentEmployeeID = %q, want emp_me", currentEmployeeID)
+	}
+	if weekID != "" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() weekID = %q, want empty", weekID)
+	}
+	if len(items) != 0 {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() len = %d, want 0", len(items))
+	}
+}
+
+func TestServiceListCurrentUserTeamWeekShiftsRequiresLinkedEmployee(t *testing.T) {
+	repo := NewRepository(nil)
+	svc := NewService(repo, stubEmployeeReader{memberErr: sql.ErrNoRows}, stubShiftReader{}, nil, nil)
+
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
+	_, _, _, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	if !errors.Is(err, models.ErrPlanningEmployeeNotFound) {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v, want %v", err, models.ErrPlanningEmployeeNotFound)
+	}
 }
 
 func TestServiceGetCurrentEmployeeTimeEntryResolvesCurrentMemberEmployee(t *testing.T) {

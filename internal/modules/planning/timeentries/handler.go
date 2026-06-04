@@ -225,3 +225,21 @@ func (h *Handler) StopCurrentUserTimeEntry(w http.ResponseWriter, r *http.Reques
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "stop_current_user_time_entry", map[string]interface{}{"status": "success", "time_entry": entry})
 }
+
+func (h *Handler) ListCurrentUserTeamWeekShifts(w http.ResponseWriter, r *http.Request) {
+	weekStart := strings.TrimSpace(r.URL.Query().Get("week_start"))
+	weekID := strings.TrimSpace(r.URL.Query().Get("week_id"))
+
+	currentEmployeeID, resolvedWeekID, items, err := h.svc.ListCurrentUserTeamWeekShifts(r.Context(), weekStart, weekID)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_current_user_team_week_shifts", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "planning", "list_current_user_team_week_shifts", map[string]interface{}{
+		"status":              "success",
+		"current_employee_id": currentEmployeeID,
+		"week_id":             resolvedWeekID,
+		"shifts":              items,
+	})
+}

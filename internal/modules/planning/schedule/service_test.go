@@ -424,6 +424,54 @@ func TestServiceListPlanningShiftsByDateRangeRejectsTooWideRange(t *testing.T) {
 	}
 }
 
+func TestServiceListPlanningShiftsManagerStillReadsDraftWeek(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{}, stubPositionReader{}, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
+	now := time.Now().UTC()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		LIMIT 1
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
+		))
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
+			position, location, notes, status, created_at, updated_at, deleted_at
+		FROM planning_shifts
+		WHERE merchant_id = ? AND week_id = ? AND enabled = 1
+		ORDER BY shift_date ASC, start_time ASC, created_at ASC
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(shiftRows().AddRow(
+			"shift_1", "merchant_1", "week_1", "emp_1", nil, "Ouverture", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", now, now, nil,
+		))
+
+	items, err := svc.ListPlanningShifts(ctx, "week_1")
+	if err != nil {
+		t.Fatalf("ListPlanningShifts() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("ListPlanningShifts() len = %d, want 1", len(items))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestServicePublishPlanningWeek(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
