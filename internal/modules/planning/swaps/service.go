@@ -285,7 +285,7 @@ func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, 
 	if err != nil {
 		return err
 	}
-	if employee.ID == "" || *employee.MemberID != currentMemberID {
+	if employee.MemberID == nil || *employee.MemberID != currentMemberID {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
 	return nil
