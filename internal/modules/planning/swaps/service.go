@@ -16,7 +16,7 @@ import (
 
 type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
-	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error)
 }
 
 type ShiftReader interface {
@@ -249,8 +249,8 @@ func (s *Service) getShiftSwapApprovalMode(ctx context.Context, merchantID strin
 	return mode, nil
 }
 
-func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID string, currentMemberID int64) error {
-	if currentMemberID == 0 {
+func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID, currentMemberID string) error {
+	if currentMemberID == "" {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
 	employee, err := s.employeeRepo.GetEmployeeByID(ctx, merchantID, targetEmployeeID)

@@ -113,7 +113,7 @@ type UserLoginRow struct {
 	// Token de droits
 	Token            string
 	MerchantID       string
-	MerchantRightsID int64
+	MerchantRightsID string
 	LoginEnabled     bool
 
 	// Merchant Info

@@ -29,7 +29,7 @@ func (s stubEmployeeReader) GetEmployeeByID(ctx context.Context, merchantID, emp
 	return s.employee, s.employeeErr
 }
 
-func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error) {
+func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error) {
 	return s.memberEmployeeID, s.memberErr
 }
 
@@ -69,7 +69,7 @@ func TestServiceGetCurrentEmployeeTimeEntryResolvesCurrentMemberEmployee(t *test
 			"entry_1", "merchant_1", "emp_1", nil, "pointage", now, nil, nil, nil, nil, nil, nil, now, now, nil,
 		))
 
-	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42})
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
 	item, err := svc.GetCurrentEmployeeTimeEntry(ctx, "me")
 	if err != nil {
 		t.Fatalf("GetCurrentEmployeeTimeEntry() error = %v", err)
@@ -142,7 +142,7 @@ func TestServiceListPlanningTimeEntriesResolvesCurrentMemberEmployee(t *testing.
 			"entry_1", "merchant_1", "emp_1", nil, "pointage", now, nil, nil, nil, nil, nil, nil, now, now, nil,
 		))
 
-	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42})
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
 	items, metadata, err := svc.ListPlanningTimeEntries(ctx, PlanningTimeEntryListFilters{From: "2026-05-01", To: "2026-05-07", EmployeeID: "me"})
 	if err != nil {
 		t.Fatalf("ListPlanningTimeEntries() error = %v", err)

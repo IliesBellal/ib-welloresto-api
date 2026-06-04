@@ -13,7 +13,7 @@ import (
 var planningHexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 type PlanningMemberEmployeeIDResolver interface {
-	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error)
 }
 
 func ParsePlanningDateRange(startDateRaw, endDateRaw string) (time.Time, time.Time, error) {
@@ -164,12 +164,12 @@ func IsCurrentPlanningEmployeeReference(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "me")
 }
 
-func ResolvePlanningEmployeeID(ctx context.Context, resolver PlanningMemberEmployeeIDResolver, merchantID, requestedEmployeeID string, currentMemberID int64) (string, error) {
+func ResolvePlanningEmployeeID(ctx context.Context, resolver PlanningMemberEmployeeIDResolver, merchantID, requestedEmployeeID, currentMemberID string) (string, error) {
 	employeeID := strings.TrimSpace(requestedEmployeeID)
 	if !IsCurrentPlanningEmployeeReference(employeeID) {
 		return employeeID, nil
 	}
-	if currentMemberID == 0 {
+	if currentMemberID == "" {
 		return "", models.ErrPlanningEmployeeNotFound
 	}
 	resolvedEmployeeID, err := resolver.GetEmployeeIDByMemberID(ctx, merchantID, currentMemberID)

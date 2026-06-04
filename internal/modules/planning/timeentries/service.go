@@ -17,7 +17,7 @@ import (
 
 type EmployeeReader interface {
 	GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*employeespkg.Employee, error)
-	GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error)
+	GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error)
 }
 
 type ShiftReader interface {

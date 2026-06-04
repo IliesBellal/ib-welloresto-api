@@ -19,7 +19,7 @@ type Employee struct {
 	ID                     string     `json:"id"`
 	MerchantID             string     `json:"merchant_id"`
 	UserID                 *string    `json:"user_id,omitempty"`
-	MemberID               *int64     `json:"-"`
+	MemberID               *string    `json:"-"`
 	FirstName              string     `json:"first_name"`
 	LastName               string     `json:"last_name"`
 	PositionID             string     `json:"position_id"`
@@ -71,7 +71,7 @@ type EmployeeUserLinkRequest struct {
 
 type EmployeeCreateRequest struct {
 	UserID                 *string    `json:"user_id,omitempty"`
-	MemberID               *int64     `json:"-"`
+	MemberID               *string    `json:"-"`
 	FirstName              string     `json:"first_name"`
 	LastName               string     `json:"last_name"`
 	PositionID             string     `json:"position_id"`

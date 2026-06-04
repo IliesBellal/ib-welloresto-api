@@ -37,7 +37,7 @@ func (s stubEmployeeReader) GetEmployeeByID(ctx context.Context, merchantID, emp
 	return s.employee, s.err
 }
 
-func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error) {
+func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error) {
 	return s.memberEmployeeID, s.memberEmployeeErr
 }
 
@@ -78,7 +78,7 @@ func TestServiceUpdatePlanningShiftSwapRequestAllowsTargetEmployeeApprovalByMemb
 	defer db.Close()
 
 	repo := NewRepository(db)
-	memberID := int64(42)
+	memberID := "42"
 	svc := NewService(
 		repo,
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_target", MemberID: &memberID}},
@@ -134,7 +134,7 @@ func TestServiceUpdatePlanningShiftSwapRequestRejectsMismatchedMemberID(t *testi
 	defer db.Close()
 
 	repo := NewRepository(db)
-	targetMemberID := int64(7)
+	targetMemberID := "7"
 	svc := NewService(
 		repo,
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_target", MemberID: &targetMemberID}},
@@ -157,7 +157,7 @@ func TestServiceUpdatePlanningShiftSwapRequestRejectsMismatchedMemberID(t *testi
 		))
 
 	status := "rejected"
-	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42})
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
 	_, err = svc.UpdatePlanningShiftSwapRequest(ctx, "swap_1", PlanningShiftSwapRequestUpdateRequest{Status: &status})
 	if err != models.ErrPlanningShiftSwapApprovalForbidden {
 		t.Fatalf("UpdatePlanningShiftSwapRequest() error = %v, want %v", err, models.ErrPlanningShiftSwapApprovalForbidden)
@@ -176,7 +176,7 @@ func TestServiceCreatePlanningShiftSwapRequestResolvesCurrentMemberEmployee(t *t
 	defer db.Close()
 
 	repo := NewRepository(db)
-	memberID := int64(42)
+	memberID := "42"
 	requesterEmployeeID := "emp_requester"
 	targetEmployeeID := "emp_target"
 	svc := NewService(

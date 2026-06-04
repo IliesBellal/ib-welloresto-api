@@ -57,7 +57,7 @@ func TestHandlerStartCurrentUserTimeEntrySuccess(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/planning/me/time-entries/start", bytes.NewBufferString(`{}`))
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.StartCurrentUserTimeEntry(rec, req)
@@ -126,7 +126,7 @@ func TestHandlerStopCurrentUserTimeEntrySuccess(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/planning/me/time-entries/stop", bytes.NewBufferString(`{}`))
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.StopCurrentUserTimeEntry(rec, req)
@@ -175,7 +175,7 @@ func TestHandlerGetCurrentUserTimeEntrySuccess(t *testing.T) {
 		))
 
 	req := httptest.NewRequest(http.MethodGet, "/planning/me/time-entries/current", nil)
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.GetCurrentUserTimeEntry(rec, req)
@@ -235,7 +235,7 @@ func TestHandlerListCurrentUserTimeEntriesSuccess(t *testing.T) {
 		))
 
 	req := httptest.NewRequest(http.MethodGet, "/planning/me/time-entries?date=2026-06-01", nil)
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.ListCurrentUserTimeEntries(rec, req)
@@ -264,7 +264,7 @@ func TestHandlerCurrentUserTimeEntryRequiresLinkedEmployee(t *testing.T) {
 	handler := NewHandler(svc)
 
 	req := httptest.NewRequest(http.MethodGet, "/planning/me/time-entries/current", nil)
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.GetCurrentUserTimeEntry(rec, req)
@@ -309,7 +309,7 @@ func TestHandlerStartCurrentUserTimeEntryRejectsAlreadyOpen(t *testing.T) {
 		))
 
 	req := httptest.NewRequest(http.MethodPost, "/planning/me/time-entries/start", bytes.NewBufferString(`{}`))
-	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42}))
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
 	rec := httptest.NewRecorder()
 
 	handler.StartCurrentUserTimeEntry(rec, req)

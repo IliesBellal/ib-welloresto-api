@@ -136,15 +136,16 @@ func (r *Repository) IsMerchantUserLinked(ctx context.Context, merchantID, userI
 	return count > 0, nil
 }
 
-func (r *Repository) GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error) {
+func (r *Repository) GetEmployeeIDByMemberID(ctx context.Context, merchantID, userID string) (string, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	var employeeID string
 	err := db.QueryRowContext(ctx, `
-		SELECT id
-		FROM employees
-		WHERE merchant_id = ? AND member_id = ? AND enabled = 1
+		SELECT emp.id
+		FROM employees emp
+		INNER JOIN users_rights ur ON ur.user_id = emp.user_id AND ur.merchant_id = emp.merchant_id AND ur.enabled = 1
+		WHERE emp.merchant_id = ? AND emp.user_id = ? AND emp.enabled = 1 AND ur.enabled = 1
 		LIMIT 1
-	`, merchantID, memberID).Scan(&employeeID)
+	`, merchantID, userID).Scan(&employeeID)
 	if err != nil {
 		return "", err
 	}

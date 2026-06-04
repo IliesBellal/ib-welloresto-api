@@ -23,7 +23,7 @@ func (s stubEmployeeReader) GetEmployeeByID(ctx context.Context, merchantID, emp
 	return s.employee, s.employeeErr
 }
 
-func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID string, memberID int64) (string, error) {
+func (s stubEmployeeReader) GetEmployeeIDByMemberID(ctx context.Context, merchantID, memberID string) (string, error) {
 	return s.memberEmployeeID, s.memberErr
 }
 
@@ -49,7 +49,7 @@ func TestServiceCreatePlanningLeaveRequestResolvesCurrentMemberEmployee(t *testi
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1", "paid", sqlmock.AnyArg(), sqlmock.AnyArg(), "pending", nil, nil, "user_1", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: 42})
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
 	item, err := svc.CreatePlanningLeaveRequest(ctx, PlanningLeaveRequestCreateRequest{
 		EmployeeID: "me",
 		LeaveType:  "paid",
