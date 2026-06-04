@@ -408,6 +408,7 @@ func scanEmployeeRow(row scannable) (*Employee, error) {
 	item.EmployerChargesPct = employerChargesPct.Float64
 	item.TransportCost = transportCost.Int64
 	item.Active = active.Bool
+	item.MemberID = &item.ID
 	if deletedAt.Valid {
 		t := deletedAt.Time
 		item.DeletedAt = &t
