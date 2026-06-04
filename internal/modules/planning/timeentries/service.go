@@ -40,6 +40,21 @@ func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftRe
 	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, settingsRepo: settingsRepo, auditService: auditService}
 }
 
+func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", models.ErrUnauthorized
+	}
+	employeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, "me", user.MerchantRightsID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, employeeID); err != nil {
+		return "", models.ErrPlanningEmployeeNotFound
+	}
+	return employeeID, nil
+}
+
 func (s *Service) ListPlanningTimeEntries(ctx context.Context, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

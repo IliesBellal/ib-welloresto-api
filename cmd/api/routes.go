@@ -731,6 +731,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 
 	// --- PLANNING ---
+	r.Route("/planning/me", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/time-entries", planningH.ListCurrentUserTimeEntries)
+		r.Get("/time-entries/current", planningH.GetCurrentUserTimeEntry)
+		r.Post("/time-entries/start", planningH.StartCurrentUserTimeEntry)
+		r.Post("/time-entries/stop", planningH.StopCurrentUserTimeEntry)
+	})
+
 	r.Route("/planning", func(r chi.Router) {
 		r.Use(authMiddleware)
 		r.Use(middleware.RequirePermission(middleware.HasPlanningAccess))

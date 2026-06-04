@@ -39,6 +39,7 @@ SELECT
     u.profile_picture,
 	u.email_verified_at,
 
+	ur.id AS merchant_rights_id,
     ur.token AS rights_token,
     ur.access_wrreception,
     ur.access_wrdelivery,
@@ -136,6 +137,7 @@ LIMIT 1;
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
 		&data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
 
+		&data.MerchantRightsID,
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.Rights.Admin,
 		&data.Rights.CanManageMenu, &data.Rights.CanManagePlannings, &data.Rights.CanManageUsers,
@@ -191,6 +193,7 @@ SELECT
     u.password,
 	u.email_verified_at,
 
+	ur.id AS merchant_rights_id,
     ur.token AS rights_token,
     ur.access_wrreception,
     ur.access_wrdelivery,
@@ -302,6 +305,7 @@ LIMIT 1;
 		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture,
 		&data.TermsOfUseAccepted, &data.Password, &data.EmailVerifiedAt,
 
+		&data.MerchantRightsID,
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
 		&data.Rights.PrintMerchantCashReport, &data.Rights.OpenCashDrawer, &data.Rights.Admin,
 		&data.Rights.CanManageMenu, &data.Rights.CanManagePlannings, &data.Rights.CanManageUsers,
