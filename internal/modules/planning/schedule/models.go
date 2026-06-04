@@ -121,6 +121,30 @@ type PlanningShift struct {
 	DeletedAt    *time.Time      `json:"deleted_at,omitempty"`
 }
 
+// PlanningShiftTeamWeekView is used by employee self team-week reads.
+// It preserves base shift fields and adds lightweight display metadata.
+type PlanningShiftTeamWeekView struct {
+	ID            string          `json:"id"`
+	MerchantID    string          `json:"merchant_id"`
+	WeekID        string          `json:"week_id"`
+	EmployeeID    *string         `json:"employee_id"`
+	EmployeeName  *string         `json:"employee_name"`
+	PositionID    *string         `json:"position_id"`
+	Position      *string         `json:"position"`
+	PositionColor *string         `json:"position_color"`
+	Title         string          `json:"title"`
+	ShiftDate     models.DateOnly `json:"shift_date"`
+	StartTime     string          `json:"start_time"`
+	EndTime       string          `json:"end_time"`
+	BreakMinutes  int             `json:"break_minutes"`
+	Location      *string         `json:"location"`
+	Notes         *string         `json:"notes"`
+	Status        string          `json:"status"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	DeletedAt     *time.Time      `json:"deleted_at,omitempty"`
+}
+
 type PlanningShiftCreateRequest struct {
 	EmployeeID   *string `json:"employee_id,omitempty"`
 	PositionID   *string `json:"position_id,omitempty"`

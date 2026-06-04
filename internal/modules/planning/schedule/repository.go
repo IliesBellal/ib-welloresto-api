@@ -241,6 +241,35 @@ func (r *Repository) ListPlanningShiftsByDateRange(ctx context.Context, merchant
 	return items, rows.Err()
 }
 
+func (r *Repository) ListPlanningShiftsTeamWeekView(ctx context.Context, merchantID, weekID string) ([]PlanningShiftTeamWeekView, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.id, s.merchant_id, s.week_id, s.employee_id,
+			NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), '') AS employee_name,
+			s.position_id, s.title, s.shift_date, s.start_time, s.end_time, s.break_minutes,
+			s.position, p.color, s.location, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
+		FROM planning_shifts s
+		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = 1
+		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = 1
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = 1
+		ORDER BY s.shift_date ASC, s.start_time ASC, s.created_at ASC
+	`, merchantID, weekID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningShiftTeamWeekView, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningShiftTeamWeekView(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*PlanningShift, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
@@ -406,4 +435,63 @@ func scanPlanningShiftRow(row scannable) (*PlanningShift, error) {
 
 func scanPlanningShift(rows scannableRows) (*PlanningShift, error) {
 	return scanPlanningShiftRow(rows)
+}
+
+func scanPlanningShiftTeamWeekViewRow(row scannable) (*PlanningShiftTeamWeekView, error) {
+	shift := &PlanningShiftTeamWeekView{}
+	var employeeID, employeeName, positionID, position, positionColor, location, notes sql.NullString
+	var deletedAt sql.NullTime
+	if err := row.Scan(
+		&shift.ID,
+		&shift.MerchantID,
+		&shift.WeekID,
+		&employeeID,
+		&employeeName,
+		&positionID,
+		&shift.Title,
+		&shift.ShiftDate,
+		&shift.StartTime,
+		&shift.EndTime,
+		&shift.BreakMinutes,
+		&position,
+		&positionColor,
+		&location,
+		&notes,
+		&shift.Status,
+		&shift.CreatedAt,
+		&shift.UpdatedAt,
+		&deletedAt,
+	); err != nil {
+		return nil, err
+	}
+	if employeeID.Valid {
+		shift.EmployeeID = &employeeID.String
+	}
+	if employeeName.Valid {
+		shift.EmployeeName = &employeeName.String
+	}
+	if positionID.Valid {
+		shift.PositionID = &positionID.String
+	}
+	if position.Valid {
+		shift.Position = &position.String
+	}
+	if positionColor.Valid {
+		shift.PositionColor = &positionColor.String
+	}
+	if location.Valid {
+		shift.Location = &location.String
+	}
+	if notes.Valid {
+		shift.Notes = &notes.String
+	}
+	if deletedAt.Valid {
+		t := deletedAt.Time
+		shift.DeletedAt = &t
+	}
+	return shift, nil
+}
+
+func scanPlanningShiftTeamWeekView(rows scannableRows) (*PlanningShiftTeamWeekView, error) {
+	return scanPlanningShiftTeamWeekViewRow(rows)
 }

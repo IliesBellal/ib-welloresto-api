@@ -49,7 +49,7 @@ type stubShiftReader struct {
 	weekByIDErr    error
 	weekByStart    *schedulepkg.PlanningWeek
 	weekByStartErr error
-	shifts         []schedulepkg.PlanningShift
+	teamShifts     []schedulepkg.PlanningShiftTeamWeekView
 	shiftsErr      error
 }
 
@@ -65,8 +65,8 @@ func (s stubShiftReader) GetPlanningWeekByStartDate(ctx context.Context, merchan
 	return s.weekByStart, s.weekByStartErr
 }
 
-func (s stubShiftReader) ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShift, error) {
-	return s.shifts, s.shiftsErr
+func (s stubShiftReader) ListPlanningShiftsTeamWeekView(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShiftTeamWeekView, error) {
+	return s.teamShifts, s.shiftsErr
 }
 
 func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *testing.T) {
@@ -76,7 +76,7 @@ func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *t
 		memberEmployeeID: "emp_me",
 	}, stubShiftReader{
 		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "published"},
-		shifts: []schedulepkg.PlanningShift{
+		teamShifts: []schedulepkg.PlanningShiftTeamWeekView{
 			{ID: "shift_1", WeekID: "week_1", EmployeeID: stringPtr("emp_me"), Title: "Ouverture", StartTime: "09:00:00", EndTime: "12:00:00", Status: "planned"},
 			{ID: "shift_2", WeekID: "week_1", EmployeeID: stringPtr("emp_2"), Title: "Service", StartTime: "12:00:00", EndTime: "16:00:00", Status: "planned"},
 		},
@@ -105,7 +105,7 @@ func TestServiceListCurrentUserTeamWeekShiftsDraftWeekReturnsEmpty(t *testing.T)
 		memberEmployeeID: "emp_me",
 	}, stubShiftReader{
 		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "draft"},
-		shifts: []schedulepkg.PlanningShift{
+		teamShifts: []schedulepkg.PlanningShiftTeamWeekView{
 			{ID: "shift_1", WeekID: "week_1", Title: "Ouverture"},
 		},
 	}, nil, nil)

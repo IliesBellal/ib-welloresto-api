@@ -24,7 +24,7 @@ type ShiftReader interface {
 	GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*schedulepkg.PlanningShift, error)
 	GetPlanningWeekByID(ctx context.Context, merchantID, weekID string) (*schedulepkg.PlanningWeek, error)
 	GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*schedulepkg.PlanningWeek, error)
-	ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShift, error)
+	ListPlanningShiftsTeamWeekView(ctx context.Context, merchantID, weekID string) ([]schedulepkg.PlanningShiftTeamWeekView, error)
 }
 
 type SettingsReader interface {
@@ -58,7 +58,7 @@ func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) 
 	return employeeID, nil
 }
 
-func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRaw, weekIDRaw string) (string, string, []schedulepkg.PlanningShift, error) {
+func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRaw, weekIDRaw string) (string, string, []schedulepkg.PlanningShiftTeamWeekView, error) {
 	currentEmployeeID, err := s.ResolveCurrentEmployeeID(ctx)
 	if err != nil {
 		return "", "", nil, err
@@ -80,7 +80,7 @@ func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRa
 	if weekID != "" {
 		week, err = s.shiftRepo.GetPlanningWeekByID(ctx, user.MerchantID, weekID)
 		if err == sql.ErrNoRows {
-			return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
 		}
 		if err != nil {
 			return "", "", nil, err
@@ -95,7 +95,7 @@ func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRa
 		}
 		week, err = s.shiftRepo.GetPlanningWeekByStartDate(ctx, user.MerchantID, startDate, "")
 		if err == sql.ErrNoRows {
-			return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
 		}
 		if err != nil {
 			return "", "", nil, err
@@ -103,13 +103,13 @@ func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRa
 	}
 
 	if week == nil || strings.TrimSpace(week.ID) == "" {
-		return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
 	}
 	if !strings.EqualFold(strings.TrimSpace(week.Status), "published") {
-		return currentEmployeeID, "", []schedulepkg.PlanningShift{}, nil
+		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
 	}
 
-	items, err := s.shiftRepo.ListPlanningShifts(ctx, user.MerchantID, week.ID)
+	items, err := s.shiftRepo.ListPlanningShiftsTeamWeekView(ctx, user.MerchantID, week.ID)
 	if err != nil {
 		return "", "", nil, err
 	}

@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/modules/auth"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
+	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 )
 
@@ -319,6 +320,78 @@ func TestHandlerStartCurrentUserTimeEntryRejectsAlreadyOpen(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "planning_time_entry_already_open") {
 		t.Fatalf("StartCurrentUserTimeEntry() body = %s, want planning_time_entry_already_open", rec.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeName(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	shiftRepo := schedulepkg.NewRepository(db)
+	svc := NewService(
+		repo,
+		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}, memberEmployeeID: "emp_1"},
+		shiftRepo,
+		nil,
+		nil,
+	)
+	handler := NewHandler(svc)
+	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+		 ORDER BY created_at DESC LIMIT 1
+	`)).
+		WithArgs("merchant_1", "2026-06-01").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "published", now, nil, now, now, nil,
+		))
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT s.id, s.merchant_id, s.week_id, s.employee_id,
+			NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), '') AS employee_name,
+			s.position_id, s.title, s.shift_date, s.start_time, s.end_time, s.break_minutes,
+			s.position, p.color, s.location, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
+		FROM planning_shifts s
+		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = 1
+		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = 1
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = 1
+		ORDER BY s.shift_date ASC, s.start_time ASC, s.created_at ASC
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "merchant_id", "week_id", "employee_id", "employee_name", "position_id", "title", "shift_date", "start_time", "end_time", "break_minutes",
+			"position", "color", "location", "notes", "status", "created_at", "updated_at", "deleted_at",
+		}).AddRow(
+			"shift_1", "merchant_1", "week_1", "emp_2", "Alice Martin", "pos_1", "Service", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "10:00:00", "14:00:00", 30,
+			"Serveuse", "#3b82f6", "Salle", "Consignes", "planned", now, now, nil,
+		))
+
+	req := httptest.NewRequest(http.MethodGet, "/planning/me/team-week?week_start=2026-06-01", nil)
+	req = req.WithContext(middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"}))
+	rec := httptest.NewRecorder()
+
+	handler.ListCurrentUserTeamWeekShifts(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"position_color":"#3b82f6"`) {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() body = %s, want position_color", body)
+	}
+	if !strings.Contains(body, `"employee_name":"Alice Martin"`) {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() body = %s, want employee_name", body)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
