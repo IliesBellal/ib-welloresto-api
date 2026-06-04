@@ -274,9 +274,13 @@ func (s *Service) getShiftSwapApprovalMode(ctx context.Context, merchantID strin
 	return mode, nil
 }
 
-func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID, currentMemberID string) error {
-	if currentMemberID == "" {
+func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, targetEmployeeID, userID string) error {
+	if userID == "" {
 		return models.ErrPlanningShiftSwapApprovalForbidden
+	}
+	userID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, merchantID, "me", userID)
+	if err != nil {
+		return err
 	}
 	employee, err := s.employeeRepo.GetEmployeeByID(ctx, merchantID, targetEmployeeID)
 	if err == sql.ErrNoRows || employee == nil {
@@ -285,7 +289,7 @@ func (s *Service) ensureTargetEmployeeApproval(ctx context.Context, merchantID, 
 	if err != nil {
 		return err
 	}
-	if employee.MemberID == nil || *employee.MemberID != currentMemberID {
+	if employee.MemberID == nil || *employee.MemberID != userID {
 		return models.ErrPlanningShiftSwapApprovalForbidden
 	}
 	return nil
