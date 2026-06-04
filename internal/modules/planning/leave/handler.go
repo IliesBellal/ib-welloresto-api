@@ -19,6 +19,20 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+func (h *Handler) CreateCurrentUserLeaveRequest(w http.ResponseWriter, r *http.Request) {
+	var req PlanningLeaveRequestSelfCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "create_current_user_leave_request", models.ErrInvalidRequestBody)
+		return
+	}
+	item, err := h.svc.CreateCurrentUserLeaveRequest(r.Context(), req)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "create_current_user_leave_request", err)
+		return
+	}
+	models.SendJSON(w, http.StatusCreated, "planning", "create_current_user_leave_request", map[string]interface{}{"status": "success", "leave_request": item})
+}
+
 func (h *Handler) ListCurrentUserLeaveRequests(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	items, err := h.svc.ListCurrentUserLeaveRequests(r.Context(), status)

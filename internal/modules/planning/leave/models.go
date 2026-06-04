@@ -95,6 +95,16 @@ type PlanningLeaveRequestCreateRequest struct {
 	Reason     *string `json:"reason,omitempty"`
 }
 
+// PlanningLeaveRequestSelfCreateRequest is the employee-facing payload for
+// /planning/me/leave-requests. employee_id and status are intentionally absent
+// because both are controlled by the backend.
+type PlanningLeaveRequestSelfCreateRequest struct {
+	LeaveType string  `json:"leave_type"`
+	StartDate string  `json:"start_date"`
+	EndDate   string  `json:"end_date"`
+	Reason    *string `json:"reason,omitempty"`
+}
+
 type PlanningLeaveRequestUpdateRequest struct {
 	LeaveType   *string `json:"leave_type,omitempty"`
 	StartDate   *string `json:"start_date,omitempty"`

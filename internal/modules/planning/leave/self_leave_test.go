@@ -297,6 +297,115 @@ func TestServiceListCurrentUserLeaveRequestsStatusFilterApplied(t *testing.T) {
 	}
 }
 
+func TestServiceCreateCurrentUserLeaveRequestForcesPendingForTokenEmployee(t *testing.T) {
+	svc, mock, cleanup := newSelfLeaveService(t, &employeespkg.Employee{ID: "emp-1"}, "emp-1")
+	defer cleanup()
+
+	mock.ExpectExec("INSERT INTO planning_leave_requests").
+		WithArgs(
+			sqlmock.AnyArg(),
+			"m-1",
+			"emp-1",
+			"paid",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			"pending",
+			"vacances",
+			nil,
+			"u-1",
+			nil,
+			nil,
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ctx := newSelfLeaveCtx()
+	reason := "vacances"
+	item, err := svc.CreateCurrentUserLeaveRequest(ctx, PlanningLeaveRequestSelfCreateRequest{
+		LeaveType: "paid",
+		StartDate: "2026-07-01",
+		EndDate:   "2026-07-05",
+		Reason:    &reason,
+	})
+	if err != nil {
+		t.Fatalf("CreateCurrentUserLeaveRequest() error = %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected created item, got nil")
+	}
+	if item.EmployeeID != "emp-1" {
+		t.Fatalf("expected employee_id emp-1, got %s", item.EmployeeID)
+	}
+	if item.Status != "pending" {
+		t.Fatalf("expected status pending, got %s", item.Status)
+	}
+}
+
+func TestServiceCreateCurrentUserLeaveRequestInvalidTypeReturnsError(t *testing.T) {
+	svc, _, cleanup := newSelfLeaveService(t, &employeespkg.Employee{ID: "emp-1"}, "emp-1")
+	defer cleanup()
+
+	ctx := newSelfLeaveCtx()
+	_, err := svc.CreateCurrentUserLeaveRequest(ctx, PlanningLeaveRequestSelfCreateRequest{
+		LeaveType: "vacation",
+		StartDate: "2026-07-01",
+		EndDate:   "2026-07-05",
+	})
+	if err == nil {
+		t.Fatal("expected invalid type error, got nil")
+	}
+	if !strings.Contains(err.Error(), "planning_leave_type_invalid") {
+		t.Fatalf("expected planning_leave_type_invalid, got %v", err)
+	}
+}
+
+func TestServiceCreateCurrentUserLeaveRequestInvalidRangeReturnsError(t *testing.T) {
+	svc, _, cleanup := newSelfLeaveService(t, &employeespkg.Employee{ID: "emp-1"}, "emp-1")
+	defer cleanup()
+
+	ctx := newSelfLeaveCtx()
+	_, err := svc.CreateCurrentUserLeaveRequest(ctx, PlanningLeaveRequestSelfCreateRequest{
+		LeaveType: "paid",
+		StartDate: "2026-07-10",
+		EndDate:   "2026-07-05",
+	})
+	if err == nil {
+		t.Fatal("expected invalid range error, got nil")
+	}
+	if !strings.Contains(err.Error(), "planning_leave_invalid_range") {
+		t.Fatalf("expected planning_leave_invalid_range, got %v", err)
+	}
+}
+
+func TestServiceCreateCurrentUserLeaveRequestUnlinkedEmployeeReturnsError(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	svc := NewService(repo, stubEmployeeReader{
+		employee:         nil,
+		employeeErr:      models.ErrPlanningEmployeeNotFound,
+		memberEmployeeID: "",
+	})
+
+	ctx := newSelfLeaveCtx()
+	_, err = svc.CreateCurrentUserLeaveRequest(ctx, PlanningLeaveRequestSelfCreateRequest{
+		LeaveType: "paid",
+		StartDate: "2026-07-01",
+		EndDate:   "2026-07-05",
+	})
+	if err == nil {
+		t.Fatal("expected planning_employee_not_found error, got nil")
+	}
+	if !strings.Contains(err.Error(), "planning_employee_not_found") {
+		t.Fatalf("expected planning_employee_not_found, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Handler tests
 // ---------------------------------------------------------------------------
@@ -413,6 +522,162 @@ func TestHandlerListCurrentUserLeaveRequestsUnlinkedEmployeeReturns422(t *testin
 
 	if rr.Code == http.StatusOK {
 		t.Fatalf("expected error status for unlinked employee, got 200")
+	}
+}
+
+func TestHandlerCreateCurrentUserLeaveRequestIgnoresEmployeeIDAndStatusFromBody(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	h := NewHandler(NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp-1"},
+		memberEmployeeID: "emp-1",
+	}))
+
+	mock.ExpectExec("INSERT INTO planning_leave_requests").
+		WithArgs(
+			sqlmock.AnyArg(),
+			"m-1",
+			"emp-1",
+			"paid",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			"pending",
+			"raison envoyee",
+			nil,
+			"u-1",
+			nil,
+			nil,
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	body := `{"employee_id":"emp-999","status":"approved","leave_type":"paid","start_date":"2026-07-01","end_date":"2026-07-05","reason":"raison envoyee"}`
+	req := httptest.NewRequest(http.MethodPost, "/planning/me/leave-requests", strings.NewReader(body))
+	ctx := middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+		UserID: "u-1", MerchantID: "m-1", MerchantRightsID: "member-1",
+	})
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	h.CreateCurrentUserLeaveRequest(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	data := envelope["data"].(map[string]interface{})
+	item := data["leave_request"].(map[string]interface{})
+
+	if item["employee_id"] != "emp-1" {
+		t.Fatalf("expected employee_id from token emp-1, got %v", item["employee_id"])
+	}
+	if item["status"] != "pending" {
+		t.Fatalf("expected forced pending status, got %v", item["status"])
+	}
+	if _, exists := item["requested_by_user_id"]; exists {
+		t.Fatalf("requested_by_user_id must not appear in self response")
+	}
+	if _, exists := item["processed_by_user_id"]; exists {
+		t.Fatalf("processed_by_user_id must not appear in self response")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestHandlerCreateCurrentUserLeaveRequestInvalidTypeReturnsError(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	h := NewHandler(NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp-1"},
+		memberEmployeeID: "emp-1",
+	}))
+
+	body := `{"leave_type":"vacation","start_date":"2026-07-01","end_date":"2026-07-05"}`
+	req := httptest.NewRequest(http.MethodPost, "/planning/me/leave-requests", strings.NewReader(body))
+	ctx := middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+		UserID: "u-1", MerchantID: "m-1", MerchantRightsID: "member-1",
+	})
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	h.CreateCurrentUserLeaveRequest(rr, req)
+
+	if rr.Code == http.StatusCreated {
+		t.Fatalf("expected error status for invalid type, got 201")
+	}
+}
+
+func TestHandlerCreateCurrentUserLeaveRequestInvalidRangeReturnsError(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	h := NewHandler(NewService(repo, stubEmployeeReader{
+		employee:         &employeespkg.Employee{ID: "emp-1"},
+		memberEmployeeID: "emp-1",
+	}))
+
+	body := `{"leave_type":"paid","start_date":"2026-07-10","end_date":"2026-07-05"}`
+	req := httptest.NewRequest(http.MethodPost, "/planning/me/leave-requests", strings.NewReader(body))
+	ctx := middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+		UserID: "u-1", MerchantID: "m-1", MerchantRightsID: "member-1",
+	})
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	h.CreateCurrentUserLeaveRequest(rr, req)
+
+	if rr.Code == http.StatusCreated {
+		t.Fatalf("expected error status for invalid range, got 201")
+	}
+}
+
+func TestHandlerCreateCurrentUserLeaveRequestUnlinkedEmployeeReturnsError(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewRepository(db)
+	h := NewHandler(NewService(repo, stubEmployeeReader{
+		employee:         nil,
+		employeeErr:      models.ErrPlanningEmployeeNotFound,
+		memberEmployeeID: "",
+	}))
+
+	body := `{"leave_type":"paid","start_date":"2026-07-01","end_date":"2026-07-05"}`
+	req := httptest.NewRequest(http.MethodPost, "/planning/me/leave-requests", strings.NewReader(body))
+	ctx := middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+		UserID: "u-1", MerchantID: "m-1", MerchantRightsID: "member-1",
+	})
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	h.CreateCurrentUserLeaveRequest(rr, req)
+
+	if rr.Code == http.StatusCreated {
+		t.Fatalf("expected error status for unlinked employee, got 201")
 	}
 }
 

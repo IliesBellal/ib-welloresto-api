@@ -64,20 +64,45 @@ func (s *Service) ListCurrentUserLeaveRequests(ctx context.Context, status strin
 	}
 	result := make([]PlanningLeaveRequestSelfView, len(items))
 	for i, item := range items {
-		result[i] = PlanningLeaveRequestSelfView{
-			ID:          item.ID,
-			EmployeeID:  item.EmployeeID,
-			LeaveType:   item.LeaveType,
-			StartDate:   item.StartDate,
-			EndDate:     item.EndDate,
-			Status:      item.Status,
-			Reason:      item.Reason,
-			ManagerNote: item.ManagerNote,
-			ProcessedAt: item.ProcessedAt,
-			CreatedAt:   item.CreatedAt,
-		}
+		result[i] = mapPlanningLeaveRequestToSelfView(item)
 	}
 	return result, nil
+}
+
+func (s *Service) CreateCurrentUserLeaveRequest(ctx context.Context, req PlanningLeaveRequestSelfCreateRequest) (*PlanningLeaveRequestSelfView, error) {
+	employeeID, err := s.ResolveCurrentEmployeeID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	created, err := s.CreatePlanningLeaveRequest(ctx, PlanningLeaveRequestCreateRequest{
+		EmployeeID: employeeID,
+		LeaveType:  req.LeaveType,
+		StartDate:  req.StartDate,
+		EndDate:    req.EndDate,
+		Reason:     req.Reason,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	view := mapPlanningLeaveRequestToSelfView(*created)
+	return &view, nil
+}
+
+func mapPlanningLeaveRequestToSelfView(item PlanningLeaveRequest) PlanningLeaveRequestSelfView {
+	return PlanningLeaveRequestSelfView{
+		ID:          item.ID,
+		EmployeeID:  item.EmployeeID,
+		LeaveType:   item.LeaveType,
+		StartDate:   item.StartDate,
+		EndDate:     item.EndDate,
+		Status:      item.Status,
+		Reason:      item.Reason,
+		ManagerNote: item.ManagerNote,
+		ProcessedAt: item.ProcessedAt,
+		CreatedAt:   item.CreatedAt,
+	}
 }
 
 func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, models.PaginationMetadata, error) {
