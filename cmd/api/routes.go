@@ -742,6 +742,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/leave-requests", planningH.ListCurrentUserLeaveRequests)
 		r.Post("/leave-requests", planningH.CreateCurrentUserLeaveRequest)
 		r.Get("/shift-swap-requests", planningH.ListCurrentUserShiftSwapRequests)
+		r.Post("/shift-swap-requests", planningH.CreateCurrentUserShiftSwapRequest)
+		r.Post("/shift-swap-requests/{id}/accept", planningH.AcceptPlanningShiftSwapRequest)
+		r.Post("/shift-swap-requests/{id}/reject", planningH.RejectPlanningShiftSwapRequest)
 	})
 
 	r.Route("/planning", func(r chi.Router) {

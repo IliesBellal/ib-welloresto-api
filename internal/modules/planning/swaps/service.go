@@ -257,6 +257,9 @@ func (s *Service) UpdatePlanningShiftSwapRequest(ctx context.Context, requestID 
 }
 
 func (s *Service) getShiftSwapApprovalMode(ctx context.Context, merchantID string) (string, error) {
+	if s.settingsRepo == nil {
+		return settingspkg.ShiftSwapApprovalModeManagerRequired, nil
+	}
 	settings, err := s.settingsRepo.GetOrCreateSettings(ctx, merchantID)
 	if err != nil {
 		return "", err
