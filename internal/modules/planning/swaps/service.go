@@ -43,6 +43,28 @@ func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftRe
 	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, conflictChecker: conflictChecker, settingsRepo: settingsRepo}
 }
 
+func (s *Service) ListCurrentUserShiftSwapRequests(ctx context.Context, status string) (string, []PlanningShiftSwapRequestSelfView, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", nil, models.ErrUnauthorized
+	}
+	currentEmployeeID, err := sharedpkg.ResolvePlanningEmployeeID(ctx, s.employeeRepo, user.MerchantID, "me", user.MerchantRightsID)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := s.employeeRepo.GetEmployeeByID(ctx, user.MerchantID, currentEmployeeID); err != nil {
+		return "", nil, models.ErrPlanningEmployeeNotFound
+	}
+	if strings.TrimSpace(status) != "" && !sharedpkg.IsValidPlanningShiftSwapStatus(strings.TrimSpace(status)) {
+		return "", nil, models.ErrPlanningShiftSwapStatusInvalid
+	}
+	items, err := s.repo.ListCurrentEmployeePlanningShiftSwapRequests(ctx, user.MerchantID, currentEmployeeID, strings.TrimSpace(status))
+	if err != nil {
+		return "", nil, err
+	}
+	return currentEmployeeID, items, nil
+}
+
 func (s *Service) ListPlanningShiftSwapRequests(ctx context.Context, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

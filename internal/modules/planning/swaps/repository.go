@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -75,6 +76,49 @@ func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchant
 		items = append(items, *item)
 	}
 	return items, totalItems, rows.Err()
+}
+
+func (r *Repository) ListCurrentEmployeePlanningShiftSwapRequests(ctx context.Context, merchantID, employeeID, status string) ([]PlanningShiftSwapRequestSelfView, error) {
+	db := dbutils.GetDB(ctx, r.db)
+	query := `
+		SELECT ss.id, ss.requester_employee_id,
+			NULLIF(TRIM(CONCAT(COALESCE(re.first_name, ''), ' ', COALESCE(re.last_name, ''))), '') AS requester_employee_name,
+			ss.requester_shift_id, ss.target_employee_id,
+			NULLIF(TRIM(CONCAT(COALESCE(te.first_name, ''), ' ', COALESCE(te.last_name, ''))), '') AS target_employee_name,
+			ss.target_shift_id, ss.status, ss.reason, ss.manager_note, ss.processed_at, ss.created_at,
+			rs.id, rs.employee_id, rs.position_id, rs.title, rs.shift_date, rs.start_time, rs.end_time, rs.position, rp.color,
+			ts.id, ts.employee_id, ts.position_id, ts.title, ts.shift_date, ts.start_time, ts.end_time, ts.position, tp.color
+		FROM planning_shift_swap_requests ss
+		LEFT JOIN employees re ON re.id = ss.requester_employee_id AND re.merchant_id = ss.merchant_id AND re.enabled = 1
+		LEFT JOIN employees te ON te.id = ss.target_employee_id AND te.merchant_id = ss.merchant_id AND te.enabled = 1
+		LEFT JOIN planning_shifts rs ON rs.id = ss.requester_shift_id AND rs.merchant_id = ss.merchant_id AND rs.enabled = 1
+		LEFT JOIN planning_positions rp ON rp.id = rs.position_id AND rp.merchant_id = rs.merchant_id AND rp.enabled = 1
+		LEFT JOIN planning_shifts ts ON ts.id = ss.target_shift_id AND ts.merchant_id = ss.merchant_id AND ts.enabled = 1
+		LEFT JOIN planning_positions tp ON tp.id = ts.position_id AND tp.merchant_id = ts.merchant_id AND tp.enabled = 1
+		WHERE ss.merchant_id = ? AND ss.enabled = 1 AND (ss.requester_employee_id = ? OR ss.target_employee_id = ?)
+	`
+	args := []interface{}{merchantID, employeeID, employeeID}
+	if strings.TrimSpace(status) != "" {
+		query += ` AND ss.status = ?`
+		args = append(args, strings.TrimSpace(status))
+	}
+	query += ` ORDER BY ss.created_at DESC`
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PlanningShiftSwapRequestSelfView, 0)
+	for rows.Next() {
+		item, scanErr := scanPlanningShiftSwapRequestSelfView(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) GetPlanningShiftSwapRequestByID(ctx context.Context, merchantID, requestID string) (*PlanningShiftSwapRequest, error) {
@@ -223,4 +267,144 @@ func scanPlanningShiftSwapRequestRow(row scannable) (*PlanningShiftSwapRequest, 
 
 func scanPlanningShiftSwapRequest(rows scannableRows) (*PlanningShiftSwapRequest, error) {
 	return scanPlanningShiftSwapRequestRow(rows)
+}
+
+func scanPlanningShiftSwapRequestSelfView(row scannable) (*PlanningShiftSwapRequestSelfView, error) {
+	item := &PlanningShiftSwapRequestSelfView{}
+	var requesterEmployeeName, targetEmployeeName sql.NullString
+	var reason, managerNote sql.NullString
+	var processedAt sql.NullTime
+
+	var requesterShiftID sql.NullString
+	var requesterShiftEmployeeID, requesterShiftPositionID, requesterShiftTitle sql.NullString
+	var requesterShiftDate sql.NullTime
+	var requesterShiftStartTime, requesterShiftEndTime, requesterShiftPosition, requesterShiftPositionColor sql.NullString
+
+	var targetShiftID sql.NullString
+	var targetShiftEmployeeID, targetShiftPositionID, targetShiftTitle sql.NullString
+	var targetShiftDate sql.NullTime
+	var targetShiftStartTime, targetShiftEndTime, targetShiftPosition, targetShiftPositionColor sql.NullString
+
+	if err := row.Scan(
+		&item.ID,
+		&item.RequesterEmployeeID,
+		&requesterEmployeeName,
+		&item.RequesterShiftID,
+		&item.TargetEmployeeID,
+		&targetEmployeeName,
+		&item.TargetShiftID,
+		&item.Status,
+		&reason,
+		&managerNote,
+		&processedAt,
+		&item.CreatedAt,
+		&requesterShiftID,
+		&requesterShiftEmployeeID,
+		&requesterShiftPositionID,
+		&requesterShiftTitle,
+		&requesterShiftDate,
+		&requesterShiftStartTime,
+		&requesterShiftEndTime,
+		&requesterShiftPosition,
+		&requesterShiftPositionColor,
+		&targetShiftID,
+		&targetShiftEmployeeID,
+		&targetShiftPositionID,
+		&targetShiftTitle,
+		&targetShiftDate,
+		&targetShiftStartTime,
+		&targetShiftEndTime,
+		&targetShiftPosition,
+		&targetShiftPositionColor,
+	); err != nil {
+		return nil, err
+	}
+
+	if requesterEmployeeName.Valid {
+		item.RequesterEmployeeName = &requesterEmployeeName.String
+	}
+	if targetEmployeeName.Valid {
+		item.TargetEmployeeName = &targetEmployeeName.String
+	}
+	if reason.Valid {
+		item.Reason = &reason.String
+	}
+	if managerNote.Valid {
+		item.ManagerNote = &managerNote.String
+	}
+	if processedAt.Valid {
+		t := processedAt.Time
+		item.ProcessedAt = &t
+	}
+
+	item.RequesterShift = buildPlanningShiftSwapRequestSelfShiftView(
+		item.RequesterShiftID,
+		requesterShiftID,
+		requesterShiftEmployeeID,
+		requesterShiftPositionID,
+		requesterShiftTitle,
+		requesterShiftDate,
+		requesterShiftStartTime,
+		requesterShiftEndTime,
+		requesterShiftPosition,
+		requesterShiftPositionColor,
+	)
+	item.TargetShift = buildPlanningShiftSwapRequestSelfShiftView(
+		item.TargetShiftID,
+		targetShiftID,
+		targetShiftEmployeeID,
+		targetShiftPositionID,
+		targetShiftTitle,
+		targetShiftDate,
+		targetShiftStartTime,
+		targetShiftEndTime,
+		targetShiftPosition,
+		targetShiftPositionColor,
+	)
+
+	return item, nil
+}
+
+func buildPlanningShiftSwapRequestSelfShiftView(
+	fallbackID string,
+	shiftID sql.NullString,
+	employeeID sql.NullString,
+	positionID sql.NullString,
+	title sql.NullString,
+	shiftDate sql.NullTime,
+	startTime sql.NullString,
+	endTime sql.NullString,
+	position sql.NullString,
+	positionColor sql.NullString,
+) PlanningShiftSwapRequestSelfShiftView {
+	view := PlanningShiftSwapRequestSelfShiftView{ID: fallbackID}
+	if shiftID.Valid && strings.TrimSpace(shiftID.String) != "" {
+		view.ID = shiftID.String
+	}
+	if employeeID.Valid {
+		view.EmployeeID = &employeeID.String
+	}
+	if positionID.Valid {
+		view.PositionID = &positionID.String
+	}
+	if title.Valid {
+		view.Title = &title.String
+	}
+	if shiftDate.Valid {
+		dateOnly := models.NewDateOnly(shiftDate.Time)
+		view.ShiftDate = &dateOnly
+	}
+	if startTime.Valid {
+		view.StartTime = &startTime.String
+	}
+	if endTime.Valid {
+		view.EndTime = &endTime.String
+	}
+	if position.Valid {
+		view.Position = &position.String
+	}
+	if positionColor.Valid {
+		view.PositionColor = &positionColor.String
+	}
+	return view
 }
