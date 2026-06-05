@@ -6,6 +6,7 @@ import (
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
+	performancepkg "welloresto-api/internal/modules/planning/performance"
 	refspkg "welloresto-api/internal/modules/planning/refs"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -25,6 +26,7 @@ type WeekTemplatesService = weektemplatespkg.Service
 type TimeEntriesService = timeentriespkg.Service
 type LeaveRequestsService = leavepkg.Service
 type ShiftSwapsService = swapspkg.Service
+type PerformanceService = performancepkg.Service
 
 type PlanningService struct {
 	repo      *PlanningRepository
@@ -39,6 +41,7 @@ type PlanningService struct {
 	*TimeEntriesService
 	*LeaveRequestsService
 	*ShiftSwapsService
+	*PerformanceService
 }
 
 func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService auditpkg.AuditService) *PlanningService {
@@ -56,5 +59,6 @@ func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService aud
 		TimeEntriesService:    timeentriespkg.NewService(repo.TimeEntriesRepository, repo.EmployeesRepository, repo.ScheduleRepository, repo.SettingsRepository, auditService),
 		LeaveRequestsService:  leavepkg.NewService(repo.LeaveRepository, repo.EmployeesRepository),
 		ShiftSwapsService:     swapspkg.NewService(repo.ShiftSwapsRepository, repo.EmployeesRepository, repo.ScheduleRepository, scheduleService, repo.SettingsRepository),
+		PerformanceService:    performancepkg.NewService(repo.PerformanceRepository),
 	}
 }

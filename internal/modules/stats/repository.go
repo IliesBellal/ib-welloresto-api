@@ -4,12 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // StatsRepository handles data access for stats module
 type StatsRepository struct {
 	database *sql.DB
+}
+
+type RevenueHTByLocalDay struct {
+	LocalDay       string
+	RevenueHTCents int64
 }
 
 // NewStatsRepository creates a new instance of StatsRepository
@@ -89,23 +95,64 @@ func (r *StatsRepository) GetRevenue(ctx context.Context, merchantID string, mer
 
 // getRevenueForPeriod sums TTC (total price) for orders in a given period (expects UTC times)
 func (r *StatsRepository) getRevenueForPeriod(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (int64, error) {
-	query := `
-	SELECT COALESCE(SUM(o.price), 0) as total
-	FROM orders o
-	WHERE o.merchant_id = ?
-	AND o.creation_date >= ?
-	AND o.creation_date < ?
-	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	`
+	query, args := buildOrdersAggregateQuery("COALESCE(SUM(o.price), 0) as total", merchantID, startTimeUTC, endTimeUTC)
 
 	var total int64
-	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&total)
+	err := r.database.QueryRowContext(ctx, query, args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get revenue for period: %w", err)
 	}
 
 	return total, nil
+}
+
+// getRevenueHTForPeriod sums HT for orders in a given period (expects UTC times).
+func (r *StatsRepository) getRevenueHTForPeriod(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (int64, error) {
+	query, args := buildOrdersAggregateQuery("COALESCE(SUM(o.HT), 0) as total", merchantID, startTimeUTC, endTimeUTC)
+
+	var total int64
+	err := r.database.QueryRowContext(ctx, query, args...).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get revenue HT for period: %w", err)
+	}
+
+	return total, nil
+}
+
+func (r *StatsRepository) ListRevenueHTByLocalDay(ctx context.Context, merchantID, tzOffset string, startTimeUTC, endTimeUTC time.Time) ([]RevenueHTByLocalDay, error) {
+	whereClause := sharedOrdersRevenueWhereClause()
+	query := strings.TrimSpace(`
+		SELECT DATE(CONVERT_TZ(o.creation_date, '+00:00', ?)) AS local_day,
+			COALESCE(SUM(o.HT), 0) AS revenue_ht_cents
+		FROM orders o
+	`) + "\n" + whereClause + `
+		GROUP BY local_day
+		ORDER BY local_day ASC
+	`
+
+	args := make([]interface{}, 0, 4)
+	args = append(args, tzOffset)
+	args = append(args, sharedOrdersRevenueWhereArgs(merchantID, startTimeUTC, endTimeUTC)...)
+
+	rows, err := r.database.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list HT revenue by local day: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]RevenueHTByLocalDay, 0)
+	for rows.Next() {
+		var row RevenueHTByLocalDay
+		if err := rows.Scan(&row.LocalDay, &row.RevenueHTCents); err != nil {
+			return nil, fmt.Errorf("failed to scan HT revenue row: %w", err)
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate HT revenue rows: %w", err)
+	}
+
+	return items, nil
 }
 
 // GetOrderCount retrieves order count for today and yesterday (accounting for merchant timezone)
@@ -131,18 +178,10 @@ func (r *StatsRepository) GetOrderCount(ctx context.Context, merchantID string, 
 
 // getOrderCountForPeriod counts orders in a given period (expects UTC times)
 func (r *StatsRepository) getOrderCountForPeriod(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (int, error) {
-	query := `
-	SELECT COUNT(*) as count
-	FROM orders o
-	WHERE o.merchant_id = ?
-	AND o.creation_date >= ?
-	AND o.creation_date < ?
-	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	`
+	query, args := buildOrdersAggregateQuery("COUNT(*) as count", merchantID, startTimeUTC, endTimeUTC)
 
 	var count int
-	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&count)
+	err := r.database.QueryRowContext(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get order count for period: %w", err)
 	}
@@ -173,18 +212,10 @@ func (r *StatsRepository) GetAverageBasket(ctx context.Context, merchantID strin
 
 // getAverageBasketForPeriod calculates average basket size for a period (expects UTC times)
 func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (int64, error) {
-	query := `
-	SELECT ROUND(COALESCE(AVG(o.price), 0),0) as avg_basket
-	FROM orders o
-	WHERE o.merchant_id = ?
-	AND o.creation_date >= ?
-	AND o.creation_date < ?
-	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	`
+	query, args := buildOrdersAggregateQuery("ROUND(COALESCE(AVG(o.price), 0),0) as avg_basket", merchantID, startTimeUTC, endTimeUTC)
 
 	var avgBasket int64
-	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&avgBasket)
+	err := r.database.QueryRowContext(ctx, query, args...).Scan(&avgBasket)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get average basket for period: %w", err)
 	}
@@ -227,7 +258,7 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	`
 
 	// Convert timezone to UTC offset format (+HH:MM)
-	tzOffset := getTZOffset(merchantTz, dateInMerchantTz)
+	tzOffset := GetTZOffset(merchantTz, dateInMerchantTz)
 
 	rows, err := r.database.QueryContext(ctx, query, tzOffset, merchantID, startDayUTC, endDayUTC, tzOffset)
 	if err != nil {
@@ -297,7 +328,7 @@ func getWeekStart(dateInTz time.Time, tz *time.Location) time.Time {
 
 // getTZOffset converts a time.Location to UTC offset format (+HH:MM or -HH:MM)
 // Required for MySQL CONVERT_TZ function
-func getTZOffset(tz *time.Location, t time.Time) string {
+func GetTZOffset(tz *time.Location, t time.Time) string {
 	_, offset := t.In(tz).Zone()
 	hours := offset / 3600
 	minutes := (offset % 3600) / 60
@@ -306,4 +337,28 @@ func getTZOffset(tz *time.Location, t time.Time) string {
 		return fmt.Sprintf("+%02d:%02d", hours, minutes)
 	}
 	return fmt.Sprintf("%03d:%02d", hours, minutes)
+}
+
+func buildOrdersAggregateQuery(selectExpr, merchantID string, startTimeUTC, endTimeUTC time.Time) (string, []interface{}) {
+	query := strings.TrimSpace(`
+		SELECT `+selectExpr+`
+		FROM orders o
+	`) + "\n" + sharedOrdersRevenueWhereClause()
+
+	args := sharedOrdersRevenueWhereArgs(merchantID, startTimeUTC, endTimeUTC)
+	return query, args
+}
+
+func sharedOrdersRevenueWhereClause() string {
+	return strings.TrimSpace(`
+		WHERE o.merchant_id = ?
+		AND o.creation_date >= ?
+		AND o.creation_date < ?
+		AND o.state IN ('CLOSED', 'DONE')
+		AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+	`)
+}
+
+func sharedOrdersRevenueWhereArgs(merchantID string, startTimeUTC, endTimeUTC time.Time) []interface{} {
+	return []interface{}{merchantID, startTimeUTC, endTimeUTC}
 }

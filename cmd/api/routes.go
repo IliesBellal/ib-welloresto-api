@@ -823,6 +823,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/shift-swap-requests/{id}", planningH.GetPlanningShiftSwapRequest)
 		r.Patch("/shift-swap-requests/{id}", planningH.UpdatePlanningShiftSwapRequest)
 		r.Delete("/shift-swap-requests/{id}", planningH.DeletePlanningShiftSwapRequest)
+
+		r.Get("/performance", planningH.GetPlanningPerformance)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---

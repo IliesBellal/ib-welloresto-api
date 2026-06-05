@@ -6,6 +6,7 @@ import (
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
+	performancepkg "welloresto-api/internal/modules/planning/performance"
 	refspkg "welloresto-api/internal/modules/planning/refs"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -13,6 +14,7 @@ import (
 	swapspkg "welloresto-api/internal/modules/planning/swaps"
 	timeentriespkg "welloresto-api/internal/modules/planning/timeentries"
 	weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
+	statspkg "welloresto-api/internal/modules/stats"
 )
 
 type DocumentsRepository = documentspkg.Repository
@@ -25,6 +27,7 @@ type WeekTemplatesRepository = weektemplatespkg.Repository
 type TimeEntriesRepository = timeentriespkg.Repository
 type LeaveRepository = leavepkg.Repository
 type ShiftSwapsRepository = swapspkg.Repository
+type PerformanceRepository = performancepkg.Repository
 
 type PlanningRepository struct {
 	db *sql.DB
@@ -38,9 +41,11 @@ type PlanningRepository struct {
 	*TimeEntriesRepository
 	*LeaveRepository
 	*ShiftSwapsRepository
+	*PerformanceRepository
 }
 
 func NewRepository(db *sql.DB) *PlanningRepository {
+	statsRepository := statspkg.NewStatsRepository(db)
 	return &PlanningRepository{
 		db:                       db,
 		DocumentsRepository:      documentspkg.NewRepository(db),
@@ -53,6 +58,7 @@ func NewRepository(db *sql.DB) *PlanningRepository {
 		TimeEntriesRepository:    timeentriespkg.NewRepository(db),
 		LeaveRepository:          leavepkg.NewRepository(db),
 		ShiftSwapsRepository:     swapspkg.NewRepository(db),
+		PerformanceRepository:    performancepkg.NewRepository(db, statsRepository),
 	}
 }
 

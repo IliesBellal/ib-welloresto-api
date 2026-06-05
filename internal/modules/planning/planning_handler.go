@@ -4,6 +4,7 @@ import (
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
+	performancepkg "welloresto-api/internal/modules/planning/performance"
 	refspkg "welloresto-api/internal/modules/planning/refs"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -23,6 +24,7 @@ type WeekTemplatesHandler = weektemplatespkg.Handler
 type TimeEntriesHandler = timeentriespkg.Handler
 type LeaveRequestsHandler = leavepkg.Handler
 type ShiftSwapsHandler = swapspkg.Handler
+type PerformanceHandler = performancepkg.Handler
 
 type PlanningHandler struct {
 	svc *PlanningService
@@ -36,6 +38,7 @@ type PlanningHandler struct {
 	*TimeEntriesHandler
 	*LeaveRequestsHandler
 	*ShiftSwapsHandler
+	*PerformanceHandler
 }
 
 func NewHandler(svc *PlanningService) *PlanningHandler {
@@ -51,5 +54,6 @@ func NewHandler(svc *PlanningService) *PlanningHandler {
 		TimeEntriesHandler:    timeentriespkg.NewHandler(svc.TimeEntriesService),
 		LeaveRequestsHandler:  leavepkg.NewHandler(svc.LeaveRequestsService),
 		ShiftSwapsHandler:     swapspkg.NewHandler(svc.ShiftSwapsService),
+		PerformanceHandler:    performancepkg.NewHandler(svc.PerformanceService),
 	}
 }
