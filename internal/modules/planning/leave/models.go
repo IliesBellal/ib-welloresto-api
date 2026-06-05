@@ -75,6 +75,8 @@ type PlanningLeaveRequestListFilters struct {
 	Status     string
 	Page       int
 	PageSize   int
+	FromDate   *time.Time
+	ToDate     *time.Time
 }
 
 type PlanningLeaveConflictingShift struct {

@@ -42,31 +42,49 @@ func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) 
 }
 
 func (s *Service) ListCurrentUserLeaveRequests(ctx context.Context, status string) ([]PlanningLeaveRequestSelfView, error) {
+	items, _, err := s.ListCurrentUserLeaveRequestsPaginated(ctx, PlanningLeaveRequestListFilters{Status: status})
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Service) ListCurrentUserLeaveRequestsPaginated(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequestSelfView, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return nil, models.ErrUnauthorized
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
 	employeeID, err := s.ResolveCurrentEmployeeID(ctx)
 	if err != nil {
-		return nil, err
+		return nil, models.PaginationMetadata{}, err
 	}
-	if strings.TrimSpace(status) != "" && !sharedpkg.IsValidPlanningLeaveStatus(strings.TrimSpace(status)) {
-		return nil, models.ErrPlanningLeaveStatusInvalid
+	if strings.TrimSpace(filters.Status) != "" && !sharedpkg.IsValidPlanningLeaveStatus(strings.TrimSpace(filters.Status)) {
+		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveStatusInvalid
 	}
-	items, _, err := s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, PlanningLeaveRequestListFilters{
-		EmployeeID: employeeID,
-		Status:     strings.TrimSpace(status),
-		Page:       1,
-		PageSize:   200,
+	if filters.FromDate != nil && filters.ToDate != nil && filters.ToDate.Before(*filters.FromDate) {
+		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveInvalidRange
+	}
+	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.Page
+	filters.PageSize = pagination.PageSize
+	filters.EmployeeID = employeeID
+	items, totalItems, err := s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, PlanningLeaveRequestListFilters{
+		EmployeeID: filters.EmployeeID,
+		Status:     strings.TrimSpace(filters.Status),
+		Page:       filters.Page,
+		PageSize:   filters.PageSize,
+		FromDate:   filters.FromDate,
+		ToDate:     filters.ToDate,
 	})
 	if err != nil {
-		return nil, err
+		return nil, models.PaginationMetadata{}, err
 	}
+
 	result := make([]PlanningLeaveRequestSelfView, len(items))
 	for i, item := range items {
 		result[i] = mapPlanningLeaveRequestToSelfView(item)
 	}
-	return result, nil
+	return result, sharedpkg.BuildPaginationMetadata(totalItems, pagination), nil
 }
 
 func (s *Service) CreateCurrentUserLeaveRequest(ctx context.Context, req PlanningLeaveRequestSelfCreateRequest) (*PlanningLeaveRequestSelfView, error) {
@@ -121,6 +139,9 @@ func (s *Service) ListPlanningLeaveRequests(ctx context.Context, filters Plannin
 	}
 	if strings.TrimSpace(filters.Status) != "" && !sharedpkg.IsValidPlanningLeaveStatus(strings.TrimSpace(filters.Status)) {
 		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveStatusInvalid
+	}
+	if filters.FromDate != nil && filters.ToDate != nil && filters.ToDate.Before(*filters.FromDate) {
+		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveInvalidRange
 	}
 	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
 	filters.Page = pagination.Page

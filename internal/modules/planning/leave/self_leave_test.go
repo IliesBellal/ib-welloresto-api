@@ -297,6 +297,47 @@ func TestServiceListCurrentUserLeaveRequestsStatusFilterApplied(t *testing.T) {
 	}
 }
 
+func TestServiceListCurrentUserLeaveRequestsPaginatedDateOverlapFilter(t *testing.T) {
+	svc, mock, cleanup := newSelfLeaveService(t, &employeespkg.Employee{ID: "emp-1"}, "emp-1")
+	defer cleanup()
+
+	createdAt := time.Now().UTC()
+	rows := sqlmock.NewRows(leaveColumns)
+	// Included: overlaps June window (2026-05-28 -> 2026-06-03).
+	addLeaveRow(rows, "lr-overlap", "m-1", "emp-1", "paid", "2026-05-28", "2026-06-03", "pending",
+		nil, nil, "u-1", nil, nil, createdAt)
+
+	fromDate := mustParseDate("2026-06-01")
+	toDate := mustParseDate("2026-06-30")
+
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("m-1", "emp-1", "2026-06-30", "2026-06-01").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT id, merchant_id, employee_id").
+		WithArgs("m-1", "emp-1", "2026-06-30", "2026-06-01", 20, 0).
+		WillReturnRows(rows)
+
+	ctx := newSelfLeaveCtx()
+	items, metadata, err := svc.ListCurrentUserLeaveRequestsPaginated(ctx, PlanningLeaveRequestListFilters{
+		Page:     1,
+		PageSize: 20,
+		FromDate: &fromDate,
+		ToDate:   &toDate,
+	})
+	if err != nil {
+		t.Fatalf("ListCurrentUserLeaveRequestsPaginated() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 overlapping item, got %d", len(items))
+	}
+	if items[0].ID != "lr-overlap" {
+		t.Fatalf("expected overlap leave request, got %s", items[0].ID)
+	}
+	if metadata.TotalItems != 1 || metadata.CurrentPage != 1 || metadata.Limit != 20 {
+		t.Fatalf("unexpected pagination metadata: %+v", metadata)
+	}
+}
+
 func TestServiceCreateCurrentUserLeaveRequestForcesPendingForTokenEmployee(t *testing.T) {
 	svc, mock, cleanup := newSelfLeaveService(t, &employeespkg.Employee{ID: "emp-1"}, "emp-1")
 	defer cleanup()

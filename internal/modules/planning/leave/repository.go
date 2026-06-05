@@ -34,6 +34,14 @@ func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID s
 		countQuery += ` AND status = ?`
 		args = append(args, strings.TrimSpace(filters.Status))
 	}
+	if filters.ToDate != nil {
+		countQuery += ` AND start_date <= ?`
+		args = append(args, filters.ToDate.Format("2006-01-02"))
+	}
+	if filters.FromDate != nil {
+		countQuery += ` AND end_date >= ?`
+		args = append(args, filters.FromDate.Format("2006-01-02"))
+	}
 	var totalItems int
 	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
 		return nil, 0, err
@@ -50,7 +58,13 @@ func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID s
 	if strings.TrimSpace(filters.Status) != "" {
 		query += ` AND status = ?`
 	}
-	query += ` ORDER BY start_date DESC, created_at DESC LIMIT ? OFFSET ?`
+	if filters.ToDate != nil {
+		query += ` AND start_date <= ?`
+	}
+	if filters.FromDate != nil {
+		query += ` AND end_date >= ?`
+	}
+	query += ` ORDER BY start_date DESC, id DESC LIMIT ? OFFSET ?`
 	dataArgs := append([]interface{}{}, args...)
 	dataArgs = append(dataArgs, filters.PageSize, (filters.Page-1)*filters.PageSize)
 	rows, err := db.QueryContext(ctx, query, dataArgs...)

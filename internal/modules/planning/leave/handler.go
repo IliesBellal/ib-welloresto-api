@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"welloresto-api/internal/models"
 	sharedpkg "welloresto-api/internal/modules/planning/shared"
@@ -34,17 +35,38 @@ func (h *Handler) CreateCurrentUserLeaveRequest(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) ListCurrentUserLeaveRequests(w http.ResponseWriter, r *http.Request) {
-	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	items, err := h.svc.ListCurrentUserLeaveRequests(r.Context(), status)
+	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
 		return
 	}
-	models.SendJSON(w, http.StatusOK, "planning", "list_current_user_leave_requests", map[string]interface{}{"status": "success", "leave_requests": items})
+	fromDate, toDate, err := parsePlanningLeaveDateOverlapRange(r)
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
+		return
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	items, metadata, err := h.svc.ListCurrentUserLeaveRequestsPaginated(r.Context(), PlanningLeaveRequestListFilters{
+		Status:   status,
+		Page:     pagination.Page,
+		PageSize: pagination.PageSize,
+		FromDate: fromDate,
+		ToDate:   toDate,
+	})
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "list_current_user_leave_requests", map[string]interface{}{"status": "success", "leave_requests": items, "pagination": metadata})
 }
 
 func (h *Handler) ListPlanningLeaveRequests(w http.ResponseWriter, r *http.Request) {
 	pagination, err := sharedpkg.ParsePlanningPagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"))
+	if err != nil {
+		models.SendErrorJSON(w, "planning", "list_planning_leave_requests", err)
+		return
+	}
+	fromDate, toDate, err := parsePlanningLeaveDateOverlapRange(r)
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_planning_leave_requests", err)
 		return
@@ -54,12 +76,43 @@ func (h *Handler) ListPlanningLeaveRequests(w http.ResponseWriter, r *http.Reque
 		Status:     strings.TrimSpace(r.URL.Query().Get("status")),
 		Page:       pagination.Page,
 		PageSize:   pagination.PageSize,
+		FromDate:   fromDate,
+		ToDate:     toDate,
 	})
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_planning_leave_requests", err)
 		return
 	}
 	models.SendJSON(w, http.StatusOK, "planning", "list_planning_leave_requests", map[string]interface{}{"status": "success", "leave_requests": items, "pagination": metadata})
+}
+
+func parsePlanningLeaveDateOverlapRange(r *http.Request) (*time.Time, *time.Time, error) {
+	rawFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	rawTo := strings.TrimSpace(r.URL.Query().Get("to"))
+
+	var fromDate *time.Time
+	var toDate *time.Time
+
+	if rawFrom != "" {
+		parsed, err := sharedpkg.ParsePlanningDate(rawFrom)
+		if err != nil {
+			return nil, nil, models.ErrPlanningLeaveInvalidRange
+		}
+		fromDate = &parsed
+	}
+	if rawTo != "" {
+		parsed, err := sharedpkg.ParsePlanningDate(rawTo)
+		if err != nil {
+			return nil, nil, models.ErrPlanningLeaveInvalidRange
+		}
+		toDate = &parsed
+	}
+
+	if fromDate != nil && toDate != nil && toDate.Before(*fromDate) {
+		return nil, nil, models.ErrPlanningLeaveInvalidRange
+	}
+
+	return fromDate, toDate, nil
 }
 
 func (h *Handler) GetPlanningLeaveRequest(w http.ResponseWriter, r *http.Request) {
