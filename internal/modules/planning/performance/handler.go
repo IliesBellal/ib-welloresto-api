@@ -19,6 +19,21 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) GetPlanningPerformance(w http.ResponseWriter, r *http.Request) {
 	fromRaw := strings.TrimSpace(r.URL.Query().Get("from"))
 	toRaw := strings.TrimSpace(r.URL.Query().Get("to"))
+	granularity := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("granularity")))
+	compare := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("compare")))
+
+	if granularity == "" {
+		granularity = "day"
+	}
+	if granularity != "day" && granularity != "week" && granularity != "month" {
+		models.SendErrorJSON(w, "planning", "get_planning_performance", models.ErrInvalidRequestBody)
+		return
+	}
+	if compare != "" && compare != "previous" {
+		models.SendErrorJSON(w, "planning", "get_planning_performance", models.ErrInvalidRequestBody)
+		return
+	}
+
 	if fromRaw == "" || toRaw == "" {
 		models.SendErrorJSON(w, "planning", "get_planning_performance", models.ErrPlanningInvalidDate)
 		return
@@ -39,7 +54,7 @@ func (h *Handler) GetPlanningPerformance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	payload, err := h.svc.GetPerformanceByDay(r.Context(), fromDate, toDate)
+	payload, err := h.svc.GetPerformance(r.Context(), fromDate, toDate, granularity, compare)
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "get_planning_performance", err)
 		return

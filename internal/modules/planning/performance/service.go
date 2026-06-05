@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/middleware"
@@ -19,100 +20,290 @@ func NewService(repo *Repository) *Service {
 }
 
 func (s *Service) GetPerformanceByDay(ctx context.Context, fromLocalDay, toLocalDay time.Time) (*PerformanceResponse, error) {
+	return s.GetPerformance(ctx, fromLocalDay, toLocalDay, "day", "")
+}
+
+func (s *Service) GetPerformance(ctx context.Context, fromLocalDay, toLocalDay time.Time, granularity, compare string) (*PerformanceResponse, error) {
+	current, err := s.buildPerformanceForRange(ctx, fromLocalDay, toLocalDay, granularity)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.EqualFold(strings.TrimSpace(compare), "previous") {
+		prevFrom, prevTo := computePreviousRange(fromLocalDay, toLocalDay, granularity)
+		previous, err := s.buildPerformanceForRange(ctx, prevFrom, prevTo, granularity)
+		if err != nil {
+			return nil, err
+		}
+		current.PreviousPeriod = &PerformancePreviousPeriod{
+			From:    previous.From,
+			To:      previous.To,
+			Periods: previous.Periods,
+			Totals:  previous.Totals,
+		}
+	}
+
+	return current, nil
+}
+
+func (s *Service) buildPerformanceForRange(ctx context.Context, fromLocalDay, toLocalDay time.Time, granularity string) (*PerformanceResponse, error) {
 	raw, err := s.GetRawPerformanceByDay(ctx, fromLocalDay, toLocalDay)
 	if err != nil {
 		return nil, err
 	}
 
-	periods := make([]PerformancePeriod, 0, len(raw.Days))
+	computedDays := make([]computedDay, 0, len(raw.Days))
 	membersWithoutRate := map[string]struct{}{}
+	for _, day := range raw.Days {
+		computed := computeDayMetrics(day, membersWithoutRate)
+		computedDays = append(computedDays, computed)
+	}
 
+	periods := rollupPeriods(computedDays, granularity, raw.FromLocalDay, raw.ToLocalDay)
+	totals := aggregateTotals(computedDays, raw.FromLocalDay, raw.ToLocalDay)
+
+	return &PerformanceResponse{
+		From:           raw.FromLocalDay,
+		To:             raw.ToLocalDay,
+		Granularity:    strings.ToLower(strings.TrimSpace(granularity)),
+		Periods:        periods,
+		Totals:         totals,
+		PreviousPeriod: nil,
+		Warnings: PerformanceWarnings{
+			MembersWithoutRate: len(membersWithoutRate),
+		},
+	}, nil
+}
+
+func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}) computedDay {
+	plannedHours := 0.0
+	workedHours := 0.0
+	payrollRaw := 0.0
+	dayMSIncomplete := false
+	dayHasMSActivity := false
+	shiftEmployeeIDs := map[string]struct{}{}
+
+	for _, employee := range day.Employees {
+		employeePlannedHours := float64(employee.PlannedMinutes) / 60.0
+		employeeWorkedRawHours := float64(employee.WorkedSeconds) / 3600.0
+
+		workedDisplayHours := employeeWorkedRawHours
+		if employee.WorkedSeconds <= 0 {
+			workedDisplayHours = employeePlannedHours
+		}
+		if workedDisplayHours > 0 {
+			dayHasMSActivity = true
+		}
+
+		plannedHours += employeePlannedHours
+		workedHours += workedDisplayHours
+
+		if employee.HourlyRateCents <= 0 {
+			if workedDisplayHours > 0 {
+				membersWithoutRate[employee.EmployeeID] = struct{}{}
+				dayMSIncomplete = true
+			}
+		} else {
+			payrollRaw += workedDisplayHours * float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
+		}
+
+		if employee.PlannedMinutes > 0 {
+			shiftEmployeeIDs[employee.EmployeeID] = struct{}{}
+		}
+	}
+
+	payrollCents := int64(math.Round(payrollRaw))
+	hoursDelta := workedHours - plannedHours
+
+	payrollRatio, revenuePerHourCents := computeRatios(
+		day.RevenueHTCents,
+		payrollCents,
+		workedHours,
+		dayMSIncomplete,
+		dayHasMSActivity && day.RevenueHTCents <= 0,
+		workedHours > 0 && day.RevenueHTCents <= 0,
+	)
+
+	period := PerformancePeriod{
+		PeriodStart:            day.LocalDay,
+		PeriodEnd:              day.LocalDay,
+		Label:                  day.LocalDay,
+		RevenueActualCents:     day.RevenueHTCents,
+		RevenueForecastCents:   nil,
+		PlannedHours:           plannedHours,
+		WorkedHours:            workedHours,
+		Headcount:              day.Headcount,
+		PayrollCostLoadedCents: payrollCents,
+		PayrollRatio:           payrollRatio,
+		RevenuePerHourCents:    revenuePerHourCents,
+		HoursDelta:             hoursDelta,
+	}
+
+	return computedDay{
+		LocalDay:               day.LocalDay,
+		Period:                 period,
+		ShiftEmployeeIDs:       shiftEmployeeIDs,
+		MSIncomplete:           dayMSIncomplete,
+		HasMSActivity:          dayHasMSActivity,
+		WorkedHoursPositive:    workedHours > 0,
+		RevenueActualCents:     day.RevenueHTCents,
+		PayrollCostLoadedCents: payrollCents,
+		PlannedHours:           plannedHours,
+		WorkedHours:            workedHours,
+	}
+}
+
+func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string) []PerformancePeriod {
+	granularity = strings.ToLower(strings.TrimSpace(granularity))
+	if granularity == "" || granularity == "day" {
+		periods := make([]PerformancePeriod, 0, len(days))
+		for _, day := range days {
+			periods = append(periods, day.Period)
+		}
+		return periods
+	}
+
+	fromDay, err := time.Parse("2006-01-02", fromDayRaw)
+	if err != nil {
+		return []PerformancePeriod{}
+	}
+	toDay, err := time.Parse("2006-01-02", toDayRaw)
+	if err != nil {
+		return []PerformancePeriod{}
+	}
+
+	type bucketAggregate struct {
+		PeriodStart        time.Time
+		PeriodEnd          time.Time
+		Label              string
+		RevenueActualCents int64
+		PlannedHours       float64
+		WorkedHours        float64
+		PayrollCents       int64
+		HoursDelta         float64
+		MSIncomplete       bool
+		AnyMSDayWithoutCA  bool
+		AnyWorkedNoCA      bool
+		ShiftEmployees     map[string]struct{}
+	}
+
+	buckets := map[string]*bucketAggregate{}
+	orderedKeys := make([]string, 0)
+
+	for _, day := range days {
+		dayDate, parseErr := time.Parse("2006-01-02", day.LocalDay)
+		if parseErr != nil {
+			continue
+		}
+
+		bucketStart, bucketEnd, bucketLabel := computeBucketBounds(dayDate, granularity, fromDay, toDay)
+		key := bucketStart.Format("2006-01-02")
+
+		bucket, exists := buckets[key]
+		if !exists {
+			bucket = &bucketAggregate{
+				PeriodStart:    bucketStart,
+				PeriodEnd:      bucketEnd,
+				Label:          bucketLabel,
+				ShiftEmployees: map[string]struct{}{},
+			}
+			buckets[key] = bucket
+			orderedKeys = append(orderedKeys, key)
+		}
+
+		bucket.RevenueActualCents += day.RevenueActualCents
+		bucket.PlannedHours += day.PlannedHours
+		bucket.WorkedHours += day.WorkedHours
+		bucket.PayrollCents += day.PayrollCostLoadedCents
+		bucket.HoursDelta += day.Period.HoursDelta
+
+		if day.MSIncomplete {
+			bucket.MSIncomplete = true
+		}
+		if day.HasMSActivity && day.RevenueActualCents <= 0 {
+			bucket.AnyMSDayWithoutCA = true
+		}
+		if day.WorkedHoursPositive && day.RevenueActualCents <= 0 {
+			bucket.AnyWorkedNoCA = true
+		}
+
+		for employeeID := range day.ShiftEmployeeIDs {
+			bucket.ShiftEmployees[employeeID] = struct{}{}
+		}
+	}
+
+	sort.Strings(orderedKeys)
+	periods := make([]PerformancePeriod, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		bucket := buckets[key]
+		payrollRatio, revenuePerHour := computeRatios(
+			bucket.RevenueActualCents,
+			bucket.PayrollCents,
+			bucket.WorkedHours,
+			bucket.MSIncomplete,
+			bucket.AnyMSDayWithoutCA,
+			bucket.AnyWorkedNoCA,
+		)
+
+		periods = append(periods, PerformancePeriod{
+			PeriodStart:            bucket.PeriodStart.Format("2006-01-02"),
+			PeriodEnd:              bucket.PeriodEnd.Format("2006-01-02"),
+			Label:                  bucket.Label,
+			RevenueActualCents:     bucket.RevenueActualCents,
+			RevenueForecastCents:   nil,
+			PlannedHours:           bucket.PlannedHours,
+			WorkedHours:            bucket.WorkedHours,
+			Headcount:              len(bucket.ShiftEmployees),
+			PayrollCostLoadedCents: bucket.PayrollCents,
+			PayrollRatio:           payrollRatio,
+			RevenuePerHourCents:    revenuePerHour,
+			HoursDelta:             bucket.HoursDelta,
+		})
+	}
+
+	return periods
+}
+
+func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePeriod {
 	totalRevenueCents := int64(0)
 	totalPlannedHours := 0.0
 	totalWorkedHours := 0.0
 	totalHeadcount := 0
 	totalPayrollCents := int64(0)
+	totalMSIncomplete := false
+	anyMSDayWithoutCA := false
+	anyWorkedHoursDayWithoutCA := false
 
-	for _, day := range raw.Days {
-		plannedHours := 0.0
-		workedHours := 0.0
-		payrollRaw := 0.0
+	for _, day := range days {
+		totalRevenueCents += day.RevenueActualCents
+		totalPlannedHours += day.PlannedHours
+		totalWorkedHours += day.WorkedHours
+		totalHeadcount += day.Period.Headcount
+		totalPayrollCents += day.PayrollCostLoadedCents
 
-		for _, employee := range day.Employees {
-			employeePlannedHours := float64(employee.PlannedMinutes) / 60.0
-			employeeWorkedRawHours := float64(employee.WorkedSeconds) / 3600.0
-
-			workedDisplayHours := employeeWorkedRawHours
-			if employee.WorkedSeconds <= 0 {
-				workedDisplayHours = employeePlannedHours
-			}
-
-			plannedHours += employeePlannedHours
-			workedHours += workedDisplayHours
-
-			if employee.HourlyRateCents <= 0 {
-				if workedDisplayHours > 0 {
-					membersWithoutRate[employee.EmployeeID] = struct{}{}
-				}
-				continue
-			}
-
-			payrollRaw += workedDisplayHours * float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
+		if day.MSIncomplete {
+			totalMSIncomplete = true
 		}
-
-		payrollCents := int64(math.Round(payrollRaw))
-		hoursDelta := workedHours - plannedHours
-
-		var payrollRatio *float64
-		var revenuePerHourCents *float64
-		if day.RevenueHTCents > 0 {
-			ratio := float64(payrollCents) / float64(day.RevenueHTCents)
-			payrollRatio = &ratio
-
-			if workedHours > 0 {
-				revPerHour := float64(day.RevenueHTCents) / workedHours
-				revenuePerHourCents = &revPerHour
-			}
+		if day.HasMSActivity && day.RevenueActualCents <= 0 {
+			anyMSDayWithoutCA = true
 		}
-
-		period := PerformancePeriod{
-			PeriodStart:            day.LocalDay,
-			PeriodEnd:              day.LocalDay,
-			Label:                  day.LocalDay,
-			RevenueActualCents:     day.RevenueHTCents,
-			RevenueForecastCents:   nil,
-			PlannedHours:           plannedHours,
-			WorkedHours:            workedHours,
-			Headcount:              day.Headcount,
-			PayrollCostLoadedCents: payrollCents,
-			PayrollRatio:           payrollRatio,
-			RevenuePerHourCents:    revenuePerHourCents,
-			HoursDelta:             hoursDelta,
+		if day.WorkedHoursPositive && day.RevenueActualCents <= 0 {
+			anyWorkedHoursDayWithoutCA = true
 		}
-		periods = append(periods, period)
-
-		totalRevenueCents += day.RevenueHTCents
-		totalPlannedHours += plannedHours
-		totalWorkedHours += workedHours
-		totalHeadcount += day.Headcount
-		totalPayrollCents += payrollCents
 	}
 
-	var totalPayrollRatio *float64
-	if totalRevenueCents > 0 {
-		ratio := float64(totalPayrollCents) / float64(totalRevenueCents)
-		totalPayrollRatio = &ratio
-	}
+	totalPayrollRatio, totalRevenuePerHour := computeRatios(
+		totalRevenueCents,
+		totalPayrollCents,
+		totalWorkedHours,
+		totalMSIncomplete,
+		anyMSDayWithoutCA,
+		anyWorkedHoursDayWithoutCA,
+	)
 
-	var totalRevenuePerHour *float64
-	if totalRevenueCents > 0 && totalWorkedHours > 0 {
-		value := float64(totalRevenueCents) / totalWorkedHours
-		totalRevenuePerHour = &value
-	}
-
-	totals := PerformancePeriod{
-		PeriodStart:            raw.FromLocalDay,
-		PeriodEnd:              raw.ToLocalDay,
+	return PerformancePeriod{
+		PeriodStart:            fromDay,
+		PeriodEnd:              toDay,
 		Label:                  "Total",
 		RevenueActualCents:     totalRevenueCents,
 		RevenueForecastCents:   nil,
@@ -124,18 +315,107 @@ func (s *Service) GetPerformanceByDay(ctx context.Context, fromLocalDay, toLocal
 		RevenuePerHourCents:    totalRevenuePerHour,
 		HoursDelta:             totalWorkedHours - totalPlannedHours,
 	}
+}
 
-	return &PerformanceResponse{
-		From:           raw.FromLocalDay,
-		To:             raw.ToLocalDay,
-		Granularity:    "day",
-		Periods:        periods,
-		Totals:         totals,
-		PreviousPeriod: nil,
-		Warnings: PerformanceWarnings{
-			MembersWithoutRate: len(membersWithoutRate),
-		},
-	}, nil
+func computeRatios(revenueCents, payrollCents int64, workedHours float64, msIncomplete, anyMSWithoutCA, anyWorkedWithoutCA bool) (*float64, *float64) {
+	var payrollRatio *float64
+	if revenueCents > 0 && !msIncomplete && !anyMSWithoutCA {
+		ratio := float64(payrollCents) / float64(revenueCents)
+		payrollRatio = &ratio
+	}
+
+	var revenuePerHour *float64
+	if revenueCents > 0 && workedHours > 0 && !anyWorkedWithoutCA {
+		value := float64(revenueCents) / workedHours
+		revenuePerHour = &value
+	}
+
+	return payrollRatio, revenuePerHour
+}
+
+func computeBucketBounds(day time.Time, granularity string, fromDay, toDay time.Time) (time.Time, time.Time, string) {
+	switch granularity {
+	case "week":
+		weekday := int(day.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		weekStart := day.AddDate(0, 0, -(weekday - 1))
+		weekEnd := weekStart.AddDate(0, 0, 6)
+		start := maxDate(weekStart, fromDay)
+		end := minDate(weekEnd, toDay)
+		label := weekStart.Format("2006-01-02")
+		return start, end, label
+	case "month":
+		monthStart := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, time.UTC)
+		monthEnd := monthStart.AddDate(0, 1, -1)
+		start := maxDate(monthStart, fromDay)
+		end := minDate(monthEnd, toDay)
+		label := monthStart.Format("2006-01")
+		return start, end, label
+	default:
+		return day, day, day.Format("2006-01-02")
+	}
+}
+
+func computePreviousRange(fromDay, toDay time.Time, granularity string) (time.Time, time.Time) {
+	from := normalizeDateOnlyUTC(fromDay)
+	to := normalizeDateOnlyUTC(toDay)
+
+	switch strings.ToLower(strings.TrimSpace(granularity)) {
+	case "month":
+		firstCurrentMonth := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, time.UTC)
+		monthCount := countMonthsInRange(from, to)
+		prevFrom := firstCurrentMonth.AddDate(0, -monthCount, 0)
+		prevTo := firstCurrentMonth.AddDate(0, 0, -1)
+		return prevFrom, prevTo
+	default:
+		lengthDays := int(to.Sub(from).Hours()/24) + 1
+		prevTo := from.AddDate(0, 0, -1)
+		prevFrom := prevTo.AddDate(0, 0, -(lengthDays - 1))
+		return prevFrom, prevTo
+	}
+}
+
+func countMonthsInRange(from, to time.Time) int {
+	count := 0
+	cursor := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, time.UTC)
+	last := time.Date(to.Year(), to.Month(), 1, 0, 0, 0, 0, time.UTC)
+	for !cursor.After(last) {
+		count++
+		cursor = cursor.AddDate(0, 1, 0)
+	}
+	if count <= 0 {
+		return 1
+	}
+	return count
+}
+
+func maxDate(left, right time.Time) time.Time {
+	if left.After(right) {
+		return left
+	}
+	return right
+}
+
+func minDate(left, right time.Time) time.Time {
+	if left.Before(right) {
+		return left
+	}
+	return right
+}
+
+type computedDay struct {
+	LocalDay               string
+	Period                 PerformancePeriod
+	ShiftEmployeeIDs       map[string]struct{}
+	MSIncomplete           bool
+	HasMSActivity          bool
+	WorkedHoursPositive    bool
+	RevenueActualCents     int64
+	PayrollCostLoadedCents int64
+	PlannedHours           float64
+	WorkedHours            float64
 }
 
 func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLocalDay time.Time) (*RawPerformanceResponse, error) {
@@ -170,26 +450,27 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 	headcountSets := map[string]map[string]struct{}{}
 
 	for _, row := range plannedRows {
-		day := ensureDay(days, row.LocalDay)
+		localDayKey := normalizeLocalDayKey(row.LocalDay)
+		day := ensureDay(days, localDayKey)
 		employee := ensureEmployee(day, row.EmployeeID)
 		employee.PlannedMinutes += row.PlannedMinutes
 		employee.PlannedHours = float64(employee.PlannedMinutes) / 60.0
 
-		if _, ok := headcountSets[row.LocalDay]; !ok {
-			headcountSets[row.LocalDay] = map[string]struct{}{}
+		if _, ok := headcountSets[localDayKey]; !ok {
+			headcountSets[localDayKey] = map[string]struct{}{}
 		}
-		headcountSets[row.LocalDay][row.EmployeeID] = struct{}{}
+		headcountSets[localDayKey][row.EmployeeID] = struct{}{}
 	}
 
 	for _, row := range workedRows {
-		day := ensureDay(days, row.LocalDay)
+		day := ensureDay(days, normalizeLocalDayKey(row.LocalDay))
 		employee := ensureEmployee(day, row.EmployeeID)
 		employee.WorkedSeconds += row.WorkedSeconds
 		employee.WorkedHours = float64(employee.WorkedSeconds) / 3600.0
 	}
 
 	for _, row := range revenueRows {
-		day := ensureDay(days, row.LocalDay)
+		day := ensureDay(days, normalizeLocalDayKey(row.LocalDay))
 		day.RevenueHTCents = row.RevenueHTCents
 	}
 
@@ -278,4 +559,30 @@ func buildRateIndex(rows []EmployeeRateRow) map[string]EmployeeRateRow {
 		index[row.EmployeeID] = row
 	}
 	return index
+}
+
+func normalizeLocalDayKey(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	if idx := strings.Index(trimmed, "T"); idx > 0 {
+		return trimmed[:idx]
+	}
+
+	if len(trimmed) >= len("2006-01-02") {
+		candidate := trimmed[:10]
+		if _, err := time.Parse("2006-01-02", candidate); err == nil {
+			return candidate
+		}
+	}
+
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04:05.000000", "2006-01-02"} {
+		if parsed, err := time.Parse(layout, trimmed); err == nil {
+			return parsed.UTC().Format("2006-01-02")
+		}
+	}
+
+	return trimmed
 }

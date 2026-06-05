@@ -98,7 +98,7 @@ func (r *Repository) ListWorkedRawByDayEmployee(ctx context.Context, merchantID 
 
 	db := dbutils.GetDB(ctx, r.db)
 	query := `
-		SELECT DATE(CONVERT_TZ(te.clock_in_at, '+00:00', ?)) AS local_day,
+		SELECT DATE_FORMAT(CONVERT_TZ(te.clock_in_at, '+00:00', ?), '%Y-%m-%d') AS local_day,
 			te.employee_id,
 			SUM(GREATEST(0, TIMESTAMPDIFF(SECOND, te.clock_in_at, te.clock_out_at))) AS worked_seconds
 		FROM planning_time_entries te

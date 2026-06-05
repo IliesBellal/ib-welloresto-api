@@ -122,7 +122,7 @@ func (r *StatsRepository) getRevenueHTForPeriod(ctx context.Context, merchantID 
 func (r *StatsRepository) ListRevenueHTByLocalDay(ctx context.Context, merchantID, tzOffset string, startTimeUTC, endTimeUTC time.Time) ([]RevenueHTByLocalDay, error) {
 	whereClause := sharedOrdersRevenueWhereClause()
 	query := strings.TrimSpace(`
-		SELECT DATE(CONVERT_TZ(o.creation_date, '+00:00', ?)) AS local_day,
+		SELECT DATE_FORMAT(CONVERT_TZ(o.creation_date, '+00:00', ?), '%Y-%m-%d') AS local_day,
 			COALESCE(SUM(o.HT), 0) AS revenue_ht_cents
 		FROM orders o
 	`) + "\n" + whereClause + `

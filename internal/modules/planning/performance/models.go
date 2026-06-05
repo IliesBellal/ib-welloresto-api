@@ -68,12 +68,19 @@ type PerformanceWarnings struct {
 	MembersWithoutRate int `json:"members_without_rate"`
 }
 
+type PerformancePreviousPeriod struct {
+	From    string              `json:"from"`
+	To      string              `json:"to"`
+	Periods []PerformancePeriod `json:"periods"`
+	Totals  PerformancePeriod   `json:"totals"`
+}
+
 type PerformanceResponse struct {
-	From           string              `json:"from"`
-	To             string              `json:"to"`
-	Granularity    string              `json:"granularity"`
-	Periods        []PerformancePeriod `json:"periods"`
-	Totals         PerformancePeriod   `json:"totals"`
-	PreviousPeriod *PerformancePeriod  `json:"previous_period"`
-	Warnings       PerformanceWarnings `json:"warnings"`
+	From           string                     `json:"from"`
+	To             string                     `json:"to"`
+	Granularity    string                     `json:"granularity"`
+	Periods        []PerformancePeriod        `json:"periods"`
+	Totals         PerformancePeriod          `json:"totals"`
+	PreviousPeriod *PerformancePreviousPeriod `json:"previous_period"`
+	Warnings       PerformanceWarnings        `json:"warnings"`
 }
