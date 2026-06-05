@@ -824,6 +824,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/shift-swap-requests/{id}", planningH.UpdatePlanningShiftSwapRequest)
 		r.Delete("/shift-swap-requests/{id}", planningH.DeletePlanningShiftSwapRequest)
 
+		r.Put("/revenue-forecast", planningH.UpsertRevenueForecasts)
 		r.Get("/performance", planningH.GetPlanningPerformance)
 	})
 

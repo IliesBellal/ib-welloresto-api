@@ -27,7 +27,7 @@ func (r *Repository) CreateSuggestion(ctx context.Context, params CreateSuggesti
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	id := helpers.GeneratePrefixedID("upsell")
+	id := helpers.GeneratePrefixedID(helpers.UpsellSuggestionIDPrefix)
 
 	itemsJSON, err := json.Marshal(params.SuggestedItems)
 	if err != nil {

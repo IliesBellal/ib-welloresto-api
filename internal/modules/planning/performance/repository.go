@@ -153,6 +153,47 @@ func (r *Repository) ListRevenueByDay(ctx context.Context, merchantID string, fr
 	return items, nil
 }
 
+type RevenueForecastByDayRow struct {
+	LocalDay      string
+	AmountHTCents int64
+}
+
+func (r *Repository) ListRevenueForecastByDay(ctx context.Context, merchantID string, fromLocalDay, toLocalDay time.Time) ([]RevenueForecastByDayRow, error) {
+	fromDay := normalizeDateOnlyUTC(fromLocalDay)
+	toDay := normalizeDateOnlyUTC(toLocalDay)
+	if toDay.Before(fromDay) {
+		return []RevenueForecastByDayRow{}, nil
+	}
+
+	db := dbutils.GetDB(ctx, r.db)
+	query := `
+		SELECT DATE_FORMAT(forecast_date, '%Y-%m-%d') AS local_day, amount_ht_cents
+		FROM planning_revenue_forecasts
+		WHERE merchant_id = ? AND forecast_date >= ? AND forecast_date <= ?
+		ORDER BY local_day ASC
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID, fromDay.Format("2006-01-02"), toDay.Format("2006-01-02"))
+	if err != nil {
+		return nil, fmt.Errorf("list revenue forecast by day: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]RevenueForecastByDayRow, 0)
+	for rows.Next() {
+		var row RevenueForecastByDayRow
+		if err := rows.Scan(&row.LocalDay, &row.AmountHTCents); err != nil {
+			return nil, fmt.Errorf("scan revenue forecast by day: %w", err)
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate revenue forecast by day: %w", err)
+	}
+
+	return items, nil
+}
+
 func (r *Repository) ListRatesByEmployee(ctx context.Context, merchantID string) ([]EmployeeRateRow, error) {
 	db := dbutils.GetDB(ctx, r.db)
 	query := `

@@ -159,7 +159,7 @@ func (r *StocksRepository) AddStockBarcode(ctx context.Context, merchantID strin
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO stock_movements(id, merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, movement_date)
 		VALUES (?, ?, ?, ?, 'scan', 'add', ? * ?, ?, UTC_TIMESTAMP)
-	`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
+	`, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), merchantID, userID, s.ComponentID, s.CQuantity, s.BCQuantity, s.BCUOM)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -248,7 +248,7 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
             SELECT ?, u.merchant_id, u.user_id, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?
             FROM users u
             WHERE u.user_id = ?;
-        `, helpers.GeneratePrefixedID("stck-mvt"), req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
+        `, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
 		if err != nil {
 			log.Error(err.Error())
 			return err
@@ -313,7 +313,7 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
                     id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment
                 )
                 VALUES (?, ?, ?, ?, ?, 'manual', 'loss', ?, ?, NULL, ?);
-            `, helpers.GeneratePrefixedID("stck-mvt"), it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
+            `, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), it.MerchantID, userID, it.ComponentID, it.ProductID, it.Qty, it.UOM, req.Comment)
 			if err != nil {
 				log.Error(err.Error())
 				return err
@@ -596,7 +596,7 @@ func (r *StocksRepository) RecordComponentMovement(ctx context.Context, merchant
 		INSERT INTO stock_movements
 			(id, merchant_id, user_id, component_id, source, movement, quantity, unit_of_measure, comment)
 		VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?)
-	`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
+	`, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), merchantID, userID, req.ComponentID, movementCode, req.Quantity, req.Unit, req.Comment)
 	return err
 }
 
@@ -683,7 +683,7 @@ func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, us
 			INSERT INTO stock_movements
 				(id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
 			VALUES (?, ?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
-		`, helpers.GeneratePrefixedID("stck-mvt"), merchantID, userID, cr.ComponentID, cr.ProductID, cr.MovementQty, cr.MovementUOM, cr.OrderItemID, orderID); err != nil {
+		`, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), merchantID, userID, cr.ComponentID, cr.ProductID, cr.MovementQty, cr.MovementUOM, cr.OrderItemID, orderID); err != nil {
 			return err
 		}
 	}

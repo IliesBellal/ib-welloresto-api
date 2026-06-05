@@ -36,10 +36,11 @@ type RawDayEmployeeMetrics struct {
 }
 
 type RawDayMetrics struct {
-	LocalDay       string                  `json:"local_day"`
-	RevenueHTCents int64                   `json:"revenue_ht_cents"`
-	Headcount      int                     `json:"headcount"`
-	Employees      []RawDayEmployeeMetrics `json:"employees"`
+	LocalDay             string                  `json:"local_day"`
+	RevenueHTCents       int64                   `json:"revenue_ht_cents"`
+	RevenueForecastCents *int64                  `json:"revenue_forecast_cents"`
+	Headcount            int                     `json:"headcount"`
+	Employees            []RawDayEmployeeMetrics `json:"employees"`
 }
 
 type RawPerformanceResponse struct {

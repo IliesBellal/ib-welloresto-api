@@ -115,13 +115,23 @@ func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}
 	payrollCents := int64(math.Round(payrollRaw))
 	hoursDelta := workedHours - plannedHours
 
+	// Determine effective revenue: real if >0, else forecast if present, else 0
+	var effectiveCents int64
+	if day.RevenueHTCents > 0 {
+		effectiveCents = day.RevenueHTCents
+	} else if day.RevenueForecastCents != nil {
+		effectiveCents = *day.RevenueForecastCents
+	} else {
+		effectiveCents = 0
+	}
+
 	payrollRatio, revenuePerHourCents := computeRatios(
-		day.RevenueHTCents,
+		effectiveCents,
 		payrollCents,
 		workedHours,
 		dayMSIncomplete,
-		dayHasMSActivity && day.RevenueHTCents <= 0,
-		workedHours > 0 && day.RevenueHTCents <= 0,
+		dayHasMSActivity && effectiveCents <= 0,
+		workedHours > 0 && effectiveCents <= 0,
 	)
 
 	period := PerformancePeriod{
@@ -129,7 +139,7 @@ func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}
 		PeriodEnd:              day.LocalDay,
 		Label:                  day.LocalDay,
 		RevenueActualCents:     day.RevenueHTCents,
-		RevenueForecastCents:   nil,
+		RevenueForecastCents:   day.RevenueForecastCents,
 		PlannedHours:           plannedHours,
 		WorkedHours:            workedHours,
 		Headcount:              day.Headcount,
@@ -147,6 +157,8 @@ func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}
 		HasMSActivity:          dayHasMSActivity,
 		WorkedHoursPositive:    workedHours > 0,
 		RevenueActualCents:     day.RevenueHTCents,
+		RevenueForecastCents:   day.RevenueForecastCents,
+		RevenueEffectiveCents:  effectiveCents,
 		PayrollCostLoadedCents: payrollCents,
 		PlannedHours:           plannedHours,
 		WorkedHours:            workedHours,
@@ -173,18 +185,20 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 	}
 
 	type bucketAggregate struct {
-		PeriodStart        time.Time
-		PeriodEnd          time.Time
-		Label              string
-		RevenueActualCents int64
-		PlannedHours       float64
-		WorkedHours        float64
-		PayrollCents       int64
-		HoursDelta         float64
-		MSIncomplete       bool
-		AnyMSDayWithoutCA  bool
-		AnyWorkedNoCA      bool
-		ShiftEmployees     map[string]struct{}
+		PeriodStart           time.Time
+		PeriodEnd             time.Time
+		Label                 string
+		RevenueActualCents    int64
+		RevenueEffectiveCents int64
+		RevenueForecastCents  *int64
+		PlannedHours          float64
+		WorkedHours           float64
+		PayrollCents          int64
+		HoursDelta            float64
+		MSIncomplete          bool
+		AnyMSDayWithoutCA     bool
+		AnyWorkedNoCA         bool
+		ShiftEmployees        map[string]struct{}
 	}
 
 	buckets := map[string]*bucketAggregate{}
@@ -212,6 +226,15 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 		}
 
 		bucket.RevenueActualCents += day.RevenueActualCents
+		bucket.RevenueEffectiveCents += day.RevenueEffectiveCents
+		if day.RevenueForecastCents != nil {
+			if bucket.RevenueForecastCents == nil {
+				v := *day.RevenueForecastCents
+				bucket.RevenueForecastCents = &v
+			} else {
+				*bucket.RevenueForecastCents += *day.RevenueForecastCents
+			}
+		}
 		bucket.PlannedHours += day.PlannedHours
 		bucket.WorkedHours += day.WorkedHours
 		bucket.PayrollCents += day.PayrollCostLoadedCents
@@ -220,10 +243,10 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 		if day.MSIncomplete {
 			bucket.MSIncomplete = true
 		}
-		if day.HasMSActivity && day.RevenueActualCents <= 0 {
+		if day.HasMSActivity && day.RevenueEffectiveCents <= 0 {
 			bucket.AnyMSDayWithoutCA = true
 		}
-		if day.WorkedHoursPositive && day.RevenueActualCents <= 0 {
+		if day.WorkedHoursPositive && day.RevenueEffectiveCents <= 0 {
 			bucket.AnyWorkedNoCA = true
 		}
 
@@ -237,7 +260,7 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 	for _, key := range orderedKeys {
 		bucket := buckets[key]
 		payrollRatio, revenuePerHour := computeRatios(
-			bucket.RevenueActualCents,
+			bucket.RevenueEffectiveCents,
 			bucket.PayrollCents,
 			bucket.WorkedHours,
 			bucket.MSIncomplete,
@@ -250,7 +273,7 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 			PeriodEnd:              bucket.PeriodEnd.Format("2006-01-02"),
 			Label:                  bucket.Label,
 			RevenueActualCents:     bucket.RevenueActualCents,
-			RevenueForecastCents:   nil,
+			RevenueForecastCents:   bucket.RevenueForecastCents,
 			PlannedHours:           bucket.PlannedHours,
 			WorkedHours:            bucket.WorkedHours,
 			Headcount:              len(bucket.ShiftEmployees),
@@ -266,6 +289,8 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 
 func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePeriod {
 	totalRevenueCents := int64(0)
+	totalRevenueEffectiveCents := int64(0)
+	var totalRevenueForecastCents *int64
 	totalPlannedHours := 0.0
 	totalWorkedHours := 0.0
 	totalHeadcount := 0
@@ -276,6 +301,15 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 
 	for _, day := range days {
 		totalRevenueCents += day.RevenueActualCents
+		totalRevenueEffectiveCents += day.RevenueEffectiveCents
+		if day.RevenueForecastCents != nil {
+			if totalRevenueForecastCents == nil {
+				v := *day.RevenueForecastCents
+				totalRevenueForecastCents = &v
+			} else {
+				*totalRevenueForecastCents += *day.RevenueForecastCents
+			}
+		}
 		totalPlannedHours += day.PlannedHours
 		totalWorkedHours += day.WorkedHours
 		totalHeadcount += day.Period.Headcount
@@ -284,16 +318,16 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 		if day.MSIncomplete {
 			totalMSIncomplete = true
 		}
-		if day.HasMSActivity && day.RevenueActualCents <= 0 {
+		if day.HasMSActivity && day.RevenueEffectiveCents <= 0 {
 			anyMSDayWithoutCA = true
 		}
-		if day.WorkedHoursPositive && day.RevenueActualCents <= 0 {
+		if day.WorkedHoursPositive && day.RevenueEffectiveCents <= 0 {
 			anyWorkedHoursDayWithoutCA = true
 		}
 	}
 
 	totalPayrollRatio, totalRevenuePerHour := computeRatios(
-		totalRevenueCents,
+		totalRevenueEffectiveCents,
 		totalPayrollCents,
 		totalWorkedHours,
 		totalMSIncomplete,
@@ -306,7 +340,7 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 		PeriodEnd:              toDay,
 		Label:                  "Total",
 		RevenueActualCents:     totalRevenueCents,
-		RevenueForecastCents:   nil,
+		RevenueForecastCents:   totalRevenueForecastCents,
 		PlannedHours:           totalPlannedHours,
 		WorkedHours:            totalWorkedHours,
 		Headcount:              totalHeadcount,
@@ -413,6 +447,8 @@ type computedDay struct {
 	HasMSActivity          bool
 	WorkedHoursPositive    bool
 	RevenueActualCents     int64
+	RevenueForecastCents   *int64
+	RevenueEffectiveCents  int64
 	PayrollCostLoadedCents int64
 	PlannedHours           float64
 	WorkedHours            float64
@@ -472,6 +508,18 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 	for _, row := range revenueRows {
 		day := ensureDay(days, normalizeLocalDayKey(row.LocalDay))
 		day.RevenueHTCents = row.RevenueHTCents
+	}
+
+	// Load revenue forecasts from planning_revenue_forecasts table
+	forecastRows, err := s.repo.ListRevenueForecastByDay(ctx, user.MerchantID, fromLocalDay, toLocalDay)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range forecastRows {
+		day := ensureDay(days, normalizeLocalDayKey(row.LocalDay))
+		// avoid taking address of loop variable
+		amt := row.AmountHTCents
+		day.RevenueForecastCents = &amt
 	}
 
 	for localDay, day := range days {

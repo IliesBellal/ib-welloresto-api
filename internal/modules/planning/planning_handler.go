@@ -6,6 +6,7 @@ import (
 	leavepkg "welloresto-api/internal/modules/planning/leave"
 	performancepkg "welloresto-api/internal/modules/planning/performance"
 	refspkg "welloresto-api/internal/modules/planning/refs"
+	revenueforecastpkg "welloresto-api/internal/modules/planning/revenueforecast"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	shifttemplatespkg "welloresto-api/internal/modules/planning/shifttemplates"
@@ -25,6 +26,7 @@ type TimeEntriesHandler = timeentriespkg.Handler
 type LeaveRequestsHandler = leavepkg.Handler
 type ShiftSwapsHandler = swapspkg.Handler
 type PerformanceHandler = performancepkg.Handler
+type RevenueForecastHandler = revenueforecastpkg.Handler
 
 type PlanningHandler struct {
 	svc *PlanningService
@@ -39,21 +41,23 @@ type PlanningHandler struct {
 	*LeaveRequestsHandler
 	*ShiftSwapsHandler
 	*PerformanceHandler
+	*RevenueForecastHandler
 }
 
 func NewHandler(svc *PlanningService) *PlanningHandler {
 	return &PlanningHandler{
-		svc:                   svc,
-		DocumentsHandler:      documentspkg.NewHandler(svc.DocumentsService),
-		SettingsHandler:       settingspkg.NewHandler(svc.SettingsService),
-		RefsHandler:           refspkg.NewHandler(svc.RefsService),
-		EmployeesHandler:      employeespkg.NewHandler(svc.EmployeesService),
-		ScheduleHandler:       schedulepkg.NewHandler(svc.ScheduleService),
-		ShiftTemplatesHandler: shifttemplatespkg.NewHandler(svc.ShiftTemplatesService),
-		WeekTemplatesHandler:  weektemplatespkg.NewHandler(svc.WeekTemplatesService),
-		TimeEntriesHandler:    timeentriespkg.NewHandler(svc.TimeEntriesService),
-		LeaveRequestsHandler:  leavepkg.NewHandler(svc.LeaveRequestsService),
-		ShiftSwapsHandler:     swapspkg.NewHandler(svc.ShiftSwapsService),
-		PerformanceHandler:    performancepkg.NewHandler(svc.PerformanceService),
+		svc:                    svc,
+		DocumentsHandler:       documentspkg.NewHandler(svc.DocumentsService),
+		SettingsHandler:        settingspkg.NewHandler(svc.SettingsService),
+		RefsHandler:            refspkg.NewHandler(svc.RefsService),
+		EmployeesHandler:       employeespkg.NewHandler(svc.EmployeesService),
+		ScheduleHandler:        schedulepkg.NewHandler(svc.ScheduleService),
+		ShiftTemplatesHandler:  shifttemplatespkg.NewHandler(svc.ShiftTemplatesService),
+		WeekTemplatesHandler:   weektemplatespkg.NewHandler(svc.WeekTemplatesService),
+		TimeEntriesHandler:     timeentriespkg.NewHandler(svc.TimeEntriesService),
+		LeaveRequestsHandler:   leavepkg.NewHandler(svc.LeaveRequestsService),
+		ShiftSwapsHandler:      swapspkg.NewHandler(svc.ShiftSwapsService),
+		PerformanceHandler:     performancepkg.NewHandler(svc.PerformanceService),
+		RevenueForecastHandler: revenueforecastpkg.NewHandler(svc.RevenueForecastService),
 	}
 }

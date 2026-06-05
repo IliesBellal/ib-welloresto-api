@@ -39,6 +39,7 @@ const (
 	PlanningWeekIDPrefix                 = "plan-week"
 	PlanningShiftIDPrefix                = "plan-shift"
 	PlanningWeekTemplateIDPrefix         = "plan-week-tpl"
+	PlanningRevenueForecastIDPrefix      = "plan-rev-forecast"
 	PlanningWeekTemplateShiftIDPrefix    = "plan-week-tpl-shift"
 	PlanningShiftTemplateIDPrefix        = "plan-shift-tpl"
 	PlanningTimeEntryIDPrefix            = "plan-time"
@@ -47,6 +48,8 @@ const (
 	PlanningEmployeeAmendmentIDPrefix    = "plan-ame"
 	PlanningSystemRuleIDPrefix           = "plan-rule"
 	PlanningHolidayIDPrefix              = "plan-hol"
+	StockMovementPrefix                  = "stock-mvt"
+	UpsellSuggestionIDPrefix             = "upsell-sugg"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").
