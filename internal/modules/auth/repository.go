@@ -363,10 +363,10 @@ LIMIT 1;
 					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)
 				}
 			*/
-		}
 
-		if !helpers.PasswordMatches(plainPwd, data.Password) {
-			return nil, models.ErrUserNotFound
+			if !helpers.PasswordMatches(plainPwd, data.Password) {
+				return nil, models.ErrUserNotFound
+			}
 		}
 	}
 
