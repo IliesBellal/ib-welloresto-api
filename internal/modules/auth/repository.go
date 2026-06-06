@@ -282,8 +282,8 @@ LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
 WHERE 
     (
-        UPPER(u.name)=UPPER(?)
-        OR UPPER(u.email)=UPPER(?)
+        (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
+        OR (UPPER(u.email)=UPPER(?) AND u.email <> '' AND u.email IS NOT NULL)
         OR ur.token = ?
     )
 LIMIT 1;
@@ -363,10 +363,10 @@ LIMIT 1;
 					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)
 				}
 			*/
-		}
 
-		if !helpers.PasswordMatches(plainPwd, data.Password) {
-			return nil, models.ErrUserNotFound
+			if !helpers.PasswordMatches(plainPwd, data.Password) {
+				return nil, models.ErrUserNotFound
+			}
 		}
 	}
 
