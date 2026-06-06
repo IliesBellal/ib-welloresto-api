@@ -230,7 +230,7 @@ type ProductUpdatePayload struct {
 	Name              *string                    `json:"name"` // Pointeurs pour gérer le NULL/Omission
 	Description       *string                    `json:"description"`
 	IsAvailableOnSno  *bool                      `json:"is_available_on_sno"`
-	CategoryID        *string                    `json:"category"`
+	CategoryID        *string                    `json:"category_id"`
 	Price             *int                       `json:"price"`
 	PriceTakeAway     *int                       `json:"price_take_away"`
 	PriceDelivery     *int                       `json:"price_delivery"`
