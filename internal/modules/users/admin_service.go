@@ -158,7 +158,7 @@ func (s *UsersService) ForceResetPassword(ctx context.Context, userID string, re
 	if err != nil {
 		return err
 	}
-	if err := s.userRepo.UpdatePassword(ctx, userID, currentUser.MerchantID, hash); err != nil {
+	if _, err := s.userRepo.UpdatePassword(ctx, userID, currentUser.MerchantID, hash); err != nil {
 		return err
 	}
 	if s.audit != nil {

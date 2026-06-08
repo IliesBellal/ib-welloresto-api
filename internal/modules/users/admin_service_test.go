@@ -152,27 +152,12 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "user_9").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT id
-		FROM users_rights
-		WHERE user_id = ?
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE users_rights
+		SET token = ?
+		WHERE user_id = ? AND merchant_id = ?
 	`)).
-		WithArgs("user_9").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(77).AddRow(78))
-
-	mock.ExpectExec(regexp.QuoteMeta(`
-			UPDATE users_rights
-			SET token = ?
-			WHERE id = ?
-		`)).
-		WithArgs(sqlmock.AnyArg(), int64(77)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(`
-			UPDATE users_rights
-			SET token = ?
-			WHERE id = ?
-		`)).
-		WithArgs(sqlmock.AnyArg(), int64(78)).
+		WithArgs(sqlmock.AnyArg(), "user_9", "merchant_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	if err := svc.ForceResetPassword(ctx, "user_9", ForceResetPasswordRequest{NewPassword: "NouveauPass123"}); err != nil {

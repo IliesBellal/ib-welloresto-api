@@ -202,11 +202,16 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 	return &res, nil
 }
 
-func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, merchantID string, hash string) error {
+func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, merchantID string, hash string) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	newUserToken, err := generateToken()
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	newMerchantToken, err := generateToken()
+	if err != nil {
+		return "", err
 	}
 
 	// 1. Update password
@@ -216,63 +221,36 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 		WHERE user_id = ?
 	`, hash, newUserToken, userID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if rows != 1 {
-		return models.ErrNotFound
+		return "", models.ErrNotFound
 	}
 
-	// 2. Load all users_rights for this user
-	rowsUR, err := db.QueryContext(ctx, `
-		SELECT id
-		FROM users_rights
-		WHERE user_id = ?
-	`, userID)
+	// 2. Rotate token only for the connected merchant.
+	rightsRes, err := db.ExecContext(ctx, `
+		UPDATE users_rights
+		SET token = ?
+		WHERE user_id = ? AND merchant_id = ?
+	`, newMerchantToken, userID, merchantID)
 	if err != nil {
-		return err
-	}
-	defer rowsUR.Close()
-
-	type ur struct {
-		id int64
+		return "", err
 	}
 
-	var rights []ur
-	for rowsUR.Next() {
-		var r ur
-		if err := rowsUR.Scan(&r.id); err != nil {
-			return err
-		}
-		rights = append(rights, r)
+	rightsRows, err := rightsRes.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if rightsRows != 1 {
+		return "", models.ErrNotFound
 	}
 
-	if err := rowsUR.Err(); err != nil {
-		return err
-	}
-
-	// 3. Reset token for each merchant
-	for _, rgt := range rights {
-		newToken, err := generateToken()
-		if err != nil {
-			return err
-		}
-
-		_, err = db.ExecContext(ctx, `
-			UPDATE users_rights
-			SET token = ?
-			WHERE id = ?
-		`, newToken, rgt.id)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return newMerchantToken, nil
 }
 
 func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*models.UserProfileResponse, error) {

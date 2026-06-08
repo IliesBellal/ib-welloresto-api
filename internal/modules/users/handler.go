@@ -86,12 +86,17 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdatePassword(ctx, token, req.OldPassword, req.NewPassword); err != nil {
+	newToken, err := h.svc.UpdatePassword(ctx, token, req.OldPassword, req.NewPassword)
+	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "user", "update_password", map[string]string{"error": err.Error()})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "user", "update_password", map[string]string{"status": "success"})
+	models.SendJSON(w, http.StatusOK, "user", "update_password",
+		models.HandlerDefaultResponse{
+			ID:   "users.reset-password",
+			Data: map[string]string{"status": "success", "token": newToken},
+		})
 }
 
 func (h *UsersHandler) GetProfile(w http.ResponseWriter, r *http.Request) {

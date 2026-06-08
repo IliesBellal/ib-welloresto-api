@@ -81,26 +81,26 @@ func validateNewPassword(password string) error {
 	return nil
 }
 
-func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass string, newPass string) error {
+func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass string, newPass string) (string, error) {
 
 	// 1. Load user
 	user, err := s.userRepo.GetUserByToken(ctx, token)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if user == nil {
-		return models.ErrUnauthorized
+		return "", models.ErrUnauthorized
 	}
 
 	// 2. Validate new password
 	if err := validateNewPassword(newPass); err != nil {
-		return err
+		return "", err
 	}
 
 	// 3. Hash password
 	hash, err := HashPassword(newPass)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// 2. Compare old password
