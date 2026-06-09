@@ -35,7 +35,6 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
-    u.pin_code,
     u.profile_picture,
 	u.email_verified_at,
 
@@ -122,20 +121,24 @@ LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_tok
 LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
 LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
-WHERE ur.token = ? 
+WHERE ur.token = ?
 LIMIT 1;
 `
 
 	row := r.database.QueryRowContext(ctx, query, token)
+	return scanUserLoginRow(row)
+}
 
+// scanUserLoginRow scans a row produced by the shared SELECT used by GetUserByToken
+// and GetUserByPIN (74 columns, same order). Shared to keep both queries in sync.
+func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 	data := &UserLoginRow{}
-
 	var ueDelayUntil sql.NullTime
 	var ueClosedUntil sql.NullTime
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
-		&data.Enabled, &data.PinCode, &data.ProfilePicture, &data.EmailVerifiedAt,
+		&data.Enabled, &data.ProfilePicture, &data.EmailVerifiedAt,
 
 		&data.MerchantRightsID,
 		&data.Token, &data.Rights.AccessReception, &data.Rights.AccessDelivery, &data.Rights.AccessWaiter,
@@ -187,7 +190,6 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
-    u.pin_code,
     u.profile_picture,
     u.terms_of_use_accepted,
     u.password,
@@ -302,7 +304,7 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
-		&data.Tel, &data.Enabled, &data.PinCode, &data.ProfilePicture,
+		&data.Tel, &data.Enabled, &data.ProfilePicture,
 		&data.TermsOfUseAccepted, &data.Password, &data.EmailVerifiedAt,
 
 		&data.MerchantRightsID,
@@ -371,6 +373,131 @@ LIMIT 1;
 	}
 
 	return data, err
+}
+
+// GetUserByPIN looks up the employee whose PIN matches within a merchant.
+// Requires ur.enabled = 1 AND ur.login_enabled = 1 so a deactivated link cannot
+// authenticate even if its pin_hash was not cleared.
+func (r *AuthRepository) GetUserByPIN(ctx context.Context, merchantID, pinHash string) (*UserLoginRow, error) {
+	query := `
+SELECT
+    u.user_id,
+    u.password,
+    u.name,
+    u.first_name,
+    u.last_name,
+    u.email,
+    u.tel,
+    u.enabled,
+    u.profile_picture,
+	u.email_verified_at,
+
+	ur.id AS merchant_rights_id,
+    ur.token AS rights_token,
+    ur.access_wrreception,
+    ur.access_wrdelivery,
+    ur.access_wrwaiter,
+    ur.print_merchant_cash_report,
+    ur.open_cash_drawer,
+    ur.admin,
+	COALESCE(ur.manage_menu, FALSE),
+	COALESCE(ur.manage_plannings, FALSE),
+	COALESCE(ur.manage_users, FALSE),
+	COALESCE(ur.manage_settings, FALSE),
+	COALESCE(ur.manage_haccp, FALSE),
+	COALESCE(ur.view_reports, FALSE),
+	COALESCE(ur.export_reports, FALSE),
+	COALESCE(ur.view_financials, FALSE),
+	COALESCE(ur.export_financials, FALSE),
+	COALESCE(ur.manage_customers, FALSE),
+	COALESCE(ur.export_customers, FALSE),
+    ur.merchant_id,
+	u.mfa_type,
+	u.mfa_status,
+	u.mfa_verified_at,
+	u.mfa_otp_sent_at,
+
+    m.fullName,
+    m.merchantTel,
+    m.lat,
+    m.lng,
+    m.timezone,
+    CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
+    m.logo,
+    m.web_site,
+
+    mp.delivery_fees,
+    mp.delivery_fees_limit,
+    mp.delivery_distance_limit,
+    mp.manage_on_site,
+    mp.manage_take_away,
+    mp.manage_delivery,
+    mp.kitchen_show_only_paid,
+    mp.service_required_for_ordering,
+    mp.warning_new_order_not_paid,
+    mp.disable_components_under_safety_stock,
+    mp.currency,
+    mp.is_open,
+
+    p.allow_waiter_account,
+    p.allow_delivery_account,
+    p.scannorder_ready,
+    p.stock_management,
+    p.hr_management,
+	COALESCE(s.planning_enabled, p.planning_enabled, p.hr_management, FALSE) AS planning_enabled,
+	COALESCE(s.haccp_enabled, p.haccp_enabled, TRUE) AS haccp_enabled,
+	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
+	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
+	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
+
+    sset.activated,
+
+    iue.store_id,
+    iue.estimated_preparation_time,
+    iue.delay_until,
+    iue.delay_duration,
+    iue.closed_until,
+	iue.commission_rate,
+
+    iud.customer_id,
+
+    ind.location_id,
+	ind.commission_rate
+
+FROM users u
+INNER JOIN users_rights ur ON ur.user_id = u.user_id
+INNER JOIN merchant m ON m.id = ur.merchant_id
+LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
+LEFT JOIN subscriptions s ON s.merchant_id = m.id
+LEFT JOIN packages p ON p.id = s.package_id
+LEFT JOIN scannorder_settings sset ON sset.merchant_id = m.id
+LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_token IS NOT NULL
+LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
+LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
+
+WHERE ur.merchant_id = ? AND ur.pin_hash = ? AND ur.enabled = 1 AND ur.login_enabled = 1
+LIMIT 1;
+`
+	row := r.database.QueryRowContext(ctx, query, merchantID, pinHash)
+	return scanUserLoginRow(row)
+}
+
+func (r *AuthRepository) SetPINHash(ctx context.Context, merchantID, userID string, pinHash *string) error {
+	_, err := r.database.ExecContext(ctx,
+		`UPDATE users_rights SET pin_hash = ? WHERE merchant_id = ? AND user_id = ?`,
+		pinHash, merchantID, userID)
+	return err
+}
+
+func (r *AuthRepository) CheckPINConflict(ctx context.Context, merchantID, pinHash, excludeUserID string) (bool, error) {
+	var exists int
+	err := r.database.QueryRowContext(ctx,
+		`SELECT 1 FROM users_rights WHERE merchant_id = ? AND pin_hash = ? AND user_id != ? LIMIT 1`,
+		merchantID, pinHash, excludeUserID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]MerchantRow, error) {

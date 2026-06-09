@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -241,6 +242,21 @@ func (r *UsersRepository) GetMerchantUserRights(ctx context.Context, merchantID,
 	`, merchantID, strings.TrimSpace(userID))
 
 	return scanMerchantUserRights(row)
+}
+
+func (r *UsersRepository) GetUsersRightsToken(ctx context.Context, merchantID, userID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	var token string
+	err := db.QueryRowContext(ctx, `
+		SELECT token
+		FROM users_rights
+		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		LIMIT 1
+	`, merchantID, strings.TrimSpace(userID)).Scan(&token)
+	if err == sql.ErrNoRows {
+		return "", models.ErrMerchantUserNotFound
+	}
+	return token, err
 }
 
 func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, merchantID, token string, rights MerchantUserRightsUpsertRequest) (int64, error) {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -174,6 +175,109 @@ func (h *AuthHandler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 		"status":  "success",
 		"message": "Authentication successful.",
 	})
+}
+
+// AuthPIN authenticates an employee by PIN.
+// Authorization: anchor token (existing session of any user on the same merchant).
+// Body: { "pin": "1234" }
+// Response: identical to /auth/login, with the permanent token of the matched employee.
+func (h *AuthHandler) AuthPIN(w http.ResponseWriter, r *http.Request) {
+	anchorToken := helpers.ExtractToken(r)
+	if anchorToken == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "pin", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req PINAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.PIN) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "pin", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	resp, err := h.svc.AuthenticatePIN(r.Context(), anchorToken, req.PIN)
+	if err != nil {
+		var lockoutErr *PINLockoutError
+		if errors.As(err, &lockoutErr) {
+			models.SendJSON(w, http.StatusTooManyRequests, "auth", "pin", map[string]interface{}{
+				"error":         "pin_locked",
+				"delay_seconds": lockoutErr.DelaySeconds,
+			})
+			return
+		}
+		models.SendErrorJSON(w, "auth", "pin", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "pin", resp)
+}
+
+
+// SetPIN allows the authenticated user to set their own PIN (self-service).
+// Authorization: the caller's own session token.
+// Body: { "pin": "1234" }
+// The user_id is taken from the authenticated session — a user cannot set another user's PIN.
+func (h *AuthHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "pin_set", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req SetPINRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.PIN) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "pin_set", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	caller, err := h.svc.GetUserByToken(r.Context(), token)
+	if err != nil || caller == nil {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "pin_set", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	if err := h.svc.SetPINSelf(r.Context(), caller.MerchantID, caller.UserID, req.PIN); err != nil {
+		switch {
+		case errors.Is(err, ErrPINInvalidLength):
+			models.SendJSON(w, http.StatusBadRequest, "auth", "pin_set", map[string]string{"error": "pin_invalid_length"})
+		case errors.Is(err, ErrPINConflict):
+			models.SendJSON(w, http.StatusConflict, "auth", "pin_set", map[string]string{"error": "pin_already_used"})
+		default:
+			models.SendErrorJSON(w, "auth", "pin_set", err)
+		}
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "pin_set", map[string]string{"status": "success"})
+}
+
+// ResetPIN clears the PIN of a target employee (sets pin_hash to NULL).
+// Authorization: admin/manager (HasUserManagementAccess).
+// Body: { "user_id": "..." }
+func (h *AuthHandler) ResetPIN(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "pin_reset", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req ResetPINRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.UserID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "pin_reset", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	caller, err := h.svc.GetUserByToken(r.Context(), token)
+	if err != nil || caller == nil {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "pin_reset", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	if err := h.svc.ResetPIN(r.Context(), caller.MerchantID, req.UserID); err != nil {
+		models.SendErrorJSON(w, "auth", "pin_reset", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "pin_reset", map[string]string{"status": "success"})
 }
 
 // FallbackSMS déclenche l'envoi d'un code de secours par SMS

@@ -18,21 +18,30 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	defer db.Close()
 
 	repo := NewAuthRepository(db)
-	svc := NewAuthService(repo, nil, nil, nil)
+	svc := NewAuthService(repo, nil, nil, nil, "")
 	token := "rights-token"
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
 		WillReturnRows(sqlmock.NewRows(makeColumns(79)).AddRow(
-			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, nil, true, "ignored", nil,
-			token, true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil,
+			// user (0-10)
+			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, true, "ignored", nil,
+			// rights (11-34)
+			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil,
+			// merchant (35-42)
 			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil,
+			// merchant params (43-58)
 			0, 0, 0, true, true, true, false, "", "", false, false, false, false, false, "EUR", true,
+			// package (59-68)
 			true, true, false, 0, false, true, true, true, false, true,
+			// SNO (69)
 			false,
+			// uber eats (70-75)
 			nil, nil, nil, nil, nil, nil,
+			// uber direct (76)
 			nil,
+			// deliveroo (77-78)
 			nil, nil,
 		))
 

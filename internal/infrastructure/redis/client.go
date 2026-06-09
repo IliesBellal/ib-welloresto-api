@@ -100,6 +100,7 @@ func (c *Client) DeleteAllMerchantKeys(ctx context.Context, merchantID string) e
 	return nil
 }
 
+
 // ScanDeleteByPattern supprime toutes les clés correspondant au pattern via SCAN + DEL par batch.
 // Retourne le nombre total de clés supprimées.
 // Utilise SCAN avec COUNT 100 par itération pour ne pas bloquer Redis.

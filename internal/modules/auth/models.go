@@ -2,13 +2,48 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 )
 
 const (
 	OTPResendCooldown = 60 * time.Second
 	MFAExpiration     = 1 * 24 * time.Hour // For testing purposes, we will use 24 hours  //30 * 24 * time.Hour
+
+	PINLength      = 4
+	PINMaxAttempts = 5
+	PINLockoutBase = 30 * time.Second
 )
+
+var (
+	ErrPINInvalidLength = errors.New("pin_invalid_length")
+	ErrPINConflict      = errors.New("pin_already_used")
+)
+
+type PINAuthRequest struct {
+	PIN string `json:"pin"`
+}
+
+// SetPINRequest is used by POST /auth/pin/set (self-service).
+// user_id is not accepted — the caller's identity comes from the auth token.
+type SetPINRequest struct {
+	PIN string `json:"pin"`
+}
+
+// ResetPINRequest is used by POST /auth/pin/reset (admin).
+type ResetPINRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// PINLockoutError carries the remaining lockout delay for the caller.
+type PINLockoutError struct {
+	DelaySeconds int
+}
+
+func (e *PINLockoutError) Error() string {
+	return fmt.Sprintf("pin_locked: retry in %ds", e.DelaySeconds)
+}
 
 type SaveDeviceTokenRequest struct {
 	DeviceToken string `json:"device_token"`
@@ -93,7 +128,6 @@ type UserLoginRow struct {
 	Tel                  string
 	Enabled              bool
 	TermsOfUseAccepted   bool
-	PinCode              sql.NullString
 	ProfilePicture       sql.NullString
 	ReceptionDeviceToken sql.NullString
 	WaiterDeviceToken    sql.NullString

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -16,15 +17,17 @@ import (
 
 type UsersService struct {
 	userRepo       *UsersRepository
+	redis          *redisclient.Client
 	audit          auditpkg.AuditService
 	memberEmployee memberEmployeeFacade
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
-func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService) *UsersService {
+func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService, redis *redisclient.Client) *UsersService {
 	return &UsersService{
 		userRepo:       u,
+		redis:          redis,
 		audit:          auditService,
 		memberEmployee: newMemberEmployeeFacade(u.database),
 	}
@@ -113,7 +116,14 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 	*/
 
 	// 4. Save
-	return s.userRepo.UpdatePassword(ctx, user.UserID, user.MerchantID, hash)
+	newToken, err := s.userRepo.UpdatePassword(ctx, user.UserID, user.MerchantID, hash)
+	if err != nil {
+		return "", err
+	}
+
+	s.redis.Delete(ctx, models.UserCachePrefix+token)
+
+	return newToken, nil
 }
 
 func (s *UsersService) GetProfile(ctx context.Context) (*models.UserProfileResponse, error) {

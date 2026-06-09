@@ -52,7 +52,6 @@ type LoginUserResponse struct {
 	Email              string `json:"email"`
 	Tel                string `json:"tel"`
 	TermsOfUseAccepted bool   `json:"terms_of_use_accepted"`
-	PinCode            string `json:"pin_code"`
 	ProfilePicture     string `json:"profile_picture"`
 }
 
@@ -251,7 +250,6 @@ type LoginLegacyFields struct {
 	WarningNewOrderNotPaid          bool                               `json:"warning_new_order_not_paid"`
 	Currency                        string                             `json:"currency"`
 	IsOpen                          bool                               `json:"is_open"`
-	PinCode                         string                             `json:"pin_code"`
 	MerchantWebSite                 string                             `json:"merchant_web_site"`
 	Token                           string                             `json:"token"`
 	ProfilePicture                  string                             `json:"profile_picture"`

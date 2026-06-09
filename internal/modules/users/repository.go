@@ -49,7 +49,6 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
-    u.pin_code,
     u.profile_picture,
     u.reception_device_token,
     u.waiter_device_token,
@@ -129,7 +128,7 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
-		&data.Enabled, &data.PinCode, &data.ProfilePicture,
+		&data.Enabled, &data.ProfilePicture,
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
 
 		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,

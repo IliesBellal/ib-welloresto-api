@@ -16,7 +16,6 @@ type UserLoginRow struct {
 	Email                string
 	Tel                  string
 	Enabled              bool
-	PinCode              sql.NullString
 	ProfilePicture       sql.NullString
 	ReceptionDeviceToken sql.NullString
 	WaiterDeviceToken    sql.NullString

@@ -13,20 +13,41 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/security"
 
 	"golang.org/x/sync/singleflight"
 )
 
+// authCache is the set of Redis operations used by AuthService.
+// Defined as an interface so tests can inject an in-memory stub.
+// *redis.Client satisfies it.
+type authCache interface {
+	Get(ctx context.Context, key string) (string, bool)
+	Set(ctx context.Context, key string, value string, ttl time.Duration) bool
+	Delete(ctx context.Context, key string) bool
+}
+
 type AuthService struct {
 	repo    AuthRepository
-	redis   *redis.Client
+	redis   authCache
 	email   mailer.Service
 	sms     sms.Service
+	pepper  string
 	sfGroup singleflight.Group
 }
 
-func NewAuthService(r AuthRepository, redis *redis.Client, email mailer.Service, sms sms.Service) AuthService {
-	return AuthService{repo: r, redis: redis, email: email, sms: sms}
+func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sms sms.Service, pepper string) AuthService {
+	var cache authCache
+	if rc != nil {
+		cache = rc
+	}
+	return AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper}
+}
+
+// lockoutState is serialised as JSON in Redis under PINLockoutPrefix+anchorToken.
+type lockoutState struct {
+	Count       int   `json:"count"`
+	LockedUntil int64 `json:"locked_until"` // Unix seconds; 0 = not locked
 }
 
 func (s *AuthService) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
@@ -45,7 +66,9 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	cached, found := s.redis.Get(ctx, cacheKey)
 	if found {
 		var user UserLoginRow
-		if err := json.Unmarshal([]byte(cached), &user); err == nil {
+		// Guard: a "null" value (from a previous buggy write or an evicted PIN session)
+		// unmarshals without error but yields a zero-value struct — reject it as a miss.
+		if err := json.Unmarshal([]byte(cached), &user); err == nil && user.UserID != "" {
 			log.Info("🧠🙋🏻‍♂️ User " + user.Name + " (" + user.UserID + ") found in Redis cache 🙋🏻‍♂️🧠")
 			return &user, nil
 		}
@@ -62,9 +85,11 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 			return nil, err
 		}
 
-		// On en profite pour remplir le cache immédiatement
-		serialized, _ := json.Marshal(loggedUser)
-		s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL)
+		// Only cache when the user was found — never write "null" for unknown tokens.
+		if loggedUser != nil {
+			serialized, _ := json.Marshal(loggedUser)
+			s.redis.Set(ctx, cacheKey, string(serialized), models.UserCacheTTL)
+		}
 
 		return loggedUser, nil
 	})
@@ -78,6 +103,102 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 	}
 
 	return val.(*UserLoginRow), nil
+}
+
+// AuthenticatePIN validates a PIN against the merchant of the anchor token,
+// then delegates to Login with the employee's permanent token.
+// The response is identical to /auth/login by construction.
+func (s *AuthService) AuthenticatePIN(ctx context.Context, anchorToken, pin string) (*LoginResponse, error) {
+	anchor, err := s.GetUserByToken(ctx, anchorToken)
+	if err != nil {
+		return nil, err
+	}
+	if anchor == nil {
+		return nil, models.ErrInvalidToken
+	}
+
+	if delay := s.checkLockout(ctx, anchorToken); delay > 0 {
+		return nil, &PINLockoutError{DelaySeconds: int(delay.Seconds())}
+	}
+
+	pinHash := security.HashPIN(pin, s.pepper)
+	employee, err := s.repo.GetUserByPIN(ctx, anchor.MerchantID, pinHash)
+	if err != nil {
+		return nil, err
+	}
+	if employee == nil {
+		s.incrementLockout(ctx, anchorToken)
+		return nil, models.ErrUserNotFound
+	}
+
+	s.resetLockout(ctx, anchorToken)
+	// Login finds the employee by token (loggedByToken path — no password check).
+	// isBackoffice=false: MFA trigger skipped; MarkLastLoginAt runs in the non-MFA else branch.
+	return s.Login(ctx, LoginRequestPayload{}, employee.Token, false)
+}
+
+// SetPINSelf sets the PIN for the caller (self-service).
+// The caller's merchantID and userID come from their authenticated session, never from the body.
+func (s *AuthService) SetPINSelf(ctx context.Context, merchantID, callerUserID, pin string) error {
+	if len(pin) != PINLength {
+		return ErrPINInvalidLength
+	}
+	h := security.HashPIN(pin, s.pepper)
+	conflict, err := s.repo.CheckPINConflict(ctx, merchantID, h, callerUserID)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return ErrPINConflict
+	}
+	return s.repo.SetPINHash(ctx, merchantID, callerUserID, &h)
+}
+
+// ResetPIN clears the PIN of a target employee (admin operation).
+// Sets pin_hash to NULL; the employee must use /auth/pin/set to create a new one.
+func (s *AuthService) ResetPIN(ctx context.Context, merchantID, targetUserID string) error {
+	return s.repo.SetPINHash(ctx, merchantID, targetUserID, nil)
+}
+
+func (s *AuthService) checkLockout(ctx context.Context, anchorToken string) time.Duration {
+	val, found := s.redis.Get(ctx, models.PINLockoutPrefix+anchorToken)
+	if !found {
+		return 0
+	}
+	var state lockoutState
+	if err := json.Unmarshal([]byte(val), &state); err != nil || state.LockedUntil == 0 {
+		return 0
+	}
+	remaining := time.Until(time.Unix(state.LockedUntil, 0))
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
+}
+
+func (s *AuthService) incrementLockout(ctx context.Context, anchorToken string) {
+	key := models.PINLockoutPrefix + anchorToken
+	var state lockoutState
+	if val, found := s.redis.Get(ctx, key); found {
+		json.Unmarshal([]byte(val), &state) //nolint:errcheck
+	}
+	state.Count++
+
+	if state.Count >= PINMaxAttempts {
+		exponent := (state.Count - PINMaxAttempts) / 5
+		if exponent > 4 {
+			exponent = 4 // cap at 480s
+		}
+		duration := PINLockoutBase * time.Duration(1<<uint(exponent))
+		state.LockedUntil = time.Now().Add(duration).Unix()
+	}
+
+	data, _ := json.Marshal(state)
+	s.redis.Set(ctx, key, string(data), models.PINLockoutTTL)
+}
+
+func (s *AuthService) resetLockout(ctx context.Context, anchorToken string) {
+	s.redis.Delete(ctx, models.PINLockoutPrefix+anchorToken)
 }
 
 func convertApp(app string) string {
@@ -249,6 +370,7 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	return buildLoginResponse(user, merchants), nil
 }
 
+/*
 func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload, token string) (*LoginResponse, error) {
 
 	appID := convertApp(payload.App)
@@ -289,7 +411,7 @@ func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload,
 	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
 
 	return buildLoginResponse(user, merchants), nil
-}
+}*/
 
 func newLoginStatusResponse(status string, enabled string) *LoginResponse {
 	return &LoginResponse{
@@ -442,7 +564,6 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
 		Currency:                        user.Currency,
 		IsOpen:                          user.IsOpen,
-		PinCode:                         user.PinCode.String,
 		MerchantWebSite:                 user.WebSite.String,
 		Token:                           user.Token,
 		ProfilePicture:                  user.ProfilePicture.String,
@@ -470,7 +591,6 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Email:              user.Email,
 			Tel:                user.Tel,
 			TermsOfUseAccepted: user.TermsOfUseAccepted,
-			PinCode:            user.PinCode.String,
 			ProfilePicture:     user.ProfilePicture.String,
 		},
 		Merchant: &LoginMerchantResponse{

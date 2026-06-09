@@ -154,6 +154,10 @@ func (s *UsersService) ForceResetPassword(ctx context.Context, userID string, re
 	} else if err != nil {
 		return err
 	}
+	oldToken, err := s.userRepo.GetUsersRightsToken(ctx, currentUser.MerchantID, userID)
+	if err != nil {
+		return err
+	}
 	hash, err := HashPassword(req.NewPassword)
 	if err != nil {
 		return err
@@ -161,6 +165,7 @@ func (s *UsersService) ForceResetPassword(ctx context.Context, userID string, re
 	if _, err := s.userRepo.UpdatePassword(ctx, userID, currentUser.MerchantID, hash); err != nil {
 		return err
 	}
+	s.redis.Delete(ctx, models.UserCachePrefix+oldToken)
 	if s.audit != nil {
 		_ = s.audit.LogChange(ctx, currentUser.MerchantID, currentUser.UserID, "force_reset_password", "merchant_user", userID, map[string]any{"reset": true}, map[string]any{"reset": true})
 	}

@@ -21,13 +21,15 @@ type AppConfig struct {
 }
 
 type App struct {
-	Port string
+	Port      string
+	PINPepper string
 }
 
 func Load() *AppConfig {
 	cfg := &AppConfig{
 		App: App{
-			Port: getEnv("PORT", "8080"),
+			Port:      getEnv("PORT", "8080"),
+			PINPepper: os.Getenv("PIN_PEPPER"),
 		},
 		Database:   loadDatabase(),
 		Google:     loadGoogle(),
@@ -53,6 +55,9 @@ func (c *AppConfig) validate() {
 	}
 	if c.R2.PrivateBucket == "" {
 		log.Fatal("R2_PRIVATE_BUCKET is not set")
+	}
+	if c.App.PINPepper == "" {
+		log.Fatal("PIN_PEPPER is not set")
 	}
 	if err := c.AI.Validate(); err != nil {
 		log.Fatal(err.Error())

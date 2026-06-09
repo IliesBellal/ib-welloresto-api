@@ -165,7 +165,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
-	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService)
+	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper)
 	authMiddleware := middleware.Auth(&authService)
 
 	// ---- POS ----
@@ -340,7 +340,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
-	usersService := usersModule.NewUsersService(usersRepo, auditService)
+	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
@@ -455,6 +455,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/mfa/fallback-sms", authH.FallbackSMS)
 		r.Post("/send-verification", authH.SendVerification)
 		r.Post("/verify", authH.VerifyCode)
+
+		r.With(authMiddleware).Post("/pin", authH.AuthPIN)
+		r.With(authMiddleware).Post("/pin/set", authH.SetPIN)
+		r.With(authMiddleware, middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/pin/reset", authH.ResetPIN)
 	})
 
 	// --- USERS ---

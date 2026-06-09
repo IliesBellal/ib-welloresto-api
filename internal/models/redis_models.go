@@ -5,9 +5,9 @@ import (
 )
 
 const (
-	// Durée de vie du cache : 5 minutes
-	// Après 5 min, le prochain appel refera la requête SQL et rafraîchira le cache
-	UserCacheTTL = 2 * time.Minute
+	// Durée de vie du cache : 60 minutes
+	// Après 60 min, le prochain appel refera la requête SQL et rafraîchira le cache
+	UserCacheTTL = 60 * time.Minute
 
 	// Préfixe des clés Redis pour les users
 	// Permet d'identifier facilement les clés dans Redis
@@ -41,6 +41,10 @@ const (
 
 	// Durée de vie du cache pour les notifications d'Uber Eats
 	WebhookUberEatsEventTTL = 3 * time.Hour
+
+	// PINLockoutPrefix keys the per-tablet brute-force counter (keyed on anchor token).
+	PINLockoutPrefix = "pin:lockout:"
+	PINLockoutTTL    = 1 * time.Hour
 
 	MFACachePrefix = "mfa_otp:"
 
