@@ -171,6 +171,8 @@ type UserLoginRow struct {
 	KitchenDistributionMode         string
 	ProductionDisplayMode           string
 	PagerNumberRequired             bool
+	POSAutoLockEnabled              bool
+	POSAutoLockDelayMinutes         int
 	ServiceRequiredForOrdering      bool
 	WarningNewOrderNotPaid          bool
 	CashRegisterRequiredForOrdering bool

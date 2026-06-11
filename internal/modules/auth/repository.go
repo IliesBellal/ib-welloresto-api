@@ -239,6 +239,8 @@ SELECT
     mp.kitchen_distribution_mode,
     mp.production_display_mode,
     mp.pager_number_required,
+    mp.pos_auto_lock_enabled,
+    mp.pos_auto_lock_delay_minutes,
     mp.service_required_for_ordering,
     mp.cash_register_required_for_ordering,
     mp.warning_new_order_not_paid,
@@ -321,7 +323,8 @@ LIMIT 1;
 
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
-		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.ProductionDisplayMode, &data.PagerNumberRequired, &data.ServiceRequiredForOrdering,
+		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.ProductionDisplayMode, &data.PagerNumberRequired,
+		&data.POSAutoLockEnabled, &data.POSAutoLockDelayMinutes, &data.ServiceRequiredForOrdering,
 		&data.CashRegisterRequiredForOrdering, &data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.Currency, &data.IsOpen,
 

@@ -81,6 +81,8 @@ type LoginMerchantSettingsResponse struct {
 	KitchenDistributionMode         string `json:"kitchen_distribution_mode"`
 	ProductionDisplayMode           string `json:"production_display_mode"`
 	PagerNumberRequired             bool   `json:"pager_number_required"`
+	POSAutoLockEnabled              bool   `json:"pos_auto_lock_enabled"`
+	POSAutoLockDelayMinutes         int    `json:"pos_auto_lock_delay_minutes"`
 	ServiceRequiredForOrdering      bool   `json:"service_required_for_ordering"`
 	CashRegisterRequiredForOrdering bool   `json:"cash_register_required_for_ordering"`
 	WarningNewOrderNotPaid          bool   `json:"warning_new_order_not_paid"`

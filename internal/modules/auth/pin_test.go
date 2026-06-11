@@ -502,8 +502,8 @@ func TestGetUserByToken_PINTokenNotInDB(t *testing.T) {
 	}
 }
 
-// loginMinRow returns 79 driver.Value values for a minimal active row as scanned
-// by repo.Login (SELECT u.user_id, u.name, ... — 79 columns, different from the
+// loginMinRow returns 81 driver.Value values for a minimal active row as scanned
+// by repo.Login (SELECT u.user_id, u.name, ... — 81 columns, different from the
 // 74-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
 func loginMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
@@ -514,14 +514,15 @@ func loginMinRow(userID, token, merchantID string) []driver.Value {
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil,
 		// merchant (35-42)
 		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
-		// params (43-58): 12 base fields + kitchen_distribution_mode, production_display_mode,
-		//                  pager_number_required, cash_register_required_for_ordering
-		0, 0, 0, true, true, true, false, "", "", false, false, false, false, false, "EUR", true,
-		// package (59-68)
+		// params (43-60): 12 base fields + kitchen_distribution_mode, production_display_mode,
+		//                  pager_number_required, pos_auto_lock_enabled, pos_auto_lock_delay_minutes,
+		//                  service_required_for_ordering, cash_register_required_for_ordering, ...
+		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, "EUR", true,
+		// package (61-70)
 		true, true, false, 0, false, true, true, true, false, true,
-		// SNO (69)
+		// SNO (71)
 		false,
-		// UE (70-75), UD (76), Droo (77-78)
+		// UE (72-77), UD (78), Droo (79-80)
 		nil, nil, nil, nil, nil, nil,
 		nil,
 		nil, nil,
@@ -566,7 +567,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(79)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(81)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

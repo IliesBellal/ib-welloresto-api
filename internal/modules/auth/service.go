@@ -616,6 +616,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 				KitchenDistributionMode:         user.KitchenDistributionMode,
 				ProductionDisplayMode:           user.ProductionDisplayMode,
 				PagerNumberRequired:             user.PagerNumberRequired,
+				POSAutoLockEnabled:              user.POSAutoLockEnabled,
+				POSAutoLockDelayMinutes:         user.POSAutoLockDelayMinutes,
 				ServiceRequiredForOrdering:      user.ServiceRequiredForOrdering,
 				CashRegisterRequiredForOrdering: user.CashRegisterRequiredForOrdering,
 				WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
