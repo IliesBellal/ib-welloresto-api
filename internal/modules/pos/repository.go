@@ -1253,6 +1253,14 @@ func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID
 		updates = append(updates, "pager_number_required = ?")
 		args = append(args, *req.PagerNumberRequired)
 	}
+	if req.POSAutoLockEnabled != nil {
+		updates = append(updates, "pos_auto_lock_enabled = ?")
+		args = append(args, *req.POSAutoLockEnabled)
+	}
+	if req.POSAutoLockDelayMinutes != nil {
+		updates = append(updates, "pos_auto_lock_delay_minutes = ?")
+		args = append(args, *req.POSAutoLockDelayMinutes)
+	}
 	if req.Currency != nil {
 		updates = append(updates, "currency = ?")
 		args = append(args, *req.Currency)
@@ -1344,6 +1352,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		       auto_accept_sno_delivery_orders, auto_accept_sno_take_away_orders,
 		       automatically_add_customer_rewards, warning_new_order_not_paid,
 		       enable_advance_orders, advance_order_days, pager_number_required,
+		       pos_auto_lock_enabled, pos_auto_lock_delay_minutes,
 		       enabled_rating, currency, is_open, primary_color, text_color_on_primary_color,
 		       zoning_type, radial_cone_count, radial_zone_ranges, grid_cell_size_km,
 		       grid_origin_lat, grid_origin_lng, cardinal_cone_count, cardinal_zone_ranges
@@ -1384,6 +1393,8 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&params.EnableAdvanceOrders,
 		&params.AdvanceOrderDays,
 		&params.PagerNumberRequired,
+		&params.POSAutoLockEnabled,
+		&params.POSAutoLockDelayMinutes,
 		&params.EnabledRating,
 		&params.Currency,
 		&params.IsOpen,

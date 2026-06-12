@@ -169,6 +169,33 @@ var (
 	// Erreurs spécifiques métier
 	ErrDeliverySessionAlreadyActive = errors.New("delivery_session_already_active")
 
+	// ErrNoActiveDeliverySession indique que l'utilisateur n'a aucune session de livraison active (404)
+	ErrNoActiveDeliverySession = errors.New("no_active_delivery_session")
+
+	// ErrDeliveryStopNotFound indique que l'order_id ciblé n'est pas un arrêt de la session (404)
+	ErrDeliveryStopNotFound = errors.New("stop_not_found")
+
+	// ErrDeliveryStopTerminal indique que l'arrêt ciblé est déjà dans un état terminal (409)
+	ErrDeliveryStopTerminal = errors.New("stop_terminal")
+
+	// ErrDeliveryStopNotCurrent indique que l'order_id ciblé n'est pas l'arrêt courant de la session (409)
+	ErrDeliveryStopNotCurrent = errors.New("not_current_stop")
+
+	// ErrDeliveryStopNotEnRoute indique que l'arrêt courant n'est pas (ou plus) en_route (409)
+	ErrDeliveryStopNotEnRoute = errors.New("stop_not_en_route")
+
+	// ErrDeliveryStopNotDeliverable indique que l'arrêt courant n'est ni en_route ni arrived (409)
+	ErrDeliveryStopNotDeliverable = errors.New("stop_not_deliverable")
+
+	// ErrOrderNotFullyPaid indique que la commande n'est pas encore intégralement payée (409)
+	ErrOrderNotFullyPaid = errors.New("order_not_fully_paid")
+
+	// ErrFailReasonRequired indique que le champ "reason" est manquant ou trop long (400)
+	ErrFailReasonRequired = errors.New("reason_required")
+
+	// ErrSessionHasPendingStops indique que la session a encore des arrêts non terminaux (409)
+	ErrSessionHasPendingStops = errors.New("session_has_pending_stops")
+
 	ErrInvalidToken = errors.New("invalid_token")
 
 	ErrCannotDisableExternalPayments = errors.New("cannot disable external platforms payments")

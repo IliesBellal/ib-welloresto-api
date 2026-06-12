@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS planning_revenue_forecasts;

@@ -211,7 +211,6 @@ func (h *AuthHandler) AuthPIN(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "auth", "pin", resp)
 }
 
-
 // SetPIN allows the authenticated user to set their own PIN (self-service).
 // Authorization: the caller's own session token.
 // Body: { "pin": "1234" }

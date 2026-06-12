@@ -25,6 +25,7 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
         SELECT fcm_token
         FROM users_devices ud
         WHERE ud.merchant_id = ?
+		AND ud.last_used >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 2 DAY)
     `, merchantID)
 	if err != nil {
 		return nil, err

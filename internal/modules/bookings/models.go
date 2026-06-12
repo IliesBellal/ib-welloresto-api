@@ -43,12 +43,12 @@ type Location struct {
 	Seats        int            `json:"seats"`
 	Order        int            `json:"order"`
 	FloorID      string         `json:"floor_id"`
-	Shape        sql.NullString `json:"location_desc"`
-	X            sql.NullString `json:"location_desc"`
-	Y            sql.NullString `json:"location_desc"`
-	W            sql.NullString `json:"location_desc"`
-	H            sql.NullString `json:"location_desc"`
-	Angle        sql.NullString `json:"location_desc"`
+	Shape        sql.NullString `json:"shape"`
+	X            sql.NullString `json:"x"`
+	Y            sql.NullString `json:"y"`
+	W            sql.NullString `json:"w"`
+	H            sql.NullString `json:"h"`
+	Angle        sql.NullString `json:"angle"`
 	OpenOrderID  sql.NullString `json:"open_order_id"`
 	Available    string         `json:"available"`
 }

@@ -4,32 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
-	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/helpers"
+	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	auditpkg "welloresto-api/internal/modules/audit"
+	"welloresto-api/internal/modules/notification"
 	planningemployees "welloresto-api/internal/modules/planning/employees"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
+// GeofenceRadiusMeters is the maximum distance from the delivery address at which
+// a position update auto-transitions the current stop from en_route to arrived.
+const GeofenceRadiusMeters = 300.0
+
 type UsersService struct {
-	userRepo       *UsersRepository
-	redis          *redisclient.Client
-	audit          auditpkg.AuditService
-	memberEmployee memberEmployeeFacade
+	userRepo            *UsersRepository
+	redis               *redisclient.Client
+	audit               auditpkg.AuditService
+	memberEmployee      memberEmployeeFacade
+	notificationService *notification.NotificationService
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
-func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService, redis *redisclient.Client) *UsersService {
+func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService, redis *redisclient.Client, notificationService *notification.NotificationService) *UsersService {
 	return &UsersService{
-		userRepo:       u,
-		redis:          redis,
-		audit:          auditService,
-		memberEmployee: newMemberEmployeeFacade(u.database),
+		userRepo:            u,
+		redis:               redis,
+		audit:               auditService,
+		memberEmployee:      newMemberEmployeeFacade(u.database),
+		notificationService: notificationService,
 	}
 }
 
@@ -60,8 +68,66 @@ func (s *UsersService) SetUserLocation(ctx context.Context, token string, req mo
 
 	req.UserID = user.UserID
 
-	// 2. Retrieve location
-	return s.userRepo.SetUserLocation(ctx, req)
+	// 3. Delivery-specific: position history + arrival geofence, only if the caller
+	// has an active delivery session.
+	sessionID, currentOrderID, err := s.userRepo.GetActiveDeliverySessionForUser(ctx, user.MerchantID, user.UserID)
+	if err != nil {
+		return err
+	}
+	if sessionID == "" {
+		return nil
+	}
+
+	// 2. Update the caller's current position (applies to all authenticated staff)
+	if err := s.userRepo.SetUserLocation(ctx, req); err != nil {
+		return err
+	}
+
+	if err := s.userRepo.InsertDeliveryPosition(ctx, user.UserID, sessionID, req.Lat, req.Lng, req.Heading, req.Accuracy, req.Speed); err != nil {
+		return err
+	}
+
+	if currentOrderID == "" {
+		return nil
+	}
+
+	stopStatus, destLat, destLng, ok, err := s.userRepo.GetDeliveryStopDestination(ctx, sessionID, currentOrderID)
+	if err != nil {
+		return err
+	}
+	if !ok || stopStatus != "en_route" {
+		return nil
+	}
+
+	if haversineMeters(req.Lat, req.Lng, destLat, destLng) > GeofenceRadiusMeters {
+		return nil
+	}
+
+	arrived, err := s.userRepo.MarkStopArrived(ctx, sessionID, currentOrderID)
+	if err != nil {
+		return err
+	}
+	if arrived && s.notificationService != nil {
+		_ = s.notificationService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
+	}
+
+	return nil
+}
+
+// haversineMeters returns the great-circle distance between two lat/lng points, in meters.
+func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthRadiusMeters = 6371000.0
+
+	lat1Rad := lat1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLng := (lng2 - lng1) * math.Pi / 180
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLng/2)*math.Sin(dLng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusMeters * c
 }
 
 func HashPassword(password string) (string, error) {

@@ -233,7 +233,7 @@ func (h *POSHandler) UpdateMerchantSettings(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.service.UpdateMerchantSettings(r.Context(), token, &req)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "pos", "update_merchant_settings", map[string]string{"error": err.Error()})
+		models.SendErrorJSON(w, "pos", "update_merchant_settings", err)
 		return
 	}
 

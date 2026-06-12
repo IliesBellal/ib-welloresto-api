@@ -143,6 +143,7 @@ type Customer struct {
 	CreationDate                       *string  `json:"creation_date"`
 	AdvertisingConsent                 *bool    `json:"advertising_consent"`
 	CustomerBrand                      *string  `json:"customer_brand"`
+	CustomerDeliveryNotes              *string  `json:"customer_delivery_notes"`
 }
 
 type Order struct {
@@ -184,6 +185,7 @@ type Order struct {
 	LastUpdate        int64            `json:"last_update"`
 	DeliverySession   *DeliverySession `json:"delivery_session"`
 	CashRegister      *CashRegister    `json:"cash_register"`
+	DeliveryStop      *DeliveryStop    `json:"delivery_stop,omitempty"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

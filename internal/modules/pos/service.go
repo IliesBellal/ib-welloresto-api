@@ -326,6 +326,22 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 				req.Parameters.EnabledRating = req.ScanOrder.EnableRating
 			}
 		}
+
+		if req.Security != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			if req.Security.POSAutoLockEnabled != nil {
+				req.Parameters.POSAutoLockEnabled = req.Security.POSAutoLockEnabled
+			}
+			if req.Security.POSAutoLockDelayMinutes != nil {
+				req.Parameters.POSAutoLockDelayMinutes = req.Security.POSAutoLockDelayMinutes
+			}
+		}
+	}
+
+	if req != nil && req.Parameters != nil && req.Parameters.POSAutoLockDelayMinutes != nil && *req.Parameters.POSAutoLockDelayMinutes < 5 {
+		return nil, models.ErrInvalidInput
 	}
 
 	// API contract: wait times are expressed in minutes.
@@ -405,6 +421,10 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			AllowScheduled:     boolVal(params.EnableAdvanceOrders),
 			MaxScheduleDays:    intVal(params.AdvanceOrderDays),
 			EnableRating:       boolVal(params.EnabledRating),
+		},
+		Security: models.POSSettingsSecurity{
+			POSAutoLockEnabled:      boolVal(params.POSAutoLockEnabled),
+			POSAutoLockDelayMinutes: intVal(params.POSAutoLockDelayMinutes),
 		},
 		HoursOfOperations: hoursOfOperations,
 	}

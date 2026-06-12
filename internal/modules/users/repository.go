@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
@@ -23,15 +24,118 @@ func (r *UsersRepository) SetUserLocation(ctx context.Context, req models.Update
 	db := dbutils.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
-		UPDATE user_status_view
-		SET lat = ?, lng = ?
+		UPDATE users
+		SET lat = ?, lng = ?, heading = ?, last_position_at = UTC_TIMESTAMP()
 		WHERE user_id = ?
-	`, req.Lat, req.Lng, req.UserID)
+	`, req.Lat, req.Lng, req.Heading, req.UserID)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// GetActiveDeliverySessionForUser returns the id and current stop (order_id) of the
+// caller's active delivery session, if any. sessionID is "" if there is none.
+func (r *UsersRepository) GetActiveDeliverySessionForUser(ctx context.Context, merchantID, userID string) (sessionID string, currentOrderID string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var id string
+	var orderID sql.NullString
+	err = db.QueryRowContext(ctx, `
+		SELECT id, current_order_id FROM delivery_session
+		WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+		ORDER BY start_date DESC LIMIT 1
+	`, userID, merchantID).Scan(&id, &orderID)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+
+	return id, orderID.String, nil
+}
+
+// InsertDeliveryPosition records a raw position sample for the driver's active session.
+func (r *UsersRepository) InsertDeliveryPosition(ctx context.Context, userID, sessionID string, lat, lng float64, heading, accuracy, speed *float64) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO delivery_position (user_id, delivery_session_id, lat, lng, heading, accuracy, speed, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+	`, userID, sessionID, lat, lng, heading, accuracy, speed)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetDeliveryStopDestination returns the per-stop status and delivery coordinates for
+// the given session/order, resolving the temporary-vs-permanent address switch. ok is
+// false when no destination coordinates are available (status is still returned).
+func (r *UsersRepository) GetDeliveryStopDestination(ctx context.Context, sessionID, orderID string) (status string, lat, lng float64, ok bool, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var useTemporary bool
+	var customerLat, customerLng sql.NullFloat64
+	var customerTemporaryLat, customerTemporaryLng sql.NullString
+
+	err = db.QueryRowContext(ctx, `
+		SELECT dso.status, o.use_customer_temporary_address,
+		       c.customer_lat, c.customer_lng,
+		       c.customer_temporary_lat, c.customer_temporary_lng
+		FROM delivery_session_order dso
+		JOIN orders o ON o.order_id = dso.order_id
+		LEFT JOIN customer c ON c.customer_id = o.customer_id
+		WHERE dso.delivery_session_id = ? AND dso.order_id = ?
+	`, sessionID, orderID).Scan(&status, &useTemporary, &customerLat, &customerLng, &customerTemporaryLat, &customerTemporaryLng)
+	if err == sql.ErrNoRows {
+		return "", 0, 0, false, nil
+	}
+	if err != nil {
+		return "", 0, 0, false, err
+	}
+
+	if useTemporary {
+		if !customerTemporaryLat.Valid || !customerTemporaryLng.Valid {
+			return status, 0, 0, false, nil
+		}
+		parsedLat, errLat := strconv.ParseFloat(strings.TrimSpace(customerTemporaryLat.String), 64)
+		parsedLng, errLng := strconv.ParseFloat(strings.TrimSpace(customerTemporaryLng.String), 64)
+		if errLat != nil || errLng != nil {
+			return status, 0, 0, false, nil
+		}
+		return status, parsedLat, parsedLng, true, nil
+	}
+
+	if !customerLat.Valid || !customerLng.Valid {
+		return status, 0, 0, false, nil
+	}
+
+	return status, customerLat.Float64, customerLng.Float64, true, nil
+}
+
+// MarkStopArrived transitions a stop from en_route to arrived (geofence trigger).
+// Returns true if a row was updated (idempotent: a no-op returns false).
+func (r *UsersRepository) MarkStopArrived(ctx context.Context, sessionID, orderID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx, `
+		UPDATE delivery_session_order SET status='arrived', arrived_at=UTC_TIMESTAMP()
+		WHERE delivery_session_id = ? AND order_id = ? AND status = 'en_route'
+	`, sessionID, orderID)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
 }
 
 func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*models.UserLoginRow, error) {

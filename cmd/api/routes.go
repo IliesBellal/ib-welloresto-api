@@ -319,7 +319,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService)
 
 	// ---- Locations ----
 	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
@@ -340,7 +340,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
-	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient)
+	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
@@ -957,6 +957,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/pending", deliverySessionsH.GetPendingDeliverySessions)
+
+		r.Get("/me", deliverySessionsH.GetMyDeliverySession)
+		r.Patch("/me/stops/{order_id}/select", deliverySessionsH.SelectDeliveryStop)
+		r.Patch("/me/stops/{order_id}/arrived", deliverySessionsH.MarkDeliveryStopArrived)
+		r.Patch("/me/stops/{order_id}/delivered", deliverySessionsH.MarkDeliveryStopDelivered)
+
+		r.Patch("/me/stops/{order_id}/failed", deliverySessionsH.MarkDeliveryStopFailed)
+		r.Patch("/me/stops/{order_id}/cancel", deliverySessionsH.CancelDeliveryStop)
+		r.Patch("/me/close", deliverySessionsH.CloseMyDeliverySession)
+
 		r.Get("/{delivery_session_id}", deliverySessionsH.GetDeliverySession)
 		r.Delete("/{delivery_session_id}", deliverySessionsH.CancelDeliverySession)
 		r.Patch("/{delivery_session_id}/close", deliverySessionsH.CloseDeliverySession)

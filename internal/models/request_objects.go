@@ -590,6 +590,8 @@ type MerchantParametersSettings struct {
 	EnableAdvanceOrders               *bool   `json:"enable_advance_orders,omitempty"`
 	AdvanceOrderDays                  *int    `json:"advance_order_days,omitempty"`
 	PagerNumberRequired               *bool   `json:"pager_number_required,omitempty"`
+	POSAutoLockEnabled                *bool   `json:"pos_auto_lock_enabled,omitempty"`
+	POSAutoLockDelayMinutes           *int    `json:"pos_auto_lock_delay_minutes,omitempty"`
 	Currency                          *string `json:"currency,omitempty"`
 	IsOpen                            *bool   `json:"is_open,omitempty"`
 	PrimaryColor                      *string `json:"primary_color,omitempty"`
@@ -635,6 +637,7 @@ type UpdateMerchantSettingsRequest struct {
 	Timings           *POSSettingsTimingsPatch    `json:"timings,omitempty"`
 	Ordering          *POSSettingsOrderingPatch   `json:"ordering,omitempty"`
 	ScanOrder         *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
+	Security          *POSSettingsSecurityPatch   `json:"security,omitempty"`
 	HoursOfOperations *[]POSHoursOfOperationPatch `json:"hours_of_operations,omitempty"`
 }
 
@@ -758,11 +761,22 @@ type POSSettingsScanOrderPatch struct {
 	EnableRating       *bool `json:"enable_rating,omitempty"`
 }
 
+type POSSettingsSecurity struct {
+	POSAutoLockEnabled      bool `json:"pos_auto_lock_enabled"`
+	POSAutoLockDelayMinutes int  `json:"pos_auto_lock_delay_minutes"`
+}
+
+type POSSettingsSecurityPatch struct {
+	POSAutoLockEnabled      *bool `json:"pos_auto_lock_enabled,omitempty"`
+	POSAutoLockDelayMinutes *int  `json:"pos_auto_lock_delay_minutes,omitempty"`
+}
+
 type POSSettingsResponse struct {
 	Info              POSSettingsInfo       `json:"info"`
 	Timings           POSSettingsTimings    `json:"timings"`
 	Ordering          POSSettingsOrdering   `json:"ordering"`
 	ScanOrder         POSSettingsScanOrder  `json:"scan_order"`
+	Security          POSSettingsSecurity   `json:"security"`
 	HoursOfOperations []POSHoursOfOperation `json:"hours_of_operations"`
 }
 
@@ -805,9 +819,12 @@ type UpdatePasswordRequest struct {
 }
 
 type UpdateLocationRequest struct {
-	UserID string  `json:"user_id"`
-	Lat    float64 `json:"lat"`
-	Lng    float64 `json:"lng"`
+	UserID   string   `json:"user_id"`
+	Lat      float64  `json:"lat"`
+	Lng      float64  `json:"lng"`
+	Heading  *float64 `json:"heading,omitempty"`
+	Accuracy *float64 `json:"accuracy,omitempty"`
+	Speed    *float64 `json:"speed,omitempty"`
 }
 
 const (

@@ -487,12 +487,6 @@ func (s *UberEatsService) FinishOrderIfDoesNotExist(ctx context.Context, token s
 
 // UberEatsBYOCStatusUpdate met à jour le statut de livraison
 func (s *UberEatsService) UberEatsBYOCStatusUpdate(ctx context.Context, merchantID, orderID string, status string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
@@ -503,14 +497,14 @@ func (s *UberEatsService) UberEatsBYOCStatusUpdate(ctx context.Context, merchant
 	// Si $order_id est l'ID interne, il faut le convertir en externe ?
 	// *Hypothèse*: Ton PHP utilise $order_id directement dans l'URL, supposons que c'est l'ID Uber passé en paramètre
 	// OU que tu as besoin de mapper. Dans le doute, je suis ton code PHP qui passe order_id direct.
-	orderIDStr := fmt.Sprintf("%d", orderID)
+	orderIDStr := fmt.Sprintf("%s", orderID)
 
 	if err := s.client.UpdateBYOCStatus(ctx, orderIDStr, token, status); err != nil {
 		// Le PHP retourne status -1 si 404, ici on retourne l'erreur
 		return err
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // UpdateBusyModeTime active le mode occupé (délai supplémentaire)
