@@ -1599,7 +1599,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, req.Order.IsScheduled,
 		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,

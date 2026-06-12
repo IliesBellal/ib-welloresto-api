@@ -112,7 +112,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 
 	// A. Insertion Payment
 	// Le repo de orderlifecycle utilisera GetDB(txCtx) en interne
-	err := s.orderlifecycle.CreatePayment(ctx, models.Payment{
+	err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
 		CashRegisterID:    models.ScanNOrderCashRegisterID,
 		MOP:               models.StripeMOP,
 		Amount:            int(session.AmountTotal),

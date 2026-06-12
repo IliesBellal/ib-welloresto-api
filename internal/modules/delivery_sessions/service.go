@@ -35,7 +35,7 @@ func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository
 // /delivery_sessions/pending
 
 // GetPendingDeliverySessions returns delivery sessions (no orders)
-func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]DeliverySession, error) {
+func (s *DeliverySessionsService) GetPendingDeliverySessions(ctx context.Context, token string) ([]models.DeliverySession, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err

@@ -22,63 +22,99 @@ func NewDeliverySessionsRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *D
 	return &DeliverySessionsRepository{database: db, ordersFetcher: ordersF}
 }
 
-func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]DeliverySession, error) {
+func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// 1. Récupérer les sessions actives
-	sessions, err := r.fetchDeliverySessions(ctx, merchantID, "status IN ('1','PENDING')")
+	// 1. Récupérer les sessions actives (en-tête + livreur, cf. fetchDeliverySessions)
+	sessions, err := r.fetchDeliverySessions(ctx, merchantID, "ds.status IN ('1','PENDING')")
 	if err != nil {
 		return nil, err
 	}
 
 	// S'il n'y a pas de session, on s'arrête là
 	if len(sessions) == 0 {
-		return []DeliverySession{}, nil
+		return []models.DeliverySession{}, nil
 	}
 
-	// 2. OPTIMISATION CRITIQUE : Récupérer les Order IDs AVANT d'appeler le gros constructeur
-	// Cela évite de refaire les jointures sessions <-> orders dans les 11 requêtes suivantes.
-
-	// A. Construire la liste des MerchantID de sessions
+	// 2. OPTIMISATION CRITIQUE : Récupérer en une requête les stops (delivery_session_order)
+	// de toutes les sessions. Cela donne à la fois les Order IDs (pour le filtre du fetch
+	// des commandes ci-dessous) et le détail par-stop (delivery_stop) à attacher à chaque
+	// commande, sans refaire les jointures sessions <-> orders.
 	sessionIDs := ""
 	for i, s := range sessions {
 		if i > 0 {
 			sessionIDs += ","
 		}
-		sessionIDs += fmt.Sprintf("'%s'", s.DeliverySessionID) // Ajout des quotes au cas où c'est du string/uuid
+		sessionIDs += fmt.Sprintf("'%s'", s.DeliverySessionID)
 	}
 
-	// B. Requête légère pour avoir juste les IDs des commandes
-	// On utilise r.db.QueryContext directement car c'est une requête interne simple
-	qOrderIDs := fmt.Sprintf(`
-		SELECT DISTINCT order_id 
-		FROM delivery_session_order 
+	qStops := fmt.Sprintf(`
+		SELECT delivery_session_id, order_id, priority, status, arrived_at, delivered_at, failed_at, canceled_at, fail_reason
+		FROM delivery_session_order
 		WHERE delivery_session_id IN (%s)
+		ORDER BY priority ASC
 	`, sessionIDs)
 
-	rows, err := db.QueryContext(ctx, qOrderIDs)
+	rows, err := db.QueryContext(ctx, qStops)
 	if err != nil {
-		log.Error("failed to fetch session order ids: " + err.Error())
-		return nil, fmt.Errorf("failed to fetch session order ids: %w", err)
+		log.Error("failed to fetch delivery session stops: " + err.Error())
+		return nil, fmt.Errorf("failed to fetch delivery session stops: %w", err)
 	}
-	defer rows.Close()
 
-	var orderIDList []string
+	stopsBySession := map[string]map[string]*models.DeliveryStop{}
+	orderIDsBySession := map[string][]string{}
+	orderIDSet := map[string]bool{}
+
 	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
+		var sessID, oid, stopStatus string
+		var priority sql.NullInt64
+		var arrivedAt, deliveredAt, failedAt, canceledAt sql.NullTime
+		var failReason sql.NullString
+
+		if err := rows.Scan(&sessID, &oid, &priority, &stopStatus, &arrivedAt, &deliveredAt, &failedAt, &canceledAt, &failReason); err != nil {
+			rows.Close()
+			log.Error("failed to scan delivery session stop: " + err.Error())
 			return nil, err
 		}
-		orderIDList = append(orderIDList, oid)
+
+		stop := &models.DeliveryStop{
+			Status:      stopStatus,
+			ArrivedAt:   helpers.NullTimePtr(arrivedAt),
+			DeliveredAt: helpers.NullTimePtr(deliveredAt),
+			FailedAt:    helpers.NullTimePtr(failedAt),
+			CanceledAt:  helpers.NullTimePtr(canceledAt),
+			FailReason:  helpers.NullStringToPtr(failReason),
+		}
+		if priority.Valid {
+			p := int(priority.Int64)
+			stop.Priority = &p
+		}
+
+		if stopsBySession[sessID] == nil {
+			stopsBySession[sessID] = map[string]*models.DeliveryStop{}
+		}
+		stopsBySession[sessID][oid] = stop
+		orderIDsBySession[sessID] = append(orderIDsBySession[sessID], oid)
+		orderIDSet[oid] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Error("failed to fetch delivery session stops: " + err.Error())
+		return nil, err
 	}
 
 	// Si ces sessions n'ont aucune commande, on retourne les sessions vides
-	if len(orderIDList) == 0 {
+	if len(orderIDSet) == 0 {
 		return sessions, nil
 	}
 
-	// 3. Construire le filtre PAR ORDER MerchantID (MySQL adore ça, c'est instantané)
+	// 3. Construire le filtre PAR ORDER ID (MySQL adore ça, c'est instantané)
+	orderIDList := make([]string, 0, len(orderIDSet))
+	for oid := range orderIDSet {
+		orderIDList = append(orderIDList, oid)
+	}
+
 	ordersFilter := ""
 	for i, oid := range orderIDList {
 		if i > 0 {
@@ -96,28 +132,21 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		return nil, err
 	}
 
-	// 5. Assemblage : Mettre les commandes dans les bonnes sessions
-
-	// Map pour regrouper les commandes par Session MerchantID
-	// (On utilise string comme clé car dans tes logs précédents c'était souvent traité comme string)
+	// 5. Assemblage : Mettre les commandes (avec leur delivery_stop) dans les bonnes sessions
 	ordersBySession := make(map[string][]models.Order)
 
 	for _, o := range orders {
 		if o.DeliverySessionID != nil {
-			// Conversion de *int64 vers string pour la clé de la map (si nécessaire)
-			// Si DeliverySessionID est int64 dans ton struct Order :
-			// key := fmt.Sprintf("%d", *o.DeliverySessionID)
-
-			// Si DeliverySessionID est string dans ton struct Order :
 			key := *o.DeliverySessionID
-
+			if stop, ok := stopsBySession[key][o.OrderID]; ok {
+				o.DeliveryStop = stop
+			}
 			ordersBySession[key] = append(ordersBySession[key], o)
 		}
 	}
 
 	// On remplit les sessions
 	for i := range sessions {
-		// On récupère l'MerchantID de la session (c'est un string dans ton struct DeliverySession ci-dessous)
 		sID := sessions[i].DeliverySessionID
 
 		if sessionOrders, found := ordersBySession[sID]; found {
@@ -125,19 +154,37 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		} else {
 			sessions[i].Orders = []models.Order{}
 		}
+
+		// 6. Resolve current_order_id: use the stored pointer if set, otherwise derive
+		// the first 'pending' stop in priority order (same as assembleDeliverySessionDetails).
+		if sessions[i].CurrentOrderID == nil {
+			for _, oid := range orderIDsBySession[sID] {
+				if stop := stopsBySession[sID][oid]; stop != nil && stop.Status == "pending" {
+					derived := oid
+					sessions[i].CurrentOrderID = &derived
+					break
+				}
+			}
+		}
 	}
 
 	return sessions, nil
 }
 
-func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, merchantID string, filterStatus string) ([]DeliverySession, error) {
+// fetchDeliverySessions returns the active delivery sessions for merchantID matching
+// filterStatus, with the full session header (start_date, distance, duration,
+// current_order_id) and delivery man info (including status) - same shape as the
+// canonical assembleDeliverySessionDetails. Orders are left empty; filled in by the caller.
+func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, merchantID string, filterStatus string) ([]models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	q := `
-       SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
+       SELECT ds.id, ds.user_id, ds.start_date, ds.distance, ds.duration, ds.status, ds.current_order_id,
+              u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, usv.status
        FROM delivery_session ds
        INNER JOIN users u on u.user_id = ds.user_id
+       INNER JOIN user_status_view usv on usv.user_id = ds.user_id
        WHERE ds.merchant_id = ? AND ` + filterStatus
 
 	rows, err := db.QueryContext(ctx, q, merchantID)
@@ -147,25 +194,38 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 	}
 	defer rows.Close()
 
-	var sessions []DeliverySession
+	var sessions []models.DeliverySession
 	for rows.Next() {
-		var profilePic, firstName, lastName, planningColor, status, id, userID sql.NullString
+		var id, userID, startDate, distance, duration, status sql.NullString
+		var currentOrderID sql.NullString
+		var profilePic, firstName, lastName, planningColor, dmStatus sql.NullString
 		var lat, lng sql.NullFloat64
-		if err := rows.Scan(&id, &userID, &profilePic, &firstName, &lastName, &lat, &lng, &planningColor, &status); err != nil {
+
+		if err := rows.Scan(&id, &userID, &startDate, &distance, &duration, &status, &currentOrderID,
+			&profilePic, &firstName, &lastName, &lat, &lng, &planningColor, &dmStatus); err != nil {
 			log.Error("failed to scan delivery session: " + err.Error())
 			return nil, err
 		}
 
-		// Conversion MerchantID int64 (si besoin)
-		// sessID, _ := strconv.ParseInt(id.String, 10, 64)
-
-		ds := DeliverySession{
-			DeliverySessionID: id.String, // ou sessID
+		ds := models.DeliverySession{
+			DeliverySessionID: id.String,
+			UserID:            userID.String,
+			MerchantID:        merchantID,
+			StartDate:         startDate.String,
+			Distance:          distance.String,
+			Duration:          duration.String,
 			Status:            status.String,
+			CurrentOrderID:    helpers.NullStringToPtr(currentOrderID),
 			Orders:            []models.Order{},
 			DeliveryMan: models.OrderUser{
-				UserID: userID.String, FirstName: &firstName.String, LastName: &lastName.String,
-				Lat: helpers.NullFloat64Ptr(lat), Lng: helpers.NullFloat64Ptr(lng),
+				UserID:         userID.String,
+				FirstName:      helpers.NullStringToPtr(firstName),
+				LastName:       helpers.NullStringToPtr(lastName),
+				ProfilePicture: helpers.NullStringToPtr(profilePic),
+				Lat:            helpers.NullFloat64Ptr(lat),
+				Lng:            helpers.NullFloat64Ptr(lng),
+				PlanningColor:  helpers.NullStringToPtr(planningColor),
+				Status:         helpers.NullStringToPtr(dmStatus),
 			},
 		}
 		sessions = append(sessions, ds)
@@ -420,98 +480,36 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
 	}, nil
 }
 
+// GetDeliverySession assembles a delivery session by id for managers (ManageDelivery),
+// using the same canonical assembly as GetActiveDeliverySessionForUser /
+// GetDeliverySessionByIDForUser (delivery man + status, per-order delivery_stop,
+// current_order_id, customer delivery_notes).
 func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, merchantID, sessionID string) (*models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// 1️⃣ Fetch session basic info
+	// 1️⃣ Fetch session header info
 	var session models.DeliverySession
+	var currentOrderID sql.NullString
+	var distance, duration, startDate sql.NullString
+
 	err := db.QueryRowContext(ctx, `
-		SELECT id, status
+		SELECT id, user_id, status, current_order_id, distance, duration, start_date
 		FROM delivery_session
-		WHERE id = ?
-	`, sessionID).Scan(&session.DeliverySessionID, &session.Status)
+		WHERE id = ? AND merchant_id = ?
+	`, sessionID, merchantID).Scan(&session.DeliverySessionID, &session.UserID, &session.Status, &currentOrderID, &distance, &duration, &startDate)
 
 	if err != nil {
 		log.Error("GetDeliverySession: failed to fetch delivery session: " + err.Error())
 		return nil, err
 	}
 
-	// 2️⃣ Fetch delivery man info
-	var deliveryMan models.OrderUser
-	err = db.QueryRowContext(ctx, `
-		SELECT DISTINCT usv.user_id, usv.first_name, usv.last_name, usv.lat, usv.lng, usv.status
-		FROM user_status_view usv
-		INNER JOIN users_rights ur ON ur.id = usv.user_id
-		INNER JOIN merchant m ON m.id = ur.merchant_id
-		INNER JOIN delivery_session ds ON ds.user_id = usv.user_id
-		WHERE ur.merchant_id = ?
-		  AND ur.enabled
-		  AND ds.id = ?
-	`, merchantID, sessionID).Scan(
-		&deliveryMan.UserID,
-		&deliveryMan.FirstName,
-		&deliveryMan.LastName,
-		&deliveryMan.Lat,
-		&deliveryMan.Lng,
-		&deliveryMan.Status,
-	)
+	session.MerchantID = merchantID
+	session.Distance = distance.String
+	session.Duration = duration.String
+	session.StartDate = startDate.String
 
-	if err == sql.ErrNoRows {
-		log.Error("GetDeliverySession: delivery man not found")
-		return nil, fmt.Errorf("cannot_find_delivery_man")
-	}
-	if err != nil {
-		log.Error("GetDeliverySession: failed to fetch delivery man: " + err.Error())
-		return nil, err
-	}
-
-	session.DeliveryMan = deliveryMan
-
-	// 3️⃣ Get order IDs in priority order
-	rows, err := db.QueryContext(ctx, `
-		SELECT o.order_id
-		FROM delivery_session ds
-		INNER JOIN delivery_session_order dso ON dso.delivery_session_id = ds.id
-		INNER JOIN orders o ON o.order_id = dso.order_id AND ds.merchant_id = o.merchant_id
-		WHERE ds.id = ?
-		AND ds.merchant_id = ?
-		ORDER BY dso.priority ASC
-	`, sessionID, merchantID)
-
-	if err != nil {
-		log.Error("GetDeliverySession: failed to fetch order IDs: " + err.Error())
-		return nil, err
-	}
-	defer rows.Close()
-
-	orderIDs := []string{}
-	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
-			return nil, err
-		}
-		orderIDs = append(orderIDs, oid)
-	}
-
-	// 4️⃣ Fetch full order objects using your existing function
-	var allOrders []models.Order
-
-	for _, oid := range orderIDs {
-		filter := fmt.Sprintf(" AND o.order_id = '%s' ", oid)
-		orders, err := r.ordersFetcher.FetchAndBuildOrders(context.Background(), merchantID, filter, "", "")
-		if err != nil {
-			return nil, err
-		}
-
-		if len(orders) > 0 {
-			allOrders = append(allOrders, orders[0])
-		}
-	}
-
-	session.Orders = allOrders
-
-	return &session, nil
+	return r.assembleDeliverySessionDetails(ctx, merchantID, &session, currentOrderID)
 }
 
 // GetActiveDeliverySessionForUser returns the currently active delivery session

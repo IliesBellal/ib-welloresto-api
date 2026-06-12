@@ -69,7 +69,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 // Helper de type défini pour passer tes fonctions métiers
 type OrderMutationFunc func(txCtx context.Context) error
 
-func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, MerchantID, UserID, orderID, action, resourceType string, work OrderMutationFunc) error {
+func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, MerchantID, UserID, orderID, action, resourceType string, sendNotification bool, work OrderMutationFunc) error {
 	log := logger.FromContext(ctx)
 
 	err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
@@ -108,7 +108,9 @@ func (s *OrdersLifeCycleService) ExecuteOrderMutation(ctx context.Context, Merch
 	}
 
 	// --- 6. ACTIONS POST-COMMIT (Effets de bord) ---
-	s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+	if sendNotification {
+		s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+	}
 
 	return nil
 }
@@ -207,7 +209,7 @@ func (s *OrdersLifeCycleService) SetOrderDeleted(ctx context.Context, in models.
 	in.MerchantID = user.MerchantID
 	in.UserID = user.UserID
 
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, in.OrderID, models.ActionOrderDelete, models.ResourceOrder, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, in.OrderID, models.ActionOrderDelete, models.ResourceOrder, true, func(txCtx context.Context) error {
 		// Pareil, DeleteOrder doit bien utiliser le txCtx
 		return s.DeleteOrder(txCtx, in)
 	})
@@ -295,7 +297,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 		return nil
 	}
 
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderClose, models.ResourceOrder, true, func(txCtx context.Context) error {
 		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err
 		}
@@ -305,7 +307,7 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 
 func (s *OrdersLifeCycleService) SetDeliveredExternal(ctx context.Context, MerchantID, UserID, orderID string) error {
 	// We don't check if order is still opened as it can be already closed by the merchant but we receive the delivery confirmation from the integrator (ex: Uber Eats)
-	return s.ExecuteOrderMutation(ctx, MerchantID, UserID, orderID, models.ActionOrderClose, models.ResourceOrder, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, MerchantID, UserID, orderID, models.ActionOrderClose, models.ResourceOrder, true, func(txCtx context.Context) error {
 		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err
 		}
@@ -328,7 +330,7 @@ func (s *OrdersLifeCycleService) ReopenClosedOrder(ctx context.Context, orderID 
 		return nil
 	}
 
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderReopen, models.ResourceOrder, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, orderID, models.ActionOrderReopen, models.ResourceOrder, true, func(txCtx context.Context) error {
 		user, _ := middleware.UserFromContext(txCtx)
 		return s.ordersLifeCycleRepo.ReopenClosedOrder(txCtx, user.MerchantID, orderID, user.UserID)
 	})
@@ -384,7 +386,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 // Nouvelle méthode pour créer un paiement et retourner son ID
 func (s *OrdersLifeCycleService) CreatePaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
 	var paymentID int64
-	err := s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
+	err := s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, true, func(txCtx context.Context) error {
 		var err error
 		paymentID, err = s.ordersLifeCycleRepo.AddPaymentAndReturnID(txCtx, payment)
 		return err
@@ -393,7 +395,13 @@ func (s *OrdersLifeCycleService) CreatePaymentAndReturnID(ctx context.Context, p
 }
 
 func (s *OrdersLifeCycleService) CreatePayment(ctx context.Context, payment models.Payment) error {
-	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, true, func(txCtx context.Context) error {
+		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
+	})
+}
+
+func (s *OrdersLifeCycleService) CreatePaymentNoNotification(ctx context.Context, payment models.Payment) error {
+	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, false, func(txCtx context.Context) error {
 		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
 	})
 }
@@ -863,7 +871,7 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 	}
 
 	// On démarre la transaction (j'utilise ta structure ExecuteOrderMutation)
-	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, req.OrderID, models.ActionOrderRefund, models.ResourceOrder, func(txCtx context.Context) error {
+	return s.ExecuteOrderMutation(ctx, user.MerchantID, user.UserID, req.OrderID, models.ActionOrderRefund, models.ResourceOrder, true, func(txCtx context.Context) error {
 		log := logger.FromContext(txCtx)
 
 		// 1. Vérifier qu'un registre de caisse est bien OUVERT pour ce Device/Merchant
