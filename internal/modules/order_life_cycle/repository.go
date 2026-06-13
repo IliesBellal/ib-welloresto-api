@@ -87,7 +87,9 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 		if err == sql.ErrNoRows {
 			return "", models.ErrNoCashRegisterOpen
 		}
-	} else if err != nil {
+	}
+
+	if err != nil {
 		log.Error("Error finding cash register: " + err.Error())
 		return "", err
 	}
