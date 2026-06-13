@@ -76,7 +76,6 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	`, deviceID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
-
 		err = db.QueryRowContext(ctx, `
 			SELECT cr.cash_register_id
 			FROM cash_registers cr
@@ -84,7 +83,10 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 			WHERE dl.device_id = ?
 			AND cr.end_date IS NULL
 		`, deviceID).Scan(&cashRegisterID)
-		return "", models.ErrNoCashRegisterOpen
+
+		if err == sql.ErrNoRows {
+			return "", models.ErrNoCashRegisterOpen
+		}
 	} else if err != nil {
 		log.Error("Error finding cash register: " + err.Error())
 		return "", err
