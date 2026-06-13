@@ -282,65 +282,95 @@ AND ds.merchant_id = ?`
 	return sessions, nil
 }
 
+// StartDeliverySession creates a new delivery session for the delivery man (closes any
+// stale finished session, blocks if one is already active, then atomically inserts the
+// session header, its delivery_session_order stops, and updates orders.brand_status).
+//
+// Steps 1-5 (cleanup of finished sessions, active-session check, and the 3 creation
+// writes) all run inside a single transaction via dbutils.RunInTx: this keeps the
+// active-session check consistent with the insert that follows it (same tx/connection)
+// and guarantees the session row, its stops, and the brand_status update either all
+// land together or not at all - avoiding the half-created "orphan" session that would
+// otherwise be seen as "active" and block the delivery man's next attempt.
 func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, req *models.DeliverySessionRequest) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	userID := req.DeliveryMan.UserID
 	merchantID := req.MerchantID
 
-	// 1. Close finished delivery sessions (PHP calls closeFinishedDeliverySession)
-	_, _ = db.ExecContext(ctx, `
-		UPDATE delivery_session
-		SET status = 'FINISHED'
-		WHERE user_id = ? AND status IN ('1','PENDING') AND end_date < UTC_TIMESTAMP
-	`, userID)
+	var sessionID int64
 
-	// 2. Check if a session is already active
-	var existing string
-	err := db.QueryRowContext(ctx, `
-		SELECT id FROM delivery_session
-		WHERE user_id = ? AND status IN ('1','PENDING')
-	`, userID).Scan(&existing)
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbutils.GetDB(txCtx, r.database)
 
-	if err != sql.ErrNoRows {
-		log.Error("StartDeliverySession: active session already exists for user " + userID)
-		return nil, models.ErrDeliverySessionAlreadyActive
-	}
+		// 1. Close finished delivery sessions (PHP calls closeFinishedDeliverySession)
+		_, _ = db.ExecContext(txCtx, `
+			UPDATE delivery_session
+			SET status = 'FINISHED'
+			WHERE user_id = ? AND status IN ('1','PENDING') AND end_date < UTC_TIMESTAMP
+		`, userID)
 
-	// 3. Insert new delivery_session
-	res, err := db.ExecContext(ctx, `
-		INSERT INTO delivery_session (user_id, merchant_id, start_date, distance, duration, status)
-		VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'PENDING')
-	`, userID, merchantID, req.Distance, req.Duration)
-	if err != nil {
-		log.Error("StartDeliverySession: failed to insert delivery session: " + err.Error())
-		return nil, err
-	}
+		// 2. Check if a session is already active
+		var existing string
+		scanErr := db.QueryRowContext(txCtx, `
+			SELECT id FROM delivery_session
+			WHERE user_id = ? AND status IN ('1','PENDING')
+		`, userID).Scan(&existing)
 
-	sessionID, _ := res.LastInsertId()
-
-	// 4. Insert delivery_session_order
-	for i, o := range req.Orders {
-		_, err := db.ExecContext(ctx, `
-			INSERT INTO delivery_session_order (delivery_session_id, order_id, priority)
-			VALUES (?, ?, ?)
-		`, sessionID, o.OrderID, i)
-		if err != nil {
-			log.Error("StartDeliverySession: failed to insert delivery session order: " + err.Error())
-			return nil, err
+		switch scanErr {
+		case nil:
+			// A session exists -> block.
+			log.Error("StartDeliverySession: active session already exists for user " + userID)
+			return models.ErrDeliverySessionAlreadyActive
+		case sql.ErrNoRows:
+			// No active session -> continue.
+		default:
+			// Real DB error -> propagate as-is, not as "already active".
+			log.Error("StartDeliverySession: failed to check active session: " + scanErr.Error())
+			return scanErr
 		}
-	}
 
-	// 5. Update orders brand_status
-	_, err = db.ExecContext(ctx, `
-		UPDATE orders o
-		INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
-		SET o.brand_status = 'EN_ROUTE_TO_DROPOFF'
-		WHERE dso.delivery_session_id = ?
-	`, sessionID)
+		// 3. Insert new delivery_session
+		res, err := db.ExecContext(txCtx, `
+			INSERT INTO delivery_session (user_id, merchant_id, start_date, distance, duration, status)
+			VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'PENDING')
+		`, userID, merchantID, req.Distance, req.Duration)
+		if err != nil {
+			log.Error("StartDeliverySession: failed to insert delivery session: " + err.Error())
+			return err
+		}
+
+		sessionID, err = res.LastInsertId()
+		if err != nil {
+			log.Error("StartDeliverySession: failed to read inserted session id: " + err.Error())
+			return err
+		}
+
+		// 4. Insert delivery_session_order
+		for i, o := range req.Orders {
+			if _, err := db.ExecContext(txCtx, `
+				INSERT INTO delivery_session_order (delivery_session_id, order_id, priority)
+				VALUES (?, ?, ?)
+			`, sessionID, o.OrderID, i); err != nil {
+				log.Error("StartDeliverySession: failed to insert delivery session order: " + err.Error())
+				return err
+			}
+		}
+
+		// 5. Update orders brand_status
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE orders o
+			INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
+			SET o.brand_status = 'EN_ROUTE_TO_DROPOFF'
+			WHERE dso.delivery_session_id = ?
+		`, sessionID); err != nil {
+			log.Error("StartDeliverySession: failed to update order brand status: " + err.Error())
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
-		log.Error("StartDeliverySession: failed to update order brand status: " + err.Error())
 		return nil, err
 	}
 

@@ -71,12 +71,19 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	err := db.QueryRowContext(ctx, `
 		SELECT cr.cash_register_id
 		FROM cash_registers cr
-		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
-		WHERE (cr.device_id = ? OR scr.device_id = ?)
+		WHERE cr.device_id = ?
 		AND cr.end_date IS NULL
-	`, deviceID, deviceID).Scan(&cashRegisterID)
+	`, deviceID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
+
+		err = db.QueryRowContext(ctx, `
+			SELECT cr.cash_register_id
+			FROM cash_registers cr
+			INNER JOIN device_link dl on dl.on_behalf_of = cr.device_id
+			WHERE dl.device_id = ?
+			AND cr.end_date IS NULL
+		`, deviceID).Scan(&cashRegisterID)
 		return "", models.ErrNoCashRegisterOpen
 	} else if err != nil {
 		log.Error("Error finding cash register: " + err.Error())
