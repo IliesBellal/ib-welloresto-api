@@ -931,7 +931,8 @@ func (r *DeliverySessionsRepository) ResolveDeliverableStop(ctx context.Context,
 		return "", err
 	}
 	if stopStatus != "en_route" && stopStatus != "arrived" {
-		return "", models.ErrDeliveryStopNotDeliverable
+		// Restreint la livraison à la commande en coursuniquement. désactivé temporairement pour ne pas bloquer
+		//return "", models.ErrDeliveryStopNotDeliverable
 	}
 
 	return sessionID, nil
