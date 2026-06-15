@@ -1018,6 +1018,98 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	return results, totalItems, nil
 }
 
+func buildCustomerOrderByClause(sortField, sortDir string) string {
+	field := strings.ToLower(strings.TrimSpace(sortField))
+	dir := strings.ToUpper(strings.TrimSpace(sortDir))
+
+	if dir != "ASC" && dir != "DESC" {
+		dir = "ASC"
+	}
+
+	fieldExpr := "c.creation_date"
+	isText := false
+
+	switch field {
+	case "customer_first_name":
+		fieldExpr = "LOWER(c.customer_first_name)"
+		isText = true
+	case "customer_email":
+		fieldExpr = "LOWER(c.customer_email)"
+		isText = true
+	case "customer_tel":
+		fieldExpr = "LOWER(c.customer_tel)"
+		isText = true
+	case "customer_nb_orders":
+		fieldExpr = "c.customer_nb_orders"
+	case "customer_total_spent":
+		fieldExpr = "c.customer_total_spent"
+	case "creation_date":
+		fieldExpr = "c.creation_date"
+	case "last_order_date":
+		fieldExpr = "c.last_order_date"
+	}
+
+	if isText {
+		return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL OR %s = '' THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, fieldExpr, dir)
+	}
+
+	return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, dir)
+}
+
+func computeScore(term string, c *CustomerSearchResult) int {
+	score := 0
+	term = normalizeStr(&term)
+
+	code := normalizeStr(c.CustomerCode)
+	tel := normalizeStr(c.CustomerTel)
+	lastName := normalizeStr(c.CustomerLastName)
+	firstName := normalizeStr(c.CustomerFirstName)
+
+	// Correspondances exactes
+	if code == term {
+		score += 500
+	}
+	if tel == term {
+		score += 300
+	}
+	if lastName == term {
+		score += 200
+	}
+	if firstName == term {
+		score += 200
+	}
+
+	// Correspondances partielles
+	if strings.Contains(lastName, term) {
+		score += 80
+	}
+	if strings.Contains(firstName, term) {
+		score += 80
+	}
+
+	if strings.Contains(tel, term) {
+		score += 120
+	}
+
+	// Bonus complétude profil
+	if c.CustomerEmail != nil && *c.CustomerEmail != "" {
+		score += 40
+	}
+	if c.CustomerTel != nil && *c.CustomerTel != "" {
+		score += 40
+	}
+	if c.CustomerName != "" {
+		score += 40
+	}
+	if c.CustomerAddress != nil && *c.CustomerAddress != "" {
+		score += 40
+	}
+
+	score += c.CustomerNbOrders
+
+	return score
+}
+
 func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
@@ -1104,44 +1196,6 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 	return results, totalItems, nil
 }
 
-func buildCustomerOrderByClause(sortField, sortDir string) string {
-	field := strings.ToLower(strings.TrimSpace(sortField))
-	dir := strings.ToUpper(strings.TrimSpace(sortDir))
-
-	if dir != "ASC" && dir != "DESC" {
-		dir = "DESC"
-	}
-
-	fieldExpr := "c.creation_date"
-	isText := false
-
-	switch field {
-	case "customer_first_name":
-		fieldExpr = "LOWER(c.customer_first_name)"
-		isText = true
-	case "customer_email":
-		fieldExpr = "LOWER(c.customer_email)"
-		isText = true
-	case "customer_tel":
-		fieldExpr = "LOWER(c.customer_tel)"
-		isText = true
-	case "customer_nb_orders":
-		fieldExpr = "c.customer_nb_orders"
-	case "customer_total_spent":
-		fieldExpr = "c.customer_total_spent"
-	case "creation_date":
-		fieldExpr = "c.creation_date"
-	case "last_order_date":
-		fieldExpr = "c.last_order_date"
-	}
-
-	if isText {
-		return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL OR %s = '' THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, fieldExpr, dir)
-	}
-
-	return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, dir)
-}
-
 func nullTimeToUTCISOZ(nt sql.NullTime) *string {
 	if !nt.Valid {
 		return nil
@@ -1157,60 +1211,6 @@ func normalizeStr(s *string) string {
 	val := strings.TrimSpace(strings.ToUpper(*s))
 	val = strings.ReplaceAll(val, " ", "")
 	return val
-}
-
-func computeScore(term string, c *CustomerSearchResult) int {
-	score := 0
-	term = normalizeStr(&term)
-
-	code := normalizeStr(c.CustomerCode)
-	tel := normalizeStr(c.CustomerTel)
-	lastName := normalizeStr(c.CustomerLastName)
-	firstName := normalizeStr(c.CustomerFirstName)
-
-	// Correspondances exactes
-	if code == term {
-		score += 500
-	}
-	if tel == term {
-		score += 300
-	}
-	if lastName == term {
-		score += 200
-	}
-	if firstName == term {
-		score += 200
-	}
-
-	// Correspondances partielles
-	if strings.Contains(lastName, term) {
-		score += 80
-	}
-	if strings.Contains(firstName, term) {
-		score += 80
-	}
-
-	if strings.Contains(tel, term) {
-		score += 120
-	}
-
-	// Bonus complétude profil
-	if c.CustomerEmail != nil && *c.CustomerEmail != "" {
-		score += 40
-	}
-	if c.CustomerTel != nil && *c.CustomerTel != "" {
-		score += 40
-	}
-	if c.CustomerName != "" {
-		score += 40
-	}
-	if c.CustomerAddress != nil && *c.CustomerAddress != "" {
-		score += 40
-	}
-
-	score += c.CustomerNbOrders
-
-	return score
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {
