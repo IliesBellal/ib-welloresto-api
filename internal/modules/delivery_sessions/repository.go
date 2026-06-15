@@ -249,17 +249,17 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 	userID := req.DeliveryMan.UserID
 	merchantID := req.MerchantID
 
+	// 1. Check if a session is already active for this user
+	current_session, err := r.GetActiveDeliverySessionForUser(ctx, merchantID, userID)
+
+	if err == nil && current_session != nil {
+		return nil, models.ErrDeliverySessionAlreadyActive
+	}
+
 	var sessionID int64
 
-	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
 		db := dbutils.GetDB(txCtx, r.database)
-
-		// 1. Check if a session is already active for this user
-		current_session, err := r.GetActiveDeliverySessionForUser(ctx, merchantID, userID)
-
-		if err == nil && current_session != nil {
-			return models.ErrDeliverySessionAlreadyActive
-		}
 
 		// 2. Insert new delivery_session
 		res, err := db.ExecContext(txCtx, `
