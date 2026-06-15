@@ -27,7 +27,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 	log := logger.FromContext(ctx)
 
 	// 1. Récupérer les sessions actives (en-tête + livreur, cf. fetchDeliverySessions)
-	sessions, err := r.fetchDeliverySessions(ctx, merchantID, "ds.status IN ('1','PENDING')")
+	sessions, err := r.fetchDeliverySessions(ctx, merchantID, "ds.status = 'active'")
 	if err != nil {
 		return nil, err
 	}
@@ -233,65 +233,16 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 	return sessions, nil
 }
 
-func (r *DeliverySessionsRepository) GetDeliverySessions(ctx context.Context, merchantID string) ([]models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
-
-	qDeliverySessions := `
-SELECT id, u.user_id, u.profile_picture, u.first_name, u.last_name, u.lat, u.lng, u.planning_color, ds.status
-FROM delivery_session ds
-INNER JOIN users u on u.user_id = ds.user_id
-WHERE status IN ('1','PENDING')
-AND ds.merchant_id = ?`
-	rows, err := db.QueryContext(ctx, qDeliverySessions, merchantID)
-	if err != nil {
-		log.Error("failed to fetch delivery sessions: " + err.Error())
-		return nil, err
-	}
-	defer rows.Close()
-
-	sessions := []models.DeliverySession{}
-	for rows.Next() {
-		var id, userID sql.NullString
-		var profilePic, firstName, lastName sql.NullString
-		var lat, lng sql.NullFloat64
-		var planningColor sql.NullString
-		var status sql.NullString
-
-		if err := rows.Scan(&id, &userID, &profilePic, &firstName, &lastName, &lat, &lng, &planningColor, &status); err != nil {
-			log.Error("failed to scan delivery session: " + err.Error())
-			return nil, err
-		}
-		ds := models.DeliverySession{
-			DeliverySessionID: id.String,
-			Status:            status.String,
-			Orders:            []models.Order{},
-			DeliveryMan: models.OrderUser{
-				UserID:         userID.String,
-				FirstName:      &firstName.String,
-				LastName:       &lastName.String,
-				ProfilePicture: helpers.NullStringToPtr(profilePic),
-				Lat:            helpers.NullFloat64Ptr(lat),
-				Lng:            helpers.NullFloat64Ptr(lng),
-				PlanningColor:  helpers.NullStringToPtr(planningColor),
-			},
-		}
-		sessions = append(sessions, ds)
-	}
-
-	return sessions, nil
-}
-
 // StartDeliverySession creates a new delivery session for the delivery man (closes any
 // stale finished session, blocks if one is already active, then atomically inserts the
 // session header, its delivery_session_order stops, and updates orders.brand_status).
 //
-// Steps 1-5 (cleanup of finished sessions, active-session check, and the 3 creation
-// writes) all run inside a single transaction via dbutils.RunInTx: this keeps the
-// active-session check consistent with the insert that follows it (same tx/connection)
-// and guarantees the session row, its stops, and the brand_status update either all
-// land together or not at all - avoiding the half-created "orphan" session that would
-// otherwise be seen as "active" and block the delivery man's next attempt.
+// Steps 1-4 (active-session check, and the 3 creation writes) all run inside a single
+// transaction via dbutils.RunInTx: this keeps the active-session check consistent with
+// the insert that follows it (same tx/connection) and guarantees the session row, its
+// stops, and the brand_status update either all land together or not at all - avoiding
+// the half-created "orphan" session that would otherwise be seen as "active" and block
+// the delivery man's next attempt.
 func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, req *models.DeliverySessionRequest) (*models.DeliverySession, error) {
 	log := logger.FromContext(ctx)
 
@@ -303,37 +254,17 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
 		db := dbutils.GetDB(txCtx, r.database)
 
-		// 1. Close finished delivery sessions (PHP calls closeFinishedDeliverySession)
-		_, _ = db.ExecContext(txCtx, `
-			UPDATE delivery_session
-			SET status = 'FINISHED'
-			WHERE user_id = ? AND status IN ('1','PENDING') AND end_date < UTC_TIMESTAMP
-		`, userID)
+		// 1. Check if a session is already active for this user
+		current_session, err := r.GetActiveDeliverySessionForUser(ctx, merchantID, userID)
 
-		// 2. Check if a session is already active
-		var existing string
-		scanErr := db.QueryRowContext(txCtx, `
-			SELECT id FROM delivery_session
-			WHERE user_id = ? AND status IN ('1','PENDING')
-		`, userID).Scan(&existing)
-
-		switch scanErr {
-		case nil:
-			// A session exists -> block.
-			log.Error("StartDeliverySession: active session already exists for user " + userID)
+		if err == nil && current_session != nil {
 			return models.ErrDeliverySessionAlreadyActive
-		case sql.ErrNoRows:
-			// No active session -> continue.
-		default:
-			// Real DB error -> propagate as-is, not as "already active".
-			log.Error("StartDeliverySession: failed to check active session: " + scanErr.Error())
-			return scanErr
 		}
 
-		// 3. Insert new delivery_session
+		// 2. Insert new delivery_session
 		res, err := db.ExecContext(txCtx, `
 			INSERT INTO delivery_session (user_id, merchant_id, start_date, distance, duration, status)
-			VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'PENDING')
+			VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'active')
 		`, userID, merchantID, req.Distance, req.Duration)
 		if err != nil {
 			log.Error("StartDeliverySession: failed to insert delivery session: " + err.Error())
@@ -346,7 +277,7 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 			return err
 		}
 
-		// 4. Insert delivery_session_order
+		// 3. Insert delivery_session_order
 		for i, o := range req.Orders {
 			if _, err := db.ExecContext(txCtx, `
 				INSERT INTO delivery_session_order (delivery_session_id, order_id, priority)
@@ -357,7 +288,7 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 			}
 		}
 
-		// 5. Update orders brand_status
+		// 4. Update orders brand_status
 		if _, err := db.ExecContext(txCtx, `
 			UPDATE orders o
 			INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
@@ -374,14 +305,14 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 		return nil, err
 	}
 
-	// 8. Return the Delivery Session object (like Management->getDeliverySession())
+	// Return the Delivery Session object (like Management->getDeliverySession())
 	session := &models.DeliverySession{
 		DeliverySessionID: fmt.Sprint(sessionID),
 		UserID:            userID,
 		MerchantID:        merchantID,
 		Distance:          req.Distance,
 		Duration:          req.Duration,
-		Status:            "PENDING",
+		Status:            "active",
 		Orders:            make([]models.Order, len(req.Orders)),
 	}
 
@@ -415,12 +346,12 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 
 	// ⚠ PHP version commented out the negative MerchantID update → we skip it, as requested.
 
-	// 2) Mark session as canceled
+	// 2) Mark session as canceled (only an active session can be canceled)
 	_, err = db.ExecContext(ctx, `
         UPDATE delivery_session
-        SET status = 'CANCELED'
+        SET status = 'canceled'
         WHERE id = ?
-        AND status >= 0
+        AND status = 'active'
 	`, sessionID)
 	if err != nil {
 		log.Error("CancelDeliverySession: failed to update delivery session status: " + err.Error())
@@ -442,7 +373,7 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 	return &models.DeliverySession{
 		DeliverySessionID: sessionID,
 		MerchantID:        merchantID,
-		Status:            "CANCELED",
+		Status:            "canceled",
 	}, nil
 }
 
@@ -455,23 +386,23 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
         UPDATE orders o
         INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-        SET 
+        SET
             o.brand_status = 'DONE',
             o.state = 'CLOSED'
         WHERE ds.id = ?
-        AND ds.status NOT IN ('-1','CLOSED','CANCELED')
+        AND ds.status NOT IN ('done','canceled')
 	`, sessionID)
 	if err != nil {
 		log.Error("CloseDeliverySession: failed to update order status: " + err.Error())
 		return nil, err
 	}
 
-	// 2) Mark session as DONE
+	// 2) Mark session as done
 	_, err = db.ExecContext(ctx, `
         UPDATE delivery_session
-        SET status = 'DONE'
+        SET status = 'done'
         WHERE id = ?
-        AND status NOT IN ('-1','CLOSED','CANCELED')
+        AND status NOT IN ('done','canceled')
 	`, sessionID)
 	if err != nil {
 		log.Error("CloseDeliverySession: failed to update delivery session status: " + err.Error())
@@ -506,7 +437,7 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
 	return &models.DeliverySession{
 		DeliverySessionID: sessionID,
 		MerchantID:        merchantID,
-		Status:            "DONE",
+		Status:            "done",
 	}, nil
 }
 
@@ -543,10 +474,9 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 }
 
 // GetActiveDeliverySessionForUser returns the currently active delivery session
-// (status IN ('1','PENDING') - legacy values, see docs/DELIVERY_DESIGN.md §7) for
-// the calling delivery user, assembled the same way as GetDeliverySession but
-// additionally exposing the per-stop FSM (delivery_session_order) and the
-// customer's delivery notes.
+// (status = 'active') for the calling delivery user, assembled the same way as
+// GetDeliverySession but additionally exposing the per-stop FSM
+// (delivery_session_order) and the customer's delivery notes.
 func (r *DeliverySessionsRepository) GetActiveDeliverySessionForUser(ctx context.Context, merchantID, userID string) (*models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -559,7 +489,7 @@ func (r *DeliverySessionsRepository) GetActiveDeliverySessionForUser(ctx context
 	err := db.QueryRowContext(ctx, `
 		SELECT id, status, current_order_id, distance, duration, start_date
 		FROM delivery_session
-		WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+		WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 		ORDER BY start_date DESC
 		LIMIT 1
 	`, userID, merchantID).Scan(&session.DeliverySessionID, &session.Status, &currentOrderID, &distance, &duration, &startDate)
@@ -583,9 +513,9 @@ func (r *DeliverySessionsRepository) GetActiveDeliverySessionForUser(ctx context
 
 // GetDeliverySessionByIDForUser assembles the calling user's delivery session by id,
 // without filtering on delivery_session.status. Unlike GetActiveDeliverySessionForUser
-// (status IN ('1','PENDING')), this is used right after a transition that may have just
-// auto-closed the session (status='0', §0.3) - the response must still reflect the final
-// state of that session, not "no active session".
+// (status = 'active'), this is used right after a transition that may have just
+// auto-closed the session (status='done', §0.3) - the response must still reflect the
+// final state of that session, not "no active session".
 func (r *DeliverySessionsRepository) GetDeliverySessionByIDForUser(ctx context.Context, merchantID, userID, sessionID string) (*models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -789,7 +719,7 @@ func (r *DeliverySessionsRepository) SelectDeliveryStop(ctx context.Context, mer
 		// 1. Resolve the caller's active session
 		txErr := db.QueryRowContext(txCtx, `
 			SELECT id FROM delivery_session
-			WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+			WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 			ORDER BY start_date DESC LIMIT 1
 		`, userID, merchantID).Scan(&sessionID)
 		if txErr == sql.ErrNoRows {
@@ -858,7 +788,7 @@ func (r *DeliverySessionsRepository) MarkDeliveryStopArrived(ctx context.Context
 		var currentOrderID sql.NullString
 		txErr := db.QueryRowContext(txCtx, `
 			SELECT id, current_order_id FROM delivery_session
-			WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+			WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 			ORDER BY start_date DESC LIMIT 1
 		`, userID, merchantID).Scan(&sessionID, &currentOrderID)
 		if txErr == sql.ErrNoRows {
@@ -905,7 +835,7 @@ func (r *DeliverySessionsRepository) ResolveDeliverableStop(ctx context.Context,
 	var currentOrderID sql.NullString
 	err = db.QueryRowContext(ctx, `
 		SELECT id, current_order_id FROM delivery_session
-		WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+		WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 		ORDER BY start_date DESC LIMIT 1
 	`, userID, merchantID).Scan(&sessionID, &currentOrderID)
 	if err == sql.ErrNoRows {
@@ -1019,14 +949,18 @@ func (r *DeliverySessionsRepository) advanceCurrentStop(ctx context.Context, ses
 // is updated accordingly (orders.state stays 'OPEN' - re-dispatchable), and
 // current_order_id advances to the next pending stop via advanceCurrentStop. Returns the
 // session id on success.
-func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context, merchantID, userID, orderID, reason, newStatus, brandStatus string) (sessionID string, err error) {
+//
+// deletionReasonID/comment are the optional structured deletion reason fields
+// (034_delivery_stop_deletion_reason): when nil, the corresponding columns are left
+// NULL and only fail_reason is written (legacy behavior, unchanged).
+func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context, merchantID, userID, orderID, reason string, deletionReasonID, deletionComment *string, newStatus, brandStatus string) (sessionID string, err error) {
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
 		db := dbutils.GetDB(txCtx, r.database)
 
 		var currentOrderID sql.NullString
 		txErr := db.QueryRowContext(txCtx, `
 			SELECT id, current_order_id FROM delivery_session
-			WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+			WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 			ORDER BY start_date DESC LIMIT 1
 		`, userID, merchantID).Scan(&sessionID, &currentOrderID)
 		if txErr == sql.ErrNoRows {
@@ -1060,18 +994,18 @@ func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context
 		case "failed":
 			updateStopQuery = `
 				UPDATE delivery_session_order
-				SET status = 'failed', failed_at = UTC_TIMESTAMP(), fail_reason = ?
+				SET status = 'failed', failed_at = UTC_TIMESTAMP(), fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
 				WHERE delivery_session_id = ? AND order_id = ?`
 		case "canceled":
 			updateStopQuery = `
 				UPDATE delivery_session_order
-				SET status = 'canceled', canceled_at = UTC_TIMESTAMP(), fail_reason = ?
+				SET status = 'canceled', canceled_at = UTC_TIMESTAMP(), fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
 				WHERE delivery_session_id = ? AND order_id = ?`
 		default:
 			return fmt.Errorf("terminalizeDeliveryStop: unsupported status %q", newStatus)
 		}
 
-		if _, txErr = db.ExecContext(txCtx, updateStopQuery, reason, sessionID, orderID); txErr != nil {
+		if _, txErr = db.ExecContext(txCtx, updateStopQuery, reason, deletionReasonID, deletionComment, sessionID, orderID); txErr != nil {
 			return txErr
 		}
 
@@ -1089,20 +1023,20 @@ func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context
 
 // MarkDeliveryStopFailed transitions the caller's current stop to 'failed' (transition
 // 4, §1.3 #4 / §3.5). orders.state is left 'OPEN' (re-dispatchable).
-func (r *DeliverySessionsRepository) MarkDeliveryStopFailed(ctx context.Context, merchantID, userID, orderID, reason string) (sessionID string, err error) {
-	return r.terminalizeDeliveryStop(ctx, merchantID, userID, orderID, reason, "failed", "DELIVERY_FAILED")
+func (r *DeliverySessionsRepository) MarkDeliveryStopFailed(ctx context.Context, merchantID, userID, orderID, reason string, deletionReasonID, deletionComment *string) (sessionID string, err error) {
+	return r.terminalizeDeliveryStop(ctx, merchantID, userID, orderID, reason, deletionReasonID, deletionComment, "failed", "DELIVERY_FAILED")
 }
 
 // CancelDeliveryStop transitions the caller's current stop to 'canceled' (transition 5,
 // §1.3 #5 / §3.6, path (a) without refund - the dispatcher handles any refund
 // separately). orders.state is left 'OPEN' (re-dispatchable).
-func (r *DeliverySessionsRepository) CancelDeliveryStop(ctx context.Context, merchantID, userID, orderID, reason string) (sessionID string, err error) {
-	return r.terminalizeDeliveryStop(ctx, merchantID, userID, orderID, reason, "canceled", "DELIVERY_CANCELED")
+func (r *DeliverySessionsRepository) CancelDeliveryStop(ctx context.Context, merchantID, userID, orderID, reason string, deletionReasonID, deletionComment *string) (sessionID string, err error) {
+	return r.terminalizeDeliveryStop(ctx, merchantID, userID, orderID, reason, deletionReasonID, deletionComment, "canceled", "DELIVERY_CANCELED")
 }
 
 // CloseMyDeliverySession closes the caller's active delivery session once all of its
-// stops are terminal (§1.5/§3.8). Writes delivery_session.status='DONE' (legacy value,
-// same as CloseDeliverySession - intentionally NOT 'done', see §0.5) and end_date.
+// stops are terminal (§1.5/§3.8). Writes delivery_session.status='done' (same as
+// CloseDeliverySession) and end_date.
 // Per-stop statuses, payments, and orders.state are left untouched (already finalized by
 // /delivered, /failed, /cancel). Also clears the driver's last known position (privacy -
 // position is retained only while a session is active, §3.7/§6).
@@ -1112,7 +1046,7 @@ func (r *DeliverySessionsRepository) CloseMyDeliverySession(ctx context.Context,
 
 		txErr := db.QueryRowContext(txCtx, `
 			SELECT id FROM delivery_session
-			WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+			WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 			ORDER BY start_date DESC LIMIT 1
 		`, userID, merchantID).Scan(&sessionID)
 		if txErr == sql.ErrNoRows {
@@ -1135,7 +1069,7 @@ func (r *DeliverySessionsRepository) CloseMyDeliverySession(ctx context.Context,
 		}
 
 		if _, txErr = db.ExecContext(txCtx, `
-			UPDATE delivery_session SET status = 'DONE', end_date = UTC_TIMESTAMP() WHERE id = ?
+			UPDATE delivery_session SET status = 'done', end_date = UTC_TIMESTAMP() WHERE id = ?
 		`, sessionID); txErr != nil {
 			return txErr
 		}

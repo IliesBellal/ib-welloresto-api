@@ -1,0 +1,3 @@
+DROP INDEX idx_delivery_session_order_deletion_reason ON delivery_session_order;
+ALTER TABLE delivery_session_order DROP COLUMN deletion_comment;
+ALTER TABLE delivery_session_order DROP COLUMN deletion_reason_id;

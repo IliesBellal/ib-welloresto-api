@@ -138,7 +138,7 @@ func (s *DeliverySessionsService) MarkDeliveryStopArrived(ctx context.Context, o
 // MarkDeliveryStopDelivered transitions the caller's current stop (en_route or arrived)
 // to delivered (transition 3, §1.3 #3 / §3.4). It reuses
 // OrdersLifeCycleService.SetDelivered as-is for the fiscal closure of the order
-// (payment check, NF525 hash, state='CLOSED', possible session auto-close to '0',
+// (payment check, NF525 hash, state='CLOSED', possible session auto-close to 'done',
 // §0.3) - that call runs in its own, separate transaction and emits UPDATE_ORDER on
 // success.
 //
@@ -192,6 +192,27 @@ func validateStopReason(req *DeliveryStopReasonRequest) (string, error) {
 	return reason, nil
 }
 
+// extractStructuredDeletionReason returns the optional deletion_reason_id/comment
+// fields from req (034_delivery_stop_deletion_reason), trimmed, with empty values
+// treated as absent (nil) so terminalizeDeliveryStop leaves the corresponding columns
+// NULL - same as today when these fields aren't sent.
+func extractStructuredDeletionReason(req *DeliveryStopReasonRequest) (deletionReasonID, comment *string) {
+	if req == nil {
+		return nil, nil
+	}
+	if req.DeletionReasonID != nil {
+		if id := strings.TrimSpace(*req.DeletionReasonID); id != "" {
+			deletionReasonID = &id
+		}
+	}
+	if req.Comment != nil {
+		if c := strings.TrimSpace(*req.Comment); c != "" {
+			comment = &c
+		}
+	}
+	return deletionReasonID, comment
+}
+
 // MarkDeliveryStopFailed transitions the caller's current stop (any non-terminal state)
 // to failed (transition 4, §1.3 #4 / §3.5). orders.brand_status becomes
 // 'DELIVERY_FAILED' and orders.state is left 'OPEN' (re-dispatchable).
@@ -205,8 +226,9 @@ func (s *DeliverySessionsService) MarkDeliveryStopFailed(ctx context.Context, or
 	if err != nil {
 		return nil, err
 	}
+	deletionReasonID, comment := extractStructuredDeletionReason(req)
 
-	sessionID, err := s.deliverySessionsRepo.MarkDeliveryStopFailed(ctx, user.MerchantID, user.UserID, orderID, reason)
+	sessionID, err := s.deliverySessionsRepo.MarkDeliveryStopFailed(ctx, user.MerchantID, user.UserID, orderID, reason, deletionReasonID, comment)
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +252,9 @@ func (s *DeliverySessionsService) CancelDeliveryStop(ctx context.Context, orderI
 	if err != nil {
 		return nil, err
 	}
+	deletionReasonID, comment := extractStructuredDeletionReason(req)
 
-	sessionID, err := s.deliverySessionsRepo.CancelDeliveryStop(ctx, user.MerchantID, user.UserID, orderID, reason)
+	sessionID, err := s.deliverySessionsRepo.CancelDeliveryStop(ctx, user.MerchantID, user.UserID, orderID, reason, deletionReasonID, comment)
 	if err != nil {
 		return nil, err
 	}
@@ -242,10 +265,10 @@ func (s *DeliverySessionsService) CancelDeliveryStop(ctx context.Context, orderI
 }
 
 // CloseMyDeliverySession closes the caller's active delivery session once all of its
-// stops are terminal (§1.5/§3.8), writing delivery_session.status='DONE' (legacy value).
+// stops are terminal (§1.5/§3.8), writing delivery_session.status='done'.
 //
-// If the session was already auto-closed by the last /delivered call (status='0',
-// §0.3), it is no longer "active" (status IN ('1','PENDING')) and the repo returns
+// If the session was already auto-closed by the last /delivered call (status='done',
+// §0.3), it is no longer "active" (status = 'active') and the repo returns
 // ErrNoActiveDeliverySession (404). This is intentional, not worked around: the app
 // treats a 404 here as "already closed" = success.
 func (s *DeliverySessionsService) CloseMyDeliverySession(ctx context.Context) (*models.DeliverySession, error) {

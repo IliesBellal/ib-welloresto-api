@@ -44,7 +44,7 @@ func (r *UsersRepository) GetActiveDeliverySessionForUser(ctx context.Context, m
 	var orderID sql.NullString
 	err = db.QueryRowContext(ctx, `
 		SELECT id, current_order_id FROM delivery_session
-		WHERE user_id = ? AND merchant_id = ? AND status IN ('1','PENDING')
+		WHERE user_id = ? AND merchant_id = ? AND status = 'active'
 		ORDER BY start_date DESC LIMIT 1
 	`, userID, merchantID).Scan(&id, &orderID)
 	if err == sql.ErrNoRows {

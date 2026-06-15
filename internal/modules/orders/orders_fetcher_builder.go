@@ -531,7 +531,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	FROM delivery_session_order dso
 	INNER JOIN delivery_session ds
 		ON ds.id = dso.delivery_session_id
-		AND ds.status IN ('1','PENDING')
+		AND ds.status = 'active'
 	WHERE ds.merchant_id = ?
 	`
 

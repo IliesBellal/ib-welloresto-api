@@ -42,7 +42,7 @@ func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, a
 	qIDs := `SELECT DISTINCT o.order_id
              FROM orders o
              LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
-             LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status IN ('1','PENDING')
+             LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status = 'active'
              WHERE o.merchant_id = ? ` + criteria
 
 	rows, err := r.database.QueryContext(ctx, qIDs, merchantID)

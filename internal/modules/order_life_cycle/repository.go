@@ -835,7 +835,7 @@ WHERE order_id = ?
 	const qCloseDS = `
 		UPDATE delivery_session ds
 		JOIN delivery_session_order dso ON dso.delivery_session_id = ds.id
-		SET ds.status = 0
+		SET ds.status = 'done'
 		WHERE dso.order_id = ?
 		  AND NOT EXISTS (
 			  SELECT 1
