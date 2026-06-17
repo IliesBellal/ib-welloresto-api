@@ -50,6 +50,7 @@ const (
 	PlanningHolidayIDPrefix              = "plan-hol"
 	StockMovementPrefix                  = "stock-mvt"
 	UpsellSuggestionIDPrefix             = "upsell-sugg"
+	PrinterIDPrefix                      = "printer"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

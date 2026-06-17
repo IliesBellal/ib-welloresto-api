@@ -48,6 +48,7 @@ import (
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
+	printersModule "welloresto-api/internal/modules/printers"
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
@@ -354,6 +355,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	tagsRepo := tagsModule.NewRepository(mysqlDB)
 	tagsService := tagsModule.NewService(tagsRepo)
 
+	// ---- Printers ----
+	printersRepo := printersModule.NewRepository(mysqlDB)
+	printersService := printersModule.NewService(printersRepo)
+
 	// ---- Discounts ----
 	discountsRepo := discountsModule.NewRepository(mysqlDB)
 	discountsService := discountsModule.NewService(discountsRepo)
@@ -380,6 +385,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
+	printersH := printersModule.NewHandler(printersService)
 	discountsH := discountsModule.NewHandler(discountsService)
 	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
 	haccpH := haccpModule.NewHandler(haccpService)
@@ -837,6 +843,16 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/", allergensH.ListAllergens)
+	})
+
+	// --- PRINTERS ---
+	r.Route("/printers", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/", printersH.ListPrinters)
+		r.Post("/", printersH.CreatePrinter)
+		r.Patch("/{printer_id}", printersH.UpdatePrinter)
+		r.Delete("/{printer_id}", printersH.DeletePrinter)
 	})
 
 	// --- FLOORS ---
