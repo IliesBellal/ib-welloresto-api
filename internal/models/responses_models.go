@@ -305,6 +305,24 @@ var (
 	ErrMerchantUserAlreadyLinked                = errors.New("merchant_user_already_linked")
 
 	ErrRedisNotAvailable = errors.New("not_available")
+
+	// Erreurs du module Kiosk (internal/modules/kiosk)
+	ErrKioskEnrollmentCodeInvalid = errors.New("kiosk_enrollment_code_invalid")
+	ErrKioskEnrollmentCodeExpired = errors.New("kiosk_enrollment_code_expired")
+	ErrKioskEnrollmentCodeUsed    = errors.New("kiosk_enrollment_code_used")
+	ErrKioskMaxKiosksReached      = errors.New("kiosk_max_kiosks_reached")
+	ErrKioskDeviceTokenInvalid    = errors.New("kiosk_device_token_invalid")
+	ErrKioskRevoked               = errors.New("kiosk_revoked")
+	ErrKioskNotFound              = errors.New("kiosk_not_found")
+
+	// Erreurs du module Kiosk — incrément 2 (menu, commandes)
+	ErrKioskProductNotFound         = errors.New("kiosk_product_not_found")
+	ErrKioskProductUnavailable      = errors.New("kiosk_product_unavailable")
+	ErrKioskFulfillmentTypeInvalid  = errors.New("kiosk_fulfillment_type_invalid")
+	ErrKioskFulfillmentTypeDisabled = errors.New("kiosk_fulfillment_type_disabled")
+	ErrKioskPayAtCounterDisabled    = errors.New("kiosk_pay_at_counter_disabled")
+	ErrKioskOrderNotFound           = errors.New("kiosk_order_not_found")
+	ErrKioskOrderNotCancellable     = errors.New("kiosk_order_not_cancellable")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -939,6 +957,76 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnauthorized
 		errorStatus = "orders_still_opened"
 		errorMsg = "Some orders created with this cash register are still opened"
+
+	case errors.Is(err, ErrKioskEnrollmentCodeInvalid):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_enrollment_code_invalid"
+		errorMsg = "The enrollment code is invalid."
+
+	case errors.Is(err, ErrKioskEnrollmentCodeExpired):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_enrollment_code_expired"
+		errorMsg = "The enrollment code has expired."
+
+	case errors.Is(err, ErrKioskEnrollmentCodeUsed):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_enrollment_code_used"
+		errorMsg = "The enrollment code has already been used."
+
+	case errors.Is(err, ErrKioskMaxKiosksReached):
+		status = http.StatusForbidden
+		errorStatus = "kiosk_max_kiosks_reached"
+		errorMsg = "The maximum number of active kiosks for this merchant has been reached."
+
+	case errors.Is(err, ErrKioskDeviceTokenInvalid):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_device_token_invalid"
+		errorMsg = "The kiosk device token is invalid or expired."
+
+	case errors.Is(err, ErrKioskRevoked):
+		status = http.StatusForbidden
+		errorStatus = "kiosk_revoked"
+		errorMsg = "This kiosk has been revoked."
+
+	case errors.Is(err, ErrKioskNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_not_found"
+		errorMsg = "Kiosk not found."
+
+	case errors.Is(err, ErrKioskProductNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_product_not_found"
+		errorMsg = "Product not found."
+
+	case errors.Is(err, ErrKioskProductUnavailable):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "kiosk_product_unavailable"
+		errorMsg = "One or more products are not available on this kiosk."
+
+	case errors.Is(err, ErrKioskFulfillmentTypeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_fulfillment_type_invalid"
+		errorMsg = "fulfillment_type must be DINE_IN or TAKE_AWAY."
+
+	case errors.Is(err, ErrKioskFulfillmentTypeDisabled):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "kiosk_fulfillment_type_disabled"
+		errorMsg = "This fulfillment type is disabled for this merchant."
+
+	case errors.Is(err, ErrKioskPayAtCounterDisabled):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "kiosk_pay_at_counter_disabled"
+		errorMsg = "Pay-at-counter is disabled for this merchant."
+
+	case errors.Is(err, ErrKioskOrderNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_order_not_found"
+		errorMsg = "Order not found."
+
+	case errors.Is(err, ErrKioskOrderNotCancellable):
+		status = http.StatusConflict
+		errorStatus = "kiosk_order_not_cancellable"
+		errorMsg = "This order can no longer be cancelled."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

@@ -18,6 +18,7 @@ type AppConfig struct {
 	Brevo      BrevoConfig
 	R2         R2Config
 	AI         ai.AIConfig
+	Kiosk      KioskConfig
 }
 
 type App struct {
@@ -40,6 +41,7 @@ func Load() *AppConfig {
 		Brevo:      loadBrevoConfig(),
 		R2:         loadR2Config(),
 		AI:         loadAIConfig(),
+		Kiosk:      loadKioskConfig(),
 	}
 
 	cfg.validate()

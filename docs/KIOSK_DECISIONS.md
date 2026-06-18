@@ -330,3 +330,341 @@ Le webhook Stripe (`internal/webhook/stripe/`) n'a pas été audité en détail 
 6. **G.2** — Backfill de `is_available_on_kiosk` à l'activation (hériter de `is_available_on_sno` vs tout désactiver par défaut)
 7. **G.3** — Flux de paiement carte sur borne (Stripe Terminal vs QR code Checkout affiché à l'écran) — **bloquant pour toute implémentation paiement Kiosk**
 8. **G.4** — Audit du webhook Stripe à faire avant d'activer le paiement Kiosk
+
+---
+
+## Incrément 1 — ce qui a été implémenté
+
+Réalisé : migrations `037_kiosk_module` / `038_kiosk_existing_tables`, module
+`internal/modules/kiosk/` (models, repository, service, handler,
+admin_handler), `internal/middleware/kiosk_auth.go`, branchement dans
+`cmd/api/routes.go`. `go build ./...` passe sans erreur.
+
+### Écarts par rapport aux décisions G.1 / G.2 ci-dessus
+
+- **G.1 (auth device)** : implémenté avec rotation de refresh token
+  (`kiosk_device_tokens`, option 2 recommandée) **+** un access token
+  auto-porteur signé HMAC-SHA256 (pepper `KIOSK_TOKEN_PEPPER`, ou
+  `PIN_PEPPER` en fallback), non persisté en base. Ce n'est pas un JWT
+  (pas de librairie JWT, pas de format de claims standard), mais le
+  principe est similaire : ça évite un lookup SQL sur la table à 1 connexion
+  partagée à chaque heartbeat. Conséquence : une borne révoquée reste
+  utilisable jusqu'à l'expiration de son access token déjà émis (15 min par
+  défaut, `KIOSK_ACCESS_TOKEN_TTL_MINUTES`) — le refresh, lui, est bloqué
+  immédiatement.
+- **G.2 (backfill disponibilité)** : tranché en faveur du backfill —
+  `is_available_on_kiosk BOOLEAN NOT NULL DEFAULT TRUE`, donc tous les
+  produits existants restent visibles sur Kiosk sans action du
+  restaurateur (pas d'héritage de `is_available_on_sno`, juste `TRUE` par
+  défaut — plus simple, écarte le risque "tout invisible au lancement").
+- **orders.kiosk_id** : `VARCHAR(64)` stockant `kiosks.public_id`
+  (`KIOSK-<uuid>`), sans contrainte FK — cohérent avec "pas de FK vers une
+  table historique".
+
+### Contrainte d'import à connaître
+
+`internal/middleware/kiosk_auth.go` importe `internal/modules/kiosk` (pour
+le type `AuthenticatedKiosk`). Cela interdit au module `kiosk` d'importer
+`internal/middleware` ou `internal/config` en retour (cycle d'import) :
+- Le contexte "borne authentifiée" est lu via `kiosk.FromContext(ctx)`
+  (vit dans le module lui-même), pas via un import de `middleware` côté
+  handler.
+- L'identité de l'utilisateur back-office (pour les routes admin) est
+  injectée par `routes.go` via `kiosk.WithAdminUser(ctx, ...)`, lue côté
+  handler via `kiosk.AdminUserFromContext(ctx)` — `routes.go` fait le pont
+  entre `middleware.GetUser(r)` et ce contexte dédié.
+- La config (`KioskConfig`) est définie comme `type Config struct{...}`
+  dans le module kiosk lui-même ; `internal/config/kiosk.go` ne fait que
+  l'aliaser (`type KioskConfig = kiosk.Config`), même pattern que
+  `config.UberEatsConfig = ubereats.ConfigUberEats`.
+
+### Variables d'environnement ajoutées
+
+- `KIOSK_TOKEN_PEPPER` (optionnel, retombe sur `PIN_PEPPER`)
+- `KIOSK_ENROLLMENT_CODE_TTL_MINUTES` (défaut 15)
+- `KIOSK_DEVICE_TOKEN_TTL_DAYS` (défaut 30)
+- `KIOSK_ACCESS_TOKEN_TTL_MINUTES` (défaut 15)
+
+### Tests manuels incrément 1
+
+**Non exécutés dans cette session** : l'environnement d'implémentation n'a
+pas accès à `MYSQL_URL` / `REDIS_URL` / aux identifiants du projet (pas de
+`.env` dans le repo, conforme à CLAUDE.md). Seul `go build ./...` a pu être
+vérifié. Avant mise en prod, exécuter ce scénario sur un environnement avec
+DB/Redis configurés, après avoir :
+1. Appliqué `037_kiosk_module.up.sql` puis `038_kiosk_existing_tables.up.sql`.
+2. Mis `subscriptions.max_kiosks >= 1` pour le merchant de test.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token d'un user back-office authentifié>"
+
+# 1. Génération d'un code d'enrôlement (back-office)
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/enrollment-codes" \
+  -H "Authorization: Bearer $USER_TOKEN" | tee enroll_code.json
+# -> { "id": "kiosk.generate_enrollment_code", "data": { "code": "AB3D9F2K", "expires_at": "..." } }
+
+CODE=$(jq -r .data.code enroll_code.json)
+
+# 2. Enrôlement de la borne (device, public)
+curl -s -X POST "$BASE_URL/kiosk/auth/enroll" \
+  -H "Content-Type: application/json" \
+  -d "{\"enrollment_code\":\"$CODE\",\"name\":\"Borne Salle 1\",\"hardware_model\":\"Elo 1502L\",\"os_version\":\"Android 13\",\"app_version\":\"1.0.0\"}" \
+  | tee enroll.json
+# -> { "data": { "kiosk_id": "KIOSK-...", "access_token": "...", "refresh_token": "...", "expires_at": "..." } }
+
+ACCESS_TOKEN=$(jq -r .data.access_token enroll.json)
+REFRESH_TOKEN=$(jq -r .data.refresh_token enroll.json)
+
+# 3. Heartbeat (device, protégé KioskAuth)
+curl -s -X POST "$BASE_URL/kiosk/auth/heartbeat" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app_version":"1.0.1"}'
+# -> { "data": { "status": "ok" } }
+
+# 4. Refresh du token
+curl -s -X POST "$BASE_URL/kiosk/auth/token/refresh" \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}" | tee refresh.json
+# -> nouveau access_token + refresh_token (rotation : l'ancien refresh_token est révoqué)
+
+# 5. Vérifier que l'ancien refresh_token est bien révoqué (doit échouer)
+curl -s -X POST "$BASE_URL/kiosk/auth/token/refresh" \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}"
+# -> { "data": { "error": "kiosk_device_token_invalid", ... } } attendu
+
+# 6. Liste des bornes (back-office)
+curl -s "$BASE_URL/pos/settings/kiosk/devices" -H "Authorization: Bearer $USER_TOKEN"
+
+# 7. Révocation de la borne (back-office)
+KIOSK_ID=$(jq -r .data.kiosk_id enroll.json)
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/revoke" \
+  -H "Authorization: Bearer $USER_TOKEN"
+# -> { "data": { "status": "revoked" } }
+
+# 8. Vérifier que le refresh échoue désormais pour cette borne
+NEW_REFRESH=$(jq -r .data.refresh_token refresh.json)
+curl -s -X POST "$BASE_URL/kiosk/auth/token/refresh" \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$NEW_REFRESH\"}"
+# -> kiosk_device_token_invalid attendu (RevokeKiosk révoque tous les
+# refresh tokens, donc le rejet se fait au niveau du token avant même
+# d'atteindre la vérification du statut "revoked" de la borne)
+```
+
+---
+
+## Incrément 2 — menu, upsell, pricing, commandes (pay-at-counter)
+
+Réalisé : extension de `internal/modules/kiosk/{models,repository,service,handler}.go`,
+routes `/kiosk/{menu,products/{id},settings,upsell,pricing,orders,...}` (toutes
+sous `middleware.KioskAuth`), aucune modification de `menuService`,
+`ordersService`, `ordersLifeCycleService` ni `upsellService` — uniquement
+consommés. `go build ./...` passe. Tests existants non affectés (`go test
+./...` montre les mêmes échecs pré-existants dans `planning/employees` et
+`planning/leave`, sans rapport avec ce module — vérifié via `git status`,
+aucun fichier planning touché).
+
+### Écart majeur découvert : cycle d'import middleware ↔ kiosk
+
+L'incrément 1 avait fait porter `AuthenticatedKiosk` et `KioskContextKey`
+par le module `kiosk` (`middleware/kiosk_auth.go` important `kiosk` pour ce
+type). Tant que `kiosk.Service` n'avait pas de dépendance transverse, ça
+fonctionnait. Dès que ce service consomme `menuService`/`ordersService`/
+`ordersLifeCycleService` (qui importent tous `middleware` pour
+`middleware.UserFromContext`), la chaîne devient :
+`middleware -> kiosk -> menu -> middleware` → cycle d'import, build cassé.
+
+**Fix** : `AuthenticatedKiosk` et la clé de contexte vivent maintenant dans
+`internal/middleware/kiosk_auth.go` (pas dans `kiosk`). `kiosk.AuthenticatedKiosk`
+est un simple alias (`type AuthenticatedKiosk = middleware.AuthenticatedKiosk`)
+— le sens de dépendance est désormais strictement `kiosk -> middleware`,
+jamais l'inverse. Même cause that avait nécessité l'alias `KioskConfig =
+kiosk.Config` côté `internal/config` en incrément 1 ; **cet alias a dû être
+abandonné** pour la même raison (`config -> kiosk -> menu -> deliveroo ->
+config`) : `internal/config/kiosk.go` redevient une struct plate
+indépendante, convertie explicitement en `kiosk.Config` dans `routes.go`
+au moment de construire le service. Conséquence pratique pour la suite :
+**le module kiosk peut désormais importer librement `middleware` et tout
+module métier**, mais aucun de ces modules (ni `internal/config`) ne doit
+jamais importer `kiosk` en retour.
+
+Bénéfice collatéral : comme `kiosk` importe maintenant `middleware`
+directement, le mécanisme `AdminUser`/`WithAdminUser`/`AdminUserFromContext`
+(bricolage de l'incrément 1 pour contourner ce même problème) a été
+supprimé — `admin_handler.go` appelle directement `middleware.GetUser(r)`,
+comme tous les autres modules protégés par `authMiddleware`. `routes.go`
+n'a donc plus besoin du middleware wrapper ad-hoc sur `/pos/settings/kiosk`.
+
+### product_id : string, pas int64 (écart par rapport au brief)
+
+`products.product_id` est un `VARCHAR` (UUID applicatif), pas un entier —
+voir `internal/models/menu_models.go` (`ProductEntry.ProductID string`) et
+`docs/ARCHITECTURE_API.md` §6.2. Tous les identifiants produit du module
+Kiosk (`KioskProduct.ID`, `KioskOrderItem.ProductID`, `cart_product_ids`,
+etc.) sont donc des `string`, jamais des `int64` comme demandé littéralement
+dans le brief — c'eût été incompatible avec le schéma réel.
+
+### Filtre `is_available_on_kiosk` : méthode repo dédiée, pas un paramètre menuService
+
+`menuService.GetMenuFromMerchantIdWithMarketing`/`GetProductFromMerchantId`
+ne savent rien de la colonne `is_available_on_kiosk` (ajoutée en incrément 1
+sur `products`, jamais branchée dans le module `menu`). Plutôt que de
+modifier `menu` (interdit), `kiosk.Repository` expose deux méthodes dédiées :
+- `GetKioskProductAvailabilityMap(ctx, merchantID)` — carte complète
+  `product_id -> bool`, utilisée par `GetMenu` pour filtrer le menu déjà
+  récupéré auprès de `menuService` (même logique de flatten groupe/sous-
+  produits que `scannorder.ComputeGetMenu`, mais sur cette carte au lieu de
+  `IsAvailableOnSNO`).
+- `GetAvailableKioskProductIDs(ctx, merchantID, productIDs)` — version
+  ciblée (sous-ensemble d'IDs), utilisée par `GetProduct`, l'upsell et la
+  validation de panier (`buildOrderProducts`) : un produit absent du
+  résultat est traité comme invalide, qu'il n'existe pas ou qu'il soit
+  simplement masqué sur la borne (même conséquence côté sécurité dans les
+  deux cas).
+
+### Pourquoi `ComputePricing` (orders) suffit déjà à re-valider les prix
+
+`orders.OrdersService.ComputePricing` ignore déjà entièrement les prix
+envoyés par le client : `buildSelectedProducts` recalcule `Price`/`TvaRate`
+depuis `dbp` (lookup DB par `product_id`), et `applyConfigurationOptionPrices`
+réécrase `ExtraPrice` depuis `configurable_attribute_options`. Le seul trou
+réel : un `product_id` totalement inconnu (ou masqué côté Kiosk) n'est pas
+rejeté, il reçoit silencieusement un prix de `0` (DBProduct zero-value).
+`kiosk.buildOrderProducts` comble ce trou en validant existence +
+`is_available_on_kiosk` **avant** d'appeler `ComputePricing` — c'est
+l'équivalent fonctionnel de `scannorder.validateAndCleanPricingPayload`,
+mais en amont plutôt qu'en nettoyage après coup, et sans dupliquer la
+logique de calcul de prix elle-même (déjà sécurisée côté `orders`).
+
+### Statut "pending_counter_payment"
+
+**Ce n'est pas une nouvelle valeur stockée en base.** C'est le nom Kiosk
+(JSON `status`) de la valeur existante `orders.merchant_approval =
+"PENDING_APPROVAL"` — déjà utilisée partout dans le projet pour "commande
+créée, pas encore validée" (c'est l'état initial des commandes ScanNOrder
+`TAKE_AWAY`/`DELIVERY`, voir `scannorder.CreateOrderSNO`). Introduire une
+valeur inédite aurait rendu les commandes Kiosk invisibles à tout code qui
+filtre explicitement sur `'PENDING_APPROVAL'` (listes "en attente" du
+back-office, etc.) — exactement le risque signalé dans le brief.
+
+Conséquence sur le découpage des deux endpoints :
+- `CreateKioskOrder` crée la commande directement avec
+  `MerchantApproval = "PENDING_APPROVAL"` (sans ça, `setOrderDefaults` la
+  mettrait à `"ACCEPTED"` par défaut — comportement à éviter ici, le
+  paiement comptoir n'a pas encore eu lieu).
+- `ConfirmCounterPayment` **ne fait pas de transition d'état** : il
+  récupère la commande (déjà `PENDING_APPROVAL`), génère `pickup_code`
+  (= `orders.order_num`, déjà généré par `OrdersLifeCycleRepository.CreateOrder`)
+  et `qr_payload`, puis rebroadcast `notification.NotificationTypeOrderUpdate`
+  pour que l'écran comptoir/back-office se rafraîchisse. Le passage réel à
+  `"ACCEPTED"` (commande encaissée, part en cuisine) est un geste staff qui
+  existe déjà ailleurs dans le projet (`OrdersLifeCycleService.AcceptOrder`,
+  routes `/orders/{order_id}/accept`) — non dupliqué ici, hors périmètre de
+  ce qui était demandé pour `ConfirmCounterPayment`.
+
+### Annulation : `DeleteOrder` direct, pas `SetOrderDeleted`
+
+`OrdersLifeCycleService.SetOrderDeleted` (et `AcceptOrder`) appellent
+`middleware.UserFromContext(ctx)` en interne — incompatible avec un appelant
+Kiosk (pas d'utilisateur humain dans le contexte). `DeleteOrder` (la méthode
+qu'ils enveloppent) ne dépend que des champs explicites de
+`models.DenyOrderInput` ; `CancelKioskOrder` l'appelle directement.
+Conséquence : pas d'entrée d'audit `ExecuteOrderMutation` pour les
+annulations Kiosk dans cet incrément (le wrapper d'audit est précisément ce
+que `SetOrderDeleted` ajoute par-dessus `DeleteOrder`) — à revoir si l'audit
+des annulations Kiosk devient un besoin explicite.
+
+`deletion_reason_id` n'est pas une contrainte FK stricte dans ce projet
+(`OrdersLifeCycleRepository.DeleteOrderLocal` stocke la valeur telle quelle).
+Une borne n'a pas accès à la liste de motifs configurés par le restaurateur
+(`deletion_reasons`, table par merchant) ; `CancelKioskOrder` utilise donc la
+valeur littérale `"KIOSK_CUSTOMER_CANCELLED"`, jamais validée contre cette
+table — acceptable puisqu'aucune contrainte ne l'exige, mais à signaler si
+les rapports d'annulation par motif doivent un jour inclure les bornes.
+
+### Upsell : mapping des sources internes vers `apriori` / `featured_fallback`
+
+`upsell.Service.GenerateUpsell` (moteur Apriori réel, partagé avec
+`orders.GetUpsell` — pas le `scannorder.GetUpsell` simplifié qui ne fait que
+filtrer `is_popular`) retourne l'une de : `pattern`, `cached_pattern`, `llm`,
+`cached_llm`, `featured_fallback`, `disabled`, `error_fallback`. Le brief
+demandait `"apriori"` ou `"featured_fallback"` côté Kiosk : `pattern` /
+`cached_pattern` / `llm` / `cached_llm` sont regroupés sous `"apriori"`
+(ce sont les sources qui ne sont *pas* le simple fallback "produits
+populaires") ; tout le reste passe tel quel.
+
+### Idempotence des commandes
+
+Clé Redis `kiosk:idempotency:{kiosk_id}:{idempotency_key}` (scope par borne,
+pas seulement par clé brute, pour éviter toute collision improbable entre
+deux bornes), valeur = `CreateKioskOrderResponse` sérialisé JSON, TTL 10 min.
+Si `idempotency_key` est vide, aucune déduplication n'est appliquée (chaque
+appel crée une commande) — choix délibéré pour rester permissif plutôt que
+de bloquer un client qui omettrait ce champ.
+
+### Tests manuels incrément 2
+
+Mêmes limites qu'à l'incrément 1 : pas de `MYSQL_URL`/`REDIS_URL` dans ce
+sandbox, donc non exécutés réellement — seul `go build ./...` /
+`go test ./...` ont pu être vérifiés. Pré-requis avant exécution réelle :
+un produit avec `is_available_on_kiosk = TRUE`, `kiosk_settings.pay_at_counter_enabled = TRUE`
+et `fulfillment_dine_in/take_away = TRUE` pour le merchant de test
+(valeurs par défaut si la ligne n'existe pas encore — voir incrément 1).
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token obtenu via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+AUTH="Authorization: Bearer $ACCESS_TOKEN"
+
+# 1. Menu filtré is_available_on_kiosk, avec ETag
+curl -s -D - "$BASE_URL/kiosk/menu" -H "$AUTH" -o menu.json
+ETAG=$(grep -i '^etag:' /dev/stdin <<< "$(curl -sI "$BASE_URL/kiosk/menu" -H "$AUTH")" | awk '{print $2}' | tr -d '\r')
+
+# 1bis. Requête conditionnelle -> 304 attendu si rien n'a changé
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/kiosk/menu" -H "$AUTH" -H "If-None-Match: $ETAG"
+# -> 304
+
+PRODUCT_ID=$(jq -r '.data.categories[0].products[0].id' menu.json)
+
+# 2. Détail produit
+curl -s "$BASE_URL/kiosk/products/$PRODUCT_ID" -H "$AUTH"
+
+# 3. Paramètres borne (timeout, fulfillment, pager, apparence)
+curl -s "$BASE_URL/kiosk/settings" -H "$AUTH"
+
+# 4. Upsell pour un panier d'un seul produit
+curl -s -X POST "$BASE_URL/kiosk/upsell" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"cart_product_ids\":[\"$PRODUCT_ID\"]}"
+
+# 5. Pricing (prévisualisation, aucune commande créée)
+curl -s -X POST "$BASE_URL/kiosk/pricing" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"fulfillment_type\":\"DINE_IN\",\"items\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":2}]}"
+
+# 6. Création de commande (pay_at_counter), idempotency_key fixe
+IDK="test-$(date +%s)"
+curl -s -X POST "$BASE_URL/kiosk/orders" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"fulfillment_type\":\"DINE_IN\",\"idempotency_key\":\"$IDK\",\"payment_method\":\"pay_at_counter\",\"items\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":2}]}" \
+  | tee order.json
+# -> { "data": { "order_id": "...", "display_number": "...", "status": "pending_counter_payment", "total_cents": ... } }
+
+# 6bis. Rejouer la même requête (même idempotency_key) -> doit renvoyer EXACTEMENT la même réponse, pas de doublon en base
+curl -s -X POST "$BASE_URL/kiosk/orders" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"fulfillment_type\":\"DINE_IN\",\"idempotency_key\":\"$IDK\",\"payment_method\":\"pay_at_counter\",\"items\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":2}]}"
+
+ORDER_ID=$(jq -r .data.order_id order.json)
+
+# 7. Suivi de la commande
+curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+
+# 8. Confirmation comptoir : pickup_code + qr_payload + notification WS
+curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/counter-payment" -H "$AUTH"
+# -> { "data": { "order_id": "...", "pickup_code": "...", "qr_payload": "KIOSK:<order_id>:<pickup_code>", "status": "pending_counter_payment" } }
+
+# 9. Annulation (doit échouer une fois la commande déjà acceptée par le staff ailleurs)
+curl -s -X DELETE "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+# -> { "data": { "status": "cancelled" } } si toujours PENDING_APPROVAL
+```
+```

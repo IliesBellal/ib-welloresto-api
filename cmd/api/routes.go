@@ -11,6 +11,7 @@ import (
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
+	kioskModule "welloresto-api/internal/modules/kiosk"
 	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
@@ -46,10 +47,10 @@ import (
 	posModule "welloresto-api/internal/modules/pos"
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
+	printersModule "welloresto-api/internal/modules/printers"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
-	printersModule "welloresto-api/internal/modules/printers"
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
@@ -378,6 +379,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Planning ----
 	planningRepo := planningModule.NewRepository(mysqlDB)
 	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService)
+
+	// ---- Kiosk ----
+	kioskRepo := kioskModule.NewRepository(mysqlDB)
+	kioskCfg := kioskModule.Config{
+		EnrollmentCodeTTLMinutes:  cfg.Kiosk.EnrollmentCodeTTLMinutes,
+		DeviceRefreshTokenTTLDays: cfg.Kiosk.DeviceRefreshTokenTTLDays,
+		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
+		Pepper:                    cfg.Kiosk.Pepper,
+	}
+	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService)
+	kioskHandler := kioskModule.NewHandler(kioskService)
+	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService)
 
 	// =============================
 	//  HANDLERS
@@ -1117,6 +1130,38 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/stripe/balance", integrationsHandler.GetStripeBalance)
 			r.Post("/stripe/branding", integrationsHandler.SyncStripeBranding)
 		})
+	})
+
+	// --- KIOSK (device, public + KioskAuth) ---
+	r.Route("/kiosk", func(r chi.Router) {
+		r.Post("/auth/enroll", kioskHandler.EnrollDevice)
+		r.Post("/auth/token/refresh", kioskHandler.RefreshDeviceToken)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.KioskAuth(kioskService))
+			r.Post("/auth/heartbeat", kioskHandler.DeviceHeartbeat)
+
+			r.Get("/menu", kioskHandler.GetKioskMenu)
+			r.Get("/products/{product_id}", kioskHandler.GetKioskProduct)
+			r.Get("/settings", kioskHandler.GetKioskSettings)
+			r.Post("/upsell", kioskHandler.GetKioskUpsell)
+			r.Post("/pricing", kioskHandler.GetKioskPricing)
+			r.Post("/orders", kioskHandler.CreateKioskOrder)
+			r.Get("/orders/{order_id}", kioskHandler.GetKioskOrder)
+			r.Delete("/orders/{order_id}", kioskHandler.CancelKioskOrder)
+			r.Post("/orders/{order_id}/counter-payment", kioskHandler.ConfirmCounterPayment)
+		})
+	})
+
+	// --- KIOSK (back-office) ---
+	r.Route("/pos/settings/kiosk", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Post("/enrollment-codes", kioskAdminHandler.GenerateEnrollmentCode)
+		r.Get("/devices", kioskAdminHandler.ListKioskDevices)
+		r.Post("/devices/{device_id}/revoke", kioskAdminHandler.RevokeKioskDevice)
+		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
+		r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)
 	})
 
 	// --- WEBSOCKET ---
