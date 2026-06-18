@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -332,8 +333,8 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 func (r *Repository) CreateEnrollmentCode(ctx context.Context, merchantID, codeHash string, expiresAt time.Time, createdByUserID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_enrollment_codes (merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, merchantID, codeHash, expiresAt, createdByUserID)
+	query := `INSERT INTO kiosk_enrollment_codes (id, merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, helpers.GeneratePrefixedID("ksk-enrl-cd"), merchantID, codeHash, expiresAt, createdByUserID)
 	return err
 }
 
