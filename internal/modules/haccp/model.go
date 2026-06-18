@@ -373,3 +373,22 @@ type CreateGoodsReceiptRequest struct {
 	Comment            *string  `json:"comment"`
 	InvoiceURL         *string  `json:"invoice_url"`
 }
+
+type HaccpComponent struct {
+	ComponentID      string   `json:"component_id"`
+	Name             string   `json:"name"`
+	Category         string   `json:"category"`
+	UnitOfMeasure    string   `json:"unit_of_measure"`
+	ConservationDays *int     `json:"conservation_days"`
+	ConservationType string   `json:"conservation_type"`
+	StorageTempMin   *float64 `json:"storage_temp_min"`
+	StorageTempMax   *float64 `json:"storage_temp_max"`
+	Status           string   `json:"status"`
+}
+
+type HaccpComponentCategory struct {
+	CategoryName string           `json:"category"`
+	CategoryID   string           `json:"category_id"`
+	Order        int              `json:"order"`
+	Components   []HaccpComponent `json:"components"`
+}

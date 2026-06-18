@@ -1057,3 +1057,11 @@ func computeTemperatureSessionStatus(readings []Reading) string {
 	}
 	return status
 }
+
+func (s *Service) GetHaccpComponents(ctx context.Context) ([]HaccpComponentCategory, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	return s.repo.GetHaccpComponents(ctx, user.MerchantID)
+}

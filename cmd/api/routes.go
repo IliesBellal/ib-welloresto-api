@@ -738,6 +738,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/cleaning-sessions", haccpH.CreateCleaningSession)
 
 		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)
+
+		r.Get("/components", haccpH.GetHaccpComponents)
 	})
 
 	// --- PLANNING ---

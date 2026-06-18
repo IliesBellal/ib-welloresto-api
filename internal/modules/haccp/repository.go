@@ -1588,3 +1588,126 @@ func (r *Repository) CreateGoodsReceipt(ctx context.Context, merchantID, created
 		UpdatedAt:          now,
 	}, nil
 }
+
+func (r *Repository) GetHaccpComponents(ctx context.Context, merchantID string) ([]HaccpComponentCategory, error) {
+	db := dbutils.GetDB(ctx, r.db)
+
+	type catTmp struct {
+		ID    string
+		Name  string
+		Order int
+	}
+	var cats []catTmp
+	{
+		rows, err := db.QueryContext(ctx, `
+			SELECT merchant_categ_id, name, categ_order
+			FROM component_category
+			WHERE merchant_id = ? AND enabled = 1
+			ORDER BY categ_order ASC
+		`, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c catTmp
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order); err != nil {
+				return nil, err
+			}
+			cats = append(cats, c)
+		}
+	}
+
+	type compTmp struct {
+		ID               string
+		Name             string
+		CatID            *string
+		UnitOfMeasure    sql.NullString
+		ConservationDays sql.NullInt64
+		ConservationType sql.NullString
+		StorageTempMin   sql.NullFloat64
+		StorageTempMax   sql.NullFloat64
+		Status           string
+	}
+	var comps []compTmp
+	{
+		rows, err := db.QueryContext(ctx, `
+			SELECT
+				c.component_id,
+				c.name,
+				c.category_id,
+				COALESCE(uomd.uom_short_desc, uomd.uom_desc, '') AS uom,
+				c.conservation_days,
+				c.conservation_type,
+				c.storage_temp_min,
+				c.storage_temp_max,
+				COALESCE(c.status, '') AS status
+			FROM components c
+			LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
+			WHERE c.merchant_id = ? AND c.enabled = 1
+			ORDER BY c.name ASC
+		`, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c compTmp
+			if err := rows.Scan(&c.ID, &c.Name, &c.CatID, &c.UnitOfMeasure, &c.ConservationDays, &c.ConservationType, &c.StorageTempMin, &c.StorageTempMax, &c.Status); err != nil {
+				return nil, err
+			}
+			comps = append(comps, c)
+		}
+	}
+
+	result := []HaccpComponentCategory{}
+	for _, cat := range cats {
+		items := []HaccpComponent{}
+		for _, comp := range comps {
+			if comp.CatID == nil || *comp.CatID != cat.ID {
+				continue
+			}
+			var conservationDays *int
+			if comp.ConservationDays.Valid {
+				cd := int(comp.ConservationDays.Int64)
+				conservationDays = &cd
+			}
+			conservationType := "froid"
+			if comp.ConservationType.Valid && comp.ConservationType.String != "" {
+				conservationType = comp.ConservationType.String
+			}
+			var storageTempMin *float64
+			if comp.StorageTempMin.Valid {
+				v := comp.StorageTempMin.Float64
+				storageTempMin = &v
+			}
+			var storageTempMax *float64
+			if comp.StorageTempMax.Valid {
+				v := comp.StorageTempMax.Float64
+				storageTempMax = &v
+			}
+			uom := ""
+			if comp.UnitOfMeasure.Valid {
+				uom = comp.UnitOfMeasure.String
+			}
+			items = append(items, HaccpComponent{
+				ComponentID:      comp.ID,
+				Name:             comp.Name,
+				Category:         cat.Name,
+				UnitOfMeasure:    uom,
+				ConservationDays: conservationDays,
+				ConservationType: conservationType,
+				StorageTempMin:   storageTempMin,
+				StorageTempMax:   storageTempMax,
+				Status:           comp.Status,
+			})
+		}
+		result = append(result, HaccpComponentCategory{
+			CategoryName: cat.Name,
+			CategoryID:   cat.ID,
+			Order:        cat.Order,
+			Components:   items,
+		})
+	}
+	return result, nil
+}

@@ -511,6 +511,19 @@ func (h *Handler) CreateCleaningSession(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *Handler) GetHaccpComponents(w http.ResponseWriter, r *http.Request) {
+	categories, err := h.svc.GetHaccpComponents(r.Context())
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_haccp_components", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_haccp_components", map[string]interface{}{
+		"status":     "success",
+		"categories": categories,
+	})
+}
+
 func (h *Handler) CreateGoodsReceipt(w http.ResponseWriter, r *http.Request) {
 	var req CreateGoodsReceiptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
