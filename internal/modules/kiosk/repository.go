@@ -59,7 +59,7 @@ func (r *Repository) CreateKiosk(ctx context.Context, merchantID, publicID, name
 	}
 
 	return &KioskRow{
-		ID:            id,
+		ID:            fmt.Sprintf("%d", id),
 		PublicID:      publicID,
 		MerchantID:    merchantID,
 		Name:          name,
@@ -71,7 +71,7 @@ func (r *Repository) CreateKiosk(ctx context.Context, merchantID, publicID, name
 }
 
 // MarkEnrollmentCodeUsed marque un code comme utilisé et le lie à la borne créée.
-func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID int64, kioskID int64) error {
+func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID string, kioskID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE kiosk_enrollment_codes SET used_at = UTC_TIMESTAMP(), kiosk_id = ? WHERE id = ?`
@@ -80,7 +80,7 @@ func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID int64, k
 }
 
 // CreateDeviceToken insère un nouveau refresh token pour une borne.
-func (r *Repository) CreateDeviceToken(ctx context.Context, kioskID int64, tokenHash string, expiresAt time.Time) error {
+func (r *Repository) CreateDeviceToken(ctx context.Context, kioskID string, tokenHash string, expiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`
@@ -112,7 +112,7 @@ func (r *Repository) GetDeviceTokenByHash(ctx context.Context, tokenHash string)
 }
 
 // RotateDeviceToken révoque l'ancien refresh token et insère le nouveau.
-func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID int64, kioskID int64, newTokenHash string, newExpiresAt time.Time) error {
+func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID string, kioskID string, newTokenHash string, newExpiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx, `UPDATE kiosk_device_tokens SET revoked_at = UTC_TIMESTAMP() WHERE id = ?`, oldTokenID); err != nil {
@@ -123,7 +123,7 @@ func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID int64, ki
 }
 
 // RevokeAllDeviceTokens révoque immédiatement tous les refresh tokens d'une borne.
-func (r *Repository) RevokeAllDeviceTokens(ctx context.Context, kioskID int64) error {
+func (r *Repository) RevokeAllDeviceTokens(ctx context.Context, kioskID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE kiosk_device_tokens SET revoked_at = UTC_TIMESTAMP() WHERE kiosk_id = ? AND revoked_at IS NULL`
@@ -132,7 +132,7 @@ func (r *Repository) RevokeAllDeviceTokens(ctx context.Context, kioskID int64) e
 }
 
 // UpdateDeviceTokenLastUsed marque un refresh token comme utilisé (heartbeat/refresh).
-func (r *Repository) UpdateDeviceTokenLastUsed(ctx context.Context, tokenID int64) error {
+func (r *Repository) UpdateDeviceTokenLastUsed(ctx context.Context, tokenID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE kiosk_device_tokens SET last_used_at = UTC_TIMESTAMP() WHERE id = ?`
@@ -141,7 +141,7 @@ func (r *Repository) UpdateDeviceTokenLastUsed(ctx context.Context, tokenID int6
 }
 
 // UpdateKioskHeartbeat met à jour le dernier heartbeat reçu d'une borne.
-func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID int64, appVersion, ip string) error {
+func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID string, appVersion, ip string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE kiosks SET last_heartbeat_at = UTC_TIMESTAMP(), app_version = ?, last_ip = ? WHERE id = ?`
@@ -150,7 +150,7 @@ func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID int64, ap
 }
 
 // UpdateKioskStatus met à jour le statut d'une borne (ex. "revoked").
-func (r *Repository) UpdateKioskStatus(ctx context.Context, kioskID int64, status string) error {
+func (r *Repository) UpdateKioskStatus(ctx context.Context, kioskID string, status string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE kiosks SET status = ? WHERE id = ?`
@@ -160,7 +160,7 @@ func (r *Repository) UpdateKioskStatus(ctx context.Context, kioskID int64, statu
 
 // GetKioskByID récupère une borne par sa clé technique.
 // Retourne (nil, nil) si aucune borne ne correspond.
-func (r *Repository) GetKioskByID(ctx context.Context, kioskID int64) (*KioskRow, error) {
+func (r *Repository) GetKioskByID(ctx context.Context, kioskID string) (*KioskRow, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `

@@ -16,7 +16,7 @@ type AuthenticatedKiosk = middleware.AuthenticatedKiosk
 
 // KioskRow mappe la table kiosks.
 type KioskRow struct {
-	ID              int64
+	ID              string
 	PublicID        string
 	MerchantID      string
 	Name            string
@@ -36,8 +36,8 @@ type KioskRow struct {
 
 // KioskDeviceTokenRow mappe la table kiosk_device_tokens.
 type KioskDeviceTokenRow struct {
-	ID         int64
-	KioskID    int64
+	ID         string
+	KioskID    string
 	TokenHash  string
 	ExpiresAt  time.Time
 	RevokedAt  *time.Time
@@ -66,7 +66,7 @@ type KioskSettingsRow struct {
 
 // EnrollmentCodeRow mappe la table kiosk_enrollment_codes.
 type EnrollmentCodeRow struct {
-	ID              int64
+	ID              string
 	MerchantID      string
 	CodeHash        string
 	KioskID         *int64
