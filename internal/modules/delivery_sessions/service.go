@@ -3,9 +3,12 @@ package delivery_sessions
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/messaggio"
 	"welloresto-api/internal/modules/notification"
 )
 
@@ -22,14 +25,58 @@ type DeliverySessionsService struct {
 	deliverySessionsRepo *DeliverySessionsRepository
 	notificationsService *notification.NotificationService
 	orderDeliverer       OrderDeliverer
+	smsService           messaggio.SMSService
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService messaggio.SMSService) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		notificationsService: notificationsService,
 		orderDeliverer:       orderDeliverer,
+		smsService:           smsService,
 	}
+}
+
+// sendDeliveryTrackingSMS notifies, by SMS, the customer of each order in the session that
+// has a phone number on file. It runs entirely in a goroutine on its own background context
+// so it never blocks or fails the delivery session creation that triggered it (fire-and-forget,
+// mirroring the existing FCM push in SendNotificationAsync). Orders sharing the same phone
+// number (e.g. several orders for the same customer in one session) are deduplicated so only
+// one SMS is sent per number.
+func (s *DeliverySessionsService) sendDeliveryTrackingSMS(merchantID string, orderIDs []string) {
+	if len(orderIDs) == 0 {
+		return
+	}
+
+	go func() {
+		ctx := context.Background()
+		log := logger.FromContext(ctx)
+
+		merchantIDInt, err := strconv.ParseInt(merchantID, 10, 64)
+		if err != nil {
+			log.Error("sendDeliveryTrackingSMS: invalid merchant id " + merchantID + ": " + err.Error())
+			return
+		}
+
+		phones, err := s.deliverySessionsRepo.GetOrderCustomerPhones(ctx, orderIDs)
+		if err != nil {
+			log.Error("sendDeliveryTrackingSMS: failed to load customer phones: " + err.Error())
+			return
+		}
+
+		sentToPhone := make(map[string]bool, len(phones))
+		for _, orderID := range orderIDs {
+			phone, ok := phones[orderID]
+			if !ok || sentToPhone[phone] {
+				continue // no phone on file for this order, or that number already notified for another stop
+			}
+			sentToPhone[phone] = true
+
+			if err := s.smsService.SendOrderTrackingSMS(ctx, merchantIDInt, orderID, phone); err != nil {
+				log.Error("sendDeliveryTrackingSMS: failed to send tracking SMS for order " + orderID + ": " + err.Error())
+			}
+		}
+	}()
 }
 
 // /delivery_sessions/pending
@@ -63,6 +110,12 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 	}
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
+
+	orderIDs := make([]string, len(session.Orders))
+	for i, o := range session.Orders {
+		orderIDs[i] = o.OrderID
+	}
+	s.sendDeliveryTrackingSMS(user.MerchantID, orderIDs)
 
 	return session, nil
 }

@@ -1,0 +1,1 @@
+DROP TABLE merchant_google_maps_monthly;

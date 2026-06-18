@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 )
 
@@ -26,10 +27,10 @@ func (h *RouteHandler) HandleGetRoute(w http.ResponseWriter, r *http.Request) {
 	origin := r.URL.Query().Get("origin")
 	destination := r.URL.Query().Get("destination")
 
-	// Simulation d'un UserID (peut venir d'un BasicAuth JWT dans le header Authorization)
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		userID = "anonymous"
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendJSON(w, http.StatusUnauthorized, "googlemaps", "get_route", map[string]string{"error": "invalid_token"})
+		return
 	}
 
 	if origin == "" || destination == "" {
@@ -38,7 +39,7 @@ func (h *RouteHandler) HandleGetRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Appel du service
-	jsonResponse, err := h.service.GetAndLogRoute(userID, origin, destination)
+	jsonResponse, err := h.service.GetAndLogRoute(r.Context(), user.UserID, user.MerchantID, origin, destination)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "googlemaps", "get_route", map[string]string{"error": "failed_to_fetch_route"})
 		return

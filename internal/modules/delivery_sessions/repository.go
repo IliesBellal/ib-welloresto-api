@@ -326,6 +326,51 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 	return session, nil
 }
 
+// GetOrderCustomerPhones resolves, for each given order ID, the customer phone number to
+// notify by SMS (customer_tel, falling back to customer_temporary_phone for guest/temporary
+// customers). Orders with no linked customer or no phone on file are simply absent from the
+// returned map - callers should treat a missing entry as "skip, no phone available".
+func (r *DeliverySessionsRepository) GetOrderCustomerPhones(ctx context.Context, orderIDs []string) (map[string]string, error) {
+	phones := make(map[string]string)
+	if len(orderIDs) == 0 {
+		return phones, nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	placeholders := make([]string, len(orderIDs))
+	args := make([]interface{}, len(orderIDs))
+	for i, id := range orderIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT o.order_id, COALESCE(c.customer_tel, c.customer_temporary_phone) AS phone
+		FROM orders o
+		LEFT JOIN customer c ON o.customer_id = c.customer_id
+		WHERE o.order_id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var orderID string
+		var phone sql.NullString
+		if err := rows.Scan(&orderID, &phone); err != nil {
+			return nil, err
+		}
+		if phone.Valid && strings.TrimSpace(phone.String) != "" {
+			phones[orderID] = phone.String
+		}
+	}
+	return phones, rows.Err()
+}
+
 func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)

@@ -38,6 +38,7 @@ import (
 	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
+	messaggioModule "welloresto-api/internal/modules/messaggio"
 	notificationModule "welloresto-api/internal/modules/notification"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
@@ -149,7 +150,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 
 	// 2. Initialisation des couches (Injection de dépendances)
-	repo := googlemaps.NewGoogleMapsRepository()
+	repo := googlemaps.NewGoogleMapsRepository(mysqlDB)
 	googleClient := googlemaps.NewGoogleMapsClient(cfg.Google)
 	svc := googlemaps.NewRouteService(repo, googleClient)
 	routeHandler := googlemaps.NewRouteHandler(svc)
@@ -320,7 +321,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Delivery Sessions ----
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService)
+	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
+	messaggioClient := messaggioModule.NewMessaggioClient()
+	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
 
 	// ---- Locations ----
 	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
