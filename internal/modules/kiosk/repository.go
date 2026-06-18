@@ -83,8 +83,8 @@ func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID string, 
 func (r *Repository) CreateDeviceToken(ctx context.Context, kioskID string, tokenHash string, expiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, kioskID, tokenHash, expiresAt)
+	query := `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, helpers.GeneratePrefixedID("ksk-dev-tkn"), kioskID, tokenHash, expiresAt)
 	return err
 }
 
@@ -118,7 +118,7 @@ func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID string, k
 	if _, err := db.ExecContext(ctx, `UPDATE kiosk_device_tokens SET revoked_at = UTC_TIMESTAMP() WHERE id = ?`, oldTokenID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`, kioskID, newTokenHash, newExpiresAt)
+	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`, helpers.GeneratePrefixedID("ksk-dev-tkn"), kioskID, newTokenHash, newExpiresAt)
 	return err
 }
 
