@@ -667,4 +667,319 @@ curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/counter-payment" -H "$AUTH"
 curl -s -X DELETE "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
 # -> { "data": { "status": "cancelled" } } si toujours PENDING_APPROVAL
 ```
+
+---
+
+## Incrément 3 — CRUD bornes, enrollment codes, settings, uploads R2
+
+### Inventaire de départ (avant cet incrément)
+
+`admin_handler.go` exposait : `GenerateEnrollmentCode`, `ListKioskDevices`,
+`RevokeKioskDevice`, `GetKioskSettings`, `UpdateKioskSettings`. Pas de
+détail/édition/enable/disable de borne, pas de liste/révocation de codes
+d'enrôlement, pas d'upload logo/idle-image. `handler.go` (device, incrément
+1-2) était déjà complet pour `/kiosk/settings` côté Flutter (tous les champs
+demandés étaient déjà retournés, y compris `logo_url`/`idle_image_url`/
+`primary_color` — aucun changement nécessaire sur cette route).
+
+### Bug critique trouvé et corrigé : insertion d'un ID préfixé dans une colonne BIGINT AUTO_INCREMENT
+
+`CreateDeviceToken`, `RotateDeviceToken` (table `kiosk_device_tokens`) et
+`CreateEnrollmentCode` (table `kiosk_enrollment_codes`) inséraient
+`helpers.GeneratePrefixedID("ksk-dev-tkn"/"ksk-enrl-cd")` — une chaîne — dans
+la colonne `id`, qui est `BIGINT UNSIGNED AUTO_INCREMENT` dans les deux
+tables (migration 037). En mode SQL strict, cet INSERT échoue purement et
+simplement (valeur non numérique dans une colonne entière) — l'enrôlement
+d'une borne et la génération d'un code d'enrôlement étaient donc cassés à
+l'exécution malgré un `go build` propre. **Fix** : les deux méthodes
+omettent désormais la colonne `id` et laissent MySQL gérer l'auto-incrément
+— ces deux tables n'ont pas besoin d'identifiant public exposé au client
+(le refresh token et le code d'enrôlement, déjà générés séparément, jouent
+ce rôle).
+
+### Axe 1 — préfixes des identifiants publics [DÉCIDÉ]
+
+Convention du projet observée dans `internal/helpers/ids.go` : préfixes
+**courts, en minuscules, avec tirets**, déclarés comme constantes nommées
+(`PrinterIDPrefix = "printer"`, `TagIDPrefix = "tag"`, etc.), jamais en
+dur dans l'appelant. `helpers.GeneratePrefixedID("KIOSK")` (majuscules,
+littéral) ne respectait pas cette convention.
+
+- **`kiosks.public_id`** : nouvelle constante `helpers.KioskIDPrefix = "kiosk"`
+  (au lieu du littéral `"KIOSK"`), utilisée dans `Service.EnrollDevice`.
+  Format : `kiosk-<uuid>` (avant : `KIOSK-<uuid>`). Les migrations déjà
+  exécutées (037/038, dossier `migrations/done/`) ne sont pas modifiées —
+  seul leur commentaire SQL mentionne encore l'ancienne casse, sans impact
+  fonctionnel (la colonne est un simple `VARCHAR`).
+- **`kiosk_enrollment_codes`** : pas de `public_id`. L'identifiant
+  pertinent exposé au restaurateur est le **code lui-même** (8 caractères
+  alphanumériques majuscules, alphabet sans `0/O/1/I/L` pour éviter les
+  confusions de lecture à l'écran — déjà implémenté par
+  `generateEnrollmentCode`, inchangé). La ligne en base n'a qu'un id
+  technique auto-incrémenté, jamais exposé seul (sauf dans la nouvelle
+  liste back-office, où il sert de clé d'action pour le `DELETE`, voir
+  Axe 3 ci-dessous).
+- **`kiosk_device_tokens`** : pas de `public_id`. Le token opaque
+  (`helpers.GenerateToken(32)`, hex 64 caractères) est déjà la bonne
+  fonction de génération pour un secret — aucun changement.
+
+### Axe 2 — CRUD bornes [DÉCIDÉ]
+
+Endpoints ajoutés : `GET /devices/{device_id}`, `PUT /devices/{device_id}`,
+`POST /devices/{device_id}/enable`, `POST /devices/{device_id}/disable`.
+`POST /devices/{device_id}/revoke` existait déjà et était déjà correct
+(passe `status='revoked'` **et** révoque tous les `kiosk_device_tokens` via
+`RevokeAllDeviceTokens` dans la même transaction) — aucune modification
+nécessaire sur ce point, juste vérifié.
+
+- **enable** : vérifie le quota `max_kiosks` (même logique que
+  l'enrôlement : `GetActiveKioskCount` compte `status IN ('pending','active')
+  AND enabled = TRUE`) avant de repasser la borne en `active`/`enabled=true`
+  — sauf si elle est déjà `active` (no-op de quota, pour ne pas bloquer un
+  appel idempotent).
+- **disable** : passe en `inactive`/`enabled=false`, **ne touche pas**
+  `kiosk_device_tokens` — une borne désactivée peut se réactiver sans
+  ré-enrôlement. `RecordHeartbeat`/`RefreshDeviceToken` ne bloquent que sur
+  `status == "revoked"` : une borne `inactive` continue donc de répondre au
+  heartbeat/refresh tant que son token n'a pas expiré naturellement — voulu
+  (disable ≠ revoke), mais à signaler si le besoin réel est qu'une borne
+  désactivée arrête immédiatement de répondre.
+- Réponse `GET/PUT/enable/disable` réutilise désormais un mapper unique
+  `toKioskDeviceResponse` (factorisation avec `ListKioskDevices`), qui
+  inclut maintenant aussi `last_ip` et `enabled` (absents de la version
+  précédente de `KioskDeviceResponse`).
+
+### Axe 3 — Enrollment codes [DÉCIDÉ]
+
+`GET /enrollment-codes` : liste les codes `used_at IS NULL AND expires_at >
+NOW()`, triés par `created_at DESC`. Champs : `id` (identifiant technique
+interne, jamais exposé ailleurs que dans cette liste — sert uniquement à
+cibler le `DELETE`), `created_at`, `expires_at`, `used_at` (toujours `null`
+ici puisque la requête filtre les codes déjà utilisés — gardé dans la
+réponse pour la cohérence du modèle plutôt que de l'omettre).
+
+`DELETE /enrollment-codes/{code_id}` : **suppression définitive** de la
+ligne (pas de marquage `used_at = NOW()`) — la table ne porte pas de notion
+de "révoqué" distincte de "utilisé", et réutiliser `used_at` pour ça aurait
+rendu ce champ ambigu (consommé via enrôlement vs. supprimé sans avoir
+servi). Comportement :
+- code introuvable **ou expiré** → 404 (`kiosk_enrollment_code_not_found`)
+  — un code expiré n'a plus d'existence actionnable côté back-office, donc
+  même statut que "introuvable".
+- code déjà utilisé → 409 (`kiosk_enrollment_code_already_used`) — sentinelle
+  **distincte** de `ErrKioskEnrollmentCodeUsed`/`Expired` déjà utilisées par
+  le flux d'enrôlement (`POST /kiosk/auth/enroll`, qui répond 401 sur ces
+  mêmes conditions) : le mapping erreur → HTTP est global par sentinelle
+  dans `SendErrorJSON`, donc une même condition logique appelant un statut
+  différent selon le contexte (401 pour un device qui se trompe de code,
+  404/409 pour un staff qui gère ses codes en attente) exige deux
+  sentinelles séparées plutôt qu'une seule réutilisée.
+
+### Axe 4 — Settings [DÉCIDÉ]
+
+`GET /settings` (back-office) et `GET /kiosk/settings` (device) étaient
+déjà conformes (tous les champs demandés, défauts si pas de ligne, jamais
+de 404) — vérifiés, non modifiés.
+
+`PUT /settings` : `logo_url`/`idle_image_url` **retirés** de
+`UpdateKioskSettingsRequest` — ce endpoint n'accepte/n'écrase plus ces
+champs (avant cet incrément, un PATCH sur `/settings` pouvait pointer ces
+champs vers une URL arbitraire fournie par le client, sans passer par R2 —
+faille mineure de cohérence, corrigée). Ils ne sont modifiables que par les
+deux nouveaux endpoints d'upload. `primary_color` est désormais validé
+(`^#[0-9A-Fa-f]{6}$`, ou `null`) — `400 kiosk_invalid_color` sinon.
+
+`POST /settings/logo` et `POST /settings/idle-image` : multipart
+(`file`), JPEG/PNG/WebP uniquement, 2 Mo max, clé R2 déterministe
+`wello_resto_images_storage/merchants/{merchant_id}/kiosk/{logo|idle}{ext}`
+(préfixe `wello_resto_images_storage/...` réutilisé du pattern existant
+`r2.GenerateScanNOrderKey`/`GenerateProductKey`, pas du chemin littéral
+`merchants/{merchant_id}/kiosk/...` du brief — cohérence avec le reste du
+bucket plutôt que littéralité du brief). Même séquence que
+`MenuHandler.UploadProductImage` : récupérer l'ancienne URL, supprimer
+l'ancien fichier R2 (best-effort, non bloquant), uploader le nouveau,
+persister l'URL dans `kiosk_settings` (upsert, créé si la ligne n'existait
+pas encore).
+
+### Tests manuels incrément 3
+
+Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
+dans ce sandbox) : seuls `go build ./...` et `go vet ./...` ont pu être
+vérifiés (propres sur tout le module kiosk et les fichiers touchés ;
+les warnings restants de `go vet ./...` sont préexistants, sans rapport
+avec ce module — `ubereats`, `auth`, `tasks`).
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token d'un user back-office authentifié>"
+AUTH="Authorization: Bearer $USER_TOKEN"
+
+# 1. Détail d'une borne
+KIOSK_ID="kiosk-..."   # public_id obtenu via /pos/settings/kiosk/devices
+curl -s "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID" -H "$AUTH"
+
+# 2. Renommer la borne
+curl -s -X PUT "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID" -H "$AUTH" \
+  -H "Content-Type: application/json" -d '{"name":"Borne Entrée"}'
+
+# 3. Désactiver puis réactiver
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/disable" -H "$AUTH"
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/enable" -H "$AUTH"
+# -> 403 kiosk_max_kiosks_reached si le quota subscriptions.max_kiosks est dépassé
+
+# 4. Générer un code, puis le lister
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/enrollment-codes" -H "$AUTH"
+curl -s "$BASE_URL/pos/settings/kiosk/enrollment-codes" -H "$AUTH"
+
+# 5. Révoquer un code avant usage
+CODE_ID=$(curl -s "$BASE_URL/pos/settings/kiosk/enrollment-codes" -H "$AUTH" | jq -r '.data.codes[0].id')
+curl -s -X DELETE "$BASE_URL/pos/settings/kiosk/enrollment-codes/$CODE_ID" -H "$AUTH"
+# -> rejouer la même requête -> 404 (la ligne n'existe plus)
+
+# 6. Settings : couleur invalide rejetée
+curl -s -X PUT "$BASE_URL/pos/settings/kiosk/settings" -H "$AUTH" \
+  -H "Content-Type: application/json" -d '{"primary_color":"not-a-color"}'
+# -> 400 kiosk_invalid_color
+
+# 7. Upload logo
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/settings/logo" -H "$AUTH" \
+  -F "file=@./logo.png;type=image/png"
+# -> { "data": { "logo_url": "https://.../wello_resto_images_storage/merchants/.../kiosk/logo.png" } }
+
+# 8. Upload idle-image
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/settings/idle-image" -H "$AUTH" \
+  -F "file=@./idle.jpg;type=image/jpeg"
+
+# 9. Vérifier que les URLs sont bien répercutées sur /kiosk/settings (device)
+curl -s "$BASE_URL/kiosk/settings" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+---
+
+## Incrément 4 — order_notes/without_component_ids, idle-video, audit R2
+
+### Audit 1 — helper R2 réutilisé
+
+Package : `internal/infrastructure/r2` (`github.com/aws/aws-sdk-go-v2`, client S3
+pointé vers l'endpoint R2 — pas un SDK Cloudflare dédié). Signature reprise
+telle quelle, aucune modification du package :
+
+```go
+func (c *Client) UploadFile(ctx context.Context, key string, file io.Reader, contentType string) (string, error)
+func (c *Client) DeleteFile(ctx context.Context, key string) error
+func (c *Client) GetKeyFromURL(url string) string
+```
+
+Convention de clé déjà en place depuis l'incrément 3 :
+`wello_resto_images_storage/merchants/{merchant_id}/kiosk/{logo|idle}{ext}`
+(`r2.GenerateKioskKey(merchantID, imageType, ext)`), réutilisée à l'identique
+pour la vidéo de veille (`imageType = "idle_video"`). Variables
+d'environnement (déjà configurées, non modifiées) : `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BASE_URL`
+(noms exacts à vérifier dans `internal/config/r2.go` — non modifié ici, voir
+`cmd/api/routes.go` pour la construction de `r2Client`).
+
+### Audit 2 — POST /kiosk/orders avant cet incrément
+
+`CreateKioskOrderRequest` et `KioskOrderItem` (équivalent du `OrderItemRequest`
+du brief — pas de struct nommée `OrderItemRequest` dans ce module) **n'avaient
+ni `order_notes` ni `without_component_ids`** avant cet incrément. Le panier
+ne supportait que `notes` par item (commentaire libre, déjà existant,
+transmis via `models.OrderItemCommentPayload`) — aucun moyen de retirer un
+composant ("sans oignons") ni de laisser une note globale sur la commande.
+
+### Axe 1 — order_notes / without_component_ids [FAIT]
+
+- `CreateKioskOrderRequest.OrderNotes string` (`json:"order_notes,omitempty"`)
+  → transmis tel quel à `orderReq.Comment` (`models.OrderRequest.Comment
+  *string`, champ commande déjà existant et consommé partout ailleurs dans
+  le projet — ScanNOrder, POS), uniquement si non vide.
+- `KioskOrderItem.WithoutComponentIDs []string`
+  (`json:"without_component_ids,omitempty"`) → mappé vers
+  `models.OrderProductPayload.Without []*models.OrderWithoutPayload{ComponentID}`,
+  exactement la même interface que celle déjà consommée par
+  `orders.OrdersService.buildSelectedProducts` (voir `internal/modules/orders/service.go:529`)
+  pour les commandes POS/ScanNOrder — aucune nouvelle interface introduite
+  côté `ordersLifeCycleService`/`ordersService`.
+- **Pas de validation d'existence des `component_id`** contre une table de
+  composants : `Without` est purement informationnel côté `orders`
+  (n'affecte jamais le prix recalculé, voir `buildSelectedProducts`), et
+  aucune autre intégration du projet (POS, ScanNOrder) ne le valide non plus
+  — ajouter une validation ici aurait introduit une contrainte absente du
+  reste du projet sans bénéfice de sécurité (contrairement aux
+  `selected_option_ids`, qui eux influencent le prix et sont déjà validés
+  contre `configurable_attribute_options` dans `buildOrderProducts`).
+- `KioskPricingItem` (`POST /kiosk/pricing`, prévisualisation) n'a **pas**
+  reçu `without_component_ids` — hors périmètre du brief (qui ne mentionne
+  que `POST /kiosk/orders`), et la prévisualisation de prix n'a de toute
+  façon aucun intérêt à connaître les composants retirés puisque ça n'affecte
+  pas le total.
+
+### Axe 3 — Upload R2 idle-video [FAIT]
+
+- Migration `migrations/todo/039_kiosk_settings_idle_video.{up,down}.sql` :
+  `ALTER TABLE kiosk_settings ADD COLUMN idle_video_url VARCHAR(500) NULL
+  DEFAULT NULL AFTER idle_image_url` — placée dans `migrations/todo/` (pas
+  encore appliquée en base, contrairement à 037/038 qui sont dans
+  `migrations/done/`).
+- `POST /pos/settings/kiosk/settings/idle-video` : multipart (`file`),
+  `video/mp4`/`video/webm` uniquement (validation via
+  `r2.ValidateVideoType`, nouvelle fonction ajoutée au package `r2` —
+  symétrique à `ValidateImageType`, n'altère pas le comportement existant
+  des uploads image), 50 Mo max. Clé R2 :
+  `wello_resto_images_storage/merchants/{merchant_id}/kiosk/idle_video{ext}`
+  (`r2.GenerateKioskKey(merchantID, "idle_video", ext)`, même fonction que
+  logo/idle-image — pas de nouvelle fonction de clé). Même séquence que les
+  uploads image : récupération de l'ancienne URL, suppression best-effort de
+  l'ancien fichier R2, upload, upsert `kiosk_settings.idle_video_url`.
+- `KioskSettingsResponse.IdleVideoURL` ajouté — répercuté automatiquement sur
+  `GET /pos/settings/kiosk/settings` **et** `GET /kiosk/settings` (device),
+  les deux réutilisant `Service.GetSettings` sans modification de leur
+  propre code.
+
+### Axe 5 — Correction de cohérence trouvée : plafond logo/idle-image partagé à tort
+
+L'incrément 3 avait introduit une seule constante
+`maxKioskSettingsImageBytes = 2 << 20` partagée par `/settings/logo` **et**
+`/settings/idle-image`, alors que le brief (et la cohérence produit — une
+image de veille plein écran est plus lourde qu'un logo) demande 2 Mo pour le
+logo mais **5 Mo** pour l'image de veille. **Corrigé** dans cet incrément :
+trois constantes dédiées `maxKioskLogoBytes` (2 Mo), `maxKioskIdleImageBytes`
+(5 Mo), `maxKioskIdleVideoBytes` (50 Mo) ; `uploadSettingsImage` prend
+désormais le plafond en paramètre au lieu d'une constante globale.
+
+### Tests manuels incrément 4
+
+Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
+dans ce sandbox) : seuls `go build ./...` et `go vet ./...` ont été vérifiés
+(propres sur le module kiosk ; mêmes avertissements préexistants et sans
+rapport ailleurs — `ubereats`, `auth`, `tasks`). **Avant exécution réelle,
+appliquer `migrations/todo/039_kiosk_settings_idle_video.up.sql`.**
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+USER_TOKEN="<token d'un user back-office authentifié>"
+PRODUCT_ID="<product_id is_available_on_kiosk=TRUE>"
+COMPONENT_ID="<component_id existant sur ce produit>"
+
+# 1. Commande avec note globale + composant retiré
+curl -s -X POST "$BASE_URL/kiosk/orders" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"fulfillment_type\":\"DINE_IN\",\"idempotency_key\":\"test-$(date +%s)\",\"payment_method\":\"pay_at_counter\",\"order_notes\":\"Table 4, allergie noix\",\"items\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":1,\"without_component_ids\":[\"$COMPONENT_ID\"]}]}"
+# -> commande créée, order_notes visible en back-office sur orders.comment,
+#    without_component_ids visible sur le ticket cuisine (même chemin que POS)
+
+# 2. Upload vidéo de veille
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/settings/idle-video" \
+  -H "Authorization: Bearer $USER_TOKEN" -F "file=@./idle.mp4;type=video/mp4"
+# -> { "data": { "idle_video_url": "https://.../wello_resto_images_storage/merchants/.../kiosk/idle_video.mp4" } }
+
+# 3. Type vidéo invalide rejeté
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/settings/idle-video" \
+  -H "Authorization: Bearer $USER_TOKEN" -F "file=@./idle.mov;type=video/quicktime"
+# -> 400 invalid_video_type
+
+# 4. Vérifier que idle_video_url apparaît côté device
+curl -s "$BASE_URL/kiosk/settings" -H "Authorization: Bearer $ACCESS_TOKEN"
 ```

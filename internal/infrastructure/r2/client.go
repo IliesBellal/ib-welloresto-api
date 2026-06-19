@@ -156,6 +156,16 @@ func GenerateScanNOrderKey(merchantID, imageType, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/scannorder/%s%s", merchantID, imageType, ext)
 }
 
+// GenerateKioskKey génère la clé R2 pour les images de configuration Kiosk
+// (logo merchant, image de veille). imageType doit être "logo" ou "idle".
+// Clé déterministe : un nouvel upload écrase l'ancien fichier.
+func GenerateKioskKey(merchantID, imageType, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/kiosk/%s%s", merchantID, imageType, ext)
+}
+
 // GetExtensionFromContentType retourne l'extension depuis le content type
 func GetExtensionFromContentType(contentType string) string {
 	switch contentType {
@@ -178,6 +188,28 @@ func ValidateImageType(contentType string) bool {
 		"image/webp": true,
 	}
 	return allowedTypes[contentType]
+}
+
+// ValidateVideoType valide que le type MIME vidéo est accepté.
+func ValidateVideoType(contentType string) bool {
+	allowedTypes := map[string]bool{
+		"video/mp4":  true,
+		"video/webm": true,
+	}
+	return allowedTypes[contentType]
+}
+
+// GetVideoExtensionFromContentType retourne l'extension depuis le content
+// type vidéo.
+func GetVideoExtensionFromContentType(contentType string) string {
+	switch contentType {
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	default:
+		return ""
+	}
 }
 
 // GenerateUserAvatarKey génère la clé R2 pour la photo de profil d'un utilisateur.

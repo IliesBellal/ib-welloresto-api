@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -104,7 +105,7 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		return nil, models.ErrKioskMaxKiosksReached
 	}
 
-	publicID := helpers.GeneratePrefixedID("KIOSK")
+	publicID := helpers.GeneratePrefixedID(helpers.KioskIDPrefix)
 	refreshToken, err := helpers.GenerateToken(32)
 	if err != nil {
 		return nil, fmt.Errorf("kiosk enroll: generate refresh token: %w", err)
@@ -292,24 +293,169 @@ func (s *Service) ListKioskDevices(ctx context.Context, merchantID string) (*Lis
 	}
 
 	devices := make([]KioskDeviceResponse, 0, len(rows))
-	for _, row := range rows {
-		var lastHeartbeat *string
-		if row.LastHeartbeatAt != nil {
-			v := row.LastHeartbeatAt.Format(time.RFC3339)
-			lastHeartbeat = &v
-		}
-		devices = append(devices, KioskDeviceResponse{
-			KioskID:         row.PublicID,
-			Name:            row.Name,
-			Status:          row.Status,
-			AppVersion:      row.AppVersion,
-			HardwareModel:   row.HardwareModel,
-			OSVersion:       row.OSVersion,
-			LastHeartbeatAt: lastHeartbeat,
-			CreatedAt:       row.CreatedAt.Format(time.RFC3339),
-		})
+	for i := range rows {
+		devices = append(devices, toKioskDeviceResponse(&rows[i]))
 	}
 	return &ListKioskDevicesResponse{Devices: devices}, nil
+}
+
+// toKioskDeviceResponse mappe une ligne kiosks vers la réponse exposée au
+// back-office — factorisé pour rester identique entre liste et détail.
+func toKioskDeviceResponse(row *KioskRow) KioskDeviceResponse {
+	var lastHeartbeat *string
+	if row.LastHeartbeatAt != nil {
+		v := row.LastHeartbeatAt.Format(time.RFC3339)
+		lastHeartbeat = &v
+	}
+	return KioskDeviceResponse{
+		KioskID:         row.PublicID,
+		Name:            row.Name,
+		Status:          row.Status,
+		AppVersion:      row.AppVersion,
+		HardwareModel:   row.HardwareModel,
+		OSVersion:       row.OSVersion,
+		LastHeartbeatAt: lastHeartbeat,
+		LastIP:          row.LastIP,
+		Enabled:         row.Enabled,
+		CreatedAt:       row.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+// GetKioskDevice retourne le détail d'une borne, scopée au merchant
+// authentifié — 404 si non trouvée ou appartenant à un autre merchant.
+func (s *Service) GetKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+	resp := toKioskDeviceResponse(kiosk)
+	return &resp, nil
+}
+
+// UpdateKioskDeviceName renomme une borne (seul champ éditable pour
+// l'instant côté back-office).
+func (s *Service) UpdateKioskDeviceName(ctx context.Context, merchantID, publicID, name string) (*KioskDeviceResponse, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, models.ErrInvalidInput
+	}
+
+	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+
+	if err := s.repo.UpdateKioskName(ctx, kiosk.ID, name); err != nil {
+		return nil, err
+	}
+	kiosk.Name = name
+	resp := toKioskDeviceResponse(kiosk)
+	return &resp, nil
+}
+
+// EnableKioskDevice repasse une borne en "active" — vérifie le quota de
+// bornes actives du merchant avant d'autoriser le passage (sauf si déjà
+// active, no-op de quota).
+func (s *Service) EnableKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+
+	if kiosk.Status != "active" {
+		maxKiosks, err := s.repo.GetMerchantMaxKiosks(ctx, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		activeCount, err := s.repo.GetActiveKioskCount(ctx, merchantID)
+		if err != nil {
+			return nil, err
+		}
+		if activeCount >= maxKiosks {
+			return nil, models.ErrKioskMaxKiosksReached
+		}
+	}
+
+	if err := s.repo.SetKioskStatusEnabled(ctx, kiosk.ID, "active", true); err != nil {
+		return nil, err
+	}
+	kiosk.Status, kiosk.Enabled = "active", true
+	resp := toKioskDeviceResponse(kiosk)
+	return &resp, nil
+}
+
+// DisableKioskDevice passe une borne en "inactive" sans révoquer ses tokens
+// — elle peut se réactiver (heartbeat/refresh restent fonctionnels tant que
+// le statut n'est pas "revoked", voir RefreshDeviceToken/RecordHeartbeat).
+func (s *Service) DisableKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+
+	if err := s.repo.SetKioskStatusEnabled(ctx, kiosk.ID, "inactive", false); err != nil {
+		return nil, err
+	}
+	kiosk.Status, kiosk.Enabled = "inactive", false
+	resp := toKioskDeviceResponse(kiosk)
+	return &resp, nil
+}
+
+// ListEnrollmentCodes liste les codes d'enrôlement en attente (non utilisés,
+// non expirés) d'un merchant — jamais le code en clair ni son hash.
+func (s *Service) ListEnrollmentCodes(ctx context.Context, merchantID string) (*ListEnrollmentCodesResponse, error) {
+	rows, err := s.repo.ListPendingEnrollmentCodes(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	codes := make([]EnrollmentCodeListItem, 0, len(rows))
+	for _, row := range rows {
+		var usedAt *string
+		if row.UsedAt != nil {
+			v := row.UsedAt.Format(time.RFC3339)
+			usedAt = &v
+		}
+		codes = append(codes, EnrollmentCodeListItem{
+			ID:        row.ID,
+			CreatedAt: row.CreatedAt.Format(time.RFC3339),
+			ExpiresAt: row.ExpiresAt.Format(time.RFC3339),
+			UsedAt:    usedAt,
+		})
+	}
+	return &ListEnrollmentCodesResponse{Codes: codes}, nil
+}
+
+// RevokeEnrollmentCode supprime un code d'enrôlement avant son utilisation.
+// 409 si déjà utilisé, 404 si introuvable ou déjà expiré (un code expiré
+// n'a plus d'existence actionnable côté back-office).
+func (s *Service) RevokeEnrollmentCode(ctx context.Context, merchantID, codeID string) error {
+	code, err := s.repo.GetEnrollmentCodeByID(ctx, merchantID, codeID)
+	if err != nil {
+		return err
+	}
+	if code == nil {
+		return models.ErrKioskEnrollmentCodeNotFound
+	}
+	if code.UsedAt != nil {
+		return models.ErrKioskEnrollmentCodeAlreadyUsed
+	}
+	if time.Now().UTC().After(code.ExpiresAt) {
+		return models.ErrKioskEnrollmentCodeNotFound
+	}
+
+	return s.repo.DeleteEnrollmentCode(ctx, code.ID)
 }
 
 // GetSettings récupère les paramètres Kiosk d'un merchant (valeurs par
@@ -332,6 +478,7 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		CardPaymentEnabled:   row.CardPaymentEnabled,
 		LogoURL:              row.LogoURL,
 		IdleImageURL:         row.IdleImageURL,
+		IdleVideoURL:         row.IdleVideoURL,
 		PrimaryColor:         row.PrimaryColor,
 	}, nil
 }
@@ -371,13 +518,10 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req Upd
 	if req.CardPaymentEnabled != nil {
 		current.CardPaymentEnabled = *req.CardPaymentEnabled
 	}
-	if req.LogoURL != nil {
-		current.LogoURL = req.LogoURL
-	}
-	if req.IdleImageURL != nil {
-		current.IdleImageURL = req.IdleImageURL
-	}
 	if req.PrimaryColor != nil {
+		if err := validatePrimaryColor(req.PrimaryColor); err != nil {
+			return nil, err
+		}
 		current.PrimaryColor = req.PrimaryColor
 	}
 
@@ -385,6 +529,63 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req Upd
 		return nil, err
 	}
 
+	return s.GetSettings(ctx, merchantID)
+}
+
+// validatePrimaryColor n'accepte que nil ou un hex couleur #RRGGBB —
+// logo_url/idle_image_url ne passent jamais par UpdateSettings (voir
+// UpdateKioskSettingsRequest), donc aucune validation équivalente n'est
+// nécessaire ici pour ces champs.
+var hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+func validatePrimaryColor(color *string) error {
+	if color == nil {
+		return nil
+	}
+	if !hexColorPattern.MatchString(*color) {
+		return models.ErrKioskInvalidColor
+	}
+	return nil
+}
+
+// SetLogoURL persiste l'URL du logo après upload R2 (voir AdminHandler) —
+// upsert sur kiosk_settings, mêmes valeurs par défaut que GetSettings pour
+// les champs non encore configurés.
+func (s *Service) SetLogoURL(ctx context.Context, merchantID, url string) (*KioskSettingsResponse, error) {
+	current, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	current.LogoURL = &url
+	if err := s.repo.UpsertSettings(ctx, current); err != nil {
+		return nil, err
+	}
+	return s.GetSettings(ctx, merchantID)
+}
+
+// SetIdleImageURL persiste l'URL de l'image de veille après upload R2.
+func (s *Service) SetIdleImageURL(ctx context.Context, merchantID, url string) (*KioskSettingsResponse, error) {
+	current, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	current.IdleImageURL = &url
+	if err := s.repo.UpsertSettings(ctx, current); err != nil {
+		return nil, err
+	}
+	return s.GetSettings(ctx, merchantID)
+}
+
+// SetIdleVideoURL persiste l'URL de la vidéo de veille après upload R2.
+func (s *Service) SetIdleVideoURL(ctx context.Context, merchantID, url string) (*KioskSettingsResponse, error) {
+	current, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	current.IdleVideoURL = &url
+	if err := s.repo.UpsertSettings(ctx, current); err != nil {
+		return nil, err
+	}
 	return s.GetSettings(ctx, merchantID)
 }
 
@@ -707,11 +908,17 @@ func (s *Service) buildOrderProducts(ctx context.Context, merchantID string, ite
 			comment = &models.OrderItemCommentPayload{UserID: kioskCreatedBy, Content: item.Notes}
 		}
 
+		var without []*models.OrderWithoutPayload
+		for _, componentID := range item.WithoutComponentIDs {
+			without = append(without, &models.OrderWithoutPayload{ComponentID: componentID})
+		}
+
 		payloads = append(payloads, models.OrderProductPayload{
 			ProductID: item.ProductID,
 			Quantity:  item.Quantity,
 			Config:    config,
 			Comment:   comment,
+			Without:   without,
 		})
 	}
 
@@ -849,11 +1056,14 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 	orderType, _ := kioskFulfillmentToOrderType(req.FulfillmentType)
 	orderReq := pricing.OrderRequest.Order
 	orderReq.OrderType = orderType
-	orderReq.MerchantApproval = "PENDING_APPROVAL"
+	orderReq.MerchantApproval = "ACCEPTED"
 	orderReq.CreatedBy = strPtr(kioskCreatedBy)
 	orderReq.CashRegisterId = strPtr(kioskCashRegister)
 	orderReq.OnlinePayment = false
 	orderReq.Payments = []models.PaymentPayload{}
+	if req.OrderNotes != "" {
+		orderReq.Comment = strPtr(req.OrderNotes)
+	}
 
 	newOrder, err := s.ordersLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
 		MerchantID: kiosk.MerchantID,

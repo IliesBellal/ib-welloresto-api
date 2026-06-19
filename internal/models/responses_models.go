@@ -323,6 +323,11 @@ var (
 	ErrKioskPayAtCounterDisabled    = errors.New("kiosk_pay_at_counter_disabled")
 	ErrKioskOrderNotFound           = errors.New("kiosk_order_not_found")
 	ErrKioskOrderNotCancellable     = errors.New("kiosk_order_not_cancellable")
+
+	// Erreurs du module Kiosk — incrément 3 (CRUD bornes, enrollment codes, settings)
+	ErrKioskEnrollmentCodeNotFound    = errors.New("kiosk_enrollment_code_not_found")
+	ErrKioskEnrollmentCodeAlreadyUsed = errors.New("kiosk_enrollment_code_already_used")
+	ErrKioskInvalidColor              = errors.New("kiosk_invalid_color")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1027,6 +1032,21 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "kiosk_order_not_cancellable"
 		errorMsg = "This order can no longer be cancelled."
+
+	case errors.Is(err, ErrKioskEnrollmentCodeNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_enrollment_code_not_found"
+		errorMsg = "Enrollment code not found or expired."
+
+	case errors.Is(err, ErrKioskEnrollmentCodeAlreadyUsed):
+		status = http.StatusConflict
+		errorStatus = "kiosk_enrollment_code_already_used"
+		errorMsg = "This enrollment code has already been used."
+
+	case errors.Is(err, ErrKioskInvalidColor):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_invalid_color"
+		errorMsg = "primary_color must be null or a valid hex color (#RRGGBB)."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

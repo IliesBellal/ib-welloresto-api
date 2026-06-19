@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -79,12 +78,15 @@ func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID string, 
 	return err
 }
 
-// CreateDeviceToken insère un nouveau refresh token pour une borne.
+// CreateDeviceToken insère un nouveau refresh token pour une borne. id est
+// BIGINT AUTO_INCREMENT (migration 037) — jamais de public_id généré côté Go
+// pour cette table (le token opaque lui-même, déjà généré par
+// helpers.GenerateToken, est la seule valeur exposée au client).
 func (r *Repository) CreateDeviceToken(ctx context.Context, kioskID string, tokenHash string, expiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, helpers.GeneratePrefixedID("ksk-dev-tkn"), kioskID, tokenHash, expiresAt)
+	query := `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, kioskID, tokenHash, expiresAt)
 	return err
 }
 
@@ -118,7 +120,7 @@ func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID string, k
 	if _, err := db.ExecContext(ctx, `UPDATE kiosk_device_tokens SET revoked_at = UTC_TIMESTAMP() WHERE id = ?`, oldTokenID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`, helpers.GeneratePrefixedID("ksk-dev-tkn"), kioskID, newTokenHash, newExpiresAt)
+	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`, kioskID, newTokenHash, newExpiresAt)
 	return err
 }
 
@@ -242,6 +244,22 @@ func (r *Repository) ListKiosksByMerchant(ctx context.Context, merchantID string
 	return result, nil
 }
 
+// UpdateKioskName renomme une borne (seul champ éditable pour l'instant côté back-office).
+func (r *Repository) UpdateKioskName(ctx context.Context, kioskID, name string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `UPDATE kiosks SET name = ? WHERE id = ?`, name, kioskID)
+	return err
+}
+
+// SetKioskStatusEnabled met à jour status et enabled ensemble (enable/disable).
+func (r *Repository) SetKioskStatusEnabled(ctx context.Context, kioskID, status string, enabled bool) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `UPDATE kiosks SET status = ?, enabled = ? WHERE id = ?`, status, enabled, kioskID)
+	return err
+}
+
 // GetActiveKioskCount compte les bornes actives/pending d'un merchant (hors révoquées/inactives).
 func (r *Repository) GetActiveKioskCount(ctx context.Context, merchantID string) (int, error) {
 	db := dbutils.GetDB(ctx, r.database)
@@ -278,7 +296,7 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	query := `
 	SELECT merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 	       show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
-	       logo_url, idle_image_url, primary_color, created_at, updated_at
+	       logo_url, idle_image_url, idle_video_url, primary_color, created_at, updated_at
 	FROM kiosk_settings
 	WHERE merchant_id = ?`
 
@@ -286,7 +304,7 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	err := db.QueryRowContext(ctx, query, merchantID).Scan(
 		&row.MerchantID, &row.FulfillmentDineIn, &row.FulfillmentTakeAway, &row.ForceFulfillmentType, &row.PagerNumberRequired,
 		&row.ShowAllergens, &row.InactivityTimeoutSec, &row.UpsellEnabled, &row.PayAtCounterEnabled, &row.CardPaymentEnabled,
-		&row.LogoURL, &row.IdleImageURL, &row.PrimaryColor, &row.CreatedAt, &row.UpdatedAt,
+		&row.LogoURL, &row.IdleImageURL, &row.IdleVideoURL, &row.PrimaryColor, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -305,8 +323,8 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 	INSERT INTO kiosk_settings (
 		merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 		show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
-		logo_url, idle_image_url, primary_color
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		logo_url, idle_image_url, idle_video_url, primary_color
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON DUPLICATE KEY UPDATE
 		fulfillment_dine_in = VALUES(fulfillment_dine_in),
 		fulfillment_take_away = VALUES(fulfillment_take_away),
@@ -319,22 +337,93 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 		card_payment_enabled = VALUES(card_payment_enabled),
 		logo_url = VALUES(logo_url),
 		idle_image_url = VALUES(idle_image_url),
+		idle_video_url = VALUES(idle_video_url),
 		primary_color = VALUES(primary_color)`
 
 	_, err := db.ExecContext(ctx, query,
 		s.MerchantID, s.FulfillmentDineIn, s.FulfillmentTakeAway, s.ForceFulfillmentType, s.PagerNumberRequired,
 		s.ShowAllergens, s.InactivityTimeoutSec, s.UpsellEnabled, s.PayAtCounterEnabled, s.CardPaymentEnabled,
-		s.LogoURL, s.IdleImageURL, s.PrimaryColor,
+		s.LogoURL, s.IdleImageURL, s.IdleVideoURL, s.PrimaryColor,
 	)
 	return err
 }
 
-// CreateEnrollmentCode insère un nouveau code d'enrôlement.
+// CreateEnrollmentCode insère un nouveau code d'enrôlement. id est BIGINT
+// AUTO_INCREMENT (migration 037) — l'identifiant "public" pertinent ici est
+// le code lisible humainement (généré par generateEnrollmentCode), jamais
+// stocké en clair ; la ligne elle-même n'a pas besoin de public_id.
 func (r *Repository) CreateEnrollmentCode(ctx context.Context, merchantID, codeHash string, expiresAt time.Time, createdByUserID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_enrollment_codes (id, merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, helpers.GeneratePrefixedID("ksk-enrl-cd"), merchantID, codeHash, expiresAt, createdByUserID)
+	query := `INSERT INTO kiosk_enrollment_codes (merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, merchantID, codeHash, expiresAt, createdByUserID)
+	return err
+}
+
+// ListPendingEnrollmentCodes liste les codes d'enrôlement non encore
+// utilisés et non expirés d'un merchant — utile pour le back-office
+// ("un code est en attente depuis N min").
+func (r *Repository) ListPendingEnrollmentCodes(ctx context.Context, merchantID string) ([]EnrollmentCodeRow, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+	SELECT id, merchant_id, code_hash, kiosk_id, expires_at, used_at, created_by_user_id, created_at
+	FROM kiosk_enrollment_codes
+	WHERE merchant_id = ? AND used_at IS NULL AND expires_at > UTC_TIMESTAMP()
+	ORDER BY created_at DESC`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []EnrollmentCodeRow
+	for rows.Next() {
+		row := EnrollmentCodeRow{}
+		if err := rows.Scan(
+			&row.ID, &row.MerchantID, &row.CodeHash, &row.KioskID, &row.ExpiresAt, &row.UsedAt, &row.CreatedByUserID, &row.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetEnrollmentCodeByID récupère un code d'enrôlement par son id interne,
+// scopé au merchant. Retourne (nil, nil) si non trouvé ou appartenant à un
+// autre merchant.
+func (r *Repository) GetEnrollmentCodeByID(ctx context.Context, merchantID, id string) (*EnrollmentCodeRow, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+	SELECT id, merchant_id, code_hash, kiosk_id, expires_at, used_at, created_by_user_id, created_at
+	FROM kiosk_enrollment_codes
+	WHERE id = ? AND merchant_id = ?`
+
+	row := EnrollmentCodeRow{}
+	err := db.QueryRowContext(ctx, query, id, merchantID).Scan(
+		&row.ID, &row.MerchantID, &row.CodeHash, &row.KioskID, &row.ExpiresAt, &row.UsedAt, &row.CreatedByUserID, &row.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// DeleteEnrollmentCode supprime définitivement un code d'enrôlement non
+// utilisé (révocation avant usage, voir Service.RevokeEnrollmentCode).
+func (r *Repository) DeleteEnrollmentCode(ctx context.Context, id string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `DELETE FROM kiosk_enrollment_codes WHERE id = ?`, id)
 	return err
 }
 

@@ -59,6 +59,7 @@ type KioskSettingsRow struct {
 	CardPaymentEnabled   bool
 	LogoURL              *string
 	IdleImageURL         *string
+	IdleVideoURL         *string
 	PrimaryColor         *string
 	CreatedAt            time.Time
 	UpdatedAt            *time.Time
@@ -126,11 +127,32 @@ type KioskDeviceResponse struct {
 	HardwareModel   *string `json:"hardware_model"`
 	OSVersion       *string `json:"os_version"`
 	LastHeartbeatAt *string `json:"last_heartbeat_at"`
+	LastIP          *string `json:"last_ip"`
+	Enabled         bool    `json:"enabled"`
 	CreatedAt       string  `json:"created_at"`
 }
 
 type ListKioskDevicesResponse struct {
 	Devices []KioskDeviceResponse `json:"devices"`
+}
+
+// UpdateKioskDeviceRequest porte la mise à jour partielle d'une borne — name
+// uniquement pour l'instant (voir docs/KIOSK_DECISIONS.md).
+type UpdateKioskDeviceRequest struct {
+	Name string `json:"name"`
+}
+
+// EnrollmentCodeListItem représente un code d'enrôlement en attente côté
+// back-office — jamais le code en clair ni son hash.
+type EnrollmentCodeListItem struct {
+	ID        string  `json:"id"`
+	CreatedAt string  `json:"created_at"`
+	ExpiresAt string  `json:"expires_at"`
+	UsedAt    *string `json:"used_at"`
+}
+
+type ListEnrollmentCodesResponse struct {
+	Codes []EnrollmentCodeListItem `json:"codes"`
 }
 
 type KioskSettingsResponse struct {
@@ -145,9 +167,14 @@ type KioskSettingsResponse struct {
 	CardPaymentEnabled   bool    `json:"card_payment_enabled"`
 	LogoURL              *string `json:"logo_url"`
 	IdleImageURL         *string `json:"idle_image_url"`
+	IdleVideoURL         *string `json:"idle_video_url"`
 	PrimaryColor         *string `json:"primary_color"`
 }
 
+// UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des
+// champs configurables ici : ils passent exclusivement par les endpoints
+// d'upload dédiés (/settings/logo, /settings/idle-image), voir
+// docs/KIOSK_DECISIONS.md.
 type UpdateKioskSettingsRequest struct {
 	FulfillmentDineIn    *bool   `json:"fulfillment_dine_in"`
 	FulfillmentTakeAway  *bool   `json:"fulfillment_take_away"`
@@ -158,8 +185,6 @@ type UpdateKioskSettingsRequest struct {
 	UpsellEnabled        *bool   `json:"upsell_enabled"`
 	PayAtCounterEnabled  *bool   `json:"pay_at_counter_enabled"`
 	CardPaymentEnabled   *bool   `json:"card_payment_enabled"`
-	LogoURL              *string `json:"logo_url"`
-	IdleImageURL         *string `json:"idle_image_url"`
 	PrimaryColor         *string `json:"primary_color"`
 }
 
@@ -250,10 +275,11 @@ type KioskPricingResponse struct {
 }
 
 type KioskOrderItem struct {
-	ProductID         string   `json:"product_id"`
-	Quantity          int      `json:"quantity"`
-	SelectedOptionIDs []string `json:"selected_option_ids,omitempty"`
-	Notes             string   `json:"notes,omitempty"`
+	ProductID           string   `json:"product_id"`
+	Quantity            int      `json:"quantity"`
+	SelectedOptionIDs   []string `json:"selected_option_ids,omitempty"`
+	Notes               string   `json:"notes,omitempty"`
+	WithoutComponentIDs []string `json:"without_component_ids,omitempty"`
 }
 
 type CreateKioskOrderRequest struct {
@@ -262,6 +288,7 @@ type CreateKioskOrderRequest struct {
 	Items           []KioskOrderItem `json:"items"`
 	PaymentMethod   string           `json:"payment_method"` // pay_at_counter uniquement cet incrément
 	DiscountCode    *string          `json:"discount_code,omitempty"`
+	OrderNotes      string           `json:"order_notes,omitempty"`
 }
 
 type CreateKioskOrderResponse struct {

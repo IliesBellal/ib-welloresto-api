@@ -51,6 +51,7 @@ const (
 	StockMovementPrefix                  = "stock-mvt"
 	UpsellSuggestionIDPrefix             = "upsell-sugg"
 	PrinterIDPrefix                      = "printer"
+	KioskIDPrefix                        = "kiosk"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

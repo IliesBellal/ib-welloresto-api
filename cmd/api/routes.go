@@ -390,7 +390,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
-	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService)
+	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
 
 	// =============================
 	//  HANDLERS
@@ -901,44 +901,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{device_id}", servicesH.GetCurrentService)
 	})
 
-	// --- ORDERS ---
-	/*
-		r.Route("/orders", func(r chi.Router) {
-			r.Use(authMiddleware)
-
-			r.Post("/create", ordersLifeCycleH.CreateOrder)
-			r.Post("/pricing", ordersH.GetPricing)
-			r.Post("/list", ordersH.GetOrders)
-
-			r.Get("/pending", ordersH.GetPendingOrders)
-			r.Post("/history", ordersH.GetHistory)
-			r.Get("/{order_id}", ordersH.GetOrder)
-
-			r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
-
-			r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
-
-			r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
-
-			r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)
-			r.Patch("/{order_id}/deny", ordersLifeCycleH.DenyOrder)
-
-			r.Patch("/{order_id}/cancel", ordersLifeCycleH.DeleteOrder)
-
-			r.Patch("/{order_id}/delivered", ordersLifeCycleH.SetDelivered)
-			r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
-
-			r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
-			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
-			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
-
-			r.Route("/{order_id}/payments", func(r chi.Router) {
-				r.Post("/create", ordersLifeCycleH.AddPayment)
-				r.Get("/", ordersLifeCycleH.GetPayments)
-				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
-			})
-		})*/
-
 	r.Route("/orders", func(r chi.Router) {
 		r.Use(authMiddleware)
 
@@ -1158,10 +1120,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Post("/enrollment-codes", kioskAdminHandler.GenerateEnrollmentCode)
+		r.Get("/enrollment-codes", kioskAdminHandler.ListEnrollmentCodes)
+		r.Delete("/enrollment-codes/{code_id}", kioskAdminHandler.DeleteEnrollmentCode)
+
 		r.Get("/devices", kioskAdminHandler.ListKioskDevices)
+		r.Get("/devices/{device_id}", kioskAdminHandler.GetKioskDevice)
+		r.Put("/devices/{device_id}", kioskAdminHandler.UpdateKioskDevice)
+		r.Post("/devices/{device_id}/enable", kioskAdminHandler.EnableKioskDevice)
+		r.Post("/devices/{device_id}/disable", kioskAdminHandler.DisableKioskDevice)
 		r.Post("/devices/{device_id}/revoke", kioskAdminHandler.RevokeKioskDevice)
+
 		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
 		r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)
+		r.Post("/settings/logo", kioskAdminHandler.UploadKioskLogo)
+		r.Post("/settings/idle-image", kioskAdminHandler.UploadKioskIdleImage)
+		r.Post("/settings/idle-video", kioskAdminHandler.UploadKioskIdleVideo)
 	})
 
 	// --- WEBSOCKET ---
