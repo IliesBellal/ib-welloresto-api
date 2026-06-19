@@ -40,26 +40,23 @@ func (r *Repository) GetEnrollmentCodeByHash(ctx context.Context, codeHash strin
 	return &row, nil
 }
 
-// CreateKiosk insère une nouvelle borne en statut "pending".
-func (r *Repository) CreateKiosk(ctx context.Context, merchantID, publicID, name, hardwareModel, osVersion string) (*KioskRow, error) {
+// CreateKiosk insère une nouvelle borne en statut "active". kioskID est
+// généré par l'appelant (Service.EnrollDevice, via
+// helpers.GeneratePrefixedID(helpers.KioskIDPrefix)) — le repository ne
+// génère plus d'identifiant.
+func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name, hardwareModel, osVersion string) (*KioskRow, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	INSERT INTO kiosks (public_id, merchant_id, name, hardware_model, os_version, status)
+	INSERT INTO kiosks (id, merchant_id, name, hardware_model, os_version, status)
 	VALUES (?, ?, ?, ?, ?, 'active')`
 
-	res, err := db.ExecContext(ctx, query, publicID, merchantID, name, hardwareModel, osVersion)
-	if err != nil {
-		return nil, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
+	if _, err := db.ExecContext(ctx, query, kioskID, merchantID, name, hardwareModel, osVersion); err != nil {
 		return nil, err
 	}
 
 	return &KioskRow{
-		ID:            fmt.Sprintf("%d", id),
-		PublicID:      publicID,
+		ID:            kioskID,
 		MerchantID:    merchantID,
 		Name:          name,
 		Status:        "active",
@@ -78,15 +75,16 @@ func (r *Repository) MarkEnrollmentCodeUsed(ctx context.Context, codeID string, 
 	return err
 }
 
-// CreateDeviceToken insère un nouveau refresh token pour une borne. id est
-// BIGINT AUTO_INCREMENT (migration 037) — jamais de public_id généré côté Go
-// pour cette table (le token opaque lui-même, déjà généré par
-// helpers.GenerateToken, est la seule valeur exposée au client).
-func (r *Repository) CreateDeviceToken(ctx context.Context, kioskID string, tokenHash string, expiresAt time.Time) error {
+// CreateDeviceToken insère un nouveau refresh token pour une borne. tokenID
+// est généré par l'appelant (Service, via
+// helpers.GeneratePrefixedID(helpers.KioskDeviceTokenIDPrefix)) — le token
+// opaque lui-même (tokenHash, déjà généré par helpers.GenerateToken) reste
+// la seule valeur exposée au client, tokenID n'est qu'une clé technique.
+func (r *Repository) CreateDeviceToken(ctx context.Context, tokenID, kioskID, tokenHash string, expiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, kioskID, tokenHash, expiresAt)
+	query := `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, tokenID, kioskID, tokenHash, expiresAt)
 	return err
 }
 
@@ -114,13 +112,14 @@ func (r *Repository) GetDeviceTokenByHash(ctx context.Context, tokenHash string)
 }
 
 // RotateDeviceToken révoque l'ancien refresh token et insère le nouveau.
-func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID string, kioskID string, newTokenHash string, newExpiresAt time.Time) error {
+// newTokenID est généré par l'appelant, même convention que CreateDeviceToken.
+func (r *Repository) RotateDeviceToken(ctx context.Context, oldTokenID, newTokenID, kioskID, newTokenHash string, newExpiresAt time.Time) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx, `UPDATE kiosk_device_tokens SET revoked_at = UTC_TIMESTAMP() WHERE id = ?`, oldTokenID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (kiosk_id, token_hash, expires_at) VALUES (?, ?, ?)`, kioskID, newTokenHash, newExpiresAt)
+	_, err := db.ExecContext(ctx, `INSERT INTO kiosk_device_tokens (id, kiosk_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`, newTokenID, kioskID, newTokenHash, newExpiresAt)
 	return err
 }
 
@@ -160,20 +159,22 @@ func (r *Repository) UpdateKioskStatus(ctx context.Context, kioskID string, stat
 	return err
 }
 
-// GetKioskByID récupère une borne par sa clé technique.
+// GetKioskByID récupère une borne par sa clé technique, sans scope merchant
+// — utilisé uniquement quand l'appartenance est déjà garantie autrement (ex.
+// via un refresh token déjà résolu pour cette borne, RefreshDeviceToken).
 // Retourne (nil, nil) si aucune borne ne correspond.
 func (r *Repository) GetKioskByID(ctx context.Context, kioskID string) (*KioskRow, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, public_id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
 	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
 	WHERE id = ?`
 
 	row := KioskRow{}
 	err := db.QueryRowContext(ctx, query, kioskID).Scan(
-		&row.ID, &row.PublicID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
+		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
 		&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -185,20 +186,22 @@ func (r *Repository) GetKioskByID(ctx context.Context, kioskID string) (*KioskRo
 	return &row, nil
 }
 
-// GetKioskByPublicID récupère une borne par son identifiant public.
-// Retourne (nil, nil) si aucune borne ne correspond.
-func (r *Repository) GetKioskByPublicID(ctx context.Context, merchantID, publicID string) (*KioskRow, error) {
+// GetKioskByIDForMerchant récupère une borne par id, scopée au merchant —
+// utilisé par toutes les routes back-office (jamais d'accès cross-merchant).
+// Retourne (nil, nil) si aucune borne ne correspond ou appartient à un autre
+// merchant.
+func (r *Repository) GetKioskByIDForMerchant(ctx context.Context, merchantID, kioskID string) (*KioskRow, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, public_id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
 	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
-	WHERE merchant_id = ? AND public_id = ?`
+	WHERE merchant_id = ? AND id = ?`
 
 	row := KioskRow{}
-	err := db.QueryRowContext(ctx, query, merchantID, publicID).Scan(
-		&row.ID, &row.PublicID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
+	err := db.QueryRowContext(ctx, query, merchantID, kioskID).Scan(
+		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
 		&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -215,7 +218,7 @@ func (r *Repository) ListKiosksByMerchant(ctx context.Context, merchantID string
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, public_id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
 	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
 	WHERE merchant_id = ?
@@ -231,7 +234,7 @@ func (r *Repository) ListKiosksByMerchant(ctx context.Context, merchantID string
 	for rows.Next() {
 		row := KioskRow{}
 		if err := rows.Scan(
-			&row.ID, &row.PublicID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
+			&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
 			&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -348,15 +351,17 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 	return err
 }
 
-// CreateEnrollmentCode insère un nouveau code d'enrôlement. id est BIGINT
-// AUTO_INCREMENT (migration 037) — l'identifiant "public" pertinent ici est
-// le code lisible humainement (généré par generateEnrollmentCode), jamais
-// stocké en clair ; la ligne elle-même n'a pas besoin de public_id.
-func (r *Repository) CreateEnrollmentCode(ctx context.Context, merchantID, codeHash string, expiresAt time.Time, createdByUserID string) error {
+// CreateEnrollmentCode insère un nouveau code d'enrôlement. id est généré
+// par l'appelant (Service, via
+// helpers.GeneratePrefixedID(helpers.KioskEnrollmentCodeIDPrefix)) — c'est
+// une clé technique interne, jamais exposée seule : l'identifiant pertinent
+// pour le restaurateur reste le code lisible humainement (généré par
+// generateEnrollmentCode), jamais stocké en clair.
+func (r *Repository) CreateEnrollmentCode(ctx context.Context, id, merchantID, codeHash string, expiresAt time.Time, createdByUserID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
-	query := `INSERT INTO kiosk_enrollment_codes (merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, merchantID, codeHash, expiresAt, createdByUserID)
+	query := `INSERT INTO kiosk_enrollment_codes (id, merchant_id, code_hash, expires_at, created_by_user_id) VALUES (?, ?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, id, merchantID, codeHash, expiresAt, createdByUserID)
 	return err
 }
 
@@ -576,10 +581,10 @@ func (r *Repository) GetExistingConfigurationOptionIDs(ctx context.Context, opti
 // elle-même passe par OrdersLifeCycleService.CreateOrder (non modifiable),
 // qui ne connaît pas la notion de borne ; ce point UPDATE ciblé referme la
 // boucle sans toucher à ce service.
-func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskPublicID string) error {
+func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE orders SET kiosk_id = ? WHERE order_id = ?`
-	_, err := db.ExecContext(ctx, query, kioskPublicID, orderID)
+	_, err := db.ExecContext(ctx, query, kioskID, orderID)
 	return err
 }

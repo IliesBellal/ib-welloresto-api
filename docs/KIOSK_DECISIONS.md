@@ -983,3 +983,135 @@ curl -s -X POST "$BASE_URL/pos/settings/kiosk/settings/idle-video" \
 # 4. Vérifier que idle_video_url apparaît côté device
 curl -s "$BASE_URL/kiosk/settings" -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
+
+---
+
+## Incrément 5 — simplification id/public_id
+
+### Contexte trouvé en reprenant ce fil
+
+Entre les incréments 3/4 et celui-ci, deux commits manuels ("fix: kiosk IDs
+in string") avaient commencé ce refactor côté Go uniquement, sans toucher au
+schéma SQL : `CreateDeviceToken`/`RotateDeviceToken` puis (non commité)
+`CreateEnrollmentCode` généraient déjà un id préfixé (`helpers.GeneratePrefixedID("ksk-dev-tkn"/"ksk-enrl-cd")`,
+littéraux non nommés) et l'inséraient dans la colonne `id` de
+`kiosk_device_tokens`/`kiosk_enrollment_codes` — alors que ces colonnes
+étaient toujours `BIGINT AUTO_INCREMENT` (migration 037, jamais modifiée).
+C'est exactement le bug déjà documenté et corrigé une fois en incrément 3
+("insertion d'un ID préfixé dans une colonne BIGINT AUTO_INCREMENT") qui
+avait été réintroduit. Cet incrément corrige le problème à la racine en
+migrant réellement le schéma plutôt qu'en Go seul.
+
+### Décision : un seul id VARCHAR(64), pas de distinction technique/public
+
+**Justification** : la distinction `id` (BIGINT interne, jamais exposé) /
+`public_id` (VARCHAR exposé au client) a du sens quand une ressource est
+accessible par un acteur non authentifié ou quand l'id technique fuite par
+un canal non maîtrisé (URL publique indexée, export tiers...). Aucune route
+Kiosk n'est dans ce cas :
+- Les routes device (`/kiosk/...`) sont toutes derrière `middleware.KioskAuth`
+  — seule la borne elle-même (qui connaît déjà son propre id, reçu à
+  l'enrôlement) peut s'authentifier.
+- Les routes back-office (`/pos/settings/kiosk/...`) sont toutes derrière
+  `authMiddleware` et scopées au merchant authentifié
+  (`GetKioskByIDForMerchant` vérifie `merchant_id = ?`) — un id qui fuite
+  ne donne accès à rien sans être déjà staff de ce merchant.
+- Aucun id n'apparaît jamais dans une URL publique sans authentification
+  (contrairement à, par exemple, un lien de réinitialisation de mot de
+  passe où l'opacité de l'id a un rôle de sécurité).
+
+Garder deux identifiants n'apportait donc aucune protection réelle, juste de
+la complexité (toujours choisir lequel passer à quelle méthode, deux champs
+à synchroniser dans les réponses). **Décision : un seul `id VARCHAR(64)`**,
+généré côté backend via `helpers.GeneratePrefixedID(...)` — même pattern que
+tous les autres modules du projet (`helpers.UserIDPrefix`, `PrinterIDPrefix`,
+etc.), avec deux nouvelles constantes ajoutées à `internal/helpers/ids.go` :
+`KioskEnrollmentCodeIDPrefix = "kiosk-enrl-cd"`, `KioskDeviceTokenIDPrefix =
+"kiosk-dev-tkn"` (`KioskIDPrefix = "kiosk"` existait déjà depuis
+l'incrément 1).
+
+### Génération déplacée dans le service, jamais dans le repository
+
+Avant cet incrément, `CreateEnrollmentCode` générait son id directement dans
+le repository (`helpers.GeneratePrefixedID("ksk-enrl-cd")` en dur dans la
+requête SQL). Déplacé dans `Service.GenerateEnrollmentCode` /
+`Service.EnrollDevice` / `Service.RefreshDeviceToken` — le repository ne
+fait plus que persister un id qu'on lui fournit, cohérent avec le reste du
+module (`CreateKiosk` prenait déjà `publicID` en paramètre avant cet
+incrément, jamais généré lui-même).
+
+### Migration 040 : fusion id + public_id, BIGINT → VARCHAR(64)
+
+`migrations/todo/040_kiosk_simplify_ids.{up,down}.sql`. Portée réelle après
+relecture des migrations 037/038 (l'état réel diffère de l'énoncé du
+brief) :
+- **`kiosks`** : avait à la fois `id BIGINT AUTO_INCREMENT` (PK) et
+  `public_id VARCHAR(64)` (UNIQUE) — fusionnés en un seul `id VARCHAR(64)
+  PRIMARY KEY` (ex-`public_id`, l'ancien `id` BIGINT est supprimé).
+- **`kiosk_device_tokens`** et **`kiosk_enrollment_codes`** : n'avaient
+  jamais de `public_id` séparé, seulement `id BIGINT AUTO_INCREMENT` — leur
+  `id` devient directement `VARCHAR(64)` (généré côté Go), et leur colonne
+  `kiosk_id` (FK vers `kiosks`) passe de `BIGINT UNSIGNED` à `VARCHAR(64)`
+  pour suivre le nouveau type de `kiosks.id`.
+- **`kiosk_settings`** : **aucun changement**. Cette table n'a jamais eu de
+  colonne `id` — sa clé primaire est `merchant_id` (une ligne par merchant,
+  même pattern que `scannorder_settings`/`merchant_parameters`). Le brief
+  listait cette table par précaution mais il n'y avait rien à fusionner.
+- **`orders.kiosk_id`** (migration 038) : déjà `VARCHAR(64)`, déjà rempli
+  avec la valeur de `kiosks.public_id` — donc déjà cohérent avec le nouvel
+  `kiosks.id` sans aucune migration de données ; `idx_orders_kiosk` reste
+  valide tel quel.
+
+La migration backfille les FK existantes avant de changer les types
+(`UPDATE ... JOIN kiosks ...` pour mapper l'ancien `kiosks.id` BIGINT vers
+`kiosks.public_id`) plutôt que de supposer qu'aucune donnée n'existe encore
+— mesure de précaution, le module n'étant pas confirmé vide en
+environnement réel à ce stade.
+
+### Repository : méthode renommée, pas de doublon fonctionnel
+
+`GetKioskByPublicID(ctx, merchantID, publicID)` → renommée
+`GetKioskByIDForMerchant(ctx, merchantID, kioskID)` : même requête, juste
+`public_id` remplacé par `id` dans le SQL et le nom mis à jour. `GetKioskByID(ctx,
+kioskID)` (sans scope merchant) est conservée séparément — toujours
+nécessaire pour `RefreshDeviceToken`, où l'appartenance au merchant est
+déjà garantie par la résolution du refresh token (pas besoin d'un second
+contrôle merchant à ce point).
+
+### Tests manuels incrément 5
+
+Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
+dans ce sandbox) : seuls `go build ./...` et `go vet ./...` ont été vérifiés
+(clean sur le module kiosk ; mêmes avertissements préexistants et sans
+rapport ailleurs). **Avant exécution réelle, appliquer dans l'ordre
+`migrations/todo/039_kiosk_settings_idle_video.up.sql` puis
+`migrations/todo/040_kiosk_simplify_ids.up.sql`** (039 n'a aucune dépendance
+sur 040, mais l'ordre numérique doit être respecté par convention du
+projet).
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token d'un user back-office authentifié>"
+
+# 1. Enrôlement : vérifier que kiosk_id retourné est bien le nouveau format
+#    "kiosk-<uuid>" (inchangé côté client, c'était déjà le format de
+#    l'ancien public_id)
+CODE=$(curl -s -X POST "$BASE_URL/pos/settings/kiosk/enrollment-codes" -H "Authorization: Bearer $USER_TOKEN" | jq -r .data.code)
+curl -s -X POST "$BASE_URL/kiosk/auth/enroll" -H "Content-Type: application/json" \
+  -d "{\"enrollment_code\":\"$CODE\",\"name\":\"Borne test\",\"hardware_model\":\"Elo\",\"os_version\":\"Android 13\",\"app_version\":\"1.0.0\"}" \
+  | tee enroll.json
+KIOSK_ID=$(jq -r .data.kiosk_id enroll.json)
+ACCESS_TOKEN=$(jq -r .data.access_token enroll.json)
+
+# 2. Détail back-office par id — doit fonctionner avec le même id reçu à l'enrôlement
+curl -s "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID" -H "Authorization: Bearer $USER_TOKEN"
+
+# 3. Refresh token : vérifier la rotation fonctionne toujours (nouvel id généré pour le nouveau refresh token)
+REFRESH_TOKEN=$(jq -r .data.refresh_token enroll.json)
+curl -s -X POST "$BASE_URL/kiosk/auth/token/refresh" -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}"
+
+# 4. Révocation puis vérification que le device_id reste utilisable pour le lookup back-office
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/revoke" -H "Authorization: Bearer $USER_TOKEN"
+curl -s "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID" -H "Authorization: Bearer $USER_TOKEN"
+```

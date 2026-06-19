@@ -14,10 +14,11 @@ import (
 // kiosk -> middleware, jamais l'inverse.
 type AuthenticatedKiosk = middleware.AuthenticatedKiosk
 
-// KioskRow mappe la table kiosks.
+// KioskRow mappe la table kiosks. id est un VARCHAR(64) généré côté backend
+// (helpers.GeneratePrefixedID(helpers.KioskIDPrefix)) — plus de distinction
+// id technique (BIGINT) / public_id séparée, voir docs/KIOSK_DECISIONS.md.
 type KioskRow struct {
 	ID              string
-	PublicID        string
 	MerchantID      string
 	Name            string
 	LocationID      *string
@@ -65,12 +66,13 @@ type KioskSettingsRow struct {
 	UpdatedAt            *time.Time
 }
 
-// EnrollmentCodeRow mappe la table kiosk_enrollment_codes.
+// EnrollmentCodeRow mappe la table kiosk_enrollment_codes. KioskID référence
+// kiosks.id (VARCHAR(64)) — nil tant que le code n'a pas encore servi.
 type EnrollmentCodeRow struct {
 	ID              string
 	MerchantID      string
 	CodeHash        string
-	KioskID         *int64
+	KioskID         *string
 	ExpiresAt       time.Time
 	UsedAt          *time.Time
 	CreatedByUserID *string

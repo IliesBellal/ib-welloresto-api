@@ -105,7 +105,8 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		return nil, models.ErrKioskMaxKiosksReached
 	}
 
-	publicID := helpers.GeneratePrefixedID(helpers.KioskIDPrefix)
+	kioskID := helpers.GeneratePrefixedID(helpers.KioskIDPrefix)
+	deviceTokenID := helpers.GeneratePrefixedID(helpers.KioskDeviceTokenIDPrefix)
 	refreshToken, err := helpers.GenerateToken(32)
 	if err != nil {
 		return nil, fmt.Errorf("kiosk enroll: generate refresh token: %w", err)
@@ -115,26 +116,26 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 
 	var kiosk *KioskRow
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		kiosk, err = s.repo.CreateKiosk(txCtx, code.MerchantID, publicID, req.Name, req.HardwareModel, req.OSVersion)
+		kiosk, err = s.repo.CreateKiosk(txCtx, kioskID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion)
 		if err != nil {
 			return err
 		}
 		if err := s.repo.MarkEnrollmentCodeUsed(txCtx, code.ID, kiosk.ID); err != nil {
 			return err
 		}
-		return s.repo.CreateDeviceToken(txCtx, kiosk.ID, refreshTokenHash, refreshExpiresAt)
+		return s.repo.CreateDeviceToken(txCtx, deviceTokenID, kiosk.ID, refreshTokenHash, refreshExpiresAt)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	accessToken, expiresAt, err := s.generateAccessToken(kiosk.PublicID, kiosk.MerchantID)
+	accessToken, expiresAt, err := s.generateAccessToken(kiosk.ID, kiosk.MerchantID)
 	if err != nil {
 		return nil, err
 	}
 
 	return &EnrollResponse{
-		KioskID:      kiosk.PublicID,
+		KioskID:      kiosk.ID,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt.Format(time.RFC3339),
@@ -177,15 +178,16 @@ func (s *Service) RefreshDeviceToken(ctx context.Context, refreshToken string) (
 	}
 	newRefreshTokenHash := security.HashPIN(newRefreshToken, s.cfg.Pepper)
 	newRefreshExpiresAt := time.Now().UTC().AddDate(0, 0, s.cfg.DeviceRefreshTokenTTLDays)
+	newTokenID := helpers.GeneratePrefixedID(helpers.KioskDeviceTokenIDPrefix)
 
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		return s.repo.RotateDeviceToken(txCtx, deviceToken.ID, kiosk.ID, newRefreshTokenHash, newRefreshExpiresAt)
+		return s.repo.RotateDeviceToken(txCtx, deviceToken.ID, newTokenID, kiosk.ID, newRefreshTokenHash, newRefreshExpiresAt)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	accessToken, expiresAt, err := s.generateAccessToken(kiosk.PublicID, kiosk.MerchantID)
+	accessToken, expiresAt, err := s.generateAccessToken(kiosk.ID, kiosk.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +204,7 @@ func (s *Service) RefreshDeviceToken(ctx context.Context, refreshToken string) (
 // non persisté — voir docs/KIOSK_DECISIONS.md section G.1). C'est le
 // middleware.KioskAuth qui appelle cette méthode sur chaque requête protégée.
 func (s *Service) ValidateAccessToken(ctx context.Context, accessToken string) (*AuthenticatedKiosk, error) {
-	publicID, merchantID, expiresAt, err := s.parseAccessToken(accessToken)
+	kioskID, merchantID, expiresAt, err := s.parseAccessToken(accessToken)
 	if err != nil {
 		return nil, models.ErrKioskDeviceTokenInvalid
 	}
@@ -210,12 +212,12 @@ func (s *Service) ValidateAccessToken(ctx context.Context, accessToken string) (
 		return nil, models.ErrKioskDeviceTokenInvalid
 	}
 
-	return &AuthenticatedKiosk{KioskID: publicID, MerchantID: merchantID}, nil
+	return &AuthenticatedKiosk{KioskID: kioskID, MerchantID: merchantID}, nil
 }
 
 // RecordHeartbeat met à jour le dernier contact connu de la borne.
 func (s *Service) RecordHeartbeat(ctx context.Context, kiosk *AuthenticatedKiosk, req HeartbeatRequest, ip string) (*HeartbeatResponse, error) {
-	row, err := s.repo.GetKioskByPublicID(ctx, kiosk.MerchantID, kiosk.KioskID)
+	row, err := s.repo.GetKioskByIDForMerchant(ctx, kiosk.MerchantID, kiosk.KioskID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,8 +239,8 @@ func (s *Service) RecordHeartbeat(ctx context.Context, kiosk *AuthenticatedKiosk
 // sont invalidés et son statut passe à "revoked". L'access token déjà
 // émis (non révocable, auto-porteur) reste valide au maximum
 // AccessTokenTTLMinutes — voir docs/KIOSK_DECISIONS.md section G.1.
-func (s *Service) RevokeKiosk(ctx context.Context, merchantID, publicID string) error {
-	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+func (s *Service) RevokeKiosk(ctx context.Context, merchantID, kioskID string) error {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
 		return err
 	}
@@ -277,8 +279,9 @@ func (s *Service) GenerateEnrollmentCode(ctx context.Context, merchantID, create
 	}
 	codeHash := security.HashPIN(code, s.cfg.Pepper)
 	expiresAt := time.Now().UTC().Add(time.Duration(s.cfg.EnrollmentCodeTTLMinutes) * time.Minute)
+	codeID := helpers.GeneratePrefixedID(helpers.KioskEnrollmentCodeIDPrefix)
 
-	if err := s.repo.CreateEnrollmentCode(ctx, merchantID, codeHash, expiresAt, createdByUserID); err != nil {
+	if err := s.repo.CreateEnrollmentCode(ctx, codeID, merchantID, codeHash, expiresAt, createdByUserID); err != nil {
 		return nil, err
 	}
 
@@ -308,7 +311,7 @@ func toKioskDeviceResponse(row *KioskRow) KioskDeviceResponse {
 		lastHeartbeat = &v
 	}
 	return KioskDeviceResponse{
-		KioskID:         row.PublicID,
+		KioskID:         row.ID,
 		Name:            row.Name,
 		Status:          row.Status,
 		AppVersion:      row.AppVersion,
@@ -323,8 +326,8 @@ func toKioskDeviceResponse(row *KioskRow) KioskDeviceResponse {
 
 // GetKioskDevice retourne le détail d'une borne, scopée au merchant
 // authentifié — 404 si non trouvée ou appartenant à un autre merchant.
-func (s *Service) GetKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
-	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+func (s *Service) GetKioskDevice(ctx context.Context, merchantID, kioskID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
 		return nil, err
 	}
@@ -337,12 +340,12 @@ func (s *Service) GetKioskDevice(ctx context.Context, merchantID, publicID strin
 
 // UpdateKioskDeviceName renomme une borne (seul champ éditable pour
 // l'instant côté back-office).
-func (s *Service) UpdateKioskDeviceName(ctx context.Context, merchantID, publicID, name string) (*KioskDeviceResponse, error) {
+func (s *Service) UpdateKioskDeviceName(ctx context.Context, merchantID, kioskID, name string) (*KioskDeviceResponse, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, models.ErrInvalidInput
 	}
 
-	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
 		return nil, err
 	}
@@ -361,8 +364,8 @@ func (s *Service) UpdateKioskDeviceName(ctx context.Context, merchantID, publicI
 // EnableKioskDevice repasse une borne en "active" — vérifie le quota de
 // bornes actives du merchant avant d'autoriser le passage (sauf si déjà
 // active, no-op de quota).
-func (s *Service) EnableKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
-	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+func (s *Service) EnableKioskDevice(ctx context.Context, merchantID, kioskID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
 		return nil, err
 	}
@@ -395,8 +398,8 @@ func (s *Service) EnableKioskDevice(ctx context.Context, merchantID, publicID st
 // DisableKioskDevice passe une borne en "inactive" sans révoquer ses tokens
 // — elle peut se réactiver (heartbeat/refresh restent fonctionnels tant que
 // le statut n'est pas "revoked", voir RefreshDeviceToken/RecordHeartbeat).
-func (s *Service) DisableKioskDevice(ctx context.Context, merchantID, publicID string) (*KioskDeviceResponse, error) {
-	kiosk, err := s.repo.GetKioskByPublicID(ctx, merchantID, publicID)
+func (s *Service) DisableKioskDevice(ctx context.Context, merchantID, kioskID string) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1205,15 +1208,15 @@ func (s *Service) GetKioskOrder(ctx context.Context, orderID string, kiosk Authe
 
 // ---- Access token : signé HMAC-SHA256, non persisté ----
 
-func (s *Service) generateAccessToken(kioskPublicID, merchantID string) (string, time.Time, error) {
+func (s *Service) generateAccessToken(kioskID, merchantID string) (string, time.Time, error) {
 	expiresAt := time.Now().UTC().Add(time.Duration(s.cfg.AccessTokenTTLMinutes) * time.Minute)
-	payload := fmt.Sprintf("%s|%s|%d", kioskPublicID, merchantID, expiresAt.Unix())
+	payload := fmt.Sprintf("%s|%s|%d", kioskID, merchantID, expiresAt.Unix())
 	encodedPayload := base64.RawURLEncoding.EncodeToString([]byte(payload))
 	signature := s.signPayload(encodedPayload)
 	return encodedPayload + "." + signature, expiresAt, nil
 }
 
-func (s *Service) parseAccessToken(token string) (publicID, merchantID string, expiresAt time.Time, err error) {
+func (s *Service) parseAccessToken(token string) (kioskID, merchantID string, expiresAt time.Time, err error) {
 	parts := strings.SplitN(token, ".", 2)
 	if len(parts) != 2 {
 		return "", "", time.Time{}, errors.New("malformed access token")
