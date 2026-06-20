@@ -360,22 +360,27 @@ LIMIT 1;
 
 	loggedByToken := token != "" && token == data.Token
 	if !loggedByToken {
-		if !loggedByToken && !strings.HasPrefix(data.Password, "$2") {
-			/*
-				// conversion automatique en hash
-				newHash, err := HashPassword(plainPwd)
-				if err == nil {
-					_ = r.userRepo.UpdatePassword(ctx, data.UserID, newHash)
-				}
-			*/
+		if !helpers.PasswordMatches(plainPwd, data.Password) {
+			return nil, models.ErrUserNotFound
+		}
 
-			if !helpers.PasswordMatches(plainPwd, data.Password) {
-				return nil, models.ErrUserNotFound
+		// Migration automatique vers bcrypt pour les mots de passe legacy
+		if !strings.HasPrefix(data.Password, "$2") {
+			if newHash, err := helpers.HashPassword(plainPwd); err == nil {
+				if err := r.UpdatePassword(ctx, data.UserID, newHash); err == nil {
+					data.Password = newHash
+				}
 			}
 		}
 	}
 
 	return data, err
+}
+
+// UpdatePassword overwrites a user's stored password hash.
+func (r *AuthRepository) UpdatePassword(ctx context.Context, userID, newHash string) error {
+	_, err := r.database.ExecContext(ctx, `UPDATE users SET password = ? WHERE user_id = ?`, newHash, userID)
+	return err
 }
 
 // GetUserByPIN looks up the employee whose PIN matches within a merchant.

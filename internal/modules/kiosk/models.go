@@ -18,21 +18,22 @@ type AuthenticatedKiosk = middleware.AuthenticatedKiosk
 // (helpers.GeneratePrefixedID(helpers.KioskIDPrefix)) — plus de distinction
 // id technique (BIGINT) / public_id séparée, voir docs/KIOSK_DECISIONS.md.
 type KioskRow struct {
-	ID              string
-	MerchantID      string
-	Name            string
-	LocationID      *string
-	Status          string
-	AppVersion      *string
-	HardwareModel   *string
-	OSVersion       *string
-	LastHeartbeatAt *time.Time
-	LastIP          *string
-	LastError       *string
-	LastErrorAt     *time.Time
-	Enabled         bool
-	CreatedAt       time.Time
-	UpdatedAt       *time.Time
+	ID                string
+	MerchantID        string
+	Name              string
+	LocationID        *string
+	Status            string
+	AppVersion        *string
+	HardwareModel     *string
+	AdminPinEncrypted []byte
+	OSVersion         *string
+	LastHeartbeatAt   *time.Time
+	LastIP            *string
+	LastError         *string
+	LastErrorAt       *time.Time
+	Enabled           bool
+	CreatedAt         time.Time
+	UpdatedAt         *time.Time
 }
 
 // KioskDeviceTokenRow mappe la table kiosk_device_tokens.
@@ -46,7 +47,10 @@ type KioskDeviceTokenRow struct {
 	CreatedAt  time.Time
 }
 
-// KioskSettingsRow mappe la table kiosk_settings.
+// KioskSettingsRow mappe la table kiosk_settings. BusinessName n'est PAS une
+// colonne de kiosk_settings : c'est merchant.fullName, attaché à ce struct
+// après coup par GetKioskSettings (voir repository.go) pour que l'appelant
+// n'ait qu'une seule structure à lire — voir docs/KIOSK_DECISIONS.md.
 type KioskSettingsRow struct {
 	MerchantID           string
 	FulfillmentDineIn    bool
@@ -62,6 +66,7 @@ type KioskSettingsRow struct {
 	IdleImageURL         *string
 	IdleVideoURL         *string
 	PrimaryColor         *string
+	BusinessName         *string
 	CreatedAt            time.Time
 	UpdatedAt            *time.Time
 }
@@ -89,11 +94,16 @@ type EnrollRequest struct {
 	AppVersion     string `json:"app_version"`
 }
 
+// EnrollResponse — admin_pin n'est retourné en clair qu'à l'enrôlement et à
+// la régénération (voir AdminPinResponse) : entre ces deux moments, seule sa
+// forme chiffrée (kiosks.admin_pin_encrypted) est stockée, déchiffrée à la
+// demande pour la consultation back-office — voir docs/KIOSK_DECISIONS.md.
 type EnrollResponse struct {
 	KioskID      string `json:"kiosk_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresAt    string `json:"expires_at"`
+	AdminPin     string `json:"admin_pin"`
 }
 
 type RefreshTokenRequest struct {
@@ -110,8 +120,46 @@ type HeartbeatRequest struct {
 	AppVersion string `json:"app_version"`
 }
 
+// HeartbeatResponse — kiosk_status/enabled sont le mécanisme de fallback si
+// le WebSocket est coupé : la borne vérifie ces champs à chaque heartbeat
+// (toutes les 5 min côté Flutter) pour rattraper un kiosk_status_changed
+// manqué pendant la coupure.
 type HeartbeatResponse struct {
-	Status string `json:"status"`
+	Status      string `json:"status"`
+	KioskStatus string `json:"kiosk_status"`
+	Enabled     bool   `json:"enabled"`
+}
+
+// SetKioskStatusRequest — body de POST /pos/kiosk/{kiosk_id}/status (staff,
+// depuis l'app POS).
+type SetKioskStatusRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// ReportUnavailableRequest — body de POST /kiosk/status/unavailable, envoyé
+// par la borne elle-même (device, KioskAuth) quand elle détecte un problème.
+type ReportUnavailableRequest struct {
+	Reason string `json:"reason"` // connection_lost | app_error | manual
+}
+
+// VerifyAdminPinRequest — body de POST /kiosk/auth/verify-admin-pin (device,
+// KioskAuth). La borne est déjà authentifiée ; ce PIN ne fait que déverrouiller
+// l'écran admin local, voir docs/KIOSK_DECISIONS.md.
+type VerifyAdminPinRequest struct {
+	Pin string `json:"pin"`
+}
+
+type VerifyAdminPinResponse struct {
+	Valid bool `json:"valid"`
+}
+
+// AdminPinResponse — réponse commune à GET .../admin-pin (consultation,
+// déchiffré) et POST .../regenerate-admin-pin (nouveau PIN) côté back-office.
+// Le PIN est en clair dans les deux cas : c'est tout l'intérêt du
+// chiffrement réversible (admin_pin_encrypted) par rapport à un hash —
+// voir docs/KIOSK_DECISIONS.md.
+type AdminPinResponse struct {
+	AdminPin string `json:"admin_pin"`
 }
 
 // ---- Admin (back-office) requests / responses ----
@@ -171,6 +219,11 @@ type KioskSettingsResponse struct {
 	IdleImageURL         *string `json:"idle_image_url"`
 	IdleVideoURL         *string `json:"idle_video_url"`
 	PrimaryColor         *string `json:"primary_color"`
+
+	// BusinessName — merchant.fullName, en lecture seule (jamais modifiable
+	// via UpdateKioskSettingsRequest : le nom de l'établissement se gère
+	// ailleurs, pas dans les paramètres Kiosk) — voir docs/KIOSK_DECISIONS.md.
+	BusinessName *string `json:"business_name"`
 }
 
 // UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des

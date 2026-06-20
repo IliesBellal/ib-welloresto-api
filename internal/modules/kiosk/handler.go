@@ -2,6 +2,7 @@ package kiosk
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"welloresto-api/internal/logger"
@@ -84,6 +85,43 @@ func (h *Handler) DeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "kiosk", "device_heartbeat", resp)
+}
+
+// VerifyAdminPin handles POST /kiosk/auth/verify-admin-pin — la borne est
+// déjà authentifiée (KioskAuth) ; ce PIN ne fait que déverrouiller l'écran
+// admin local. Rate-limité côté service (5 tentatives, 30s de lockout).
+func (h *Handler) VerifyAdminPin(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "verify_admin_pin", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req VerifyAdminPinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "verify_admin_pin", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.VerifyAdminPin(ctx, authenticatedKiosk, req.Pin)
+	if err != nil {
+		var lockoutErr *AdminPinLockoutError
+		if errors.As(err, &lockoutErr) {
+			models.SendJSON(w, http.StatusTooManyRequests, "kiosk", "verify_admin_pin", map[string]interface{}{
+				"error":         "kiosk_admin_pin_locked",
+				"delay_seconds": lockoutErr.DelaySeconds,
+			})
+			return
+		}
+		log.Warn("kiosk verify admin pin failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "verify_admin_pin", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "verify_admin_pin", resp)
 }
 
 // GetKioskMenu handles GET /kiosk/menu — supports conditional requests via
@@ -287,6 +325,34 @@ func (h *Handler) CancelKioskOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "kiosk", "cancel_order", map[string]string{"status": "cancelled"})
+}
+
+// ReportUnavailable handles POST /kiosk/status/unavailable — la borne
+// signale elle-même un problème (connection_lost/app_error/manual). Diffuse
+// kiosk_unavailable sur le hub WebSocket du merchant.
+func (h *Handler) ReportUnavailable(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "report_unavailable", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req ReportUnavailableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "report_unavailable", models.ErrInvalidRequestBody)
+		return
+	}
+
+	if err := h.service.ReportUnavailable(ctx, authenticatedKiosk, req.Reason); err != nil {
+		log.Warn("kiosk report unavailable failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "report_unavailable", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "report_unavailable", map[string]string{"status": "ok"})
 }
 
 func (h *Handler) ConfirmCounterPayment(w http.ResponseWriter, r *http.Request) {

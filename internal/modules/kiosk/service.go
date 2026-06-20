@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
@@ -77,6 +79,11 @@ const (
 // couple de tokens. Tout se passe dans une transaction : création de la
 // borne, marquage du code comme utilisé, création du refresh token.
 func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string) (*EnrollResponse, error) {
+	if err := validateKioskName(req.Name); err != nil {
+		return nil, err
+	}
+	req.Name = strings.TrimSpace(req.Name)
+
 	codeHash := security.HashPIN(req.EnrollmentCode, s.cfg.Pepper)
 
 	code, err := s.repo.GetEnrollmentCodeByHash(ctx, codeHash)
@@ -114,9 +121,18 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 	refreshTokenHash := security.HashPIN(refreshToken, s.cfg.Pepper)
 	refreshExpiresAt := time.Now().UTC().AddDate(0, 0, s.cfg.DeviceRefreshTokenTTLDays)
 
+	adminPin, err := generateAdminPin()
+	if err != nil {
+		return nil, fmt.Errorf("kiosk enroll: generate admin pin: %w", err)
+	}
+	adminPinEncrypted, err := helpers.Encrypt(adminPin)
+	if err != nil {
+		return nil, fmt.Errorf("kiosk enroll: encrypt admin pin: %w", err)
+	}
+
 	var kiosk *KioskRow
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		kiosk, err = s.repo.CreateKiosk(txCtx, kioskID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion)
+		kiosk, err = s.repo.CreateKiosk(txCtx, kioskID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion, adminPinEncrypted)
 		if err != nil {
 			return err
 		}
@@ -139,7 +155,35 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt.Format(time.RFC3339),
+		AdminPin:     adminPin,
 	}, nil
+}
+
+// validateKioskName impose un nom non vide et <= 100 caractères (colonne
+// kiosks.name VARCHAR(100)) — comptage en runes, pas en octets, pour rester
+// correct avec des noms accentués (utf8mb4).
+func validateKioskName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" || utf8.RuneCountInString(trimmed) > 100 {
+		return models.ErrKioskNameInvalid
+	}
+	return nil
+}
+
+// generateAdminPin produit un PIN numérique à 4 chiffres — même esprit que
+// generateEnrollmentCode (crypto/rand, pas math/rand), mais alphabet limité
+// à 0-9 puisque le PIN est saisi sur le pavé numérique de l'écran admin de la
+// borne.
+func generateAdminPin() (string, error) {
+	raw := make([]byte, 4)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	digits := make([]byte, 4)
+	for i, b := range raw {
+		digits[i] = '0' + b%10
+	}
+	return string(digits), nil
 }
 
 // RefreshDeviceToken échange un refresh token valide contre une nouvelle
@@ -232,7 +276,169 @@ func (s *Service) RecordHeartbeat(ctx context.Context, kiosk *AuthenticatedKiosk
 		return nil, err
 	}
 
-	return &HeartbeatResponse{Status: "ok"}, nil
+	return &HeartbeatResponse{Status: "ok", KioskStatus: row.Status, Enabled: row.Enabled}, nil
+}
+
+// ---- PIN admin (déverrouillage de l'écran admin local de la borne) ----
+
+const (
+	adminPinMaxAttempts     = 5
+	adminPinLockoutSeconds  = 30
+	adminPinLockoutStateTTL = 24 * time.Hour
+)
+
+const adminPinLockoutKeyPrefix = "kiosk:admin_pin:lockout:"
+
+// AdminPinLockoutError carries the remaining lockout delay for the caller —
+// même pattern que auth.PINLockoutError.
+type AdminPinLockoutError struct {
+	DelaySeconds int
+}
+
+func (e *AdminPinLockoutError) Error() string {
+	return fmt.Sprintf("kiosk_admin_pin_locked: retry in %ds", e.DelaySeconds)
+}
+
+// adminPinLockoutState est sérialisé en JSON dans Redis sous
+// adminPinLockoutKeyPrefix+kioskID.
+type adminPinLockoutState struct {
+	Count       int   `json:"count"`
+	LockedUntil int64 `json:"locked_until"`
+}
+
+func (s *Service) checkAdminPinLockout(ctx context.Context, kioskID string) time.Duration {
+	if s.redis == nil {
+		return 0
+	}
+	val, found := s.redis.Get(ctx, adminPinLockoutKeyPrefix+kioskID)
+	if !found {
+		return 0
+	}
+	var state adminPinLockoutState
+	if err := json.Unmarshal([]byte(val), &state); err != nil || state.LockedUntil == 0 {
+		return 0
+	}
+	remaining := time.Until(time.Unix(state.LockedUntil, 0))
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
+}
+
+func (s *Service) incrementAdminPinLockout(ctx context.Context, kioskID string) {
+	if s.redis == nil {
+		return
+	}
+	key := adminPinLockoutKeyPrefix + kioskID
+	var state adminPinLockoutState
+	if val, found := s.redis.Get(ctx, key); found {
+		json.Unmarshal([]byte(val), &state) //nolint:errcheck
+	}
+	state.Count++
+	if state.Count >= adminPinMaxAttempts {
+		state.LockedUntil = time.Now().Add(adminPinLockoutSeconds * time.Second).Unix()
+	}
+	data, _ := json.Marshal(state)
+	s.redis.Set(ctx, key, string(data), adminPinLockoutStateTTL)
+}
+
+func (s *Service) resetAdminPinLockout(ctx context.Context, kioskID string) {
+	if s.redis == nil {
+		return
+	}
+	s.redis.Delete(ctx, adminPinLockoutKeyPrefix+kioskID)
+}
+
+// VerifyAdminPin déchiffre admin_pin_encrypted et compare en temps constant
+// au PIN fourni — la borne est déjà authentifiée (KioskAuth), ce PIN ne fait
+// que déverrouiller l'écran admin local. Rate-limité par borne (pas par
+// merchant) : 5 tentatives puis 30s de lockout, voir docs/KIOSK_DECISIONS.md.
+// Une erreur de déchiffrement (clé KIOSK_PIN_ENCRYPTION_KEY absente/invalide,
+// ciphertext corrompu) est propagée telle quelle — ce n'est pas un PIN
+// invalide, c'est une erreur de configuration serveur, jamais comptée dans
+// le lockout.
+func (s *Service) VerifyAdminPin(ctx context.Context, kiosk *AuthenticatedKiosk, pin string) (*VerifyAdminPinResponse, error) {
+	if delay := s.checkAdminPinLockout(ctx, kiosk.KioskID); delay > 0 {
+		return nil, &AdminPinLockoutError{DelaySeconds: int(delay.Seconds())}
+	}
+
+	row, err := s.repo.GetKioskByIDForMerchant(ctx, kiosk.MerchantID, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, models.ErrKioskNotFound
+	}
+	if len(row.AdminPinEncrypted) == 0 {
+		s.incrementAdminPinLockout(ctx, kiosk.KioskID)
+		return nil, models.ErrKioskAdminPinInvalid
+	}
+
+	decrypted, err := helpers.Decrypt(row.AdminPinEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("kiosk verify admin pin: decrypt: %w", err)
+	}
+
+	if subtle.ConstantTimeCompare([]byte(decrypted), []byte(pin)) != 1 {
+		s.incrementAdminPinLockout(ctx, kiosk.KioskID)
+		return nil, models.ErrKioskAdminPinInvalid
+	}
+
+	s.resetAdminPinLockout(ctx, kiosk.KioskID)
+	return &VerifyAdminPinResponse{Valid: true}, nil
+}
+
+// GetAdminPin (back-office) déchiffre et retourne le PIN admin courant d'une
+// borne — consultation depuis le POS, sans le régénérer. 404 dédié si la
+// borne n'a jamais eu de PIN chiffré en base (créée avant cette
+// fonctionnalité, ou régénération jamais effectuée).
+func (s *Service) GetAdminPin(ctx context.Context, merchantID, kioskID string) (*AdminPinResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+	if len(kiosk.AdminPinEncrypted) == 0 {
+		return nil, models.ErrKioskAdminPinNotConfigured
+	}
+
+	adminPin, err := helpers.Decrypt(kiosk.AdminPinEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("kiosk get admin pin: decrypt: %w", err)
+	}
+
+	return &AdminPinResponse{AdminPin: adminPin}, nil
+}
+
+// RegenerateAdminPin (back-office) génère un nouveau PIN admin pour une
+// borne — utile si le technicien a perdu le PIN initial reçu une seule fois
+// à l'enrôlement, ou si la borne est suspectée compromise. Retourné en clair
+// une seule fois, même pattern que EnrollResponse.AdminPin.
+func (s *Service) RegenerateAdminPin(ctx context.Context, merchantID, kioskID string) (*AdminPinResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+
+	adminPin, err := generateAdminPin()
+	if err != nil {
+		return nil, fmt.Errorf("kiosk admin: generate admin pin: %w", err)
+	}
+	adminPinEncrypted, err := helpers.Encrypt(adminPin)
+	if err != nil {
+		return nil, fmt.Errorf("kiosk admin: encrypt admin pin: %w", err)
+	}
+
+	if err := s.repo.UpdateKioskAdminPinEncrypted(ctx, kiosk.ID, adminPinEncrypted); err != nil {
+		return nil, err
+	}
+
+	return &AdminPinResponse{AdminPin: adminPin}, nil
 }
 
 // RevokeKiosk révoque immédiatement une borne : tous ses refresh tokens
@@ -341,9 +547,10 @@ func (s *Service) GetKioskDevice(ctx context.Context, merchantID, kioskID string
 // UpdateKioskDeviceName renomme une borne (seul champ éditable pour
 // l'instant côté back-office).
 func (s *Service) UpdateKioskDeviceName(ctx context.Context, merchantID, kioskID, name string) (*KioskDeviceResponse, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, models.ErrInvalidInput
+	if err := validateKioskName(name); err != nil {
+		return nil, err
 	}
+	name = strings.TrimSpace(name)
 
 	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
@@ -391,6 +598,7 @@ func (s *Service) EnableKioskDevice(ctx context.Context, merchantID, kioskID str
 		return nil, err
 	}
 	kiosk.Status, kiosk.Enabled = "active", true
+	s.broadcastKioskStatus(merchantID, kiosk.ID, true, "backoffice")
 	resp := toKioskDeviceResponse(kiosk)
 	return &resp, nil
 }
@@ -411,8 +619,113 @@ func (s *Service) DisableKioskDevice(ctx context.Context, merchantID, kioskID st
 		return nil, err
 	}
 	kiosk.Status, kiosk.Enabled = "inactive", false
+	s.broadcastKioskStatus(merchantID, kiosk.ID, false, "backoffice")
 	resp := toKioskDeviceResponse(kiosk)
 	return &resp, nil
+}
+
+// SetKioskStatusFromPOS active/désactive une borne depuis l'app POS Flutter
+// (staff en salle, pas le back-office web) — même mécanique que
+// Enable/DisableKioskDevice (quota vérifié uniquement à l'activation), avec
+// triggered_by = "pos" dans l'event diffusé.
+func (s *Service) SetKioskStatusFromPOS(ctx context.Context, merchantID, kioskID string, enabled bool) (*KioskDeviceResponse, error) {
+	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
+	if err != nil {
+		return nil, err
+	}
+	if kiosk == nil {
+		return nil, models.ErrKioskNotFound
+	}
+
+	status := "inactive"
+	if enabled {
+		status = "active"
+		if kiosk.Status != "active" {
+			maxKiosks, err := s.repo.GetMerchantMaxKiosks(ctx, merchantID)
+			if err != nil {
+				return nil, err
+			}
+			activeCount, err := s.repo.GetActiveKioskCount(ctx, merchantID)
+			if err != nil {
+				return nil, err
+			}
+			if activeCount >= maxKiosks {
+				return nil, models.ErrKioskMaxKiosksReached
+			}
+		}
+	}
+
+	if err := s.repo.SetKioskStatusEnabled(ctx, kiosk.ID, status, enabled); err != nil {
+		return nil, err
+	}
+	kiosk.Status, kiosk.Enabled = status, enabled
+	s.broadcastKioskStatus(merchantID, kiosk.ID, enabled, "pos")
+	resp := toKioskDeviceResponse(kiosk)
+	return &resp, nil
+}
+
+// validKioskUnavailableReasons — voir docs/KIOSK_DECISIONS.md, payload
+// kiosk_unavailable.
+var validKioskUnavailableReasons = map[string]bool{
+	"connection_lost": true,
+	"app_error":       true,
+	"manual":          true,
+}
+
+// ReportUnavailable est appelé par la borne elle-même (pas le POS/back-office)
+// quand elle détecte un problème (ex. perte réseau récupérée, erreur
+// critique côté app). Persiste last_error/last_error_at pour le support
+// distant (table kiosks) et diffuse kiosk_unavailable sur le hub WebSocket du
+// merchant — best-effort, ça n'altère jamais kiosks.status/enabled (la borne
+// reste "active" : elle signale un souci, elle ne se désactive pas elle-même).
+func (s *Service) ReportUnavailable(ctx context.Context, kiosk *AuthenticatedKiosk, reason string) error {
+	if !validKioskUnavailableReasons[reason] {
+		return models.ErrInvalidInput
+	}
+
+	row, err := s.repo.GetKioskByIDForMerchant(ctx, kiosk.MerchantID, kiosk.KioskID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return models.ErrKioskNotFound
+	}
+
+	if err := s.repo.UpdateKioskLastError(ctx, row.ID, reason); err != nil {
+		return err
+	}
+
+	if s.notificationSvc != nil {
+		s.notificationSvc.BroadcastToMerchant(kiosk.MerchantID, map[string]interface{}{
+			"type":     notification.WSEventKioskUnavailable,
+			"kiosk_id": kiosk.KioskID,
+			"reason":   reason,
+		})
+	}
+
+	return nil
+}
+
+// broadcastKioskStatus diffuse kiosk_status_changed sur le hub WebSocket du
+// merchant (voir docs/KIOSK_DECISIONS.md) — extrait pour être appelé aussi
+// bien par le flux POS que par le flux back-office, sans dupliquer le
+// payload. Best-effort : le hub WebSocket n'est qu'un canal temps réel, le
+// heartbeat (RecordHeartbeat) reste le mécanisme de fallback fiable.
+func (s *Service) broadcastKioskStatus(merchantID, kioskID string, enabled bool, triggeredBy string) {
+	if s.notificationSvc == nil {
+		return
+	}
+	status := "inactive"
+	if enabled {
+		status = "active"
+	}
+	s.notificationSvc.BroadcastToMerchant(merchantID, map[string]interface{}{
+		"type":         notification.WSEventKioskStatusChanged,
+		"kiosk_id":     kioskID,
+		"status":       status,
+		"enabled":      enabled,
+		"triggered_by": triggeredBy,
+	})
 }
 
 // ListEnrollmentCodes liste les codes d'enrôlement en attente (non utilisés,
@@ -483,6 +796,7 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		IdleImageURL:         row.IdleImageURL,
 		IdleVideoURL:         row.IdleVideoURL,
 		PrimaryColor:         row.PrimaryColor,
+		BusinessName:         row.BusinessName,
 	}, nil
 }
 

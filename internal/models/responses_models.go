@@ -328,6 +328,11 @@ var (
 	ErrKioskEnrollmentCodeNotFound    = errors.New("kiosk_enrollment_code_not_found")
 	ErrKioskEnrollmentCodeAlreadyUsed = errors.New("kiosk_enrollment_code_already_used")
 	ErrKioskInvalidColor              = errors.New("kiosk_invalid_color")
+
+	// Erreurs du module Kiosk — PIN admin par borne et nom obligatoire à l'enrôlement
+	ErrKioskNameInvalid           = errors.New("kiosk_name_invalid")
+	ErrKioskAdminPinInvalid       = errors.New("kiosk_admin_pin_invalid")
+	ErrKioskAdminPinNotConfigured = errors.New("kiosk_admin_pin_not_configured")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1047,6 +1052,21 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "kiosk_invalid_color"
 		errorMsg = "primary_color must be null or a valid hex color (#RRGGBB)."
+
+	case errors.Is(err, ErrKioskNameInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_name_invalid"
+		errorMsg = "name is required and must be at most 100 characters."
+
+	case errors.Is(err, ErrKioskAdminPinInvalid):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_admin_pin_invalid"
+		errorMsg = "The admin PIN is invalid."
+
+	case errors.Is(err, ErrKioskAdminPinNotConfigured):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_admin_pin_not_configured"
+		errorMsg = "This kiosk has no admin PIN configured yet. Regenerate one via POST .../regenerate-admin-pin."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

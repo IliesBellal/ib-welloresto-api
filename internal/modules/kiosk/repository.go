@@ -43,26 +43,29 @@ func (r *Repository) GetEnrollmentCodeByHash(ctx context.Context, codeHash strin
 // CreateKiosk insère une nouvelle borne en statut "active". kioskID est
 // généré par l'appelant (Service.EnrollDevice, via
 // helpers.GeneratePrefixedID(helpers.KioskIDPrefix)) — le repository ne
-// génère plus d'identifiant.
-func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name, hardwareModel, osVersion string) (*KioskRow, error) {
+// génère plus d'identifiant. adminPinEncrypted est déjà chiffré par
+// l'appelant (helpers.Encrypt, AES-256-GCM) — le PIN en clair n'existe jamais
+// côté repository.
+func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name, hardwareModel, osVersion string, adminPinEncrypted []byte) (*KioskRow, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	INSERT INTO kiosks (id, merchant_id, name, hardware_model, os_version, status)
-	VALUES (?, ?, ?, ?, ?, 'active')`
+	INSERT INTO kiosks (id, merchant_id, name, hardware_model, os_version, admin_pin_encrypted, status)
+	VALUES (?, ?, ?, ?, ?, ?, 'active')`
 
-	if _, err := db.ExecContext(ctx, query, kioskID, merchantID, name, hardwareModel, osVersion); err != nil {
+	if _, err := db.ExecContext(ctx, query, kioskID, merchantID, name, hardwareModel, osVersion, adminPinEncrypted); err != nil {
 		return nil, err
 	}
 
 	return &KioskRow{
-		ID:            kioskID,
-		MerchantID:    merchantID,
-		Name:          name,
-		Status:        "active",
-		HardwareModel: &hardwareModel,
-		OSVersion:     &osVersion,
-		Enabled:       true,
+		ID:                kioskID,
+		MerchantID:        merchantID,
+		Name:              name,
+		Status:            "active",
+		HardwareModel:     &hardwareModel,
+		OSVersion:         &osVersion,
+		AdminPinEncrypted: adminPinEncrypted,
+		Enabled:           true,
 	}, nil
 }
 
@@ -150,6 +153,17 @@ func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID string, a
 	return err
 }
 
+// UpdateKioskLastError enregistre la dernière erreur signalée par la borne
+// elle-même (kiosk_unavailable) — visibilité support distant, voir
+// docs/KIOSK_DECISIONS.md table kiosks.
+func (r *Repository) UpdateKioskLastError(ctx context.Context, kioskID, reason string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `UPDATE kiosks SET last_error = ?, last_error_at = UTC_TIMESTAMP() WHERE id = ?`
+	_, err := db.ExecContext(ctx, query, reason, kioskID)
+	return err
+}
+
 // UpdateKioskStatus met à jour le statut d'une borne (ex. "revoked").
 func (r *Repository) UpdateKioskStatus(ctx context.Context, kioskID string, status string) error {
 	db := dbutils.GetDB(ctx, r.database)
@@ -167,14 +181,14 @@ func (r *Repository) GetKioskByID(ctx context.Context, kioskID string) (*KioskRo
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, admin_pin_encrypted, os_version,
 	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
 	WHERE id = ?`
 
 	row := KioskRow{}
 	err := db.QueryRowContext(ctx, query, kioskID).Scan(
-		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
+		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.AdminPinEncrypted, &row.OSVersion,
 		&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -194,14 +208,14 @@ func (r *Repository) GetKioskByIDForMerchant(ctx context.Context, merchantID, ki
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, admin_pin_encrypted, os_version,
 	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
 	WHERE merchant_id = ? AND id = ?`
 
 	row := KioskRow{}
 	err := db.QueryRowContext(ctx, query, merchantID, kioskID).Scan(
-		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.OSVersion,
+		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.AdminPinEncrypted, &row.OSVersion,
 		&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -252,6 +266,17 @@ func (r *Repository) UpdateKioskName(ctx context.Context, kioskID, name string) 
 	db := dbutils.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `UPDATE kiosks SET name = ? WHERE id = ?`, name, kioskID)
+	return err
+}
+
+// UpdateKioskAdminPinEncrypted remplace le PIN admin chiffré d'une borne
+// (régénération back-office, voir Service.RegenerateAdminPin). Le
+// chiffrement est déjà fait par l'appelant (helpers.Encrypt) — le repository
+// ne manipule jamais le PIN en clair.
+func (r *Repository) UpdateKioskAdminPinEncrypted(ctx context.Context, kioskID string, adminPinEncrypted []byte) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `UPDATE kiosks SET admin_pin_encrypted = ? WHERE id = ?`, adminPinEncrypted, kioskID)
 	return err
 }
 
@@ -451,15 +476,41 @@ func defaultKioskSettingsRow(merchantID string) *KioskSettingsRow {
 
 // GetKioskSettings récupère les paramètres Kiosk d'un merchant, ou les
 // valeurs par défaut si la ligne n'existe pas encore — jamais sql.ErrNoRows.
+// BusinessName vient toujours de la table merchant (jamais de kiosk_settings),
+// donc il est attaché que la ligne kiosk_settings existe ou non.
 func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*KioskSettingsRow, error) {
 	row, err := r.GetSettingsByMerchant(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}
 	if row == nil {
-		return defaultKioskSettingsRow(merchantID), nil
+		row = defaultKioskSettingsRow(merchantID)
 	}
+
+	businessName, err := r.getMerchantBusinessName(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	row.BusinessName = businessName
+
 	return row, nil
+}
+
+// getMerchantBusinessName récupère merchant.fullName — utilisé pour le
+// bandeau d'accueil du Menu côté borne (kiosk_settings n'a pas cette
+// information, voir docs/KIOSK_DECISIONS.md).
+func (r *Repository) getMerchantBusinessName(ctx context.Context, merchantID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var fullName *string
+	err := db.QueryRowContext(ctx, `SELECT fullName FROM merchant WHERE id = ?`, merchantID).Scan(&fullName)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fullName, nil
 }
 
 // GetAvailableKioskProductIDs filtre productIDs et ne retourne que ceux qui

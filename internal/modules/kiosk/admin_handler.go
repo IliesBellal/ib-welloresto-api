@@ -213,6 +213,102 @@ func (h *AdminHandler) DisableKioskDevice(w http.ResponseWriter, r *http.Request
 	models.SendJSON(w, http.StatusOK, "kiosk", "disable_kiosk_device", resp)
 }
 
+// GetAdminPin handles GET /pos/settings/kiosk/devices/{device_id}/admin-pin
+// — consultation du PIN admin courant depuis le POS (déchiffré à la volée,
+// jamais stocké en clair). 404 dédié si la borne n'a pas encore de PIN
+// chiffré en base (borne créée avant cette fonctionnalité) : le message
+// invite à régénérer plutôt que de laisser un 500 ambigu.
+func (h *AdminHandler) GetAdminPin(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", "get_admin_pin", models.ErrUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "device_id")
+	if deviceID == "" {
+		models.SendErrorJSON(w, "kiosk", "get_admin_pin", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.GetAdminPin(ctx, user.MerchantID, deviceID)
+	if err != nil {
+		log.Warn("kiosk admin: get admin pin failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "get_admin_pin", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "get_admin_pin", resp)
+}
+
+// RegenerateAdminPin handles POST /pos/settings/kiosk/devices/{device_id}/regenerate-admin-pin
+// — utile si le technicien a perdu le PIN admin reçu une seule fois à
+// l'enrôlement. Le nouveau PIN n'est lui aussi retourné qu'une seule fois.
+func (h *AdminHandler) RegenerateAdminPin(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", "regenerate_admin_pin", models.ErrUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "device_id")
+	if deviceID == "" {
+		models.SendErrorJSON(w, "kiosk", "regenerate_admin_pin", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.RegenerateAdminPin(ctx, user.MerchantID, deviceID)
+	if err != nil {
+		log.Warn("kiosk admin: regenerate admin pin failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "regenerate_admin_pin", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "regenerate_admin_pin", resp)
+}
+
+// SetKioskStatusFromPOS handles POST /pos/kiosk/{kiosk_id}/status — activation
+// /désactivation d'une borne depuis l'app POS Flutter (staff en salle), pas
+// depuis le back-office web (voir EnableKioskDevice/DisableKioskDevice).
+// triggered_by = "pos" dans l'event kiosk_status_changed diffusé.
+func (h *AdminHandler) SetKioskStatusFromPOS(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_status_from_pos", models.ErrUnauthorized)
+		return
+	}
+
+	kioskID := chi.URLParam(r, "kiosk_id")
+	if kioskID == "" {
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_status_from_pos", models.ErrMissingResourceID)
+		return
+	}
+
+	var req SetKioskStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_status_from_pos", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.SetKioskStatusFromPOS(ctx, user.MerchantID, kioskID, req.Enabled)
+	if err != nil {
+		log.Warn("kiosk pos: set status failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_status_from_pos", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "set_kiosk_status_from_pos", resp)
+}
+
 func (h *AdminHandler) ListEnrollmentCodes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

@@ -60,6 +60,14 @@ const (
 	MaxDiscountUnitQuantity MaxDiscountUnit = "QUANTITY"
 )
 
+// DiscountScope distinguishes product-level discounts from cart-wide (codes promo panier) discounts.
+type DiscountScope string
+
+const (
+	DiscountScopeProduct    DiscountScope = "PRODUCT"
+	DiscountScopeOrderTotal DiscountScope = "ORDER_TOTAL"
+)
+
 // DiscountProduct represents a product associated with a discount and its custom price
 type DiscountProduct struct {
 	ID         string `json:"id"`
@@ -104,6 +112,11 @@ type Discount struct {
 	CreationDate       time.Time          `json:"creation_date"` // UTC
 	Products           []DiscountProduct  `json:"products,omitempty"`
 	Schedules          []DiscountSchedule `json:"schedules,omitempty"`
+
+	// Codes promo panier (Sprint 2)
+	DiscountScope             DiscountScope `json:"discount_scope"`
+	MaxRedemptions            *int          `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int          `json:"max_redemptions_per_customer,omitempty"`
 }
 
 // CreateDiscountRequest is the payload for creating a discount
@@ -128,6 +141,9 @@ type CreateDiscountRequest struct {
 	Available          bool                    `json:"available"`
 	Products           []CreateProductRequest  `json:"products,omitempty"`
 	Schedules          []CreateScheduleRequest `json:"schedules,omitempty"`
+	DiscountScope             DiscountScope `json:"discount_scope,omitempty"`
+	MaxRedemptions            *int          `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int          `json:"max_redemptions_per_customer,omitempty"`
 }
 
 // CreateProductRequest represents product data for discount creation
@@ -192,6 +208,9 @@ type CreateDiscountRequestHelper struct {
 	Available          bool                    `json:"available"`
 	Products           []CreateProductRequest  `json:"products,omitempty"`
 	Schedules          []CreateScheduleRequest `json:"schedules,omitempty"`
+	DiscountScope             DiscountScope `json:"discount_scope,omitempty"`
+	MaxRedemptions            *int          `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int          `json:"max_redemptions_per_customer,omitempty"`
 }
 
 // UnmarshalJSON for CreateDiscountRequest handles date format parsing
@@ -222,6 +241,12 @@ func (r *CreateDiscountRequest) UnmarshalJSON(data []byte) error {
 	r.Available = helper.Available
 	r.Products = helper.Products
 	r.Schedules = helper.Schedules
+	r.DiscountScope = helper.DiscountScope
+	if r.DiscountScope == "" {
+		r.DiscountScope = DiscountScopeProduct
+	}
+	r.MaxRedemptions = helper.MaxRedemptions
+	r.MaxRedemptionsPerCustomer = helper.MaxRedemptionsPerCustomer
 
 	// Parse ValidFrom (YYYY-MM-DD format)
 	if t, err := time.Parse("2006-01-02", helper.ValidFrom); err == nil {
@@ -259,6 +284,9 @@ type UpdateDiscountRequest struct {
 	Available          *bool                   `json:"available,omitempty"`
 	Products           []CreateProductRequest  `json:"products,omitempty"`  // If provided, replaces all
 	Schedules          []CreateScheduleRequest `json:"schedules,omitempty"` // If provided, replaces all
+	DiscountScope             *DiscountScope `json:"discount_scope,omitempty"`
+	MaxRedemptions            *int           `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int           `json:"max_redemptions_per_customer,omitempty"`
 }
 
 // Validate checks the CreateDiscountRequest validity

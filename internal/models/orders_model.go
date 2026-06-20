@@ -163,6 +163,9 @@ type Order struct {
 	TTC               int64            `json:"TTC"`
 	TVA               *int64           `json:"TVA"`
 	HT                *int64           `json:"HT"`
+	CartDiscountID    *string          `json:"cart_discount_id,omitempty"`
+	CartDiscountCode  *string          `json:"cart_discount_code,omitempty"`
+	CartDiscountAmount int64           `json:"cart_discount_amount"`
 	PlacesSettings    *int64           `json:"places_settings"`
 	PagerNumber       *string          `json:"pager_number"`
 	IsPaid            bool             `json:"isPaid"`

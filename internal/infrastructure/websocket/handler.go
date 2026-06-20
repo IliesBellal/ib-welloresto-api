@@ -56,17 +56,35 @@ func websocketCloseText(code int) string {
 	}
 }
 
-// ServeWS gère la connexion WebSocket pour un client
+// ServeWS gère la connexion WebSocket pour un client humain authentifié
+// (POS, back-office) — auth via middleware.Auth (middleware.GetUser).
 func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	// Récupérer le user depuis le contexte
 	user := middleware.GetUser(r)
 	if user == nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	serveWS(hub, w, r, user.MerchantID)
+}
+
+// ServeKioskWS gère la connexion WebSocket d'une borne Kiosk — auth via
+// middleware.KioskAuth (middleware.GetKiosk), distincte de l'auth humaine.
+// Réutilise le même Hub (clé par merchantID, indifférent à l'origine de la
+// connexion) : la borne reçoit donc les mêmes events que le POS/back-office
+// du même merchant (menu_updated, availability_update, device_command,
+// kiosk_status_changed, ...), voir docs/KIOSK_DECISIONS.md incrément 7.
+func ServeKioskWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	kiosk := middleware.GetKiosk(r)
+	if kiosk == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	serveWS(hub, w, r, kiosk.MerchantID)
+}
+
+func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID string) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
 
 	// Upgrader la connexion HTTP en WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -83,7 +101,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	connID := uuid.New().String()
 	clientLog := log.With(
-		zap.String("merchant_id", user.MerchantID),
+		zap.String("merchant_id", merchantID),
 		zap.String("conn_id", connID),
 		zap.String("remote_addr", r.RemoteAddr),
 		zap.String("origin", r.Header.Get("Origin")),
@@ -93,7 +111,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// Créer un nouveau client avec un UUID unique
 	client := &Client{
 		conn:       conn,
-		merchantID: user.MerchantID,
+		merchantID: merchantID,
 		connID:     connID,
 		send:       make(chan []byte, 256),
 		startedAt:  time.Now(),

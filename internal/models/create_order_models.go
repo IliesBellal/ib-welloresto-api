@@ -45,6 +45,11 @@ type OrderRequest struct {
 	BookingID                   *string               `json:"booking_id,omitempty"`
 	Currency                    *string               `json:"currency"`
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
+
+	// Code promo panier (discount_scope = ORDER_TOTAL), affecté par applyCartDiscount.
+	CartDiscountID     *string `json:"cart_discount_id,omitempty"`
+	CartDiscountCode   string  `json:"cart_discount_code,omitempty"`
+	CartDiscountAmount int     `json:"cart_discount_amount"` // en centimes, toujours >= 0
 }
 
 type CustomerRequest struct {

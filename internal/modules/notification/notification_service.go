@@ -84,6 +84,23 @@ func (s *NotificationService) SendNotificationAsync(merchantID, orderID, nType s
 	return nil
 }
 
+// BroadcastToMerchant envoie un message WebSocket brut à tous les clients
+// connectés d'un merchant, sans passer par FCM — utilisé pour les events qui
+// n'ont pas vocation à déclencher une notification push mobile (ex.
+// kiosk_status_changed, kiosk_unavailable), contrairement à
+// SendNotificationAsync qui fait les deux. Retourne false si aucun client
+// n'était connecté pour recevoir le message.
+func (s *NotificationService) BroadcastToMerchant(merchantID string, payload map[string]interface{}) bool {
+	if s.hub == nil {
+		return false
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	return s.hub.BroadcastToMerchant(merchantID, payloadJSON)
+}
+
 func (s *NotificationService) SendNotificationAsyncWithPayload(
 	merchantID string,
 	nType string,

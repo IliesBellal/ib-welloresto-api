@@ -360,6 +360,10 @@ type DBDiscount struct {
 	IsCumulative       bool     `json:"is_cumulative"` // true/false
 	Available          bool     `json:"available"`
 	PreferredOrder     int      `json:"prefered_order"`
+	// Codes promo panier (Sprint 2) : discount_scope = "PRODUCT" (défaut) ou "ORDER_TOTAL".
+	DiscountScope             string `json:"discount_scope,omitempty"`
+	MaxRedemptions            *int   `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int   `json:"max_redemptions_per_customer,omitempty"`
 	// RelatedProducts: product -> new_price (if unit NEWPRICE) or presence for discount targeting
 	RelatedProductIDs []int64                       `json:"related_products_ids,omitempty"`
 	RelatedProducts   map[int64]DiscountProductInfo `json:"related_products,omitempty"` // key = product_id
@@ -377,6 +381,19 @@ type DiscountOptionInfo struct {
 	OptionID          string `json:"option_id"`
 	IsOptionMandatory bool   `json:"is_option_mandatory"`
 	NewPrice          *int   `json:"new_price,omitempty"`
+}
+
+// DiscountRedemption trace l'utilisation effective d'un code promo panier sur une commande.
+// Une ligne par (discount_id, order_id), insérée uniquement à la création de la commande
+// (jamais lors d'un simple ComputePricing/validate).
+type DiscountRedemption struct {
+	ID                 int64     `json:"id"`
+	DiscountID         string    `json:"discount_id"`
+	OrderID            string    `json:"order_id"`
+	MerchantID         string    `json:"merchant_id"`
+	CustomerID         *string   `json:"customer_id,omitempty"`
+	AmountAppliedCents int       `json:"amount_applied_cents"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // DBReward représente une reward utilisateur (customer reward) et les produits liés.

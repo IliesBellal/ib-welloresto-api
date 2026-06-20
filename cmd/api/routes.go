@@ -1102,6 +1102,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.KioskAuth(kioskService))
 			r.Post("/auth/heartbeat", kioskHandler.DeviceHeartbeat)
+			r.Post("/auth/verify-admin-pin", kioskHandler.VerifyAdminPin)
 
 			r.Get("/menu", kioskHandler.GetKioskMenu)
 			r.Get("/products/{product_id}", kioskHandler.GetKioskProduct)
@@ -1112,8 +1113,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/orders/{order_id}", kioskHandler.GetKioskOrder)
 			r.Delete("/orders/{order_id}", kioskHandler.CancelKioskOrder)
 			r.Post("/orders/{order_id}/counter-payment", kioskHandler.ConfirmCounterPayment)
+			r.Post("/status/unavailable", kioskHandler.ReportUnavailable)
 		})
 	})
+
+	// --- KIOSK (POS Flutter, staff) ---
+	r.With(authMiddleware).Post("/pos/kiosk/{kiosk_id}/status", kioskAdminHandler.SetKioskStatusFromPOS)
 
 	// --- KIOSK (back-office) ---
 	r.Route("/pos/settings/kiosk", func(r chi.Router) {
@@ -1130,6 +1135,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/devices/{device_id}/disable", kioskAdminHandler.DisableKioskDevice)
 		r.Post("/devices/{device_id}/revoke", kioskAdminHandler.RevokeKioskDevice)
 
+		// PIN admin : expose un secret en clair (déchiffré) — protégé par
+		// HasSettingsAccess en plus de authMiddleware, contrairement aux
+		// autres routes /pos/settings/kiosk/* qui n'ont aucune permission
+		// dédiée, voir docs/KIOSK_DECISIONS.md.
+		r.With(middleware.RequirePermission(middleware.HasSettingsAccess)).Get("/devices/{device_id}/admin-pin", kioskAdminHandler.GetAdminPin)
+		r.With(middleware.RequirePermission(middleware.HasSettingsAccess)).Post("/devices/{device_id}/regenerate-admin-pin", kioskAdminHandler.RegenerateAdminPin)
+
 		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
 		r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)
 		r.Post("/settings/logo", kioskAdminHandler.UploadKioskLogo)
@@ -1143,6 +1155,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			websocket.ServeWS(wsHub, w, r)
+		})
+	})
+
+	// --- WEBSOCKET (Kiosk device) ---
+	r.Route("/ws-kiosk", func(r chi.Router) {
+		r.Use(middleware.KioskAuth(kioskService))
+
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			websocket.ServeKioskWS(wsHub, w, r)
 		})
 	})
 

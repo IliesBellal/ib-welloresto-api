@@ -634,8 +634,13 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 		if d.DiscountOrderType != "" && !strings.Contains(d.DiscountOrderType, req.Order.OrderType) {
 			continue
 		}
-		if req.DiscountCode != "" && d.DiscountCode != nil && *d.DiscountCode != req.DiscountCode {
-			continue
+		// Bug fix: une remise protégée par un code (discount_code non nul) ne doit jamais
+		// s'appliquer sans saisie du code exact, sinon elle s'appliquait par défaut quand
+		// req.DiscountCode était vide.
+		if d.DiscountCode != nil {
+			if req.DiscountCode == "" || req.DiscountCode != *d.DiscountCode {
+				continue
+			}
 		}
 		if discountAlreadyApplied && !d.IsCumulative {
 			continue
@@ -715,6 +720,24 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 							calculatedPrice = sp.Price
 						}
 					}
+
+					// Bug fix: plafonner le montant de la remise par MaxDiscountValue/MaxDiscountUnit
+					// (jusqu'ici uniquement appliqué aux rewards, jamais aux discounts produit).
+					if d.MaxDiscountValue != nil && *d.MaxDiscountValue > 0 {
+						discountAmount := sp.Price - calculatedPrice
+						var maxDiscount int
+						if d.MaxDiscountUnit != nil && *d.MaxDiscountUnit == "PERCENTAGE" {
+							maxDiscount = int(float64(sp.Price) * (*d.MaxDiscountValue) / 100.0)
+						} else {
+							maxDiscount = int(*d.MaxDiscountValue)
+						}
+						if discountAmount > maxDiscount {
+							calculatedPrice = sp.Price - maxDiscount
+						}
+					}
+
+					// Bug fix: un prix unitaire remisé ne doit jamais être négatif (Stripe rejette unit_amount < 0).
+					calculatedPrice = int(math.Max(0, float64(calculatedPrice)))
 
 					// Sécurisation des pointeurs : on crée de nouvelles adresses mémoire
 					// pour que chaque produit ait sa propre instance de prix et d'ID

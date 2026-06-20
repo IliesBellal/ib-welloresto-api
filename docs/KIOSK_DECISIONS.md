@@ -1078,6 +1078,8 @@ nécessaire pour `RefreshDeviceToken`, où l'appartenance au merchant est
 déjà garantie par la résolution du refresh token (pas besoin d'un second
 contrôle merchant à ce point).
 
+---
+
 ### Tests manuels incrément 5
 
 Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
@@ -1114,4 +1116,431 @@ curl -s -X POST "$BASE_URL/kiosk/auth/token/refresh" -H "Content-Type: applicati
 # 4. Révocation puis vérification que le device_id reste utilisable pour le lookup back-office
 curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/revoke" -H "Authorization: Bearer $USER_TOKEN"
 curl -s "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID" -H "Authorization: Bearer $USER_TOKEN"
+```
+
+---
+
+## Incrément 6 — statut kiosk temps réel (WebSocket)
+
+### Événements WebSocket ajoutés
+
+Constantes déclarées dans `internal/modules/notification/notification_models.go`
+(même fichier que `NotificationTypeOrderUpdate`, seul endroit où des "types
+d'événements WS" étaient déjà typés dans le projet — pas de fichier dédié WS
+event créé pour rester cohérent avec l'existant) :
+
+```go
+const (
+    WSEventKioskStatusChanged = "kiosk_status_changed"
+    WSEventKioskUnavailable   = "kiosk_unavailable"
+)
+```
+
+**`kiosk_status_changed`** — POS ou back-office vers la borne (en pratique :
+diffusé à tous les clients WebSocket connectés du merchant, voir limite
+ci-dessous) :
+```json
+{
+    "type": "kiosk_status_changed",
+    "kiosk_id": "kiosk-...",
+    "status": "active" | "inactive",
+    "enabled": true | false,
+    "triggered_by": "pos" | "backoffice"
+}
+```
+
+**`kiosk_unavailable`** — la borne vers le hub :
+```json
+{
+    "type": "kiosk_unavailable",
+    "kiosk_id": "kiosk-...",
+    "reason": "connection_lost" | "app_error" | "manual"
+}
+```
+
+### Diffusion : `NotificationService.BroadcastToMerchant` (nouvelle méthode)
+
+Le hub WebSocket existant (`internal/infrastructure/websocket`) ne connaît
+que `merchantID -> connID -> *Client` — pas de canal par device, voir
+`ARCHITECTURE_API.md` §10.2. Aucune modification du Hub n'a été nécessaire
+(confirmé conforme à §10.4) : `NotificationService.BroadcastToMerchant(merchantID,
+payload map[string]interface{}) bool` sérialise le payload et appelle
+`hub.BroadcastToMerchant` — même mécanisme que celui déjà utilisé en interne
+par `SendNotificationAsync`, mais exposé publiquement et **sans** le volet
+FCM (ces deux events ne déclenchent pas de notification push mobile,
+seulement un rafraîchissement temps réel du POS/back-office déjà ouvert).
+`kiosk.Service.broadcastKioskStatus`/`ReportUnavailable` appellent cette
+méthode — best-effort, ne bloque jamais la mutation DB qui précède (si aucun
+client n'est connecté, l'event est simplement perdu, voir fallback heartbeat
+ci-dessous).
+
+### Pas de nouvelle authentification WebSocket pour les bornes
+
+Le brief soulevait la question d'un WebSocket dédié aux bornes (auth device
+≠ auth humaine, voir `ServeWS` qui exige `middleware.GetUser(r)`). **Décision :
+aucun nouveau WebSocket kiosk.** Une borne physique n'a aujourd'hui aucune
+raison de recevoir des messages WS — elle n'a pas d'écran de supervision
+multi-commandes à rafraîchir en push (son propre statut, elle peut le
+redemander via heartbeat). Construire une seconde variante du Hub avec un
+schéma d'auth différent (token kiosk auto-porteur vs `*auth.UserLoginRow`)
+aurait dupliqué `Client`/`Register`/`Unregister`/`BroadcastToMerchant` pour
+un besoin non confirmé. Conséquence pratique :
+- `kiosk_status_changed` est reçu par les clients WS déjà connectés du
+  merchant (POS, back-office) — **pas par la borne elle-même**, qui n'a pas
+  de connexion WS. C'est le **heartbeat** (`POST /kiosk/auth/heartbeat`,
+  toutes les 5 min côté Flutter) qui sert de mécanisme de fallback pour que
+  la borne apprenne son propre statut — voir ci-dessous. Latence max avant
+  qu'une borne désactivée à distance arrête réellement de prendre des
+  commandes : la durée d'un cycle de heartbeat (5 min), sauf si une future
+  itération ajoute un canal direct.
+- `kiosk_unavailable` est **émis** par la borne via un nouvel endpoint REST
+  protégé `KioskAuth` (`POST /kiosk/status/unavailable`), pas via une
+  connexion WebSocket sortante de la borne — cohérent avec le choix
+  ci-dessus (la borne ne parle qu'en REST authentifié par son access token,
+  jamais en WS).
+
+### `POST /pos/kiosk/{kiosk_id}/status` (POS Flutter, staff)
+
+`kioskAdminHandler.SetKioskStatusFromPOS`, protégé `authMiddleware` (même
+niveau de protection que les routes `/pos/settings/kiosk/*` existantes —
+**pas** de `RequirePermission` dédié ajouté : aucune des routes kiosk
+back-office actuelles n'en a, et le brief ne demande pas de restreindre
+au-delà de "staff authentifié", donc rester cohérent avec l'existant plutôt
+que d'introduire une permission Kiosk inédite sans avoir été demandée).
+Réutilise `Repository.SetKioskStatusEnabled` (même méthode que
+`Enable/DisableKioskDevice`, voir Incrément 1) et la vérification de quota
+`max_kiosks` à l'activation (même logique que `EnableKioskDevice`).
+`triggered_by = "pos"` dans l'event diffusé.
+
+### Extension de `EnableKioskDevice`/`DisableKioskDevice` (back-office web)
+
+Factorisation demandée par le brief : `broadcastKioskStatus(merchantID,
+kioskID, enabled, triggeredBy)` est l'unique point d'appel du broadcast,
+utilisé par les trois flux (POS, enable back-office, disable back-office) —
+aucune duplication du payload `kiosk_status_changed`. `triggered_by =
+"backoffice"` pour ces deux-là.
+
+### Extension du heartbeat
+
+`HeartbeatResponse` gagne `kiosk_status` et `enabled`, lus depuis la ligne
+`kiosks` déjà chargée par `RecordHeartbeat` (`GetKioskByIDForMerchant`,
+aucune requête SQL supplémentaire) :
+```json
+{ "commands": [], "kiosk_status": "active" | "inactive", "enabled": true | false }
+```
+Note : ce module n'a jamais eu de notion de `commands` (pas dans le scope de
+cet incrément, pas trouvé ailleurs dans le module Kiosk) — le champ
+`commands: []` mentionné dans le brief n'existe pas dans
+`HeartbeatResponse` actuel et n'a pas été ajouté ici (aucune commande à
+faire transiter par ce canal aujourd'hui) ; seuls `kiosk_status`/`enabled`
+ont été ajoutés, conformément au besoin réel exprimé (fallback de statut si
+le WebSocket est coupé).
+
+### Tests manuels incrément 6
+
+Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
+dans ce sandbox) : seul `go build ./...` a été vérifié (clean).
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token d'un user back-office/POS authentifié>"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+KIOSK_ID="kiosk-..."
+
+# 1. POS désactive une borne -> diffuse kiosk_status_changed (triggered_by=pos)
+# (ouvrir une connexion WS sur le merchant avant cet appel pour observer l'event)
+curl -s -X POST "$BASE_URL/pos/kiosk/$KIOSK_ID/status" -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" -d '{"enabled":false}'
+
+# 2. Heartbeat : la borne voit son statut même sans WebSocket
+curl -s -X POST "$BASE_URL/kiosk/auth/heartbeat" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" -d '{"app_version":"1.0.1"}'
+# -> { "data": { "status": "ok", "kiosk_status": "inactive", "enabled": false } }
+
+# 3. Back-office réactive -> triggered_by=backoffice
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/enable" -H "Authorization: Bearer $USER_TOKEN"
+
+# 4. La borne signale un problème -> diffuse kiosk_unavailable
+curl -s -X POST "$BASE_URL/kiosk/status/unavailable" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" -d '{"reason":"connection_lost"}'
+# -> { "data": { "status": "ok" } }, last_error/last_error_at mis à jour en base
+
+# 5. Reason invalide rejetée
+curl -s -X POST "$BASE_URL/kiosk/status/unavailable" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" -d '{"reason":"bogus"}'
+# -> 400 invalid_input
+```
+
+---
+
+## Incrément 7 — endpoint WebSocket dédié à la borne (`/ws-kiosk`)
+
+### Diagnostic ayant invalidé la décision de l'incrément 6
+
+L'incrément 6 concluait : "aucun nouveau WebSocket kiosk" car une borne n'a
+"aujourd'hui aucune raison de recevoir des messages WS". Cette hypothèse
+était fausse — vérifiée en relisant le code Flutter `wello-kiosk` réel : le
+service `WebSocketService` du Kiosk consomme déjà 5 événements (`menu_updated`,
+`availability_update`, `device_command`, `order_update`, `kiosk_status_changed`)
+et `MenuController` est bien câblé sur les trois premiers depuis le début.
+Sauf que `WebSocketService.connect()` s'authentifiait avec l'access token
+device sur `/ws`, qui n'accepte que `middleware.Auth` (lookup Redis d'un
+`users_rights.token` humain) — l'access token Kiosk (HMAC auto-porteur, jamais
+stocké en Redis) n'y correspond jamais : `ServeWS` renvoyait 401 avant même
+l'upgrade WebSocket. Donc **les 5 événements n'étaient jamais reçus par
+aucune borne en pratique**, malgré un code Flutter syntaxiquement correct —
+pas seulement `kiosk_status_changed` comme suspecté initialement.
+
+### Décision révisée : endpoint `/ws-kiosk`, même Hub, middleware différent
+
+Plutôt que documenter ce canal comme mort (option envisagée), un second
+point d'entrée WebSocket est ajouté : `/ws-kiosk`, protégé par
+`middleware.KioskAuth(kioskService)` au lieu de `authMiddleware`
+(`cmd/api/routes.go`). Aucune duplication du `Hub`/`Client`/`Register`/
+`Unregister`/`BroadcastToMerchant` — ces types sont déjà indifférents à
+l'origine de la connexion (clé `merchantID -> connID -> *Client`).
+`internal/infrastructure/websocket/handler.go` factorise désormais la
+logique d'upgrade dans `serveWS(hub, w, r, merchantID)`, appelée par :
+- `ServeWS` (inchangé pour l'appelant) : extrait `merchantID` via
+  `middleware.GetUser(r)`.
+- `ServeKioskWS` (nouveau) : extrait `merchantID` via
+  `middleware.GetKiosk(r)`.
+
+Conséquence : une borne reçoit désormais réellement tous les events broadcastés
+à son merchant, y compris ceux destinés au POS/back-office (pas de filtrage
+serveur par type de client) — c'est au client Flutter de filtrer, comme déjà
+documenté côté `WebSocketService` (filtrage par `kiosk_id`/`order_id` côté
+appelant, pas par le service).
+
+### Pourquoi pas un canal séparé par device
+
+Le `Hub` reste mono-canal par merchant (pas de canal par device) — une borne
+reçoit donc aussi les events des autres bornes/POS du même merchant (ex:
+`kiosk_status_changed` d'une autre borne, qu'elle ignore déjà côté client en
+comparant `kiosk_id`). Introduire un routage par device aurait été une
+sur-ingénierie pour un volume de bornes par merchant qui reste faible — à
+réévaluer si ce volume devient significatif.
+
+### Heartbeat conservé comme fallback (pas raccourci)
+
+Le heartbeat (`POST /kiosk/auth/heartbeat`, 5 min côté Flutter) reste à son
+intervalle actuel : avec `/ws-kiosk` fonctionnel, c'est désormais un
+mécanisme de repli (borne qui rate un event WS pendant une reconnexion), pas
+le canal primaire — la branche du brief qui demandait un raccourcissement à
+30s ne s'applique donc plus (elle ne s'appliquait qu'au scénario "WebSocket
+device impossible").
+
+### Tests manuels incrément 7
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+
+# Connexion WS device (wscat ou équivalent) :
+wscat -c "$BASE_URL/ws-kiosk/" -H "Authorization: Bearer $ACCESS_TOKEN"
+# -> connexion acceptée (pas de 401), contrairement à /ws/ avec ce même token
+
+# Pendant que la connexion est ouverte, déclencher un broadcast merchant
+# (ex: PUT /pos/settings/kiosk/devices/{id}/disable, ou tout event order_update
+# du même merchant) -> l'event correspondant doit apparaître sur la connexion.
+```
+
+---
+
+## Incrément 8 — nom obligatoire à l'enrôlement, PIN admin par borne
+
+### Nom de la borne : `name`, pas `device_name`
+
+Le brief demandait un champ `device_name`. Vérification faite : le contrat
+réel de `POST /kiosk/auth/enroll` (`EnrollRequest.Name`, JSON `name`) existait
+déjà depuis l'incrément 1, et le client Flutter `wello-kiosk`
+(`lib/data/models/enroll_request.dart`) envoie déjà `name` (pas
+`device_name`). Renommer le champ aurait cassé le client existant sans aucun
+bénéfice — **le champ reste `name`**, seule sa validation change :
+`validateKioskName` (`internal/modules/kiosk/service.go`) rejette désormais
+une valeur vide ou de plus de 100 caractères (limite de `kiosks.name
+VARCHAR(100)`, comptée en runes pour rester correcte avec des noms accentués)
+avec `400 kiosk_name_invalid`. Réutilisée aussi par
+`UpdateKioskDeviceName` (back-office), qui n'avait jusqu'ici qu'une
+vérification "non vide".
+
+### PIN admin par borne — chiffrement réversible, pas hash
+
+**Révision** : la v1 de cet incrément stockait `admin_pin_hash` (HMAC-SHA256,
+même pattern que `auth.pin_hash`) — un hash unidirectionnel ne permet par
+construction aucune relecture du PIN. Besoin produit confirmé entre-temps :
+le PIN doit pouvoir être **réaffiché depuis le POS** (technicien sans accès à
+la borne physique, ou qui n'a pas noté le PIN affiché une seule fois à
+l'enrôlement). Migration `migrations/todo/042_kiosk_admin_pin.up.sql` (encore
+non appliquée, modifiée en place plutôt que dupliquée en 043) :
+`kiosks.admin_pin_encrypted VARBINARY(255) NULL` à la place de
+`admin_pin_hash`.
+
+**Chiffrement réversible recherché dans le projet avant d'en créer un** :
+aucun mécanisme réutilisable trouvé. Les seuls secrets actuellement persistés
+en base (tokens Uber Eats `access_token`/`refresh_token`/`bearer_token` dans
+`integration_uber_eats`) sont stockés **en clair** (`VARCHAR`), pas chiffrés
+— rien à réutiliser. Le seul code AES existant du projet
+(`helpers.EncryptPHP`, `internal/helpers/services_helpers.go`) est un AES-128
+en mode **ECB** utilisé uniquement comme fallback de vérification de mot de
+passe (one-way, jamais déchiffré) — ECB n'a pas de nonce/IV et n'est pas
+adapté à un chiffrement réversible générique. **Nouveau helper créé** :
+`internal/helpers/encryption.go`, `Encrypt(plaintext string) ([]byte, error)`
+/ `Decrypt(ciphertext []byte) (string, error)`, AES-**256-GCM** (AEAD :
+authentifie l'intégrité du ciphertext en plus de le chiffrer, contrairement à
+ECB/CBC nu) — nonce de 12 octets généré aléatoirement à chaque appel et
+préfixé au ciphertext retourné (pas de colonne séparée pour le stocker).
+
+**Variable d'environnement** : `KIOSK_PIN_ENCRYPTION_KEY` — clé AES-256, 32
+octets encodés en base64. Génération :
+```bash
+openssl rand -base64 32
+```
+Chargée une seule fois (`sync.Once`) au premier `Encrypt`/`Decrypt` ; absente
+ou mal formée (pas du base64 valide, ou décodée à une longueur ≠ 32 octets)
+→ erreur propagée telle quelle (pas de fallback silencieux en clair). Cette
+clé est **distincte** du pepper Kiosk existant (`KIOSK_TOKEN_PEPPER`/
+`Config.Pepper`, qui sert au hachage HMAC des refresh tokens/codes
+d'enrôlement) : un pepper HMAC et une clé de chiffrement symétrique ont des
+propriétés différentes (HMAC n'est pas réversible par construction, donc
+inutilisable ici) et ne doivent pas être confondus même s'ils sont tous deux
+des secrets serveur.
+
+**Pourquoi chiffrement plutôt que hash, ici précisément** : un hash est le
+bon choix quand on n'a besoin de vérifier une égalité que côté serveur (PIN
+employé, refresh token, code d'enrôlement — c'est encore le cas de
+`verify-admin-pin`, qui pourrait rester un hash). Le chiffrement réversible
+est **nécessaire** dès qu'il faut réafficher le secret en clair à un humain
+après coup (ici : consultation POS) — un hash ne le permettrait jamais, quel
+que soit l'algorithme.
+
+- **Génération** : à l'enrôlement (`EnrollDevice`) — 4 chiffres,
+  `generateAdminPin()` (`crypto/rand`, alphabet 0-9, même esprit que
+  `generateEnrollmentCode`). Chiffré via `helpers.Encrypt` avant stockage.
+  Retourné en clair dans `EnrollResponse.AdminPin` — toujours utile pour le
+  technicien sur site qui n'a pas forcément le POS sous la main au moment de
+  l'installation.
+- **Vérification** — `POST /kiosk/auth/verify-admin-pin` (device,
+  `KioskAuth`, inchangé dans le principe) : `Service.VerifyAdminPin`
+  déchiffre `admin_pin_encrypted` puis compare en **temps constant**
+  (`crypto/subtle.ConstantTimeCompare`, plus approprié qu'une comparaison de
+  hash `==` puisqu'on compare maintenant le PIN en clair lui-même) au PIN
+  fourni. Rate-limiting Redis **par borne** (clé
+  `kiosk:admin_pin:lockout:{kiosk_id}`) : 5 tentatives puis 30s de lockout
+  fixe (pas de backoff exponentiel — le brief ne demande qu'un lockout fixe).
+  Une erreur de déchiffrement (clé absente/invalide, ciphertext corrompu)
+  n'incrémente **pas** le compteur de lockout et est propagée comme erreur
+  serveur (500) — ce n'est pas une tentative de PIN invalide, c'est une
+  panne de configuration qu'il faut voir dans les logs, pas masquer derrière
+  un 401 générique.
+- **Consultation** (nouveau) — `GET /pos/settings/kiosk/devices/{id}/admin-pin`
+  (back-office) : `Service.GetAdminPin` déchiffre et retourne le PIN courant
+  sans le modifier. `404 kiosk_admin_pin_not_configured` si
+  `admin_pin_encrypted` est NULL (borne enrôlée avant cette fonctionnalité,
+  ou jamais régénérée depuis) — message invitant explicitement à régénérer
+  plutôt qu'un 404 générique ambigu.
+- **Régénération** — `POST /pos/settings/kiosk/devices/{id}/regenerate-admin-pin` :
+  génère un nouveau PIN, l'écrase en base (`UpdateKioskAdminPinEncrypted`),
+  le retourne en clair une seule fois — utile si la borne est compromise (un
+  vrai changement de secret, contrairement à la simple consultation
+  ci-dessus). N'invalide pas un éventuel déverrouillage déjà actif côté
+  borne (état Flutter local, hors scope API).
+- **Permission back-office** : le brief demandait "même permission que la
+  gestion des bornes existante" pour la consultation — vérifié qu'**aucune**
+  route `/pos/settings/kiosk/*` n'a de `RequirePermission` dédié aujourd'hui
+  (seulement `authMiddleware`, voir Incrément 6). Plutôt que de laisser ces
+  deux routes sans aucune permission spécifique comme le reste du module —
+  ce qui serait cohérent avec l'existant mais insuffisant pour un secret
+  réaffichable en clair — `middleware.RequirePermission(middleware.HasSettingsAccess)`
+  a été ajouté **uniquement** sur `GET .../admin-pin` et
+  `POST .../regenerate-admin-pin` (pas sur le reste du groupe) : ce sont les
+  deux seules routes Kiosk qui exposent un secret en clair, elles méritent un
+  contrôle que les autres (liste, rename, enable/disable...) n'ont pas besoin
+  d'avoir. Écart volontaire par rapport à "même permission que l'existant"
+  puisque l'existant n'en a aucune.
+
+### Tests manuels incrément 8
+
+Mêmes limites que les incréments précédents (pas de `MYSQL_URL`/`REDIS_URL`
+dans ce sandbox) : seul `go build ./...` a été vérifié (clean). **Avant
+exécution réelle :**
+1. Appliquer `migrations/todo/042_kiosk_admin_pin.up.sql`.
+2. Configurer `KIOSK_PIN_ENCRYPTION_KEY` (`openssl rand -base64 32`) —
+   `Encrypt`/`Decrypt` échouent sinon (`encryption key not configured`).
+3. S'assurer que l'utilisateur de test a `HasSettingsAccess` (ou `IsAdmin`)
+   pour les étapes 5/6 ci-dessous.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token d'un user back-office authentifié, HasSettingsAccess>"
+
+# 1. Nom vide rejeté à l'enrôlement
+CODE=$(curl -s -X POST "$BASE_URL/pos/settings/kiosk/enrollment-codes" -H "Authorization: Bearer $USER_TOKEN" | jq -r .data.code)
+curl -s -X POST "$BASE_URL/kiosk/auth/enroll" -H "Content-Type: application/json" \
+  -d "{\"enrollment_code\":\"$CODE\",\"name\":\"\",\"hardware_model\":\"Elo\",\"os_version\":\"Android 13\",\"app_version\":\"1.0.0\"}"
+# -> 400 kiosk_name_invalid
+
+# 2. Enrôlement valide : admin_pin présent une seule fois
+curl -s -X POST "$BASE_URL/kiosk/auth/enroll" -H "Content-Type: application/json" \
+  -d "{\"enrollment_code\":\"$CODE\",\"name\":\"Borne test\",\"hardware_model\":\"Elo\",\"os_version\":\"Android 13\",\"app_version\":\"1.0.0\"}" \
+  | tee enroll.json
+ACCESS_TOKEN=$(jq -r .data.access_token enroll.json)
+ADMIN_PIN=$(jq -r .data.admin_pin enroll.json)
+KIOSK_ID=$(jq -r .data.kiosk_id enroll.json)
+
+# 3. Vérification du PIN admin (succès)
+curl -s -X POST "$BASE_URL/kiosk/auth/verify-admin-pin" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" -d "{\"pin\":\"$ADMIN_PIN\"}"
+# -> { "data": { "valid": true } }
+
+# 4. PIN invalide x5 -> lockout
+for i in 1 2 3 4 5; do
+  curl -s -X POST "$BASE_URL/kiosk/auth/verify-admin-pin" -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" -d '{"pin":"0000"}'
+done
+# -> 401 kiosk_admin_pin_invalid x5, puis :
+curl -s -X POST "$BASE_URL/kiosk/auth/verify-admin-pin" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" -d '{"pin":"0000"}'
+# -> 429 kiosk_admin_pin_locked avec delay_seconds proche de 30
+
+# 5. Consultation back-office (déchiffrement)
+curl -s "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/admin-pin" \
+  -H "Authorization: Bearer $USER_TOKEN"
+# -> { "data": { "admin_pin": "<ADMIN_PIN>" } } — doit être identique au PIN reçu à l'étape 2
+
+# 6. Régénération back-office
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/regenerate-admin-pin" \
+  -H "Authorization: Bearer $USER_TOKEN"
+# -> { "data": { "admin_pin": "<nouveau PIN>" } }, l'ancien ADMIN_PIN ne fonctionne plus à l'étape 3,
+#    et la consultation (étape 5) renvoie désormais ce nouveau PIN
+
+# 7. Utilisateur sans HasSettingsAccess -> 403 sur les deux routes ci-dessus
+```
+
+## Incrément 9 — `business_name` dans `GET /kiosk/settings` (bandeau d'accueil Menu côté borne)
+
+Demandé côté `wello-kiosk` pour le bandeau coloré au-dessus de `MenuScreen`
+(logo + nom de l'établissement) : le nom à afficher n'était exposé par
+aucun endpoint Kiosk. `kiosk_settings` ne contient que des paramètres
+d'affichage (logo/couleur/vidéo) — jamais l'identité du merchant, voir
+incrément 4 ("Ticket client sans identité merchant"). Le nom existe déjà en
+base sous `merchant.fullName`, utilisé par le login humain
+(`internal/modules/users/repository.go`, alias `MerchantName`), mais jamais
+joint côté Kiosk (auth device, pas auth humaine).
+
+**`Repository.GetKioskSettings`** (`internal/modules/kiosk/repository.go`)
+attache désormais `KioskSettingsRow.BusinessName` via une requête séparée
+(`getMerchantBusinessName`, `SELECT fullName FROM merchant WHERE id = ?`)
+plutôt que d'étendre le `JOIN` dans `GetSettingsByMerchant` : ce dernier
+retourne `(nil, nil)` quand le merchant n'a pas encore de ligne
+`kiosk_settings` (cas normal pour une borne neuve, voir
+`defaultKioskSettingsRow`), un `JOIN` dans cette requête n'aurait donc pas
+attaché le nom dans ce cas précis. La requête séparée s'applique après coup,
+que la ligne `kiosk_settings` existe ou non.
+
+`KioskSettingsResponse.BusinessName` (`business_name` en JSON, `*string`,
+absent → `null`) est exposé en lecture seule : **pas** de champ
+correspondant dans `UpdateKioskSettingsRequest` — le nom de l'établissement
+se gère via la fiche merchant existante (back-office), pas via les
+paramètres Kiosk.
 ```
