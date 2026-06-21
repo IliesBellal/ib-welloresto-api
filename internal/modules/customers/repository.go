@@ -228,6 +228,41 @@ func getStringField(c *models.Customer, name string) *string {
 	return nil
 }
 
+// GetCustomerByID récupère un client par son ID, scopé au merchant
+func (r *CustomersRepository) GetCustomerByID(ctx context.Context, customerID, merchantID string) (*models.Customer, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var c models.Customer
+	err := db.QueryRowContext(ctx, `
+		SELECT customer_id, customer_first_name, customer_last_name, customer_email
+		FROM customer
+		WHERE customer_id = ? AND merchant_id = ?
+	`, customerID, merchantID).Scan(&c.CustomerID, &c.CustomerFirstName, &c.CustomerLastName, &c.CustomerEmail)
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
+// FindCustomerByEmail recherche un client par email (insensible à la casse), scopé au merchant
+func (r *CustomersRepository) FindCustomerByEmail(ctx context.Context, email, merchantID string) (*models.Customer, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var c models.Customer
+	err := db.QueryRowContext(ctx, `
+		SELECT customer_id, customer_first_name, customer_last_name, customer_email
+		FROM customer
+		WHERE LOWER(customer_email) = LOWER(?) AND merchant_id = ?
+		LIMIT 1
+	`, email, merchantID).Scan(&c.CustomerID, &c.CustomerFirstName, &c.CustomerLastName, &c.CustomerEmail)
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
 func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID, merchantID string) (*CustomerLoyalty, error) {
 
 	loyalty := &CustomerLoyalty{

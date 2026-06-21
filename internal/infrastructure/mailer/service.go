@@ -32,6 +32,10 @@ type Service interface {
 	SendPayoutPaidNotification(email string, name string, payout PayoutData)
 	SendOTP(data MfaOTPData)
 
+	// SendInvoiceEmailToCustomer envoie une facture PDF en pièce jointe de façon SYNCHRONE
+	// (contrairement à SendAsync) afin que l'appelant puisse réagir à un échec d'envoi.
+	SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error
+
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
 }
 

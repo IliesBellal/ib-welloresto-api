@@ -78,3 +78,11 @@ type MFAMailData struct {
 	MFACode   string
 	ExpiresIn int // en minutes
 }
+
+// InvoiceEmailData pour l'envoi de facture PDF en pièce jointe
+type InvoiceEmailData struct {
+	MerchantName  string
+	CustomerName  string
+	ReceiptNumber string
+	SupportEmail  string
+}

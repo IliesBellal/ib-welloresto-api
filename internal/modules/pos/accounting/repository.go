@@ -59,7 +59,7 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 		return &MerchantHeader{
 			MerchantName: "Nom Établissement",
 			SIRET:        "000 000 000 00000",
-			VATNumber:    "FR00000000000",
+			VATNumber:    nil,
 			Address:      "Adresse inconnue",
 			Currency:     "EUR",
 			Phone:        "N/A",

@@ -14,6 +14,40 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func (h *OrdersLifeCycleHandler) SendInvoiceEmail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "send_invoice_email", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req SendInvoiceEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "send_invoice_email", models.ErrInvalidRequestBody)
+		return
+	}
+
+	res, err := h.ordersLifeCycleService.SendInvoiceByEmail(ctx, orderID, &req)
+	if err != nil {
+		var emailErr *EmailDeliveryError
+		if errors.As(err, &emailErr) {
+			models.SendJSON(w, http.StatusBadGateway, "order_life_cycle", "send_invoice_email", map[string]interface{}{
+				"error":           "L'email n'a pas pu être envoyé.",
+				"details":         emailErr.Error(),
+				"customer_linked": true,
+				"customer_id":     res.CustomerID,
+			})
+			return
+		}
+
+		models.SendErrorJSON(w, "order_life_cycle", "send_invoice_email", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "send_invoice_email", res)
+}
+
 // OrdersHandler handles orders endpoints
 type OrdersLifeCycleHandler struct {
 	ordersLifeCycleService  *OrdersLifeCycleService

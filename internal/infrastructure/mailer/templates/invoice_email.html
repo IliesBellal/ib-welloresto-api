@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Votre facture</title>
+</head>
+<body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
+
+<table width="100%" style="max-width: 712px; margin: auto;">
+    <tbody>
+    <tr>
+        <td align="center" style="padding: 40px 20px;">
+            <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre facture {{ .ReceiptNumber }}</h1>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Bonjour {{ .CustomerName }},<br>
+                Veuillez trouver ci-joint la facture de votre commande chez <strong>{{ .MerchantName }}</strong>.
+            </p>
+            <p style="font-size:12px; color:#666; padding-top: 30px;">
+                Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
+            </p>
+        </td>
+    </tr>
+    </tbody>
+</table>
+</body>
+</html>

@@ -36,6 +36,22 @@ func NewOrdersLifeCycleRepository(db *sql.DB, custoRepo *customers.CustomersRepo
 	}
 }
 
+// LinkCustomerToOrder rattache un client à une commande (écrase le client déjà rattaché s'il y en a un)
+func (r *OrdersLifeCycleRepository) LinkCustomerToOrder(ctx context.Context, orderID, customerID, merchantID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE orders
+		SET customer_id = ?
+		WHERE order_id = ? AND merchant_id = ?
+	`, customerID, orderID, merchantID)
+	if err != nil {
+		return fmt.Errorf("link customer to order failed: %w", err)
+	}
+
+	return nil
+}
+
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)

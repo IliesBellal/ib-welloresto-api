@@ -333,6 +333,11 @@ var (
 	ErrKioskNameInvalid           = errors.New("kiosk_name_invalid")
 	ErrKioskAdminPinInvalid       = errors.New("kiosk_admin_pin_invalid")
 	ErrKioskAdminPinNotConfigured = errors.New("kiosk_admin_pin_not_configured")
+
+	// Erreurs de l'envoi de facture par email
+	ErrInvoiceInvalidEmail    = errors.New("invoice_invalid_email")
+	ErrInvoiceCustomerNotFound = errors.New("invoice_customer_not_found")
+	ErrInvoiceAttachmentTooLarge = errors.New("invoice_attachment_too_large")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1067,6 +1072,21 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "kiosk_admin_pin_not_configured"
 		errorMsg = "This kiosk has no admin PIN configured yet. Regenerate one via POST .../regenerate-admin-pin."
+
+	case errors.Is(err, ErrInvoiceInvalidEmail):
+		status = http.StatusBadRequest
+		errorStatus = "invoice_invalid_email"
+		errorMsg = "The provided email address is missing or invalid."
+
+	case errors.Is(err, ErrInvoiceCustomerNotFound):
+		status = http.StatusNotFound
+		errorStatus = "invoice_customer_not_found"
+		errorMsg = "The provided customer_id does not match any customer for this merchant."
+
+	case errors.Is(err, ErrInvoiceAttachmentTooLarge):
+		status = http.StatusBadGateway
+		errorStatus = "invoice_attachment_too_large"
+		errorMsg = "The generated invoice PDF exceeds Brevo's attachment size limit."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

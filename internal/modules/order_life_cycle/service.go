@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/redis"
@@ -17,7 +19,7 @@ import (
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/notification"
-	"welloresto-api/internal/modules/orders"
+	"welloresto-api/internal/modules/pos/accounting"
 	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/stocks"
 	"welloresto-api/internal/modules/ubereats"
@@ -25,14 +27,28 @@ import (
 	"welloresto-api/internal/utils/dbutils"
 	receiptUtils "welloresto-api/internal/utils/receipt"
 
+	"welloresto-api/internal/infrastructure/mailer"
+
 	"go.uber.org/zap"
 )
+
+// orderFetcher est le sous-ensemble de orders.OrdersService utilisé par ce service. Permet de
+// substituer un fake dans les tests sans dépendre de la requête SQL complète d'OrdersRepository.
+type orderFetcher interface {
+	ComputeGetOrder(ctx context.Context, merchantID, orderID string) (*models.PendingOrdersResponse, error)
+}
+
+// merchantHeaderProvider est le sous-ensemble de accounting.AccountingRepository utilisé par ce
+// service (en-tête merchant pour la génération de la facture PDF).
+type merchantHeaderProvider interface {
+	GetMerchantHeader(ctx context.Context, merchantID string) (*accounting.MerchantHeader, error)
+}
 
 type OrdersLifeCycleService struct {
 	db                   *sql.DB
 	auditService         audit.AuditService
 	ordersLifeCycleRepo  *OrdersLifeCycleRepository
-	ordersService        *orders.OrdersService
+	ordersService        orderFetcher
 	deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository
 	uberSvc              *ubereats.UberEatsService
 	deliverooSvc         *deliveroo.DeliverooService
@@ -44,9 +60,11 @@ type OrdersLifeCycleService struct {
 	redis                *redis.Client
 	receiptService       receipt.ReceiptService
 	stocksRepo           *stocks.StocksRepository
+	accountingRepo       merchantHeaderProvider
+	mailerService        mailer.Service
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders *orders.OrdersService, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders orderFetcher, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker, accountingRepo merchantHeaderProvider, mailerService mailer.Service) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -63,6 +81,8 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		db:                   db,
 		ordersService:        orders,
 		stocksRepo:           stocksRepo,
+		accountingRepo:       accountingRepo,
+		mailerService:        mailerService,
 	}
 }
 
@@ -1072,6 +1092,152 @@ func (s *OrdersLifeCycleService) UpdateOrder(ctx context.Context, req *models.Re
 	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
 
 	return nil
+}
+
+var invoiceEmailRegex = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+// maxBrevoAttachmentBytes correspond à la limite de 4 Mo annoncée par Brevo pour le payload
+// "attachment", mesurée APRÈS encodage base64 (~33% d'inflation par rapport aux octets bruts).
+const maxBrevoAttachmentBytes = 4 * 1024 * 1024
+
+// SendInvoiceByEmail génère la facture PDF de la commande à partir du Receipt déjà figé (NF525,
+// aucun recalcul) et l'envoie par email au client en pièce jointe via Brevo. Le client lié à la
+// commande est résolu/créé/mis à jour et rattaché à la commande dans une transaction qui est
+// commitée indépendamment du succès de l'envoi de l'email.
+func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID string, req *SendInvoiceEmailRequest) (*SendInvoiceEmailResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	email := strings.TrimSpace(req.Email)
+	if email == "" || !invoiceEmailRegex.MatchString(email) {
+		return nil, models.ErrInvoiceInvalidEmail
+	}
+
+	orders, err := s.ordersService.ComputeGetOrder(ctx, user.MerchantID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if orders == nil || len(orders.Orders) == 0 {
+		return nil, models.ErrNotFound
+	}
+	order := orders.Orders[0]
+
+	var customerID string
+	var customerName string
+
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		firstName := strings.TrimSpace(req.FirstName)
+		lastName := strings.TrimSpace(req.LastName)
+
+		var existing *models.Customer
+		var lookupErr error
+
+		if req.CustomerID != nil && strings.TrimSpace(*req.CustomerID) != "" {
+			existing, lookupErr = s.customersService.GetCustomerByID(txCtx, user.MerchantID, *req.CustomerID)
+			if lookupErr == sql.ErrNoRows {
+				return models.ErrInvoiceCustomerNotFound
+			}
+			if lookupErr != nil {
+				return lookupErr
+			}
+		} else {
+			existing, lookupErr = s.customersService.FindCustomerByEmail(txCtx, user.MerchantID, email)
+			if lookupErr != nil && lookupErr != sql.ErrNoRows {
+				return lookupErr
+			}
+		}
+
+		toUpsert := &models.Customer{MerchantID: user.MerchantID, CustomerEmail: &email}
+		if firstName != "" {
+			toUpsert.CustomerFirstName = &firstName
+		}
+		if lastName != "" {
+			toUpsert.CustomerLastName = &lastName
+		}
+
+		var oldState interface{}
+		if existing != nil {
+			oldState = existing
+			toUpsert.CustomerID = existing.CustomerID
+		}
+
+		newID, err := s.customersService.UpsertCustomer(txCtx, toUpsert)
+		if err != nil {
+			return fmt.Errorf("failed to upsert customer: %w", err)
+		}
+
+		if toUpsert.CustomerID != nil {
+			customerID = *toUpsert.CustomerID
+		} else if newID != nil {
+			customerID = *newID
+		}
+
+		newState, err := s.customersService.GetCustomerByID(txCtx, user.MerchantID, customerID)
+		if err != nil {
+			return fmt.Errorf("failed to reload customer after upsert: %w", err)
+		}
+
+		if newState.CustomerFirstName != nil {
+			customerName = *newState.CustomerFirstName
+		}
+		if newState.CustomerLastName != nil && *newState.CustomerLastName != "" {
+			if customerName != "" {
+				customerName += " "
+			}
+			customerName += *newState.CustomerLastName
+		}
+
+		if err := s.ordersLifeCycleRepo.LinkCustomerToOrder(txCtx, orderID, customerID, user.MerchantID); err != nil {
+			return err
+		}
+
+		return s.auditService.LogChange(txCtx, user.MerchantID, user.UserID, models.ActionCustomerInvoiceLink, models.ResourceCustomer, customerID, oldState, newState)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// --- À partir d'ici, le client est lié et commité : un échec d'email n'annule rien. ---
+
+	response := &SendInvoiceEmailResponse{
+		CustomerID:  customerID,
+		EmailSentTo: email,
+	}
+
+	rcpt, err := s.receiptService.GetReceiptByOrderID(ctx, orderID)
+	if err != nil {
+		return response, fmt.Errorf("failed to load fiscal receipt for order %s: %w", orderID, err)
+	}
+
+	header, err := s.accountingRepo.GetMerchantHeader(ctx, user.MerchantID)
+	if err != nil {
+		return response, fmt.Errorf("failed to load merchant header: %w", err)
+	}
+
+	orderNum := ""
+	if order.OrderNum != nil {
+		orderNum = *order.OrderNum
+	}
+
+	pdfBytes, err := buildInvoicePDF(rcpt, header, orderNum)
+	if err != nil {
+		return response, fmt.Errorf("failed to build invoice PDF: %w", err)
+	}
+
+	// Estimation post-base64 (~33% d'inflation) pour respecter la limite Brevo de 4 Mo.
+	if (len(pdfBytes)*4)/3 > maxBrevoAttachmentBytes {
+		return response, models.ErrInvoiceAttachmentTooLarge
+	}
+
+	fileName := fmt.Sprintf("facture-%s.pdf", rcpt.ReceiptNumber)
+	if err := s.mailerService.SendInvoiceEmailToCustomer(email, customerName, pdfBytes, fileName); err != nil {
+		return response, &EmailDeliveryError{Err: err}
+	}
+
+	return response, nil
 }
 
 func (s *OrdersLifeCycleService) ComputeEstimatedReady(ctx context.Context, id string) (string, error) {

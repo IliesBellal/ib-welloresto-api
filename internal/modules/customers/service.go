@@ -8,6 +8,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
 )
 
 type CustomersService struct {
@@ -26,6 +27,21 @@ func (s *CustomersService) UpdateOrCreateCustomer(ctx context.Context, params ma
 		"status":      "success",
 		"customer_id": params["customer_id"],
 	}, nil
+}
+
+// GetCustomerByID récupère un client par son ID, scopé au merchant. Retourne sql.ErrNoRows si introuvable.
+func (s *CustomersService) GetCustomerByID(ctx context.Context, merchantID, customerID string) (*models.Customer, error) {
+	return s.customerRepo.GetCustomerByID(ctx, customerID, merchantID)
+}
+
+// FindCustomerByEmail recherche un client existant par email (insensible à la casse). Retourne sql.ErrNoRows si introuvable.
+func (s *CustomersService) FindCustomerByEmail(ctx context.Context, merchantID, email string) (*models.Customer, error) {
+	return s.customerRepo.FindCustomerByEmail(ctx, email, merchantID)
+}
+
+// UpsertCustomer crée ou met à jour partiellement un client (seuls les champs non-vides du modèle sont écrits).
+func (s *CustomersService) UpsertCustomer(ctx context.Context, c *models.Customer) (*string, error) {
+	return s.customerRepo.UpdateOrCreateCustomer(ctx, c)
 }
 
 func (s *CustomersService) GetCustomerLoyalty(ctx context.Context, token, customerID string) (*CustomerLoyalty, error) {

@@ -18,7 +18,7 @@ type ExportAccountingResponse struct {
 type MerchantHeader struct {
 	MerchantName string
 	SIRET        string
-	VATNumber    string
+	VATNumber    *string
 	Address      string
 	Phone        string
 	Currency     string

@@ -267,6 +267,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		mysqlDB,
 		stocksRepo,
 		upsellTracker,
+		posAccountingRepo,
+		mailService,
 	)
 
 	// ---- ScanNOrder ----
@@ -924,6 +926,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
 			r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
 			r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
+			r.Post("/{order_id}/invoice/email-sms", ordersLifeCycleH.SendInvoiceEmail)
 
 			// Cycle de vie
 			r.Patch("/{order_id}/accept", ordersLifeCycleH.AcceptOrder)

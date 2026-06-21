@@ -16,8 +16,11 @@ const (
 	ActionPaymentAdded   = "PAYMENT_ADDED"
 	ActionPaymentDeleted = "PAYMENT_DELETED"
 
-	ResourceOrder   = "orders"
-	ResourcePayment = "payments"
+	ActionCustomerInvoiceLink = "CUSTOMER_INVOICE_LINK"
+
+	ResourceOrder    = "orders"
+	ResourcePayment  = "payments"
+	ResourceCustomer = "customers"
 )
 
 type AuditLog struct {

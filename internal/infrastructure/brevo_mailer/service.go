@@ -2,6 +2,7 @@ package brevo_mailer
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -95,6 +96,23 @@ func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payo
 	}()
 }
 
+// SendInvoiceEmailToCustomer sends an invoice PDF as attachment, synchronously (the caller needs to know if it failed)
+func (b *BrevoMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
+	data := mailer.InvoiceEmailData{
+		MerchantName:  "Wello Resto",
+		CustomerName:  customerName,
+		SupportEmail:  mailer.SupportEmail,
+		ReceiptNumber: fileName,
+	}
+
+	html, err := b.renderTemplate("invoice_email.html", data)
+	if err != nil {
+		return fmt.Errorf("failed to render invoice email template: %w", err)
+	}
+
+	return b.sendEmailViaBrevoWithAttachment("Wello Resto", mailer.InvoiceEmail, to, "Votre facture", html, pdfBytes, fileName)
+}
+
 // TriggerTestEmail sends a test email
 func (b *BrevoMailer) TriggerTestEmail(writer http.ResponseWriter, request *http.Request) {
 	data := mailer.ScanNOrderConfirmationData{
@@ -150,6 +168,55 @@ func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, html
 	defer resp.Body.Close()
 
 	// Check response status
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// sendEmailViaBrevoWithAttachment sends an email with a single attachment via the Brevo API
+func (b *BrevoMailer) sendEmailViaBrevoWithAttachment(from_name, from_email, to, subject, htmlContent string, attachmentBytes []byte, attachmentName string) error {
+	payload := map[string]interface{}{
+		"sender": map[string]string{
+			"name":  from_name,
+			"email": from_email,
+		},
+		"to": []map[string]string{
+			{
+				"email": to,
+			},
+		},
+		"subject":     subject,
+		"htmlContent": htmlContent,
+		"attachment": []map[string]string{
+			{
+				"content": base64.StdEncoding.EncodeToString(attachmentBytes),
+				"name":    attachmentName,
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("api-key", b.apiKey)
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(body))
