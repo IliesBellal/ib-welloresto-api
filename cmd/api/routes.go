@@ -1147,6 +1147,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/settings/logo", kioskAdminHandler.UploadKioskLogo)
 		r.Post("/settings/idle-image", kioskAdminHandler.UploadKioskIdleImage)
 		r.Post("/settings/idle-video", kioskAdminHandler.UploadKioskIdleVideo)
+		r.Delete("/settings/idle-video", kioskAdminHandler.DeleteKioskIdleVideo)
 	})
 
 	// --- WEBSOCKET ---

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
@@ -430,6 +431,9 @@ func (h *AdminHandler) uploadSettingsImage(w http.ResponseWriter, r *http.Reques
 		models.SendErrorJSON(w, "kiosk", fnName, fmt.Errorf("failed to upload image"))
 		return
 	}
+	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
+	// sans ce paramètre le navigateur/CDN continue de servir l'ancienne image.
+	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
 
 	var updated *KioskSettingsResponse
 	if imageType == "logo" {
@@ -523,6 +527,9 @@ func (h *AdminHandler) UploadKioskIdleVideo(w http.ResponseWriter, r *http.Reque
 		models.SendErrorJSON(w, "kiosk", fnName, fmt.Errorf("failed to upload video"))
 		return
 	}
+	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
+	// sans ce paramètre le kiosque continue de jouer l'ancienne vidéo en cache.
+	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
 
 	updated, err := h.service.SetIdleVideoURL(ctx, user.MerchantID, publicURL)
 	if err != nil {
@@ -532,6 +539,44 @@ func (h *AdminHandler) UploadKioskIdleVideo(w http.ResponseWriter, r *http.Reque
 	}
 
 	models.SendJSON(w, http.StatusOK, "kiosk", fnName, map[string]string{"idle_video_url": *updated.IdleVideoURL})
+}
+
+// DeleteKioskIdleVideo retire la vidéo de veille : supprime le fichier R2
+// (best-effort) puis met idle_video_url à NULL en base.
+func (h *AdminHandler) DeleteKioskIdleVideo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	const fnName = "delete_kiosk_idle_video"
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	settings, err := h.service.GetSettings(ctx, user.MerchantID)
+	if err != nil {
+		log.Warn("kiosk admin: get settings before idle video delete failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", fnName, err)
+		return
+	}
+
+	if settings.IdleVideoURL != nil {
+		if oldKey := h.r2Client.GetKeyFromURL(*settings.IdleVideoURL); oldKey != "" {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				log.Warn("kiosk admin: delete idle video from r2 failed", zap.Error(err))
+			}
+		}
+	}
+
+	updated, err := h.service.ClearIdleVideoURL(ctx, user.MerchantID)
+	if err != nil {
+		log.Error("kiosk admin: clear idle video url failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", fnName, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", fnName, map[string]any{"idle_video_url": updated.IdleVideoURL})
 }
 
 func (h *AdminHandler) GetKioskSettings(w http.ResponseWriter, r *http.Request) {

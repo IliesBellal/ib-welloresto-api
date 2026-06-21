@@ -129,8 +129,12 @@ func (c *Client) DeleteFile(ctx context.Context, key string) error {
 	return nil
 }
 
-// GetKeyFromURL extrait la clé R2 depuis une URL publique
+// GetKeyFromURL extrait la clé R2 depuis une URL publique. La query string
+// (ex: cache-buster ?v=...) est ignorée pour retrouver la clé d'objet réelle.
 func (c *Client) GetKeyFromURL(url string) string {
+	if idx := strings.Index(url, "?"); idx != -1 {
+		url = url[:idx]
+	}
 	baseURL := strings.TrimRight(c.publicBaseURL, "/")
 	if strings.HasPrefix(url, baseURL+"/") {
 		return strings.TrimPrefix(url, baseURL+"/")

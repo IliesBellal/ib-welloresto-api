@@ -906,6 +906,19 @@ func (s *Service) SetIdleVideoURL(ctx context.Context, merchantID, url string) (
 	return s.GetSettings(ctx, merchantID)
 }
 
+// ClearIdleVideoURL retire la vidéo de veille des settings (champ mis à NULL).
+func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*KioskSettingsResponse, error) {
+	current, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	current.IdleVideoURL = nil
+	if err := s.repo.UpsertSettings(ctx, current); err != nil {
+		return nil, err
+	}
+	return s.GetSettings(ctx, merchantID)
+}
+
 // ---- Incrément 2 : menu, upsell, pricing, commandes ----
 
 // GetMenu retourne le menu filtré sur is_available_on_kiosk, avec un ETag
