@@ -1110,6 +1110,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/menu", kioskHandler.GetKioskMenu)
 			r.Get("/products/{product_id}", kioskHandler.GetKioskProduct)
 			r.Get("/settings", kioskHandler.GetKioskSettings)
+			r.Get("/discounts", kioskHandler.GetKioskDiscounts)
 			r.Post("/upsell", kioskHandler.GetKioskUpsell)
 			r.Post("/pricing", kioskHandler.GetKioskPricing)
 			r.Post("/orders", kioskHandler.CreateKioskOrder)

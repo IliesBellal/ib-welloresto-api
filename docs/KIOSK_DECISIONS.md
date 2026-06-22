@@ -1543,4 +1543,89 @@ absent → `null`) est exposé en lecture seule : **pas** de champ
 correspondant dans `UpdateKioskSettingsRequest` — le nom de l'établissement
 se gère via la fiche merchant existante (back-office), pas via les
 paramètres Kiosk.
+
+## Incrément 10 — `GET /kiosk/discounts`
+
+Port de `scannorder.GetDiscounts` (`/scannorder/{merchant_slug}/discounts`)
+côté Kiosk. Différence structurelle de départ : ScanNOrder résout le
+merchant depuis un QR code (`GetMerchantIDAndTZFromQR`), le Kiosk connaît
+déjà son `merchant_id` via `middleware.KioskAuth` — pas de résolution de
+slug nécessaire, mais le fuseau horaire du merchant (nécessaire pour calculer
+le jour de la semaine courant et filtrer `discounts_schedules`) n'était
+disponible nulle part dans le module : ajout de
+`Repository.GetMerchantTimezone(ctx, merchantID)` (`SELECT timezone FROM
+merchant WHERE id = ?`), dédiée au module Kiosk plutôt que d'importer
+`scannorder` juste pour ce champ (cohérent avec le reste du module qui
+évite les imports croisés entre modules métier, voir Incrément 2).
+
+### Écart volontaire : pas de filtre `order_type`
+
+`scannorder.GetDiscounts` reçoit `?order_type=` en query et filtre
+`discounts.discount_order_type` dessus (valeurs `IN`/`TAKE_AWAY`/`DELIVERY`,
+voir `internal/models/orders_model.go`). `GET /kiosk/discounts` n'a **pas**
+de query param équivalent : la borne affiche typiquement ses promotions sur
+l'écran d'accueil, avant que le client ait choisi un `fulfillment_type`
+(`DINE_IN`/`TAKE_AWAY`, vocabulaire différent de `IN`/`TAKE_AWAY` côté
+ScanNOrder — une conversion aurait été nécessaire de toute façon).
+`Repository.GetDiscounts(ctx, merchantID, orderType, dow)` garde le
+paramètre `orderType` (réutilisable plus tard si un filtrage par mode de
+retrait est demandé), mais `Service.GetDiscounts` l'appelle avec `""`
+(`LIKE '%%'` → aucun filtre de type, seulement validité temporelle + jour de
+la semaine). Les autres filtres de `scannorder.GetDiscounts` sont repris à
+l'identique : `valid_from`/`valid_to`, `discounts_schedules` (si
+`is_time_limited`), `available = true`, `enabled = true`.
+
+### Modèle de réponse : mêmes champs JSON que ScanNOrder
+
+`kiosk.KioskDiscount` reprend exactement les champs de
+`scannorder.Discount` (même nommage JSON), pour qu'un client qui consomme
+déjà le contrat ScanNOrder n'ait rien à réapprendre. Tableau vide (`[]`),
+jamais `null`, si aucune promotion active — même garantie que
+`scannorder.GetDiscounts`.
+
+### Exemple réel — `GET /kiosk/discounts`
+
+```json
+{
+  "id": "kiosk.get_discounts",
+  "data": {
+    "discounts": [
+      {
+        "discount_id": "d1",
+        "discount_order_type": "IN,TAKE_AWAY",
+        "discount_code": null,
+        "discount_desc": "10% de réduction sur place et à emporter",
+        "discount_name": "Happy Hour",
+        "discount_value": 10,
+        "discount_unit": "PERCENT",
+        "min_order_value": 0,
+        "min_order_unit": "EUR",
+        "max_discount_value": null,
+        "max_discount_unit": null,
+        "discounted_quantity": 0,
+        "is_cumulative": false,
+        "available": true
+      }
+    ]
+  }
+}
+```
+
+Réponse vide (aucune promotion active) :
+```json
+{ "id": "kiosk.get_discounts", "data": { "discounts": [] } }
+```
+
+### Tests manuels incrément 10
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+
+curl -s "$BASE_URL/kiosk/discounts" -H "Authorization: Bearer $ACCESS_TOKEN"
+# -> { "data": { "discounts": [...] } }, [] si aucune promotion active pour ce merchant
+```
+
+Non exécuté dans ce sandbox (pas de `MYSQL_URL`/`REDIS_URL`) — seul `go
+build ./...` a été vérifié (clean).
 ```

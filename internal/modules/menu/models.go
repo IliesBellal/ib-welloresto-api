@@ -256,14 +256,18 @@ type ProductAttributesPayload struct {
 
 // UpdateComponentPayload pour la mise à jour de composants
 type UpdateComponentPayload struct {
-	Name            *string  `json:"name"`              // Nom du composant (optionnel)
-	Price           *int     `json:"price"`             // Prix de vente en centimes (optionnel)
-	PurchaseCost    *int     `json:"purchase_cost"`     // Coût d'achat en centimes (optionnel)
-	PurchaseUnitID  *string  `json:"purchase_unit_id"`  // ID unité de mesure d'achat (optionnel)
-	PurchaseCostQty *float64 `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
-	MerchantID      string   `json:"-"`                 // ID du marchand, à récupérer du token
-	CategoryID      *string  `json:"category_id"`       // ID de la catégorie
-	UnitID          *string  `json:"unit_id"`           // ID de l'unité de mesure
+	Name              *string  `json:"name"`               // Nom du composant (optionnel)
+	Price             *int     `json:"price"`              // Prix de vente en centimes (optionnel)
+	PurchaseCost      *int     `json:"purchase_cost"`      // Coût d'achat en centimes (optionnel)
+	PurchaseUnitID    *string  `json:"purchase_unit_id"`   // ID unité de mesure d'achat (optionnel)
+	PurchaseCostQty   *float64 `json:"purchase_cost_qty"`  // Quantité pour le coût d'achat (optionnel)
+	MerchantID        string   `json:"-"`                  // ID du marchand, à récupérer du token
+	CategoryID        *string  `json:"category_id"`        // ID de la catégorie
+	UnitID            *string  `json:"unit_id"`            // ID de l'unité de mesure
+	ConservationDays  *int     `json:"conservation_days"`  // Durée de conservation après ouverture, en jours (optionnel)
+	ConservationType  *string  `json:"conservation_type"`  // Type de conservation: froid, congele, sec, ambiant (optionnel)
+	StorageTempMin    *float64 `json:"storage_temp_min"`   // Température min de stockage en °C (optionnel)
+	StorageTempMax    *float64 `json:"storage_temp_max"`   // Température max de stockage en °C (optionnel)
 }
 
 // UpsertComponentCategoryPayload pour la création de catégories de composants

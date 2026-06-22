@@ -369,3 +369,27 @@ type KioskOrderResponse struct {
 	TotalCents      int64  `json:"total_cents"`
 	CreatedAt       string `json:"created_at,omitempty"`
 }
+
+// KioskDiscount reprend exactement les champs JSON de scannorder.Discount
+// (même nommage, voir internal/modules/scannorder/models.go) pour rester
+// cohérent entre les deux canaux côté client.
+type KioskDiscount struct {
+	DiscountID         string  `json:"discount_id"`
+	DiscountOrderType  string  `json:"discount_order_type"`
+	DiscountCode       *string `json:"discount_code"`
+	DiscountDesc       string  `json:"discount_desc"`
+	DiscountName       string  `json:"discount_name"`
+	DiscountValue      int     `json:"discount_value"`
+	DiscountUnit       string  `json:"discount_unit"`
+	MinOrderValue      int     `json:"min_order_value"`
+	MinOrderUnit       string  `json:"min_order_unit"`
+	MaxDiscountValue   *int    `json:"max_discount_value"`
+	MaxDiscountUnit    *string `json:"max_discount_unit"`
+	DiscountedQuantity int     `json:"discounted_quantity"`
+	IsCumulative       bool    `json:"is_cumulative"`
+	Available          bool    `json:"available"`
+}
+
+type KioskDiscountsResponse struct {
+	Discounts []KioskDiscount `json:"discounts"`
+}

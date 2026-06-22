@@ -168,6 +168,10 @@ type ComponentBasic struct {
 	PurchasePricePerUnit    *float64 `json:"purchase_price_per_unit,omitempty"`
 	PurchaseUnitOfMeasureID string   `json:"purchase_unit_of_measure_id,omitempty"`
 	PurchaseUnitOfMeasure   string   `json:"purchase_unit_of_measure,omitempty"`
+	ConservationDays        *int     `json:"conservation_days,omitempty"`
+	ConservationType        string   `json:"conservation_type,omitempty"`
+	StorageTempMin          *float64 `json:"storage_temp_min,omitempty"`
+	StorageTempMax          *float64 `json:"storage_temp_max,omitempty"`
 }
 
 // configurable attributes

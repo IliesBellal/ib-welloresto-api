@@ -136,7 +136,16 @@ func (h *Handler) GetKioskMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetMenu(ctx, authenticatedKiosk.MerchantID)
+	// order_type ("IN"/"TAKE_AWAY") suit le même vocabulaire que scannorder
+	// (GET /{merchant_slug}/menu?order_type=...) — optionnel : un kiosk qui n'a
+	// pas encore demandé le mode au client (écran d'accueil) reçoit le menu au
+	// prix "IN" par défaut.
+	orderType := r.URL.Query().Get("order_type")
+	if orderType == "" {
+		orderType = models.OrderTypeIn
+	}
+
+	resp, err := h.service.GetMenu(ctx, authenticatedKiosk.MerchantID, orderType)
 	if err != nil {
 		log.Error("kiosk get menu failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_menu", err)
@@ -168,7 +177,12 @@ func (h *Handler) GetKioskProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetProduct(ctx, authenticatedKiosk.MerchantID, productID)
+	orderType := r.URL.Query().Get("order_type")
+	if orderType == "" {
+		orderType = models.OrderTypeIn
+	}
+
+	resp, err := h.service.GetProduct(ctx, authenticatedKiosk.MerchantID, productID, orderType)
 	if err != nil {
 		log.Warn("kiosk get product failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_product", err)
@@ -196,6 +210,26 @@ func (h *Handler) GetKioskSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "kiosk", "get_settings", resp)
+}
+
+func (h *Handler) GetKioskDiscounts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "get_discounts", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	resp, err := h.service.GetDiscounts(ctx, authenticatedKiosk.MerchantID)
+	if err != nil {
+		log.Error("kiosk get discounts failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "get_discounts", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "get_discounts", resp)
 }
 
 func (h *Handler) GetKioskUpsell(w http.ResponseWriter, r *http.Request) {

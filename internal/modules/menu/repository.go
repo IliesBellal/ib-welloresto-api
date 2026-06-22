@@ -1678,16 +1678,20 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		PurchasePriceQty        sql.NullFloat64
 		PurchaseUnitOfMeasureID sql.NullInt64
 		PurchaseUnitOfMeasure   sql.NullString
+		ConservationDays        sql.NullInt64
+		ConservationType        sql.NullString
+		StorageTempMin          sql.NullFloat64
+		StorageTempMax          sql.NullFloat64
 	}
 	var allComponents []compBasicTmp
 	{
 		step := "all_components"
 		q := `
-			SELECT 
-				c.component_id, 
-				c.name, 
-				c.category_id, 
-				c.status, 
+			SELECT
+				c.component_id,
+				c.name,
+				c.category_id,
+				c.status,
 				c.component_price,
 				c.unit_of_measure,
 				COALESCE(uomd.uom_desc, '') as uom_desc,
@@ -1695,7 +1699,11 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				c.purchase_price,
 				c.purchase_price_quantity,
 				c.purchase_unit_id,
-				COALESCE(puomd.uom_desc, '') as purchase_uom_desc
+				COALESCE(puomd.uom_desc, '') as purchase_uom_desc,
+				c.conservation_days,
+				c.conservation_type,
+				c.storage_temp_min,
+				c.storage_temp_max
 			FROM components c
 			LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
 			LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
@@ -1708,7 +1716,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 		defer rows.Close()
 		for rows.Next() {
 			var cb compBasicTmp
-			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.UnitShortName, &cb.PurchasePrice, &cb.PurchasePriceQty, &cb.PurchaseUnitOfMeasureID, &cb.PurchaseUnitOfMeasure); err != nil {
+			if err := rows.Scan(&cb.ID, &cb.Name, &cb.CatID, &cb.Status, &cb.Price, &cb.UnitOfMeasureID, &cb.UnitOfMeasure, &cb.UnitShortName, &cb.PurchasePrice, &cb.PurchasePriceQty, &cb.PurchaseUnitOfMeasureID, &cb.PurchaseUnitOfMeasure, &cb.ConservationDays, &cb.ConservationType, &cb.StorageTempMin, &cb.StorageTempMax); err != nil {
 				return nil, err
 			}
 			allComponents = append(allComponents, cb)
@@ -1756,6 +1764,29 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					purchaseUomName = cb.PurchaseUnitOfMeasure.String
 				}
 
+				var conservationDays *int
+				if cb.ConservationDays.Valid {
+					cd := int(cb.ConservationDays.Int64)
+					conservationDays = &cd
+				}
+
+				conservationType := "froid"
+				if cb.ConservationType.Valid && cb.ConservationType.String != "" {
+					conservationType = cb.ConservationType.String
+				}
+
+				var storageTempMin *float64
+				if cb.StorageTempMin.Valid {
+					v := cb.StorageTempMin.Float64
+					storageTempMin = &v
+				}
+
+				var storageTempMax *float64
+				if cb.StorageTempMax.Valid {
+					v := cb.StorageTempMax.Float64
+					storageTempMax = &v
+				}
+
 				actual = append(actual, models.ComponentBasic{
 					ComponentID:             cb.ID,
 					Name:                    cb.Name,
@@ -1770,6 +1801,10 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 					PurchaseUnitOfMeasureID: purchaseUomID,
 					PurchaseUnitOfMeasure:   purchaseUomName,
 					UnitOfMeasureShortName:  cb.UnitShortName.String,
+					ConservationDays:        conservationDays,
+					ConservationType:        conservationType,
+					StorageTempMin:          storageTempMin,
+					StorageTempMax:          storageTempMax,
 				})
 			}
 		}
@@ -1789,11 +1824,11 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 	db := dbutils.GetDB(ctx, r.database)
 
 	q := `
-		SELECT 
-			c.component_id, 
-			c.name, 
-			c.category_id, 
-			c.status, 
+		SELECT
+			c.component_id,
+			c.name,
+			c.category_id,
+			c.status,
 			c.component_price,
 			c.unit_of_measure,
 			COALESCE(uomd.uom_desc, '') as uom_desc,
@@ -1801,7 +1836,11 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 			c.purchase_price,
 			c.purchase_price_quantity,
 			c.purchase_unit_id,
-			COALESCE(puomd.uom_desc, '') as purchase_uom_desc
+			COALESCE(puomd.uom_desc, '') as purchase_uom_desc,
+			c.conservation_days,
+			c.conservation_type,
+			c.storage_temp_min,
+			c.storage_temp_max
 		FROM components c
 		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
 		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
@@ -1821,10 +1860,15 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		purchasePriceQty        sql.NullFloat64
 		purchaseUnitOfMeasureID sql.NullInt64
 		purchaseUnitOfMeasure   sql.NullString
+		conservationDays        sql.NullInt64
+		conservationType        sql.NullString
+		storageTempMin          sql.NullFloat64
+		storageTempMax          sql.NullFloat64
 	)
 
 	err := db.QueryRowContext(ctx, q, componentID, merchantID).Scan(
 		&id, &name, &catID, &status, &price, &unitOfMeasureID, &unitOfMeasure, &unitShortName, &purchasePrice, &purchasePriceQty, &purchaseUnitOfMeasureID, &purchaseUnitOfMeasure,
+		&conservationDays, &conservationType, &storageTempMin, &storageTempMax,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1860,6 +1904,29 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		purchaseUomName = purchaseUnitOfMeasure.String
 	}
 
+	var cd *int
+	if conservationDays.Valid {
+		cdVal := int(conservationDays.Int64)
+		cd = &cdVal
+	}
+
+	ct := "froid"
+	if conservationType.Valid && conservationType.String != "" {
+		ct = conservationType.String
+	}
+
+	var stMin *float64
+	if storageTempMin.Valid {
+		stMinVal := storageTempMin.Float64
+		stMin = &stMinVal
+	}
+
+	var stMax *float64
+	if storageTempMax.Valid {
+		stMaxVal := storageTempMax.Float64
+		stMax = &stMaxVal
+	}
+
 	return &models.ComponentBasic{
 		ComponentID:             id,
 		Name:                    name,
@@ -1873,6 +1940,10 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 		PurchasePriceQty:        ppq,
 		PurchaseUnitOfMeasureID: purchaseUomID,
 		PurchaseUnitOfMeasure:   purchaseUomName,
+		ConservationDays:        cd,
+		ConservationType:        ct,
+		StorageTempMin:          stMin,
+		StorageTempMax:          stMax,
 	}, nil
 }
 
@@ -2576,6 +2647,26 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 		updateArgs = append(updateArgs, *updates.PurchaseUnitID)
 	}
 
+	if updates.ConservationDays != nil {
+		updateFields = append(updateFields, "conservation_days = ?")
+		updateArgs = append(updateArgs, *updates.ConservationDays)
+	}
+
+	if updates.ConservationType != nil && *updates.ConservationType != "" {
+		updateFields = append(updateFields, "conservation_type = ?")
+		updateArgs = append(updateArgs, *updates.ConservationType)
+	}
+
+	if updates.StorageTempMin != nil {
+		updateFields = append(updateFields, "storage_temp_min = ?")
+		updateArgs = append(updateArgs, *updates.StorageTempMin)
+	}
+
+	if updates.StorageTempMax != nil {
+		updateFields = append(updateFields, "storage_temp_max = ?")
+		updateArgs = append(updateArgs, *updates.StorageTempMax)
+	}
+
 	// S'il n'y a rien à mettre à jour, retourner sans erreur
 	if len(updateFields) == 0 {
 		return nil
@@ -2668,6 +2759,26 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		purchaseUnitID = p.PurchaseUnitID
 	}
 
+	var conservationDays interface{} = nil
+	if p.ConservationDays != nil {
+		conservationDays = *p.ConservationDays
+	}
+
+	conservationType := "froid"
+	if p.ConservationType != nil && *p.ConservationType != "" {
+		conservationType = *p.ConservationType
+	}
+
+	var storageTempMin interface{} = nil
+	if p.StorageTempMin != nil {
+		storageTempMin = *p.StorageTempMin
+	}
+
+	var storageTempMax interface{} = nil
+	if p.StorageTempMax != nil {
+		storageTempMax = *p.StorageTempMax
+	}
+
 	// Insérer le composant
 	query := `
 		INSERT INTO components (
@@ -2679,9 +2790,13 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 			purchase_unit_id,
 			purchase_price,
 			purchase_price_quantity,
+			conservation_days,
+			conservation_type,
+			storage_temp_min,
+			storage_temp_max,
 			enabled,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
 	`
 
 	res, err := db.ExecContext(
@@ -2695,6 +2810,10 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		purchaseUnitID,
 		purchaseCost,
 		purchaseCostQty,
+		conservationDays,
+		conservationType,
+		storageTempMin,
+		storageTempMax,
 	)
 	if err != nil {
 		return "0", fmt.Errorf("insert component error: %w", err)

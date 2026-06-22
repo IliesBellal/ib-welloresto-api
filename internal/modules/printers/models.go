@@ -37,28 +37,30 @@ func languageForRole(role string) string {
 
 // PrinterEntry is the response DTO returned for every printer operation.
 type PrinterEntry struct {
-	ID               string    `json:"id"`
-	MerchantID       string    `json:"merchant_id"`
-	Name             string    `json:"name"`
-	ConnectionType   string    `json:"connection_type"`
-	IPAddress        *string   `json:"ip_address,omitempty"`
-	Port             int       `json:"port"`
-	BluetoothAddress *string   `json:"bluetooth_address,omitempty"`
-	Role             string    `json:"role"`
-	Language         string    `json:"language"`
-	Enabled          bool      `json:"enabled"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                    string    `json:"id"`
+	MerchantID            string    `json:"merchant_id"`
+	Name                  string    `json:"name"`
+	ConnectionType        string    `json:"connection_type"`
+	IPAddress             *string   `json:"ip_address,omitempty"`
+	Port                  int       `json:"port"`
+	BluetoothAddress      *string   `json:"bluetooth_address,omitempty"`
+	Role                  string    `json:"role"`
+	Language              string    `json:"language"`
+	Enabled               bool      `json:"enabled"`
+	ProductionProductIDs  []string  `json:"production_product_ids"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // CreatePrinterRequest is the DTO for creating a printer.
 type CreatePrinterRequest struct {
-	Name             string  `json:"name"`
-	ConnectionType   string  `json:"connection_type"`
-	IPAddress        *string `json:"ip_address,omitempty"`
-	Port             *int    `json:"port,omitempty"`
-	BluetoothAddress *string `json:"bluetooth_address,omitempty"`
-	Role             string  `json:"role"`
+	Name                 string    `json:"name"`
+	ConnectionType       string    `json:"connection_type"`
+	IPAddress            *string   `json:"ip_address,omitempty"`
+	Port                 *int      `json:"port,omitempty"`
+	BluetoothAddress     *string   `json:"bluetooth_address,omitempty"`
+	Role                 string    `json:"role"`
+	ProductionProductIDs *[]string `json:"production_product_ids,omitempty"`
 }
 
 func (r *CreatePrinterRequest) Validate() error {
@@ -83,12 +85,13 @@ func (r *CreatePrinterRequest) Validate() error {
 // UpdatePrinterRequest is the DTO for partial updates on a printer.
 // All fields are optional; only non-nil fields are written to the DB.
 type UpdatePrinterRequest struct {
-	Name             *string `json:"name,omitempty"`
-	ConnectionType   *string `json:"connection_type,omitempty"`
-	IPAddress        *string `json:"ip_address,omitempty"`
-	Port             *int    `json:"port,omitempty"`
-	BluetoothAddress *string `json:"bluetooth_address,omitempty"`
-	Role             *string `json:"role,omitempty"`
+	Name                 *string   `json:"name,omitempty"`
+	ConnectionType       *string   `json:"connection_type,omitempty"`
+	IPAddress            *string   `json:"ip_address,omitempty"`
+	Port                 *int      `json:"port,omitempty"`
+	BluetoothAddress     *string   `json:"bluetooth_address,omitempty"`
+	Role                 *string   `json:"role,omitempty"`
+	ProductionProductIDs *[]string `json:"production_product_ids,omitempty"`
 }
 
 func (r *UpdatePrinterRequest) Validate() error {

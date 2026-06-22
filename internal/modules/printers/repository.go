@@ -3,6 +3,7 @@ package printers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -27,11 +28,11 @@ type printerScanner interface {
 
 func scanPrinter(s printerScanner) (PrinterEntry, error) {
 	var p PrinterEntry
-	var ipAddress, bluetoothAddress sql.NullString
+	var ipAddress, bluetoothAddress, productionProductIDs sql.NullString
 	err := s.Scan(
 		&p.ID, &p.MerchantID, &p.Name, &p.ConnectionType,
 		&ipAddress, &p.Port, &bluetoothAddress, &p.Role, &p.Language,
-		&p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+		&p.Enabled, &productionProductIDs, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return PrinterEntry{}, err
@@ -42,13 +43,17 @@ func scanPrinter(s printerScanner) (PrinterEntry, error) {
 	if bluetoothAddress.Valid {
 		p.BluetoothAddress = &bluetoothAddress.String
 	}
+	p.ProductionProductIDs = make([]string, 0)
+	if productionProductIDs.Valid {
+		_ = json.Unmarshal([]byte(productionProductIDs.String), &p.ProductionProductIDs)
+	}
 	return p, nil
 }
 
 const selectCols = `
 	SELECT printer_id, merchant_id, name, connection_type,
 	       ip_address, port, bluetooth_address, role, language,
-	       enabled, created_at, updated_at
+	       enabled, production_product_ids, created_at, updated_at
 	FROM printers`
 
 // ListPrinters returns all enabled printers for a merchant.
@@ -109,11 +114,12 @@ func (r *Repository) CreatePrinter(ctx context.Context, merchantID string, req *
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO printers
-		 (printer_id, merchant_id, name, connection_type, ip_address, port, bluetooth_address, role, language)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (printer_id, merchant_id, name, connection_type, ip_address, port, bluetooth_address, role, language, production_product_ids)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		printerID, merchantID, req.Name, req.ConnectionType,
 		toNullString(req.IPAddress), port,
 		toNullString(req.BluetoothAddress), req.Role, language,
+		productIDsToNullString(req.ProductionProductIDs),
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -175,6 +181,10 @@ func (r *Repository) UpdatePrinter(ctx context.Context, merchantID, printerID st
 		updates = append(updates, "language = ?")
 		args = append(args, languageForRole(*req.Role))
 	}
+	if req.ProductionProductIDs != nil {
+		updates = append(updates, "production_product_ids = ?")
+		args = append(args, productIDsToNullString(req.ProductionProductIDs))
+	}
 
 	if len(updates) > 0 {
 		args = append(args, printerID, merchantID)
@@ -235,6 +245,19 @@ func toNullString(s *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *s, Valid: true}
+}
+
+// productIDsToNullString serializes a *[]string to JSON for storage.
+// A nil pointer or an empty slice both result in a SQL NULL (no filter).
+func productIDsToNullString(ids *[]string) sql.NullString {
+	if ids == nil || len(*ids) == 0 {
+		return sql.NullString{}
+	}
+	raw, err := json.Marshal(*ids)
+	if err != nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(raw), Valid: true}
 }
 
 func isUniqueConstraintError(err error) bool {

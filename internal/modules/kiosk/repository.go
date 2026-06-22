@@ -639,3 +639,107 @@ func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskID str
 	_, err := db.ExecContext(ctx, query, kioskID, orderID)
 	return err
 }
+
+// GetMerchantTimezone récupère le fuseau horaire du merchant, nécessaire pour
+// calculer le jour de la semaine courant côté GetDiscounts (les promotions
+// peuvent être limitées à certains jours via discounts_schedules). Le module
+// kiosk connaît déjà le merchant_id (via KioskAuth, pas de QR code à
+// résoudre comme scannorder.GetMerchantIDAndTZFromQR) — cette requête isolée
+// évite d'importer le module scannorder juste pour ce champ.
+func (r *Repository) GetMerchantTimezone(ctx context.Context, merchantID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var tz string
+	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ?`, merchantID).Scan(&tz)
+	if err != nil {
+		return "", err
+	}
+	return tz, nil
+}
+
+// GetDiscounts liste les promotions actives du merchant, valides à l'instant
+// présent et pour le jour de la semaine donné (1=lundi...7=dimanche, même
+// convention que scannorder.Repository.GetDiscounts). orderType filtre sur
+// discounts.discount_order_type via LIKE — passer "" pour ne filtrer sur
+// aucun type (voir kiosk.Service.GetDiscounts : la borne n'a pas toujours un
+// fulfillment_type connu au moment de l'affichage des promotions, à la
+// différence de ScanNOrder qui reçoit ?order_type= en query).
+func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderType string, dow int) ([]KioskDiscount, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `
+	SELECT DISTINCT
+		d.discount_id,
+		d.discount_order_type,
+		d.discount_code,
+		d.discount_desc,
+		d.discount_name,
+		d.discount_value,
+		d.discount_unit,
+		d.min_order_value,
+		d.min_order_unit,
+		d.max_discount_value,
+		d.max_discount_unit,
+		d.discounted_quantity,
+		d.is_cumulative,
+		d.available
+	FROM discounts d
+	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
+	WHERE d.merchant_id = ?
+	AND d.discount_order_type LIKE ?
+	AND (d.valid_from < UTC_TIMESTAMP()
+		AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
+	AND (
+		(ds.available_from < UTC_TIMESTAMP()
+		 AND ds.available_to > UTC_TIMESTAMP()
+		 AND ds.day_of_week = ?)
+		OR NOT d.is_time_limited
+	)
+	AND d.available = true
+	AND d.enabled = true
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query kiosk discounts: %w", err)
+	}
+	defer rows.Close()
+
+	discounts := []KioskDiscount{}
+
+	for rows.Next() {
+		var d KioskDiscount
+		var isCumulative int
+		var available int
+
+		err := rows.Scan(
+			&d.DiscountID,
+			&d.DiscountOrderType,
+			&d.DiscountCode,
+			&d.DiscountDesc,
+			&d.DiscountName,
+			&d.DiscountValue,
+			&d.DiscountUnit,
+			&d.MinOrderValue,
+			&d.MinOrderUnit,
+			&d.MaxDiscountValue,
+			&d.MaxDiscountUnit,
+			&d.DiscountedQuantity,
+			&isCumulative,
+			&available,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan kiosk discount: %w", err)
+		}
+
+		d.IsCumulative = isCumulative == 1
+		d.Available = available == 1
+
+		discounts = append(discounts, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error during kiosk discounts fetch: %w", err)
+	}
+
+	return discounts, nil
+}

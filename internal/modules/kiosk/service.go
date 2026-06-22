@@ -800,6 +800,39 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 	}, nil
 }
 
+// GetDiscounts liste les promotions actives du merchant, valides à l'instant
+// présent. Contrairement à scannorder.Service.GetDiscounts (qui reçoit
+// ?order_type= en query et filtre dessus), GET /kiosk/discounts n'a pas de
+// fulfillment_type connu au moment de l'appel (écran d'accueil, avant tout
+// choix client) — orderType est donc "%" (aucun filtre par type de commande,
+// seulement validité temporelle + jour de la semaine).
+func (s *Service) GetDiscounts(ctx context.Context, merchantID string) (*KioskDiscountsResponse, error) {
+	tz, err := s.repo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	dow := int(now.Weekday())
+	if dow == 0 {
+		dow = 7
+	}
+
+	discounts, err := s.repo.GetDiscounts(ctx, merchantID, "", dow)
+	if err != nil {
+		return nil, err
+	}
+	if discounts == nil {
+		discounts = []KioskDiscount{}
+	}
+
+	return &KioskDiscountsResponse{Discounts: discounts}, nil
+}
+
 // UpdateSettings applique un patch partiel sur les paramètres Kiosk du
 // merchant (les champs nil ne sont pas modifiés).
 func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req UpdateKioskSettingsRequest) (*KioskSettingsResponse, error) {
@@ -924,7 +957,17 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // GetMenu retourne le menu filtré sur is_available_on_kiosk, avec un ETag
 // (MD5 du JSON sérialisé) permettant au handler de répondre 304 sur un
 // If-None-Match identique.
-func (s *Service) GetMenu(ctx context.Context, merchantID string) (*KioskMenuResponse, error) {
+//
+// orderType (IN/TAKE_AWAY) adapte le prix affiché par produit — même
+// vocabulaire et même principe que scannorder.ComputeGetMenu avec son
+// paramètre deliveryType (internal/modules/scannorder/service.go), reçu
+// directement depuis la query string sans traduction intermédiaire (à la
+// différence de Pricing/CreateOrder qui restent sur le vocabulaire
+// DINE_IN/TAKE_AWAY propre au Kiosk, traduit via kioskFulfillmentToOrderType).
+// Comme scannorder, une valeur absente ou inconnue ne fait pas échouer la
+// requête : seul "TAKE_AWAY" dévie du prix de base (voir
+// cleanProductPricesForKiosk) ; le menu Kiosk n'a pas de notion de DELIVERY.
+func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
 	rawMenu, err := s.menuService.GetMenuFromMerchantIdWithMarketing(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -937,7 +980,7 @@ func (s *Service) GetMenu(ctx context.Context, merchantID string) (*KioskMenuRes
 
 	categories := make([]KioskCategory, 0, len(rawMenu.ProductsTypes))
 	for _, pt := range rawMenu.ProductsTypes {
-		products := flattenKioskProducts(pt.Products, availability)
+		products := flattenKioskProducts(pt.Products, availability, orderType)
 		if len(products) == 0 {
 			continue
 		}
@@ -956,8 +999,12 @@ func (s *Service) GetMenu(ctx context.Context, merchantID string) (*KioskMenuRes
 	}
 
 	resp := &KioskMenuResponse{Categories: categories}
+	// orderType préfixe le hash : deux modes dont les prix seraient identiques
+	// produiraient sinon le même ETag, ce qui reste correct (contenu réellement
+	// identique) mais on le rend explicite pour ne jamais dépendre de cette
+	// coïncidence.
 	if serialized, err := json.Marshal(categories); err == nil {
-		sum := md5.Sum(serialized)
+		sum := md5.Sum(append([]byte(orderType+"|"), serialized...))
 		resp.ETag = fmt.Sprintf("%x", sum)
 	}
 
@@ -970,14 +1017,14 @@ func (s *Service) GetMenu(ctx context.Context, merchantID string) (*KioskMenuRes
 // (table products, colonne dédiée — migration 038) au lieu de
 // is_available_on_sno. Implémenté ici plutôt que dans menuService pour ne
 // jamais modifier ce module existant (voir docs/KIOSK_DECISIONS.md).
-func flattenKioskProducts(products []models.ProductEntry, availability map[string]bool) []KioskProduct {
+func flattenKioskProducts(products []models.ProductEntry, availability map[string]bool, orderType string) []KioskProduct {
 	out := make([]KioskProduct, 0, len(products))
 
 	var toAdd []models.ProductEntry
 	for _, p := range products {
 		isGroup := p.IsProductGroup != nil && *p.IsProductGroup
 		if !isGroup && availability[p.ProductID] {
-			out = append(out, mapProductEntryToKioskProduct(&p))
+			out = append(out, mapProductEntryToKioskProduct(&p, orderType))
 			continue
 		}
 		if len(p.SubProducts) > 0 {
@@ -987,14 +1034,27 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 
 	for _, sp := range toAdd {
 		if availability[sp.ProductID] {
-			out = append(out, mapProductEntryToKioskProduct(&sp))
+			out = append(out, mapProductEntryToKioskProduct(&sp, orderType))
 		}
 	}
 
 	return out
 }
 
-func mapProductEntryToKioskProduct(p *models.ProductEntry) KioskProduct {
+// cleanProductPricesForKiosk adapte le prix affiché au mode de commande Kiosk,
+// même principe que scannorder.cleanProductPricesForSNO (internal/modules/
+// scannorder/service.go) mais sans DELIVERY (inexistant sur Kiosk) et sans
+// déréférencer un pointeur nil : si PriceTakeAway n'est pas configuré pour ce
+// produit, on garde le prix de base (DINE_IN/"IN") plutôt que de paniquer.
+func cleanProductPricesForKiosk(p *models.ProductEntry, orderType string) {
+	if orderType == models.OrderTypeTakeAway && p.PriceTakeAway != nil {
+		p.Price = *p.PriceTakeAway
+	}
+}
+
+func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) KioskProduct {
+	cleanProductPricesForKiosk(p, orderType)
+
 	description := ""
 	if p.Description != nil {
 		description = *p.Description
@@ -1050,8 +1110,10 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry) KioskProduct {
 
 // GetProduct retourne le détail d'un produit, en rejetant explicitement les
 // produits désactivés sur la borne (is_available_on_kiosk = FALSE), même
-// s'ils existent et sont visibles sur d'autres canaux.
-func (s *Service) GetProduct(ctx context.Context, merchantID, productID string) (*KioskProduct, error) {
+// s'ils existent et sont visibles sur d'autres canaux. orderType (IN/
+// TAKE_AWAY) suit la même convention que GetMenu — voir son commentaire pour
+// le détail (équivalent du paramètre order_type de scannorder.GetProduct).
+func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderType string) (*KioskProduct, error) {
 	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, []string{productID})
 	if err != nil {
 		return nil, err
@@ -1068,7 +1130,7 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID string) 
 		return nil, models.ErrKioskProductNotFound
 	}
 
-	mapped := mapProductEntryToKioskProduct(product)
+	mapped := mapProductEntryToKioskProduct(product, orderType)
 	return &mapped, nil
 }
 
@@ -1302,10 +1364,33 @@ func (s *Service) ComputePricing(ctx context.Context, merchantID string, req Kio
 	return pricingResponseToKiosk(pricing), nil
 }
 
+// pricingResponseToKiosk dérive le détail kiosk (sous-total/remise/taxe/total)
+// de la réponse pricing partagée avec le POS. itemsTotal doit inclure les
+// mêmes composantes que OrdersService.computeTotals (prix produit + extras +
+// options de configuration sélectionnées) : sinon il sous-estime le
+// sous-total dès qu'un produit a une option/extra payante, et discountCents
+// (itemsTotal - totalCents) absorbe l'écart en l'affichant comme une fausse
+// "promotion" — ou le masque silencieusement via le clamp à 0 ci-dessous.
 func pricingResponseToKiosk(pricing *models.PricingResponse) *KioskPricingResponse {
 	var itemsTotal int64
 	for _, p := range pricing.OrderRequest.Order.Products {
 		itemsTotal += int64(p.Price) * int64(p.Quantity)
+
+		for _, e := range p.Extra {
+			if e != nil {
+				itemsTotal += int64(e.Price) * int64(p.Quantity)
+			}
+		}
+
+		if p.Config != nil {
+			for _, attr := range p.Config.Attributes {
+				for _, o := range attr.Options {
+					if o.Selected && o.ExtraPrice != 0 {
+						itemsTotal += int64(o.ExtraPrice) * int64(p.Quantity)
+					}
+				}
+			}
+		}
 	}
 
 	totalCents := int64(pricing.OrderRequest.Order.TTC)
