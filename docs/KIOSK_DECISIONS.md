@@ -1858,3 +1858,93 @@ dehors de la documentation). `go vet ./...` : aucun nouvel avertissement
 introduit par ce changement (les avertissements existants — `ubereats`,
 `auth`, `tasks`, `webhook/ubereats/client` — sont préexistants, sans rapport
 avec ce module). `go test ./internal/modules/kiosk/...` : OK.
+
+---
+
+## Incrément 7 — bug `POST /kiosk/pricing` retourne toujours `is_orderable: false`
+
+### Cause exacte
+
+`OrdersService.ComputePricing` (`internal/modules/orders/service.go`) calcule
+correctement `req.IsOrderable` / `req.NotOrderableReason` sur le
+`*models.PricingRequest` (`applyDeliveryRules`, ligne ~1167) — mais ces
+champs sont marqués `json:"-"` sur `PricingRequest` (internes, jamais sur le
+wire). Le retour final de `ComputePricing` ne les recopiait **jamais** sur
+les champs équivalents de `PricingResponse` (`IsOrderable`,
+`NotOrderableReason`, `MinimumCartForDeliveryOrder`, eux bien sérialisés en
+JSON) : la réponse partait donc toujours avec la valeur zéro de Go,
+`is_orderable: false`, quel que soit le résultat réel du calcul.
+
+`scannorder.GetPricingSNO` (ligne 449) fait ce recopiage explicitement après
+avoir appelé `ComputePricing` :
+```go
+pricing.IsOrderable = pricing.OrderRequest.IsOrderable
+```
+C'est pour ça que ScanNOrder a toujours renvoyé la bonne valeur, alors que
+tout autre appelant de `ComputePricing` sans ce recopiage était cassé par
+construction.
+
+Le kiosk avait initialement le même recopiage, dans `pricingResponseToKiosk`
+(voir Correction 6, Incrément 5) : *"`OrdersService.ComputePricing` ne
+renseigne pas `PricingResponse.IsOrderable` (...) `pricingResponseToKiosk`
+fait désormais la même chose"*. Ce recopiage a été perdu **sans intention**
+lors de l'Incrément 6, quand `pricingResponseToKiosk` (et tout le mapping
+vers les structs kiosk dédiées) a été supprimé pour faire consommer
+`models.PricingResponse` directement par le handler kiosk — le bug latent de
+`ComputePricing` est alors redevenu visible côté Kiosk, **sans aucune
+modification volontaire de la logique d'éligibilité**.
+
+`POST /pos/pricing` (`OrdersHandler.GetPricing` → `OrdersService.GetPricing`
+→ `ComputePricing`, sans recopiage non plus) a exactement le même bug — pas
+spécifique au Kiosk, juste jamais remarqué côté POS.
+
+### Pourquoi `estimated_distribution_time: 1080` n'est pas la cause
+
+Ce champ (`GetEstimatedDistributionTime`) est calculé indépendamment de
+`is_orderable` et ne le bloque jamais dans `ComputePricing` — aucun lien
+entre les deux. La valeur élevée n'est qu'une coïncidence de données de
+test, pas un seuil de blocage.
+
+### Correction appliquée (Option A — fix dans `ComputePricing`, root cause)
+
+`internal/modules/orders/service.go`, retour final de `ComputePricing` :
+recopie désormais `req.IsOrderable` → `PricingResponse.IsOrderable`,
+`req.NotOrderableReason` → `PricingResponse.NotOrderableReason`,
+`req.MinimumCartForDeliveryOrder` → `PricingResponse.MinimumCartForDeliveryOrder`.
+
+Corrigé à la source plutôt que côté kiosk uniquement, parce que le bug
+n'est pas propre au Kiosk : le contrat de `ComputePricing` (une fonction
+partagée par POS, ScanNOrder et Kiosk) doit produire une réponse correcte
+par lui-même, sans dépendre de chaque appelant pour "réparer" le résultat
+après coup. Aucune modification de `scannorder.GetPricingSNO` :
+son recopiage (ligne 449) devient redondant (même valeur déjà posée par
+`ComputePricing`) mais reste inoffensif, y compris pour son cas
+spécifique `IsInDeliveryZone` (lignes 450-454, toujours appliqué après,
+inchangé). `OrdersService.GetPricing` (route POS `/pricing`) profite du même
+correctif sans changement de code supplémentaire.
+
+La logique d'éligibilité elle-même (`applyDeliveryRules`) n'a pas été
+touchée : `IsOrderable` ne devient `false` que pour `OrderType == "DELIVERY"
+&& IsSNO && TTC < MinimumCartForDeliveryOrder` — ce check ne s'applique déjà
+pas à `TAKE_AWAY`/`DINE_IN`, donc pas au cas Kiosk pizza Margarita (qui est
+`order_type` Kiosk, jamais `"DELIVERY"`).
+
+### Vérification
+
+- `go build ./...` et `go vet ./...` clean.
+- `go test ./internal/modules/orders/... ./internal/modules/kiosk/...
+  ./internal/modules/scannorder/...` : OK (aucun test cassé).
+- Pour le cas concret du brief (pizza Margarita Jambon, quantity 3, remise
+  appliquée, `order_type` Kiosk DINE_IN/TAKE_AWAY) : `applyDeliveryRules`
+  pose `req.IsOrderable = true` (pas de branche `DELIVERY`, donc jamais mis
+  à `false`) ; ce flag est désormais recopié sur la réponse →
+  `is_orderable: true`, `not_orderable_reason` absent. À reconfirmer en
+  conditions réelles après déploiement (pas de `MYSQL_URL` dans ce sandbox,
+  mêmes limites que les incréments précédents).
+- Cas bloquants toujours corrects : panier vide → `unavailable_products`
+  non vide, réponse retournée avant `applyDeliveryRules` (la valeur zéro
+  Go de `PricingResponse.IsOrderable`, `false`, reste correcte ici, jamais
+  écrasée) ; minimum panier livraison non atteint → toujours `IsOrderable =
+  false` + `NotOrderableReason = "minimum_cart_for_delivery_not_reached"`,
+  désormais effectivement visible sur le wire (ce qui ne l'était pas avant
+  ce correctif, autre bug latent corrigé au passage).
