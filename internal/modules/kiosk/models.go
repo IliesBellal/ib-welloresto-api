@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
 )
 
 // AuthenticatedKiosk est un alias du type porté par middleware (voir
@@ -257,39 +258,58 @@ type KioskMenuResponse struct {
 }
 
 type KioskCategory struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	SortOrder int            `json:"sort_order"`
-	ImageURL  string         `json:"image_url,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sort_order"`
+	ImageURL  string `json:"image_url,omitempty"`
+	// Available reprend products_types.available (scannorder l'expose déjà) —
+	// une catégorie désactivée par le restaurateur ne doit pas apparaître sur
+	// la borne (voir GetMenu, le filtre est appliqué côté service).
+	Available bool           `json:"available"`
 	Products  []KioskProduct `json:"products"`
 }
 
 type KioskProduct struct {
-	ID               string               `json:"id"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description,omitempty"`
-	PriceCents       int64                `json:"price_cents"`
-	ImageURL         string               `json:"image_url,omitempty"`
-	Available        bool                 `json:"available"`
-	AvailableOnKiosk bool                 `json:"available_on_kiosk"`
-	Allergens        []string             `json:"allergens,omitempty"`
-	Tags             []string             `json:"tags,omitempty"`
-	ModifierGroups   []KioskModifierGroup `json:"modifier_groups,omitempty"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Description        string               `json:"description,omitempty"`
+	PriceCents         int64                `json:"price_cents"`
+	PriceTakeAwayCents *int64               `json:"price_take_away_cents,omitempty"`
+	ImageURL           string               `json:"image_url,omitempty"`
+	Available          bool                 `json:"available"`
+	AvailableOnKiosk   bool                 `json:"available_on_kiosk"`
+	Allergens          []string             `json:"allergens,omitempty"`
+	Tags               []string             `json:"tags,omitempty"`
+	ModifierGroups     []KioskModifierGroup `json:"modifier_groups,omitempty"`
+	IsPopular          bool                 `json:"is_popular,omitempty"`
+	TVARate            *float64             `json:"tva_rate,omitempty"`
+	MaxQuantity        *int                 `json:"max_quantity,omitempty"`
+	DisplayOrder       *int                 `json:"display_order,omitempty"`
+	Status             string               `json:"status,omitempty"`
 }
 
+// KioskModifierGroup/KioskModifierOption — champs JSON alignés sur
+// ConfigurableAttribute/ConfigurableOption (scannorder, internal/models/
+// menu_models.go), voir docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #5. Les
+// anciens noms (name/min/max/required/price_delta_cents) sont une rupture de
+// contrat JSON pour le client Flutter kiosk existant — voir
+// docs/KIOSK_DECISIONS.md.
 type KioskModifierGroup struct {
-	ID       string                `json:"id"`
-	Name     string                `json:"name"`
-	Min      int                   `json:"min"`
-	Max      int                   `json:"max"`
-	Required bool                  `json:"required"`
-	Options  []KioskModifierOption `json:"options"`
+	ID            string                `json:"id"`
+	Title         string                `json:"title"`
+	MinOptions    int                   `json:"min_options"`
+	MaxOptions    int                   `json:"max_options"`
+	AttributeType string                `json:"attribute_type"`
+	Options       []KioskModifierOption `json:"options"`
 }
 
 type KioskModifierOption struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	PriceDeltaCents int    `json:"price_delta_cents"`
+	ID                      string `json:"id"`
+	Title                   string `json:"title"`
+	ExtraPrice              int    `json:"extra_price"`
+	MaxQuantity             int    `json:"max_quantity"`
+	ConfigurableAttributeID string `json:"configurable_attribute_id"`
+	Selected                bool   `json:"selected,omitempty"`
 }
 
 type KioskUpsellRequest struct {
@@ -327,6 +347,16 @@ type KioskPricingResponse struct {
 	DiscountCents   int64 `json:"discount_cents"`
 	TaxCents        int64 `json:"tax_cents"`
 	TotalCents      int64 `json:"total_cents"`
+	HTCents         int64 `json:"ht_cents"`
+
+	// Champs repris de models.PricingResponse (voir
+	// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #6) — déjà calculés par
+	// ordersService.ComputePricing, simplement absents du mapping kiosk
+	// jusqu'ici.
+	IsOrderable         bool                            `json:"is_orderable"`
+	NotOrderableReason  string                          `json:"not_orderable_reason,omitempty"`
+	AppliedDiscounts    []string                        `json:"applied_discounts,omitempty"`
+	UnavailableProducts []models.UnavailableProductInfo `json:"unavailable_products,omitempty"`
 }
 
 type KioskOrderItem struct {

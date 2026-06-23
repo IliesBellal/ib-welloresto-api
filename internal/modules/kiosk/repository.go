@@ -587,11 +587,15 @@ func (r *Repository) GetKioskProductAvailabilityMap(ctx context.Context, merchan
 	return result, nil
 }
 
-// GetExistingConfigurationOptionIDs vérifie l'existence réelle d'options de
+// GetConfigurationOptionAttributeIDs vérifie l'existence réelle des options de
 // configuration (rejette les IDs fabriqués côté client — même esprit que
-// GetProductPricesForSNO dans scannorder).
-func (r *Repository) GetExistingConfigurationOptionIDs(ctx context.Context, optionIDs []string) (map[string]bool, error) {
-	result := make(map[string]bool)
+// GetProductPricesForSNO dans scannorder) ET retourne le vrai
+// configurable_attribute_id de chacune, pour regrouper correctement les
+// options sélectionnées par groupe de modificateur (voir
+// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #2 — buildOrderProducts utilisait
+// auparavant un id fictif "kiosk-options" pour tout regrouper).
+func (r *Repository) GetConfigurationOptionAttributeIDs(ctx context.Context, optionIDs []string) (map[string]string, error) {
+	result := make(map[string]string)
 	if len(optionIDs) == 0 {
 		return result, nil
 	}
@@ -608,22 +612,22 @@ func (r *Repository) GetExistingConfigurationOptionIDs(ctx context.Context, opti
 		args = append(args, id)
 	}
 
-	query := fmt.Sprintf(`SELECT id FROM configurable_attribute_options WHERE id IN (%s)`, placeholders)
+	query := fmt.Sprintf(`SELECT id, configurable_attribute_id FROM configurable_attribute_options WHERE id IN (%s)`, placeholders)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query configuration option existence: %w", err)
+		return nil, fmt.Errorf("failed to query configuration option attribute ids: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan configuration option id: %w", err)
+		var id, attributeID string
+		if err := rows.Scan(&id, &attributeID); err != nil {
+			return nil, fmt.Errorf("failed to scan configuration option attribute id: %w", err)
 		}
-		result[id] = true
+		result[id] = attributeID
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error during configuration option existence fetch: %w", err)
+		return nil, fmt.Errorf("rows error during configuration option attribute id fetch: %w", err)
 	}
 	return result, nil
 }

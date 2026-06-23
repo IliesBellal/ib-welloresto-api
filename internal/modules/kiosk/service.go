@@ -980,6 +980,13 @@ func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*K
 
 	categories := make([]KioskCategory, 0, len(rawMenu.ProductsTypes))
 	for _, pt := range rawMenu.ProductsTypes {
+		// Une catégorie désactivée par le restaurateur (products_types.available
+		// = false) ne doit pas apparaître sur la borne — voir
+		// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #4.
+		if !pt.Available {
+			continue
+		}
+
 		products := flattenKioskProducts(pt.Products, availability, orderType)
 		if len(products) == 0 {
 			continue
@@ -994,6 +1001,7 @@ func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*K
 			ID:        categoryID,
 			Name:      pt.CategoryName,
 			SortOrder: pt.Order,
+			Available: pt.Available,
 			Products:  products,
 		})
 	}
@@ -1079,32 +1087,46 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 		options := make([]KioskModifierOption, 0, len(attr.Options))
 		for _, opt := range attr.Options {
 			options = append(options, KioskModifierOption{
-				ID:              opt.ID,
-				Name:            opt.Title,
-				PriceDeltaCents: opt.ExtraPrice,
+				ID:                      opt.ID,
+				Title:                   opt.Title,
+				ExtraPrice:              opt.ExtraPrice,
+				MaxQuantity:             opt.MaxQuantity,
+				ConfigurableAttributeID: attr.ID,
+				Selected:                opt.Selected,
 			})
 		}
 		modifierGroups = append(modifierGroups, KioskModifierGroup{
-			ID:       attr.ID,
-			Name:     attr.Title,
-			Min:      attr.MinOptions,
-			Max:      attr.MaxOptions,
-			Required: attr.MinOptions > 0,
-			Options:  options,
+			ID:            attr.ID,
+			Title:         attr.Title,
+			MinOptions:    attr.MinOptions,
+			MaxOptions:    attr.MaxOptions,
+			AttributeType: attr.AttributeType,
+			Options:       options,
 		})
 	}
 
 	return KioskProduct{
-		ID:               p.ProductID,
-		Name:             p.Name,
-		Description:      description,
-		PriceCents:       p.Price,
-		ImageURL:         imageURL,
-		Available:        available,
-		AvailableOnKiosk: true,
-		Allergens:        allergens,
-		Tags:             tags,
-		ModifierGroups:   modifierGroups,
+		ID:                 p.ProductID,
+		Name:               p.Name,
+		Description:        description,
+		PriceCents:         p.Price,
+		PriceTakeAwayCents: p.PriceTakeAway,
+		ImageURL:           imageURL,
+		Available:          available,
+		AvailableOnKiosk:   true,
+		Allergens:          allergens,
+		Tags:               tags,
+		ModifierGroups:     modifierGroups,
+		IsPopular:          p.IsPopular,
+		TVARate:            p.TVARate,
+		// MaxQuantity : ProductEntry (internal/models/menu_models.go) n'a pas
+		// de limite de quantité par produit côté commande — seul
+		// ConfigurableOption.MaxQuantity existe (limite par option d'un
+		// modificateur, déjà porté par KioskModifierOption.MaxQuantity).
+		// Champ laissé nil tant qu'aucune colonne DB n'existe pour ça.
+		MaxQuantity:  nil,
+		DisplayOrder: p.DisplayOrder,
+		Status:       p.Status,
 	}
 }
 
@@ -1274,7 +1296,7 @@ func (s *Service) buildOrderProducts(ctx context.Context, merchantID string, ite
 	for id := range optionIDSet {
 		optionIDs = append(optionIDs, id)
 	}
-	existingOptions, err := s.repo.GetExistingConfigurationOptionIDs(ctx, optionIDs)
+	optionAttributeIDs, err := s.repo.GetConfigurationOptionAttributeIDs(ctx, optionIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1283,16 +1305,28 @@ func (s *Service) buildOrderProducts(ctx context.Context, merchantID string, ite
 	for _, item := range items {
 		var config *models.ProductConfiguration
 		if len(item.SelectedOptionIDs) > 0 {
-			options := make([]models.ConfigurationOption, 0, len(item.SelectedOptionIDs))
+			// Regroupe les options sélectionnées par leur vrai
+			// configurable_attribute_id (et non un id fictif unique) — même
+			// structure que scannorder, voir
+			// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #2.
+			attributeOrder := make([]string, 0, len(item.SelectedOptionIDs))
+			optionsByAttribute := make(map[string][]models.ConfigurationOption)
 			for _, optID := range item.SelectedOptionIDs {
-				if !existingOptions[optID] {
+				attributeID, exists := optionAttributeIDs[optID]
+				if !exists {
 					return nil, models.ErrInvalidInput
 				}
-				options = append(options, models.ConfigurationOption{ID: optID, Selected: true})
+				if _, seen := optionsByAttribute[attributeID]; !seen {
+					attributeOrder = append(attributeOrder, attributeID)
+				}
+				optionsByAttribute[attributeID] = append(optionsByAttribute[attributeID], models.ConfigurationOption{ID: optID, Selected: true})
 			}
-			config = &models.ProductConfiguration{
-				Attributes: []models.ConfigurationAttribute{{ID: "kiosk-options", Options: options}},
+
+			attributes := make([]models.ConfigurationAttribute, 0, len(attributeOrder))
+			for _, attributeID := range attributeOrder {
+				attributes = append(attributes, models.ConfigurationAttribute{ID: attributeID, Options: optionsByAttribute[attributeID]})
 			}
+			config = &models.ProductConfiguration{Attributes: attributes}
 		}
 
 		var comment *models.OrderItemCommentPayload
@@ -1395,16 +1429,31 @@ func pricingResponseToKiosk(pricing *models.PricingResponse) *KioskPricingRespon
 
 	totalCents := int64(pricing.OrderRequest.Order.TTC)
 	taxCents := int64(pricing.OrderRequest.Order.TVA)
+	htCents := int64(pricing.OrderRequest.Order.HT)
 	discountCents := itemsTotal - totalCents
 	if discountCents < 0 {
 		discountCents = 0
 	}
 
+	// pricing.IsOrderable/NotOrderableReason (champs de réponse) restent à
+	// zéro tant qu'on n'appelle pas ComputePricing via le wrapper SNO —
+	// OrdersService.ComputePricing ne renseigne que pricing.OrderRequest.
+	// IsOrderable/NotOrderableReason (champs internes à la requête, voir
+	// internal/models/request_objects.go PricingRequest), exactement comme
+	// scannorder.GetPricingSNO les recopie avant de répondre.
+	isOrderable := pricing.OrderRequest.IsOrderable
+	notOrderableReason := pricing.OrderRequest.NotOrderableReason
+
 	return &KioskPricingResponse{
-		ItemsTotalCents: itemsTotal,
-		DiscountCents:   discountCents,
-		TaxCents:        taxCents,
-		TotalCents:      totalCents,
+		ItemsTotalCents:     itemsTotal,
+		DiscountCents:       discountCents,
+		TaxCents:            taxCents,
+		TotalCents:          totalCents,
+		HTCents:             htCents,
+		IsOrderable:         isOrderable,
+		NotOrderableReason:  notOrderableReason,
+		AppliedDiscounts:    pricing.AppliedDiscounts,
+		UnavailableProducts: pricing.UnavailableProduct,
 	}
 }
 
@@ -1475,6 +1524,7 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 	orderReq.CreatedBy = strPtr(kioskCreatedBy)
 	orderReq.CashRegisterId = strPtr(kioskCashRegister)
 	orderReq.OnlinePayment = false
+	orderReq.IsSNO = false
 	orderReq.Payments = []models.PaymentPayload{}
 	if req.OrderNotes != "" {
 		orderReq.Comment = strPtr(req.OrderNotes)
@@ -1518,12 +1568,14 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 
 func strPtr(s string) *string { return &s }
 
-// ConfirmCounterPayment génère le code de retrait et le QR à afficher à
-// l'écran de la borne, et notifie le merchant en temps réel qu'une commande
-// attend d'être encaissée au comptoir. N'altère pas merchant_approval : la
-// commande est déjà en PENDING_APPROVAL depuis sa création (voir
-// CreateKioskOrder) — cet appel rend cet état visible/actionnable côté
-// borne et back-office, il ne le déclenche pas une seconde fois.
+// ConfirmCounterPayment marque la commande comme encaissée au comptoir : le
+// staff vient de prendre le paiement réel (espèces/CB), donc on fait
+// transitionner merchant_approval de PENDING_APPROVAL vers ACCEPTED (voir
+// OrdersLifeCycleService.SetOrderAccepted — même mécanisme que
+// AcceptOrder/POS, appelé directement ici puisque le kiosk est authentifié
+// par device, pas par middleware.UserFromContext). Génère ensuite le code de
+// retrait et le QR à afficher à l'écran de la borne, et notifie le merchant
+// en temps réel.
 func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kiosk AuthenticatedKiosk) (*CounterPaymentResponse, error) {
 	orders, err := s.ordersService.ComputeGetOrder(ctx, kiosk.MerchantID, orderID)
 	if err != nil {
@@ -1533,6 +1585,13 @@ func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kio
 		return nil, models.ErrKioskOrderNotFound
 	}
 	order := orders.Orders[0]
+
+	if order.MerchantApproval == "PENDING_APPROVAL" {
+		if _, err := s.ordersLifeCycleSvc.SetOrderAccepted(ctx, kioskCreatedBy, kiosk.MerchantID, orderID); err != nil {
+			return nil, err
+		}
+		order.MerchantApproval = "ACCEPTED"
+	}
 
 	pickupCode := ""
 	if order.OrderNum != nil {

@@ -1629,3 +1629,130 @@ curl -s "$BASE_URL/kiosk/discounts" -H "Authorization: Bearer $ACCESS_TOKEN"
 Non exécuté dans ce sandbox (pas de `MYSQL_URL`/`REDIS_URL`) — seul `go
 build ./...` a été vérifié (clean).
 ```
+
+## Incrément 11 — alignement structurel avec ScanNOrder
+
+Suite à `docs/KIOSK_VS_SCANNORDER_STRUCTS.md` (audit comparatif des structs
+entre `scannorder` et `kiosk` sur les flux menu/pricing/commande), les écarts
+suivants ont été corrigés **côté kiosk uniquement** — `scannorder` n'a pas
+été modifié.
+
+### Correction 1 (requalifiée non-bloquante après revue) — `MerchantApproval` forcé à `ACCEPTED`
+
+`Service.CreateKioskOrder` forçait `merchant_approval = "ACCEPTED"` dès la
+création, sans paiement réel encaissé. **Mise à jour (Ilies)** : la
+qualification initiale "bloquante" était une erreur d'appréciation de
+l'audit — ce n'est pas un bug, les commandes Kiosk aboutissent de toute
+façon à `ACCEPTED` (immédiatement ou après encaissement comptoir), c'est
+l'un des seuls comportements **volontairement différents** de Kiosk par
+rapport à ScanNOrder. Voir `docs/KIOSK_VS_SCANNORDER_STRUCTS.md` (note en
+tête de document) pour le détail de cette requalification.
+
+Le correctif suivant a néanmoins été appliqué (et reste en place, sans
+besoin de revert) : **toute commande kiosk part en `PENDING_APPROVAL`
+à la création, qu'elle soit `DINE_IN` ou `TAKE_AWAY`** — contrairement à
+`scannorder.CreateOrderSNO` où `IN` part directement en `ACCEPTED` (le client
+scanne à table, le staff voit la commande live, pas de paiement à confirmer).
+Le kiosk n'a, à cet incrément, que le paiement comptoir (`pay_at_counter`) :
+DINE_IN comme TAKE_AWAY doivent attendre que le staff encaisse réellement.
+
+`Service.ConfirmCounterPayment` fait maintenant la transition
+`PENDING_APPROVAL → ACCEPTED` via
+`OrdersLifeCycleService.SetOrderAccepted(ctx, kioskCreatedBy, merchantID,
+orderID)` — le même mécanisme que `AcceptOrder`/POS, appelé directement
+(sans passer par `middleware.UserFromContext`, qui n'existe pas pour un
+appelant authentifié par device).
+
+### Correction 2 (majeure) — regroupement des options par vrai `configurable_attribute_id`
+
+`Service.buildOrderProducts` regroupait toutes les options sélectionnées
+sous un id fictif unique `"kiosk-options"`, perdant l'information de groupe
+de modificateur (ticket cuisine, audit). `Repository.
+GetConfigurationOptionAttributeIDs` (remplace `GetExistingConfigurationOptionIDs`)
+retourne désormais `configurable_attribute_id` par option, et
+`buildOrderProducts` reconstruit un `models.ConfigurationAttribute` par
+groupe réel — même structure que ce qu'envoie le client ScanNOrder.
+
+### Correction 3 (majeure) — champs manquants sur `KioskProduct`
+
+Ajout de `price_take_away_cents`, `is_popular`, `tva_rate`, `display_order`,
+`status` (mappés depuis `models.ProductEntry`). `max_quantity` reste `nil` :
+il n'existe pas de limite de quantité par produit en base (seule
+`ConfigurableOption.MaxQuantity`, par option de modificateur, existe — déjà
+porté par `KioskModifierOption.MaxQuantity`).
+
+### Correction 4 (majeure) — `KioskCategory.available`
+
+Ajout du champ `available`, alimenté depuis `ProductCategory.Available`.
+`GetMenu` filtre désormais les catégories désactivées par le restaurateur
+(`available = false`) avant de les inclure dans la réponse — auparavant
+elles restaient visibles sur la borne.
+
+### Correction 5 (majeure, **breaking change client**) — nommage `KioskModifierGroup`/`KioskModifierOption`
+
+Champs JSON renommés pour s'aligner sur `ConfigurableAttribute`/
+`ConfigurableOption` (`internal/models/menu_models.go`, référence ScanNOrder) :
+
+| Avant (kiosk) | Après (kiosk = scannorder) |
+|---|---|
+| `KioskModifierGroup.name` | `title` |
+| `KioskModifierGroup.min` | `min_options` |
+| `KioskModifierGroup.max` | `max_options` |
+| `KioskModifierGroup.required` (déduit de `min>0`) | supprimé, remplacé par `attribute_type` |
+| `KioskModifierOption.name` | `title` |
+| `KioskModifierOption.price_delta_cents` | `extra_price` |
+| — | `max_quantity` (nouveau) |
+| — | `configurable_attribute_id` (nouveau) |
+| — | `selected` (nouveau) |
+
+**⚠️ Le client Flutter kiosk doit être mis à jour en conséquence** (modèles
+Dart consommant `GET /kiosk/menu` / `GET /kiosk/products/{id}`) — prévu dans
+la session Flutter suivante.
+
+### Correction 6 (majeure) — champs manquants sur `KioskPricingResponse`
+
+Ajout de `ht_cents`, `is_orderable`, `not_orderable_reason`,
+`applied_discounts`, `unavailable_products` — déjà calculés par
+`OrdersService.ComputePricing` mais jusqu'ici non mappés. Point notable :
+`OrdersService.ComputePricing` ne renseigne **pas** `PricingResponse.
+IsOrderable`/`NotOrderableReason` (champs de réponse) — seulement
+`PricingRequest.IsOrderable`/`NotOrderableReason` (champs internes à la
+requête, json `"-"`, donc invisibles sur le wire). `scannorder.GetPricingSNO`
+les recopie explicitement après l'appel ; `pricingResponseToKiosk` fait
+désormais la même chose (`pricing.OrderRequest.IsOrderable` →
+`KioskPricingResponse.IsOrderable`).
+
+### Correction 7 — `validateAndCleanPricingPayload` : **non applicable**, vérifié plutôt qu'implémenté
+
+L'audit suggérait de porter `scannorder.validateAndCleanPricingPayload`
+(anti-fraude prix) côté kiosk avant `ComputePricing`. Vérification du code
+réel de `OrdersService.ComputePricing` (`internal/modules/orders/
+service.go`) : `buildSelectedProducts` recalcule **toujours** `Price`/`TvaRate`
+depuis `dbProducts` (jamais depuis le payload client), et
+`applyConfigurationOptionPrices` réécrit toujours `ExtraPrice` depuis
+`GetConfigurationOptionPrices` (DB). `validateAndCleanPricingPayload`
+côté scannorder ne fait donc, pour le prix, qu'un travail déjà refait
+(de façon redondante) par le moteur partagé — sa seule valeur ajoutée réelle
+est de rejeter explicitement un `product_id`/`option_id` inconnu avant
+l'appel. Le kiosk fait déjà cette validation d'existence, mais via un
+mécanisme différent : `buildOrderProducts` vérifie `GetAvailableKioskProductIDs`
+(produits) et `GetConfigurationOptionAttributeIDs` (options, Correction 2)
+**avant** d'appeler `ComputePricing`, et retourne `models.ErrInvalidInput`/
+`ErrKioskProductUnavailable` si un id n'existe pas. Dupliquer
+`validateAndCleanPricingPayload` aurait donc ajouté du code mort. Aucun
+changement appliqué pour cette correction.
+
+### M2 — `order_id`/`IsSNO` sur `CreateKioskOrder`
+
+Ajout de `orderReq.IsSNO = false` (explicite, alignement avec
+`scannorder.CreateOrderSNO` qui pose `IsSNO = true`). Le mapping
+`fulfillment_type → order_type` (M1) et le report des `TTC`/`TVA`/`HT`
+calculés par `ComputePricing` avant l'appel à `CreateOrder` (M3) étaient déjà
+en place avant cet incrément — vérifiés, non modifiés.
+
+### Tests
+
+`go build ./...` clean. `go test ./internal/modules/kiosk/...` : OK (suite
+existante, non étendue dans cet incrément — la Correction 5 étant un
+breaking change JSON, des tests dédiés au format de `GET /kiosk/menu`
+seraient à ajouter avant la mise à jour du client Flutter).
