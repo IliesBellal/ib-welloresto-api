@@ -963,7 +963,7 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // paramètre deliveryType (internal/modules/scannorder/service.go), reçu
 // directement depuis la query string sans traduction intermédiaire (à la
 // différence de Pricing/CreateOrder qui restent sur le vocabulaire
-// DINE_IN/TAKE_AWAY propre au Kiosk, traduit via kioskFulfillmentToOrderType).
+// IN/TAKE_AWAY propre au Kiosk, traduit via kioskFulfillmentToOrderType).
 // Comme scannorder, une valeur absente ou inconnue ne fait pas échouer la
 // requête : seul "TAKE_AWAY" dévie du prix de base (voir
 // cleanProductPricesForKiosk) ; le menu Kiosk n'a pas de notion de DELIVERY.
@@ -980,12 +980,6 @@ func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*K
 
 	categories := make([]KioskCategory, 0, len(rawMenu.ProductsTypes))
 	for _, pt := range rawMenu.ProductsTypes {
-		// Une catégorie désactivée par le restaurateur (products_types.available
-		// = false) ne doit pas apparaître sur la borne — voir
-		// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #4.
-		if !pt.Available {
-			continue
-		}
 
 		products := flattenKioskProducts(pt.Products, availability, orderType)
 		if len(products) == 0 {
