@@ -1235,10 +1235,13 @@ func kioskFulfillmentToOrderType(fulfillmentType string) (string, error) {
 }
 
 // checkFulfillmentEnabled vérifie que le mode demandé est activé dans
-// kiosk_settings pour ce merchant.
-func checkFulfillmentEnabled(settings *KioskSettingsRow, fulfillmentType string) error {
-	switch fulfillmentType {
-	case "DINE_IN":
+// kiosk_settings pour ce merchant. orderType est déjà la valeur traduite
+// ("IN"/"TAKE_AWAY", voir kioskFulfillmentToOrderType), pas le vocabulaire
+// kiosk brut — pour rester cohérent avec models.OrderRequest.OrderType, seul
+// champ que le service manipule désormais.
+func checkFulfillmentEnabled(settings *KioskSettingsRow, orderType string) error {
+	switch orderType {
+	case "IN":
 		if !settings.FulfillmentDineIn {
 			return models.ErrKioskFulfillmentTypeDisabled
 		}
@@ -1246,209 +1249,56 @@ func checkFulfillmentEnabled(settings *KioskSettingsRow, fulfillmentType string)
 		if !settings.FulfillmentTakeAway {
 			return models.ErrKioskFulfillmentTypeDisabled
 		}
+	default:
+		return models.ErrKioskFulfillmentTypeInvalid
 	}
 	return nil
 }
 
-// buildOrderProducts valide chaque item (existence + is_available_on_kiosk
-// + options réellement configurées) puis construit les OrderProductPayload
-// envoyés à ordersService.ComputePricing — qui recalculera lui-même prix et
-// TVA depuis la base (jamais depuis le client, voir
-// orders.OrdersService.buildSelectedProducts). C'est l'équivalent Kiosk de
-// scannorder.validateAndCleanPricingPayload : ce qui change ici, c'est qu'on
-// valide l'existence/disponibilité AVANT envoi plutôt que de nettoyer après,
-// parce que ComputePricing ne connaît pas la notion de canal Kiosk et
-// attribuerait silencieusement un prix de 0 à un product_id inconnu.
-func (s *Service) buildOrderProducts(ctx context.Context, merchantID string, items []KioskOrderItem) ([]models.OrderProductPayload, error) {
-	if len(items) == 0 {
-		return nil, models.ErrCartEmpty
+// validateKioskProductAvailability vérifie que chaque produit du panier a
+// is_available_on_kiosk = TRUE. C'est une règle métier propre au canal Kiosk
+// (un produit peut être vendable en salle/POS mais désactivé sur la borne),
+// distincte du calcul de prix : on ne fait que filtrer, jamais recalculer un
+// prix ou une TVA (laissé entièrement à ordersService.ComputePricing).
+func (s *Service) validateKioskProductAvailability(ctx context.Context, merchantID string, products []models.OrderProductPayload) error {
+	if len(products) == 0 {
+		return models.ErrCartEmpty
 	}
 
-	productIDs := make([]string, 0, len(items))
-	optionIDSet := map[string]bool{}
-	for _, item := range items {
-		if item.Quantity <= 0 {
-			return nil, models.ErrInvalidInput
+	productIDs := make([]string, 0, len(products))
+	for _, p := range products {
+		if p.Quantity <= 0 {
+			return models.ErrInvalidInput
 		}
-		productIDs = append(productIDs, item.ProductID)
-		for _, optID := range item.SelectedOptionIDs {
-			optionIDSet[optID] = true
-		}
+		productIDs = append(productIDs, p.ProductID)
 	}
 
-	availableProducts, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, productIDs)
+	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, productIDs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, id := range productIDs {
-		if !availableProducts[id] {
-			return nil, models.ErrKioskProductUnavailable
+		if !available[id] {
+			return models.ErrKioskProductUnavailable
 		}
 	}
-
-	optionIDs := make([]string, 0, len(optionIDSet))
-	for id := range optionIDSet {
-		optionIDs = append(optionIDs, id)
-	}
-	optionAttributeIDs, err := s.repo.GetConfigurationOptionAttributeIDs(ctx, optionIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	payloads := make([]models.OrderProductPayload, 0, len(items))
-	for _, item := range items {
-		var config *models.ProductConfiguration
-		if len(item.SelectedOptionIDs) > 0 {
-			// Regroupe les options sélectionnées par leur vrai
-			// configurable_attribute_id (et non un id fictif unique) — même
-			// structure que scannorder, voir
-			// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #2.
-			attributeOrder := make([]string, 0, len(item.SelectedOptionIDs))
-			optionsByAttribute := make(map[string][]models.ConfigurationOption)
-			for _, optID := range item.SelectedOptionIDs {
-				attributeID, exists := optionAttributeIDs[optID]
-				if !exists {
-					return nil, models.ErrInvalidInput
-				}
-				if _, seen := optionsByAttribute[attributeID]; !seen {
-					attributeOrder = append(attributeOrder, attributeID)
-				}
-				optionsByAttribute[attributeID] = append(optionsByAttribute[attributeID], models.ConfigurationOption{ID: optID, Selected: true})
-			}
-
-			attributes := make([]models.ConfigurationAttribute, 0, len(attributeOrder))
-			for _, attributeID := range attributeOrder {
-				attributes = append(attributes, models.ConfigurationAttribute{ID: attributeID, Options: optionsByAttribute[attributeID]})
-			}
-			config = &models.ProductConfiguration{Attributes: attributes}
-		}
-
-		var comment *models.OrderItemCommentPayload
-		if item.Notes != "" {
-			comment = &models.OrderItemCommentPayload{UserID: kioskCreatedBy, Content: item.Notes}
-		}
-
-		var without []*models.OrderWithoutPayload
-		for _, componentID := range item.WithoutComponentIDs {
-			without = append(without, &models.OrderWithoutPayload{ComponentID: componentID})
-		}
-
-		payloads = append(payloads, models.OrderProductPayload{
-			ProductID: item.ProductID,
-			Quantity:  item.Quantity,
-			Config:    config,
-			Comment:   comment,
-			Without:   without,
-		})
-	}
-
-	return payloads, nil
-}
-
-// computeOrderPricing construit la requête de pricing puis délègue
-// entièrement à ordersService.ComputePricing — seule source de vérité pour
-// les prix/TVA/remises (voir internal/modules/orders/service.go).
-func (s *Service) computeOrderPricing(ctx context.Context, merchantID, fulfillmentType string, items []KioskOrderItem, discountCode *string) (*models.PricingResponse, error) {
-	orderType, err := kioskFulfillmentToOrderType(fulfillmentType)
-	if err != nil {
-		return nil, err
-	}
-
-	products, err := s.buildOrderProducts(ctx, merchantID, items)
-	if err != nil {
-		return nil, err
-	}
-
-	pricingReq := &models.PricingRequest{
-		MerchantID: merchantID,
-		Order: &models.OrderRequest{
-			OrderType: orderType,
-			Products:  products,
-		},
-	}
-	if discountCode != nil {
-		pricingReq.DiscountCode = *discountCode
-	}
-
-	return s.ordersService.ComputePricing(ctx, pricingReq)
+	return nil
 }
 
 // ComputePricing prévisualise le total d'un panier (écran borne avant
-// validation), sans créer de commande.
-func (s *Service) ComputePricing(ctx context.Context, merchantID string, req KioskPricingRequest) (*KioskPricingResponse, error) {
-	items := make([]KioskOrderItem, 0, len(req.Items))
-	for _, item := range req.Items {
-		items = append(items, KioskOrderItem{ProductID: item.ProductID, Quantity: item.Quantity, SelectedOptionIDs: item.SelectedOptionIDs, Notes: item.Notes})
-	}
-
-	pricing, err := s.computeOrderPricing(ctx, merchantID, req.FulfillmentType, items, req.DiscountCode)
-	if err != nil {
-		return nil, err
-	}
-	if pricing.Status != "success" {
+// validation), sans créer de commande. Délègue entièrement à
+// ordersService.ComputePricing — même contrat (models.PricingRequest /
+// models.PricingResponse) que scannorder.GetPricingSNO. Seul ajout
+// kiosk-spécifique : le filtre is_available_on_kiosk.
+func (s *Service) ComputePricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
+	if req.Order == nil {
 		return nil, models.ErrInvalidInput
 	}
-
-	return pricingResponseToKiosk(pricing), nil
-}
-
-// pricingResponseToKiosk dérive le détail kiosk (sous-total/remise/taxe/total)
-// de la réponse pricing partagée avec le POS. itemsTotal doit inclure les
-// mêmes composantes que OrdersService.computeTotals (prix produit + extras +
-// options de configuration sélectionnées) : sinon il sous-estime le
-// sous-total dès qu'un produit a une option/extra payante, et discountCents
-// (itemsTotal - totalCents) absorbe l'écart en l'affichant comme une fausse
-// "promotion" — ou le masque silencieusement via le clamp à 0 ci-dessous.
-func pricingResponseToKiosk(pricing *models.PricingResponse) *KioskPricingResponse {
-	var itemsTotal int64
-	for _, p := range pricing.OrderRequest.Order.Products {
-		itemsTotal += int64(p.Price) * int64(p.Quantity)
-
-		for _, e := range p.Extra {
-			if e != nil {
-				itemsTotal += int64(e.Price) * int64(p.Quantity)
-			}
-		}
-
-		if p.Config != nil {
-			for _, attr := range p.Config.Attributes {
-				for _, o := range attr.Options {
-					if o.Selected && o.ExtraPrice != 0 {
-						itemsTotal += int64(o.ExtraPrice) * int64(p.Quantity)
-					}
-				}
-			}
-		}
+	if err := s.validateKioskProductAvailability(ctx, req.MerchantID, req.Order.Products); err != nil {
+		return nil, err
 	}
 
-	totalCents := int64(pricing.OrderRequest.Order.TTC)
-	taxCents := int64(pricing.OrderRequest.Order.TVA)
-	htCents := int64(pricing.OrderRequest.Order.HT)
-	discountCents := itemsTotal - totalCents
-	if discountCents < 0 {
-		discountCents = 0
-	}
-
-	// pricing.IsOrderable/NotOrderableReason (champs de réponse) restent à
-	// zéro tant qu'on n'appelle pas ComputePricing via le wrapper SNO —
-	// OrdersService.ComputePricing ne renseigne que pricing.OrderRequest.
-	// IsOrderable/NotOrderableReason (champs internes à la requête, voir
-	// internal/models/request_objects.go PricingRequest), exactement comme
-	// scannorder.GetPricingSNO les recopie avant de répondre.
-	isOrderable := pricing.OrderRequest.IsOrderable
-	notOrderableReason := pricing.OrderRequest.NotOrderableReason
-
-	return &KioskPricingResponse{
-		ItemsTotalCents:     itemsTotal,
-		DiscountCents:       discountCents,
-		TaxCents:            taxCents,
-		TotalCents:          totalCents,
-		HTCents:             htCents,
-		IsOrderable:         isOrderable,
-		NotOrderableReason:  notOrderableReason,
-		AppliedDiscounts:    pricing.AppliedDiscounts,
-		UnavailableProducts: pricing.UnavailableProduct,
-	}
+	return s.ordersService.ComputePricing(ctx, req)
 }
 
 // mapMerchantApprovalToKioskStatus traduit orders.merchant_approval — déjà
@@ -1470,21 +1320,21 @@ func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 	}
 }
 
-// CreateKioskOrder crée une commande borne en mode "payer au comptoir" :
-// pas de paiement en ligne, MerchantApproval reste PENDING_APPROVAL jusqu'à
-// ce que le staff encaisse au comptoir (voir ConfirmCounterPayment).
-// Idempotent via idempotency_key (Redis, TTL 10 min, scope par borne).
-func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequest, kiosk AuthenticatedKiosk) (*CreateKioskOrderResponse, error) {
-	if req.PaymentMethod != "" && req.PaymentMethod != "pay_at_counter" {
-		return nil, models.ErrInvalidInput
-	}
-
+// CreateOrder crée une commande borne en mode "payer au comptoir" : pas de
+// paiement en ligne, MerchantApproval reste PENDING_APPROVAL jusqu'à ce que
+// le staff encaisse au comptoir (voir ConfirmCounterPayment). Idempotent via
+// idempotencyKey (Redis, TTL 10 min, scope par borne) — transmis par le
+// handler depuis le header HTTP "Idempotency-Key", absent de
+// models.RequestObject. Délègue le calcul de prix et la création à
+// ordersService.ComputePricing / ordersLifeCycleSvc.CreateOrder, exactement
+// comme scannorder.CreateOrderSNO.
+func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, kiosk AuthenticatedKiosk, idempotencyKey string) (*models.CreateOrderResult, error) {
 	idemKey := ""
-	if req.IdempotencyKey != "" {
-		idemKey = fmt.Sprintf("kiosk:idempotency:%s:%s", kiosk.KioskID, req.IdempotencyKey)
+	if idempotencyKey != "" {
+		idemKey = fmt.Sprintf("kiosk:idempotency:%s:%s", kiosk.KioskID, idempotencyKey)
 		if s.redis != nil {
 			if cached, found := s.redis.Get(ctx, idemKey); found {
-				var resp CreateKioskOrderResponse
+				var resp models.CreateOrderResult
 				if err := json.Unmarshal([]byte(cached), &resp); err == nil {
 					return &resp, nil
 				}
@@ -1499,11 +1349,19 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 	if !settings.PayAtCounterEnabled {
 		return nil, models.ErrKioskPayAtCounterDisabled
 	}
-	if err := checkFulfillmentEnabled(settings, req.FulfillmentType); err != nil {
+	if err := checkFulfillmentEnabled(settings, req.Order.OrderType); err != nil {
 		return nil, err
 	}
 
-	pricing, err := s.computeOrderPricing(ctx, kiosk.MerchantID, req.FulfillmentType, req.Items, req.DiscountCode)
+	req.MerchantID = kiosk.MerchantID
+	if err := s.validateKioskProductAvailability(ctx, kiosk.MerchantID, req.Order.Products); err != nil {
+		return nil, err
+	}
+
+	pricing, err := s.ordersService.ComputePricing(ctx, &models.PricingRequest{
+		MerchantID: kiosk.MerchantID,
+		Order:      &req.Order,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1511,18 +1369,13 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 		return nil, models.ErrInvalidInput
 	}
 
-	orderType, _ := kioskFulfillmentToOrderType(req.FulfillmentType)
 	orderReq := pricing.OrderRequest.Order
-	orderReq.OrderType = orderType
 	orderReq.MerchantApproval = "ACCEPTED"
 	orderReq.CreatedBy = strPtr(kioskCreatedBy)
 	orderReq.CashRegisterId = strPtr(kioskCashRegister)
 	orderReq.OnlinePayment = false
 	orderReq.IsSNO = false
 	orderReq.Payments = []models.PaymentPayload{}
-	if req.OrderNotes != "" {
-		orderReq.Comment = strPtr(req.OrderNotes)
-	}
 
 	newOrder, err := s.ordersLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
 		MerchantID: kiosk.MerchantID,
@@ -1539,25 +1392,13 @@ func (s *Service) CreateKioskOrder(ctx context.Context, req CreateKioskOrderRequ
 		return nil, err
 	}
 
-	displayNumber := ""
-	if newOrder.OrderNum != nil {
-		displayNumber = *newOrder.OrderNum
-	}
-
-	resp := &CreateKioskOrderResponse{
-		OrderID:       newOrder.OrderID,
-		DisplayNumber: displayNumber,
-		Status:        "pending_counter_payment",
-		TotalCents:    int64(orderReq.TTC),
-	}
-
 	if idemKey != "" && s.redis != nil {
-		if serialized, err := json.Marshal(resp); err == nil {
+		if serialized, err := json.Marshal(newOrder); err == nil {
 			s.redis.Set(ctx, idemKey, string(serialized), 10*time.Minute)
 		}
 	}
 
-	return resp, nil
+	return newOrder, nil
 }
 
 func strPtr(s string) *string { return &s }

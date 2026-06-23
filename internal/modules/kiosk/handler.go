@@ -258,6 +258,20 @@ func (h *Handler) GetKioskUpsell(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "kiosk", "get_upsell", resp)
 }
 
+// kioskFulfillmentTypeOf lit le fulfillment_type envoyé par la borne dans le
+// body (champ déjà porté par models.OrderRequest, voir
+// internal/models/create_order_models.go), sans struct kiosk dédiée.
+func kioskFulfillmentTypeOf(order *models.OrderRequest) string {
+	if order == nil || order.FulfillmentType == nil {
+		return ""
+	}
+	return *order.FulfillmentType
+}
+
+// GetKioskPricing décode directement models.PricingRequest (même contrat que
+// scannorder.GetPricingSNO) — seule traduction kiosk-spécifique : le
+// fulfillment_type du body (DINE_IN/TAKE_AWAY) est mappé vers order_type
+// avant d'appeler le service, voir docs/KIOSK_DECISIONS.md.
 func (h *Handler) GetKioskPricing(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -268,13 +282,25 @@ func (h *Handler) GetKioskPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req KioskPricingRequest
+	var req models.PricingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendErrorJSON(w, "kiosk", "get_pricing", models.ErrInvalidRequestBody)
 		return
 	}
+	if req.Order == nil {
+		models.SendErrorJSON(w, "kiosk", "get_pricing", models.ErrInvalidInput)
+		return
+	}
 
-	resp, err := h.service.ComputePricing(ctx, authenticatedKiosk.MerchantID, req)
+	orderType, err := kioskFulfillmentToOrderType(kioskFulfillmentTypeOf(req.Order))
+	if err != nil {
+		models.SendErrorJSON(w, "kiosk", "get_pricing", err)
+		return
+	}
+	req.Order.OrderType = orderType
+	req.MerchantID = authenticatedKiosk.MerchantID
+
+	resp, err := h.service.ComputePricing(ctx, &req)
 	if err != nil {
 		log.Warn("kiosk get pricing failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_pricing", err)
@@ -284,6 +310,11 @@ func (h *Handler) GetKioskPricing(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "kiosk", "get_pricing", resp)
 }
 
+// CreateKioskOrder décode directement models.RequestObject (même contrat que
+// scannorder.CreateOrderSNO). Traductions kiosk-spécifiques faites ici, avant
+// d'appeler le service : fulfillment_type → order_type, et la clé
+// d'idempotence (sans équivalent dans les structs partagées) lue depuis le
+// header HTTP "Idempotency-Key" plutôt que depuis le body.
 func (h *Handler) CreateKioskOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -294,13 +325,23 @@ func (h *Handler) CreateKioskOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateKioskOrderRequest
+	var req models.RequestObject
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendErrorJSON(w, "kiosk", "create_order", models.ErrInvalidRequestBody)
 		return
 	}
 
-	resp, err := h.service.CreateKioskOrder(ctx, req, *authenticatedKiosk)
+	orderType, err := kioskFulfillmentToOrderType(kioskFulfillmentTypeOf(&req.Order))
+	if err != nil {
+		models.SendErrorJSON(w, "kiosk", "create_order", err)
+		return
+	}
+	req.Order.OrderType = orderType
+	req.MerchantID = authenticatedKiosk.MerchantID
+
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+
+	resp, err := h.service.CreateOrder(ctx, &req, *authenticatedKiosk, idempotencyKey)
 	if err != nil {
 		log.Warn("kiosk create order failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "create_order", err)

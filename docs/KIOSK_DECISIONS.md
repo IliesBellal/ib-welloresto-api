@@ -1756,3 +1756,105 @@ en place avant cet incrément — vérifiés, non modifiés.
 existante, non étendue dans cet incrément — la Correction 5 étant un
 breaking change JSON, des tests dédiés au format de `GET /kiosk/menu`
 seraient à ajouter avant la mise à jour du client Flutter).
+
+---
+
+## Incrément 6 — alignement complet des contrats pricing/commande sur scannorder
+
+### Décision [FAIT]
+
+Suppression des quatre types fantômes propres au module Kiosk qui
+dupliquaient les structs partagées sans y ajouter de logique métier réelle :
+`KioskPricingRequest`, `KioskPricingResponse`, `CreateKioskOrderRequest`,
+`CreateKioskOrderResponse` (ainsi que leurs types satellites `KioskPricingItem`
+et `KioskOrderItem`, devenus inutiles pour la même raison). Les endpoints
+`POST /kiosk/pricing` et `POST /kiosk/orders` consomment désormais
+directement `models.PricingRequest` / `models.PricingResponse` /
+`models.RequestObject` / `models.CreateOrderResult` (`internal/models/`) —
+**exactement le même contrat wire que** `scannorder.GetPricingSNO` /
+`scannorder.CreateOrderSNO`.
+
+**Pourquoi** : cohérence multi-canal (un seul format de payload pricing/
+commande à maintenir pour POS, ScanNOrder et Kiosk, au lieu de trois) et
+simplicité de maintenance (un changement de `models.OrderProductPayload`,
+ex. un nouveau champ de configuration produit, se propage désormais
+automatiquement au Kiosk sans mapping intermédiaire à mettre à jour).
+
+### Changement de contrat wire côté client Kiosk (breaking change assumé)
+
+Avant cet incrément, le client Kiosk envoyait un format simplifié pour les
+items (`product_id`, `quantity`, `selected_option_ids`, `notes`), traduit
+côté serveur (`buildOrderProducts`) vers le `models.OrderProductPayload`
+complet (`Configuration`/`Attributes`/`Options`) via des lookups DB
+(`GetConfigurationOptionAttributeIDs`). Ce mapping intermédiaire est
+supprimé : le client Kiosk doit désormais envoyer les items directement au
+format `models.OrderProductPayload` (même structure que le client
+ScanNOrder), `Configuration`/`Attributes`/`Options` inclus. **Le client
+Flutter `wello-kiosk` devra être mis à jour en conséquence** (pas fait dans
+cet incrément, hors scope backend).
+
+Seule traduction kiosk-spécifique conservée, faite dans le handler avant
+d'appeler le service (pas dans une struct dédiée) : `fulfillment_type`
+(`DINE_IN`/`TAKE_AWAY`, vocabulaire écran borne) → `order_type` (`IN`/
+`TAKE_AWAY`, convention partagée POS/ScanNOrder/Kiosk), via
+`kioskFulfillmentToOrderType` (inchangée, déjà testée par
+`menu_pricing_test.go`). `fulfillment_type` lui-même est lu depuis
+`models.OrderRequest.FulfillmentType` (champ déjà présent dans la struct
+partagée, json `"fulfillment_type"`) — aucune struct nouvelle introduite
+pour le porter.
+
+La clé d'idempotence (`idempotency_key`, sans équivalent dans les structs
+partagées) n'est plus un champ JSON du body : elle est désormais lue depuis
+le header HTTP `Idempotency-Key`, pattern REST standard pour ce type de
+donnée orthogonale au payload métier.
+
+### Ce qui reste spécifique au Kiosk côté service (pas de la duplication de logique pricing/commande)
+
+- **`validateKioskProductAvailability`** (remplace `buildOrderProducts`) :
+  vérifie `is_available_on_kiosk` pour chaque `product_id` du panier, avant
+  d'appeler `ordersService.ComputePricing`. Ce n'est pas du calcul de prix
+  (entièrement délégué à `orders`), c'est une règle d'accès au canal —
+  un produit peut être vendable en salle/POS mais désactivé sur la borne.
+- **`checkFulfillmentEnabled`** : vérifie que le mode (`IN`/`TAKE_AWAY`) est
+  activé dans `kiosk_settings` pour ce merchant — gate métier Kiosk, pas du
+  pricing.
+- **Idempotence** (`Service.CreateOrder`) et **forçage des champs paiement**
+  (`OnlinePayment = false`, `Payments = []`, `MerchantApproval = "ACCEPTED"`,
+  `CreatedBy`/`CashRegisterId` kiosk) : logique de session/device Kiosk, pas
+  de recalcul de prix ou de montant.
+
+### Changement de réponse `POST /kiosk/orders`
+
+Avant : `{order_id, display_number, status: "pending_counter_payment",
+total_cents}` (type `CreateKioskOrderResponse`, supprimé). Après :
+`models.CreateOrderResult` brut — `{status, order_id, order_num, message,
+action, checkout_session}`, identique à la réponse de
+`scannorder.CreateOrderSNO`. Le statut `"pending_counter_payment"`
+n'apparaît plus dans la réponse de création — il reste accessible via
+`GET /kiosk/orders/{order_id}` (`KioskOrderResponse`, non touché par cet
+incrément, toujours dérivé de `orders.merchant_approval` via
+`mapMerchantApprovalToKioskStatus`).
+
+### Fichiers modifiés
+
+- `internal/modules/kiosk/models.go` : suppression de `KioskPricingItem`,
+  `KioskPricingRequest`, `KioskPricingResponse`, `KioskOrderItem`,
+  `CreateKioskOrderRequest`, `CreateKioskOrderResponse`.
+- `internal/modules/kiosk/service.go` : suppression de `buildOrderProducts`,
+  `computeOrderPricing`, `pricingResponseToKiosk` ; `ComputePricing` et
+  `CreateKioskOrder` (renommée `CreateOrder`) réécrites pour prendre/
+  retourner les structs partagées ; `checkFulfillmentEnabled` adaptée pour
+  recevoir `order_type` (`IN`/`TAKE_AWAY`) au lieu de `fulfillment_type`
+  brut ; ajout de `validateKioskProductAvailability`.
+- `internal/modules/kiosk/handler.go` : `GetKioskPricing`/`CreateKioskOrder`
+  décodent désormais `models.PricingRequest`/`models.RequestObject`
+  directement, font le mapping `fulfillment_type` → `order_type`, lisent
+  l'idempotence depuis le header `Idempotency-Key`.
+
+### Tests
+
+`go build ./...` clean (aucune référence restante aux types supprimés en
+dehors de la documentation). `go vet ./...` : aucun nouvel avertissement
+introduit par ce changement (les avertissements existants — `ubereats`,
+`auth`, `tasks`, `webhook/ubereats/client` — sont préexistants, sans rapport
+avec ce module). `go test ./internal/modules/kiosk/...` : OK.

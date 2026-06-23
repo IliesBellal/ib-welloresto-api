@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"welloresto-api/internal/middleware"
-	"welloresto-api/internal/models"
 )
 
 // AuthenticatedKiosk est un alias du type porté par middleware (voir
@@ -327,60 +326,6 @@ type KioskUpsellSuggestion struct {
 	PriceCents int64  `json:"price_cents"`
 	ImageURL   string `json:"image_url,omitempty"`
 	Reason     string `json:"reason,omitempty"`
-}
-
-type KioskPricingItem struct {
-	ProductID         string   `json:"product_id"`
-	Quantity          int      `json:"quantity"`
-	SelectedOptionIDs []string `json:"selected_option_ids,omitempty"`
-	Notes             string   `json:"notes,omitempty"`
-}
-
-type KioskPricingRequest struct {
-	FulfillmentType string             `json:"fulfillment_type"`
-	Items           []KioskPricingItem `json:"items"`
-	DiscountCode    *string            `json:"discount_code,omitempty"`
-}
-
-type KioskPricingResponse struct {
-	ItemsTotalCents int64 `json:"items_total_cents"`
-	DiscountCents   int64 `json:"discount_cents"`
-	TaxCents        int64 `json:"tax_cents"`
-	TotalCents      int64 `json:"total_cents"`
-	HTCents         int64 `json:"ht_cents"`
-
-	// Champs repris de models.PricingResponse (voir
-	// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #6) — déjà calculés par
-	// ordersService.ComputePricing, simplement absents du mapping kiosk
-	// jusqu'ici.
-	IsOrderable         bool                            `json:"is_orderable"`
-	NotOrderableReason  string                          `json:"not_orderable_reason,omitempty"`
-	AppliedDiscounts    []string                        `json:"applied_discounts,omitempty"`
-	UnavailableProducts []models.UnavailableProductInfo `json:"unavailable_products,omitempty"`
-}
-
-type KioskOrderItem struct {
-	ProductID           string   `json:"product_id"`
-	Quantity            int      `json:"quantity"`
-	SelectedOptionIDs   []string `json:"selected_option_ids,omitempty"`
-	Notes               string   `json:"notes,omitempty"`
-	WithoutComponentIDs []string `json:"without_component_ids,omitempty"`
-}
-
-type CreateKioskOrderRequest struct {
-	FulfillmentType string           `json:"fulfillment_type"` // DINE_IN | TAKE_AWAY
-	IdempotencyKey  string           `json:"idempotency_key"`
-	Items           []KioskOrderItem `json:"items"`
-	PaymentMethod   string           `json:"payment_method"` // pay_at_counter uniquement cet incrément
-	DiscountCode    *string          `json:"discount_code,omitempty"`
-	OrderNotes      string           `json:"order_notes,omitempty"`
-}
-
-type CreateKioskOrderResponse struct {
-	OrderID       string `json:"order_id"`
-	DisplayNumber string `json:"display_number"`
-	Status        string `json:"status"`
-	TotalCents    int64  `json:"total_cents"`
 }
 
 type CounterPaymentResponse struct {

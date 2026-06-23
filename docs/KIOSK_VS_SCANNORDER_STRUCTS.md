@@ -1,6 +1,19 @@
 # Comparaison structs kiosk vs scannorder
 ## Document de référence pour l'alignement
 
+> **⚠️ Document gelé / historique.** Suite à `docs/KIOSK_DECISIONS.md`,
+> Incrément 6 ("alignement complet des contrats pricing/commande sur
+> scannorder"), les structs `KioskPricingRequest`, `KioskPricingResponse`,
+> `CreateKioskOrderRequest`, `CreateKioskOrderResponse`, `KioskPricingItem` et
+> `KioskOrderItem` mentionnées ci-dessous **ont été supprimées** du module
+> Kiosk. `POST /kiosk/pricing` et `POST /kiosk/orders` consomment désormais
+> directement `models.PricingRequest`/`models.PricingResponse`/
+> `models.RequestObject`/`models.CreateOrderResult`, exactement comme
+> `scannorder`. Les écarts documentés ci-dessous (notamment les sections
+> "Pricing request/response" et "Create order request/response") décrivent
+> donc un état du code antérieur, conservé pour archive — voir
+> `KIOSK_DECISIONS.md` Incrément 6 pour l'état courant.
+
 > Sources lues : `docs/ARCHITECTURE_API.md`, `docs/KIOSK_DECISIONS.md` (incréments 1 à 5),
 > `internal/modules/scannorder/{handler,service,repository,models}.go`,
 > `internal/modules/kiosk/{handler,service,repository,models,admin_handler,config}.go`,
