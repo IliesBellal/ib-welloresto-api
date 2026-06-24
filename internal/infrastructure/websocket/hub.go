@@ -13,6 +13,7 @@ type Client struct {
 	conn       *websocket.Conn
 	merchantID string
 	connID     string
+	kioskID    string // vide pour un client humain (POS/back-office)
 	send       chan []byte
 	startedAt  time.Time
 	log        *zap.Logger
@@ -118,4 +119,73 @@ func (h *Hub) IsConnected(merchantID string) bool {
 
 	merchant, exists := h.clients[merchantID]
 	return exists && len(merchant) > 0
+}
+
+// BroadcastToMerchantExcept envoie un message à tous les clients d'un merchant
+// sauf la connexion excludeConnID — utilisé pour relayer un message reçu d'un
+// client (ex. kiosk_unavailable envoyé par une borne) sans le renvoyer à son
+// propre émetteur.
+func (h *Hub) BroadcastToMerchantExcept(merchantID, excludeConnID string, message []byte) bool {
+	h.mu.RLock()
+	merchant, exists := h.clients[merchantID]
+	if !exists || len(merchant) == 0 {
+		h.mu.RUnlock()
+		return false
+	}
+	clientsToNotify := make([]*Client, 0, len(merchant))
+	for connID, client := range merchant {
+		if connID == excludeConnID {
+			continue
+		}
+		clientsToNotify = append(clientsToNotify, client)
+	}
+	h.mu.RUnlock()
+
+	sent := false
+	failedClients := []*Client{}
+	for _, client := range clientsToNotify {
+		select {
+		case client.send <- message:
+			sent = true
+		default:
+			failedClients = append(failedClients, client)
+		}
+	}
+	for _, client := range failedClients {
+		h.Unregister(client)
+	}
+
+	return sent
+}
+
+// CloseKioskConnections ferme immédiatement toute connexion WebSocket active
+// d'une borne donnée (identifiée par kioskID) dans le canal d'un merchant —
+// utilisé lors d'une révocation pour ne pas attendre l'expiration naturelle
+// de l'access token. Retourne true si au moins une connexion a été fermée.
+func (h *Hub) CloseKioskConnections(merchantID, kioskID string, code int, reason string) bool {
+	h.mu.RLock()
+	merchant, exists := h.clients[merchantID]
+	if !exists {
+		h.mu.RUnlock()
+		return false
+	}
+	targets := make([]*Client, 0, 1)
+	for _, client := range merchant {
+		if client.kioskID != "" && client.kioskID == kioskID {
+			targets = append(targets, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return false
+	}
+
+	closeMsg := websocket.FormatCloseMessage(code, reason)
+	for _, client := range targets {
+		_ = client.conn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(5*time.Second))
+		_ = client.conn.Close()
+	}
+
+	return true
 }

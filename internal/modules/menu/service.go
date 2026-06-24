@@ -66,6 +66,24 @@ func (s *MenuService) UpdateProductImage(ctx context.Context, token, productID, 
 	return s.legacy.UpdateProductImage(ctx, user.MerchantID, productID, imageURL)
 }
 
+func (s *MenuService) GetAttributeOptionImageURL(ctx context.Context, token, optionID string) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return s.legacy.GetAttributeOptionImageURL(ctx, user.MerchantID, optionID)
+}
+
+func (s *MenuService) UpdateAttributeOptionImageURL(ctx context.Context, token, optionID, imageURL string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.legacy.UpdateAttributeOptionImageURL(ctx, user.MerchantID, optionID, imageURL)
+}
+
 func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, productID string, attributeIDs []string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

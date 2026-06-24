@@ -94,6 +94,7 @@ type OrderProductPayload struct {
 	Config          *ProductConfiguration    `json:"configuration"`
 	Comment         *OrderItemCommentPayload `json:"comment"`
 	OrderItemID     *string                  `json:"order_item_id"`
+	IsUpsell        bool                     `json:"is_upsell"`
 }
 
 type OrderExtraPayload struct {

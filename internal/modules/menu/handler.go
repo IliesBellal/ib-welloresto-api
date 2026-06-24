@@ -1291,6 +1291,108 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// maxAttributeOptionImageBytes : 2 Mo, décision actée pour les vignettes
+// d'option de configuration (voir docs/KIOSK_DECISIONS.md) — plus petit que
+// les 5 Mo d'une image produit plein écran.
+const maxAttributeOptionImageBytes = 2 << 20
+
+func (h *MenuHandler) UploadAttributeOptionImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	// 1. Auth & Validation basique
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		log.Error("[ERROR] UploadAttributeOptionImage UserFromContext: " + err.Error())
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_attribute_option_image", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	optionID := chi.URLParam(r, "option_id")
+	if optionID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	// 2. Parse multipart form (taille max 2 Mo)
+	if err := r.ParseMultipartForm(maxAttributeOptionImageBytes); err != nil {
+		log.Error("[ERROR] UploadAttributeOptionImage ParseMultipartForm: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "file_too_large_or_invalid"})
+		return
+	}
+
+	// 3. Récupérer le fichier
+	file, header, err := r.FormFile("photo")
+	if err != nil {
+		log.Error("[ERROR] UploadAttributeOptionImage FormFile: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_photo_field"})
+		return
+	}
+	defer file.Close()
+
+	// 4. Valider le type MIME
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r2.GetContentTypeFromExtension(header.Filename)
+	}
+
+	if !r2.ValidateImageType(contentType) {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{
+			"error":   "invalid_image_type",
+			"message": "Only JPEG, PNG, and WebP images are allowed",
+		})
+		return
+	}
+
+	// 5. Récupérer l'ancienne URL d'image (si elle existe)
+	oldImageURL, err := h.service.GetAttributeOptionImageURL(ctx, token, optionID)
+	if err != nil {
+		// On log l'erreur mais on continue (pas bloquant)
+		log.Warn("[WARN] UploadAttributeOptionImage GetAttributeOptionImageURL: " + err.Error())
+	}
+
+	// 6. Générer la clé R2
+	ext := r2.GetExtensionFromContentType(contentType)
+	key := r2.GenerateConfigOptionKey(user.MerchantID, optionID, ext)
+
+	// 7. Supprimer l'ancienne image de R2 (si elle existe)
+	if oldImageURL != "" {
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if oldKey != "" {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				// On log l'erreur mais on continue (pas bloquant)
+				log.Warn("[WARN] UploadAttributeOptionImage DeleteFile (old image): " + err.Error())
+			}
+		}
+	}
+
+	// 8. Upload le nouveau fichier vers R2
+	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
+	if err != nil {
+		log.Error("[ERROR] UploadAttributeOptionImage UploadFile: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_attribute_option_image", fmt.Errorf("failed to upload image"))
+		return
+	}
+
+	// 9. Mettre à jour la base de données
+	if err := h.service.UpdateAttributeOptionImageURL(ctx, token, optionID, publicURL); err != nil {
+		log.Error("[ERROR] UploadAttributeOptionImage UpdateAttributeOptionImageURL: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_attribute_option_image", err)
+		return
+	}
+
+	// 10. Réponse
+	models.SendJSON(w, http.StatusOK, "menu", "upload_attribute_option_image", map[string]interface{}{
+		"image_url": publicURL,
+	})
+}
+
 // GetDeliverooMenu récupère le menu depuis l'API Deliveroo
 func (h *MenuHandler) GetDeliverooMenu(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)

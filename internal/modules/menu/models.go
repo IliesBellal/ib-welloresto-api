@@ -196,11 +196,12 @@ type Attribute struct {
 }
 
 type AttributeOption struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Price       int    `json:"price"`        // extra_price (idéalement stocké en centimes)
-	MaxQuantity int    `json:"max_quantity"` // max_quantity
-	Enabled     bool   `json:"enabled"`      // enabled
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Price       int     `json:"price"`        // extra_price (idéalement stocké en centimes)
+	MaxQuantity int     `json:"max_quantity"` // max_quantity
+	Enabled     bool    `json:"enabled"`      // enabled
+	ImageURL    *string `json:"image_url,omitempty"`
 }
 
 type CreateProductPayload struct {
@@ -301,6 +302,7 @@ type UpdateAttributeOptionPayload struct {
 	MaxQuantity *int    `json:"max_quantity"` // Max quantity per option
 	Enabled     *bool   `json:"enabled"`      // Whether the option is enabled
 	ExtraPrice  *int    `json:"extra_price"`  // Extra price (deprecated, use Price)
+	ImageURL    *string `json:"image_url"`    // Image URL (managed primarily via the dedicated upload endpoint)
 }
 
 // UpdateAttributePayload for updating configurable attributes

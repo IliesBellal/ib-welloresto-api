@@ -191,14 +191,15 @@ type ConfigurableAttribute struct {
 }
 
 type ConfigurableOption struct {
-	ID                string `json:"id"`
-	Title             string `json:"title"`
-	ExtraPrice        int    `json:"extra_price"`
-	MaxQuantity       int    `json:"max_quantity"`
-	ConfigAttributeID string `json:"configurable_attribute_id"`
-	OrderItemID       string `json:"order_item_id"`
-	Quantity          int    `json:"quantity"`
-	Selected          bool   `json:"selected"`
+	ID                string  `json:"id"`
+	Title             string  `json:"title"`
+	ExtraPrice        int     `json:"extra_price"`
+	MaxQuantity       int     `json:"max_quantity"`
+	ConfigAttributeID string  `json:"configurable_attribute_id"`
+	OrderItemID       string  `json:"order_item_id"`
+	Quantity          int     `json:"quantity"`
+	Selected          bool    `json:"selected"`
+	ImageURL          *string `json:"image_url,omitempty"`
 }
 
 // delays

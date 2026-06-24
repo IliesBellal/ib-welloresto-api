@@ -520,6 +520,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/dashboard", func(r chi.Router) {
 			r.Get("/summary", statsH.GetDashboardSummary)
 		})
+
+		r.Get("/upsell", statsH.GetUpsellStats)
 	})
 
 	// --- POS ---
@@ -673,6 +675,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/attributes", menuH.CreateAttribute)            // used by: back-office
 		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
 		r.Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
+		r.Put("/attribute_options/{option_id}/image", menuH.UploadAttributeOptionImage)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Route("/tags", func(r chi.Router) {

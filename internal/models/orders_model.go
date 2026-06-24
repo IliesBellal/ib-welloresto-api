@@ -30,6 +30,7 @@ type OrderItemInsert struct {
 	DelayID         *string
 	Comment         *string
 	CreatedBy       string
+	IsUpsell        bool // true when this line was added from an upsell suggestion
 }
 
 type ExtraInsert struct {

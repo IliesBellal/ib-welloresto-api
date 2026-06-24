@@ -305,6 +305,7 @@ type KioskModifierGroup struct {
 type KioskModifierOption struct {
 	ID                      string `json:"id"`
 	Title                   string `json:"title"`
+	ImageURL                string `json:"image_url,omitempty"`
 	ExtraPrice              int    `json:"extra_price"`
 	MaxQuantity             int    `json:"max_quantity"`
 	ConfigurableAttributeID string `json:"configurable_attribute_id"`

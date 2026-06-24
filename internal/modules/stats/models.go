@@ -55,6 +55,24 @@ type HourlyMetric struct {
 	Total     int64  `json:"total"`
 }
 
+// ============ Upsell Stats Models ============
+
+// UpsellStatsResponse est la structure de réponse de /stats/upsell
+type UpsellStatsResponse struct {
+	TotalUpsellLines     int64              `json:"total_upsell_lines"`
+	UpsellRevenueHT      int64              `json:"upsell_revenue_ht"`
+	OrdersWithUpsellRate float64            `json:"orders_with_upsell_rate"`
+	ByServer             []UpsellServerStat `json:"by_server"`
+}
+
+// UpsellServerStat contient le classement upsell d'un serveur
+type UpsellServerStat struct {
+	ServerID        string `json:"server_id"`
+	ServerName      string `json:"server_name"`
+	UpsellLines     int64  `json:"upsell_lines"`
+	UpsellRevenueHT int64  `json:"upsell_revenue_ht"`
+}
+
 // HourlyData deprecated - use HourlyMetric instead
 type HourlyData struct {
 	Hour      string `json:"hour"`

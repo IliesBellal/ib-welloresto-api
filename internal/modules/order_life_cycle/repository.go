@@ -1280,8 +1280,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
 	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
 	stmtItem, err := db.PrepareContext(ctx, `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
 			-- Remet isDistributed à 0 seulement si la quantité distribuée ne correspond plus
 			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
@@ -1290,6 +1290,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			price         = VALUES(price),
 			discount_id   = VALUES(discount_id),
 			delay_id      = VALUES(delay_id),
+			is_upsell     = VALUES(is_upsell),
 			ordered_on    = VALUES(ordered_on)`)
 	if err != nil {
 		return fmt.Errorf("prepare orderitem upsert failed: %w", err)
@@ -1308,7 +1309,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 
 		res, err := stmtItem.ExecContext(ctx,
 			p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID)
+			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell)
 		if err != nil {
 			return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 		}
@@ -1955,9 +1956,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbutils.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
-		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell)
+		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
+		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell)
 	if err != nil {
 		return 0, err
 	}

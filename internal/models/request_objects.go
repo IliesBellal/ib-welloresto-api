@@ -609,6 +609,7 @@ type MerchantParametersSettings struct {
 	PagerNumberRequired               *bool   `json:"pager_number_required,omitempty"`
 	POSAutoLockEnabled                *bool   `json:"pos_auto_lock_enabled,omitempty"`
 	POSAutoLockDelayMinutes           *int    `json:"pos_auto_lock_delay_minutes,omitempty"`
+	POSUpsellEnabled                  *bool   `json:"pos_upsell_enabled,omitempty"`
 	Currency                          *string `json:"currency,omitempty"`
 	IsOpen                            *bool   `json:"is_open,omitempty"`
 	PrimaryColor                      *string `json:"primary_color,omitempty"`
@@ -743,6 +744,7 @@ type POSSettingsOrdering struct {
 	ActiveOnSite       bool   `json:"active_on_site"`
 	ActiveTakeaway     bool   `json:"active_takeaway"`
 	ActiveDelivery     bool   `json:"active_delivery"`
+	UpsellEnabled      bool   `json:"upsell_enabled"`
 }
 
 type POSSettingsOrderingPatch struct {
@@ -754,6 +756,7 @@ type POSSettingsOrderingPatch struct {
 	ActiveOnSite       *bool   `json:"active_on_site,omitempty"`
 	ActiveTakeaway     *bool   `json:"active_takeaway,omitempty"`
 	ActiveDelivery     *bool   `json:"active_delivery,omitempty"`
+	UpsellEnabled      *bool   `json:"upsell_enabled,omitempty"`
 }
 
 type POSSettingsScanOrder struct {

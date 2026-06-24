@@ -102,6 +102,74 @@ func (s *StatsService) GetDashboardSummary(ctx context.Context, token string) (*
 	return summary, nil
 }
 
+// GetUpsellStats returns upsell impact stats and the by-server ranking for the given local day range.
+// NOTE: until the Flutter app (Sprint 2) writes orderitems.is_upsell, this will return zeros — expected.
+func (s *StatsService) GetUpsellStats(ctx context.Context, token string, fromLocalDay, toLocalDay time.Time) (*UpsellStatsResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	merchantID := user.MerchantID
+
+	tzString, err := s.statsRepo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load merchant timezone: %w", err)
+	}
+
+	merchantTz, err := time.LoadLocation(tzString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid merchant timezone '%s': %w", tzString, err)
+	}
+
+	fromDate := time.Date(fromLocalDay.Year(), fromLocalDay.Month(), fromLocalDay.Day(), 0, 0, 0, 0, merchantTz)
+	toDate := time.Date(toLocalDay.Year(), toLocalDay.Month(), toLocalDay.Day(), 0, 0, 0, 0, merchantTz)
+	startUTC := fromDate.UTC()
+	endUTC := toDate.Add(24 * time.Hour).UTC()
+
+	totals, err := s.statsRepo.GetUpsellTotals(ctx, merchantID, startUTC, endUTC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get upsell totals: %w", err)
+	}
+
+	ordersWithUpsell, err := s.statsRepo.GetOrdersWithUpsellCount(ctx, merchantID, startUTC, endUTC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get orders with upsell count: %w", err)
+	}
+
+	totalOrders, err := s.statsRepo.getOrderCountForPeriod(ctx, merchantID, startUTC, endUTC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total order count: %w", err)
+	}
+
+	var rate float64
+	if totalOrders > 0 {
+		rate = float64(ordersWithUpsell) / float64(totalOrders) * 100
+	}
+
+	byServerRows, err := s.statsRepo.ListUpsellByServer(ctx, merchantID, startUTC, endUTC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list upsell by server: %w", err)
+	}
+
+	byServer := make([]UpsellServerStat, 0, len(byServerRows))
+	for _, row := range byServerRows {
+		byServer = append(byServer, UpsellServerStat{
+			ServerID:        row.ServerID,
+			ServerName:      row.ServerName,
+			UpsellLines:     row.UpsellLines,
+			UpsellRevenueHT: row.UpsellRevenueHT,
+		})
+	}
+
+	return &UpsellStatsResponse{
+		TotalUpsellLines:     totals.TotalLines,
+		UpsellRevenueHT:      totals.RevenueHTCents,
+		OrdersWithUpsellRate: rate,
+		ByServer:             byServer,
+	}, nil
+}
+
 // buildHourlyMetric converts raw hourly data into HourlyMetric response format
 func (s *StatsService) buildHourlyMetric(rawData []map[string]interface{}) []HourlyMetric {
 	hourlyMap := make(map[int]*HourlyMetric)

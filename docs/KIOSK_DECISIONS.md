@@ -1948,3 +1948,207 @@ pas à `TAKE_AWAY`/`DINE_IN`, donc pas au cas Kiosk pizza Margarita (qui est
   false` + `NotOrderableReason = "minimum_cart_for_delivery_not_reached"`,
   désormais effectivement visible sur le wire (ce qui ne l'était pas avant
   ce correctif, autre bug latent corrigé au passage).
+
+---
+
+## Incrément 8 — `/ws-kiosk` : relais `kiosk_unavailable` entrant + fermeture ciblée à la révocation
+
+### Constat de départ
+
+`/ws-kiosk` (Incrément 7) couvrait déjà l'enregistrement de la borne dans le
+Hub sous son `merchant_id`, la réception des broadcasts merchant (ping/pong,
+désenregistrement propre à la déconnexion). Deux écarts subsistaient par
+rapport au besoin (auth device sur un canal WS persistant, pas seulement
+broadcast sortant) :
+1. `kiosk_unavailable` n'existait que côté REST (`POST
+   /kiosk/status/unavailable`) — aucun message entrant lu sur `/ws-kiosk`
+   n'était traité, `readPump` ne reconnaissait que `{"type":"PING"}`.
+2. La révocation d'une borne (`RevokeKiosk`) ne fermait pas sa connexion
+   `/ws-kiosk` active — le `Hub` n'avait aucune notion de `kioskID` (seulement
+   `merchantID -> connID -> *Client`), donc aucun moyen de cibler une
+   connexion précise.
+
+**Décision : étendre `/ws-kiosk` existant plutôt que créer un second
+endpoint `/ws/device` dupliquant `Client`/`Register`/`Unregister`/`serveWS`**
+— cohérent avec le rejet explicite de cette duplication en Incrément 7.
+
+### Hub : `kioskID` sur `Client`, fermeture ciblée, broadcast avec exclusion
+
+`internal/infrastructure/websocket/hub.go` :
+- `Client.kioskID string` — vide pour une connexion humaine (POS/back-office
+  sur `/ws`), renseigné pour une connexion device (`/ws-kiosk`).
+- `Hub.CloseKioskConnections(merchantID, kioskID string, code int, reason
+  string) bool` — itère les clients du merchant, ferme (via
+  `conn.WriteControl(CloseMessage, ...)` puis `conn.Close()`) celles dont le
+  `kioskID` correspond. `conn.Close()` déclenche `ReadMessage` en erreur côté
+  `readPump`, qui fait son nettoyage habituel (`hub.Unregister` +
+  `conn.Close()` à nouveau, sans effet car déjà fermée).
+- `Hub.BroadcastToMerchantExcept(merchantID, excludeConnID string, message
+  []byte) bool` — même logique que `BroadcastToMerchant`, sauf qu'elle
+  saute la connexion émettrice (utilisé pour ne pas renvoyer à la borne le
+  message qu'elle vient d'envoyer).
+
+### Relais de `kiosk_unavailable` (`internal/infrastructure/websocket/handler.go`)
+
+`readPump` reconnaît désormais, en plus de `{"type":"PING"}`, tout message
+JSON dont `type == "kiosk_unavailable"` — **uniquement si la connexion est
+une connexion device** (`c.kioskID != ""` : une connexion `/ws` humaine ne
+peut pas émettre ce type de message, il est silencieusement ignoré). Le
+`kiosk_id` du message est **toujours réécrit** avec `c.kioskID` (valeur
+authentifiée par `KioskAuth` à la connexion) avant relais via
+`BroadcastToMerchantExcept` — empêche une borne compromise d'usurper l'id
+d'une autre borne du même merchant.
+
+Format attendu de la borne vers le hub (inchangé par rapport à la doc
+Incrément 6, désormais réellement consommé) :
+```json
+{ "type": "kiosk_unavailable", "reason": "connection_lost" }
+```
+(`kiosk_id` peut être omis ou contenir n'importe quelle valeur — il est
+ignoré et remplacé côté serveur.)
+
+### Endpoint REST `POST /kiosk/status/unavailable` : conservé, pas déprécié
+
+Les deux canaux coexistent désormais pour `kiosk_unavailable` (REST et WS) —
+décision : **garder le REST en fallback**, ne pas le déprécier. Une borne
+peut signaler un problème de connectivité WS via REST précisément dans le
+cas où sa connexion `/ws-kiosk` est elle-même la chose qui a un problème
+(WS coupé mais réseau HTTP encore fonctionnel) ; le déprécier aurait
+supprimé le seul canal fiable dans ce scénario précis.
+
+### Révocation (`Service.RevokeKiosk`, `internal/modules/kiosk/service.go`)
+
+Après la transaction DB (révocation des `kiosk_device_tokens` +
+`kiosks.status = 'revoked'`), appel best-effort à
+`notificationSvc.CloseKioskConnection(merchantID, kiosk.ID)` (nouvelle
+méthode sur `NotificationService`, même pattern que `BroadcastToMerchant` —
+pas de dépendance directe de `kiosk` vers `internal/infrastructure/websocket`,
+cohérent avec l'injection déjà en place). Code de fermeture WebSocket **1008
+(Policy Violation)**, raison `"kiosk_revoked"`. Si la borne n'a pas de
+connexion `/ws-kiosk` active, `CloseKioskConnection` retourne simplement
+`false`, sans erreur.
+
+Le heartbeat (`POST /kiosk/auth/heartbeat`) reste également bloqué
+immédiatement après révocation (`status == "revoked"`, déjà en place) — la
+fermeture WS est un mécanisme de notification immédiate complémentaire, pas
+un remplacement de cette vérification serveur.
+
+### Tests manuels incrément 8
+
+`go build ./...`, `go vet ./...` (packages touchés) et `go test
+./internal/modules/kiosk/...` clean. Pas de `MYSQL_URL`/`REDIS_URL` dans ce
+sandbox — non exécuté en conditions réelles.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token back-office>"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll>"
+KIOSK_ID="kiosk-..."
+
+# 1. Connexion device WS
+wscat -c "$BASE_URL/ws-kiosk/" -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 2. Depuis cette même connexion, envoyer :
+{"type":"kiosk_unavailable","reason":"connection_lost"}
+# -> un client POS connecté sur /ws du même merchant doit recevoir :
+# {"type":"kiosk_unavailable","reason":"connection_lost","kiosk_id":"kiosk-..."}
+# (kiosk_id = identité authentifiée, quelle que soit la valeur envoyée par la borne)
+
+# 3. Révocation pendant que la connexion /ws-kiosk est ouverte
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/revoke" \
+  -H "Authorization: Bearer $USER_TOKEN"
+# -> la connexion wscat de l'étape 1 doit se fermer immédiatement avec le
+#    code 1008 ("kiosk_revoked"), sans attendre l'expiration de l'access token
+```
+
+---
+
+## Incrément — images sur les options de configuration produit
+
+Basé sur `docs/CONFIG_OPTIONS_IMAGES_AUDIT.md` (audit préalable, lecture
+seule). Décisions actées : taille max **2 Mo**, formats JPEG/PNG/WebP
+(`r2.ValidateImageType`, inchangé), pas de fallback serveur si
+`image_url` est `NULL`, portée d'affichage **Kiosk uniquement** (mais la
+struct partagée `models.ConfigurableOption` porte quand même le champ,
+pour ne pas créer de dette si ScanNOrder/POS l'exploitent plus tard).
+
+### Migration
+
+`migrations/todo/046_configurable_attribute_options_image_url.{up,down}.sql` —
+`ALTER TABLE configurable_attribute_options ADD COLUMN image_url
+VARCHAR(500) NULL DEFAULT NULL AFTER extra_price`. Numéro suivant le
+dernier réellement utilisé (045, déjà présent non commité dans
+`migrations/todo/` au moment de cet incrément). Comme `upsell_suggestions`
+documenté ailleurs, c'est la première migration à référencer cette table
+legacy (jamais créée par migration).
+
+### Écart corrigé par rapport au plan initial : la vraie source de
+`models.ConfigurableOption` côté Kiosk
+
+Le plan initial listait uniquement les 4 requêtes CRUD back-office
+(`GetAttributes`, `GetAttribute`, `CreateAttribute`, `UpdateAttribute` —
+struct `menu.AttributeOption`, page `Attributes.tsx`). **Ce n'est pas ce
+qui alimente le Kiosk.** `models.ConfigurableOption` (la struct partagée,
+celle qui porte le nouveau champ `ImageURL`) est en réalité construite par
+trois requêtes séparées dans `internal/modules/menu/repository.go` :
+`GetMenu`, `GetAllProducts`, `GetProduct` — c'est leur résultat
+(`ProductEntry.Configuration`) qui devient `KioskModifierOption` côté
+`kiosk.Service.toKioskProduct` (`internal/modules/kiosk/service.go`).
+Sans étendre ces trois requêtes, `image_url` serait toujours vide dans
+`GET /kiosk/menu`/`GET /kiosk/products/{id}` malgré une implémentation
+"complète" sur le papier. **Étendues dans cet incrément**, en plus des 4
+requêtes CRUD listées initialement.
+
+`internal/modules/kiosk/repository.go:615`
+(`GetConfigurationOptionAttributeIDs`) n'a, à l'inverse, **pas** été
+étendue malgré la demande initiale : cette requête ne retourne qu'une
+`map[string]string` (id → attribute_id) pour la validation de panier
+côté commande, jamais consommée pour l'affichage — y ajouter `image_url`
+aurait été du code mort sans aucun consommateur.
+
+### Risque de perte silencieuse corrigé : `UpdateAttribute` (PATCH back-office)
+
+`UpdateAttribute` désactive puis recrée/met à jour toutes les options à
+chaque sauvegarde de l'attribut (comportement existant, documenté dans
+l'audit). Le formulaire back-office actuel (`Attributes.tsx`) ne connaît
+pas encore `image_url` et ne l'envoie donc jamais dans son payload — un
+`UPDATE ... SET image_url = ?` inconditionnel aurait effacé à chaque
+sauvegarde l'image uploadée séparément via le nouvel endpoint dédié.
+Corrigé avec `image_url = COALESCE(?, image_url)` : seule une valeur
+explicitement fournie écrase l'existant, sinon l'image déjà uploadée est
+préservée.
+
+### Endpoint d'upload
+
+`PUT /menu/attribute_options/{option_id}/image`, calqué à l'identique sur
+`UploadProductImage` (form field `photo`, JOIN sur
+`configurable_attributes` pour le scoping merchant — les options n'ont pas
+de `merchant_id` direct). Plafond dédié `maxAttributeOptionImageBytes = 2
+<< 20` (2 Mo, distinct des 5 Mo produit). Clé R2 :
+`r2.GenerateConfigOptionKey(merchantID, optionID, ext)` →
+`wello_resto_images_storage/merchants/{merchant_id}/config_options/{option_id}{ext}`.
+Pas de middleware de permission dédié sur le groupe `/menu` (seul
+`authMiddleware`) — cohérent avec toutes les autres routes du groupe.
+
+### Tests manuels
+
+Non exécutés dans cet incrément (pas de `MYSQL_URL`/`REDIS_URL` dans ce
+sandbox) — seuls `go build ./...` et `go vet ./...` ont été vérifiés
+(propres sur les fichiers touchés ; mêmes avertissements préexistants et
+sans rapport ailleurs). Avant exécution réelle : appliquer
+`migrations/todo/046_configurable_attribute_options_image_url.up.sql`.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token back-office>"
+OPTION_ID="<id d'une option existante via GET /menu/attributes>"
+
+curl -s -X PUT "$BASE_URL/menu/attribute_options/$OPTION_ID/image" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -F "photo=@./option.png;type=image/png"
+# -> { "data": { "image_url": "https://.../wello_resto_images_storage/merchants/.../config_options/....png" } }
+
+# Vérifier la propagation : GET /menu/attributes (image_url sur l'option),
+# GET /kiosk/menu et GET /kiosk/products/{id} (image_url sur le modifier
+# correspondant, via un access_token kiosk valide)
+```

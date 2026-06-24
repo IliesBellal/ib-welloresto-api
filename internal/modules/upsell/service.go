@@ -20,8 +20,8 @@ import (
 
 const (
 	upsellTask         = "upsell"
-	cacheKeyResultFmt  = "upsell:result:%s:%s"   // merchantID, cartSignature
-	cacheKeyPatternFmt = "upsell:patterns:%s:%s" // merchantID, productID
+	cacheKeyResultFmt  = "upsell:result:%s:%s:%s" // merchantID, cartSignature, orderType
+	cacheKeyPatternFmt = "upsell:patterns:%s:%s"  // merchantID, productID
 	cacheResultTTL     = 30 * time.Minute
 	llmTimeout         = 1500 * time.Millisecond
 	maxAvailableForLLM = 50
@@ -87,16 +87,16 @@ func NewService(
 // GenerateUpsell produces upsell suggestions for the given cart.
 // It never returns a 5xx-worthy error: all internal failures fall back gracefully.
 // The only error it returns is ErrEmptyCart (→ 400 to the caller).
-func (s *Service) GenerateUpsell(ctx context.Context, merchantID string, cartProducts []models.ProductEntry) (*UpsellResult, error) {
+func (s *Service) GenerateUpsell(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, orderType string) (*UpsellResult, error) {
 	// Wrap the whole flow in a recover guard so the handler is always safe.
-	result, err := s.generateUpsellSafe(ctx, merchantID, cartProducts)
+	result, err := s.generateUpsellSafe(ctx, merchantID, cartProducts, orderType)
 	if err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, cartProducts []models.ProductEntry) (res *UpsellResult, err error) {
+func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, orderType string) (res *UpsellResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("upsell: panic recovered in GenerateUpsell",
@@ -134,7 +134,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 
 	// ── 4.2 Cart signature & cache check ─────────────────────────────────────
 	cartSignature := cartSignatureFrom(cartProducts)
-	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature)
+	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature, normalizeOrderType(orderType))
 
 	if cached, hit, _ := s.aiCache.Get(ctx, cacheKey); hit {
 		var cachedResult UpsellResult
@@ -262,7 +262,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	// Frequent pairs for LLM context (top by lift).
 	frequentPairs := buildFrequentPairsForPrompt(aggregated, candidateMap, maxFreqPairsForLLM)
 
-	userPrompt, promptErr := buildUserPrompt(cartProducts, available, llmAvailable, frequentPairs)
+	userPrompt, promptErr := buildUserPrompt(cartProducts, available, llmAvailable, frequentPairs, orderType)
 	if promptErr != nil {
 		s.logger.Error("upsell: failed to build user prompt",
 			zap.String("merchant_id", merchantID),
@@ -458,6 +458,38 @@ func cartSignatureFrom(products []models.ProductEntry) string {
 	return fmt.Sprintf("%x", sum)
 }
 
+// normalizeOrderType returns a stable, uppercase cache-key segment for orderType.
+// Empty/unknown values normalize to "ANY" so dine-in/takeaway/delivery results
+// never collide with each other or with the pre-channel cache generation.
+func normalizeOrderType(orderType string) string {
+	switch strings.ToUpper(strings.TrimSpace(orderType)) {
+	case models.OrderTypeIn:
+		return models.OrderTypeIn
+	case models.OrderTypeTakeAway:
+		return models.OrderTypeTakeAway
+	case models.OrderTypeDelivery:
+		return models.OrderTypeDelivery
+	default:
+		return "ANY"
+	}
+}
+
+// channelLabel returns a short human-readable description of the order channel
+// for inclusion in the LLM prompt, or "" when orderType is empty/unrecognized —
+// in which case the caller omits the field entirely.
+func channelLabel(orderType string) string {
+	switch strings.ToUpper(strings.TrimSpace(orderType)) {
+	case models.OrderTypeIn:
+		return "commande sur place"
+	case models.OrderTypeTakeAway:
+		return "commande à emporter"
+	case models.OrderTypeDelivery:
+		return "commande en livraison"
+	default:
+		return ""
+	}
+}
+
 // cachedSourceOf returns the "cached_*" variant of a source constant.
 func cachedSourceOf(source string) string {
 	switch source {
@@ -546,6 +578,7 @@ func buildUserPrompt(
 	allAvailable []menu.AvailableProduct,
 	llmCandidates []menu.AvailableProduct,
 	frequentPairs []map[string]interface{},
+	orderType string,
 ) (string, error) {
 	// Build a category lookup from all available products.
 	catByID := make(map[string]string, len(allAvailable))
@@ -582,6 +615,11 @@ func buildUserPrompt(
 		"cart":               cartItems,
 		"available_products": availItems,
 		"frequent_pairs":     frequentPairs,
+	}
+	// Channel context is omitted entirely when unknown/empty, so the prompt payload
+	// is byte-for-byte identical to the pre-channel behavior in that case.
+	if label := channelLabel(orderType); label != "" {
+		payload["order_channel"] = label
 	}
 
 	raw, err := json.Marshal(payload)

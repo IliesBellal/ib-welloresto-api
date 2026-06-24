@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -64,7 +65,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	serveWS(hub, w, r, user.MerchantID)
+	serveWS(hub, w, r, user.MerchantID, "")
 }
 
 // ServeKioskWS gère la connexion WebSocket d'une borne Kiosk — auth via
@@ -79,10 +80,10 @@ func ServeKioskWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	serveWS(hub, w, r, kiosk.MerchantID)
+	serveWS(hub, w, r, kiosk.MerchantID, kiosk.KioskID)
 }
 
-func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID string) {
+func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID, kioskID string) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
@@ -113,6 +114,7 @@ func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID string
 		conn:       conn,
 		merchantID: merchantID,
 		connID:     connID,
+		kioskID:    kioskID,
 		send:       make(chan []byte, 256),
 		startedAt:  time.Now(),
 		log:        clientLog,
@@ -189,8 +191,34 @@ func (c *Client) readPump(hub *Hub) {
 			default:
 				c.log.Warn("websocket pong dropped: send buffer full")
 			}
+			continue
+		}
+
+		// Relais des messages envoyés par une borne (kiosk_unavailable) vers
+		// le reste du canal merchant (POS/back-office) — seules les
+		// connexions device (kioskID non vide) sont autorisées à émettre ce
+		// message, kiosk_id est toujours forcé à l'identité authentifiée
+		// pour empêcher l'usurpation d'une autre borne.
+		if c.kioskID != "" {
+			c.handleIncomingMessage(hub, message)
 		}
 	}
+}
+
+func (c *Client) handleIncomingMessage(hub *Hub, raw []byte) {
+	var msg map[string]interface{}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	if msgType, _ := msg["type"].(string); msgType != "kiosk_unavailable" {
+		return
+	}
+	msg["kiosk_id"] = c.kioskID
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	hub.BroadcastToMerchantExcept(c.merchantID, c.connID, payload)
 }
 
 // writePump écrit les messages vers le WebSocket (non-bloquant)

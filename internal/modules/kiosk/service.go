@@ -454,12 +454,22 @@ func (s *Service) RevokeKiosk(ctx context.Context, merchantID, kioskID string) e
 		return models.ErrKioskNotFound
 	}
 
-	return dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+	if err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 		if err := s.repo.RevokeAllDeviceTokens(txCtx, kiosk.ID); err != nil {
 			return err
 		}
 		return s.repo.UpdateKioskStatus(txCtx, kiosk.ID, "revoked")
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Best-effort : ferme la connexion /ws-kiosk active de la borne sans
+	// attendre l'expiration naturelle de son access token déjà émis.
+	if s.notificationSvc != nil {
+		s.notificationSvc.CloseKioskConnection(merchantID, kiosk.ID)
+	}
+
+	return nil
 }
 
 // ---- Back-office (admin) ----
@@ -1080,9 +1090,14 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 	for _, attr := range p.Configuration.Attributes {
 		options := make([]KioskModifierOption, 0, len(attr.Options))
 		for _, opt := range attr.Options {
+			imageURL := ""
+			if opt.ImageURL != nil {
+				imageURL = *opt.ImageURL
+			}
 			options = append(options, KioskModifierOption{
 				ID:                      opt.ID,
 				Title:                   opt.Title,
+				ImageURL:                imageURL,
 				ExtraPrice:              opt.ExtraPrice,
 				MaxQuantity:             opt.MaxQuantity,
 				ConfigurableAttributeID: attr.ID,
@@ -1166,7 +1181,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		inCart[id] = true
 	}
 
-	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts)
+	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, "")
 	if err != nil {
 		return &KioskUpsellResponse{Suggestions: []KioskUpsellSuggestion{}, Source: "error_fallback"}, nil
 	}
