@@ -135,6 +135,23 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merc
 	}
 
 	// ------------------------------------------------------
+	// 4 — ON BEHALF OF (device_link)
+	// ------------------------------------------------------
+
+	var onBehalfOf *string
+
+	rowLink := db.QueryRowContext(ctx, `SELECT on_behalf_of FROM device_link WHERE device_id = ?`, deviceID)
+	var linkOnBehalfOf string
+	switch errScan := rowLink.Scan(&linkOnBehalfOf); errScan {
+	case sql.ErrNoRows:
+		onBehalfOf = nil
+	case nil:
+		onBehalfOf = &linkOnBehalfOf
+	default:
+		return nil, errScan
+	}
+
+	// ------------------------------------------------------
 	// BUILD RESPONSE
 	// ------------------------------------------------------
 
@@ -142,5 +159,6 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merc
 		Service:      svc,
 		CashRegister: cr,
 		CashDesks:    desks,
+		OnBehalfOf:   onBehalfOf,
 	}, nil
 }

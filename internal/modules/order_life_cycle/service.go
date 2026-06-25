@@ -375,7 +375,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, req.DeviceID)
 	if err != nil && req.CashRegisterID == nil {
-		return nil, models.ErrNoCashRegisterOpen
+		return nil, err
 	}
 
 	payment := models.Payment{

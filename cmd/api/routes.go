@@ -1028,6 +1028,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/history", cashRegisterH.GetHistory)
 		r.Post("/history", cashRegisterH.GetHistory)
 		r.Post("/link", cashRegisterH.HandleLinkDevice)
+		r.Delete("/link", cashRegisterH.HandleUnlinkDevice)
 
 		r.Route("/{cash_register_id}", func(r chi.Router) {
 			r.Get("/", cashRegisterH.GetCashRegisterHistoryByID)

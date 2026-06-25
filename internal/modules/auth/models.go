@@ -177,6 +177,7 @@ type UserLoginRow struct {
 	WarningNewOrderNotPaid          bool
 	CashRegisterRequiredForOrdering bool
 	DisableSafetyStock              bool
+	CustomerFormRequirements        []byte
 	Currency                        string
 	IsOpen                          bool
 

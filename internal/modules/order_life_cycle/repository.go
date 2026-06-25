@@ -101,6 +101,19 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 		`, deviceID).Scan(&cashRegisterID)
 
 		if err == sql.ErrNoRows {
+			var linkedDevice string
+			linkErr := db.QueryRowContext(ctx, `
+				SELECT on_behalf_of FROM device_link WHERE device_id = ?
+			`, deviceID).Scan(&linkedDevice)
+
+			if linkErr == nil {
+				return "", models.ErrLinkedDeviceRegisterClosed
+			}
+			if linkErr != sql.ErrNoRows {
+				log.Error("Error checking device_link: " + linkErr.Error())
+				return "", linkErr
+			}
+
 			return "", models.ErrNoCashRegisterOpen
 		}
 	}

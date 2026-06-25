@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -610,6 +611,7 @@ type MerchantParametersSettings struct {
 	POSAutoLockEnabled                *bool   `json:"pos_auto_lock_enabled,omitempty"`
 	POSAutoLockDelayMinutes           *int    `json:"pos_auto_lock_delay_minutes,omitempty"`
 	POSUpsellEnabled                  *bool   `json:"pos_upsell_enabled,omitempty"`
+	CustomerFormRequirements          *json.RawMessage `json:"customer_form_requirements,omitempty"`
 	Currency                          *string `json:"currency,omitempty"`
 	IsOpen                            *bool   `json:"is_open,omitempty"`
 	PrimaryColor                      *string `json:"primary_color,omitempty"`
@@ -657,6 +659,7 @@ type UpdateMerchantSettingsRequest struct {
 	ScanOrder         *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
 	Security          *POSSettingsSecurityPatch   `json:"security,omitempty"`
 	HoursOfOperations *[]POSHoursOfOperationPatch `json:"hours_of_operations,omitempty"`
+	CustomerFormRequirements *json.RawMessage      `json:"customer_form_requirements,omitempty"`
 }
 
 type POSHoursOfOperation struct {
@@ -745,6 +748,7 @@ type POSSettingsOrdering struct {
 	ActiveTakeaway     bool   `json:"active_takeaway"`
 	ActiveDelivery     bool   `json:"active_delivery"`
 	UpsellEnabled      bool   `json:"upsell_enabled"`
+	CustomerFormRequirements *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
 
 type POSSettingsOrderingPatch struct {

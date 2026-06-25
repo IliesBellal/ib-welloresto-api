@@ -215,6 +215,12 @@ var (
 
 	ErrNoCashRegisterOpen = errors.New("no_cash_register_open")
 
+	// ErrLinkedDeviceRegisterClosed indique que le device est lié à un autre device dont le registre n'est pas ouvert
+	ErrLinkedDeviceRegisterClosed = errors.New("linked_device_register_closed")
+
+	// ErrCircularDeviceLink indique une tentative de liaison circulaire entre deux devices
+	ErrCircularDeviceLink = errors.New("circular_device_link")
+
 	ErrRefoundMustBeGreaterThanZero = errors.New("refund_amount_must_be_greater_than_zero")
 
 	ErrReceiptNotFound = errors.New("receipt_not_found")
@@ -782,6 +788,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "no_cash_register_opened"
 		errorMsg = "no cash register opened for this device id"
+
+	case errors.Is(err, ErrLinkedDeviceRegisterClosed):
+		status = http.StatusConflict
+		errorStatus = "linked_device_register_closed"
+		errorMsg = "Le registre de caisse doit être ouvert sur l'appareil principal auquel vous êtes lié."
+
+	case errors.Is(err, ErrCircularDeviceLink):
+		status = http.StatusConflict
+		errorStatus = "circular_device_link"
+		errorMsg = "Impossible de se lier à cet appareil : il est déjà lié au vôtre. Supprimez d'abord la liaison existante sur l'autre appareil."
 
 	case errors.Is(err, ErrCashRegisterStillOpen):
 		status = http.StatusConflict

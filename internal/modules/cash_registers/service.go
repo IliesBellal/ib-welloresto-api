@@ -127,10 +127,31 @@ func (s *CashRegisterService) LinkDevice(ctx context.Context, req DeviceLinkRequ
 		return err
 	}
 
+	circular, err := s.cashRegisterRepo.IsCircularDeviceLink(ctx, req.DeviceID, req.OnBehalfOf)
+	if err != nil {
+		return models.ErrInternalServerError
+	}
+	if circular {
+		return models.ErrCircularDeviceLink
+	}
+
 	// Logique métier additionnelle si nécessaire
 	err = s.cashRegisterRepo.UpsertDeviceLink(ctx, req.DeviceID, user.UserID, req.OnBehalfOf)
 	if err != nil {
 		return models.ErrInternalServerError
 	}
+	return nil
+}
+
+func (s *CashRegisterService) UnlinkDevice(ctx context.Context, deviceID string) error {
+	rowsAffected, err := s.cashRegisterRepo.DeleteDeviceLink(ctx, deviceID)
+	if err != nil {
+		return models.ErrInternalServerError
+	}
+
+	if rowsAffected == 0 {
+		return models.ErrNotFound
+	}
+
 	return nil
 }

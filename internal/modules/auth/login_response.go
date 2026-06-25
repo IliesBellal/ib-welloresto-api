@@ -87,6 +87,7 @@ type LoginMerchantSettingsResponse struct {
 	CashRegisterRequiredForOrdering bool   `json:"cash_register_required_for_ordering"`
 	WarningNewOrderNotPaid          bool   `json:"warning_new_order_not_paid"`
 	DisableSafetyStock              bool   `json:"disable_safety_stock"`
+	CustomerFormRequirements        *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
 
 type LoginAccessResponse struct {

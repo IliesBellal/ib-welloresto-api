@@ -1134,6 +1134,26 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 	}, nil
 }
 
+func (r *CashRegisterRepository) IsCircularDeviceLink(ctx context.Context, deviceID, onBehalfOf string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	var exists int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1 FROM device_link WHERE device_id = ? AND on_behalf_of = ?
+	`, onBehalfOf, deviceID).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		log.Error(err.Error())
+		return false, err
+	}
+
+	return true, nil
+}
+
 func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID, userID, onBehalfOf string) error {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -1151,4 +1171,17 @@ func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID,
 		log.Error(err.Error())
 	}
 	return err
+}
+
+func (r *CashRegisterRepository) DeleteDeviceLink(ctx context.Context, deviceID string) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	res, err := db.ExecContext(ctx, `DELETE FROM device_link WHERE device_id = ?`, deviceID)
+	if err != nil {
+		log.Error(err.Error())
+		return 0, err
+	}
+
+	return res.RowsAffected()
 }

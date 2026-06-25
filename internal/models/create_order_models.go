@@ -158,6 +158,7 @@ type CurrentServiceResponse struct {
 	Service      *PerformedService `json:"service"`
 	CashRegister *CashRegisterInfo `json:"cash_register"`
 	CashDesks    []CashDeskInfo    `json:"cash_desks"`
+	OnBehalfOf   *string           `json:"on_behalf_of"`
 }
 
 type PerformedService struct {

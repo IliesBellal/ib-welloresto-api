@@ -341,6 +341,13 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 				req.Parameters.POSAutoLockDelayMinutes = req.Security.POSAutoLockDelayMinutes
 			}
 		}
+
+		if req.CustomerFormRequirements != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			req.Parameters.CustomerFormRequirements = req.CustomerFormRequirements
+		}
 	}
 
 	if req != nil && req.Parameters != nil && req.Parameters.POSAutoLockDelayMinutes != nil && *req.Parameters.POSAutoLockDelayMinutes < 5 {
@@ -415,6 +422,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			ActiveTakeaway:     boolVal(params.ManageTakeAway),
 			ActiveDelivery:     boolVal(params.ManageDelivery),
 			UpsellEnabled:      boolVal(params.POSUpsellEnabled),
+			CustomerFormRequirements: params.CustomerFormRequirements,
 		},
 		ScanOrder: models.POSSettingsScanOrder{
 			ActiveDelivery:     boolVal(params.ManageDelivery),
