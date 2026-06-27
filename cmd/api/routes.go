@@ -8,7 +8,7 @@ import (
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
-	requestlogger "welloresto-api/internal/middleware/request_logger"
+	//requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
 	kioskModule "welloresto-api/internal/modules/kiosk"
