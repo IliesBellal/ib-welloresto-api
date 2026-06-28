@@ -373,7 +373,7 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 
 	req.OrderID = orderID
 
-	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, req.DeviceID)
+	activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(ctx, user.MerchantID, req.DeviceID)
 	if err != nil && req.CashRegisterID == nil {
 		return nil, err
 	}
@@ -895,7 +895,7 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 		log := logger.FromContext(txCtx)
 
 		// 1. Vérifier qu'un registre de caisse est bien OUVERT pour ce Device/Merchant
-		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, req.DeviceID)
+		activeRegister, err := s.ordersLifeCycleRepo.GetActiveCashRegisterID(txCtx, user.MerchantID, req.DeviceID)
 		if err != nil {
 			return err
 		}

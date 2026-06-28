@@ -79,7 +79,7 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 	return nil
 }
 
-func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, deviceID string) (string, error) {
+func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, merchantID, deviceID string) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -88,8 +88,9 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 		SELECT cr.cash_register_id
 		FROM cash_registers cr
 		WHERE cr.device_id = ?
+		AND cr.merchant_id = ?
 		AND cr.end_date IS NULL
-	`, deviceID).Scan(&cashRegisterID)
+	`, deviceID, merchantID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
 		err = db.QueryRowContext(ctx, `
@@ -97,8 +98,9 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 			FROM cash_registers cr
 			INNER JOIN device_link dl on dl.on_behalf_of = cr.device_id
 			WHERE dl.device_id = ?
+			AND cr.merchant_id = ?
 			AND cr.end_date IS NULL
-		`, deviceID).Scan(&cashRegisterID)
+		`, deviceID, merchantID).Scan(&cashRegisterID)
 
 		if err == sql.ErrNoRows {
 			var linkedDevice string
@@ -1045,7 +1047,7 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	req.Order.OrderNum = &orderNum
 
 	if req.DeviceID != nil && *req.DeviceID != "" {
-		activeRegister, err := r.GetActiveCashRegisterID(ctx, *req.DeviceID)
+		activeRegister, err := r.GetActiveCashRegisterID(ctx, req.MerchantID, *req.DeviceID)
 		if err != nil {
 			return nil, err
 		}
