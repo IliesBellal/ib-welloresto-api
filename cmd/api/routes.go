@@ -8,7 +8,7 @@ import (
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
-	requestlogger "welloresto-api/internal/middleware/request_logger"
+	//requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
 	kioskModule "welloresto-api/internal/modules/kiosk"
@@ -81,7 +81,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Use(middleware.CORSMiddleware().Handler)
 	r.Use(middleware.LoggingMiddleware(log, mysqlDB))
 	// Il semblerait que ce middleware cause des timeout lors d'appels d'API uber eats, désactivé temporairement
-	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, log, 1000)))
+	//r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, log, 1000)))
 
 	// ============================
 	// REDIS
