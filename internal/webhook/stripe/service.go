@@ -18,6 +18,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
+	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/balancetransaction"
@@ -31,9 +32,10 @@ type StripeWebhookService struct {
 	orderlifecycle *order_life_cycle.OrdersLifeCycleService
 	notification   *notification.NotificationService
 	redis          *redis.Client
+	db             *sql.DB
 }
 
-func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client) *StripeWebhookService {
+func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client, db *sql.DB) *StripeWebhookService {
 	stripe.Key = stripeKey
 	return &StripeWebhookService{
 		repo:           repo,
@@ -43,6 +45,7 @@ func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Ser
 		orderlifecycle: lifecycle,
 		notification:   notification,
 		redis:          redis,
+		db:             db,
 	}
 }
 
@@ -96,83 +99,102 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	merchantID := session.Metadata["merchant_id"]
 	orderID := session.Metadata["order_id"]
 
-	key := helpers.GetRedisOrderKey(merchantID, orderID)
-	s.redis.Delete(ctx, key)
-
 	if merchantID == "" || orderID == "" {
 		return errors.New("missing metadata in stripe session")
 	}
 
-	// On utilise dbutils.RunInTx pour ouvrir la transaction.
-	// Toutes les fonctions à l'intérieur utiliseront 'txCtx'.
 	piID := ""
 	if session.PaymentIntent != nil {
 		piID = session.PaymentIntent.ID
 	}
 
-	// A. Insertion Payment
-	// Le repo de orderlifecycle utilisera GetDB(txCtx) en interne
-	err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
-		CashRegisterID:    models.ScanNOrderCashRegisterID,
-		MOP:               models.StripeMOP,
-		Amount:            int(session.AmountTotal),
-		OrderID:           orderID,
-		MerchantID:        merchantID,
-		UserID:            models.StripeWebhookUserID,
-		OperationType:     models.OperationTypeSale,
-		PaymentIntentID:   &piID,
-		CheckoutSessionID: &session.ID,
-		CustomerEmail:     &session.CustomerDetails.Email,
+	var isAppQRCode bool
+	var shouldAutoAccept bool
+
+	// Toutes les écritures liées au paiement s'exécutent dans une seule transaction :
+	// l'invalidation du cache Redis et la mise à jour du statut de la commande doivent
+	// être atomiques, sinon un GetOrder concurrent peut recacher un statut périmé
+	// (ex: ONLINE_PAYMENT_PENDING) pour la durée du TTL.
+	err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		key := helpers.GetRedisOrderKey(merchantID, orderID)
+		if s.redis != nil {
+			s.redis.Delete(txCtx, key)
+		}
+
+		// A. Insertion Payment
+		if err := s.orderlifecycle.CreatePaymentNoNotification(txCtx, models.Payment{
+			CashRegisterID:    models.ScanNOrderCashRegisterID,
+			MOP:               models.StripeMOP,
+			Amount:            int(session.AmountTotal),
+			OrderID:           orderID,
+			MerchantID:        merchantID,
+			UserID:            models.StripeWebhookUserID,
+			OperationType:     models.OperationTypeSale,
+			PaymentIntentID:   &piID,
+			CheckoutSessionID: &session.ID,
+			CustomerEmail:     &session.CustomerDetails.Email,
+		}); err != nil {
+			return fmt.Errorf("insert payment: %w", err)
+		}
+
+		// B. Update Order Creation Date to current time upon successful payment
+		if err := s.repo.UpdateOrderCreationDate(txCtx, orderID); err != nil {
+			return fmt.Errorf("update order creation date: %w", err)
+		}
+
+		// C. Update Order Status
+		if err := s.repo.UpdateOrderPaymentStatus(txCtx, orderID); err != nil {
+			return fmt.Errorf("update order payment status: %w", err)
+		}
+
+		// D. Cas Spécial: App QR Code
+		if session.Metadata["checkout_session_type"] == "app_qr_code" {
+			isAppQRCode = true
+			if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
+				log.Printf("Warning: failed to update customer: %v", err)
+			}
+			return nil
+		}
+
+		// E. Flow Standard
+		if err := s.repo.UpdateOrderDetails(txCtx, session.ID, orderID); err != nil {
+			return fmt.Errorf("update order details: %w", err)
+		}
+		if err := s.repo.UpdateOrderItemsPaid(txCtx, session.ID, orderID); err != nil {
+			return fmt.Errorf("update items paid: %w", err)
+		}
+
+		// F. Auto Accept Logic
+		orderType, merchantParams, err := s.repo.GetAutoAcceptSettings(txCtx, orderID, merchantID)
+		if err == nil {
+			shouldAutoAccept = (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
+				(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
+		}
+
+		// G. Update Customer
+		if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
+			log.Printf("Warning: customer update failed: %v", err)
+		}
+
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("insert payment: %w", err)
+		return err
 	}
 
-	// B. Update Order Creation Date to current time upon successful payment
-	if err := s.repo.UpdateOrderCreationDate(ctx, orderID); err != nil {
-		return fmt.Errorf("update order creation date: %w", err)
-	}
+	// --- ACTIONS POST-COMMIT (effets de bord) ---
+	// Tout ce qui suit ne s'exécute qu'une fois la transaction validée, pour ne jamais
+	// notifier/envoyer un email pour un paiement qui aurait finalement été annulé (rollback).
 
-	// C. Update Order Status
-	if err := s.repo.UpdateOrderPaymentStatus(ctx, orderID); err != nil {
-		return fmt.Errorf("update order payment status: %w", err)
-	}
-
-	// D. Cas Spécial: App QR Code
-	if session.Metadata["checkout_session_type"] == "app_qr_code" {
-		if err := s.handleCustomerUpdate(ctx, &session, orderID, merchantID); err != nil {
-			log.Printf("Warning: failed to update customer: %v", err)
-		}
-		// Async : On utilise context.Background() car la transaction va se fermer
+	if isAppQRCode {
 		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-		return nil // Succès -> Commit
+		return nil
 	}
 
-	// E. Flow Standard
-	if err := s.repo.UpdateOrderDetails(ctx, session.ID, orderID); err != nil {
-		return fmt.Errorf("update order details: %w", err)
-	}
-	if err := s.repo.UpdateOrderItemsPaid(ctx, session.ID, orderID); err != nil {
-		return fmt.Errorf("update items paid: %w", err)
-	}
+	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
-	// F. Auto Accept Logic
-	orderType, merchantParams, err := s.repo.GetAutoAcceptSettings(ctx, orderID, merchantID)
-	if err == nil {
-		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-
-		shouldAccept := (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
-			(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
-
-		if shouldAccept {
-			// IMPORTANT: context.Background() pour les appels asynchrones hors transaction
-			go s.orderlifecycle.SetOrderAccepted(context.Background(), "SYSTEM", merchantID, orderID)
-		}
-	}
-
-	// G. Update Customer
-	if err := s.handleCustomerUpdate(ctx, &session, orderID, merchantID); err != nil {
-		log.Printf("Warning: customer update failed: %v", err)
+	if shouldAutoAccept {
+		go s.orderlifecycle.SetOrderAccepted(context.Background(), "SYSTEM", merchantID, orderID)
 	}
 
 	// Récupération des infos pour notifications
@@ -203,9 +225,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		}
 	}
 
-	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-
-	return nil // Fin du bloc : Commit automatique
+	return nil
 }
 
 // 2. HandleCheckoutSessionCanceled

@@ -32,7 +32,7 @@ func scanPrinter(s printerScanner) (PrinterEntry, error) {
 	err := s.Scan(
 		&p.ID, &p.MerchantID, &p.Name, &p.ConnectionType,
 		&ipAddress, &p.Port, &bluetoothAddress, &p.Role, &p.Language,
-		&p.Enabled, &productionProductIDs, &p.CreatedAt, &p.UpdatedAt,
+		&p.Enabled, &productionProductIDs, &p.PaperWidthMm, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return PrinterEntry{}, err
@@ -53,7 +53,7 @@ func scanPrinter(s printerScanner) (PrinterEntry, error) {
 const selectCols = `
 	SELECT printer_id, merchant_id, name, connection_type,
 	       ip_address, port, bluetooth_address, role, language,
-	       enabled, production_product_ids, created_at, updated_at
+	       enabled, production_product_ids, paper_width_mm, created_at, updated_at
 	FROM printers`
 
 // ListPrinters returns all enabled printers for a merchant.
@@ -112,14 +112,19 @@ func (r *Repository) CreatePrinter(ctx context.Context, merchantID string, req *
 		port = *req.Port
 	}
 
+	paperWidthMm := 57
+	if req.PaperWidthMm != nil {
+		paperWidthMm = *req.PaperWidthMm
+	}
+
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO printers
-		 (printer_id, merchant_id, name, connection_type, ip_address, port, bluetooth_address, role, language, production_product_ids)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (printer_id, merchant_id, name, connection_type, ip_address, port, bluetooth_address, role, language, production_product_ids, paper_width_mm)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		printerID, merchantID, req.Name, req.ConnectionType,
 		toNullString(req.IPAddress), port,
 		toNullString(req.BluetoothAddress), req.Role, language,
-		productIDsToNullString(req.ProductionProductIDs),
+		productIDsToNullString(req.ProductionProductIDs), paperWidthMm,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -184,6 +189,10 @@ func (r *Repository) UpdatePrinter(ctx context.Context, merchantID, printerID st
 	if req.ProductionProductIDs != nil {
 		updates = append(updates, "production_product_ids = ?")
 		args = append(args, productIDsToNullString(req.ProductionProductIDs))
+	}
+	if req.PaperWidthMm != nil {
+		updates = append(updates, "paper_width_mm = ?")
+		args = append(args, *req.PaperWidthMm)
 	}
 
 	if len(updates) > 0 {

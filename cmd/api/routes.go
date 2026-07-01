@@ -296,6 +296,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		ordersLifeCycleService,
 		notificationService,
 		redisClient,
+		mysqlDB,
 	)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 

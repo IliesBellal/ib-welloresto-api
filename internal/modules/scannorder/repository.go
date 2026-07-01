@@ -574,6 +574,28 @@ func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string,
 	return &merchantID, nil
 }
 
+// GetStripePaymentForOrder returns the intent_id and account_id of the active Stripe
+// payment for a given order. Returns ("", "", nil) when no Stripe payment exists.
+func (r *Repository) GetStripePaymentForOrder(ctx context.Context, orderID string) (intentID string, accountID string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	q := `
+		SELECT sp.payment_intent_id, sa.account_id
+		FROM payments p
+		INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
+		INNER JOIN stripe_accounts sa ON sa.merchant_id = p.merchant_id
+		WHERE p.order_id = ?
+		  AND p.mop = 'STRIPE'
+		  AND p.enabled = 1
+		LIMIT 1`
+
+	err = db.QueryRowContext(ctx, q, orderID).Scan(&intentID, &accountID)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	return intentID, accountID, err
+}
+
 func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -815,20 +837,20 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 	return brand, merchants, nil
 }
 
-func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]UpsellProduct, error) {
+// GetUpsellProducts retrieves the IDs of "popular" products (is_popular = 1) eligible for
+// upsell. Product groups are excluded since they are not orderable on their own — only their
+// sub-products are (same rule as the SNO menu, which flattens groups into their sub-products).
+func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT 
-		p.product_id,
-		p.name,
-		p.product_desc,
-		p.price,
-		p.image_url
+	SELECT
+		p.product_id
 	FROM products p
 	WHERE p.merchant_id = ?
 	AND p.is_popular = 1
 	AND p.status in ('available','1')
+	AND (p.is_product_group IS NULL OR p.is_product_group != 1)
 	ORDER BY p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
@@ -837,37 +859,20 @@ func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) (
 	}
 	defer rows.Close()
 
-	var products []UpsellProduct
+	var productIDs []string
 	for rows.Next() {
-		var product UpsellProduct
-		var description sql.NullString
-		var imageURL sql.NullString
-
-		if err := rows.Scan(
-			&product.ProductID,
-			&product.Name,
-			&description,
-			&product.Price,
-			&imageURL,
-		); err != nil {
+		var productID string
+		if err := rows.Scan(&productID); err != nil {
 			return nil, err
 		}
-
-		if description.Valid {
-			product.Description = &description.String
-		}
-		if imageURL.Valid {
-			product.ImageURL = &imageURL.String
-		}
-
-		products = append(products, product)
+		productIDs = append(productIDs, productID)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return products, nil
+	return productIDs, nil
 }
 
 // GetProductPricesForSNO retrieves official product prices for SNO from database

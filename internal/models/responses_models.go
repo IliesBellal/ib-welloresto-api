@@ -207,6 +207,8 @@ var (
 
 	ErrTooLateToDeleteOrder = errors.New("too_late_to_delete_order")
 
+	ErrOrderAlreadyAccepted = errors.New("order_already_accepted")
+
 	ErrUserNotAllowed = errors.New("user_not_allowed")
 
 	ErrCartEmpty = errors.New("cart_is_empty")
@@ -438,6 +440,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "too_late_to_delete_order"
 		errorMsg = "Too late to delete order, you can only delete an order within 60 seconds after its creation"
+
+	case errors.Is(err, ErrOrderAlreadyAccepted):
+		status = http.StatusConflict
+		errorStatus = "order_already_accepted"
+		errorMsg = "This order has already been accepted by the restaurant and can no longer be cancelled"
 
 	case errors.Is(err, ErrRedisNotAvailable):
 		status = http.StatusServiceUnavailable

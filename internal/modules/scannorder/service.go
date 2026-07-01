@@ -616,6 +616,8 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 }
 
 func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {
+	log := logger.FromContext(ctx)
+
 	// 1️⃣ Merchant depuis QR
 	merchantID, err := s.repo.GetMerchantIDByQR(ctx, qr)
 	if err != nil {
@@ -625,12 +627,11 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 		return map[string]interface{}{"status": "cannot_retrieve_merchant"}, nil
 	}
 
-	// 2️⃣ Récupérer commande (via module déjà fait)
+	// 2️⃣ Récupérer commande
 	orderResp, err := s.GetOrderSNO(ctx, qr, orderID)
 	if err != nil {
 		return nil, err
 	}
-
 	if orderResp == nil {
 		return map[string]interface{}{
 			"status": "cannot_retrieve_order",
@@ -638,30 +639,58 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 		}, nil
 	}
 
-	// 3️⃣ Vérifier état
+	// 3️⃣ Vérifier état terminal
 	state := fmt.Sprintf("%v", orderResp.State)
 	if state == "CLOSED" || state == "DONE" {
-		return map[string]interface{}{
-			"status": "order_closed",
-		}, nil
+		return map[string]interface{}{"status": "order_closed"}, nil
 	}
 
-	// 4️⃣ Vérifier délai 150 sec
-	creationTime := time.Unix(orderResp.CreationDate, 0)
+	// 4️⃣ Garde merchant_approval : bloquer si le restaurant a déjà accepté
+	if orderResp.MerchantApproval == "ACCEPTED" {
+		return nil, models.ErrOrderAlreadyAccepted
+	}
 
-	now := time.Now().Unix()
-	calc := now - creationTime.Unix()
-
-	if calc > 60 {
+	// 5️⃣ Garde temporelle : bloquer après 60 secondes
+	if time.Now().Unix()-time.Unix(orderResp.CreationDate, 0).Unix() > 60 {
 		return nil, models.ErrTooLateToDeleteOrder
 	}
 
-	// 🐛 RETURN DEBUG EXACT COMME PHP
-	return map[string]interface{}{
-		"calc":          calc,
-		"now":           now,
-		"creation_date": creationTime.Unix(),
-	}, nil
+	// 6️⃣ Récupérer le paiement Stripe s'il existe (non-bloquant si absent)
+	var stripeIntentID, stripeAccountID string
+	for _, p := range orderResp.Payments {
+		if p.MOP == models.PaymentStripe && p.Enabled {
+			stripeIntentID, stripeAccountID, err = s.repo.GetStripePaymentForOrder(ctx, orderID)
+			if err != nil {
+				// Non-bloquant : commande annulée même si lecture Stripe échoue.
+				// Risque accepté : remboursement silencieusement absent — monitorer via logs.
+				log.Error("CancelOrderSNO: stripe payment lookup failed, proceeding without refund",
+					zap.String("order_id", orderID), zap.Error(err))
+			}
+			break
+		}
+	}
+
+	// 7️⃣ Annulation DB complète (rewards, QR, payments, cache, intégrations)
+	if err := s.orderLifeCycleSvc.DeleteOrder(ctx, models.DenyOrderInput{
+		OrderID:            orderID,
+		MerchantID:         *merchantID,
+		UserID:             "SNO_CUSTOMER",
+		DeletionReasonID:   "SNO_CUSTOMER_CANCELLED",
+		DeletionReasonType: "scannorder",
+		DeletionComment:    "Annulée par le client ScanNOrder",
+	}); err != nil {
+		return nil, err
+	}
+
+	// 8️⃣ Remboursement Stripe asynchrone (déclenché après succès de l'annulation DB)
+	if stripeIntentID != "" && stripeAccountID != "" {
+		s.StripeManager.RefundOrCancelAsync(stripeclient.RefundRequest{
+			IntentID:  stripeIntentID,
+			AccountID: stripeAccountID,
+		})
+	}
+
+	return map[string]interface{}{"status": "cancelled"}, nil
 }
 
 func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest) (models.CreateOrderResult, error) {
@@ -1020,8 +1049,57 @@ func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType 
 	}, nil
 }
 
-// GetUpsell retrieves famous (upsell) products for the QR code's merchant
-func (s *Service) GetUpsell(ctx context.Context, qrCode string) (*UpsellResponse, error) {
+// GetUpsell retrieves famous (upsell) products for the QR code's merchant, fully configured
+// (attributes, options) so the frontend can open the product configuration modal directly.
+func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, error) {
+	// Si Redis n'est pas configuré, on court direct à la BDD
+	if s.redis == nil {
+		return s.computeGetUpsell(ctx, qr)
+	}
+
+	log := logger.FromContext(ctx)
+	cacheKey := models.ScannorderMerchantUpsell + qr
+
+	// --- ÉTAPE 1 : Chercher dans Redis ---
+	cached, found := s.redis.Get(ctx, cacheKey)
+
+	if found {
+		var upsell UpsellResponse
+		if err := json.Unmarshal([]byte(cached), &upsell); err == nil {
+			log.Info("🧠🎯 Upsell found in Redis cache 🎯🧠")
+			return &upsell, nil
+		}
+	}
+
+	log.Info("🧠🚫 Upsell not found in Redis cache 🚫🧠")
+
+	// --- ÉTAPE 2 : Appel BDD (calcul lourd : 1 GetProduct par produit populaire) ---
+	upsell, err := s.computeGetUpsell(ctx, qr)
+	if err != nil {
+		return nil, err
+	}
+
+	if upsell == nil {
+		return nil, nil
+	}
+
+	// --- ÉTAPE 3 : Stocker dans Redis ---
+	// Note : pas d'invalidation active ici, comme pour le cache menu (DeleteAllMerchantKeys
+	// existe dans internal/infrastructure/redis/client.go mais n'est appelé nulle part
+	// actuellement) — on se repose uniquement sur le TTL, mêmes règles que GetMenu.
+	serialized, err := json.Marshal(upsell)
+	if err == nil {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); !saved {
+			log.Warn("Warning Redis Set (Upsell): save failed")
+		} else {
+			log.Info("🧠📌 Upsell saved in Redis cache 📌🧠")
+		}
+	}
+
+	return upsell, nil
+}
+
+func (s *Service) computeGetUpsell(ctx context.Context, qrCode string) (*UpsellResponse, error) {
 	log := logger.FromContext(ctx)
 
 	log.Info("GetUpsell called", zap.String("qr_code", qrCode))
@@ -1031,22 +1109,34 @@ func (s *Service) GetUpsell(ctx context.Context, qrCode string) (*UpsellResponse
 	if err != nil || merchantID == "" {
 		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
 		return &UpsellResponse{
-			Products: []UpsellProduct{},
+			Products: []models.ProductEntry{},
 		}, nil
 	}
 
-	log.Debug("Retrieving upsell products", zap.String("merchant_id", merchantID))
+	log.Debug("Retrieving upsell product IDs", zap.String("merchant_id", merchantID))
 
-	// 2️⃣ Retrieve famous (is_famous = 1) products from repository
-	products, err := s.repo.GetUpsellProducts(ctx, merchantID)
+	// 2️⃣ Retrieve popular (is_popular = 1) product IDs from repository
+	productIDs, err := s.repo.GetUpsellProducts(ctx, merchantID)
 	if err != nil {
 		log.Error("GetUpsellProducts repo error", zap.Error(err))
 		return nil, err
 	}
 
-	// 3️⃣ Return empty array if nil
-	if products == nil {
-		products = []UpsellProduct{}
+	// 3️⃣ Load each product fully configured, same as the product detail endpoint
+	products := make([]models.ProductEntry, 0, len(productIDs))
+	for _, productID := range productIDs {
+		product, err := s.menu.GetProductFromMerchantId(ctx, merchantID, productID)
+		if err != nil {
+			// Un produit en erreur ne doit pas bloquer toute la réponse upsell
+			log.Warn("GetUpsell: failed to load product, skipping", zap.String("product_id", productID), zap.Error(err))
+			continue
+		}
+		if product == nil {
+			continue
+		}
+
+		s.cleanProductForSNO(product, "")
+		products = append(products, *product)
 	}
 
 	log.Info("GetUpsell success", zap.Int("count", len(products)))

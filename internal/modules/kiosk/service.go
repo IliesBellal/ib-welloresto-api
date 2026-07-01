@@ -807,6 +807,7 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		IdleVideoURL:         row.IdleVideoURL,
 		PrimaryColor:         row.PrimaryColor,
 		BusinessName:         row.BusinessName,
+		Slug:                 row.Slug,
 	}, nil
 }
 
@@ -1448,12 +1449,21 @@ func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kio
 		pickupCode = *order.OrderNum
 	}
 
+	slug, err := s.repo.getMerchantSlug(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	qrPayload := fmt.Sprintf("KIOSK:%s:%s", order.OrderID, pickupCode)
+	if slug != nil && *slug != "" {
+		qrPayload = fmt.Sprintf("https://scannorder.welloresto.fr/restaurants/%s/order/%s", *slug, order.OrderID)
+	}
+
 	resp := &CounterPaymentResponse{
 		OrderID:       order.OrderID,
 		DisplayNumber: pickupCode,
 		Status:        mapMerchantApprovalToKioskStatus(&order),
 		PickupCode:    pickupCode,
-		QRPayload:     fmt.Sprintf("KIOSK:%s:%s", order.OrderID, pickupCode),
+		QRPayload:     qrPayload,
 	}
 
 	if s.notificationSvc != nil {

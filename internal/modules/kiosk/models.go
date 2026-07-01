@@ -47,10 +47,10 @@ type KioskDeviceTokenRow struct {
 	CreatedAt  time.Time
 }
 
-// KioskSettingsRow mappe la table kiosk_settings. BusinessName n'est PAS une
-// colonne de kiosk_settings : c'est merchant.fullName, attaché à ce struct
-// après coup par GetKioskSettings (voir repository.go) pour que l'appelant
-// n'ait qu'une seule structure à lire — voir docs/KIOSK_DECISIONS.md.
+// KioskSettingsRow mappe la table kiosk_settings. BusinessName et Slug ne sont
+// PAS des colonnes de kiosk_settings : ils sont attachés à ce struct après coup
+// par GetKioskSettings (voir repository.go) pour que l'appelant n'ait qu'une
+// seule structure à lire — voir docs/KIOSK_DECISIONS.md.
 type KioskSettingsRow struct {
 	MerchantID           string
 	FulfillmentDineIn    bool
@@ -67,6 +67,7 @@ type KioskSettingsRow struct {
 	IdleVideoURL         *string
 	PrimaryColor         *string
 	BusinessName         *string
+	Slug                 *string
 	CreatedAt            time.Time
 	UpdatedAt            *time.Time
 }
@@ -224,6 +225,11 @@ type KioskSettingsResponse struct {
 	// via UpdateKioskSettingsRequest : le nom de l'établissement se gère
 	// ailleurs, pas dans les paramètres Kiosk) — voir docs/KIOSK_DECISIONS.md.
 	BusinessName *string `json:"business_name"`
+
+	// Slug — code QR principal du merchant (qrcodes.code, sans location_id ni
+	// user_id), en lecture seule. Correspond au {merchant_slug} des routes
+	// scannorder, permettant au kiosk de construire ou afficher l'URL SNO.
+	Slug *string `json:"slug"`
 }
 
 // UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des
@@ -334,7 +340,12 @@ type CounterPaymentResponse struct {
 	DisplayNumber string `json:"display_number"`
 	Status        string `json:"status"`
 	PickupCode    string `json:"pickup_code"`
-	QRPayload     string `json:"qr_payload"`
+
+	// QRPayload — URL de suivi ScanNOrder de la commande
+	// (https://scannorder.welloresto.fr/restaurants/{slug}/order/{order_id}),
+	// imprimée en QR sur le ticket. Retombe sur "KIOSK:{order_id}:{pickup_code}"
+	// si le merchant n'a pas de slug (qrcodes.code) configuré.
+	QRPayload string `json:"qr_payload"`
 }
 
 type KioskOrderResponse struct {

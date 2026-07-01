@@ -230,14 +230,8 @@ type DiscountsResponse struct {
 
 // --- Upsell ---
 
-type UpsellProduct struct {
-	ProductID   string  `json:"product_id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-	Price       int64   `json:"price"`
-	ImageURL    *string `json:"image_url,omitempty"`
-}
-
+// UpsellResponse carries fully-configured products (same shape as the product detail
+// endpoint), so the frontend can open the configuration modal directly from an upsell suggestion.
 type UpsellResponse struct {
-	Products []UpsellProduct `json:"products"`
+	Products []models.ProductEntry `json:"products"`
 }

@@ -15,8 +15,9 @@ const (
 
 	// Préfixe des clés Redis pour les merchants (scannorder)
 	// Permet d'identifier facilement les clés dans Redis
-	ScannorderMerchant     = "scannorder:merchant:"
-	ScannorderMerchantMenu = "scannorder:merchant:menu:"
+	ScannorderMerchant       = "scannorder:merchant:"
+	ScannorderMerchantMenu   = "scannorder:merchant:menu:"
+	ScannorderMerchantUpsell = "scannorder:merchant:upsell:"
 
 	// Durée de vie du cache pour les merchants
 	ScannorderMerchantMenuTTL = 10 * time.Minute

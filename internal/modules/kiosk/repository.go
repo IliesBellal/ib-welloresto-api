@@ -476,8 +476,8 @@ func defaultKioskSettingsRow(merchantID string) *KioskSettingsRow {
 
 // GetKioskSettings récupère les paramètres Kiosk d'un merchant, ou les
 // valeurs par défaut si la ligne n'existe pas encore — jamais sql.ErrNoRows.
-// BusinessName vient toujours de la table merchant (jamais de kiosk_settings),
-// donc il est attaché que la ligne kiosk_settings existe ou non.
+// BusinessName et Slug viennent d'autres tables (jamais de kiosk_settings),
+// donc ils sont attachés que la ligne kiosk_settings existe ou non.
 func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*KioskSettingsRow, error) {
 	row, err := r.GetSettingsByMerchant(ctx, merchantID)
 	if err != nil {
@@ -492,6 +492,12 @@ func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*
 		return nil, err
 	}
 	row.BusinessName = businessName
+
+	slug, err := r.getMerchantSlug(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	row.Slug = slug
 
 	return row, nil
 }
@@ -511,6 +517,28 @@ func (r *Repository) getMerchantBusinessName(ctx context.Context, merchantID str
 		return nil, err
 	}
 	return fullName, nil
+}
+
+// getMerchantSlug récupère le code QR principal du merchant (sans location_id
+// ni user_id) — c'est le {merchant_slug} utilisé dans les routes scannorder.
+func (r *Repository) getMerchantSlug(ctx context.Context, merchantID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var slug *string
+	err := db.QueryRowContext(ctx, `
+		SELECT code FROM qrcodes
+		WHERE merchant_id = ?
+		  AND location_id IS NULL
+		  AND user_id IS NULL
+		  AND deleted = false
+		LIMIT 1`, merchantID).Scan(&slug)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return slug, nil
 }
 
 // GetAvailableKioskProductIDs filtre productIDs et ne retourne que ceux qui
