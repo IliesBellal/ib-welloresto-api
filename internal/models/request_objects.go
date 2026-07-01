@@ -230,6 +230,11 @@ type PricingRequest struct {
 
 	CheckoutSessionType string       `json:"checkout_session_type,omitempty"`
 	Merchant            *MerchantRow `json:"merchant,omitempty"`
+
+	// UpsellSuggestionID, when set on a CreateOrderSNO call, is carried into
+	// RequestObject.UpsellSuggestionID so OrdersLifeCycleService.CreateOrder can
+	// trigger upsell acceptance tracking (Phase C). Unused by pricing calls.
+	UpsellSuggestionID *string `json:"upsell_suggestion_id,omitempty"`
 }
 
 type MerchantRow struct {

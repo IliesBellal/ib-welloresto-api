@@ -240,6 +240,10 @@ func (h *Handler) GetDiscounts(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_discounts", resp)
 }
 
+// GetUpsell is DEPRECATED: static is_popular selection, no cart context.
+// Kept temporarily in parallel with PostUpsellSNO while the frontend migrates
+// to POST /scannorder/{merchant_slug}/upsell (cart-aware, same engine as POS/Kiosk).
+// À supprimer une fois le front migré sur POST (voir Phase A résiduelle).
 func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -252,6 +256,32 @@ func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_upsell", resp)
+}
+
+// PostUpsellSNO generates cart-aware upsell suggestions via upsell.Service.GenerateUpsell
+// (Apriori/LLM/featured fallback, same engine as POS/Kiosk), enriched with full product
+// configuration. Payload reuses models.PricingRequest like GetPricingSNO/CreateOrderSNO.
+func (h *Handler) PostUpsellSNO(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req models.PricingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "scannorder", "post_upsell", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	qr := chi.URLParam(r, "merchant_slug")
+	req.QRCode = qr
+
+	resp, err := h.service.PostUpsell(ctx, &req)
+	if err != nil {
+		log.Error("PostUpsellSNO failed", zap.Error(err))
+		models.SendErrorJSON(w, "scannorder", "post_upsell", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "post_upsell", resp)
 }
 
 func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {

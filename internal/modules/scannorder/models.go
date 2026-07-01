@@ -232,6 +232,9 @@ type DiscountsResponse struct {
 
 // UpsellResponse carries fully-configured products (same shape as the product detail
 // endpoint), so the frontend can open the configuration modal directly from an upsell suggestion.
+// SuggestionID is only populated by PostUpsell (cart-aware, tracked) — the deprecated
+// GetUpsell (static is_popular) leaves it empty since it never creates a tracked suggestion.
 type UpsellResponse struct {
-	Products []models.ProductEntry `json:"products"`
+	Products     []models.ProductEntry `json:"products"`
+	SuggestionID string                 `json:"suggestion_id,omitempty"`
 }

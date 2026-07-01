@@ -1182,7 +1182,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		inCart[id] = true
 	}
 
-	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, "")
+	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, "", upsell.ChannelKiosk)
 	if err != nil {
 		return &KioskUpsellResponse{Suggestions: []KioskUpsellSuggestion{}, Source: "error_fallback"}, nil
 	}
@@ -1232,7 +1232,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		})
 	}
 
-	return &KioskUpsellResponse{Suggestions: suggestions, Source: source}, nil
+	return &KioskUpsellResponse{Suggestions: suggestions, Source: source, SuggestionID: result.SuggestionID}, nil
 }
 
 // kioskFulfillmentToOrderType traduit le fulfillment_type Kiosk
@@ -1394,8 +1394,9 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	orderReq.Payments = []models.PaymentPayload{}
 
 	newOrder, err := s.ordersLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
-		MerchantID: kiosk.MerchantID,
-		Order:      *orderReq,
+		MerchantID:         kiosk.MerchantID,
+		Order:              *orderReq,
+		UpsellSuggestionID: req.UpsellSuggestionID,
 	})
 	if err != nil {
 		return nil, err

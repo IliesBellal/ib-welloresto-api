@@ -323,8 +323,9 @@ type KioskUpsellRequest struct {
 }
 
 type KioskUpsellResponse struct {
-	Suggestions []KioskUpsellSuggestion `json:"suggestions"`
-	Source      string                  `json:"source"`
+	Suggestions  []KioskUpsellSuggestion `json:"suggestions"`
+	Source       string                  `json:"source"`
+	SuggestionID string                  `json:"suggestion_id,omitempty"`
 }
 
 type KioskUpsellSuggestion struct {

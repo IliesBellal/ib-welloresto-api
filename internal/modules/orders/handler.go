@@ -158,7 +158,7 @@ func (h *OrdersHandler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	result, err := h.upsellService.GenerateUpsell(ctx, user.MerchantID, cartProducts, req.Order.OrderType)
+	result, err := h.upsellService.GenerateUpsell(ctx, user.MerchantID, cartProducts, req.Order.OrderType, upsell.ChannelPOS)
 	if err != nil {
 		log.Error("GetUpsell service error: " + err.Error())
 		models.SendJSON(w, http.StatusOK, "orders", "get_upsell", map[string]interface{}{

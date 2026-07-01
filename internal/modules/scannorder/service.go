@@ -17,6 +17,7 @@ import (
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
+	"welloresto-api/internal/modules/upsell"
 
 	"go.uber.org/zap"
 )
@@ -30,10 +31,11 @@ type Service struct {
 	StripeManager          *stripeclient.StripeManager
 	cfg                    config.ScanNOrderConfig
 	redis                  *redis.Client
+	upsellService          *upsell.Service
 }
 
-func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc}
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService}
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
@@ -825,8 +827,9 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 
 	// 6️⃣ Création commande BDD
 	newOrder, err := s.orderLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
-		MerchantID: orderReq.Merchant.MerchantID,
-		Order:      *orderReq.Order,
+		MerchantID:         orderReq.Merchant.MerchantID,
+		Order:              *orderReq.Order,
+		UpsellSuggestionID: req.UpsellSuggestionID,
 	})
 	if err != nil {
 		log.Error("CreateOrder", zap.Error(err))
@@ -1144,6 +1147,58 @@ func (s *Service) computeGetUpsell(ctx context.Context, qrCode string) (*UpsellR
 	return &UpsellResponse{
 		Products: products,
 	}, nil
+}
+
+// PostUpsell generates cart-aware upsell suggestions (Apriori/LLM/featured fallback,
+// same engine as POS/Kiosk) via upsell.Service.GenerateUpsell, then applies the SNO
+// product cleanup (per-channel price collapsing, removal of internal fields) on top.
+// Response shape mirrors GetUpsell ({products: [...]}) so the frontend can migrate
+// from GET to POST without changing its parsing logic.
+func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*UpsellResponse, error) {
+	log := logger.FromContext(ctx)
+
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, req.QRCode)
+	if err != nil || merchantID == "" {
+		log.Warn("PostUpsell: merchant not found for QR code", zap.String("qr_code", req.QRCode), zap.Error(err))
+		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
+	}
+
+	if req.Order == nil || len(req.Order.Products) == 0 {
+		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
+	}
+
+	cartProducts := make([]models.ProductEntry, 0, len(req.Order.Products))
+	for _, p := range req.Order.Products {
+		qty := p.Quantity
+		cartProducts = append(cartProducts, models.ProductEntry{
+			ProductID: p.ProductID,
+			Name:      p.ProductName,
+			Price:     int64(p.Price),
+			Quantity:  &qty,
+		})
+	}
+
+	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, req.Order.OrderType, upsell.ChannelSNO)
+	if err != nil {
+		log.Error("PostUpsell: GenerateUpsell failed", zap.Error(err))
+		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
+	}
+
+	products := make([]models.ProductEntry, 0, len(result.Suggestions))
+	for _, sg := range result.Suggestions {
+		if sg.Product == nil {
+			// Best-effort enrichment failed upstream for this suggestion — skip it
+			// rather than returning a product without configuration to the SNO client.
+			continue
+		}
+		product := *sg.Product
+		s.cleanProductForSNO(&product, req.Order.OrderType)
+		products = append(products, product)
+	}
+
+	log.Info("PostUpsell success", zap.Int("count", len(products)), zap.String("source", result.Source))
+
+	return &UpsellResponse{Products: products, SuggestionID: result.SuggestionID}, nil
 }
 
 func (s *Service) cleanProductPricesForSNO(product *models.ProductEntry, deliveryType string) {

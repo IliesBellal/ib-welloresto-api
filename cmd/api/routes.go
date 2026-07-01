@@ -273,7 +273,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
-	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
@@ -576,7 +576,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{merchant_slug}/loyalty_programs", scannHandler.GetLoyaltyPrograms)
 		r.Get("/{merchant_slug}/discounts", scannHandler.GetDiscounts)
 
-		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell)
+		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell) // deprecated, see handler comment
+		r.Post("/{merchant_slug}/upsell", scannHandler.PostUpsellSNO)
 		r.Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
 		r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
 
