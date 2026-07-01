@@ -180,6 +180,7 @@ type UserLoginRow struct {
 	CustomerFormRequirements        []byte
 	Currency                        string
 	IsOpen                          bool
+	POSUpsellEnabled                bool
 
 	// Subscription / Package
 	AllowWaiterAccount   bool

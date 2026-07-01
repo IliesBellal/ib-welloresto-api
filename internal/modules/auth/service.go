@@ -622,6 +622,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 				CashRegisterRequiredForOrdering: user.CashRegisterRequiredForOrdering,
 				WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
 				DisableSafetyStock:              user.DisableSafetyStock,
+				POSUpsellEnabled:                user.POSUpsellEnabled,
 				CustomerFormRequirements:        customerFormRequirementsRawMessage(user.CustomerFormRequirements),
 			},
 		},

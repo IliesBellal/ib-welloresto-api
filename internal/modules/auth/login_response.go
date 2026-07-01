@@ -71,22 +71,23 @@ type LoginMerchantResponse struct {
 }
 
 type LoginMerchantSettingsResponse struct {
-	DeliveryFees                    int    `json:"delivery_fees"`
-	DeliveryFeesLimit               int    `json:"delivery_fees_limit"`
-	DeliveryDistanceLimit           int    `json:"delivery_distance_limit"`
-	ManageOnSite                    bool   `json:"manage_on_site"`
-	ManageTakeAway                  bool   `json:"manage_take_away"`
-	ManageDelivery                  bool   `json:"manage_delivery"`
-	KitchenShowOnlyPaid             bool   `json:"kitchen_show_only_paid"`
-	KitchenDistributionMode         string `json:"kitchen_distribution_mode"`
-	ProductionDisplayMode           string `json:"production_display_mode"`
-	PagerNumberRequired             bool   `json:"pager_number_required"`
-	POSAutoLockEnabled              bool   `json:"pos_auto_lock_enabled"`
-	POSAutoLockDelayMinutes         int    `json:"pos_auto_lock_delay_minutes"`
-	ServiceRequiredForOrdering      bool   `json:"service_required_for_ordering"`
-	CashRegisterRequiredForOrdering bool   `json:"cash_register_required_for_ordering"`
-	WarningNewOrderNotPaid          bool   `json:"warning_new_order_not_paid"`
-	DisableSafetyStock              bool   `json:"disable_safety_stock"`
+	DeliveryFees                    int              `json:"delivery_fees"`
+	DeliveryFeesLimit               int              `json:"delivery_fees_limit"`
+	DeliveryDistanceLimit           int              `json:"delivery_distance_limit"`
+	ManageOnSite                    bool             `json:"manage_on_site"`
+	ManageTakeAway                  bool             `json:"manage_take_away"`
+	ManageDelivery                  bool             `json:"manage_delivery"`
+	KitchenShowOnlyPaid             bool             `json:"kitchen_show_only_paid"`
+	KitchenDistributionMode         string           `json:"kitchen_distribution_mode"`
+	ProductionDisplayMode           string           `json:"production_display_mode"`
+	PagerNumberRequired             bool             `json:"pager_number_required"`
+	POSAutoLockEnabled              bool             `json:"pos_auto_lock_enabled"`
+	POSAutoLockDelayMinutes         int              `json:"pos_auto_lock_delay_minutes"`
+	ServiceRequiredForOrdering      bool             `json:"service_required_for_ordering"`
+	CashRegisterRequiredForOrdering bool             `json:"cash_register_required_for_ordering"`
+	WarningNewOrderNotPaid          bool             `json:"warning_new_order_not_paid"`
+	POSUpsellEnabled                bool             `json:"pos_upsell_enabled"`
+	DisableSafetyStock              bool             `json:"disable_safety_stock"`
 	CustomerFormRequirements        *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
 

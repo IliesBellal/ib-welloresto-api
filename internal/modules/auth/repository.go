@@ -85,6 +85,7 @@ SELECT
     mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
+	mp.pos_upsell_enabled,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -158,7 +159,7 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.KitchenShowOnlyPaid, &data.ServiceRequiredForOrdering,
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.CustomerFormRequirements,
-		&data.Currency, &data.IsOpen,
+		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
@@ -250,6 +251,7 @@ SELECT
     mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
+	mp.pos_upsell_enabled,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -330,7 +332,7 @@ LIMIT 1;
 		&data.POSAutoLockEnabled, &data.POSAutoLockDelayMinutes, &data.ServiceRequiredForOrdering,
 		&data.CashRegisterRequiredForOrdering, &data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.CustomerFormRequirements,
-		&data.Currency, &data.IsOpen,
+		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
