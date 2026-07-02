@@ -27,15 +27,15 @@ type Service struct {
 	menu                   *menu.MenuService
 	orderingService        *orders.OrdersService
 	orderLifeCycleSvc      *order_life_cycle.OrdersLifeCycleService
-	deliverySessionService delivery_sessions.DeliverySessionsService
+	deliverySessionService *delivery_sessions.DeliverySessionsService
 	StripeManager          *stripeclient.StripeManager
 	cfg                    config.ScanNOrderConfig
 	redis                  *redis.Client
 	upsellService          *upsell.Service
 }
 
-func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService}
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service, deliverySessionService *delivery_sessions.DeliverySessionsService) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService}
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
@@ -575,7 +575,7 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 	return nil
 }
 
-func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.Order, error) {
+func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*PublicSNOOrder, error) {
 	log := logger.FromContext(ctx)
 
 	// 🔹 1. Récupérer merchant via QR
@@ -591,6 +591,13 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 		return nil, err
 	}
 
+	order := response.Orders[0]
+	// The internal delivery_session (which lists every other customer of the tour) must
+	// never be serialized on this public endpoint. Drop it from the embedded order; the
+	// GDPR-safe projection is attached separately below.
+	order.DeliverySession = nil
+	publicOrder := &PublicSNOOrder{Order: &order}
+
 	// 🔹 2. Chercher delivery session
 	deliverySessionID, err := s.repo.GetDeliverySessionByOrderID(ctx, orderID)
 	if err != nil {
@@ -598,23 +605,78 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*models.
 		return nil, err
 	}
 
-	// 🔹 3. Si session trouvée → enrichir
+	// 🔹 3. Si session trouvée → enrichir avec la projection publique filtrée (RGPD)
 	if deliverySessionID != nil {
 		log.Info("Order linked to delivery session",
 			zap.String("order_id", orderID),
 			zap.String("delivery_session_id", *deliverySessionID),
 		)
 
-		session, err := s.deliverySessionService.GetDeliverySession(ctx, merchant.MerchantID, *deliverySessionID)
+		session, err := s.deliverySessionService.FetchDeliverySession(ctx, merchant.MerchantID, *deliverySessionID)
 		if err != nil {
-			log.Error("GetDeliverySession", zap.String("delivery_session_id", *deliverySessionID), zap.Error(err))
+			log.Error("FetchDeliverySession", zap.String("delivery_session_id", *deliverySessionID), zap.Error(err))
 			return nil, err
 		}
 
-		response.Orders[0].DeliverySession = session
+		publicOrder.DeliverySession = toPublicDeliverySession(session, orderID)
 	}
 
-	return &response.Orders[0], nil
+	return publicOrder, nil
+}
+
+// deliveryStopTerminalStatuses are the per-stop FSM states that mean a stop is already
+// served (no longer ahead of the caller). Mirrors the terminal set used by the delivery
+// session repository.
+var deliveryStopTerminalStatuses = map[string]struct{}{
+	"delivered": {},
+	"failed":    {},
+	"canceled":  {},
+}
+
+// toPublicDeliverySession maps the internal (merchant-facing) delivery session to the
+// GDPR-safe projection exposed to the SNO tracking client. It exposes only the delivery
+// man's first name + live position, the session status, and a non-identifying rank of the
+// caller's own stop in the tour. No other customer's data is ever copied out.
+func toPublicDeliverySession(session *models.DeliverySession, currentOrderID string) *PublicDeliverySession {
+	if session == nil {
+		return nil
+	}
+
+	pub := &PublicDeliverySession{
+		DeliverySessionID: session.DeliverySessionID,
+		Status:            session.Status,
+		DeliveryMan: PublicDeliveryMan{
+			FirstName: session.DeliveryMan.FirstName,
+			Lat:       session.DeliveryMan.Lat,
+			Lng:       session.DeliveryMan.Lng,
+			Status:    session.DeliveryMan.Status,
+		},
+	}
+
+	// session.Orders is ordered by delivery priority ASC. We only expose counts derived
+	// from it — never the orders themselves.
+	if total := len(session.Orders); total > 0 {
+		pub.TotalStops = &total
+
+		stopsBefore := 0
+		for _, o := range session.Orders {
+			if o.OrderID == currentOrderID {
+				sb := stopsBefore
+				pub.StopsBeforeYou = &sb
+				break
+			}
+			// Count stops still to be served ahead of the caller (non-terminal).
+			if o.DeliveryStop == nil {
+				stopsBefore++
+				continue
+			}
+			if _, terminal := deliveryStopTerminalStatuses[o.DeliveryStop.Status]; !terminal {
+				stopsBefore++
+			}
+		}
+	}
+
+	return pub
 }
 
 func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {

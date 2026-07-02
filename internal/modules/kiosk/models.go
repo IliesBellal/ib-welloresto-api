@@ -322,20 +322,6 @@ type KioskUpsellRequest struct {
 	CartProductIDs []string `json:"cart_product_ids"`
 }
 
-type KioskUpsellResponse struct {
-	Suggestions  []KioskUpsellSuggestion `json:"suggestions"`
-	Source       string                  `json:"source"`
-	SuggestionID string                  `json:"suggestion_id,omitempty"`
-}
-
-type KioskUpsellSuggestion struct {
-	ProductID  string `json:"product_id"`
-	Name       string `json:"name"`
-	PriceCents int64  `json:"price_cents"`
-	ImageURL   string `json:"image_url,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-}
-
 type CounterPaymentResponse struct {
 	OrderID       string `json:"order_id"`
 	DisplayNumber string `json:"display_number"`

@@ -1065,6 +1065,45 @@ func cleanProductPricesForKiosk(p *models.ProductEntry, orderType string) {
 	}
 }
 
+// cleanProductForKiosk nettoie un ProductEntry brut avant de l'exposer tel
+// quel au client Kiosk (utilisé par GetUpsellSuggestions pour le champ
+// SuggestedItem.Product — le produit y est sérialisé directement, contrairement
+// à GetProduct/GetMenu qui le convertissent en KioskProduct). Collapse le prix
+// selon fulfillmentType et retire les champs internes/sensibles (coûts, marges,
+// indicateurs de sync, prix des autres canaux) — mêmes principes que
+// scannorder.Service.cleanProductForSNO, adaptés à la convention Kiosk
+// (IN/TAKE_AWAY, pas de DELIVERY).
+func cleanProductForKiosk(product *models.ProductEntry, fulfillmentType string) {
+	if fulfillmentType == models.OrderTypeTakeAway && product.PriceTakeAway != nil {
+		product.Price = *product.PriceTakeAway
+	}
+	product.PriceTakeAway = nil
+	product.PriceDelivery = nil
+	product.PriceUberEats = nil
+	product.PriceDeliveroo = nil
+
+	product.MerchantID = nil
+	product.CostPrice = nil
+	product.FoodCostPercent = nil
+	product.MarginPercent = nil
+	product.BgColor = nil
+	product.Category = nil
+	product.TVAIn = nil
+	product.TVADelivery = nil
+	product.TVATakeAway = nil
+	product.IsAvailableOnSNO = nil
+	product.IsProductGroup = nil
+	product.SubProducts = nil
+	product.SyncDeliveroo = nil
+	product.SyncUberEats = nil
+	product.Available = nil
+	product.AvailableIn = nil
+	product.AvailableDelivery = nil
+	product.AvailableTakeAway = nil
+	product.IsDistributed = nil
+	product.ProductionColor = nil
+}
+
 func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) KioskProduct {
 	cleanProductPricesForKiosk(p, orderType)
 
@@ -1167,11 +1206,17 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderTy
 }
 
 // GetUpsellSuggestions délègue au service Apriori existant (upsell.Service,
-// même moteur que orders.GetUpsell) puis filtre is_available_on_kiosk et
-// l'appartenance au panier en cours, avant de plafonner à 3 suggestions.
-func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, cartProductIDs []string) (*KioskUpsellResponse, error) {
+// même moteur que orders.GetUpsell/scannorder.PostUpsell) puis filtre
+// is_available_on_kiosk et l'appartenance au panier en cours, avant de
+// plafonner à 3 suggestions. Réponse alignée sur /orders/upsell (POS) :
+// *upsell.UpsellResult sérialisé directement, suggestions comprises — plus
+// de DTO Kiosk dédié (voir docs/KIOSK_DECISIONS.md, homogénéisation upsell).
+// fulfillmentType (IN/TAKE_AWAY) n'est pas encore transmis par
+// KioskUpsellRequest côté HTTP (dette documentée) : "" tombe sur le prix de
+// base (IN), sans erreur.
+func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, cartProductIDs []string, fulfillmentType string) (*upsell.UpsellResult, error) {
 	if len(cartProductIDs) == 0 {
-		return &KioskUpsellResponse{Suggestions: []KioskUpsellSuggestion{}, Source: upsell.SourceDisabled}, nil
+		return &upsell.UpsellResult{Suggestions: []upsell.SuggestedItem{}, Source: upsell.SourceDisabled}, nil
 	}
 
 	cartProducts := make([]models.ProductEntry, 0, len(cartProductIDs))
@@ -1182,9 +1227,9 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		inCart[id] = true
 	}
 
-	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, "", upsell.ChannelKiosk)
+	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, fulfillmentType, upsell.ChannelKiosk)
 	if err != nil {
-		return &KioskUpsellResponse{Suggestions: []KioskUpsellSuggestion{}, Source: "error_fallback"}, nil
+		return &upsell.UpsellResult{Suggestions: []upsell.SuggestedItem{}, Source: "error_fallback"}, nil
 	}
 
 	candidateIDs := make([]string, 0, len(result.Suggestions))
@@ -1199,40 +1244,22 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		return nil, err
 	}
 
-	source := "featured_fallback"
-	if result.Source == upsell.SourcePattern || result.Source == upsell.SourceCachedPattern || result.Source == upsell.SourceLLM || result.Source == upsell.SourceCachedLLM {
-		source = "apriori"
-	}
-
-	suggestions := make([]KioskUpsellSuggestion, 0, 3)
+	suggestions := make([]upsell.SuggestedItem, 0, 3)
 	for _, sugg := range result.Suggestions {
 		if len(suggestions) >= 3 {
 			break
 		}
-		if inCart[sugg.ProductID] || !available[sugg.ProductID] {
+		if inCart[sugg.ProductID] || !available[sugg.ProductID] || sugg.Product == nil {
 			continue
 		}
 
-		product, err := s.menuService.GetProductFromMerchantId(ctx, merchantID, sugg.ProductID)
-		if err != nil || product == nil {
-			continue
-		}
-
-		imageURL := ""
-		if product.ImageURL != nil {
-			imageURL = *product.ImageURL
-		}
-
-		suggestions = append(suggestions, KioskUpsellSuggestion{
-			ProductID:  sugg.ProductID,
-			Name:       product.Name,
-			PriceCents: product.Price,
-			ImageURL:   imageURL,
-			Reason:     sugg.Title,
-		})
+		product := *sugg.Product
+		cleanProductForKiosk(&product, fulfillmentType)
+		sugg.Product = &product
+		suggestions = append(suggestions, sugg)
 	}
 
-	return &KioskUpsellResponse{Suggestions: suggestions, Source: source, SuggestionID: result.SuggestionID}, nil
+	return &upsell.UpsellResult{SuggestionID: result.SuggestionID, Suggestions: suggestions, Source: result.Source}, nil
 }
 
 // kioskFulfillmentToOrderType traduit le fulfillment_type Kiosk

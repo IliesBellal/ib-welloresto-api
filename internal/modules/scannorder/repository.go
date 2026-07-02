@@ -533,6 +533,12 @@ func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID stri
 	return result, nil
 }
 
+// GetDeliverySessionByOrderID resolves the delivery session currently linked to an order.
+// An order can have been dispatched more than once (delivery_session_order gets a new row
+// each time), so this always returns the most recent non-canceled session — ORDER BY
+// start_date DESC (delivery_session has no created_at column) with a status filter that
+// excludes 'canceled' but keeps 'active' and 'done' (a just-finished session must stay
+// visible for the post-delivery SNO display).
 func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID string) (deliverySessionID *string, err error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -541,7 +547,9 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 	FROM delivery_session ds
 	INNER JOIN delivery_session_order dso ON ds.id = dso.delivery_session_id
 	INNER JOIN orders o ON o.order_id = dso.order_id
-	WHERE o.order_id = ?`
+	WHERE o.order_id = ? AND ds.status != 'canceled'
+	ORDER BY ds.start_date DESC
+	LIMIT 1`
 
 	row := db.QueryRowContext(ctx, query, orderID)
 

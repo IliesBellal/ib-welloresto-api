@@ -8,6 +8,7 @@ import (
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
+
 	//requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
@@ -271,9 +272,15 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		mailService,
 	)
 
+	// ---- Delivery Sessions ----
+	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
+	messaggioClient := messaggioModule.NewMessaggioClient()
+	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
+
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
-	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
@@ -323,12 +330,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	)
 
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
-
-	// ---- Delivery Sessions ----
-	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
-	messaggioClient := messaggioModule.NewMessaggioClient()
-	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
 
 	// ---- Locations ----
 	locationsRepo := locModule.NewLocationsRepository(mysqlDB)

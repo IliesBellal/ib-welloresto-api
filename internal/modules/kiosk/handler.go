@@ -248,7 +248,10 @@ func (h *Handler) GetKioskUpsell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetUpsellSuggestions(ctx, authenticatedKiosk.MerchantID, req.CartProductIDs)
+	// fulfillmentType : KioskUpsellRequest ne transporte pas encore ce champ
+	// (dette documentée, voir docs/KIOSK_DECISIONS.md) — "" retombe sur le
+	// prix de base (IN) côté cleanProductForKiosk, sans erreur.
+	resp, err := h.service.GetUpsellSuggestions(ctx, authenticatedKiosk.MerchantID, req.CartProductIDs, "")
 	if err != nil {
 		log.Warn("kiosk get upsell failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_upsell", err)
