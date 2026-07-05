@@ -166,3 +166,58 @@ func (h *LocationsHandler) CreateFloor(w http.ResponseWriter, r *http.Request) {
 
 	models.SendJSON(w, http.StatusOK, "locations", "create_floor", result)
 }
+
+func (h *LocationsHandler) UpdateFloor(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "locations", "update_floor", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	floorID := chi.URLParam(r, "floor_id")
+	if floorID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "locations", "update_floor", map[string]string{"error": "missing_floor_id"})
+		return
+	}
+
+	var payload FloorUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "locations", "update_floor", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	if strings.TrimSpace(payload.Name) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "locations", "update_floor", map[string]string{"error": "missing_name"})
+		return
+	}
+
+	result, err := h.locationsService.UpdateFloor(r.Context(), token, floorID, payload)
+	if err != nil {
+		models.SendErrorJSON(w, "locations", "update_floor", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "locations", "update_floor", result)
+}
+
+func (h *LocationsHandler) DeleteFloor(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "locations", "delete_floor", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	floorID := chi.URLParam(r, "floor_id")
+	if floorID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "locations", "delete_floor", map[string]string{"error": "missing_floor_id"})
+		return
+	}
+
+	result, err := h.locationsService.DeleteFloor(r.Context(), token, floorID)
+	if err != nil {
+		models.SendErrorJSON(w, "locations", "delete_floor", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "locations", "delete_floor", result)
+}

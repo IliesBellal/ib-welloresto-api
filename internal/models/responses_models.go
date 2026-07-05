@@ -349,6 +349,8 @@ var (
 
 	// Erreurs du plan de salle (module locations)
 	ErrInvalidTableGeometry = errors.New("invalid_table_geometry")
+	ErrFloorNotEmpty        = errors.New("floor_not_empty")
+	ErrFloorNotFound        = errors.New("floor_not_found")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1118,6 +1120,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnprocessableEntity
 		errorStatus = "invalid_table_geometry"
 		errorMsg = "Table properties are out of bounds (x/y 0-1000, width/height 40-300, angle 0-359, seats >= 1, shape circle|square|rectangle)."
+
+	case errors.Is(err, ErrFloorNotEmpty):
+		status = http.StatusConflict
+		errorStatus = "floor_not_empty"
+		errorMsg = "The floor still has active tables attached. Move or delete them first."
+
+	case errors.Is(err, ErrFloorNotFound):
+		status = http.StatusNotFound
+		errorStatus = "floor_not_found"
+		errorMsg = "The requested floor does not exist for this merchant."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

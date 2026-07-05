@@ -257,6 +257,64 @@ func (r *LocationsRepository) UpdateLocationCoordinates(ctx context.Context, mer
 	return err
 }
 
+func (r *LocationsRepository) UpdateFloor(ctx context.Context, merchantID, floorID, name string) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE floors SET name = ? WHERE id = ? AND merchant_id = ? AND enabled IS TRUE`,
+		name, floorID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// RowsAffected = 0 quand l'étage n'existe pas pour ce marchand… mais aussi
+	// quand le nom envoyé est identique : on distingue par une lecture.
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		var exists int
+		err := db.QueryRowContext(ctx,
+			`SELECT 1 FROM floors WHERE id = ? AND merchant_id = ? AND enabled IS TRUE`,
+			floorID, merchantID,
+		).Scan(&exists)
+		if err == sql.ErrNoRows {
+			return models.ErrFloorNotFound
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (r *LocationsRepository) DeleteFloor(ctx context.Context, merchantID, floorID string) error {
+	db := dbutils.GetDB(ctx, r.db)
+
+	var activeTables int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM locations WHERE floor_id = ? AND merchant_id = ? AND enabled IS TRUE`,
+		floorID, merchantID,
+	).Scan(&activeTables)
+	if err != nil {
+		return err
+	}
+	if activeTables > 0 {
+		return models.ErrFloorNotEmpty
+	}
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE floors SET enabled = FALSE WHERE id = ? AND merchant_id = ? AND enabled IS TRUE`,
+		floorID, merchantID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return models.ErrFloorNotFound
+	}
+
+	return nil
+}
+
 func (r *LocationsRepository) CreateFloor(ctx context.Context, merchantID, name string) (string, error) {
 	db := dbutils.GetDB(ctx, r.db)
 

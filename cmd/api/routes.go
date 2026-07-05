@@ -887,6 +887,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Post("/", locationsH.CreateFloor)
+		r.Patch("/{floor_id}", locationsH.UpdateFloor)
+		r.Delete("/{floor_id}", locationsH.DeleteFloor)
 	})
 
 	// --- LOCATIONS ---

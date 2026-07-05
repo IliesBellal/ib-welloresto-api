@@ -144,3 +144,35 @@ func (s *LocationsService) CreateFloor(ctx context.Context, token string, req Fl
 		"floor_id": floorID,
 	}, nil
 }
+
+func (s *LocationsService) UpdateFloor(ctx context.Context, token, floorID string, req FloorUpdateRequest) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.locationsRepo.UpdateFloor(ctx, user.MerchantID, floorID, req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"status": "1",
+	}, nil
+}
+
+func (s *LocationsService) DeleteFloor(ctx context.Context, token, floorID string) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.locationsRepo.DeleteFloor(ctx, user.MerchantID, floorID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"status": "1",
+	}, nil
+}

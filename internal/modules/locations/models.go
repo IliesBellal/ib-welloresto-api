@@ -37,3 +37,7 @@ func (r UpdateTableRequest) TableAngle() *float64 {
 type FloorCreateRequest struct {
 	Name string `json:"name"`
 }
+
+type FloorUpdateRequest struct {
+	Name string `json:"name"`
+}
