@@ -464,7 +464,11 @@ type PricingResponse struct {
 type UnavailableProductInfo struct {
 	ProductID int64  `json:"product_id"`
 	Name      string `json:"name"`
-	Status    int    `json:"status"`
+	// Status est textuel : GetUnavailableProducts retourne soit products.status
+	// brut ('not_available', '0', ...), soit 'out_of_stock' dérivé quand un
+	// composant de recette est épuisé. L'ancien type int faisait échouer le
+	// rows.Scan dès qu'un statut non numérique remontait.
+	Status string `json:"status"`
 }
 
 type SelectedProduct struct {

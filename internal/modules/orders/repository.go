@@ -516,8 +516,8 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
            SELECT DISTINCT r.product_id
            FROM requires rq
            INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-           INNER JOIN components c ON rq.component_id = c.component_id 
-               AND c.status IN ('0','out_of_stock')      -- Composant inactif/épuisé
+           INNER JOIN components c ON rq.component_id = c.component_id
+               AND c.status IN ('0','out_of_stock','not_available') -- Composant inactif/épuisé ('not_available' = valeur écrite par le toggle POS)
                AND rq.enabled = TRUE -- Recette active
        ) a ON a.product_id = p.product_id
        WHERE p.merchant_id = ?
