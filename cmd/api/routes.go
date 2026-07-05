@@ -896,7 +896,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/", locationsH.GetLocations)
-		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
 
 		// Floor tables management
 		r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)

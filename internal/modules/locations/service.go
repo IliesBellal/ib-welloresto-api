@@ -25,22 +25,6 @@ func (s *LocationsService) GetLocations(ctx context.Context, token string) (*mod
 	return s.locationsRepo.GetLocations(ctx, user.MerchantID)
 }
 
-func (s *LocationsService) UpdateLocationCoordinates(ctx context.Context, token, locationID string, x float64, y float64) (map[string]interface{}, error) {
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.locationsRepo.UpdateLocationCoordinates(ctx, user.MerchantID, locationID, x, y)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"status": "1",
-	}, nil
-}
-
 // validTableShapes reflète les trois formes proposées par l'éditeur BO.
 var validTableShapes = map[string]bool{"circle": true, "square": true, "rectangle": true}
 

@@ -244,19 +244,6 @@ func (r *LocationsRepository) DeleteTable(ctx context.Context, merchantID, locat
 	return err
 }
 
-func (r *LocationsRepository) UpdateLocationCoordinates(ctx context.Context, merchantID, locationID string, x, y float64) error {
-	db := dbutils.GetDB(ctx, r.db)
-
-	query := `
-		UPDATE locations
-		SET current_x = ?, current_y = ?
-		WHERE location_id = ? AND merchant_id = ?
-	`
-
-	_, err := db.ExecContext(ctx, query, x, y, locationID, merchantID)
-	return err
-}
-
 func (r *LocationsRepository) UpdateFloor(ctx context.Context, merchantID, floorID, name string) error {
 	db := dbutils.GetDB(ctx, r.db)
 

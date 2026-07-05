@@ -37,31 +37,6 @@ func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) 
 	models.SendJSON(w, http.StatusOK, "locations", "get", resp)
 }
 
-func (h *LocationsHandler) UpdateLocationCoordinates(w http.ResponseWriter, r *http.Request) {
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "locations", "update_coordinates", map[string]string{"error": "missing_token"})
-		return
-	}
-	ctx := r.Context()
-
-	locationID := chi.URLParam(r, "location_id")
-
-	var payload models.UpdateLocationCoordinatesRequest
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "locations", "update_coordinates", map[string]string{"error": "invalid_body"})
-		return
-	}
-
-	result, err := h.locationsService.UpdateLocationCoordinates(ctx, token, locationID, payload.X, payload.Y)
-	if err != nil {
-		models.SendErrorJSON(w, "locations", "update_coordinates", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "locations", "update_coordinates", result)
-}
-
 func (h *LocationsHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
