@@ -346,6 +346,9 @@ var (
 	ErrInvoiceInvalidEmail    = errors.New("invoice_invalid_email")
 	ErrInvoiceCustomerNotFound = errors.New("invoice_customer_not_found")
 	ErrInvoiceAttachmentTooLarge = errors.New("invoice_attachment_too_large")
+
+	// Erreurs du plan de salle (module locations)
+	ErrInvalidTableGeometry = errors.New("invalid_table_geometry")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1110,6 +1113,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadGateway
 		errorStatus = "invoice_attachment_too_large"
 		errorMsg = "The generated invoice PDF exceeds Brevo's attachment size limit."
+
+	case errors.Is(err, ErrInvalidTableGeometry):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "invalid_table_geometry"
+		errorMsg = "Table properties are out of bounds (x/y 0-1000, width/height 40-300, angle 0-359, seats >= 1, shape circle|square|rectangle)."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

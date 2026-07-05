@@ -211,16 +211,20 @@ func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locat
 			location_name = COALESCE(?, location_name),
 			location_order = COALESCE(?, location_order),
 			floor_id = COALESCE(?, floor_id),
+			seats = COALESCE(?, seats),
+			shape = COALESCE(?, shape),
 			current_x = COALESCE(?, current_x),
 			current_y = COALESCE(?, current_y),
 			current_width = COALESCE(?, current_width),
 			current_height = COALESCE(?, current_height),
-			angle = COALESCE(?, angle)
+			angle = COALESCE(?, angle),
+			enabled = COALESCE(?, enabled)
 		WHERE location_id = ? AND merchant_id = ?
 	`
 
 	_, err := db.ExecContext(ctx, query,
-		req.LocationName, req.LocationOrder, req.FloorID, req.X, req.Y, req.Width, req.Height, angle,
+		req.LocationName, req.LocationOrder, req.FloorID, req.Seats, req.Shape,
+		req.X, req.Y, req.Width, req.Height, angle, req.Enabled,
 		locationID, merchantID,
 	)
 
