@@ -2,6 +2,7 @@ package bookings
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -79,6 +80,17 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 
 	booking, err := h.svc.CreateBooking(ctx, &req)
 	if err != nil {
+		// 409 enrichi : les bookings/tables en collision sont renvoyés au client
+		// pour que le POS puisse afficher le conflit.
+		var conflictErr *TableConflictError
+		if errors.As(err, &conflictErr) {
+			models.SendJSON(w, http.StatusConflict, "bookings", "create", map[string]interface{}{
+				"error":     "table_conflict",
+				"conflicts": conflictErr.Conflicts,
+			})
+			return
+		}
+
 		models.SendErrorJSON(w, "bookings", "create", err)
 		return
 	}

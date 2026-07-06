@@ -351,6 +351,9 @@ var (
 	ErrInvalidTableGeometry = errors.New("invalid_table_geometry")
 	ErrFloorNotEmpty        = errors.New("floor_not_empty")
 	ErrFloorNotFound        = errors.New("floor_not_found")
+
+	// Erreurs du module réservation
+	ErrTableConflict = errors.New("table_conflict")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1130,6 +1133,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "floor_not_found"
 		errorMsg = "The requested floor does not exist for this merchant."
+
+	case errors.Is(err, ErrTableConflict):
+		status = http.StatusConflict
+		errorStatus = "table_conflict"
+		errorMsg = "One or more requested tables are already booked on an overlapping time slot."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

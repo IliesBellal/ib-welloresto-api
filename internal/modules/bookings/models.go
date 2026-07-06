@@ -148,3 +148,26 @@ type ExistingBooking struct {
 	StartDate string
 	EndDate   *string
 }
+
+// ----------------------------------------------------
+// Conflit table × créneau
+// ----------------------------------------------------
+
+// BookingLocationConflict identifie une affectation existante en collision
+// avec le créneau demandé (une ligne par couple booking/table en conflit).
+type BookingLocationConflict struct {
+	BookingID  string `json:"booking_id"`
+	LocationID string `json:"location_id"`
+}
+
+// TableConflictError porte les affectations en collision jusqu'au handler,
+// qui les renvoie dans le corps du 409 table_conflict.
+type TableConflictError struct {
+	Conflicts []BookingLocationConflict
+}
+
+func (e *TableConflictError) Error() string { return "table_conflict" }
+
+// Is rattache l'erreur au sentinel models.ErrTableConflict (mapping 409 de
+// SendErrorJSON) pour les appelants qui ne la traitent pas spécifiquement.
+func (e *TableConflictError) Is(target error) bool { return target == models.ErrTableConflict }

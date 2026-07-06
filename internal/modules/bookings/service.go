@@ -51,6 +51,26 @@ func (s *BookingsService) CreateBooking(ctx context.Context, req *BookingObjectR
 	// 2️⃣ Lancement de la transaction
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 
+		// Contrôle de conflit table × créneau : les affectations en collision
+		// sont verrouillées (FOR UPDATE) jusqu'au commit/rollback.
+		if len(req.Booking.Locations) > 0 {
+			locationIDs := make([]string, 0, len(req.Booking.Locations))
+			for _, loc := range req.Booking.Locations {
+				locationIDs = append(locationIDs, loc.LocationID)
+			}
+
+			conflicts, err := s.repo.FindConflictingBookings(
+				txCtx, req.MerchantID, locationIDs,
+				req.Booking.StartDate, req.Booking.EndDate, "",
+			)
+			if err != nil {
+				return fmt.Errorf("repo.FindConflictingBookings failed: %w", err)
+			}
+			if len(conflicts) > 0 {
+				return &TableConflictError{Conflicts: conflicts}
+			}
+		}
+
 		// 3️⃣ Création du booking (utilise le txCtx pour propager la transaction)
 		bookingID, err := s.repo.CreateBooking(txCtx, req)
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
@@ -176,6 +177,65 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	*/
 
 	return fmt.Sprintf("%d", bookingID), nil
+}
+
+// FindConflictingBookings retourne les affectations de tables en collision avec
+// le créneau [dateFrom, dateTo) pour les tables demandées (chevauchement strict :
+// deux créneaux dos à dos ne sont pas en conflit). Le FOR UPDATE verrouille les
+// lignes candidates le temps de la transaction appelante — stratégie de verrou
+// SQL seul (addendum, décision 7.5) ; avec le pool à 1 connexion les écritures
+// d'une instance sont déjà sérialisées, le verrou couvre le multi-instances.
+// excludeBookingID vide = pas d'exclusion (création) ; renseigné = réattribution.
+// Statuts legacy actifs uniquement — bascule vers le vocabulaire normalisé en
+// Phase 1 (T-08). Les booking_date_to NULL du flux public legacy retombent sur
+// booking_duration (défaut 90 min), même convention que le calcul d'occupation.
+func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, merchantID string, locationIDs []string, dateFrom, dateTo, excludeBookingID string) ([]BookingLocationConflict, error) {
+	if len(locationIDs) == 0 {
+		return nil, nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(locationIDs)), ",")
+
+	if excludeBookingID == "" {
+		excludeBookingID = "0" // booking_id est un AUTO_INCREMENT : 0 n'existe jamais
+	}
+
+	args := make([]interface{}, 0, len(locationIDs)+4)
+	for _, id := range locationIDs {
+		args = append(args, id)
+	}
+	args = append(args, merchantID, dateTo, dateFrom, excludeBookingID)
+
+	query := fmt.Sprintf(`
+        SELECT b.booking_id, bl.location_id
+        FROM booked_location bl
+        INNER JOIN bookings b ON b.booking_id = bl.booking_id
+        WHERE bl.location_id IN (%s)
+          AND b.merchant_id = ?
+          AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
+          AND b.booking_date_from < ?
+          AND COALESCE(b.booking_date_to, b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE) > ?
+          AND b.booking_id <> ?
+        FOR UPDATE`, placeholders)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	conflicts := []BookingLocationConflict{}
+	for rows.Next() {
+		var c BookingLocationConflict
+		if err := rows.Scan(&c.BookingID, &c.LocationID); err != nil {
+			return nil, err
+		}
+		conflicts = append(conflicts, c)
+	}
+
+	return conflicts, rows.Err()
 }
 
 func (r *BookingsRepository) SetBookingState(ctx context.Context, bookingID string, state string) error {
