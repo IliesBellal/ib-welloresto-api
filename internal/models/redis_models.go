@@ -14,13 +14,18 @@ const (
 	UserCachePrefix = "user:token:"
 
 	// Préfixe des clés Redis pour les merchants (scannorder)
-	// Permet d'identifier facilement les clés dans Redis
+	// Toutes les clés sont indexées par merchant_id (plus jamais par QR seul)
+	// pour permettre l'invalidation par merchant — voir
+	// redis.Client.InvalidateMerchantMenuCaches.
 	ScannorderMerchant       = "scannorder:merchant:"
 	ScannorderMerchantMenu   = "scannorder:merchant:menu:"
 	ScannorderMerchantUpsell = "scannorder:merchant:upsell:"
 
+	// Préfixe des clés Redis pour le menu Kiosk (clé : préfixe + merchantID + ":" + orderType)
+	KioskMerchantMenu = "kiosk:merchant:menu:"
+
 	// Durée de vie du cache pour les merchants
-	ScannorderMerchantMenuTTL = 10 * time.Minute
+	ScannorderKioskMerchantMenuTTL = 10 * time.Minute
 
 	// Durée de vie du cache pour les merchants
 	ScannorderMerchantTTL = 60 * time.Minute

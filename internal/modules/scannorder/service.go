@@ -46,7 +46,17 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	}
 
 	log := logger.FromContext(ctx)
-	cacheKey := models.ScannorderMerchant + qr
+
+	// Clé préfixée par merchantID pour rendre le cache invalidable par merchant.
+	// Le QR reste en suffixe d'unicité : la réponse contient des données propres
+	// au QR (location, order_id, appel serveur…), deux tables du même merchant
+	// ne doivent jamais partager une entrée de cache.
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
+	if err != nil || merchantID == "" {
+		// QR inconnu/expiré : computeGetMerchant renverra le statut adapté
+		return s.computeGetMerchant(ctx, qr)
+	}
+	cacheKey := models.ScannorderMerchant + merchantID + ":" + qr
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found := s.redis.Get(ctx, cacheKey)
@@ -204,7 +214,8 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	}
 
 	log := logger.FromContext(ctx)
-	// On combine QR et deliveryType dans la clé pour l'unicité
+	// Clé par merchantID + deliveryType (le menu est identique pour tous les QR
+	// d'un merchant) — invalidable via InvalidateMerchantMenuCaches
 	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, merchant.Merchant.MerchantID, deliveryType)
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
@@ -233,8 +244,9 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	// --- ÉTAPE 3 : Stocker dans Redis ---
 	serialized, err := json.Marshal(menu)
 	if err == nil {
-		// Un TTL de 1h ou 2h est généralement un bon compromis pour un menu
-		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); !saved {
+		// TTL court (filet de sécurité) : l'invalidation active se fait via
+		// InvalidateMerchantMenuCaches à chaque mutation du menu
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderKioskMerchantMenuTTL); !saved {
 			log.Warn("Warning Redis Set (Menu): " + err.Error())
 		} else {
 			log.Info("🧠📌 Menu saved in Redis cache 📌🧠")
@@ -1138,13 +1150,23 @@ func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType 
 // GetUpsell retrieves famous (upsell) products for the QR code's merchant, fully configured
 // (attributes, options) so the frontend can open the product configuration modal directly.
 func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, error) {
-	// Si Redis n'est pas configuré, on court direct à la BDD
-	if s.redis == nil {
-		return s.computeGetUpsell(ctx, qr)
+	log := logger.FromContext(ctx)
+
+	// Résolution QR → merchantID en amont : la clé de cache est indexée par
+	// merchant (le contenu upsell est identique pour tous les QR du merchant),
+	// ce qui la rend invalidable via InvalidateMerchantMenuCaches.
+	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
+	if err != nil || merchantID == "" {
+		log.Warn("GetUpsell: merchant not found for QR code", zap.String("qr_code", qr), zap.Error(err))
+		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 
-	log := logger.FromContext(ctx)
-	cacheKey := models.ScannorderMerchantUpsell + qr
+	// Si Redis n'est pas configuré, on court direct à la BDD
+	if s.redis == nil {
+		return s.computeGetUpsell(ctx, merchantID)
+	}
+
+	cacheKey := models.ScannorderMerchantUpsell + merchantID
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found := s.redis.Get(ctx, cacheKey)
@@ -1160,7 +1182,7 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 	log.Info("🧠🚫 Upsell not found in Redis cache 🚫🧠")
 
 	// --- ÉTAPE 2 : Appel BDD (calcul lourd : 1 GetProduct par produit populaire) ---
-	upsell, err := s.computeGetUpsell(ctx, qr)
+	upsell, err := s.computeGetUpsell(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,12 +1192,12 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 	}
 
 	// --- ÉTAPE 3 : Stocker dans Redis ---
-	// Note : pas d'invalidation active ici, comme pour le cache menu (DeleteAllMerchantKeys
-	// existe dans internal/infrastructure/redis/client.go mais n'est appelé nulle part
-	// actuellement) — on se repose uniquement sur le TTL, mêmes règles que GetMenu.
+	// Invalidation active : toute mutation du menu purge cette clé via
+	// redis.Client.InvalidateMerchantMenuCaches (appelé par menu.MenuService),
+	// le TTL ne sert que de filet de sécurité.
 	serialized, err := json.Marshal(upsell)
 	if err == nil {
-		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantMenuTTL); !saved {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderKioskMerchantMenuTTL); !saved {
 			log.Warn("Warning Redis Set (Upsell): save failed")
 		} else {
 			log.Info("🧠📌 Upsell saved in Redis cache 📌🧠")
@@ -1185,30 +1207,21 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 	return upsell, nil
 }
 
-func (s *Service) computeGetUpsell(ctx context.Context, qrCode string) (*UpsellResponse, error) {
+// computeGetUpsell calcule la réponse upsell pour un merchant — la résolution
+// QR → merchantID est faite en amont par GetUpsell (clé de cache par merchant).
+func (s *Service) computeGetUpsell(ctx context.Context, merchantID string) (*UpsellResponse, error) {
 	log := logger.FromContext(ctx)
-
-	log.Info("GetUpsell called", zap.String("qr_code", qrCode))
-
-	// 1️⃣ Get merchant ID from QR code
-	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
-	if err != nil || merchantID == "" {
-		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
-		return &UpsellResponse{
-			Products: []models.ProductEntry{},
-		}, nil
-	}
 
 	log.Debug("Retrieving upsell product IDs", zap.String("merchant_id", merchantID))
 
-	// 2️⃣ Retrieve popular (is_popular = 1) product IDs from repository
+	// 1️⃣ Retrieve popular (is_popular = 1) product IDs from repository
 	productIDs, err := s.repo.GetUpsellProducts(ctx, merchantID)
 	if err != nil {
 		log.Error("GetUpsellProducts repo error", zap.Error(err))
 		return nil, err
 	}
 
-	// 3️⃣ Load each product fully configured, same as the product detail endpoint
+	// 2️⃣ Load each product fully configured, same as the product detail endpoint
 	products := make([]models.ProductEntry, 0, len(productIDs))
 	for _, productID := range productIDs {
 		product, err := s.menu.GetProductFromMerchantId(ctx, merchantID, productID)

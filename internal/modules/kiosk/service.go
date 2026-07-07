@@ -20,6 +20,7 @@ import (
 
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/notification"
@@ -978,7 +979,51 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // Comme scannorder, une valeur absente ou inconnue ne fait pas échouer la
 // requête : seul "TAKE_AWAY" dévie du prix de base (voir
 // cleanProductPricesForKiosk) ; le menu Kiosk n'a pas de notion de DELIVERY.
+//
+// La réponse est cachée dans Redis par merchantID + orderType (ETag inclus —
+// le flux 304/If-None-Match du handler reste fonctionnel sur un hit), même
+// pattern que scannorder.GetMenu. Invalidation active à chaque mutation du
+// menu via redis.Client.InvalidateMerchantMenuCaches, TTL en filet de
+// sécurité.
 func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
+	// Si Redis est absent, direct BDD
+	if s.redis == nil {
+		return s.computeGetMenu(ctx, merchantID, orderType)
+	}
+
+	log := logger.FromContext(ctx)
+	cacheKey := fmt.Sprintf("%s%s:%s", models.KioskMerchantMenu, merchantID, orderType)
+
+	// --- ÉTAPE 1 : Chercher dans Redis ---
+	if cached, found := s.redis.Get(ctx, cacheKey); found {
+		var menu KioskMenuResponse
+		if err := json.Unmarshal([]byte(cached), &menu); err == nil {
+			log.Info(fmt.Sprintf("🧠📖 Kiosk menu (%s) found in Redis cache 📖🧠", orderType))
+			return &menu, nil
+		}
+	}
+
+	log.Info(fmt.Sprintf("🧠🚫 Kiosk menu (%s) not found in Redis cache 🚫🧠", orderType))
+
+	// --- ÉTAPE 2 : Appel BDD (calcul lourd) ---
+	menu, err := s.computeGetMenu(ctx, merchantID, orderType)
+	if err != nil {
+		return nil, err
+	}
+
+	// --- ÉTAPE 3 : Stocker dans Redis ---
+	if serialized, err := json.Marshal(menu); err == nil {
+		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderKioskMerchantMenuTTL); !saved {
+			log.Warn("Warning Redis Set (Kiosk menu): save failed")
+		} else {
+			log.Info("🧠📌 Kiosk menu saved in Redis cache 📌🧠")
+		}
+	}
+
+	return menu, nil
+}
+
+func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
 	rawMenu, err := s.menuService.GetMenuFromMerchantIdWithMarketing(ctx, merchantID)
 	if err != nil {
 		return nil, err
