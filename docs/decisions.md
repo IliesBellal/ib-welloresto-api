@@ -1,5 +1,42 @@
 # Decisions
 
+### Statuts produits — fiabilisation backend + affichage/blocage SNO (2026-07-05)
+
+- **Contexte** (audit du 2026-07-04) : `products.status` est une colonne texte
+  libre. Valeurs effectives : `available`/`1` (commandable), `not_available`
+  (toggle POS)/`0`, `out_of_stock`, `removed_from_menu` (soft-delete, filtré).
+  Règle de vérité : commandable ⇔ statut ∈ {available, 1} (POS + pricing).
+- **`UnavailableProductInfo.Status` int → string** : la requête
+  `GetUnavailableProducts` retourne des statuts textuels — le `rows.Scan` en
+  int échouait dès qu'un produit non-numérique était indisponible (pricing en
+  erreur au lieu de la liste `unavailable_products`).
+- **`ComponentUsage.Status` int → string** (models + module menu) : même bug,
+  plus grave — le scan du menu (`GetMenuFromMerchantId`) échouait dès qu'un
+  composant portait un statut textuel : **un ingrédient désactivé depuis le
+  POS cassait le GetMenu entier** (menu 500 POS/SNO/Kiosk). Scans corrigés
+  (menu/repository.go, orders_fetcher_builder.go). Les parseurs POS font déjà
+  `json['status']?.toString()` — changement de type wire sans impact client.
+- **`not_available` ajouté** : (a) aux checks composants de
+  `GetUnavailableProducts` (orders) et `validateProductAvailability`
+  (order_life_cycle) — un composant désactivé au POS ne bloquait pas les
+  produits qui en dépendent ; (b) à `mapWelloStatusToAvailability` (menu) —
+  la sync Uber Eats/Deliveroo était silencieusement sautée quand le POS
+  désactivait un produit.
+- **Garde CreateOrder SNO** (`scannorder/service.go`) : le pricing répond
+  "success" même avec `unavailable_products` non vide, et le gate de création
+  (`validateProductAvailability`) ne bloque que `out_of_stock` — un produit
+  `not_available` pouvait être **commandé et payé** via SNO. La création SNO
+  retourne désormais `{status: "unavailable_products", message: <noms>}`
+  (même statut que le gate order_life_cycle).
+- **Non traité (dette notée)** : le gate de création (partagé POS/Kiosk) ne
+  bloque toujours que `out_of_stock` au niveau produit (asymétrie voulue :
+  un staff POS peut encaisser un produit désactivé à la vente en ligne) ;
+  le Kiosk n'inspecte pas `unavailable_products` (cf.
+  KIOSK_VS_SCANNORDER_STRUCTS.md §propositions) ; `products.available`
+  (PATCH /availability) reste sans effet sur le menu — à filtrer ou déprécier.
+- Côté SNO : affichage Épuisé/Indisponible + blocage panier/checkout — voir
+  `wello-resto-scannorder/docs/decisions.md` (entrée du 2026-07-05).
+
 ### Refonte page de suivi de commande SNO — carte temps réel + layouts (2026-07-02)
 
 - `OrderTrackingPage` (repo `wello-resto-scannorder`) refondue : side sheet

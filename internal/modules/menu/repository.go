@@ -873,13 +873,14 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var productID string
 			var c models.ComponentUsage
-			var uom sql.NullString
-			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
+			var uom, status sql.NullString
+			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &status, &c.Quantity, &uom); err != nil {
 				return nil, err
 			}
 			if uom.Valid {
 				c.UnitOfMeasure = uom.String
 			}
+			c.Status = status.String
 			compMap[productID] = append(compMap[productID], c)
 			count++
 		}

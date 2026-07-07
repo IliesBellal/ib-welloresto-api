@@ -103,7 +103,7 @@ type ComponentUsage struct {
 	ProductID     string  `json:"product_id,omitempty"`
 	Name          string  `json:"name"`
 	Price         int64   `json:"price"`
-	Status        int     `json:"status"`
+	Status        string  `json:"status"` // textuel, aligné sur models.ComponentUsage
 	Quantity      float64 `json:"quantity"`
 	UnitOfMeasure string  `json:"unit_of_measure"`
 }

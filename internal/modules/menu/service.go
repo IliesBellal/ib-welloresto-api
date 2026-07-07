@@ -337,7 +337,10 @@ func mapWelloStatusToAvailability(status string) (bool, bool) {
 	switch v {
 	case "1", "true", "available":
 		return true, true
-	case "0", "false", "out_of_stock", "unavailable":
+	// "not_available" est la valeur effectivement envoyée par le toggle POS
+	// (menu_api.dart) — son absence ici sautait silencieusement la sync
+	// Uber Eats/Deliveroo quand un produit était désactivé depuis le POS.
+	case "0", "false", "out_of_stock", "unavailable", "not_available":
 		return false, true
 	default:
 		return false, false

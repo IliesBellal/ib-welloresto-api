@@ -1235,9 +1235,9 @@ func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Cont
             SELECT DISTINCT r.product_id
             FROM requires rq
             INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-            INNER JOIN components c 
+            INNER JOIN components c
                    ON rq.component_id = c.component_id
-                  AND c.status IN ('0','out_of_stock')
+                  AND c.status IN ('0','out_of_stock','not_available')
                   AND rq.enabled = TRUE
         ) a ON a.product_id = p.product_id
         WHERE p.product_id IN (%s)

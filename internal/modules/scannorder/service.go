@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/infrastructure/redis"
@@ -193,6 +194,10 @@ func (s *Service) GetEffectivePrepMinutes(ctx context.Context, row *models.Merch
 }
 
 func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
+	merchant, err := s.GetMerchant(ctx, qr) // On s'assure que le merchant est valide et que le QR n'est pas expiré
+	if err != nil {
+		return nil, err
+	}
 	// Si Redis est absent, direct BDD
 	if s.redis == nil {
 		return s.ComputeGetMenu(ctx, qr, deliveryType)
@@ -200,7 +205,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 
 	log := logger.FromContext(ctx)
 	// On combine QR et deliveryType dans la clé pour l'unicité
-	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, qr, deliveryType)
+	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, merchant.Merchant.MerchantID, deliveryType)
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found := s.redis.Get(ctx, cacheKey)
@@ -875,6 +880,22 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 
 	if pricingResp.Status != "success" {
 		return models.CreateOrderResult{Status: pricingResp.Status}, nil
+	}
+
+	// Le pricing répond "success" même quand des produits sont indisponibles
+	// (liste UnavailableProduct non vide). Sans cette garde, un produit
+	// 'not_available' passait jusqu'à la création (validateProductAvailability
+	// ne bloque que 'out_of_stock') et pouvait être commandé et payé via SNO.
+	// Même statut que le gate de order_life_cycle pour un traitement front unifié.
+	if len(pricingResp.UnavailableProduct) > 0 {
+		names := make([]string, 0, len(pricingResp.UnavailableProduct))
+		for _, p := range pricingResp.UnavailableProduct {
+			names = append(names, p.Name)
+		}
+		return models.CreateOrderResult{
+			Status:  "unavailable_products",
+			Message: strings.Join(names, ", "),
+		}, nil
 	}
 
 	orderReq := pricingResp.OrderRequest
