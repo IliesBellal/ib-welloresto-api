@@ -342,6 +342,13 @@ var (
 	ErrKioskAdminPinInvalid       = errors.New("kiosk_admin_pin_invalid")
 	ErrKioskAdminPinNotConfigured = errors.New("kiosk_admin_pin_not_configured")
 
+	// Erreurs du module Kiosk — paiement carte (Stripe Terminal)
+	ErrKioskCardPaymentDisabled   = errors.New("kiosk_card_payment_disabled")
+	ErrKioskPaymentMethodInvalid  = errors.New("kiosk_payment_method_invalid")
+	ErrKioskOrderNotCardPending   = errors.New("kiosk_order_not_card_pending")
+	ErrKioskAmountMismatch        = errors.New("kiosk_amount_mismatch")
+	ErrKioskTerminalNotConfigured = errors.New("kiosk_terminal_not_configured")
+
 	// Erreurs de l'envoi de facture par email
 	ErrInvoiceInvalidEmail    = errors.New("invoice_invalid_email")
 	ErrInvoiceCustomerNotFound = errors.New("invoice_customer_not_found")
@@ -1103,6 +1110,31 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "kiosk_admin_pin_not_configured"
 		errorMsg = "This kiosk has no admin PIN configured yet. Regenerate one via POST .../regenerate-admin-pin."
+
+	case errors.Is(err, ErrKioskCardPaymentDisabled):
+		status = http.StatusForbidden
+		errorStatus = "kiosk_card_payment_disabled"
+		errorMsg = "Card payment is disabled for this merchant's kiosks."
+
+	case errors.Is(err, ErrKioskPaymentMethodInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_payment_method_invalid"
+		errorMsg = "payment_method must be either \"card\" or \"pay_at_counter\"."
+
+	case errors.Is(err, ErrKioskOrderNotCardPending):
+		status = http.StatusConflict
+		errorStatus = "kiosk_order_not_card_pending"
+		errorMsg = "This order is not awaiting a card payment (pending_card_payment)."
+
+	case errors.Is(err, ErrKioskAmountMismatch):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_amount_mismatch"
+		errorMsg = "amount_cents does not match the order total."
+
+	case errors.Is(err, ErrKioskTerminalNotConfigured):
+		status = http.StatusFailedDependency
+		errorStatus = "kiosk_terminal_not_configured"
+		errorMsg = "No Stripe connected account is configured for this merchant."
 
 	case errors.Is(err, ErrInvoiceInvalidEmail):
 		status = http.StatusBadRequest

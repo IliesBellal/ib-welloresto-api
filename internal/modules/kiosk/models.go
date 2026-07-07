@@ -1,6 +1,7 @@
 package kiosk
 
 import (
+	"context"
 	"time"
 
 	"welloresto-api/internal/middleware"
@@ -230,6 +231,12 @@ type KioskSettingsResponse struct {
 	// user_id), en lecture seule. Correspond au {merchant_slug} des routes
 	// scannorder, permettant au kiosk de construire ou afficher l'URL SNO.
 	Slug *string `json:"slug"`
+
+	// TerminalLocationID — stripe_accounts.terminal_location_id (Stripe Terminal
+	// Location, tml_...), en lecture seule. Nécessaire côté Flutter pour connecter
+	// le lecteur de carte. null si pas de ligne stripe_accounts pour ce merchant
+	// ou si Terminal n'est pas activé (colonne NULL) — jamais une erreur.
+	TerminalLocationID *string `json:"terminal_location_id"`
 }
 
 // UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des
@@ -366,4 +373,38 @@ type KioskDiscount struct {
 
 type KioskDiscountsResponse struct {
 	Discounts []KioskDiscount `json:"discounts"`
+}
+
+// ---- Paiement carte (Stripe Terminal) ----
+
+// TerminalGateway est le sous-ensemble de stripeclient.TerminalService dont ce
+// module a besoin. Interface (plutôt qu'import du type concret) pour que le
+// service kiosk reste testable et découplé de l'infrastructure Stripe — la
+// logique Terminal elle-même vit côté infra, paramétrée par merchantID, jamais
+// couplée à KioskAuth (voir docs/KIOSK_DECISIONS.md, règle de découplage).
+type TerminalGateway interface {
+	CreateConnectionToken(ctx context.Context, merchantID string) (string, error)
+	CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64) (clientSecret, paymentIntentID string, err error)
+	CancelTerminalPaymentIntent(ctx context.Context, merchantID, paymentIntentID string) error
+	CancelActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) error
+}
+
+// TerminalConnectionTokenResponse — POST /kiosk/terminal/connection-token.
+type TerminalConnectionTokenResponse struct {
+	Secret string `json:"secret"`
+}
+
+// CreateTerminalPaymentIntentRequest — body de POST /kiosk/terminal/payment-intent.
+// amount_cents est re-validé côté serveur contre orders.TTC (jamais utilisé tel
+// quel comme montant à charger), voir Service.CreateTerminalPaymentIntent.
+type CreateTerminalPaymentIntentRequest struct {
+	OrderID     string `json:"order_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+// TerminalPaymentIntentResponse — client_secret consommé par le SDK Stripe
+// Terminal côté borne pour présenter le paiement sur le lecteur.
+type TerminalPaymentIntentResponse struct {
+	ClientSecret    string `json:"client_secret"`
+	PaymentIntentID string `json:"payment_intent_id"`
 }

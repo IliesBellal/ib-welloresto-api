@@ -20,6 +20,7 @@ import (
 
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/menu"
@@ -41,6 +42,7 @@ type Service struct {
 	ordersLifeCycleSvc *order_life_cycle.OrdersLifeCycleService
 	upsellService      *upsell.Service
 	notificationSvc    *notification.NotificationService
+	terminal           TerminalGateway
 }
 
 func NewService(
@@ -53,6 +55,7 @@ func NewService(
 	ordersLifeCycleSvc *order_life_cycle.OrdersLifeCycleService,
 	upsellService *upsell.Service,
 	notificationSvc *notification.NotificationService,
+	terminal TerminalGateway,
 ) *Service {
 	return &Service{
 		cfg:                cfg,
@@ -64,6 +67,7 @@ func NewService(
 		ordersLifeCycleSvc: ordersLifeCycleSvc,
 		upsellService:      upsellService,
 		notificationSvc:    notificationSvc,
+		terminal:           terminal,
 	}
 }
 
@@ -793,6 +797,13 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		return nil, err
 	}
 
+	// terminal_location_id vit dans stripe_accounts (pas kiosk_settings) : lu à
+	// part, null si Terminal non activé pour ce merchant — jamais une erreur.
+	terminalLocationID, err := s.repo.GetTerminalLocationID(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &KioskSettingsResponse{
 		FulfillmentDineIn:    row.FulfillmentDineIn,
 		FulfillmentTakeAway:  row.FulfillmentTakeAway,
@@ -809,6 +820,7 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		PrimaryColor:         row.PrimaryColor,
 		BusinessName:         row.BusinessName,
 		Slug:                 row.Slug,
+		TerminalLocationID:   terminalLocationID,
 	}, nil
 }
 
@@ -1399,8 +1411,10 @@ func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 		return "closed"
 	}
 	switch order.MerchantApproval {
-	case "PENDING_APPROVAL":
+	case models.MerchantApprovalPendingApproval:
 		return "pending_counter_payment"
+	case models.MerchantApprovalPendingCardPayment:
+		return "pending_card_payment"
 	case "ACCEPTED":
 		return "accepted"
 	default:
@@ -1408,15 +1422,29 @@ func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 	}
 }
 
-// CreateOrder crée une commande borne en mode "payer au comptoir" : pas de
-// paiement en ligne, MerchantApproval reste PENDING_APPROVAL jusqu'à ce que
-// le staff encaisse au comptoir (voir ConfirmCounterPayment). Idempotent via
-// idempotencyKey (Redis, TTL 10 min, scope par borne) — transmis par le
-// handler depuis le header HTTP "Idempotency-Key", absent de
-// models.RequestObject. Délègue le calcul de prix et la création à
-// ordersService.ComputePricing / ordersLifeCycleSvc.CreateOrder, exactement
-// comme scannorder.CreateOrderSNO.
-func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, kiosk AuthenticatedKiosk, idempotencyKey string) (*models.CreateOrderResult, error) {
+// Modes de paiement acceptés par CreateOrder (champ payment_method du body).
+const (
+	kioskPaymentMethodCounter = "pay_at_counter"
+	kioskPaymentMethodCard    = "card"
+)
+
+// CreateOrder crée une commande borne. Le mode de paiement (paymentMethod,
+// champ payment_method du body) détermine le statut initial :
+//   - "pay_at_counter" (ou vide, rétrocompatible) : comportement existant
+//     inchangé — commande créée directement en ACCEPTED, encaissement comptoir
+//     géré ensuite par ConfirmCounterPayment.
+//   - "card" : commande créée en PENDING_CARD_PAYMENT (Stripe Terminal). Elle ne
+//     part pas en cuisine tant que le webhook Stripe n'a pas confirmé le paiement
+//     (voir docs/KIOSK_DECISIONS.md). Le paiement carte lui-même passe par les
+//     endpoints /kiosk/terminal/*, hors de ce flux de création.
+//
+// Aucun paiement en ligne (OnlinePayment=false, Payments=[]) dans les deux cas :
+// le Terminal est encaissé hors bande, pas via un Checkout web. Idempotent via
+// idempotencyKey (Redis, TTL 10 min, scope par borne) — transmis par le handler
+// depuis le header HTTP "Idempotency-Key". Délègue le calcul de prix et la
+// création à ordersService.ComputePricing / ordersLifeCycleSvc.CreateOrder,
+// exactement comme scannorder.CreateOrderSNO.
+func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, kiosk AuthenticatedKiosk, idempotencyKey, paymentMethod string) (*models.CreateOrderResult, error) {
 	idemKey := ""
 	if idempotencyKey != "" {
 		idemKey = fmt.Sprintf("kiosk:idempotency:%s:%s", kiosk.KioskID, idempotencyKey)
@@ -1434,11 +1462,25 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	if err != nil {
 		return nil, err
 	}
-	if !settings.PayAtCounterEnabled {
-		return nil, models.ErrKioskPayAtCounterDisabled
-	}
 	if err := checkFulfillmentEnabled(settings, req.Order.OrderType); err != nil {
 		return nil, err
+	}
+
+	// Le mode de paiement détermine le statut initial et la gate à vérifier.
+	var initialApproval string
+	switch paymentMethod {
+	case kioskPaymentMethodCard:
+		if !settings.CardPaymentEnabled {
+			return nil, models.ErrKioskCardPaymentDisabled
+		}
+		initialApproval = models.MerchantApprovalPendingCardPayment
+	case "", kioskPaymentMethodCounter:
+		if !settings.PayAtCounterEnabled {
+			return nil, models.ErrKioskPayAtCounterDisabled
+		}
+		initialApproval = "ACCEPTED"
+	default:
+		return nil, models.ErrKioskPaymentMethodInvalid
 	}
 
 	req.MerchantID = kiosk.MerchantID
@@ -1458,7 +1500,7 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	}
 
 	orderReq := pricing.OrderRequest.Order
-	orderReq.MerchantApproval = "ACCEPTED"
+	orderReq.MerchantApproval = initialApproval
 	orderReq.CreatedBy = strPtr(kioskCreatedBy)
 	orderReq.CashRegisterId = strPtr(kioskCashRegister)
 	orderReq.OnlinePayment = false
@@ -1564,8 +1606,25 @@ func (s *Service) CancelKioskOrder(ctx context.Context, orderID string, kiosk Au
 	}
 	order := orderResp.Orders[0]
 
-	if order.MerchantApproval != "PENDING_APPROVAL" {
+	// Deux statuts sont annulables depuis la borne : une commande en attente de
+	// paiement comptoir (PENDING_APPROVAL) et une commande en attente de paiement
+	// carte (PENDING_CARD_PAYMENT). Toute commande déjà encaissée/acceptée
+	// (ACCEPTED, CLOSED, ...) ne l'est pas.
+	if order.MerchantApproval != models.MerchantApprovalPendingApproval &&
+		order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
 		return models.ErrKioskOrderNotCancellable
+	}
+
+	// Commande en attente de paiement carte : annuler d'abord le PaymentIntent
+	// Stripe actif associé, sinon un PaymentIntent orphelin pourrait être capturé
+	// plus tard par erreur (client qui présente sa carte après l'annulation).
+	// Best-effort (comme SwitchToCounterPayment) : un échec Stripe ne doit pas
+	// empêcher l'annulation de la commande côté borne. CancelActivePaymentIntentForOrder
+	// est un no-op s'il n'existe aucun PaymentIntent actif.
+	if order.MerchantApproval == models.MerchantApprovalPendingCardPayment && s.terminal != nil {
+		if err := s.terminal.CancelActivePaymentIntentForOrder(ctx, kiosk.MerchantID, orderID); err != nil {
+			logger.FromContext(ctx).Warn("kiosk cancel order: cancel active payment intent failed: " + err.Error())
+		}
 	}
 
 	return s.ordersLifeCycleSvc.DeleteOrder(ctx, models.DenyOrderInput{
@@ -1608,6 +1667,132 @@ func (s *Service) GetKioskOrder(ctx context.Context, orderID string, kiosk Authe
 		TotalCents:      order.TTC,
 		CreatedAt:       time.Unix(order.CreationDate, 0).UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// ---- Paiement carte (Stripe Terminal) ----
+
+// mapTerminalError traduit les sentinelles de l'infra Stripe Terminal vers les
+// erreurs Kiosk exposées au client (mapping HTTP via SendErrorJSON).
+func mapTerminalError(err error) error {
+	if errors.Is(err, stripeclient.ErrNoStripeAccount) {
+		return models.ErrKioskTerminalNotConfigured
+	}
+	return err
+}
+
+// GetTerminalConnectionToken retourne un secret de connexion Stripe Terminal
+// scopé au compte connecté du merchant. Gate sur card_payment_enabled : inutile
+// d'appairer un lecteur si le paiement carte est désactivé pour ce merchant.
+func (s *Service) GetTerminalConnectionToken(ctx context.Context, kiosk AuthenticatedKiosk) (*TerminalConnectionTokenResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+
+	settings, err := s.repo.GetKioskSettings(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if !settings.CardPaymentEnabled {
+		return nil, models.ErrKioskCardPaymentDisabled
+	}
+
+	secret, err := s.terminal.CreateConnectionToken(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return &TerminalConnectionTokenResponse{Secret: secret}, nil
+}
+
+// CreateTerminalPaymentIntent crée un PaymentIntent card_present pour une
+// commande en attente de paiement carte. La commande doit appartenir au merchant
+// et être en PENDING_CARD_PAYMENT. Le montant est re-lu depuis orders.TTC
+// (jamais depuis le client) ; amount_cents fourni par la borne n'est accepté que
+// s'il correspond, sinon la requête est rejetée (défense en profondeur).
+func (s *Service) CreateTerminalPaymentIntent(ctx context.Context, kiosk AuthenticatedKiosk, orderID string, amountCents int64) (*TerminalPaymentIntentResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+
+	order, err := s.getKioskOrder(ctx, kiosk.MerchantID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
+		return nil, models.ErrKioskOrderNotCardPending
+	}
+	if amountCents != int64(order.TTC) {
+		return nil, models.ErrKioskAmountMismatch
+	}
+
+	clientSecret, piID, err := s.terminal.CreateTerminalPaymentIntent(ctx, kiosk.MerchantID, orderID, int64(order.TTC))
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return &TerminalPaymentIntentResponse{ClientSecret: clientSecret, PaymentIntentID: piID}, nil
+}
+
+// CancelTerminalPaymentIntent annule un PaymentIntent en cours (abandon/timeout
+// côté borne). La commande reste en PENDING_CARD_PAYMENT : le client peut
+// relancer un paiement carte ou basculer vers la caisse
+// (SwitchToCounterPayment). Le scoping merchant est appliqué côté infra
+// (le mapping Redis porte le merchant_id).
+func (s *Service) CancelTerminalPaymentIntent(ctx context.Context, kiosk AuthenticatedKiosk, paymentIntentID string) error {
+	if s.terminal == nil {
+		return models.ErrKioskTerminalNotConfigured
+	}
+	if err := s.terminal.CancelTerminalPaymentIntent(ctx, kiosk.MerchantID, paymentIntentID); err != nil {
+		return mapTerminalError(err)
+	}
+	return nil
+}
+
+// SwitchToCounterPayment bascule une commande du paiement carte vers le paiement
+// caisse après échec/abandon, sans recréer de commande. Annule le PaymentIntent
+// actif s'il en existe un, repasse la commande en PENDING_APPROVAL
+// (= pending_counter_payment), puis réutilise le flux ConfirmCounterPayment
+// existant tel quel (transition vers ACCEPTED + code de retrait + QR +
+// notification).
+func (s *Service) SwitchToCounterPayment(ctx context.Context, kiosk AuthenticatedKiosk, orderID string) (*CounterPaymentResponse, error) {
+	order, err := s.getKioskOrder(ctx, kiosk.MerchantID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
+		return nil, models.ErrKioskOrderNotCardPending
+	}
+
+	// Annulation best-effort du PaymentIntent actif : un échec ici (ex. PI déjà
+	// annulé côté Stripe) ne doit pas empêcher le basculement vers la caisse.
+	if s.terminal != nil {
+		if err := s.terminal.CancelActivePaymentIntentForOrder(ctx, kiosk.MerchantID, orderID); err != nil {
+			logger.FromContext(ctx).Warn("kiosk switch-to-counter: cancel active payment intent failed: " + err.Error())
+		}
+	}
+
+	if err := s.repo.UpdateOrderMerchantApproval(ctx, kiosk.MerchantID, orderID, models.MerchantApprovalPendingApproval); err != nil {
+		return nil, err
+	}
+	// La commande est cachée dans Redis par ComputeGetOrder : on invalide pour
+	// que ConfirmCounterPayment relise l'état PENDING_APPROVAL fraîchement écrit.
+	if s.redis != nil {
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(kiosk.MerchantID, orderID))
+	}
+
+	return s.ConfirmCounterPayment(ctx, orderID, kiosk)
+}
+
+// getKioskOrder factorise la récupération d'une commande scopée au merchant
+// (jamais un paramètre client), utilisée par les flux Terminal.
+func (s *Service) getKioskOrder(ctx context.Context, merchantID, orderID string) (*models.Order, error) {
+	orderResp, err := s.ordersService.ComputeGetOrder(ctx, merchantID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if orderResp == nil || len(orderResp.Orders) == 0 {
+		return nil, models.ErrKioskOrderNotFound
+	}
+	order := orderResp.Orders[0]
+	return &order, nil
 }
 
 // ---- Access token : signé HMAC-SHA256, non persisté ----

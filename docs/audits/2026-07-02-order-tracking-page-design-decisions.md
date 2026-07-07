@@ -128,3 +128,32 @@ no-op sub-métrique, bearing par frame) en `requestAnimationFrame`.
 - `VITE_GOOGLE_MAPS_MAP_ID` : repli sur `DEMO_MAP_ID` (fonctionnel) — créer un
   vrai Map ID en console Google pour la prod, et activer **Maps JavaScript
   API** + restreindre la clé par referrer.
+
+## 8. Ajouts post-refonte (2026-07-07) : images produits + bloc paiements
+
+Ajout dans `OrderInfoPanel` (récap commande, partagé desktop/mobile) : vignette
+produit et bloc "Paiements", sans changement backend — les deux champs
+(`OrderProduct.image_url`, `Order.payments[]`) étaient déjà retournés par le
+GET order.
+
+- **Vignette produit** : cercle 48px (`ProductThumbnail`), cohérent avec les
+  ronds déjà utilisés ailleurs dans le panneau (logo restaurant, icône
+  livreur) plutôt qu'un carré/`rounded-card` — évite un troisième radius dans
+  une même liste compacte. Repli sur l'initiale du nom (pas une icône
+  générique) : plus rapide à scanner visuellement dans une liste de plusieurs
+  articles, et fonctionne aussi bien pour `image_url` absent que pour une URL
+  cassée (`onError`, état local par ligne — pas de retry).
+- **Bloc paiements** : n'existe que si au moins un paiement `enabled` est
+  présent (aucune section vide). Placé entre la liste d'articles et le total,
+  toujours dans le récap repliable existant — pas un nouveau bloc top-level —
+  pour rester "sous le pli" du peek mobile comme le reste du récap.
+- **Mapping `mop` → libellé FR** : `STRIPE`/`CB` → "Carte bancaire",
+  `CASH` → "Espèces", `TR`/`TICKET_RESTAURANT` → "Titre-restaurant",
+  `CHECK`/`CHEQUE` → "Chèque", `REWARD` → "Récompense fidélité", fallback sur
+  le code brut sinon (mop futurs sans casser l'affichage).
+- **`REFUND`** : icône dédiée (`Undo2`) + libellé "· Remboursement" + montant
+  en rouge (`text-destructive`) précédé d'un signe moins — jamais fondu dans
+  le total des paiements, pour ne pas laisser croire qu'un remboursement est
+  un encaissement.
+- **Paiements `enabled: false`** filtrés côté affichage : ce sont des lignes
+  annulées/void côté encaissement, pas des paiements réels du client.

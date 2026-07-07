@@ -173,12 +173,22 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash)
 
+	// cash_register_id vide -> NULL : un paiement sans caisse (ex. borne Kiosk /
+	// Stripe Terminal) ne rattache pas d'identifiant de caisse. Les appelants
+	// existants passent toujours une valeur non vide (caisse réelle,
+	// ScanNOrderCashRegisterID, ...), donc leur comportement est inchangé.
+	cashRegisterID := sql.NullString{String: payment.CashRegisterID, Valid: payment.CashRegisterID != ""}
+
+	// net_amount est initialisé à amount (valeur provisoire, avant réception des
+	// frais réels Stripe) pour TOUS les paiements, sans toucher aucun appelant :
+	// il est recalculé à amount - fee par le webhook charge.captured qui
+	// renseigne déjà payments.fee (voir internal/webhook/stripe, UpdateFees).
 	// 3. Insérer le paiement avec son hash
 	res, err := db.ExecContext(ctx, `
 	INSERT INTO payments
-	(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
+	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())

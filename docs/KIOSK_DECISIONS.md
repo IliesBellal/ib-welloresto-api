@@ -2152,3 +2152,329 @@ curl -s -X PUT "$BASE_URL/menu/attribute_options/$OPTION_ID/image" \
 # GET /kiosk/menu et GET /kiosk/products/{id} (image_url sur le modifier
 # correspondant, via un access_token kiosk valide)
 ```
+
+---
+
+## Incrément — paiement carte borne (Stripe Terminal)
+
+Implémentation des endpoints Stripe Terminal côté API pour le canal Kiosk :
+lecteur de carte physique intégré à la borne (décision actée G.3 — Stripe
+Terminal retenu). Le document `docs/STRIPE_TERMINAL_AUDIT.md` mentionné dans le
+brief **n'existe pas dans le repo** — la règle de découplage appliquée est
+celle restituée dans le brief lui-même : la logique Terminal vit dans un
+service Go interne paramétré par `merchantID`, jamais couplé à `KioskAuth` ;
+les handlers `/kiosk/terminal/*` restent des adaptateurs minces qui extraient
+`merchantID` du contexte `KioskAuth` puis appellent ce service (objectif :
+pouvoir ajouter `/pos/terminal/*` plus tard sans dupliquer la logique).
+
+### 1. Nouveau statut de commande : `pending_card_payment`
+
+**Décision : nouvelle valeur `merchant_approval = "PENDING_CARD_PAYMENT"`**
+(`models.MerchantApprovalPendingCardPayment`, `internal/models/orders_model.go`),
+et non une réutilisation de `PENDING_APPROVAL`. Justification :
+
+- `pending_counter_payment` est le nom Kiosk de `PENDING_APPROVAL` (incrément 2).
+  Pour que `pending_card_payment` soit **réellement distinct** (le brief l'exige :
+  `POST /kiosk/terminal/payment-intent` et `switch-to-counter-payment` doivent
+  vérifier « la commande est en `pending_card_payment` »), il faut une valeur
+  stockée distincte — sinon les deux états seraient indiscernables en base.
+- Une commande carte **ne doit pas partir en cuisine** avant confirmation du
+  paiement. `PENDING_CARD_PAYMENT` ≠ `ACCEPTED` la tient hors du flux KDS (qui
+  ne traite que les commandes `ACCEPTED`) jusqu'au webhook Stripe.
+
+**Blast radius vérifié** (le brief demandait que ce statut ne casse aucun
+filtre/affichage) :
+- `internal/modules/orders/orders_fetcher_builder.go` scanne `merchant_approval`
+  en `string` sans `switch`/enum — une nouvelle valeur passe sans erreur.
+- `internal/tasks/orders.go` (`DenyOrders`, cron par ailleurs désactivé) filtre
+  `merchant_approval = 'PENDING_APPROVAL'` : une commande carte n'y est **pas**
+  capturée — voulu (elle a son propre cycle : retry, cancel PI, ou bascule
+  caisse).
+- Aucun autre `WHERE merchant_approval = ...` ne cible cette valeur.
+- `mapMerchantApprovalToKioskStatus` mappe `PENDING_CARD_PAYMENT` →
+  `"pending_card_payment"` (visible sur `GET /kiosk/orders/{id}`).
+
+**Détermination du statut initial** — `Service.CreateOrder` prend désormais un
+paramètre `paymentMethod`, lu depuis le champ **racine** `payment_method` du body
+de création (via un wrapper de handler qui étend `models.RequestObject`, sans
+polluer la struct partagée) :
+- `"card"` → gate `card_payment_enabled`, `MerchantApproval = PENDING_CARD_PAYMENT`.
+- `"pay_at_counter"` **ou vide** (rétrocompatible avec le client existant) →
+  comportement inchangé : gate `pay_at_counter_enabled`, `MerchantApproval = "ACCEPTED"`.
+- toute autre valeur → `400 kiosk_payment_method_invalid`.
+
+Dans les deux cas : `OnlinePayment=false`, `Payments=[]` — le Terminal est
+encaissé hors bande (pas de Checkout web).
+
+### 2. Service Stripe Terminal — `internal/infrastructure/stripe/terminal.go`
+
+`TerminalService` (package `stripeclient`), construit dans `routes.go` à partir
+du `StripeManager` existant, d'un `TerminalAccountStore` (SQL) et de Redis :
+
+- **`CreateConnectionToken(ctx, merchantID)`** → `TerminalConnectionTokens.New`
+  scopé au compte connecté (`SetStripeAccount`). Retourne le `secret`.
+- **`CreateTerminalPaymentIntent(ctx, merchantID, orderID, amountCents)`** →
+  PaymentIntent `card_present`, `CaptureMethod=automatic`, `Currency=eur`, sur le
+  **compte connecté** (`SetStripeAccount`) avec `ApplicationFeeAmount` — **même
+  modèle de charge directe + commission que `CreateCheckoutSession`** (checkout.go :
+  `floor(ttc*variable_fees + fixed_fees + 0.5)`), plutôt que le modèle destination
+  charge (`OnBehalfOf`/`TransferData`) : cohérence avec l'existant. Stocke deux
+  mappings Redis (TTL 1h) : direct `terminal_pi:{piID}` →
+  `{order_id, merchant_id}` (lu par le webhook) et inverse
+  `terminal_order_pi:{merchant}:{order}` → `piID` (pour retrouver le PI actif au
+  basculement caisse). Le brief ne demandait que `order_id` dans le mapping ;
+  `merchant_id` est ajouté car le webhook en a besoin pour `SetOrderAccepted` +
+  notification, et le mapping inverse pour le basculement caisse.
+- **`CancelTerminalPaymentIntent(ctx, merchantID, paymentIntentID)`** → annule le
+  PI sur le compte connecté et supprime les mappings. `merchantID` ajouté à la
+  signature du brief : nécessaire pour résoudre le compte connecté (l'annulation
+  exige `SetStripeAccount`) et pour refuser qu'une borne annule le PI d'un autre
+  merchant.
+- **`CancelActivePaymentIntentForOrder(ctx, merchantID, orderID)`** (helper,
+  hors liste du brief) → retrouve le PI actif via le mapping inverse et l'annule ;
+  no-op si aucun. Utilisé par le basculement caisse.
+
+Clés Redis + struct `TerminalPaymentMapping` **exportées** et réutilisées par le
+webhook (jamais dupliquées).
+
+### 3. Handlers et routes Kiosk (groupe `/kiosk`, `KioskAuth`)
+
+- `POST /kiosk/terminal/connection-token` → `{ "secret": "..." }` (gate
+  `card_payment_enabled`).
+- `POST /kiosk/terminal/payment-intent` — body `{order_id, amount_cents}` :
+  vérifie que la commande appartient au merchant **et** est en
+  `PENDING_CARD_PAYMENT` ; le montant est re-lu depuis `orders.TTC` (jamais
+  depuis le client), `amount_cents` n'est accepté que s'il **correspond**
+  (`400 kiosk_amount_mismatch` sinon). Retourne `{client_secret, payment_intent_id}`.
+- `POST /kiosk/terminal/payment-intent/{payment_intent_id}/cancel` → annule le PI
+  (abandon/timeout). La commande **reste** en `PENDING_CARD_PAYMENT` (retry ou
+  bascule caisse possibles).
+- `POST /kiosk/orders/{order_id}/switch-to-counter-payment` → vérifie
+  `PENDING_CARD_PAYMENT`, annule le PI actif (best-effort), repasse la commande en
+  `PENDING_APPROVAL` (+ invalidation du cache Redis order), puis réutilise
+  `ConfirmCounterPayment` tel quel (transition `ACCEPTED` + code de retrait + QR +
+  notification). Réponse = `CounterPaymentResponse`.
+
+Le service kiosk dépend d'une interface locale `TerminalGateway` (pas du type
+concret) — découplage/testabilité.
+
+### 4. Webhook — events Terminal (`internal/webhook/stripe/service.go`)
+
+Le switch `event.Type` est étendu sans casser le flux Checkout en ligne :
+
+- **`payment_intent.succeeded`** → `HandlePaymentIntentSucceeded`. Discriminant
+  card_present : **présence du mapping Redis `terminal_pi:{id}`** (plus fiable que
+  parser `payment_method_details.type`, non expansé sur l'objet PaymentIntent
+  reçu — il faudrait un appel API en plus — et le mapping donne directement la
+  commande). Si mapping trouvé → `SetOrderAccepted(ctx, "KIOSK", merchantID,
+  orderID)` (`PENDING_CARD_PAYMENT` → `ACCEPTED`, **même mécanisme que
+  ConfirmCounterPayment** ; déclenche KDS/impression + broadcast `order_updated`
+  en interne) puis suppression des mappings. Sinon → comportement existant
+  inchangé (`UpdatePaymentIntentStatus(..., "CAPTURED")`). La suppression du
+  mapping rend la confirmation idempotente (redélivrance Stripe → mapping absent →
+  no-op).
+- **`payment_intent.payment_failed`** (nouveau case) → si mapping trouvé, la
+  commande **reste** en `PENDING_CARD_PAYMENT` (aucune annulation serveur, le
+  client réessaie ou bascule caisse), on diffuse seulement `order_updated`. Sinon
+  ignoré (aucun case n'existait avant).
+
+**Hors périmètre (assumé)** : aucun enregistrement `payments` n'est inséré pour la
+charge Terminal (le brief liste explicitement les actions webhook et n'inclut pas
+l'insertion d'un paiement) — à ajouter si le reporting `payments.mop` doit couvrir
+les encaissements carte borne.
+
+### Variables d'environnement
+
+Aucune nouvelle : le Terminal réutilise `STRIPE_API_KEY` (déjà dans
+`StripeManager`), la base et Redis existants. Prérequis : le merchant doit avoir
+un compte Stripe connecté (`stripe_accounts`) et `kiosk_settings.card_payment_enabled = TRUE`.
+
+### Tests manuels
+
+Non exécutés dans ce sandbox (pas de `MYSQL_URL`/`REDIS_URL`/clé Stripe test) —
+seuls `go build ./...`, `go vet` (paquets touchés) et
+`go test ./internal/modules/kiosk/...` ont été vérifiés (clean ; les 2 warnings
+`go vet` restants — `cmd/api` copie de lock `NewAuthHandler`, `tasks.go`
+unreachable — sont préexistants et sans rapport). Le webhook doit être configuré
+pour envoyer `payment_intent.succeeded` **et** `payment_intent.payment_failed`.
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+AUTH="Authorization: Bearer $ACCESS_TOKEN"
+PRODUCT_ID="<product_id is_available_on_kiosk=TRUE>"
+# Prérequis : kiosk_settings.card_payment_enabled = TRUE, stripe_accounts renseigné.
+
+# 0. Connection token (appairage du lecteur)
+curl -s -X POST "$BASE_URL/kiosk/terminal/connection-token" -H "$AUTH"
+# -> { "data": { "secret": "pst_test_..." } }
+
+# 1. Créer une commande carte -> statut pending_card_payment
+curl -s -X POST "$BASE_URL/kiosk/orders" -H "$AUTH" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: card-$(date +%s)" \
+  -d "{\"payment_method\":\"card\",\"order\":{\"fulfillment_type\":\"DINE_IN\",\"products\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":1}]}}" \
+  | tee card_order.json
+ORDER_ID=$(jq -r .data.order_id card_order.json)
+
+curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+# -> { "data": { "status": "pending_card_payment", ... } }
+
+# 2. PaymentIntent Terminal (amount_cents DOIT = orders.TTC)
+TTC=$(curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH" | jq -r .data.total_cents)
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"order_id\":\"$ORDER_ID\",\"amount_cents\":$TTC}" | tee pi.json
+# -> { "data": { "client_secret": "pi_..._secret_...", "payment_intent_id": "pi_..." } }
+PI_ID=$(jq -r .data.payment_intent_id pi.json)
+
+# 2bis. Montant incohérent -> 400 kiosk_amount_mismatch
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"order_id\":\"$ORDER_ID\",\"amount_cents\":1}"
+# -> 400 kiosk_amount_mismatch
+
+# --- CAS SUCCÈS ---
+# Après paiement réussi sur le lecteur, Stripe envoie payment_intent.succeeded
+# (card_present). Le webhook confirme la commande :
+curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+# -> { "data": { "status": "accepted", ... } }  (partie en cuisine)
+
+# --- CAS ÉCHEC ---
+# Stripe envoie payment_intent.payment_failed -> la commande reste
+# pending_card_payment, un order_updated est diffusé. Le client peut relancer
+# un PaymentIntent (retry) ou basculer vers la caisse (ci-dessous).
+
+# 3. Annulation d'un PaymentIntent (abandon/timeout) — commande inchangée
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent/$PI_ID/cancel" -H "$AUTH"
+# -> { "data": { "status": "cancelled" } } ; GET /kiosk/orders/$ORDER_ID reste pending_card_payment
+
+# --- CAS BASCULE CAISSE ---
+# 4. Basculer carte -> caisse (après échec/abandon) sans recréer de commande
+curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/switch-to-counter-payment" -H "$AUTH"
+# -> { "data": { "order_id": "...", "pickup_code": "...", "qr_payload": "...", "status": "accepted" } }
+#    (PI actif annulé, commande passée en caisse puis encaissée via le flux ConfirmCounterPayment)
+
+# 4bis. Rejouer sur une commande qui n'est plus pending_card_payment -> 409
+curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/switch-to-counter-payment" -H "$AUTH"
+# -> 409 kiosk_order_not_card_pending
+```
+
+---
+
+## Incrément Terminal 2 — enregistrement `payments`, `net_amount`, `terminal_location_id`
+
+Complète l'increment Terminal précédent (qui acceptait la commande via
+`SetOrderAccepted` mais **n'insérait aucune ligne `payments`** — trou signalé
+« Hors périmètre (assumé) » ci-dessus, désormais comblé).
+
+### Audit 0.A — capture des frais Stripe existante [CONSTAT]
+
+- **Event déclencheur** : `charge.captured`. Le switch `ProcessEvent`
+  (`internal/webhook/stripe/service.go`) route ce type vers
+  `HandleRetrieveFees` (commentaire du code : « En PHP c'était retrieveFees »).
+- **Lecture des frais** : `HandleRetrieveFees` récupère le `balance_transaction`
+  **sur le compte connecté** (`params.SetStripeAccount(event.Account)` puis
+  `balancetransaction.Get`), somme `FeeDetails` par type (`application_fee` →
+  `wrFees`, `stripe_fee` → `stripeFees`), et lit le total `bt.Fee`.
+- **Écriture du champ `fee`** : `repo.UpdateFees(ctx, piID, wrFees, stripeFees,
+  bt.Fee)` fait **deux UPDATE** : `stripe_payments` (`wello_resto_total_fees`,
+  `stripe_total_fees`) puis `payments.fee = bt.Fee` via la jointure
+  `payments p INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
+  WHERE sp.payment_intent_id = ?`. C'est **le seul endroit** où `payments.fee`
+  est renseigné.
+- **Synchrone ou asynchrone** : **asynchrone** — `payments.fee` est mis à jour à
+  la réception ultérieure du webhook `charge.captured`, pas à la création du
+  paiement (où `fee` vaut sa valeur par défaut). La jointure passe par
+  `stripe_payments.payment_intent_id` : tout paiement dont
+  `AddPaymentAndReturnID` a inséré la ligne `stripe_payments` (cas `MOP=STRIPE`)
+  est éligible à cette mise à jour — y compris désormais les encaissements
+  Terminal.
+
+**Conséquence pour `net_amount`** : le point 4 du brief (« mettre à jour
+`net_amount` quand les frais réels arrivent ») est branché exactement ici —
+`UpdateFees` écrit désormais `payments.fee = bt.Fee` **et**
+`payments.net_amount = payments.amount - bt.Fee` dans le même UPDATE. Le
+mécanisme existe donc bien pour les paiements en ligne (pas de limitation à
+documenter) et couvre Terminal par la même jointure.
+
+**Réserve** : la mise à jour de `net_amount` dépend entièrement de l'émission de
+`charge.captured` par Stripe. Pour un `card_present` en capture automatique, si
+Stripe n'émettait pas cet event, `net_amount` resterait à sa valeur provisoire
+(`= amount`, `fee = 0`) — même comportement que le Checkout en ligne, qui repose
+sur la même hypothèse. Aucune régression : c'est le mécanisme existant, réutilisé
+tel quel.
+
+### Audit 0.B — création de paiements (point d'insertion unique) [CONSTAT]
+
+- **Fonction unique** : `OrdersLifeCycleRepository.AddPaymentAndReturnID`
+  (`internal/modules/order_life_cycle/repository.go`). C'est le seul INSERT INTO
+  `payments` réellement utilisé : il porte le chaînage fiscal NF525
+  (`previous_hash`/`hash`/`signature`), le garde de montant
+  (`OrderNotFullyPaidError`), les effets de bord (`restaurant_ticket` pour
+  `MOP=TR`, `stripe_payments` pour `MOP=STRIPE`) et le recalcul de `orders.isPaid`.
+- **Wrappers** : `AddPayment` (ignore l'ID) ; côté service
+  `CreatePayment` / `CreatePaymentNoNotification` /
+  `CreatePaymentAndReturnID` (enveloppent dans `ExecuteOrderMutation` : tx +
+  audit). Le Checkout en ligne utilise `CreatePaymentNoNotification`.
+- **Second INSERT ignoré** : `internal/webhook/stripe/repository.go` porte un
+  `InsertPayment` (INSERT simplifié, sans hash), mais il est **explicitement
+  marqué `// Decom`** (décommissionné) et n'est appelé nulle part dans le flux
+  actif — le Checkout est passé à `orderlifecycle.CreatePaymentNoNotification`.
+  Il n'a **pas** été étendu : le paiement Terminal passe par la même fonction
+  canonique que le reste du projet.
+- **Paramètres acceptés** : `models.Payment{ OrderID, MerchantID, MOP, Amount,
+  CashRegisterID, UserID, OperationType, Comment, StatusCheck, Code,
+  PaymentIntentID, CheckoutSessionID, CustomerEmail }`.
+
+### Ce qui a été implémenté
+
+1. **Migrations** (`053`, `054`, dans `migrations/` — non appliquées) :
+   `payments.net_amount INT NOT NULL DEFAULT 0 AFTER fee` et
+   `stripe_accounts.terminal_location_id VARCHAR(255) NULL`. Aucun renommage de
+   colonne existante.
+2. **`net_amount` initialisé à la création** : `AddPaymentAndReturnID` insère
+   `net_amount = amount` **pour tous les paiements**, en injectant `payment.Amount`
+   dans la colonne `net_amount` de l'INSERT — **aucun appelant modifié** (pas de
+   nouveau champ obligatoire à renseigner partout, `net_amount` ne peut donc pas
+   rester à 0 par omission d'un appelant).
+3. **`net_amount` mis à jour aux frais réels** : `UpdateFees` (webhook) — voir
+   audit 0.A ci-dessus.
+4. **`cash_register_id` vide → NULL** : `AddPaymentAndReturnID` convertit une
+   `CashRegisterID` vide en `NULL` (`sql.NullString`), pour qu'un paiement borne
+   (sans caisse) respecte le point 5 du brief. Les appelants existants passent
+   toujours une valeur non vide → comportement inchangé.
+5. **Enregistrement du paiement Terminal** : dans
+   `handleTerminalPaymentSucceeded` (webhook `payment_intent.succeeded`,
+   card_present), après `SetOrderAccepted`, appel de
+   `recordTerminalPayment` → `CreatePaymentNoNotification` avec `amount =
+   pi.Amount`, `mop = models.StripeMOP` (**même valeur que le Checkout carte en
+   ligne**, cohérence multi-canal), `fee = 0` (défaut) / `net_amount = amount`
+   (via l'INSERT), `user_id = "KIOSK"`, `cash_register_id = NULL`, `order_id` /
+   `merchant_id` depuis le mapping Redis. **Best-effort** : la commande est déjà
+   acceptée ; un échec d'insertion est loggé sans faire échouer le webhook (éviter
+   un rejeu Stripe qui re-déclencherait l'accept et se heurterait au garde de
+   montant à la ré-insertion). L'insertion de `stripe_payments` (faite en interne
+   pour `MOP=STRIPE`) relie `payment_intent_id`, ce qui rend le paiement Terminal
+   éligible à la mise à jour `fee`/`net_amount` par `charge.captured`.
+6. **`terminal_location_id` dans `GET /kiosk/settings`** : nouveau champ
+   `terminal_location_id` (nullable) dans `KioskSettingsResponse`, alimenté par
+   `Repository.GetTerminalLocationID` (lecture `stripe_accounts` par
+   `merchant_id`). `null` si pas de ligne `stripe_accounts` ou colonne NULL —
+   jamais d'erreur. Exposé aussi dans le `GET /pos/settings/kiosk` back-office
+   (même méthode `GetSettings`), sans effet indésirable.
+7. **Annulation `pending_card_payment`** : `CancelKioskOrder` accepte désormais
+   `PENDING_APPROVAL` **et** `PENDING_CARD_PAYMENT`. Pour une commande carte, le
+   PaymentIntent actif est annulé (`CancelActivePaymentIntentForOrder`,
+   best-effort avec warning — cohérent avec `SwitchToCounterPayment`) **avant**
+   `DeleteOrder`, pour éviter un PaymentIntent orphelin capturé plus tard.
+
+### Vérifications
+
+`go build ./...` et `go vet` (paquets touchés : webhook/stripe, kiosk,
+order_life_cycle, infrastructure/stripe) clean.
+`go test ./internal/modules/kiosk/... ./internal/modules/order_life_cycle/...`
+passent. Tests manuels DB/Stripe non exécutés (pas de `MYSQL_URL`/clé Stripe test
+dans ce sandbox) — appliquer les migrations `053`/`054`, renseigner
+`stripe_accounts.terminal_location_id` manuellement pour le merchant de test,
+puis rejouer le scénario Terminal ci-dessus en vérifiant en base : une ligne
+`payments` (`mop='STRIPE'`, `net_amount=amount`, `fee=0`, `cash_register_id`
+NULL) après `payment_intent.succeeded`, puis `fee`/`net_amount` mis à jour après
+`charge.captured`.

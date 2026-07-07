@@ -502,6 +502,29 @@ func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*
 	return row, nil
 }
 
+// GetTerminalLocationID lit stripe_accounts.terminal_location_id pour un
+// merchant. Retourne (nil, nil) si aucune ligne stripe_accounts n'existe ou si
+// la colonne est NULL (Terminal non activé) — jamais sql.ErrNoRows, pour que
+// GET /kiosk/settings renvoie null sans erreur (voir docs/KIOSK_DECISIONS.md).
+func (r *Repository) GetTerminalLocationID(ctx context.Context, merchantID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var loc sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT terminal_location_id FROM stripe_accounts WHERE merchant_id = ? LIMIT 1`,
+		merchantID).Scan(&loc)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !loc.Valid {
+		return nil, nil
+	}
+	return &loc.String, nil
+}
+
 // getMerchantBusinessName récupère merchant.fullName — utilisé pour le
 // bandeau d'accueil du Menu côté borne (kiosk_settings n'a pas cette
 // information, voir docs/KIOSK_DECISIONS.md).
@@ -669,6 +692,19 @@ func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskID str
 
 	query := `UPDATE orders SET kiosk_id = ? WHERE order_id = ?`
 	_, err := db.ExecContext(ctx, query, kioskID, orderID)
+	return err
+}
+
+// UpdateOrderMerchantApproval force merchant_approval sur une commande, scopé au
+// merchant. Utilisé par le basculement carte -> caisse (PENDING_CARD_PAYMENT ->
+// PENDING_APPROVAL) : OrdersLifeCycleService n'expose pas de mutation générique
+// de ce champ, et SetOrderAccepted/DeliverOrder ne couvrent pas cette transition
+// précise. last_update est rafraîchi comme partout ailleurs dans le projet.
+func (r *Repository) UpdateOrderMerchantApproval(ctx context.Context, merchantID, orderID, approval string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `UPDATE orders SET merchant_approval = ?, last_update = UTC_TIMESTAMP WHERE order_id = ? AND merchant_id = ?`
+	_, err := db.ExecContext(ctx, query, approval, orderID, merchantID)
 	return err
 }
 
