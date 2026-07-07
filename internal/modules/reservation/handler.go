@@ -40,7 +40,7 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "application/json")
 
 	slug := chi.URLParam(r, "slug")
-	dateUnixStr := r.URL.Query().Get("date") // Ex: "1773784295"
+	dateStr := r.URL.Query().Get("date")
 	partySizeStr := r.URL.Query().Get("party_size")
 
 	partySize, _ := strconv.Atoi(partySizeStr)
@@ -48,13 +48,11 @@ func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *htt
 		partySize = 1
 	}
 
-	// Conversion de la string Unix en entier 64 bits
-	dateUnix, err := strconv.ParseInt(dateUnixStr, 10, 64)
-	if slug == "" || dateUnixStr == "" || err != nil {
+	if slug == "" || dateStr == "" {
 		models.SendErrorJSON(w, "rsv", "booking-availability", models.ErrInvalidInput)
 		return
 	}
-	response := h.svc.GetBookingAvailability(r.Context(), slug, dateUnix, partySize)
+	response := h.svc.GetBookingAvailability(r.Context(), slug, dateStr, partySize)
 
 	models.SendJSON(w, http.StatusOK, "rsv", "booking-availability", response)
 }
@@ -70,7 +68,7 @@ func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *h
 		return
 	}
 
-	response := h.svc.CreateReservation(r.Context(), slug, req)
+	response := h.svc.CreateReservation(r.Context(), slug, r.Header.Get("Idempotency-Key"), req)
 	models.SendJSON(w, http.StatusOK, "rsv", "booking-create", response)
 }
 

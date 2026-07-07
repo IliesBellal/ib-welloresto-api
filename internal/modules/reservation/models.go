@@ -1,5 +1,7 @@
 package reservation
 
+import "welloresto-api/internal/modules/bookingcore"
+
 // Design regroupe les paramètres visuels du marchand
 type Design struct {
 	PrimaryColor            string `json:"primary_color"`
@@ -57,9 +59,10 @@ type OpenHoursResponse struct {
 
 // Slot représente un créneau horaire de réservation
 type Slot struct {
-	Time      string `json:"time"`
-	Available bool   `json:"available"`
-	HOOID     string `json:"hoo_id,omitempty"`
+	Time            string `json:"time"`
+	Available       bool   `json:"available"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	HOOID           string `json:"hoo_id,omitempty"`
 }
 
 // AvailabilityResponse est la réponse renvoyée au client
@@ -87,16 +90,17 @@ type BookingRequest struct {
 }
 
 type BookingData struct {
-	BookingID      string `json:"booking_id"`
-	BookingNumber  string `json:"booking_number"`
-	MerchantID     string `json:"merchant_id"`
-	StartDate      string `json:"start_date"`
-	EndDate        string `json:"end_date"`
-	PartySize      int    `json:"party_size"`
-	Comment        string `json:"comment,omitempty"`
-	Status         string `json:"status"`
-	SequenceNumber int    `json:"sequence_number"` // Ajouté pour la limite de modif
-	Cancelable     bool   `json:"cancelable"`      // Champ calculé
+	BookingID       string `json:"booking_id"`
+	BookingNumber   string `json:"booking_number"`
+	MerchantID      string `json:"merchant_id"`
+	StartDate       string `json:"start_date"`
+	EndDate         string `json:"end_date"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	PartySize       int    `json:"party_size"`
+	Comment         string `json:"comment,omitempty"`
+	Status          string `json:"status"`
+	SequenceNumber  int    `json:"sequence_number"` // Ajouté pour la limite de modif
+	Cancelable      bool   `json:"cancelable"`      // Champ calculé
 }
 
 type CustomerData struct {
@@ -120,6 +124,57 @@ type CreateBookingResponse struct {
 	Status  string       `json:"status"`
 	Error   string       `json:"error,omitempty"`
 	Booking *BookingData `json:"booking,omitempty"`
+}
+
+type MerchantPublic struct {
+	BusinessName string  `json:"business_name"`
+	Phone        string  `json:"phone"`
+	Address      Address `json:"address"`
+	LogoURL      string  `json:"logo_url"`
+	Design       Design  `json:"design"`
+	Timezone     string  `json:"timezone"`
+}
+
+type BookingPublic struct {
+	BookingNumber    string         `json:"booking_number"`
+	Status           string         `json:"status"`
+	PartySize        int            `json:"party_size"`
+	DateFrom         string         `json:"date_from"`
+	DurationMinutes  int            `json:"duration_minutes"`
+	Comment          string         `json:"comment,omitempty"`
+	Cancelable       bool           `json:"cancelable"`
+	Modifiable       bool           `json:"modifiable"`
+	RemainingUpdates int            `json:"remaining_updates"`
+	Merchant         MerchantPublic `json:"merchant"`
+}
+
+type PublicBookingResponse struct {
+	Status  string         `json:"status"`
+	Error   string         `json:"error,omitempty"`
+	Warning string         `json:"warning,omitempty"`
+	Booking *BookingPublic `json:"booking,omitempty"`
+}
+
+func NewBookingSettingsFromMerchant(merchant *Merchant) bookingcore.BookingSettings {
+	if merchant == nil {
+		return bookingcore.DefaultBookingSettings()
+	}
+
+	return bookingcore.BookingSettings{
+		DefaultBookingDuration:        merchant.DefaultBookingDuration,
+		AutoAcceptReserveBookings:     merchant.AutoAcceptReserveBookings,
+		ReserveMaximumPartySize:       merchant.ReserveMaximumPartySize,
+		ReserveMinimumPartySize:       merchant.ReserveMinimumPartySize,
+		FirstBookingOffsetMinutes:     merchant.FirstBookingOffsetMinutes,
+		LastBookingOffsetMinutes:      merchant.LastBookingOffsetMinutes,
+		CancelBookingLimitOffsetHours: merchant.CancelBookingLimitOffsetHours,
+		SlotIntervalMinutes:           merchant.SlotIntervalMinutes,
+		CancelableByCustomer:          merchant.CancelableByCustomer,
+		Enabled:                       true,
+		OverbookingPercent:            merchant.OverbookingPercent,
+		MaxBookingHorizonDays:         merchant.MaxBookingHorizonDays,
+		PendingExpirationHours:        merchant.PendingExpirationHours,
+	}
 }
 
 type GenericResponse struct {

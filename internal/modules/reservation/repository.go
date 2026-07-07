@@ -20,7 +20,9 @@ type ReservationRepository interface {
 	GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error)
 	GetOperationRanges(ctx context.Context, merchantID string, dayOfWeek int, requestedDate string) ([]OperationRange, error)
 	GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error)
+	GetBookedCapacityExcludingBooking(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error)
 	GetBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error)
+	FindExistingActiveBookingWarning(ctx context.Context, merchantID, phone, startDate string) (bool, error)
 	GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error)
 	GetRewards(ctx context.Context, customerID string) ([]Reward, error)
 	CreateBooking(ctx context.Context, b *BookingRequest) (int64, error)
@@ -165,6 +167,14 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 }
 
 func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error) {
+	return r.getBookedCapacity(ctx, merchantID, requestedDate, "")
+}
+
+func (r *reservationRepository) GetBookedCapacityExcludingBooking(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error) {
+	return r.getBookedCapacity(ctx, merchantID, requestedDate, excludeBookingNumber)
+}
+
+func (r *reservationRepository) getBookedCapacity(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 	dayStart := requestedDate + " 00:00:00"
@@ -177,9 +187,10 @@ func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantI
 		WHERE booking_date_from < ?
 		  AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
 		  AND merchant_id = ?
+		  AND (? = '' OR booking_number <> ?)
 	`
 
-	rows, err := db.QueryContext(ctx, query, dayEnd, dayStart, merchantID)
+	rows, err := db.QueryContext(ctx, query, dayEnd, dayStart, merchantID, excludeBookingNumber, excludeBookingNumber)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -229,6 +240,34 @@ func (r *reservationRepository) GetBookingDurationRules(ctx context.Context, mer
 	}
 
 	return rules, rows.Err()
+}
+
+func (r *reservationRepository) FindExistingActiveBookingWarning(ctx context.Context, merchantID, phone, startDate string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	row := db.QueryRowContext(ctx, `
+		SELECT b.status
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.merchant_id = ?
+		  AND c.customer_tel = ?
+		  AND b.booking_date_from = ?
+		ORDER BY b.booking_id DESC
+		LIMIT 1
+	`, merchantID, phone, startDate)
+
+	var status string
+	if err := row.Scan(&status); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		log.Error(err.Error())
+		return false, err
+	}
+
+	normalized := bookingcore.NormalizeLegacyStatus(status)
+	return normalized == bookingcore.StatusPending || normalized == bookingcore.StatusConfirmed, nil
 }
 
 func (r *reservationRepository) GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error) {
@@ -300,7 +339,7 @@ func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingN
 	log := logger.FromContext(ctx)
 
 	query := `
-		SELECT booking_id, booking_number, merchant_id, booking_date_from, booking_date_to, party_size, status, sequence_number
+		SELECT booking_id, booking_number, merchant_id, booking_date_from, booking_date_to, booking_duration, party_size, comment, status, sequence_number
 		FROM bookings
 		WHERE booking_number = ? AND merchant_id = ?`
 
@@ -308,7 +347,7 @@ func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingN
 	var err error
 
 	row := db.QueryRowContext(ctx, query, bookingNumber, merchantID)
-	err = row.Scan(&b.BookingID, &b.BookingNumber, &b.MerchantID, &b.StartDate, &b.EndDate, &b.PartySize, &b.Status, &b.SequenceNumber)
+	err = row.Scan(&b.BookingID, &b.BookingNumber, &b.MerchantID, &b.StartDate, &b.EndDate, &b.DurationMinutes, &b.PartySize, &b.Comment, &b.Status, &b.SequenceNumber)
 
 	if err != nil {
 		if err == sql.ErrNoRows {

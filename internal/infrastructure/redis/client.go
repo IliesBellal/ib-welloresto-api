@@ -75,6 +75,21 @@ func (c *Client) Set(ctx context.Context, key string, value string, ttl time.Dur
 	return true
 }
 
+// SetNX stocke une valeur uniquement si la cle n'existe pas deja.
+func (c *Client) SetNX(ctx context.Context, key string, value string, ttl time.Duration) bool {
+	if c == nil || c.rdb == nil {
+		return false
+	}
+
+	ok, err := c.rdb.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		logger.FromContext(ctx).Warn("⚠️ Redis Error (SetNX): " + err.Error())
+		return false
+	}
+
+	return ok
+}
+
 // Delete pareil : on ne veut pas bloquer un flow métier pour un problème de cache
 func (c *Client) Delete(ctx context.Context, key string) bool {
 	if c == nil || c.rdb == nil {
@@ -106,7 +121,6 @@ func (c *Client) InvalidateMerchantMenuCaches(ctx context.Context, merchantID st
 		}
 	}
 }
-
 
 // ScanDeleteByPattern supprime toutes les clés correspondant au pattern via SCAN + DEL par batch.
 // Retourne le nombre total de clés supprimées.
