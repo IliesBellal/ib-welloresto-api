@@ -3,8 +3,10 @@ package reservation
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookings"
 )
 
@@ -116,7 +118,7 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 	t := time.Unix(requestedUnix, 0).In(loc)
 
 	// On recrée la string YYYY-MM-DD pour que tes requêtes SQL continuent de fonctionner parfaitement !
-	requestedDateStr := t.Format("2006-01-02")
+	requestedDateStr := bookingcore.NormalizeRequestedDate(t)
 
 	dayOfWeek := int(t.Weekday())
 	if dayOfWeek == 0 {
@@ -138,67 +140,37 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 	// 4. Calcul de l'heure actuelle chez le marchand
 	nowMerchant := time.Now().In(loc)
 
-	var allSlots []Slot
-
+	slotRanges := make([]bookingcore.SlotRange, 0, len(ranges))
 	for _, r := range ranges {
-		// Parsing des bornes en utilisant la date string qu'on a formatée
-		startService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourFrom, loc)
-		endService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourTo, loc)
+		slotRanges = append(slotRanges, bookingcore.SlotRange{
+			ID:              mustAtoi(r.ID),
+			HourFrom:        r.HourFrom,
+			HourTo:          r.HourTo,
+			BookingCapacity: r.BookingCapacity,
+		})
+	}
 
-		firstBookable := startService
-		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
-			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.FirstBookingTime, loc)
-		}
+	computed := bookingcore.ComputeSlots(
+		bookingcore.SlotParams{
+			RequestedDate:            requestedDateStr,
+			SlotIntervalMinutes:      merchant.SlotIntervalMinutes,
+			DefaultDurationMinutes:   merchant.DefaultBookingDuration,
+			LastBookingOffsetMinutes: merchant.LastBookingOffsetMinutes,
+		},
+		slotRanges,
+		bookings,
+		nowMerchant,
+	)
 
-		lastBookable := endService
-		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
-			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.LastBookingTime, loc)
-		}
-
-		currentSlot := firstBookable
-		interval := time.Duration(merchant.SlotIntervalMinutes) * time.Minute
-		duration := time.Duration(merchant.DefaultBookingDuration) * time.Minute
-
-		for !currentSlot.After(lastBookable) {
-			isAvailable := true
-
-			// Déjà passé ?
-			if currentSlot.Before(nowMerchant) {
-				isAvailable = false
-			}
-
-			if isAvailable {
-				// Vérification capacité
-				maxBooked := 0
-				endBookingWindow := currentSlot.Add(duration)
-
-				tempSlot := currentSlot
-				for tempSlot.Before(endBookingWindow) {
-					slotKey := tempSlot.Format("15:04:05")
-					if booked, ok := bookings[slotKey]; ok {
-						if booked > maxBooked {
-							maxBooked = booked
-						}
-					}
-					tempSlot = tempSlot.Add(interval)
-				}
-
-				if (r.BookingCapacity - maxBooked) < partySize {
-					isAvailable = false
-				}
-			}
-
-			allSlots = append(allSlots, Slot{
-				// FIX: "H:i" c'est pour le PHP. En Go, on utilise "15:04" pour extraire l'heure.
-				Time:      currentSlot.Format("15:04"),
-				Available: isAvailable,
-				HOOID:     r.ID,
-				// Facultatif mais très pratique pour le front :
-				// UnixTime: currentSlot.Unix(),
-			})
-
-			currentSlot = currentSlot.Add(interval)
-		}
+	allSlots := make([]Slot, 0, len(computed))
+	for _, s := range computed {
+		isAvailable := s.Available && s.RemainingCapacity >= partySize
+		timeFrom, _ := time.ParseInLocation("2006-01-02 15:04:05", s.DateFrom, loc)
+		allSlots = append(allSlots, Slot{
+			Time:      timeFrom.Format("15:04"),
+			Available: isAvailable,
+			HOOID:     fmt.Sprintf("%d", s.HourOfOperationID),
+		})
 	}
 
 	return AvailabilityResponse{Slots: allSlots}
@@ -261,6 +233,11 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, r
 func (s *reservationService) normalizePhone(phone string) string {
 	// Implémente ici ta logique PHP normalizePhoneNumber
 	return phone
+}
+
+func mustAtoi(v string) int {
+	n, _ := strconv.Atoi(v)
+	return n
 }
 
 const MaximumSequenceNumber = 3
