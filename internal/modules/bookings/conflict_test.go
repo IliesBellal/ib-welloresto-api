@@ -99,6 +99,64 @@ func TestFindConflictingBookings_QueryShapeAndArgs(t *testing.T) {
 	}
 }
 
+func TestHasRuleOverlap(t *testing.T) {
+	rules := []BookingDurationRule{
+		{RuleID: "r1", MinPartySize: 1, MaxPartySize: 4, DurationMinutes: 90, Enabled: true},
+		{RuleID: "r2", MinPartySize: 5, MaxPartySize: 8, DurationMinutes: 120, Enabled: true},
+	}
+
+	if hasRuleOverlap(rules, 3, 6, "") == false {
+		t.Fatal("expected overlap for intersecting range")
+	}
+	if hasRuleOverlap(rules, 9, 12, "") == true {
+		t.Fatal("did not expect overlap for disjoint range")
+	}
+	if hasRuleOverlap(rules, 5, 8, "r2") == true {
+		t.Fatal("self exclusion should ignore matching rule id")
+	}
+}
+
+func TestPutBookingSettings_Validation(t *testing.T) {
+	svc := &BookingsService{}
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
+
+	invalidCases := []PutBookingSettingsRequest{
+		{MinBookingNoticeMinutes: -1, MaxBookingHorizonDays: 30, OverbookingPercent: 0, ReserveMinimumPartySize: 1, ReserveMaximumPartySize: 8},
+		{MinBookingNoticeMinutes: 0, MaxBookingHorizonDays: 0, OverbookingPercent: 0, ReserveMinimumPartySize: 1, ReserveMaximumPartySize: 8},
+		{MinBookingNoticeMinutes: 0, MaxBookingHorizonDays: 30, OverbookingPercent: 101, ReserveMinimumPartySize: 1, ReserveMaximumPartySize: 8},
+		{MinBookingNoticeMinutes: 0, MaxBookingHorizonDays: 30, OverbookingPercent: 0, ReserveMinimumPartySize: 9, ReserveMaximumPartySize: 8},
+	}
+
+	for _, req := range invalidCases {
+		if _, err := svc.PutBookingSettings(ctx, "tok", &req); !errors.Is(err, models.ErrInvalidInput) {
+			t.Fatalf("expected ErrInvalidInput, got %v for req %+v", err, req)
+		}
+	}
+}
+
+func TestPutBookingHours_Validation(t *testing.T) {
+	svc := &BookingsService{}
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
+
+	first := "12:00:00"
+	last := "11:00:00"
+	capacity := 10
+	_, err := svc.PutBookingHours(ctx, "tok", &PutBookingSettingsHoursRequest{
+		Hours: []models.POSHoursOfOperationPatch{{
+			DayOfWeekFrom:    1,
+			DayOfWeekTo:      1,
+			HourFrom:         "10:00:00",
+			HourTo:           "14:00:00",
+			BookingCapacity:  &capacity,
+			FirstBookingTime: &first,
+			LastBookingTime:  &last,
+		}},
+	})
+	if !errors.Is(err, models.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for invalid hours payload, got %v", err)
+	}
+}
+
 func TestFindConflictingBookings_ExcludeSelf(t *testing.T) {
 	db, mock, _ := newCapturingMockDB(t)
 	defer db.Close()
