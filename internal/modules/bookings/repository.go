@@ -347,10 +347,15 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 		return nil, err
 	}
 
+	durationRules, err := r.loadBookingDurationRules(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	// -------------------------------------------------------
 	// 4) Compute occupation for each slot
 	// -------------------------------------------------------
-	occupation := r.computeOccupation(bookings, params.SlotIntervalMinutes)
+	occupation := r.computeOccupation(bookings, params, durationRules)
 
 	// -------------------------------------------------------
 	// 5) Generate availability slots
@@ -360,6 +365,7 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 		requestedDate,
 		timeRanges,
 		occupation,
+		durationRules,
 	)
 
 	// -------------------------------------------------------
@@ -391,12 +397,23 @@ func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merc
 	db := dbutils.GetDB(ctx, r.database)
 
 	row := db.QueryRowContext(ctx, `
-        SELECT m.id, m.timezone, bs.default_booking_duration, bs.slot_interval_minutes,
-               bs.auto_accept_reserve_bookings, bs.reserve_maximum_party_size,
-               bs.last_booking_offset_minutes, bs.cancelable_by_customer,
-               bs.cancel_booking_limit_offset_hours, m.logo_url, m.fullName
-        FROM bookings_settings bs
-        INNER JOIN merchant m ON bs.merchant_id = m.id
+	 SELECT m.id, m.timezone,
+		 COALESCE(bs.default_booking_duration, 90),
+		 COALESCE(bs.slot_interval_minutes, 15),
+		 COALESCE(bs.auto_accept_reserve_bookings, 0),
+		 COALESCE(bs.reserve_maximum_party_size, 8),
+		 COALESCE(bs.reserve_minimum_party_size, 1),
+		 COALESCE(bs.first_booking_offset_minutes, 0),
+		 COALESCE(bs.last_booking_offset_minutes, 60),
+		 COALESCE(bs.cancelable_by_customer, 1),
+		 COALESCE(bs.cancel_booking_limit_offset_hours, 48),
+		 COALESCE(bs.enabled, 1),
+		 COALESCE(bs.overbooking_percent, 0),
+		 COALESCE(bs.max_booking_horizon_days, 90),
+		 COALESCE(bs.pending_expiration_hours, 24),
+		 m.logo_url, m.fullName
+	 FROM merchant m
+	 LEFT JOIN bookings_settings bs ON bs.merchant_id = m.id
         WHERE m.id = ?
     `, merchantID)
 
@@ -406,11 +423,17 @@ func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merc
 		&params.Timezone,
 		&params.DefaultBookingDuration,
 		&params.SlotIntervalMinutes,
-		&params.AutoAccept,
+		&params.AutoAcceptReserveBookings,
 		&params.ReserveMaximumPartySize,
+		&params.ReserveMinimumPartySize,
+		&params.FirstBookingOffsetMinutes,
 		&params.LastBookingOffsetMinutes,
 		&params.CancelableByCustomer,
-		&params.CancelBookingLimitOffsetHr,
+		&params.CancelBookingLimitOffsetHours,
+		&params.Enabled,
+		&params.OverbookingPercent,
+		&params.MaxBookingHorizonDays,
+		&params.PendingExpirationHours,
 		&params.LogoURL,
 		&params.BusinessName,
 	)
@@ -433,15 +456,19 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 
 	rows, err := db.QueryContext(ctx, `
-        SELECT id, hour_from, hour_to, booking_capacity
+				SELECT id, hour_from, hour_to, booking_capacity, first_booking_time, last_booking_time
         FROM hours_of_operation
         WHERE merchant_id = ?
           AND enabled = 1
-          AND day_of_week_from = ?
+					AND (
+								(day_of_week_from <= day_of_week_to AND ? BETWEEN day_of_week_from AND day_of_week_to)
+								OR
+								(day_of_week_from > day_of_week_to AND (? >= day_of_week_from OR ? <= day_of_week_to))
+							)
           AND (valid_from IS NULL OR valid_from <= ?)
           AND (valid_to IS NULL OR valid_to >= ?)
     `,
-		merchantID, dayOfWeek, requestedDate, requestedDate,
+		merchantID, dayOfWeek, dayOfWeek, dayOfWeek, requestedDate, requestedDate,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -451,7 +478,7 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 	list := []TimeRange{}
 	for rows.Next() {
 		var tr TimeRange
-		if err := rows.Scan(&tr.ID, &tr.HourFrom, &tr.HourTo, &tr.BookingCapacity); err != nil {
+		if err := rows.Scan(&tr.ID, &tr.HourFrom, &tr.HourTo, &tr.BookingCapacity, &tr.FirstBookingTime, &tr.LastBookingTime); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, tr)
@@ -462,14 +489,17 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 
 func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, requestedDate string) ([]ExistingBooking, error) {
 	db := dbutils.GetDB(ctx, r.database)
+	dayStart := requestedDate + " 00:00:00"
+	dayEndTime, _ := time.Parse("2006-01-02 15:04:05", dayStart)
+	dayEnd := dayEndTime.Add(24 * time.Hour).Format("2006-01-02 15:04:05")
 
 	rows, err := db.QueryContext(ctx, `
-        SELECT party_size, booking_date_from, booking_date_to
+				SELECT party_size, booking_date_from, booking_date_to, booking_duration, status
         FROM bookings
-        WHERE CAST(booking_date_from AS DATE) = ?
-          AND status IN ('ACCEPTED','ORDER_OPEN')
+				WHERE booking_date_from < ?
+					AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
           AND merchant_id = ?
-    `, requestedDate, merchantID)
+		`, dayEnd, dayStart, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -479,8 +509,11 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 
 	for rows.Next() {
 		var b ExistingBooking
-		if err := rows.Scan(&b.PartySize, &b.StartDate, &b.EndDate); err != nil {
+		if err := rows.Scan(&b.PartySize, &b.StartDate, &b.EndDate, &b.DurationMinutes, &b.Status); err != nil {
 			return nil, err
+		}
+		if !bookingcore.IsActiveForConflict(b.Status) {
+			continue
 		}
 		list = append(list, b)
 	}
@@ -488,40 +521,97 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 	return list, nil
 }
 
-func (r *BookingsRepository) computeOccupation(bookings []ExistingBooking, interval int) map[string]int {
+func (r *BookingsRepository) loadBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+        SELECT min_party_size, max_party_size, duration_minutes, enabled
+        FROM booking_duration_rules
+        WHERE merchant_id = ?
+        ORDER BY min_party_size, max_party_size
+    `, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rules := []bookingcore.DurationRule{}
+	for rows.Next() {
+		var rule bookingcore.DurationRule
+		if err := rows.Scan(&rule.MinPartySize, &rule.MaxPartySize, &rule.DurationMinutes, &rule.Enabled); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+
+	return rules, rows.Err()
+}
+
+func (r *BookingsRepository) computeOccupation(bookings []ExistingBooking, params *MerchantBookingParams, rules []bookingcore.DurationRule) map[string]int {
 	input := make([]bookingcore.IntervalBooking, 0, len(bookings))
 	for _, b := range bookings {
 		input = append(input, bookingcore.IntervalBooking{
-			PartySize: b.PartySize,
-			StartDate: b.StartDate,
-			EndDate:   b.EndDate,
+			PartySize:       b.PartySize,
+			StartDate:       b.StartDate,
+			EndDate:         b.EndDate,
+			DurationMinutes: b.DurationMinutes,
 		})
 	}
 
-	return bookingcore.BuildOccupationByInterval(input, interval, 90)
+	return bookingcore.BuildOccupationByInterval(input, params.SlotIntervalMinutes, bookingcore.BookingSettings{
+		DefaultBookingDuration:        params.DefaultBookingDuration,
+		AutoAcceptReserveBookings:     params.AutoAcceptReserveBookings,
+		ReserveMaximumPartySize:       params.ReserveMaximumPartySize,
+		ReserveMinimumPartySize:       params.ReserveMinimumPartySize,
+		FirstBookingOffsetMinutes:     params.FirstBookingOffsetMinutes,
+		LastBookingOffsetMinutes:      params.LastBookingOffsetMinutes,
+		CancelBookingLimitOffsetHours: params.CancelBookingLimitOffsetHours,
+		SlotIntervalMinutes:           params.SlotIntervalMinutes,
+		CancelableByCustomer:          params.CancelableByCustomer,
+		Enabled:                       params.Enabled,
+		OverbookingPercent:            params.OverbookingPercent,
+		MaxBookingHorizonDays:         params.MaxBookingHorizonDays,
+		PendingExpirationHours:        params.PendingExpirationHours,
+	}, rules)
 }
 
-func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParams, requestedDate string, timeRanges []TimeRange, occupation map[string]int) []BookingSlot {
+func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParams, requestedDate string, timeRanges []TimeRange, occupation map[string]int, rules []bookingcore.DurationRule) []BookingSlot {
 	ranges := make([]bookingcore.SlotRange, 0, len(timeRanges))
 	for _, tr := range timeRanges {
 		ranges = append(ranges, bookingcore.SlotRange{
-			ID:              tr.ID,
-			HourFrom:        tr.HourFrom,
-			HourTo:          tr.HourTo,
-			BookingCapacity: tr.BookingCapacity,
+			ID:               tr.ID,
+			HourFrom:         tr.HourFrom,
+			HourTo:           tr.HourTo,
+			BookingCapacity:  tr.BookingCapacity,
+			FirstBookingTime: tr.FirstBookingTime,
+			LastBookingTime:  tr.LastBookingTime,
 		})
 	}
 
 	computed := bookingcore.ComputeSlots(
 		bookingcore.SlotParams{
-			RequestedDate:            requestedDate,
-			SlotIntervalMinutes:      params.SlotIntervalMinutes,
-			DefaultDurationMinutes:   params.DefaultBookingDuration,
-			LastBookingOffsetMinutes: params.LastBookingOffsetMinutes,
+			RequestedDate: requestedDate,
+			PartySize:     params.ReserveMinimumPartySize,
+			BookingSettings: bookingcore.BookingSettings{
+				DefaultBookingDuration:        params.DefaultBookingDuration,
+				AutoAcceptReserveBookings:     params.AutoAcceptReserveBookings,
+				ReserveMaximumPartySize:       params.ReserveMaximumPartySize,
+				ReserveMinimumPartySize:       params.ReserveMinimumPartySize,
+				FirstBookingOffsetMinutes:     params.FirstBookingOffsetMinutes,
+				LastBookingOffsetMinutes:      params.LastBookingOffsetMinutes,
+				CancelBookingLimitOffsetHours: params.CancelBookingLimitOffsetHours,
+				SlotIntervalMinutes:           params.SlotIntervalMinutes,
+				CancelableByCustomer:          params.CancelableByCustomer,
+				Enabled:                       params.Enabled,
+				OverbookingPercent:            params.OverbookingPercent,
+				MaxBookingHorizonDays:         params.MaxBookingHorizonDays,
+				PendingExpirationHours:        params.PendingExpirationHours,
+			},
+			DurationRules: rules,
 		},
 		ranges,
 		occupation,
-		time.Now().In(time.FixedZone("UTC", 0)),
+		time.Now().In(time.FixedZone(params.Timezone, 0)),
 	)
 
 	slots := make([]BookingSlot, 0, len(computed))

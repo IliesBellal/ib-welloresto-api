@@ -110,6 +110,9 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 	if merchant.ReserveMaximumPartySize < partySize {
 		return AvailabilityResponse{Status: "maximum_party_size_reached", Error: "Maximum party size reached"}
 	}
+	if merchant.ReserveMinimumPartySize > 0 && partySize < merchant.ReserveMinimumPartySize {
+		return AvailabilityResponse{Status: "minimum_party_size_not_reached", Error: "Minimum party size not reached"}
+	}
 
 	// 2. Préparation de la date via le timestamp Unix
 	loc, _ := time.LoadLocation(merchant.Timezone)
@@ -136,6 +139,27 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
 	}
 
+	durationRules, err := s.repo.GetBookingDurationRules(ctx, merchant.MerchantID)
+	if err != nil {
+		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
+	}
+
+	occupation := bookingcore.BuildOccupationByInterval(bookings, merchant.SlotIntervalMinutes, bookingcore.BookingSettings{
+		DefaultBookingDuration:        merchant.DefaultBookingDuration,
+		AutoAcceptReserveBookings:     merchant.AutoAcceptReserveBookings,
+		ReserveMaximumPartySize:       merchant.ReserveMaximumPartySize,
+		ReserveMinimumPartySize:       merchant.ReserveMinimumPartySize,
+		FirstBookingOffsetMinutes:     merchant.FirstBookingOffsetMinutes,
+		LastBookingOffsetMinutes:      merchant.LastBookingOffsetMinutes,
+		CancelBookingLimitOffsetHours: merchant.CancelBookingLimitOffsetHours,
+		SlotIntervalMinutes:           merchant.SlotIntervalMinutes,
+		CancelableByCustomer:          merchant.CancelableByCustomer,
+		Enabled:                       true,
+		OverbookingPercent:            merchant.OverbookingPercent,
+		MaxBookingHorizonDays:         merchant.MaxBookingHorizonDays,
+		PendingExpirationHours:        merchant.PendingExpirationHours,
+	}, durationRules)
+
 	// 4. Calcul de l'heure actuelle chez le marchand
 	nowMerchant := time.Now().In(loc)
 
@@ -151,13 +175,27 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 
 	computed := bookingcore.ComputeSlots(
 		bookingcore.SlotParams{
-			RequestedDate:            requestedDateStr,
-			SlotIntervalMinutes:      merchant.SlotIntervalMinutes,
-			DefaultDurationMinutes:   merchant.DefaultBookingDuration,
-			LastBookingOffsetMinutes: merchant.LastBookingOffsetMinutes,
+			RequestedDate: requestedDateStr,
+			PartySize:     partySize,
+			BookingSettings: bookingcore.BookingSettings{
+				DefaultBookingDuration:        merchant.DefaultBookingDuration,
+				AutoAcceptReserveBookings:     merchant.AutoAcceptReserveBookings,
+				ReserveMaximumPartySize:       merchant.ReserveMaximumPartySize,
+				ReserveMinimumPartySize:       merchant.ReserveMinimumPartySize,
+				FirstBookingOffsetMinutes:     merchant.FirstBookingOffsetMinutes,
+				LastBookingOffsetMinutes:      merchant.LastBookingOffsetMinutes,
+				CancelBookingLimitOffsetHours: merchant.CancelBookingLimitOffsetHours,
+				SlotIntervalMinutes:           merchant.SlotIntervalMinutes,
+				CancelableByCustomer:          merchant.CancelableByCustomer,
+				Enabled:                       true,
+				OverbookingPercent:            merchant.OverbookingPercent,
+				MaxBookingHorizonDays:         merchant.MaxBookingHorizonDays,
+				PendingExpirationHours:        merchant.PendingExpirationHours,
+			},
+			DurationRules: durationRules,
 		},
 		slotRanges,
-		bookings,
+		occupation,
 		nowMerchant,
 	)
 

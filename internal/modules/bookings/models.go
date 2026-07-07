@@ -105,17 +105,23 @@ type AssignBookingLocationsRequest struct {
 // ----------------------------------------------------
 
 type MerchantBookingParams struct {
-	MerchantID                 int    `json:"merchant_id"`
-	Timezone                   string `json:"timezone"`
-	LogoURL                    string `json:"logo_url"`
-	BusinessName               string `json:"business_name"`
-	DefaultBookingDuration     int    `json:"default_booking_duration"`
-	SlotIntervalMinutes        int    `json:"slot_interval_minutes"`
-	ReserveMaximumPartySize    int    `json:"reserve_maximum_party_size"`
-	LastBookingOffsetMinutes   int    `json:"last_booking_offset_minutes"`
-	CancelableByCustomer       bool   `json:"cancelable_by_customer"`
-	CancelBookingLimitOffsetHr int    `json:"cancel_booking_limit_offset_hours"`
-	AutoAccept                 bool   `json:"auto_accept_reserve_bookings"`
+	MerchantID                    int    `json:"merchant_id"`
+	Timezone                      string `json:"timezone"`
+	LogoURL                       string `json:"logo_url"`
+	BusinessName                  string `json:"business_name"`
+	DefaultBookingDuration        int    `json:"default_booking_duration"`
+	SlotIntervalMinutes           int    `json:"slot_interval_minutes"`
+	ReserveMaximumPartySize       int    `json:"reserve_maximum_party_size"`
+	ReserveMinimumPartySize       int    `json:"reserve_minimum_party_size"`
+	FirstBookingOffsetMinutes     int    `json:"first_booking_offset_minutes"`
+	LastBookingOffsetMinutes      int    `json:"last_booking_offset_minutes"`
+	CancelableByCustomer          bool   `json:"cancelable_by_customer"`
+	CancelBookingLimitOffsetHours int    `json:"cancel_booking_limit_offset_hours"`
+	AutoAcceptReserveBookings     bool   `json:"auto_accept_reserve_bookings"`
+	Enabled                       bool   `json:"enabled"`
+	OverbookingPercent            int    `json:"overbooking_percent"`
+	MaxBookingHorizonDays         int    `json:"max_booking_horizon_days"`
+	PendingExpirationHours        int    `json:"pending_expiration_hours"`
 }
 
 // ----------------------------------------------------
@@ -123,10 +129,12 @@ type MerchantBookingParams struct {
 // ----------------------------------------------------
 
 type TimeRange struct {
-	ID              int    `json:"id"`
-	HourFrom        string `json:"hour_from"`
-	HourTo          string `json:"hour_to"`
-	BookingCapacity int    `json:"booking_capacity"`
+	ID               int     `json:"id"`
+	HourFrom         string  `json:"hour_from"`
+	HourTo           string  `json:"hour_to"`
+	BookingCapacity  int     `json:"booking_capacity"`
+	FirstBookingTime *string `json:"first_booking_time,omitempty"`
+	LastBookingTime  *string `json:"last_booking_time,omitempty"`
 }
 
 // ----------------------------------------------------
@@ -152,9 +160,11 @@ type BookingSlot struct {
 // ----------------------------------------------------
 
 type ExistingBooking struct {
-	PartySize int
-	StartDate string
-	EndDate   *string
+	PartySize       int
+	StartDate       string
+	EndDate         *string
+	DurationMinutes *int
+	Status          string
 }
 
 // ----------------------------------------------------
