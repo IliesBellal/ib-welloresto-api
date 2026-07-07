@@ -92,6 +92,14 @@ type BookingObjectRequest struct {
 	Booking         Booking         `json:"booking"`
 }
 
+type DenyBookingRequest struct {
+	DeletionReasonID *string `json:"deletion_reason_id"`
+}
+
+type AssignBookingLocationsRequest struct {
+	Locations []BookingLocation `json:"locations"`
+}
+
 // ----------------------------------------------------
 // Merchant params
 // ----------------------------------------------------

@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"time"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/r2"
@@ -21,6 +22,7 @@ import (
 	"welloresto-api/internal/webhook/deliveroo_orders"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/httprate"
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
@@ -226,6 +228,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Stripe ----
 	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
 
+	// Service Stripe Terminal (paiement carte borne). Paramétré par merchantID,
+	// jamais couplé à KioskAuth — réutilisable par un futur /pos/terminal/*.
+	terminalService := stripeInternalClient.NewTerminalService(
+		stripeManager,
+		stripeInternalClient.NewTerminalAccountStore(mysqlDB),
+		redisClient,
+	)
+
 	// ---- Uber ----
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats, redisClient)
 	uberHandler := uberModule.NewUberHandler(uberService)
@@ -392,7 +402,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
 		Pepper:                    cfg.Kiosk.Pepper,
 	}
-	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService)
+	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
 
@@ -1058,17 +1068,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
+		r.Patch("/{booking_id}/locations", bookingsH.AssignBookingLocations)
 	})
 
 	// --- BOOKINGS ---
 	r.Route("/rsv/{slug}", func(r chi.Router) {
+		r.Use(httprate.LimitByIP(60, 1*time.Minute))
 
 		r.Get("/open-hours", reservationHandler.HandleGetOpenHours)
 		r.Get("/booking-availability", reservationHandler.HandleGetAvailability)
-		r.Post("/booking/create", reservationHandler.HandleCreateReservation)
-		r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
-		r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
-		r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+
+		r.Group(func(r chi.Router) {
+			r.Use(httprate.LimitByIP(10, 1*time.Minute))
+			r.Post("/booking/create", reservationHandler.HandleCreateReservation)
+			r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
+			r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
+			r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+		})
 	})
 
 	r.Route("/integrations", func(r chi.Router) {
@@ -1125,7 +1141,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/orders/{order_id}", kioskHandler.GetKioskOrder)
 			r.Delete("/orders/{order_id}", kioskHandler.CancelKioskOrder)
 			r.Post("/orders/{order_id}/counter-payment", kioskHandler.ConfirmCounterPayment)
+			r.Post("/orders/{order_id}/switch-to-counter-payment", kioskHandler.SwitchToCounterPayment)
 			r.Post("/status/unavailable", kioskHandler.ReportUnavailable)
+
+			// Paiement carte (Stripe Terminal)
+			r.Post("/terminal/connection-token", kioskHandler.TerminalConnectionToken)
+			r.Post("/terminal/payment-intent", kioskHandler.TerminalCreatePaymentIntent)
+			r.Post("/terminal/payment-intent/{payment_intent_id}/cancel", kioskHandler.TerminalCancelPaymentIntent)
 		})
 	})
 

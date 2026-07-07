@@ -89,6 +89,7 @@ type BookingData struct {
 	StartDate      string `json:"start_date"`
 	EndDate        string `json:"end_date"`
 	PartySize      int    `json:"party_size"`
+	Comment        string `json:"comment,omitempty"`
 	Status         string `json:"status"`
 	SequenceNumber int    `json:"sequence_number"` // Ajouté pour la limite de modif
 	Cancelable     bool   `json:"cancelable"`      // Champ calculé
@@ -97,7 +98,9 @@ type BookingData struct {
 type CustomerData struct {
 	CustomerID       string   `json:"customer_id"`
 	MerchantID       string   `json:"merchant_id"`
+	CustomerName     string   `json:"customer_name"`
 	CustomerTel      string   `json:"customer_tel"`
+	CustomerEmail    string   `json:"customer_email"`
 	AvailableRewards []Reward `json:"available_rewards,omitempty"`
 }
 

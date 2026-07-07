@@ -3,6 +3,7 @@ package bookings
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
@@ -130,8 +131,15 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	bookingID := chi.URLParam(r, "booking_id")
+	var req DenyBookingRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			models.SendJSON(w, http.StatusBadRequest, "bookings", "deny", map[string]string{"error": "invalid_request"})
+			return
+		}
+	}
 
-	result, err := h.svc.DenyBooking(ctx, token, bookingID)
+	result, err := h.svc.DenyBooking(ctx, token, bookingID, &req)
 
 	if err != nil {
 		models.SendErrorJSON(w, "bookings", "deny", err)
@@ -139,6 +147,43 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "bookings", "deny", result)
+}
+
+func (h *BookingsHandler) AssignBookingLocations(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "assign_locations", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	bookingID := chi.URLParam(r, "booking_id")
+
+	var req AssignBookingLocationsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "bookings", "assign_locations", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	booking, err := h.svc.AssignBookingLocations(ctx, token, bookingID, &req)
+	if err != nil {
+		var conflictErr *TableConflictError
+		if errors.As(err, &conflictErr) {
+			models.SendJSON(w, http.StatusConflict, "bookings", "assign_locations", map[string]interface{}{
+				"error":     "table_conflict",
+				"conflicts": conflictErr.Conflicts,
+			})
+			return
+		}
+
+		models.SendErrorJSON(w, "bookings", "assign_locations", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "assign_locations", map[string]interface{}{
+		"status":  "1",
+		"booking": booking,
+	})
 }
 
 func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.Request) {

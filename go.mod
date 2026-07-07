@@ -36,9 +36,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
+	github.com/go-chi/httprate v0.16.0 // indirect
 	github.com/jung-kurt/gofpdf v1.16.2 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/stripe/stripe-go/v78 v78.12.0 // indirect
+	github.com/zeebo/xxh3 v1.0.2 // indirect
+	golang.org/x/sys v0.32.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 

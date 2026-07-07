@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -105,14 +107,23 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 		return nil, err
 	}
 
+	booking, err := s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusConfirmed); err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
 	// 1️⃣ Update booking state
-	err = s.repo.SetBookingState(ctx, bookingID, "ACCEPTED")
+	err = s.repo.SetBookingState(ctx, user.MerchantID, bookingID, bookingcore.StatusConfirmed)
 	if err != nil {
 		return nil, err
 	}
 
 	// 2️⃣ Reload booking (fetchAndBuildBookings)
-	booking, err := s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
+	booking, err = s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,13 +136,8 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 	}, nil
 }
 
-func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID string) (map[string]interface{}, error) {
+func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID string, req *DenyBookingRequest) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.repo.SetBookingState(ctx, bookingID, "DENIED")
 	if err != nil {
 		return nil, err
 	}
@@ -141,10 +147,84 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 		return nil, err
 	}
 
+	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusDenied); err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	if req != nil && req.DeletionReasonID != nil {
+		ok, err := s.repo.IsValidDeletionReason(ctx, *req.DeletionReasonID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, models.ErrInvalidInput
+		}
+	}
+
+	err = s.repo.DenyBooking(ctx, user.MerchantID, bookingID, user.UserID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	booking, err = s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
 	return map[string]interface{}{
 		"status":  "1",
 		"booking": booking,
 	}, nil
+}
+
+func (s *BookingsService) AssignBookingLocations(ctx context.Context, token, bookingID string, req *AssignBookingLocationsRequest) (*Booking, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	var result *Booking
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		booking, err := s.repo.GetBookingByID(txCtx, user.MerchantID, bookingID)
+		if err != nil {
+			return err
+		}
+
+		locationIDs := make([]string, 0, len(req.Locations))
+		for _, loc := range req.Locations {
+			locationIDs = append(locationIDs, loc.LocationID)
+		}
+
+		conflicts, err := s.repo.FindConflictingBookings(
+			txCtx,
+			user.MerchantID,
+			locationIDs,
+			booking.StartDate,
+			booking.EndDate,
+			bookingID,
+		)
+		if err != nil {
+			return err
+		}
+		if len(conflicts) > 0 {
+			return &TableConflictError{Conflicts: conflicts}
+		}
+
+		if err := s.repo.ReplaceBookingLocations(txCtx, user.MerchantID, bookingID, locationIDs); err != nil {
+			return err
+		}
+
+		result, err = s.repo.GetBookingByID(txCtx, user.MerchantID, bookingID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, date string) (*BookingAvailabilityResponse, error) {

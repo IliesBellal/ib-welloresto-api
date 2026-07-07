@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookings"
 )
@@ -177,8 +176,11 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 }
 
 func (s *reservationService) CreateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse {
+	if req.Booking == nil || req.Customer == nil {
+		return CreateBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+
 	// 1. Vérification Marchand (Utilise la connexion, puis la libère)
-	log := logger.FromContext(ctx)
 
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
@@ -197,7 +199,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, r
 
 	req.MerchantID = merchant.MerchantID
 	req.Booking.MerchantID = merchant.MerchantID
-	req.Booking.Status = "PENDING_APPROVAL"
+	req.Booking.Status = bookingcore.StatusPending
 	req.CreatedBy = "WR_ONLINE_BOOKING"
 
 	// Calcul de la date de fin
@@ -206,6 +208,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, r
 
 	// 3. Nettoyage des données
 	req.Customer.MerchantID = merchant.MerchantID
+	req.Customer.CustomerID = "" // ignore toute valeur fournie par le client public
 	req.Customer.CustomerTel = s.normalizePhone(req.Customer.CustomerTel)
 
 	// 4. Délégation de la persistance transactionnelle au Repository
@@ -219,12 +222,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, r
 	// 5. Auto-acceptation si activée
 	// À ce stade, la transaction de création est terminée et commitée. La connexion est libre !
 	if merchant.AutoAcceptReserveBookings {
-		_, err := s.bookingSvc.AcceptBooking(ctx, "nil", bookingID)
-		if err != nil {
-			log.Error(err.Error())
-			return CreateBookingResponse{Status: "-2", Error: "Auto-accept failed"}
-		}
-		req.Booking.Status = "ACCEPTED"
+		req.Booking.Status = bookingcore.StatusConfirmed
 	}
 
 	return CreateBookingResponse{Status: "1", Booking: req.Booking}
@@ -274,6 +272,10 @@ func (s *reservationService) GetReservation(ctx context.Context, qr string, book
 }
 
 func (s *reservationService) UpdateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse {
+	if req.Booking == nil {
+		return CreateBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+
 	// 1. Vérifier si c'est encore modifiable (Pas de transaction globale = pas de deadlock)
 	current := s.GetReservation(ctx, qr, req.Booking.BookingNumber)
 	if current.Booking == nil || !current.Booking.Cancelable {
@@ -296,11 +298,11 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 
 	req.Booking.BookingID = current.Booking.BookingID // On récupère l'ID interne
 	req.Booking.EndDate = startTime.Add(duration).Format("2006-01-02 15:04:05")
-	req.Booking.Status = "PENDING_APPROVAL"
+	req.Booking.Status = bookingcore.StatusPending
 
 	// 4. Auto-acceptation si activée
 	if merchant.AutoAcceptReserveBookings {
-		req.Booking.Status = "ACCEPTED"
+		req.Booking.Status = bookingcore.StatusConfirmed
 	}
 
 	// 5. Exécution de la mise à jour via le Repository
@@ -315,14 +317,17 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 
 func (s *reservationService) CancelReservation(ctx context.Context, qr string, bookingNumber string) GenericResponse {
 	// 1. Vérifier si annulable
+	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
+	if err != nil || merchant == nil {
+		return GenericResponse{Status: "-1", Error: "QR Code expired"}
+	}
+
 	current := s.GetReservation(ctx, qr, bookingNumber)
 	if current.Booking == nil || !current.Booking.Cancelable {
 		return GenericResponse{Status: "too_late_to_edit"}
 	}
 
-	// 2. Annulation via le service Booking existant
-	// C'est ce service qui gérera ses propres accès DB ou transactions s'il en a besoin !
-	_, err := s.bookingSvc.DenyBooking(ctx, "", bookingNumber)
+	err = s.repo.CancelBookingPublic(ctx, merchant.MerchantID, bookingNumber)
 	if err != nil {
 		return GenericResponse{Status: "2", Error: err.Error()}
 	}

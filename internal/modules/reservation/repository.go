@@ -3,8 +3,14 @@ package reservation
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strconv"
+	"time"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcore"
+	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/utils"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -20,16 +26,21 @@ type ReservationRepository interface {
 	GetBookingByNumber(ctx context.Context, bookingNumber string, merchantID string) (*BookingData, error)
 	UpdateBooking(ctx context.Context, b *BookingData) error
 	CancelBookingDB(ctx context.Context, bookingNumber string) error
+	CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error
 	CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error)
 }
 
 type reservationRepository struct {
-	database *sql.DB
+	database        *sql.DB
+	customerUpdater *customers.CustomersRepository
 }
 
 // NewReservationRepository instancie le repository
 func NewReservationRepository(db *sql.DB) ReservationRepository {
-	return &reservationRepository{database: db}
+	return &reservationRepository{
+		database:        db,
+		customerUpdater: customers.NewCustomerRepository(db),
+	}
 }
 
 func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) (*Merchant, error) {
@@ -294,38 +305,58 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// 2. Recherche du client (en utilisant la transaction courante)
-	queryCustomer := `
-		SELECT customer_id 
-		FROM customer 
-		WHERE customer_tel = ? AND enabled = 1 AND merchant_id = ?`
+	customer := &models.Customer{
+		MerchantID:    req.MerchantID,
+		CustomerName:  stringPtr(req.Customer.CustomerName),
+		CustomerTel:   stringPtr(req.Customer.CustomerTel),
+		CustomerEmail: stringPtr(req.Customer.CustomerEmail),
+	}
 
-	var customerID string
-	err := db.QueryRowContext(ctx, queryCustomer, req.Customer.CustomerTel, req.MerchantID).Scan(&customerID)
-
-	if err != nil && err != sql.ErrNoRows {
-		// Erreur SQL autre que "non trouvé"
+	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
+	if err != nil {
 		log.Error(err.Error())
 		return "", err
 	}
-
-	if err == nil {
-		// Client trouvé
-		req.Customer.CustomerID = customerID
+	if customerID == nil || *customerID == "" {
+		return "", fmt.Errorf("customer_upsert_failed")
 	}
 
-	// 3. Insertion de la réservation
+	bookingNumber, err := r.generateUniqueBookingNumber(ctx, req.MerchantID)
+	if err != nil {
+		return "", err
+	}
+
+	start, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	if err != nil {
+		return "", err
+	}
+	end, err := time.Parse("2006-01-02 15:04:05", req.Booking.EndDate)
+	if err != nil {
+		return "", err
+	}
+	duration := int(end.Sub(start).Minutes())
+	if duration < 0 {
+		return "", fmt.Errorf("start date is after end date")
+	}
+
 	queryInsert := `
-		INSERT INTO bookings (merchant_id, customer_id, booking_date_from, booking_date_to, party_size, status, created_by) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
+		INSERT INTO bookings (
+			booking_number, status, source, merchant_id, party_size,
+			customer_id, comment, creation_date, booking_date_from,
+			booking_date_to, booking_duration, created_by
+		)
+		VALUES (?, ?, 'web', ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?)`
 
 	res, err := db.ExecContext(ctx, queryInsert,
+		bookingNumber,
+		bookingcore.NormalizeLegacyStatus(req.Booking.Status),
 		req.MerchantID,
-		req.Customer.CustomerID,
+		req.Booking.PartySize,
+		*customerID,
+		req.Booking.Comment,
 		req.Booking.StartDate,
 		req.Booking.EndDate,
-		req.Booking.PartySize,
-		req.Booking.Status,
+		duration,
 		req.CreatedBy,
 	)
 	if err != nil {
@@ -337,5 +368,47 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		return "", err
 	}
 
+	req.Booking.BookingNumber = bookingNumber
 	return strconv.FormatInt(bookingID, 10), nil
+}
+
+func (r *reservationRepository) CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings
+		SET status = ?, cancelled_by = ?, deletion_reason_id = NULL
+		WHERE booking_number = ? AND merchant_id = ?`,
+		bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("customer", ""), bookingNumber, merchantID,
+	)
+	return err
+}
+
+func (r *reservationRepository) generateUniqueBookingNumber(ctx context.Context, merchantID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	for {
+		bookingNumber := utils.GenerateRandomString(6)
+
+		var exists string
+		err := db.QueryRowContext(ctx,
+			`SELECT booking_id FROM bookings WHERE merchant_id = ? AND booking_number = ?`,
+			merchantID,
+			bookingNumber,
+		).Scan(&exists)
+
+		if err == sql.ErrNoRows {
+			return bookingNumber, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+}
+
+func stringPtr(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }

@@ -77,7 +77,10 @@ func (h *ReservationHandler) HandleCreateReservation(w http.ResponseWriter, r *h
 // GET /reservation?slug=...&number=...
 func (h *ReservationHandler) HandleGetReservation(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
-	number := r.URL.Query().Get("number")
+	number := chi.URLParam(r, "booking_id")
+	if number == "" {
+		number = r.URL.Query().Get("number")
+	}
 	resp := h.svc.GetReservation(r.Context(), slug, number)
 	models.SendJSON(w, 200, "rsv", "get.booking", resp)
 }
@@ -86,7 +89,13 @@ func (h *ReservationHandler) HandleGetReservation(w http.ResponseWriter, r *http
 func (h *ReservationHandler) HandleUpdateReservation(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	var req BookingRequest
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "rsv", "update.booking", models.ErrInvalidInput)
+		return
+	}
+	if req.Booking != nil && req.Booking.BookingNumber == "" {
+		req.Booking.BookingNumber = chi.URLParam(r, "booking_id")
+	}
 	resp := h.svc.UpdateReservation(r.Context(), slug, req)
 	models.SendJSON(w, 200, "rsv", "update.booking", resp)
 }
@@ -94,7 +103,10 @@ func (h *ReservationHandler) HandleUpdateReservation(w http.ResponseWriter, r *h
 // POST /reservation/cancel?slug=...&number=...
 func (h *ReservationHandler) HandleCancelReservation(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
-	number := r.URL.Query().Get("number")
+	number := chi.URLParam(r, "booking_id")
+	if number == "" {
+		number = r.URL.Query().Get("number")
+	}
 	resp := h.svc.CancelReservation(r.Context(), slug, number)
 	models.SendJSON(w, 200, "rsv", "cancel.booking", resp)
 }

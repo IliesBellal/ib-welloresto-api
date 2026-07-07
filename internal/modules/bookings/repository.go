@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/utils"
 	"welloresto-api/internal/utils/dbutils"
@@ -239,17 +239,84 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
 	return conflicts, rows.Err()
 }
 
-func (r *BookingsRepository) SetBookingState(ctx context.Context, bookingID string, state string) error {
+func (r *BookingsRepository) SetBookingState(ctx context.Context, merchantID, bookingID string, state string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE bookings
         SET status = ?
-        WHERE booking_id = ?
-    `, state, bookingID)
+        WHERE booking_id = ? AND merchant_id = ?
+    `, state, bookingID, merchantID)
 
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (r *BookingsRepository) DenyBooking(ctx context.Context, merchantID, bookingID, userID string, req *DenyBookingRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var deletionReasonID interface{}
+	if req != nil && req.DeletionReasonID != nil {
+		deletionReasonID = *req.DeletionReasonID
+	}
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings
+		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = UTC_TIMESTAMP
+		WHERE booking_id = ? AND merchant_id = ?
+	`, bookingcore.StatusDenied, userID, deletionReasonID, bookingID, merchantID)
+	return err
+}
+
+func (r *BookingsRepository) IsValidDeletionReason(ctx context.Context, deletionReasonID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var existing string
+	err := db.QueryRowContext(ctx, `
+		SELECT deletion_reason_id
+		FROM deletion_reasons
+		WHERE deletion_reason_id = ?
+		  AND enabled = 1
+		  AND LOWER(deletion_reason_object) IN ('booking', 'bookings')
+		LIMIT 1
+	`, deletionReasonID).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (r *BookingsRepository) ReplaceBookingLocations(ctx context.Context, merchantID, bookingID string, locationIDs []string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		DELETE bl
+		FROM booked_location bl
+		INNER JOIN bookings b ON b.booking_id = bl.booking_id
+		WHERE bl.booking_id = ? AND b.merchant_id = ?
+	`, bookingID, merchantID)
+	if err != nil {
+		return err
+	}
+
+	for _, locationID := range locationIDs {
+		if strings.TrimSpace(locationID) == "" {
+			continue
+		}
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO booked_location(booking_id, location_id)
+			VALUES (?, ?)
+		`, bookingID, locationID)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
