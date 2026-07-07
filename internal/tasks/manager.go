@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	aicache "welloresto-api/internal/ai/cache"
 	"welloresto-api/internal/infrastructure/mailer"
@@ -44,5 +45,26 @@ func NewTasksManager(
 		AICache:        aiCache,
 		UpsellRepo:     upsellRepo,
 		Logger:         logger,
+	}
+}
+
+func (tm *TasksManager) ExpirePendingBookings() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("booking pending expiration skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.ExpirePendingBookings(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("booking pending expiration failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("booking pending expiration finished", zap.Int64("rows_affected", rows))
 	}
 }

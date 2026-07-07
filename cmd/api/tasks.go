@@ -14,6 +14,11 @@ func SetupTasks(
 	// 3. Configuration du Planificateur (Cron)
 	c := cron.New()
 
+	// CRON GLOBAL TOUJOURS DESACTIVE.
+	// La tache d'expiration des reservations pending est prete :
+	//   c.AddFunc("@hourly", func() { taskManager.ExpirePendingBookings() })
+	// Pour l'activer manuellement plus tard, retirer le return ci-dessous puis
+	// decommenter UNIQUEMENT cette ligne, sans reactiver les autres taches dormantes.
 	return
 
 	// Toutes les 15 minutes

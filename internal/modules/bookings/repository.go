@@ -393,6 +393,34 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	return resp, nil
 }
 
+func (r *BookingsRepository) ExpirePendingBookings(ctx context.Context) (int64, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	result, err := db.ExecContext(ctx, `
+		UPDATE bookings b
+		LEFT JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
+		SET b.status = ?,
+		    b.cancelled_by = ?,
+		    b.deletion_reason_id = ?,
+		    b.deletion_date = UTC_TIMESTAMP
+		WHERE b.status = ?
+		  AND COALESCE(
+				b.booking_date_to,
+				b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE
+		  ) < UTC_TIMESTAMP() - INTERVAL COALESCE(bs.pending_expiration_hours, 24) HOUR
+	`, bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("system", ""), "booking_pending_expired", bookingcore.StatusPending)
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return rowsAffected, nil
+}
+
 func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merchantID string) (*MerchantBookingParams, error) {
 	db := dbutils.GetDB(ctx, r.database)
 

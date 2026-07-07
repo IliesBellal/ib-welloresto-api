@@ -235,3 +235,7 @@ func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, dat
 
 	return s.repo.GetBookingAvailability(ctx, user.MerchantID, date)
 }
+
+func (s *BookingsService) ExpirePendingBookings(ctx context.Context) (int64, error) {
+	return s.repo.ExpirePendingBookings(ctx)
+}
