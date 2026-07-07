@@ -207,3 +207,22 @@ func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.
 		"data":   avail,
 	})
 }
+
+func (h *BookingsHandler) GetBookingSettings(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "get_settings", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	settings, err := h.svc.GetBookingSettings(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "bookings", "get_settings", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "get_settings", map[string]interface{}{
+		"status":   "1",
+		"settings": settings,
+	})
+}

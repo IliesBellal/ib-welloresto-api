@@ -50,6 +50,138 @@ func (r *BookingsRepository) GetBookingByID(ctx context.Context, merchantID, boo
 	return &list[0], nil
 }
 
+func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID string) (*BookingSettings, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	settings := &BookingSettings{}
+	err := db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(bs.enabled, 1),
+			COALESCE(bs.code, ''),
+			COALESCE(bs.auto_accept_reserve_bookings, 0),
+			COALESCE(bs.slot_interval_minutes, 15),
+			COALESCE(bs.default_booking_duration, 90),
+			COALESCE(bs.reserve_maximum_party_size, 8),
+			COALESCE(bs.reserve_minimum_party_size, 1),
+			COALESCE(bs.last_booking_offset_minutes, 60),
+			COALESCE(bs.min_booking_notice_minutes, 60),
+			COALESCE(bs.max_booking_horizon_days, 90),
+			COALESCE(bs.overbooking_percent, 0),
+			COALESCE(bs.cancelable_by_customer, 1),
+			COALESCE(bs.cancel_booking_limit_offset_hours, 48),
+			COALESCE(bs.pending_expiration_hours, 24)
+		FROM merchant m
+		LEFT JOIN bookings_settings bs ON bs.merchant_id = m.id
+		WHERE m.id = ?
+		LIMIT 1
+	`, merchantID).Scan(
+		&settings.Enabled,
+		&settings.Code,
+		&settings.AutoAcceptReserveBookings,
+		&settings.SlotIntervalMinutes,
+		&settings.DefaultBookingDuration,
+		&settings.ReserveMaximumPartySize,
+		&settings.ReserveMinimumPartySize,
+		&settings.LastBookingOffsetMinutes,
+		&settings.MinBookingNoticeMinutes,
+		&settings.MaxBookingHorizonDays,
+		&settings.OverbookingPercent,
+		&settings.CancelableByCustomer,
+		&settings.CancelBookingLimitOffsetHours,
+		&settings.PendingExpirationHours,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, models.ErrNotFound
+		}
+		return nil, err
+	}
+
+	rules, err := r.ListBookingDurationRules(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	settings.DurationRules = rules
+
+	physicalCapacity, err := r.GetPhysicalCapacity(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	settings.PhysicalCapacity = physicalCapacity
+
+	maxBookingCapacity, err := r.GetMaxBookingCapacity(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	settings.CapacityWarning = maxBookingCapacity > physicalCapacity
+
+	return settings, nil
+}
+
+func (r *BookingsRepository) GetPhysicalCapacity(ctx context.Context, merchantID string) (int, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var physicalCapacity int
+	err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(COALESCE(seats, 0)), 0)
+		FROM locations
+		WHERE merchant_id = ?
+		  AND enabled = 1
+	`, merchantID).Scan(&physicalCapacity)
+	if err != nil {
+		return 0, err
+	}
+
+	return physicalCapacity, nil
+}
+
+func (r *BookingsRepository) GetMaxBookingCapacity(ctx context.Context, merchantID string) (int, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var maxBookingCapacity int
+	err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(COALESCE(booking_capacity, 0)), 0)
+		FROM hours_of_operation
+		WHERE merchant_id = ?
+		  AND enabled = 1
+	`, merchantID).Scan(&maxBookingCapacity)
+	if err != nil {
+		return 0, err
+	}
+
+	return maxBookingCapacity, nil
+}
+
+func (r *BookingsRepository) ListBookingDurationRules(ctx context.Context, merchantID string) ([]BookingDurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT rule_id, min_party_size, max_party_size, duration_minutes, enabled
+		FROM booking_duration_rules
+		WHERE merchant_id = ? AND enabled = 1
+		ORDER BY min_party_size ASC, max_party_size ASC
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rules := make([]BookingDurationRule, 0)
+	for rows.Next() {
+		var rule BookingDurationRule
+		if err := rows.Scan(&rule.RuleID, &rule.MinPartySize, &rule.MaxPartySize, &rule.DurationMinutes, &rule.Enabled); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return rules, nil
+}
+
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObjectRequest) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 

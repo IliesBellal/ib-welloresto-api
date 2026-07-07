@@ -1062,6 +1062,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Post("/", bookingsH.SearchBookings)
 		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
+		r.Get("/settings", bookingsH.GetBookingSettings)
 
 		r.Post("/create", bookingsH.CreateBooking)
 		r.Get("/{booking_id}", bookingsH.GetBooking)
