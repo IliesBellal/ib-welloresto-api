@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/customers"
@@ -180,6 +181,469 @@ func (r *BookingsRepository) ListBookingDurationRules(ctx context.Context, merch
 	}
 
 	return rules, nil
+}
+
+func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchantID string, req *PutBookingSettingsRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO bookings_settings (
+			merchant_id,
+			enabled,
+			code,
+			auto_accept_reserve_bookings,
+			slot_interval_minutes,
+			default_booking_duration,
+			reserve_maximum_party_size,
+			reserve_minimum_party_size,
+			last_booking_offset_minutes,
+			min_booking_notice_minutes,
+			max_booking_horizon_days,
+			overbooking_percent,
+			cancelable_by_customer,
+			cancel_booking_limit_offset_hours,
+			pending_expiration_hours
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			enabled = VALUES(enabled),
+			code = VALUES(code),
+			auto_accept_reserve_bookings = VALUES(auto_accept_reserve_bookings),
+			slot_interval_minutes = VALUES(slot_interval_minutes),
+			default_booking_duration = VALUES(default_booking_duration),
+			reserve_maximum_party_size = VALUES(reserve_maximum_party_size),
+			reserve_minimum_party_size = VALUES(reserve_minimum_party_size),
+			last_booking_offset_minutes = VALUES(last_booking_offset_minutes),
+			min_booking_notice_minutes = VALUES(min_booking_notice_minutes),
+			max_booking_horizon_days = VALUES(max_booking_horizon_days),
+			overbooking_percent = VALUES(overbooking_percent),
+			cancelable_by_customer = VALUES(cancelable_by_customer),
+			cancel_booking_limit_offset_hours = VALUES(cancel_booking_limit_offset_hours),
+			pending_expiration_hours = VALUES(pending_expiration_hours)
+	`,
+		merchantID,
+		req.Enabled,
+		req.Code,
+		req.AutoAcceptReserveBookings,
+		req.SlotIntervalMinutes,
+		req.DefaultBookingDuration,
+		req.ReserveMaximumPartySize,
+		req.ReserveMinimumPartySize,
+		req.LastBookingOffsetMinutes,
+		req.MinBookingNoticeMinutes,
+		req.MaxBookingHorizonDays,
+		req.OverbookingPercent,
+		req.CancelableByCustomer,
+		req.CancelBookingLimitOffsetHours,
+		req.PendingExpirationHours,
+	)
+
+	return err
+}
+
+func (r *BookingsRepository) CreateBookingDurationRule(ctx context.Context, merchantID string, req CreateDurationRuleRequest) (*BookingDurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	ruleID := helpers.GeneratePrefixedID("bdr")
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO booking_duration_rules (rule_id, merchant_id, min_party_size, max_party_size, duration_minutes, enabled)
+		VALUES (?, ?, ?, ?, ?, 1)
+	`, ruleID, merchantID, req.MinPartySize, req.MaxPartySize, req.DurationMinutes)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.GetBookingDurationRuleByID(ctx, merchantID, ruleID)
+}
+
+func (r *BookingsRepository) GetBookingDurationRuleByID(ctx context.Context, merchantID, ruleID string) (*BookingDurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var rule BookingDurationRule
+	err := db.QueryRowContext(ctx, `
+		SELECT rule_id, min_party_size, max_party_size, duration_minutes, enabled
+		FROM booking_duration_rules
+		WHERE merchant_id = ? AND rule_id = ?
+		LIMIT 1
+	`, merchantID, ruleID).Scan(&rule.RuleID, &rule.MinPartySize, &rule.MaxPartySize, &rule.DurationMinutes, &rule.Enabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, models.ErrNotFound
+		}
+		return nil, err
+	}
+
+	return &rule, nil
+}
+
+func (r *BookingsRepository) UpdateBookingDurationRule(ctx context.Context, merchantID, ruleID string, req PatchDurationRuleRequest) (*BookingDurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rule, err := r.GetBookingDurationRuleByID(ctx, merchantID, ruleID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.MinPartySize != nil {
+		rule.MinPartySize = *req.MinPartySize
+	}
+	if req.MaxPartySize != nil {
+		rule.MaxPartySize = *req.MaxPartySize
+	}
+	if req.DurationMinutes != nil {
+		rule.DurationMinutes = *req.DurationMinutes
+	}
+
+	_, err = db.ExecContext(ctx, `
+		UPDATE booking_duration_rules
+		SET min_party_size = ?, max_party_size = ?, duration_minutes = ?
+		WHERE merchant_id = ? AND rule_id = ?
+	`, rule.MinPartySize, rule.MaxPartySize, rule.DurationMinutes, merchantID, ruleID)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.GetBookingDurationRuleByID(ctx, merchantID, ruleID)
+}
+
+func (r *BookingsRepository) DeleteBookingDurationRule(ctx context.Context, merchantID, ruleID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM booking_duration_rules
+		WHERE merchant_id = ? AND rule_id = ?
+	`, merchantID, ruleID)
+	if err != nil {
+		return err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return models.ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *BookingsRepository) ListBookingHours(ctx context.Context, merchantID string) ([]models.POSHoursOfOperation, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			hoo.id,
+			hoo.day_of_week_from,
+			hoo.day_of_week_to,
+			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
+			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			hoo.booking_capacity,
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
+			hoo.enabled
+		FROM hours_of_operation hoo
+		WHERE hoo.merchant_id = ?
+		  AND hoo.enabled = 1
+		ORDER BY hoo.day_of_week_from, hoo.day_of_week_to, hoo.hour_from, hoo.id
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.POSHoursOfOperation, 0)
+	for rows.Next() {
+		var item models.POSHoursOfOperation
+		var bookingCapacity sql.NullInt64
+		var firstBookingTime sql.NullString
+		var lastBookingTime sql.NullString
+		var validFrom sql.NullString
+		var validTo sql.NullString
+		var enabledInt int
+
+		err := rows.Scan(
+			&item.ID,
+			&item.DayOfWeekFrom,
+			&item.DayOfWeekTo,
+			&item.HourFrom,
+			&item.HourTo,
+			&bookingCapacity,
+			&firstBookingTime,
+			&lastBookingTime,
+			&validFrom,
+			&validTo,
+			&enabledInt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if bookingCapacity.Valid {
+			v := int(bookingCapacity.Int64)
+			item.BookingCapacity = &v
+		}
+		if firstBookingTime.Valid {
+			v := firstBookingTime.String
+			item.FirstBookingTime = &v
+		}
+		if lastBookingTime.Valid {
+			v := lastBookingTime.String
+			item.LastBookingTime = &v
+		}
+		if validFrom.Valid {
+			v := validFrom.String
+			item.ValidFrom = &v
+		}
+		if validTo.Valid {
+			v := validTo.String
+			item.ValidTo = &v
+		}
+		item.Enabled = enabledInt == 1
+
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *BookingsRepository) ReplaceBookingHours(ctx context.Context, merchantID string, hours []models.POSHoursOfOperationPatch) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbutils.GetDB(txCtx, r.database)
+
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE hours_of_operation
+			SET enabled = 0
+			WHERE merchant_id = ?
+		`, merchantID); err != nil {
+			return err
+		}
+
+		for _, item := range hours {
+			id := ""
+			if item.ID != nil {
+				id = strings.TrimSpace(*item.ID)
+			}
+
+			enabled := true
+			if item.Enabled != nil {
+				enabled = *item.Enabled
+			}
+
+			var firstBooking interface{}
+			if item.FirstBookingTime != nil && strings.TrimSpace(*item.FirstBookingTime) != "" {
+				firstBooking = strings.TrimSpace(*item.FirstBookingTime)
+			}
+
+			var lastBooking interface{}
+			if item.LastBookingTime != nil && strings.TrimSpace(*item.LastBookingTime) != "" {
+				lastBooking = strings.TrimSpace(*item.LastBookingTime)
+			}
+
+			var validFrom interface{}
+			if item.ValidFrom != nil && strings.TrimSpace(*item.ValidFrom) != "" {
+				validFrom = strings.TrimSpace(*item.ValidFrom)
+			}
+
+			var validTo interface{}
+			if item.ValidTo != nil && strings.TrimSpace(*item.ValidTo) != "" {
+				validTo = strings.TrimSpace(*item.ValidTo)
+			}
+
+			if _, err := db.ExecContext(txCtx, `
+				INSERT INTO hours_of_operation (
+					id,
+					merchant_id,
+					day_of_week_from,
+					day_of_week_to,
+					hour_from,
+					hour_to,
+					booking_capacity,
+					first_booking_time,
+					last_booking_time,
+					valid_from,
+					valid_to,
+					enabled
+				)
+				VALUES (
+					COALESCE(NULLIF(?, ''), UUID()),
+					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+				)
+				ON DUPLICATE KEY UPDATE
+					merchant_id = VALUES(merchant_id),
+					day_of_week_from = VALUES(day_of_week_from),
+					day_of_week_to = VALUES(day_of_week_to),
+					hour_from = VALUES(hour_from),
+					hour_to = VALUES(hour_to),
+					booking_capacity = VALUES(booking_capacity),
+					first_booking_time = VALUES(first_booking_time),
+					last_booking_time = VALUES(last_booking_time),
+					valid_from = VALUES(valid_from),
+					valid_to = VALUES(valid_to),
+					enabled = VALUES(enabled)
+			`,
+				id,
+				merchantID,
+				item.DayOfWeekFrom,
+				item.DayOfWeekTo,
+				strings.TrimSpace(item.HourFrom),
+				strings.TrimSpace(item.HourTo),
+				item.BookingCapacity,
+				firstBooking,
+				lastBooking,
+				validFrom,
+				validTo,
+				enabled,
+			); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchantID string, filters BookingListFilters) ([]BookingListItem, int, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	sortBy := "b.booking_date_from"
+	switch strings.ToLower(strings.TrimSpace(filters.SortBy)) {
+	case "booking_date_from":
+		sortBy = "b.booking_date_from"
+	case "party_size":
+		sortBy = "b.party_size"
+	case "status":
+		sortBy = "b.status"
+	case "customer_name":
+		sortBy = "c.customer_name"
+	}
+
+	sortDir := "DESC"
+	if strings.EqualFold(strings.TrimSpace(filters.SortDir), "asc") {
+		sortDir = "ASC"
+	}
+
+	where := []string{"b.merchant_id = ?"}
+	args := []interface{}{merchantID}
+
+	if len(filters.Statuses) > 0 {
+		placeholders := make([]string, 0, len(filters.Statuses))
+		for _, status := range filters.Statuses {
+			status = strings.TrimSpace(status)
+			if status == "" {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		if len(placeholders) > 0 {
+			where = append(where, "b.status IN ("+strings.Join(placeholders, ",")+")")
+		}
+	}
+
+	if filters.DateFrom != nil && strings.TrimSpace(*filters.DateFrom) != "" {
+		where = append(where, "b.booking_date_from >= ?")
+		args = append(args, strings.TrimSpace(*filters.DateFrom))
+	}
+	if filters.DateTo != nil && strings.TrimSpace(*filters.DateTo) != "" {
+		where = append(where, "b.booking_date_from <= ?")
+		args = append(args, strings.TrimSpace(*filters.DateTo))
+	}
+	if filters.PartySize != nil {
+		where = append(where, "b.party_size = ?")
+		args = append(args, *filters.PartySize)
+	}
+	if filters.Source != nil && strings.TrimSpace(*filters.Source) != "" {
+		where = append(where, "b.source = ?")
+		args = append(args, strings.TrimSpace(*filters.Source))
+	}
+	if filters.Search != nil && strings.TrimSpace(*filters.Search) != "" {
+		search := "%" + strings.TrimSpace(*filters.Search) + "%"
+		where = append(where, "(c.customer_name LIKE ? OR c.customer_tel LIKE ?)")
+		args = append(args, search, search)
+	}
+
+	whereSQL := strings.Join(where, " AND ")
+
+	var totalItems int
+	countQuery := `
+		SELECT COUNT(*)
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		WHERE ` + whereSQL
+	err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := (filters.Page - 1) * filters.Limit
+	dataQuery := `
+		SELECT
+			b.booking_id,
+			b.booking_number,
+			b.status,
+			COALESCE(b.source, 'staff') AS source,
+			DATE_FORMAT(b.booking_date_from, '%Y-%m-%d %H:%i:%s') AS booking_date_from,
+			b.party_size,
+			COALESCE(c.customer_name, '') AS customer_name,
+			COALESCE(c.customer_tel, '') AS customer_tel,
+			GROUP_CONCAT(DISTINCT l.location_name ORDER BY l.location_name SEPARATOR '||') AS assigned_tables
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		LEFT JOIN booked_location bl ON bl.booking_id = b.booking_id
+		LEFT JOIN locations l ON l.location_id = bl.location_id
+		WHERE ` + whereSQL + `
+		GROUP BY b.booking_id, b.booking_number, b.status, b.source, b.booking_date_from, b.party_size, c.customer_name, c.customer_tel
+		ORDER BY ` + sortBy + ` ` + sortDir + `
+		LIMIT ? OFFSET ?`
+
+	dataArgs := append([]interface{}{}, args...)
+	dataArgs = append(dataArgs, filters.Limit, offset)
+
+	rows, err := db.QueryContext(ctx, dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]BookingListItem, 0)
+	for rows.Next() {
+		var item BookingListItem
+		var assignedTables sql.NullString
+		if err := rows.Scan(
+			&item.BookingID,
+			&item.BookingNumber,
+			&item.Status,
+			&item.Source,
+			&item.BookingDateFrom,
+			&item.PartySize,
+			&item.CustomerName,
+			&item.CustomerTel,
+			&assignedTables,
+		); err != nil {
+			return nil, 0, err
+		}
+
+		if assignedTables.Valid && strings.TrimSpace(assignedTables.String) != "" {
+			item.AssignedTables = strings.Split(assignedTables.String, "||")
+		} else {
+			item.AssignedTables = []string{}
+		}
+
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return items, totalItems, nil
 }
 
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObjectRequest) (string, error) {

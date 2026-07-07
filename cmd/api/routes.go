@@ -1060,9 +1060,17 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/bookings", func(r chi.Router) {
 		r.Use(authMiddleware)
 
+		r.Get("/", bookingsH.ListBookingsBackOffice)
 		r.Post("/", bookingsH.SearchBookings)
 		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
 		r.Get("/settings", bookingsH.GetBookingSettings)
+		r.Put("/settings", bookingsH.PutBookingSettings)
+		r.Get("/settings/duration-rules", bookingsH.ListBookingDurationRules)
+		r.Post("/settings/duration-rules", bookingsH.CreateBookingDurationRule)
+		r.Patch("/settings/duration-rules/{rule_id}", bookingsH.PatchBookingDurationRule)
+		r.Delete("/settings/duration-rules/{rule_id}", bookingsH.DeleteBookingDurationRule)
+		r.Get("/settings/hours", bookingsH.GetBookingSettingsHours)
+		r.Put("/settings/hours", bookingsH.PutBookingSettingsHours)
 
 		r.Post("/create", bookingsH.CreateBooking)
 		r.Get("/{booking_id}", bookingsH.GetBooking)

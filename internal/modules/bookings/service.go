@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
@@ -243,6 +246,222 @@ func (s *BookingsService) GetBookingSettings(ctx context.Context, token string) 
 	}
 
 	return s.repo.GetBookingSettings(ctx, user.MerchantID)
+}
+
+func (s *BookingsService) PutBookingSettings(ctx context.Context, token string, req *PutBookingSettingsRequest) (*BookingSettings, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	if req.MinBookingNoticeMinutes < 0 {
+		return nil, models.ErrInvalidInput
+	}
+	if req.MaxBookingHorizonDays < 1 {
+		return nil, models.ErrInvalidInput
+	}
+	if req.OverbookingPercent < 0 || req.OverbookingPercent > 100 {
+		return nil, models.ErrInvalidInput
+	}
+	if req.ReserveMinimumPartySize > req.ReserveMaximumPartySize {
+		return nil, models.ErrInvalidInput
+	}
+
+	if err := s.repo.UpsertBookingSettings(ctx, user.MerchantID, req); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetBookingSettings(ctx, user.MerchantID)
+}
+
+func (s *BookingsService) ListBookingDurationRules(ctx context.Context, token string) ([]BookingDurationRule, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.ListBookingDurationRules(ctx, user.MerchantID)
+}
+
+func (s *BookingsService) CreateBookingDurationRule(ctx context.Context, token string, req CreateDurationRuleRequest) (*BookingDurationRule, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.MinPartySize <= 0 || req.MaxPartySize <= 0 || req.DurationMinutes <= 0 || req.MinPartySize > req.MaxPartySize {
+		return nil, models.ErrInvalidInput
+	}
+
+	rules, err := s.repo.ListBookingDurationRules(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if hasRuleOverlap(rules, req.MinPartySize, req.MaxPartySize, "") {
+		return nil, models.ErrInvalidInput
+	}
+
+	return s.repo.CreateBookingDurationRule(ctx, user.MerchantID, req)
+}
+
+func (s *BookingsService) UpdateBookingDurationRule(ctx context.Context, token, ruleID string, req PatchDurationRuleRequest) (*BookingDurationRule, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	existing, err := s.repo.GetBookingDurationRuleByID(ctx, user.MerchantID, ruleID)
+	if err != nil {
+		return nil, err
+	}
+
+	minPartySize := existing.MinPartySize
+	maxPartySize := existing.MaxPartySize
+	duration := existing.DurationMinutes
+
+	if req.MinPartySize != nil {
+		minPartySize = *req.MinPartySize
+	}
+	if req.MaxPartySize != nil {
+		maxPartySize = *req.MaxPartySize
+	}
+	if req.DurationMinutes != nil {
+		duration = *req.DurationMinutes
+	}
+
+	if minPartySize <= 0 || maxPartySize <= 0 || duration <= 0 || minPartySize > maxPartySize {
+		return nil, models.ErrInvalidInput
+	}
+
+	rules, err := s.repo.ListBookingDurationRules(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if hasRuleOverlap(rules, minPartySize, maxPartySize, ruleID) {
+		return nil, models.ErrInvalidInput
+	}
+
+	return s.repo.UpdateBookingDurationRule(ctx, user.MerchantID, ruleID, req)
+}
+
+func (s *BookingsService) DeleteBookingDurationRule(ctx context.Context, token, ruleID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.repo.DeleteBookingDurationRule(ctx, user.MerchantID, ruleID)
+}
+
+func (s *BookingsService) GetBookingHours(ctx context.Context, token string) ([]models.POSHoursOfOperation, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.ListBookingHours(ctx, user.MerchantID)
+}
+
+func (s *BookingsService) PutBookingHours(ctx context.Context, token string, req *PutBookingSettingsHoursRequest) ([]models.POSHoursOfOperation, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	for _, h := range req.Hours {
+		if h.DayOfWeekFrom < 1 || h.DayOfWeekFrom > 7 || h.DayOfWeekTo < 1 || h.DayOfWeekTo > 7 {
+			return nil, models.ErrInvalidInput
+		}
+		if strings.TrimSpace(h.HourFrom) == "" || strings.TrimSpace(h.HourTo) == "" {
+			return nil, models.ErrInvalidInput
+		}
+		if h.BookingCapacity != nil && *h.BookingCapacity < 0 {
+			return nil, models.ErrInvalidInput
+		}
+		if h.FirstBookingTime != nil && h.LastBookingTime != nil {
+			first, err1 := time.Parse("15:04:05", strings.TrimSpace(*h.FirstBookingTime))
+			last, err2 := time.Parse("15:04:05", strings.TrimSpace(*h.LastBookingTime))
+			if err1 != nil || err2 != nil || !first.Before(last) {
+				return nil, models.ErrInvalidInput
+			}
+		}
+	}
+
+	if err := s.repo.ReplaceBookingHours(ctx, user.MerchantID, req.Hours); err != nil {
+		return nil, err
+	}
+
+	return s.repo.ListBookingHours(ctx, user.MerchantID)
+}
+
+func (s *BookingsService) ListBookingsBackOffice(ctx context.Context, token string, filters BookingListFilters) (*BookingListResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if filters.Page <= 0 {
+		filters.Page = 1
+	}
+	if filters.Limit <= 0 {
+		filters.Limit = 20
+	}
+	if filters.Limit > 100 {
+		filters.Limit = 100
+	}
+	if filters.SortBy == "" {
+		filters.SortBy = "booking_date_from"
+	}
+	if filters.SortDir == "" {
+		filters.SortDir = "desc"
+	}
+
+	items, totalItems, err := s.repo.ListBookingsBackOffice(ctx, user.MerchantID, filters)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = (totalItems + filters.Limit - 1) / filters.Limit
+	}
+
+	return &BookingListResponse{
+		Metadata: models.PaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  totalPages,
+			CurrentPage: filters.Page,
+			Limit:       filters.Limit,
+		},
+		Bookings: items,
+	}, nil
+}
+
+func hasRuleOverlap(rules []BookingDurationRule, minPartySize, maxPartySize int, excludeRuleID string) bool {
+	sorted := append([]BookingDurationRule(nil), rules...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].MinPartySize == sorted[j].MinPartySize {
+			return sorted[i].MaxPartySize < sorted[j].MaxPartySize
+		}
+		return sorted[i].MinPartySize < sorted[j].MinPartySize
+	})
+
+	for _, rule := range sorted {
+		if rule.RuleID == excludeRuleID {
+			continue
+		}
+		if minPartySize <= rule.MaxPartySize && maxPartySize >= rule.MinPartySize {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *BookingsService) ExpirePendingBookings(ctx context.Context) (int64, error) {
