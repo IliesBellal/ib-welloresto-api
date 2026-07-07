@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     creation_date      DATETIME NULL,          -- UTC ; NOT NULL DEFAULT prévu en 053
     created_by         VARCHAR(64) NULL,       -- user_id ou littéral legacy 'WR_ONLINE_BOOKING' (migre vers source='web' en 053)
     deletion_date      DATETIME NULL,          -- code mort côté Go, conservé pour les données historiques
-    deletion_reason_id VARCHAR(64) NULL
+    deletion_reason_id VARCHAR(64) NULL,
+    cancelled_by       VARCHAR(64) NULL        -- addendum §7.9 : SYSTEM | CUSTOMER | user_id staff (rempli à denied/cancelled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS bookings_settings (
