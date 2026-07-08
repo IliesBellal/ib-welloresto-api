@@ -173,6 +173,109 @@ func (r *BookingsRepository) SetWaitlistStatus(ctx context.Context, merchantID, 
 	return nil
 }
 
+// GetFirstWaitingEntry retourne la plus ancienne entrée en statut waiting.
+// Renvoie (nil, nil) si la file est vide.
+func (r *BookingsRepository) GetFirstWaitingEntry(ctx context.Context, merchantID string) (*WaitlistEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	row := db.QueryRowContext(ctx, `
+		SELECT `+waitlistColumns+`
+		FROM booking_waitlist
+		WHERE merchant_id = ? AND status = ?
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, merchantID, bookingcore.WaitlistWaiting)
+	entry, err := scanWaitlist(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+// MarkWaitlistNotified passe une entrée waiting -> notified et pose
+// notified_at + expires_at (= notified_at + expiryMinutes). La garde
+// status='waiting' évite une double notification concurrente.
+func (r *BookingsRepository) MarkWaitlistNotified(ctx context.Context, merchantID, id string, expiryMinutes int) error {
+	db := dbutils.GetDB(ctx, r.database)
+	res, err := db.ExecContext(ctx, `
+		UPDATE booking_waitlist
+		SET status = ?, notified_at = UTC_TIMESTAMP(), expires_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE
+		WHERE merchant_id = ? AND id = ? AND status = ?
+	`, bookingcore.WaitlistNotified, expiryMinutes, merchantID, id, bookingcore.WaitlistWaiting)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return models.ErrNotFound
+	}
+	return nil
+}
+
+// ListExpiredNotifiedWaitlist retourne toutes les entrées notified dont le
+// délai est dépassé, tous marchands confondus (utilisé par le cron).
+func (r *BookingsRepository) ListExpiredNotifiedWaitlist(ctx context.Context) ([]WaitlistEntry, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `
+		SELECT `+waitlistColumns+`
+		FROM booking_waitlist
+		WHERE status = ? AND expires_at IS NOT NULL AND expires_at < UTC_TIMESTAMP()
+		ORDER BY merchant_id, created_at ASC
+	`, bookingcore.WaitlistNotified)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]WaitlistEntry, 0)
+	for rows.Next() {
+		entry, err := scanWaitlist(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *entry)
+	}
+	return list, rows.Err()
+}
+
+// GetCustomerEmail retourne l'email du client (chaîne vide si absent).
+func (r *BookingsRepository) GetCustomerEmail(ctx context.Context, merchantID, customerID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	var email sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT customer_email FROM customer
+		WHERE merchant_id = ? AND customer_id = ?
+		LIMIT 1
+	`, merchantID, customerID).Scan(&email)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if email.Valid {
+		return email.String, nil
+	}
+	return "", nil
+}
+
+// GetMerchantBusinessName retourne le nom commercial du marchand.
+func (r *BookingsRepository) GetMerchantBusinessName(ctx context.Context, merchantID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	var name sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT fullName FROM merchant WHERE id = ? LIMIT 1
+	`, merchantID).Scan(&name)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	if name.Valid {
+		return name.String, nil
+	}
+	return "", nil
+}
+
 // DeleteWaitlistEntry supprime définitivement une entrée (scoping merchant).
 func (r *BookingsRepository) DeleteWaitlistEntry(ctx context.Context, merchantID, id string) error {
 	db := dbutils.GetDB(ctx, r.database)

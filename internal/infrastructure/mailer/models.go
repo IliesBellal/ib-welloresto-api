@@ -86,3 +86,13 @@ type InvoiceEmailData struct {
 	ReceiptNumber string
 	SupportEmail  string
 }
+
+// WaitlistAvailableData pour la notification "une table s'est libérée"
+// envoyée au premier de la liste d'attente lors d'un no-show / expiration.
+type WaitlistAvailableData struct {
+	EmailBaseData
+	MerchantName  string
+	CustomerName  string
+	PartySize     int
+	ExpiryMinutes int
+}

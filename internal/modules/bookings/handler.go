@@ -150,6 +150,25 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "bookings", "deny", result)
 }
 
+func (h *BookingsHandler) NoShowBooking(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "no_show", map[string]string{"error": "missing_token"})
+		return
+	}
+	ctx := r.Context()
+
+	bookingID := chi.URLParam(r, "booking_id")
+
+	result, err := h.svc.NoShowBooking(ctx, token, bookingID)
+	if err != nil {
+		models.SendErrorJSON(w, "bookings", "no_show", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "no_show", result)
+}
+
 func (h *BookingsHandler) AssignBookingLocations(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

@@ -186,7 +186,7 @@ func TestCreateBooking_TableConflict_RollsBackWith409Sentinel(t *testing.T) {
 	defer db.Close()
 
 	repo := NewBookingsRepository(db, zap.NewNop())
-	svc := NewBookingsService(repo, db)
+	svc := NewBookingsService(repo, db, nil, nil, nil, zap.NewNop())
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
 

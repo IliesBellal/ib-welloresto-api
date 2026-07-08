@@ -68,3 +68,27 @@ func (tm *TasksManager) ExpirePendingBookings() {
 		tm.Logger.Info("booking pending expiration finished", zap.Int64("rows_affected", rows))
 	}
 }
+
+// ExpireWaitlistNotifications expire les entrées de liste d'attente notified
+// dont le délai est dépassé et notifie l'entrée suivante. Même schéma dormant
+// que ExpirePendingBookings : tâche prête, activée manuellement dans SetupTasks.
+func (tm *TasksManager) ExpireWaitlistNotifications() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("waitlist expiration skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.ExpireWaitlistNotifications(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("waitlist expiration failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("waitlist expiration finished", zap.Int64("rows_affected", rows))
+	}
+}

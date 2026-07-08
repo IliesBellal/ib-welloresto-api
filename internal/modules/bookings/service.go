@@ -7,19 +7,35 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"welloresto-api/internal/infrastructure/mailer"
+	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
+	"welloresto-api/internal/modules/bookingevents"
 	"welloresto-api/internal/utils/dbutils"
+
+	"go.uber.org/zap"
 )
 
 type BookingsService struct {
-	repo *BookingsRepository
-	db   *sql.DB // Ajout d'une référence à la DB pour les transactions
+	repo   *BookingsRepository
+	db     *sql.DB // Ajout d'une référence à la DB pour les transactions
+	mailer mailer.Service
+	sms    sms.Service
+	events *bookingevents.Repository
+	log    *zap.Logger
 }
 
-func NewBookingsService(repo *BookingsRepository, db *sql.DB) *BookingsService {
-	return &BookingsService{repo: repo, db: db}
+func NewBookingsService(
+	repo *BookingsRepository,
+	db *sql.DB,
+	mail mailer.Service,
+	smsSvc sms.Service,
+	events *bookingevents.Repository,
+	log *zap.Logger,
+) *BookingsService {
+	return &BookingsService{repo: repo, db: db, mailer: mail, sms: smsSvc, events: events, log: log}
 }
 
 func (s *BookingsService) GetBookings(ctx context.Context, token string, req *BookingObjectRequest) ([]Booking, error) {

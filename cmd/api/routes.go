@@ -32,6 +32,7 @@ import (
 	allergensModule "welloresto-api/internal/modules/allergens"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
+	bookingEventsModule "welloresto-api/internal/modules/bookingevents"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
 	customersModule "welloresto-api/internal/modules/customers"
@@ -350,8 +351,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
 
 	// ---- Bookings ----
+	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, log)
 
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)
@@ -1077,6 +1079,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
+		r.Patch("/{booking_id}/no-show", bookingsH.NoShowBooking)
 		r.Patch("/{booking_id}/locations", bookingsH.AssignBookingLocations)
 
 		// Liste d'attente salle (staff)

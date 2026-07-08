@@ -15,10 +15,11 @@ func SetupTasks(
 	c := cron.New()
 
 	// CRON GLOBAL TOUJOURS DESACTIVE.
-	// La tache d'expiration des reservations pending est prete :
+	// Les taches liste de reservation sont pretes :
 	//   c.AddFunc("@hourly", func() { taskManager.ExpirePendingBookings() })
-	// Pour l'activer manuellement plus tard, retirer le return ci-dessous puis
-	// decommenter UNIQUEMENT cette ligne, sans reactiver les autres taches dormantes.
+	//   c.AddFunc("@every 5m", func() { taskManager.ExpireWaitlistNotifications() })
+	// Pour les activer manuellement plus tard, retirer le return ci-dessous puis
+	// decommenter UNIQUEMENT ces lignes, sans reactiver les autres taches dormantes.
 	return
 
 	// Toutes les 15 minutes
