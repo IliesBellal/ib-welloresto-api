@@ -361,6 +361,10 @@ var (
 
 	// Erreurs du module réservation
 	ErrTableConflict = errors.New("table_conflict")
+
+	// Erreurs de la liste d'attente (module bookings, migration 059)
+	ErrWaitlistDisabled = errors.New("waitlist_disabled")
+	ErrWaitlistFull     = errors.New("waitlist_full")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1170,6 +1174,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "table_conflict"
 		errorMsg = "One or more requested tables are already booked on an overlapping time slot."
+
+	case errors.Is(err, ErrWaitlistDisabled):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "waitlist_disabled"
+		errorMsg = "The waitlist is not enabled for this merchant."
+
+	case errors.Is(err, ErrWaitlistFull):
+		status = http.StatusConflict
+		errorStatus = "waitlist_full"
+		errorMsg = "The waitlist has reached its maximum size."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

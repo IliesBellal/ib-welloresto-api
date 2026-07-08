@@ -19,6 +19,9 @@ type ReservationService interface {
 	GetReservation(ctx context.Context, qr string, bookingNumber string) PublicBookingResponse
 	UpdateReservation(ctx context.Context, qr string, req BookingRequest) PublicBookingResponse
 	CancelReservation(ctx context.Context, qr string, bookingNumber string) GenericResponse
+	JoinWaitlist(ctx context.Context, qr string, req WaitlistJoinRequest) WaitlistPublicResponse
+	GetWaitlistStatus(ctx context.Context, qr string, token string) WaitlistPublicResponse
+	LeaveWaitlist(ctx context.Context, qr string, token string) GenericResponse
 }
 
 type reservationService struct {

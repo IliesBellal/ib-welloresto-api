@@ -1078,6 +1078,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
 		r.Patch("/{booking_id}/locations", bookingsH.AssignBookingLocations)
+
+		// Liste d'attente salle (staff)
+		r.Get("/waitlist", bookingsH.ListWaitlist)
+		r.Post("/waitlist", bookingsH.CreateWaitlistEntry)
+		r.Patch("/waitlist/{id}/seat", bookingsH.SeatWaitlistEntry)
+		r.Patch("/waitlist/{id}/cancel", bookingsH.CancelWaitlistEntry)
+		r.Delete("/waitlist/{id}", bookingsH.DeleteWaitlistEntry)
 	})
 
 	// --- BOOKINGS ---
@@ -1093,6 +1100,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
 			r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
 			r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+
+			// Liste d'attente (public, token = id d'entrée)
+			r.Post("/waitlist", reservationHandler.HandleJoinWaitlist)
+			r.Get("/waitlist/{waitlist_token}", reservationHandler.HandleGetWaitlistStatus)
+			r.Delete("/waitlist/{waitlist_token}", reservationHandler.HandleLeaveWaitlist)
 		})
 	})
 
