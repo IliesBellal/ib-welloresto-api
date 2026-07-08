@@ -281,10 +281,10 @@ type BookingLocationConflict struct {
 	LocationID string `json:"location_id"`
 }
 
-// ExpiringBookingContact porte les données de contact d'une réservation
-// pending sur le point d'être expirée par le cron, nécessaires à l'envoi
-// d'une notification d'annulation avant la bascule de statut.
-type ExpiringBookingContact struct {
+// BookingContact porte les données de contact d'une réservation nécessaires
+// à l'envoi d'un message de communication (annulation système à l'expiration
+// pending, rappel avant service) sans recharger le Booking complet.
+type BookingContact struct {
 	BookingID     string
 	MerchantID    string
 	BookingNumber string

@@ -92,3 +92,28 @@ func (tm *TasksManager) ExpireWaitlistNotifications() {
 		tm.Logger.Info("waitlist expiration finished", zap.Int64("rows_affected", rows))
 	}
 }
+
+// SendBookingReminders envoie le rappel avant service (J-1 par défaut) aux
+// réservations confirmed à venir qui n'en ont pas encore reçu. Même schéma
+// dormant que les deux autres tâches réservation : prête, activée
+// sélectivement dans SetupTasks.
+func (tm *TasksManager) SendBookingReminders() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("booking reminders skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.SendBookingReminders(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("booking reminders failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("booking reminders finished", zap.Int64("rows_affected", rows))
+	}
+}

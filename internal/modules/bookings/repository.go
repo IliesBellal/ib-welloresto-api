@@ -1013,7 +1013,7 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 // d'être expirées (même prédicat que ExpirePendingBookings), avec les
 // données de contact nécessaires à l'envoi d'une notification d'annulation
 // avant la bascule de statut.
-func (r *BookingsRepository) ListPendingBookingsToExpire(ctx context.Context) ([]ExpiringBookingContact, error) {
+func (r *BookingsRepository) ListPendingBookingsToExpire(ctx context.Context) ([]BookingContact, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
@@ -1037,9 +1037,9 @@ func (r *BookingsRepository) ListPendingBookingsToExpire(ctx context.Context) ([
 	}
 	defer rows.Close()
 
-	list := make([]ExpiringBookingContact, 0)
+	list := make([]BookingContact, 0)
 	for rows.Next() {
-		var c ExpiringBookingContact
+		var c BookingContact
 		var smsEnabled int
 		if err := rows.Scan(
 			&c.BookingID, &c.MerchantID, &c.BookingNumber, &c.PartySize, &c.StartDate,
@@ -1080,6 +1080,58 @@ func (r *BookingsRepository) ExpirePendingBookings(ctx context.Context) (int64, 
 	}
 
 	return rowsAffected, nil
+}
+
+// ListBookingsForReminder retourne les réservations confirmed dont le
+// créneau tombe dans les prochaines withinHours heures et qui n'ont pas
+// encore reçu de rappel (reminder_sent_at IS NULL).
+func (r *BookingsRepository) ListBookingsForReminder(ctx context.Context, withinHours int) ([]BookingContact, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			b.booking_id, b.merchant_id, b.booking_number, b.party_size,
+			DATE_FORMAT(b.booking_date_from, '%Y-%m-%d %H:%i:%s'),
+			m.fullName, COALESCE(bs.code, ''), m.timezone, COALESCE(bs.sms_enabled, 0),
+			COALESCE(c.customer_name, ''), COALESCE(c.customer_email, ''), COALESCE(c.customer_tel, '')
+		FROM bookings b
+		INNER JOIN merchant m ON m.id = b.merchant_id
+		LEFT JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
+		LEFT JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.status = ?
+		  AND b.reminder_sent_at IS NULL
+		  AND b.booking_date_from >= UTC_TIMESTAMP()
+		  AND b.booking_date_from < UTC_TIMESTAMP() + INTERVAL ? HOUR
+	`, bookingcore.StatusConfirmed, withinHours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]BookingContact, 0)
+	for rows.Next() {
+		var c BookingContact
+		var smsEnabled int
+		if err := rows.Scan(
+			&c.BookingID, &c.MerchantID, &c.BookingNumber, &c.PartySize, &c.StartDate,
+			&c.MerchantName, &c.MerchantSlug, &c.Timezone, &smsEnabled,
+			&c.CustomerName, &c.CustomerEmail, &c.CustomerPhone,
+		); err != nil {
+			return nil, err
+		}
+		c.SMSEnabled = smsEnabled == 1
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+// MarkReminderSent pose reminder_sent_at pour éviter un double envoi.
+func (r *BookingsRepository) MarkReminderSent(ctx context.Context, bookingID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings SET reminder_sent_at = UTC_TIMESTAMP() WHERE booking_id = ?
+	`, bookingID)
+	return err
 }
 
 func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merchantID string) (*MerchantBookingParams, error) {
