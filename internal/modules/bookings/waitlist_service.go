@@ -7,6 +7,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
+	"welloresto-api/internal/modules/notification"
 )
 
 // ---------------------------------------------------------------------------
@@ -138,9 +139,15 @@ func (s *BookingsService) transitionWaitlist(ctx context.Context, merchantID, id
 // ---------------------------------------------------------------------------
 
 // CreateWaitlistEntryPublic est appelé par le flux public /rsv ; le client est
-// résolu (créé si absent) par téléphone dans createWaitlistEntry.
+// résolu (créé si absent) par téléphone dans createWaitlistEntry. Notifie le
+// POS en temps réel (WebSocket + FCM) — inscription venue du public uniquement.
 func (s *BookingsService) CreateWaitlistEntryPublic(ctx context.Context, merchantID string, req CreateWaitlistRequest) (*WaitlistEntry, error) {
-	return s.createWaitlistEntry(ctx, merchantID, req)
+	entry, err := s.createWaitlistEntry(ctx, merchantID, req)
+	if err != nil {
+		return nil, err
+	}
+	s.notifyPOS(merchantID, entry.ID, notification.NotificationTypeNewWaitlist)
+	return entry, nil
 }
 
 // GetWaitlistEntryPublic consulte une entrée via son token (= id).

@@ -9,6 +9,7 @@ import (
 	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookings"
+	"welloresto-api/internal/modules/notification"
 )
 
 // ReservationService définit le contrat pour la logique métier
@@ -28,11 +29,21 @@ type reservationService struct {
 	repo       ReservationRepository
 	bookingSvc *bookings.BookingsService
 	redis      *redisclient.Client
+	notifier   *notification.NotificationService
 }
 
 // NewReservationService instancie le service avec son repository
-func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService, redis *redisclient.Client) ReservationService {
-	return &reservationService{repo: repo, bookingSvc: bookingSvc, redis: redis}
+func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService, redis *redisclient.Client, notifier *notification.NotificationService) ReservationService {
+	return &reservationService{repo: repo, bookingSvc: bookingSvc, redis: redis, notifier: notifier}
+}
+
+// notifyPOS pousse un événement temps réel (WebSocket + FCM) vers le POS du
+// marchand via le canal existant. No-op si le service n'est pas câblé.
+func (s *reservationService) notifyPOS(merchantID, entityID, nType string) {
+	if s.notifier == nil {
+		return
+	}
+	_ = s.notifier.SendNotificationAsync(merchantID, entityID, nType)
 }
 
 func (s *reservationService) GetOpenHours(ctx context.Context, qr string) OpenHoursResponse {
@@ -224,6 +235,9 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 	}
 	s.saveIdempotencyResult(ctx, qr, idempotencyKey, req.Booking.BookingNumber)
 
+	// Notification temps réel POS : nouvelle demande de réservation publique.
+	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeNewBooking)
+
 	return response
 }
 
@@ -324,6 +338,9 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 	if err != nil {
 		return PublicBookingResponse{Status: "-2", Error: err.Error()}
 	}
+
+	// Notification temps réel POS : modification d'une réservation par le client.
+	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeUpdateBooking)
 
 	// 6. On retourne la réservation à jour
 	return s.GetReservation(ctx, qr, req.Booking.BookingNumber)

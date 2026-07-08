@@ -17,6 +17,12 @@ type NotificationMessage struct {
 const (
 	NotificationTypeOrderUpdate = "UPDATE_ORDER"
 
+	// Événements réservation/liste d'attente poussés vers le POS (WS + FCM).
+	NotificationTypeNewBooking    = "NEW_BOOKING"
+	NotificationTypeUpdateBooking = "UPDATE_BOOKING"
+	NotificationTypeNewWaitlist   = "NEW_WAITLIST"
+	NotificationTypeBookingNoShow = "BOOKING_NO_SHOW"
+
 	// WSEventKioskStatusChanged : envoyé par le POS ou le back-office vers le
 	// hub merchant pour activer/désactiver une borne en temps réel.
 	WSEventKioskStatusChanged = "kiosk_status_changed"

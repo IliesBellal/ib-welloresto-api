@@ -13,18 +13,20 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookingevents"
+	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
 
 type BookingsService struct {
-	repo   *BookingsRepository
-	db     *sql.DB // Ajout d'une référence à la DB pour les transactions
-	mailer mailer.Service
-	sms    sms.Service
-	events *bookingevents.Repository
-	log    *zap.Logger
+	repo     *BookingsRepository
+	db       *sql.DB // Ajout d'une référence à la DB pour les transactions
+	mailer   mailer.Service
+	sms      sms.Service
+	events   *bookingevents.Repository
+	notifier *notification.NotificationService
+	log      *zap.Logger
 }
 
 func NewBookingsService(
@@ -33,9 +35,10 @@ func NewBookingsService(
 	mail mailer.Service,
 	smsSvc sms.Service,
 	events *bookingevents.Repository,
+	notifier *notification.NotificationService,
 	log *zap.Logger,
 ) *BookingsService {
-	return &BookingsService{repo: repo, db: db, mailer: mail, sms: smsSvc, events: events, log: log}
+	return &BookingsService{repo: repo, db: db, mailer: mail, sms: smsSvc, events: events, notifier: notifier, log: log}
 }
 
 func (s *BookingsService) GetBookings(ctx context.Context, token string, req *BookingObjectRequest) ([]Booking, error) {
@@ -488,4 +491,14 @@ func hasRuleOverlap(rules []BookingDurationRule, minPartySize, maxPartySize int,
 
 func (s *BookingsService) ExpirePendingBookings(ctx context.Context) (int64, error) {
 	return s.repo.ExpirePendingBookings(ctx)
+}
+
+// notifyPOS pousse un événement temps réel (WebSocket + FCM) vers le POS du
+// marchand via le canal existant. No-op si le service de notification n'est
+// pas câblé. Non bloquant (goroutine interne à SendNotificationAsync).
+func (s *BookingsService) notifyPOS(merchantID, entityID, nType string) {
+	if s.notifier == nil {
+		return
+	}
+	_ = s.notifier.SendNotificationAsync(merchantID, entityID, nType)
 }

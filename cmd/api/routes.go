@@ -353,11 +353,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Bookings ----
 	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, log)
 
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)
-	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient)
+	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService)
 	reservationHandler := reservation.NewReservationHandler(reservationService)
 
 	// ---- Users ----

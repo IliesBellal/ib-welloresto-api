@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookingevents"
+	"welloresto-api/internal/modules/notification"
 
 	"go.uber.org/zap"
 )
@@ -49,6 +50,9 @@ func (s *BookingsService) NoShowBooking(ctx context.Context, token, bookingID st
 			s.log.Warn("booking no_show event log failed", zap.Error(err))
 		}
 	}
+
+	// Notification temps réel POS (WebSocket + FCM).
+	s.notifyPOS(user.MerchantID, bookingID, notification.NotificationTypeBookingNoShow)
 
 	// Réattribution automatique du créneau libéré.
 	if settings, err := s.repo.GetBookingSettings(ctx, user.MerchantID); err == nil {
