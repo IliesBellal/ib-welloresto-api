@@ -96,3 +96,26 @@ type WaitlistAvailableData struct {
 	PartySize     int
 	ExpiryMinutes int
 }
+
+// BookingMessageData est la donnée partagée par les emails du cycle de vie
+// d'une réservation (confirmation, rappel, modification, annulation,
+// reconfirmation). ManagementLink est vide si non pertinent pour le type de
+// message (ex: annulation) ou si aucune base URL publique n'est configurée.
+type BookingMessageData struct {
+	EmailBaseData
+	MerchantName   string
+	CustomerName   string
+	BookingNumber  string
+	DateLabel      string // date formatée locale, ex "vendredi 12 juillet 2026"
+	TimeLabel      string // heure formatée locale, ex "20:00"
+	PartySize      int
+	ManagementLink string
+}
+
+// BookingPostVisitData pour le message post-visite (remerciement + demande
+// d'avis — Should du cadrage §6.4, préparé mais non branché dans le cron).
+type BookingPostVisitData struct {
+	EmailBaseData
+	MerchantName string
+	CustomerName string
+}
