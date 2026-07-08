@@ -209,6 +209,44 @@ func (h *BookingsHandler) RescheduleBooking(w http.ResponseWriter, r *http.Reque
 	models.SendJSON(w, http.StatusOK, "bookings", "reschedule", result)
 }
 
+func (h *BookingsHandler) SeatBooking(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "seat", map[string]string{"error": "missing_token"})
+		return
+	}
+	ctx := r.Context()
+
+	bookingID := chi.URLParam(r, "booking_id")
+
+	result, err := h.svc.SeatBooking(ctx, token, bookingID)
+	if err != nil {
+		models.SendErrorJSON(w, "bookings", "seat", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "seat", result)
+}
+
+func (h *BookingsHandler) CompleteBooking(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "complete", map[string]string{"error": "missing_token"})
+		return
+	}
+	ctx := r.Context()
+
+	bookingID := chi.URLParam(r, "booking_id")
+
+	result, err := h.svc.CompleteBooking(ctx, token, bookingID)
+	if err != nil {
+		models.SendErrorJSON(w, "bookings", "complete", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "complete", result)
+}
+
 func (h *BookingsHandler) NoShowBooking(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
