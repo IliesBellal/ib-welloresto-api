@@ -269,6 +269,12 @@ func (s *BookingsService) PutBookingSettings(ctx context.Context, token string, 
 	if req.ReserveMinimumPartySize > req.ReserveMaximumPartySize {
 		return nil, models.ErrInvalidInput
 	}
+	if req.WaitlistMaxSize < 0 {
+		return nil, models.ErrInvalidInput
+	}
+	if req.WaitlistSlotExpiryMinutes < 0 {
+		return nil, models.ErrInvalidInput
+	}
 
 	if err := s.repo.UpsertBookingSettings(ctx, user.MerchantID, req); err != nil {
 		return nil, err

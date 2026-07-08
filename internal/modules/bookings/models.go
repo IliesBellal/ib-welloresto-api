@@ -137,6 +137,10 @@ type BookingSettings struct {
 	CancelableByCustomer          bool                 `json:"cancelable_by_customer"`
 	CancelBookingLimitOffsetHours int                  `json:"cancel_booking_limit_offset_hours"`
 	PendingExpirationHours        int                  `json:"pending_expiration_hours"`
+	SMSEnabled                    bool                 `json:"sms_enabled"`
+	WaitlistEnabled               bool                 `json:"waitlist_enabled"`
+	WaitlistMaxSize               int                  `json:"waitlist_max_size"`
+	WaitlistSlotExpiryMinutes     int                  `json:"waitlist_slot_expiry_minutes"`
 	DurationRules                 []BookingDurationRule `json:"duration_rules"`
 	CapacityWarning               bool                 `json:"capacity_warning"`
 	PhysicalCapacity              int                  `json:"physical_capacity"`
@@ -157,6 +161,10 @@ type PutBookingSettingsRequest struct {
 	CancelableByCustomer          bool   `json:"cancelable_by_customer"`
 	CancelBookingLimitOffsetHours int    `json:"cancel_booking_limit_offset_hours"`
 	PendingExpirationHours        int    `json:"pending_expiration_hours"`
+	SMSEnabled                    bool   `json:"sms_enabled"`
+	WaitlistEnabled               bool   `json:"waitlist_enabled"`
+	WaitlistMaxSize               int    `json:"waitlist_max_size"`
+	WaitlistSlotExpiryMinutes     int    `json:"waitlist_slot_expiry_minutes"`
 }
 
 type BookingDurationRule struct {

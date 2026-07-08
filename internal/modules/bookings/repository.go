@@ -70,7 +70,11 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 			COALESCE(bs.overbooking_percent, 0),
 			COALESCE(bs.cancelable_by_customer, 1),
 			COALESCE(bs.cancel_booking_limit_offset_hours, 48),
-			COALESCE(bs.pending_expiration_hours, 24)
+			COALESCE(bs.pending_expiration_hours, 24),
+			COALESCE(bs.sms_enabled, 0),
+			COALESCE(bs.waitlist_enabled, 0),
+			COALESCE(bs.waitlist_max_size, 0),
+			COALESCE(bs.waitlist_slot_expiry_minutes, 15)
 		FROM merchant m
 		LEFT JOIN bookings_settings bs ON bs.merchant_id = m.id
 		WHERE m.id = ?
@@ -90,6 +94,10 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 		&settings.CancelableByCustomer,
 		&settings.CancelBookingLimitOffsetHours,
 		&settings.PendingExpirationHours,
+		&settings.SMSEnabled,
+		&settings.WaitlistEnabled,
+		&settings.WaitlistMaxSize,
+		&settings.WaitlistSlotExpiryMinutes,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -202,9 +210,13 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 			overbooking_percent,
 			cancelable_by_customer,
 			cancel_booking_limit_offset_hours,
-			pending_expiration_hours
+			pending_expiration_hours,
+			sms_enabled,
+			waitlist_enabled,
+			waitlist_max_size,
+			waitlist_slot_expiry_minutes
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			enabled = VALUES(enabled),
 			code = VALUES(code),
@@ -219,7 +231,11 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 			overbooking_percent = VALUES(overbooking_percent),
 			cancelable_by_customer = VALUES(cancelable_by_customer),
 			cancel_booking_limit_offset_hours = VALUES(cancel_booking_limit_offset_hours),
-			pending_expiration_hours = VALUES(pending_expiration_hours)
+			pending_expiration_hours = VALUES(pending_expiration_hours),
+			sms_enabled = VALUES(sms_enabled),
+			waitlist_enabled = VALUES(waitlist_enabled),
+			waitlist_max_size = VALUES(waitlist_max_size),
+			waitlist_slot_expiry_minutes = VALUES(waitlist_slot_expiry_minutes)
 	`,
 		merchantID,
 		req.Enabled,
@@ -236,6 +252,10 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 		req.CancelableByCustomer,
 		req.CancelBookingLimitOffsetHours,
 		req.PendingExpirationHours,
+		req.SMSEnabled,
+		req.WaitlistEnabled,
+		req.WaitlistMaxSize,
+		req.WaitlistSlotExpiryMinutes,
 	)
 
 	return err
