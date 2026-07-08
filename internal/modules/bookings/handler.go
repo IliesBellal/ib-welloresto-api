@@ -319,10 +319,7 @@ func (h *BookingsHandler) GetBookingAvailability(w http.ResponseWriter, r *http.
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "get_availability", map[string]interface{}{
-		"status": "1",
-		"data":   avail,
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "get_availability", avail)
 }
 
 func (h *BookingsHandler) GetBookingSettings(w http.ResponseWriter, r *http.Request) {
@@ -338,10 +335,7 @@ func (h *BookingsHandler) GetBookingSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "get_settings", map[string]interface{}{
-		"status":   "1",
-		"settings": settings,
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "get_settings", settings)
 }
 
 func (h *BookingsHandler) PutBookingSettings(w http.ResponseWriter, r *http.Request) {
@@ -363,10 +357,7 @@ func (h *BookingsHandler) PutBookingSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "put_settings", map[string]interface{}{
-		"status":   "1",
-		"settings": settings,
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "put_settings", settings)
 }
 
 func (h *BookingsHandler) ListBookingDurationRules(w http.ResponseWriter, r *http.Request) {
@@ -382,10 +373,7 @@ func (h *BookingsHandler) ListBookingDurationRules(w http.ResponseWriter, r *htt
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "list_duration_rules", map[string]interface{}{
-		"status": "1",
-		"rules":  rules,
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "list_duration_rules", rules)
 }
 
 func (h *BookingsHandler) CreateBookingDurationRule(w http.ResponseWriter, r *http.Request) {
@@ -407,10 +395,7 @@ func (h *BookingsHandler) CreateBookingDurationRule(w http.ResponseWriter, r *ht
 		return
 	}
 
-	models.SendJSON(w, http.StatusCreated, "bookings", "create_duration_rule", map[string]interface{}{
-		"status": "1",
-		"rule":   rule,
-	})
+	models.SendJSON(w, http.StatusCreated, "bookings", "create_duration_rule", rule)
 }
 
 func (h *BookingsHandler) PatchBookingDurationRule(w http.ResponseWriter, r *http.Request) {
@@ -438,10 +423,7 @@ func (h *BookingsHandler) PatchBookingDurationRule(w http.ResponseWriter, r *htt
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "patch_duration_rule", map[string]interface{}{
-		"status": "1",
-		"rule":   rule,
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "patch_duration_rule", rule)
 }
 
 func (h *BookingsHandler) DeleteBookingDurationRule(w http.ResponseWriter, r *http.Request) {
@@ -462,9 +444,7 @@ func (h *BookingsHandler) DeleteBookingDurationRule(w http.ResponseWriter, r *ht
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "bookings", "delete_duration_rule", map[string]interface{}{
-		"status": "1",
-	})
+	models.SendJSON(w, http.StatusOK, "bookings", "delete_duration_rule", map[string]string{"status": "1"})
 }
 
 func (h *BookingsHandler) GetBookingSettingsHours(w http.ResponseWriter, r *http.Request) {
