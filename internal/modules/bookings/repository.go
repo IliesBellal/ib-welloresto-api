@@ -669,14 +669,26 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObjectRequest) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
+	var normalizedCustomerID *string
+	if req.Customer.CustomerID != nil {
+		trimmedCustomerID := strings.TrimSpace(*req.Customer.CustomerID)
+		if trimmedCustomerID != "" {
+			normalizedCustomerID = &trimmedCustomerID
+		}
+	}
+
 	// 1️⃣ Construire un modèle Customer
 	customer := &models.Customer{
-		CustomerID:    req.Customer.CustomerID,
+		CustomerID:    normalizedCustomerID,
 		MerchantID:    req.MerchantID,
 		CustomerName:  req.Customer.CustomerName,
 		CustomerTel:   req.Customer.CustomerTel,
 		CustomerEmail: req.Customer.CustomerEmail,
 		// Tous les autres champs sont optionnels → nil
+	}
+	if normalizedCustomerID == nil {
+		brand := models.BrandWelloResto
+		customer.CustomerBrand = &brand
 	}
 
 	// 2️⃣ Update or Create
