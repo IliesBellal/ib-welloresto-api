@@ -70,6 +70,7 @@ import (
 	"welloresto-api/internal/ai/providers"
 
 	// ---- WEBHOOKS ----
+	brevoSMSReplyModule "welloresto-api/internal/webhook/brevo_sms_reply"
 	webhookstripe "welloresto-api/internal/webhook/stripe"
 	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
 	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
@@ -360,6 +361,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService)
 	reservationHandler := reservation.NewReservationHandler(reservationService)
 
+	// ---- Webhook Brevo SMS entrant (réponses client) ----
+	brevoSMSReplyService := brevoSMSReplyModule.NewService(
+		brevoSMSReplyModule.NewRepository(mysqlDB),
+		bookingEventsRepo,
+		log,
+	)
+	brevoSMSReplyHandler := brevoSMSReplyModule.NewHandler(brevoSMSReplyService)
+
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
 	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService)
@@ -478,6 +487,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Get("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
+		r.Post("/brevo/sms-reply", brevoSMSReplyHandler.HandleWebhook)
 	})
 
 	// API externes
