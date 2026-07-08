@@ -2,21 +2,16 @@ package bookings
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"time"
-	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcomm"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookingevents"
 	"welloresto-api/internal/modules/notification"
 
 	"go.uber.org/zap"
 )
-
-const waitlistSMSSender = "Wello Resto"
 
 // NoShowBooking marque une réservation no_show (depuis le POS) puis, si la
 // liste d'attente est active, notifie le premier client en attente.
@@ -127,8 +122,9 @@ func (s *BookingsService) reattributeFirstWaiting(ctx context.Context, merchantI
 	}
 }
 
-// notifyWaitlistEntry passe l'entrée en notified, envoie l'email
-// (systématique si l'adresse existe) et le SMS (si sms_enabled), puis journalise.
+// notifyWaitlistEntry passe l'entrée en notified puis envoie la notification
+// "table disponible" via le service de communication centralisé (email
+// systématique si l'adresse est connue, SMS si sms_enabled), puis journalise.
 func (s *BookingsService) notifyWaitlistEntry(ctx context.Context, merchantID string, entry *WaitlistEntry, settings *BookingSettings) error {
 	expiry := settings.WaitlistSlotExpiryMinutes
 	if expiry <= 0 {
@@ -144,34 +140,21 @@ func (s *BookingsService) notifyWaitlistEntry(ctx context.Context, merchantID st
 		merchantName = "le restaurant"
 	}
 
-	// Email systématique (si une adresse est connue pour ce client).
-	if s.mailer != nil && entry.CustomerID != nil {
-		email, _ := s.repo.GetCustomerEmail(ctx, merchantID, *entry.CustomerID)
-		if strings.TrimSpace(email) != "" {
-			data := mailer.WaitlistAvailableData{
-				EmailBaseData: mailer.EmailBaseData{
-					BrandName:    "Wello Resto",
-					BrandLogoURL: mailer.BrandLogoURL,
-					SupportEmail: mailer.SupportEmail,
-					Year:         time.Now().Year(),
-				},
-				MerchantName:  merchantName,
-				CustomerName:  entry.CustomerName,
-				PartySize:     entry.PartySize,
-				ExpiryMinutes: expiry,
-			}
-			s.mailer.SendAsync(merchantName, mailer.InvoiceEmail, email, "Une table s'est libérée", "waitlist_available.html", data)
-		}
+	var email string
+	if entry.CustomerID != nil {
+		email, _ = s.repo.GetCustomerEmail(ctx, merchantID, *entry.CustomerID)
 	}
 
-	// SMS conditionné au paramètre sms_enabled.
-	if settings.SMSEnabled && s.sms != nil {
-		phone := helpers.NormalizePhoneNumber(entry.CustomerPhone, "FR")
-		msg := fmt.Sprintf(
-			"Bonne nouvelle ! Une table pour %d personne(s) s'est liberee chez %s. Elle vous est reservee %d min.",
-			entry.PartySize, merchantName, expiry,
-		)
-		s.sms.SendSMSAsync(waitlistSMSSender, phone, msg)
+	if s.comm != nil {
+		s.comm.SendWaitlistAvailable(ctx, bookingcomm.WaitlistMessage{
+			MerchantName:  merchantName,
+			CustomerName:  entry.CustomerName,
+			CustomerEmail: email,
+			CustomerPhone: entry.CustomerPhone,
+			PartySize:     entry.PartySize,
+			ExpiryMinutes: expiry,
+			SMSEnabled:    settings.SMSEnabled,
+		})
 	}
 
 	if s.events != nil {

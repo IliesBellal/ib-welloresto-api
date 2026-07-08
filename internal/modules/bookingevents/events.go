@@ -24,6 +24,8 @@ const (
 	TypeWaitlistExpired   = "waitlist_expired"
 	TypeSMSReconfirmed    = "sms_reconfirmed"
 	TypeSMSCancelled      = "sms_cancelled"
+	TypeBookingCancelled  = "booking_cancelled"
+	TypeBookingReminder   = "booking_reminder_sent"
 )
 
 // Sources d'un événement.

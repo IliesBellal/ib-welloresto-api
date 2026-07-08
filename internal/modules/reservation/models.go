@@ -38,6 +38,7 @@ type Merchant struct {
 	CancelableByCustomer          bool              `json:"cancelable_by_customer"`
 	CancelBookingLimitOffsetHours int               `json:"cancel_booking_limit_offset_hours"`
 	AutoAcceptReserveBookings     bool              `json:"auto_accept_reserve_bookings"`
+	SMSEnabled                    bool              `json:"sms_enabled"`
 	OpenHours                     map[string]string `json:"open_hours,omitempty"`
 }
 

@@ -31,6 +31,7 @@ type ReservationRepository interface {
 	CancelBookingDB(ctx context.Context, bookingNumber string) error
 	CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error
 	CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error)
+	GetBookingCustomerContact(ctx context.Context, bookingNumber, merchantID string) (name, email, phone string, err error)
 }
 
 type reservationRepository struct {
@@ -51,14 +52,15 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 	log := logger.FromContext(ctx)
 
 	query := `
-		SELECT 
-			m.id, m.timezone, m.merchantTel, m.street_number, m.street, m.zip_code, m.city, m.handicap_access, m.logo_url, m.fullName as business_name, 
+		SELECT
+			m.id, m.timezone, m.merchantTel, m.street_number, m.street, m.zip_code, m.city, m.handicap_access, m.logo_url, m.fullName as business_name,
 			COALESCE(bs.default_booking_duration, 90), COALESCE(bs.slot_interval_minutes, 15), COALESCE(bs.auto_accept_reserve_bookings, 0),
 			COALESCE(bs.reserve_maximum_party_size, 8), COALESCE(bs.reserve_minimum_party_size, 1),
 			COALESCE(bs.last_booking_offset_minutes, 60), COALESCE(bs.overbooking_percent, 0), COALESCE(bs.max_booking_horizon_days, 90),
 			COALESCE(bs.pending_expiration_hours, 24),
 			COALESCE(bs.cancelable_by_customer, 1), COALESCE(bs.cancel_booking_limit_offset_hours, 48), COALESCE(bs.first_booking_offset_minutes, 0),
-			mp.primary_color, mp.text_color_on_primary_color 
+			COALESCE(bs.sms_enabled, 0),
+			mp.primary_color, mp.text_color_on_primary_color
 		FROM bookings_settings bs
 		INNER JOIN merchant m ON bs.merchant_id = m.id
 		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
@@ -66,6 +68,7 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 
 	var m Merchant
 	var handicapAccess, autoAccept, cancelable string
+	var smsEnabled int
 
 	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&m.MerchantID, &m.Timezone, &m.Phone, &m.Address.StreetNumber, &m.Address.Street, &m.Address.ZipCode, &m.Address.City,
@@ -73,6 +76,7 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 		&m.DefaultBookingDuration, &m.SlotIntervalMinutes, &autoAccept, &m.ReserveMaximumPartySize, &m.ReserveMinimumPartySize, &m.LastBookingOffsetMinutes, &m.OverbookingPercent, &m.MaxBookingHorizonDays,
 		&m.PendingExpirationHours,
 		&cancelable, &m.CancelBookingLimitOffsetHours, &m.FirstBookingOffsetMinutes,
+		&smsEnabled,
 		&m.Design.PrimaryColor, &m.Design.TextColorOnPrimaryColor,
 	)
 
@@ -87,8 +91,30 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 	m.HandicapAccess = handicapAccess == "1"
 	m.AutoAcceptReserveBookings = autoAccept == "1"
 	m.CancelableByCustomer = cancelable == "1"
+	m.SMSEnabled = smsEnabled == 1
 
 	return &m, nil
+}
+
+// GetBookingCustomerContact retourne les coordonnées client (nom, email,
+// téléphone) associées à une réservation, indépendamment de ce que le corps
+// de la requête publique contient — utilisé pour notifier modification et
+// annulation même quand le client n'a pas renvoyé ses coordonnées.
+func (r *reservationRepository) GetBookingCustomerContact(ctx context.Context, bookingNumber, merchantID string) (name, email, phone string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var n, e, p sql.NullString
+	err = db.QueryRowContext(ctx, `
+		SELECT c.customer_name, c.customer_email, c.customer_tel
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.booking_number = ? AND b.merchant_id = ?
+		LIMIT 1
+	`, bookingNumber, merchantID).Scan(&n, &e, &p)
+	if err != nil {
+		return "", "", "", err
+	}
+	return n.String, e.String, p.String, nil
 }
 
 func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error) {

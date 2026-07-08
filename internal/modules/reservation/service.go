@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	redisclient "welloresto-api/internal/infrastructure/redis"
+	"welloresto-api/internal/modules/bookingcomm"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookings"
 	"welloresto-api/internal/modules/notification"
@@ -30,11 +31,12 @@ type reservationService struct {
 	bookingSvc *bookings.BookingsService
 	redis      *redisclient.Client
 	notifier   *notification.NotificationService
+	comm       *bookingcomm.Service
 }
 
 // NewReservationService instancie le service avec son repository
-func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService, redis *redisclient.Client, notifier *notification.NotificationService) ReservationService {
-	return &reservationService{repo: repo, bookingSvc: bookingSvc, redis: redis, notifier: notifier}
+func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService, redis *redisclient.Client, notifier *notification.NotificationService, comm *bookingcomm.Service) ReservationService {
+	return &reservationService{repo: repo, bookingSvc: bookingSvc, redis: redis, notifier: notifier, comm: comm}
 }
 
 // notifyPOS pousse un événement temps réel (WebSocket + FCM) vers le POS du
@@ -238,6 +240,22 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 	// Notification temps réel POS : nouvelle demande de réservation publique.
 	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeNewBooking)
 
+	// Confirmation immédiate au client si la réservation est auto-acceptée.
+	if s.comm != nil && merchant.AutoAcceptReserveBookings {
+		s.comm.SendConfirmation(ctx, bookingcomm.BookingMessage{
+			MerchantSlug:  qr,
+			MerchantName:  merchant.BusinessName,
+			CustomerName:  req.Customer.CustomerName,
+			CustomerEmail: req.Customer.CustomerEmail,
+			CustomerPhone: req.Customer.CustomerTel,
+			BookingNumber: req.Booking.BookingNumber,
+			DateLabel:     bookingcore.FormatDateLabelFR(startTime),
+			TimeLabel:     startTime.Format("15:04"),
+			PartySize:     req.Booking.PartySize,
+			SMSEnabled:    merchant.SMSEnabled,
+		})
+	}
+
 	return response
 }
 
@@ -342,6 +360,26 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 	// Notification temps réel POS : modification d'une réservation par le client.
 	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeUpdateBooking)
 
+	// Notification modification au client (coordonnées relues en base — le
+	// corps de la requête publique ne contient pas forcément le customer).
+	if s.comm != nil {
+		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, req.Booking.BookingNumber, merchant.MerchantID)
+		if cerr == nil {
+			s.comm.SendModification(ctx, bookingcomm.BookingMessage{
+				MerchantSlug:  qr,
+				MerchantName:  merchant.BusinessName,
+				CustomerName:  name,
+				CustomerEmail: email,
+				CustomerPhone: phone,
+				BookingNumber: req.Booking.BookingNumber,
+				DateLabel:     bookingcore.FormatDateLabelFR(startTime),
+				TimeLabel:     startTime.Format("15:04"),
+				PartySize:     req.Booking.PartySize,
+				SMSEnabled:    merchant.SMSEnabled,
+			})
+		}
+	}
+
 	// 6. On retourne la réservation à jour
 	return s.GetReservation(ctx, qr, req.Booking.BookingNumber)
 }
@@ -361,6 +399,35 @@ func (s *reservationService) CancelReservation(ctx context.Context, qr string, b
 	err = s.repo.CancelBookingPublic(ctx, merchant.MerchantID, bookingNumber)
 	if err != nil {
 		return GenericResponse{Status: "2", Error: err.Error()}
+	}
+
+	// Notification annulation au client.
+	if s.comm != nil {
+		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, bookingNumber, merchant.MerchantID)
+		if cerr == nil {
+			loc, _ := time.LoadLocation(merchant.Timezone)
+			if loc == nil {
+				loc = time.UTC
+			}
+			dateLabel, timeLabel := "", ""
+			if startTime, perr := time.Parse(time.RFC3339, current.Booking.DateFrom); perr == nil {
+				startTime = startTime.In(loc)
+				dateLabel = bookingcore.FormatDateLabelFR(startTime)
+				timeLabel = startTime.Format("15:04")
+			}
+			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				MerchantSlug:  qr,
+				MerchantName:  merchant.BusinessName,
+				CustomerName:  name,
+				CustomerEmail: email,
+				CustomerPhone: phone,
+				BookingNumber: bookingNumber,
+				DateLabel:     dateLabel,
+				TimeLabel:     timeLabel,
+				PartySize:     current.Booking.PartySize,
+				SMSEnabled:    merchant.SMSEnabled,
+			})
+		}
 	}
 
 	return GenericResponse{Status: "1"}

@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcomm"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookingevents"
 	"welloresto-api/internal/modules/notification"
@@ -26,6 +27,7 @@ type BookingsService struct {
 	sms      sms.Service
 	events   *bookingevents.Repository
 	notifier *notification.NotificationService
+	comm     *bookingcomm.Service
 	log      *zap.Logger
 }
 
@@ -36,9 +38,10 @@ func NewBookingsService(
 	smsSvc sms.Service,
 	events *bookingevents.Repository,
 	notifier *notification.NotificationService,
+	comm *bookingcomm.Service,
 	log *zap.Logger,
 ) *BookingsService {
-	return &BookingsService{repo: repo, db: db, mailer: mail, sms: smsSvc, events: events, notifier: notifier, log: log}
+	return &BookingsService{repo: repo, db: db, mailer: mail, sms: smsSvc, events: events, notifier: notifier, comm: comm, log: log}
 }
 
 func (s *BookingsService) GetBookings(ctx context.Context, token string, req *BookingObjectRequest) ([]Booking, error) {
@@ -117,8 +120,11 @@ func (s *BookingsService) CreateBooking(ctx context.Context, req *BookingObjectR
 		return nil, err
 	}
 
-	// 5️⃣ Optionnel : Envoi d'email (Hors transaction car c'est un effet de bord externe)
-	// s.sendBookingConfirmation(result)
+	// 5️⃣ Envoi de la confirmation (hors transaction, effet de bord externe) si
+	// la réservation créée par le staff est immédiatement confirmed.
+	if bookingcore.NormalizeLegacyStatus(result.Status) == bookingcore.StatusConfirmed {
+		s.notifyBookingMessage(ctx, req.MerchantID, result, s.comm.SendConfirmation)
+	}
 
 	return result, nil
 }
@@ -150,7 +156,8 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 		return nil, err
 	}
 
-	// 3️⃣ Email pending — ignored for now
+	// 3️⃣ Confirmation au client (staff a accepté une demande pending)
+	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendConfirmation)
 
 	return map[string]interface{}{
 		"status":  "1",
@@ -192,6 +199,9 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 	if err != nil {
 		return nil, err
 	}
+
+	// Le refus d'une demande pending vaut annulation côté client.
+	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
 
 	return map[string]interface{}{
 		"status":  "1",
@@ -489,8 +499,59 @@ func hasRuleOverlap(rules []BookingDurationRule, minPartySize, maxPartySize int,
 	return false
 }
 
+// ExpirePendingBookings bascule les réservations pending expirées en
+// cancelled. Les clients concernés sont notifiés (annulation système) avant
+// la bascule de statut, sur la base du même prédicat de sélection.
 func (s *BookingsService) ExpirePendingBookings(ctx context.Context) (int64, error) {
-	return s.repo.ExpirePendingBookings(ctx)
+	toExpire, err := s.repo.ListPendingBookingsToExpire(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := s.repo.ExpirePendingBookings(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, b := range toExpire {
+		loc, err := time.LoadLocation(b.Timezone)
+		if err != nil || loc == nil {
+			loc = time.UTC
+		}
+		start, err := time.Parse("2006-01-02 15:04:05", b.StartDate)
+		if err != nil {
+			continue
+		}
+		start = start.In(loc)
+
+		if s.comm != nil && (strings.TrimSpace(b.CustomerEmail) != "" || strings.TrimSpace(b.CustomerPhone) != "") {
+			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				MerchantSlug:  b.MerchantSlug,
+				MerchantName:  b.MerchantName,
+				CustomerName:  b.CustomerName,
+				CustomerEmail: b.CustomerEmail,
+				CustomerPhone: b.CustomerPhone,
+				BookingNumber: b.BookingNumber,
+				DateLabel:     bookingcore.FormatDateLabelFR(start),
+				TimeLabel:     start.Format("15:04"),
+				PartySize:     b.PartySize,
+				SMSEnabled:    b.SMSEnabled,
+			})
+		}
+
+		if s.events != nil {
+			_ = s.events.Log(ctx, bookingevents.Event{
+				MerchantID: b.MerchantID,
+				BookingID:  b.BookingID,
+				EventType:  bookingevents.TypeBookingCancelled,
+				Source:     bookingevents.SourceSystem,
+				Actor:      "SYSTEM",
+				Metadata:   map[string]interface{}{"reason": "pending_expired"},
+			})
+		}
+	}
+
+	return rowsAffected, nil
 }
 
 // notifyPOS pousse un événement temps réel (WebSocket + FCM) vers le POS du

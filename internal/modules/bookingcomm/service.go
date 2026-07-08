@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/sms"
 
@@ -94,7 +95,7 @@ func (s *Service) sendSMS(m BookingMessage, text string) {
 	if !m.SMSEnabled || s.sms == nil || strings.TrimSpace(m.CustomerPhone) == "" {
 		return
 	}
-	s.sms.SendSMSAsync(smsSender, m.CustomerPhone, text)
+	s.sms.SendSMSAsync(smsSender, helpers.NormalizePhoneNumber(m.CustomerPhone, "FR"), text)
 }
 
 // SendConfirmation envoie la confirmation immédiate à la création d'une
@@ -191,6 +192,6 @@ func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) 
 			"Bonne nouvelle ! Une table pour %d personne(s) s'est liberee chez %s. Elle vous est reservee %d min.",
 			m.PartySize, m.MerchantName, m.ExpiryMinutes,
 		)
-		s.sms.SendSMSAsync(smsSender, m.CustomerPhone, text)
+		s.sms.SendSMSAsync(smsSender, helpers.NormalizePhoneNumber(m.CustomerPhone, "FR"), text)
 	}
 }

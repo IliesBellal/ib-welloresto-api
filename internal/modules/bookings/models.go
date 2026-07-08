@@ -281,6 +281,24 @@ type BookingLocationConflict struct {
 	LocationID string `json:"location_id"`
 }
 
+// ExpiringBookingContact porte les données de contact d'une réservation
+// pending sur le point d'être expirée par le cron, nécessaires à l'envoi
+// d'une notification d'annulation avant la bascule de statut.
+type ExpiringBookingContact struct {
+	BookingID     string
+	MerchantID    string
+	BookingNumber string
+	PartySize     int
+	StartDate     string // "2006-01-02 15:04:05" UTC
+	MerchantName  string
+	MerchantSlug  string
+	Timezone      string
+	SMSEnabled    bool
+	CustomerName  string
+	CustomerEmail string
+	CustomerPhone string
+}
+
 // TableConflictError porte les affectations en collision jusqu'au handler,
 // qui les renvoie dans le corps du 409 table_conflict.
 type TableConflictError struct {

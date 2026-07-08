@@ -32,6 +32,7 @@ import (
 	allergensModule "welloresto-api/internal/modules/allergens"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
+	bookingcommModule "welloresto-api/internal/modules/bookingcomm"
 	bookingEventsModule "welloresto-api/internal/modules/bookingevents"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
@@ -353,12 +354,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Bookings ----
 	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
+	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, log)
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)
-	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService)
+	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService, bookingCommService)
 	reservationHandler := reservation.NewReservationHandler(reservationService)
 
 	// ---- Webhook Brevo SMS entrant (réponses client) ----
