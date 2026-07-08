@@ -209,6 +209,163 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 	}, nil
 }
 
+// CancelBooking annule staff une résa confirmed|seated. Distincte de
+// DenyBooking, qui couvre uniquement les demandes pending (addendum §7.9).
+func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID string, req *CancelBookingRequest) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	booking, err := s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusCancelled); err != nil {
+		return nil, models.ErrInvalidInput
+	}
+
+	if req != nil && req.DeletionReasonID != nil {
+		ok, err := s.repo.IsValidDeletionReason(ctx, *req.DeletionReasonID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, models.ErrInvalidInput
+		}
+	}
+
+	if err := s.repo.CancelBooking(ctx, user.MerchantID, bookingID, user.UserID, req); err != nil {
+		return nil, err
+	}
+
+	if s.events != nil {
+		metadata := map[string]interface{}{}
+		if req != nil && req.DeletionReasonID != nil {
+			metadata["deletion_reason_id"] = *req.DeletionReasonID
+		}
+		if err := s.events.Log(ctx, bookingevents.Event{
+			MerchantID: user.MerchantID,
+			BookingID:  bookingID,
+			EventType:  bookingevents.TypeBookingCancelled,
+			Source:     bookingevents.SourcePOS,
+			Actor:      user.UserID,
+			Metadata:   metadata,
+		}); err != nil && s.log != nil {
+			s.log.Warn("booking cancel event log failed", zap.Error(err))
+		}
+	}
+
+	s.notifyPOS(user.MerchantID, bookingID, notification.NotificationTypeUpdateBooking)
+
+	booking, err = s.repo.GetBookingByID(ctx, user.MerchantID, bookingID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+
+	return map[string]interface{}{
+		"status":  "1",
+		"booking": booking,
+	}, nil
+}
+
+// RescheduleBooking modifie staff la date/heure (et éventuellement le nombre
+// de couverts) d'une résa confirmed, en revalidant la disponibilité via le
+// moteur unifié (booking exclue de son propre calcul d'occupation).
+func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingID string, req *RescheduleBookingRequest) (map[string]interface{}, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil || strings.TrimSpace(req.BookingDateFrom) == "" || strings.TrimSpace(req.BookingDateTo) == "" {
+		return nil, models.ErrInvalidInput
+	}
+	if req.PartySize != nil && *req.PartySize <= 0 {
+		return nil, models.ErrInvalidInput
+	}
+
+	var result *Booking
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		booking, err := s.repo.GetBookingByID(txCtx, user.MerchantID, bookingID)
+		if err != nil {
+			return err
+		}
+
+		if bookingcore.NormalizeLegacyStatus(booking.Status) != bookingcore.StatusConfirmed {
+			return models.ErrInvalidInput
+		}
+
+		partySize := booking.PartySize
+		if req.PartySize != nil {
+			partySize = *req.PartySize
+		}
+
+		if len(booking.Locations) > 0 {
+			locationIDs := make([]string, 0, len(booking.Locations))
+			for _, loc := range booking.Locations {
+				locationIDs = append(locationIDs, loc.LocationID)
+			}
+
+			conflicts, err := s.repo.FindConflictingBookings(
+				txCtx, user.MerchantID, locationIDs,
+				req.BookingDateFrom, req.BookingDateTo, bookingID,
+			)
+			if err != nil {
+				return err
+			}
+			if len(conflicts) > 0 {
+				return &TableConflictError{Conflicts: conflicts}
+			}
+		}
+
+		available, err := s.repo.CheckCapacityForWindow(txCtx, user.MerchantID, req.BookingDateFrom, req.BookingDateTo, partySize, bookingID)
+		if err != nil {
+			return err
+		}
+		if !available {
+			return models.ErrSlotUnavailable
+		}
+
+		if err := s.repo.RescheduleBooking(txCtx, user.MerchantID, bookingID, req.BookingDateFrom, req.BookingDateTo, req.PartySize); err != nil {
+			return err
+		}
+
+		if s.events != nil {
+			if err := s.events.Log(txCtx, bookingevents.Event{
+				MerchantID: user.MerchantID,
+				BookingID:  bookingID,
+				EventType:  bookingevents.TypeBookingModified,
+				Source:     bookingevents.SourcePOS,
+				Actor:      user.UserID,
+				Metadata: map[string]interface{}{
+					"booking_date_from": req.BookingDateFrom,
+					"booking_date_to":   req.BookingDateTo,
+					"party_size":        partySize,
+				},
+			}); err != nil && s.log != nil {
+				s.log.Warn("booking reschedule event log failed", zap.Error(err))
+			}
+		}
+
+		result, err = s.repo.GetBookingByID(txCtx, user.MerchantID, bookingID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.notifyPOS(user.MerchantID, bookingID, notification.NotificationTypeUpdateBooking)
+	s.notifyBookingMessage(ctx, user.MerchantID, result, s.comm.SendModification)
+
+	return map[string]interface{}{
+		"status":  "1",
+		"booking": result,
+	}, nil
+}
+
 func (s *BookingsService) AssignBookingLocations(ctx context.Context, token, bookingID string, req *AssignBookingLocationsRequest) (*Booking, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

@@ -360,7 +360,8 @@ var (
 	ErrFloorNotFound        = errors.New("floor_not_found")
 
 	// Erreurs du module réservation
-	ErrTableConflict = errors.New("table_conflict")
+	ErrTableConflict   = errors.New("table_conflict")
+	ErrSlotUnavailable = errors.New("slot_unavailable")
 
 	// Erreurs de la liste d'attente (module bookings, migration 059)
 	ErrWaitlistDisabled = errors.New("waitlist_disabled")
@@ -1174,6 +1175,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "table_conflict"
 		errorMsg = "One or more requested tables are already booked on an overlapping time slot."
+
+	case errors.Is(err, ErrSlotUnavailable):
+		status = http.StatusConflict
+		errorStatus = "slot_unavailable"
+		errorMsg = "The requested slot no longer has enough remaining capacity."
 
 	case errors.Is(err, ErrWaitlistDisabled):
 		status = http.StatusUnprocessableEntity

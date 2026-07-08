@@ -1091,6 +1091,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
+		r.Patch("/{booking_id}/cancel", bookingsH.CancelBooking)
+		r.Patch("/{booking_id}/reschedule", bookingsH.RescheduleBooking)
 		r.Patch("/{booking_id}/no-show", bookingsH.NoShowBooking)
 		r.Patch("/{booking_id}/locations", bookingsH.AssignBookingLocations)
 

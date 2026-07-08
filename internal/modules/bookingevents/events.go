@@ -25,6 +25,7 @@ const (
 	TypeSMSReconfirmed    = "sms_reconfirmed"
 	TypeSMSCancelled      = "sms_cancelled"
 	TypeBookingCancelled  = "booking_cancelled"
+	TypeBookingModified   = "booking_modified"
 	TypeBookingReminder   = "booking_reminder_sent"
 )
 

@@ -199,6 +199,21 @@ type DenyBookingRequest struct {
 	DeletionReasonID *string `json:"deletion_reason_id"`
 }
 
+// CancelBookingRequest — annulation staff d'une résa confirmed|seated (§
+// distincte de deny, qui couvre uniquement les pending).
+type CancelBookingRequest struct {
+	DeletionReasonID *string `json:"deletion_reason_id"`
+}
+
+// RescheduleBookingRequest — modification staff de date/heure (et
+// optionnellement du nombre de couverts) d'une résa confirmed. Les deux
+// bornes sont fournies par le client au format "2006-01-02 15:04:05".
+type RescheduleBookingRequest struct {
+	BookingDateFrom string `json:"booking_date_from"`
+	BookingDateTo   string `json:"booking_date_to"`
+	PartySize       *int   `json:"party_size"`
+}
+
 type AssignBookingLocationsRequest struct {
 	Locations []BookingLocation `json:"locations"`
 }

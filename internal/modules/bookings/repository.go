@@ -909,6 +909,139 @@ func (r *BookingsRepository) IsValidDeletionReason(ctx context.Context, deletion
 	return true, nil
 }
 
+// CancelBooking annule staff une résa confirmed|seated (miroir de DenyBooking,
+// qui couvre les pending — cf. addendum §7.9).
+func (r *BookingsRepository) CancelBooking(ctx context.Context, merchantID, bookingID, userID string, req *CancelBookingRequest) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var deletionReasonID interface{}
+	if req != nil && req.DeletionReasonID != nil {
+		deletionReasonID = *req.DeletionReasonID
+	}
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings
+		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = UTC_TIMESTAMP
+		WHERE booking_id = ? AND merchant_id = ?
+	`, bookingcore.StatusCancelled, userID, deletionReasonID, bookingID, merchantID)
+	return err
+}
+
+// RescheduleBooking modifie staff la date/heure (et éventuellement le nombre
+// de couverts) d'une résa. Le statut n'est pas touché (aligné sur le contrat
+// staff, à la différence de la modification publique qui peut repasser en
+// pending — cf. reservation.UpdateReservation).
+func (r *BookingsRepository) RescheduleBooking(ctx context.Context, merchantID, bookingID, dateFrom, dateTo string, partySize *int) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings
+		SET booking_date_from = ?,
+		    booking_date_to = ?,
+		    booking_duration = TIMESTAMPDIFF(MINUTE, ?, ?),
+		    party_size = COALESCE(?, party_size),
+		    sequence_number = sequence_number + 1
+		WHERE booking_id = ? AND merchant_id = ?
+	`, dateFrom, dateTo, dateFrom, dateTo, partySize, bookingID, merchantID)
+	return err
+}
+
+// CheckCapacityForWindow revalide la disponibilité d'une fenêtre [dateFrom,
+// dateTo) explicite pour party_size couverts, en excluant excludeBookingID de
+// l'occupation (§6.1/§6.2 du cadrage technico-fonctionnel, moteur unifié
+// bookingcore). Retourne false si aucune plage d'ouverture ne couvre la
+// fenêtre, ou si la capacité (avec overbooking) est dépassée à un instant de
+// la fenêtre.
+func (r *BookingsRepository) CheckCapacityForWindow(ctx context.Context, merchantID, dateFrom, dateTo string, partySize int, excludeBookingID string) (bool, error) {
+	from, err := time.Parse("2006-01-02 15:04:05", dateFrom)
+	if err != nil {
+		return false, fmt.Errorf("invalid dateFrom: %w", err)
+	}
+	to, err := time.Parse("2006-01-02 15:04:05", dateTo)
+	if err != nil {
+		return false, fmt.Errorf("invalid dateTo: %w", err)
+	}
+	if !to.After(from) {
+		return false, nil
+	}
+
+	requestedDate := from.Format("2006-01-02")
+
+	params, err := r.loadMerchantBookingParams(ctx, merchantID)
+	if err != nil {
+		return false, err
+	}
+
+	timeRanges, _, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate)
+	if err != nil {
+		return false, err
+	}
+
+	existingBookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate, excludeBookingID)
+	if err != nil {
+		return false, err
+	}
+
+	rules, err := r.loadBookingDurationRules(ctx, merchantID)
+	if err != nil {
+		return false, err
+	}
+
+	occupation := r.computeOccupation(existingBookings, params, rules)
+	capacityMultiplier := 100 + params.OverbookingPercent
+
+	// Une plage doit couvrir toute la fenêtre demandée (bornes de service,
+	// first/last booking time) pour que la fenêtre soit jouable.
+	var coveringRange *TimeRange
+	for i := range timeRanges {
+		tr := &timeRanges[i]
+
+		rangeStart, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourFrom, from.Location())
+		if err != nil {
+			continue
+		}
+		rangeEnd, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourTo, from.Location())
+		if err != nil {
+			continue
+		}
+
+		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
+			if fb, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.FirstBookingTime, from.Location()); err == nil && fb.After(rangeStart) {
+				rangeStart = fb
+			}
+		}
+		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
+			if lb, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.LastBookingTime, from.Location()); err == nil && lb.Before(rangeEnd) {
+				rangeEnd = lb
+			}
+		}
+
+		if !from.Before(rangeStart) && !to.After(rangeEnd) {
+			coveringRange = tr
+			break
+		}
+	}
+
+	if coveringRange == nil {
+		return false, nil
+	}
+
+	capacity := (coveringRange.BookingCapacity * capacityMultiplier) / 100
+	interval := params.SlotIntervalMinutes
+	if interval <= 0 {
+		interval = 15
+	}
+
+	for cur := from; cur.Before(to); cur = cur.Add(time.Duration(interval) * time.Minute) {
+		occ := occupation[cur.Format("15:04:05")]
+		if occ+partySize > capacity {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
 func (r *BookingsRepository) ReplaceBookingLocations(ctx context.Context, merchantID, bookingID string, locationIDs []string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -958,7 +1091,7 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	// -------------------------------------------------------
 	// 3) Existing bookings (start + end)
 	// -------------------------------------------------------
-	bookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate)
+	bookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1228,7 +1361,10 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 	return list, dayOfWeek, nil
 }
 
-func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, requestedDate string) ([]ExistingBooking, error) {
+// loadExistingBookings charge les résas actives du jour demandé. excludeBookingID,
+// si non vide, retire cette résa du calcul d'occupation (revalidation d'un
+// créneau en excluant la résa que l'on est en train de modifier).
+func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, requestedDate, excludeBookingID string) ([]ExistingBooking, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	dayStart := requestedDate + " 00:00:00"
 	dayEndTime, _ := time.Parse("2006-01-02 15:04:05", dayStart)
@@ -1240,7 +1376,8 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 				WHERE booking_date_from < ?
 					AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
           AND merchant_id = ?
-		`, dayEnd, dayStart, merchantID)
+          AND (? = '' OR booking_id <> ?)
+		`, dayEnd, dayStart, merchantID, excludeBookingID, excludeBookingID)
 	if err != nil {
 		return nil, err
 	}

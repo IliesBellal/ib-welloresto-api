@@ -51,7 +51,6 @@ func CanTransition(from, to string) error {
 		StatusPending: {
 			StatusConfirmed: true,
 			StatusDenied:    true,
-			StatusCancelled: true,
 		},
 		StatusConfirmed: {
 			StatusSeated:    true,
@@ -61,6 +60,7 @@ func CanTransition(from, to string) error {
 		},
 		StatusSeated: {
 			StatusCompleted: true,
+			StatusCancelled: true,
 		},
 	}
 

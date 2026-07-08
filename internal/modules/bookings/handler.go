@@ -150,6 +150,65 @@ func (h *BookingsHandler) DenyBooking(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "bookings", "deny", result)
 }
 
+func (h *BookingsHandler) CancelBooking(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "cancel", map[string]string{"error": "missing_token"})
+		return
+	}
+	ctx := r.Context()
+
+	bookingID := chi.URLParam(r, "booking_id")
+	var req CancelBookingRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			models.SendJSON(w, http.StatusBadRequest, "bookings", "cancel", map[string]string{"error": "invalid_request"})
+			return
+		}
+	}
+
+	result, err := h.svc.CancelBooking(ctx, token, bookingID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "bookings", "cancel", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "cancel", result)
+}
+
+func (h *BookingsHandler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "bookings", "reschedule", map[string]string{"error": "missing_token"})
+		return
+	}
+	ctx := r.Context()
+
+	bookingID := chi.URLParam(r, "booking_id")
+	var req RescheduleBookingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "bookings", "reschedule", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	result, err := h.svc.RescheduleBooking(ctx, token, bookingID, &req)
+	if err != nil {
+		var conflictErr *TableConflictError
+		if errors.As(err, &conflictErr) {
+			models.SendJSON(w, http.StatusConflict, "bookings", "reschedule", map[string]interface{}{
+				"error":     "table_conflict",
+				"conflicts": conflictErr.Conflicts,
+			})
+			return
+		}
+
+		models.SendErrorJSON(w, "bookings", "reschedule", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "bookings", "reschedule", result)
+}
+
 func (h *BookingsHandler) NoShowBooking(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
