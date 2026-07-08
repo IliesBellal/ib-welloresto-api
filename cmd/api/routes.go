@@ -263,6 +263,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
 	stocksService := stocksModule.NewStockService(stocksRepo)
 
+	// ---- Bookings (initialized here because ordersLifeCycleService depends on it
+	// for the auto-seat/auto-complete hooks, cf. CreateOrder/DeliverOrder) ----
+	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
+	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, log)
+	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
+
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, customersRepo)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
@@ -283,6 +290,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		upsellTracker,
 		posAccountingRepo,
 		mailService,
+		bookingsService,
 	)
 
 	// ---- Delivery Sessions ----
@@ -351,12 +359,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Cash Register ----
 	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB)
 	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
-
-	// ---- Bookings ----
-	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
-	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, log)
-	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)

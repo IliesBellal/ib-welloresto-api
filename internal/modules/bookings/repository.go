@@ -855,6 +855,91 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
 	return conflicts, rows.Err()
 }
 
+// FindConfirmedBookingForAutoSeat cherche la resa confirmed la plus proche de
+// maintenant parmi celles dont une table attribuee figure dans locationIDs,
+// avec une tolerance de 30 min de part et d'autre de sa fenetre
+// [booking_date_from, booking_date_to] (arrivee en avance/en retard). "" est
+// retourne (sans erreur) si aucune resa ne correspond.
+func (r *BookingsRepository) FindConfirmedBookingForAutoSeat(ctx context.Context, merchantID string, locationIDs []string) (string, error) {
+	if len(locationIDs) == 0 {
+		return "", nil
+	}
+
+	db := dbutils.GetDB(ctx, r.database)
+
+	placeholders := make([]string, len(locationIDs))
+	args := make([]interface{}, 0, len(locationIDs)+1)
+	for i, id := range locationIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, merchantID)
+
+	query := fmt.Sprintf(`
+        SELECT b.booking_id
+        FROM bookings b
+        INNER JOIN booked_location bl ON bl.booking_id = b.booking_id
+        WHERE bl.location_id IN (%s)
+          AND b.merchant_id = ?
+          AND b.status = 'confirmed'
+          AND b.booking_date_from - INTERVAL 30 MINUTE <= UTC_TIMESTAMP()
+          AND COALESCE(b.booking_date_to, b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE) + INTERVAL 30 MINUTE >= UTC_TIMESTAMP()
+        GROUP BY b.booking_id, b.booking_date_from
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, b.booking_date_from, UTC_TIMESTAMP())) ASC
+        LIMIT 1
+    `, strings.Join(placeholders, ","))
+
+	var bookingID string
+	err := db.QueryRowContext(ctx, query, args...).Scan(&bookingID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return bookingID, nil
+}
+
+// SetBookingSeatedWithOrder transitionne une resa vers seated et pose le lien
+// caisse (bookings.order_id), active par le hook auto-seat (cf.
+// order_life_cycle.CreateOrder). Ce lien est ensuite exploite tel quel par
+// order_life_cycle.ClearBookings (detache a l'annulation de commande, sans
+// toucher au statut) et par le hook auto-complete (FindSeatedBookingByOrderID).
+func (r *BookingsRepository) SetBookingSeatedWithOrder(ctx context.Context, merchantID, bookingID, orderID string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+        UPDATE bookings
+        SET status = ?, order_id = ?
+        WHERE booking_id = ? AND merchant_id = ?
+    `, bookingcore.StatusSeated, orderID, bookingID, merchantID)
+	return err
+}
+
+// FindSeatedBookingByOrderID retrouve la resa seated liee a une commande
+// (posee par SetBookingSeatedWithOrder). "" est retourne (sans erreur) si
+// aucune resa n'est liee ou si elle n'est plus au statut seated.
+func (r *BookingsRepository) FindSeatedBookingByOrderID(ctx context.Context, merchantID, orderID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var bookingID string
+	err := db.QueryRowContext(ctx, `
+        SELECT booking_id
+        FROM bookings
+        WHERE merchant_id = ? AND order_id = ? AND status = ?
+        LIMIT 1
+    `, merchantID, orderID, bookingcore.StatusSeated).Scan(&bookingID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return bookingID, nil
+}
+
 func (r *BookingsRepository) SetBookingState(ctx context.Context, merchantID, bookingID string, state string) error {
 	db := dbutils.GetDB(ctx, r.database)
 

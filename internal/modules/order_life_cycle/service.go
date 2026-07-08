@@ -44,6 +44,14 @@ type merchantHeaderProvider interface {
 	GetMerchantHeader(ctx context.Context, merchantID string) (*accounting.MerchantHeader, error)
 }
 
+// bookingAutoTransitioner est le sous-ensemble de bookings.BookingsService utilisé par les hooks
+// automatiques confirmed->seated (CreateOrder) et seated->completed (DeliverOrder). Permet de
+// substituer un fake dans les tests sans dépendre des dépendances lourdes de BookingsService.
+type bookingAutoTransitioner interface {
+	AutoSeatForOrder(ctx context.Context, merchantID, orderID string, locationIDs []string) error
+	AutoCompleteForOrder(ctx context.Context, merchantID, orderID string) error
+}
+
 type OrdersLifeCycleService struct {
 	db                   *sql.DB
 	auditService         audit.AuditService
@@ -62,9 +70,10 @@ type OrdersLifeCycleService struct {
 	stocksRepo           *stocks.StocksRepository
 	accountingRepo       merchantHeaderProvider
 	mailerService        mailer.Service
+	bookingsSvc          bookingAutoTransitioner
 }
 
-func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders orderFetcher, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker, accountingRepo merchantHeaderProvider, mailerService mailer.Service) *OrdersLifeCycleService {
+func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders orderFetcher, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker, accountingRepo merchantHeaderProvider, mailerService mailer.Service, bookingsSvc bookingAutoTransitioner) *OrdersLifeCycleService {
 	return &OrdersLifeCycleService{
 		ordersLifeCycleRepo:  ordersRepo,
 		deliverySessionsRepo: deliverySessionsRepo,
@@ -83,6 +92,7 @@ func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc 
 		stocksRepo:           stocksRepo,
 		accountingRepo:       accountingRepo,
 		mailerService:        mailerService,
+		bookingsSvc:          bookingsSvc,
 	}
 }
 
@@ -281,6 +291,17 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 			logger.FromContext(ctx).Error("stock consumption failed on order close",
 				zap.String("order_id", orderID),
 				zap.Error(stockErr),
+			)
+		}
+	}
+
+	// Pont automatique seated -> completed : fire-and-forget, ne doit jamais
+	// affecter la fermeture de la commande (cf. bookingAutoTransitioner).
+	if s.bookingsSvc != nil {
+		if hookErr := s.bookingsSvc.AutoCompleteForOrder(ctx, MerchantID, orderID); hookErr != nil {
+			logger.FromContext(ctx).Error("booking auto-complete hook failed",
+				zap.String("order_id", orderID),
+				zap.Error(hookErr),
 			)
 		}
 	}
@@ -958,6 +979,21 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 	} else {
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
 		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
+
+		// Pont automatique confirmed -> seated : fire-and-forget, ne doit jamais
+		// affecter le flux de création de commande (cf. bookingAutoTransitioner).
+		if s.bookingsSvc != nil && len(req.Order.Locations) > 0 {
+			locationIDs := make([]string, 0, len(req.Order.Locations))
+			for _, loc := range req.Order.Locations {
+				locationIDs = append(locationIDs, loc.LocationID)
+			}
+			if hookErr := s.bookingsSvc.AutoSeatForOrder(ctx, req.MerchantID, result.OrderID, locationIDs); hookErr != nil {
+				log.Error("booking auto-seat hook failed",
+					zap.String("order_id", result.OrderID),
+					zap.Error(hookErr),
+				)
+			}
+		}
 
 		// Tracking is fire-and-forget and must never affect CreateOrder response flow.
 		if s.upsellTracker != nil && req.UpsellSuggestionID != nil && *req.UpsellSuggestionID != "" {

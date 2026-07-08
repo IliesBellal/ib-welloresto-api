@@ -866,11 +866,13 @@ WHERE order_id = ?
 		return nil, err
 	}
 
-	// 4) Set bookings status = 0
-	qUpdBook := `UPDATE bookings SET status = '0' WHERE order_id = ?`
-	if _, err := db.ExecContext(ctx, qUpdBook, orderID); err != nil {
-		return nil, err
-	}
+	// Historique : cette etape ecrivait autrefois `UPDATE bookings SET
+	// status = '0' WHERE order_id = ?` directement ici. bookings.order_id
+	// n'etant renseigne par aucun chemin de code Go, cette ligne n'a jamais
+	// matche la moindre ligne en production. Le pont seated -> completed
+	// est desormais gere par OrdersLifeCycleService.DeliverOrder via
+	// bookingsSvc.AutoCompleteForOrder (transition via bookingcore,
+	// booking_events, notification POS).
 
 	// 5) Close delivery_session if last order
 	const qCloseDS = `
