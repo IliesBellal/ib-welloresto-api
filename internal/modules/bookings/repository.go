@@ -1551,6 +1551,11 @@ func (r *BookingsRepository) computeOccupation(bookings []ExistingBooking, param
 }
 
 func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParams, requestedDate string, timeRanges []TimeRange, occupation map[string]int, rules []bookingcore.DurationRule) []BookingSlot {
+	loc, err := time.LoadLocation(params.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+
 	ranges := make([]bookingcore.SlotRange, 0, len(timeRanges))
 	for _, tr := range timeRanges {
 		ranges = append(ranges, bookingcore.SlotRange{
@@ -1586,7 +1591,7 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 		},
 		ranges,
 		occupation,
-		time.Now().In(time.FixedZone(params.Timezone, 0)),
+		time.Now().In(loc),
 	)
 
 	slots := make([]BookingSlot, 0, len(computed))
