@@ -717,7 +717,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	var bookingNumber string
 
 	for {
-		bookingNumber = utils.GenerateRandomString(6)
+		bookingNumber = strings.ToUpper(utils.GenerateRandomString(6))
 
 		err = db.QueryRowContext(ctx,
 			`SELECT booking_id FROM bookings WHERE booking_number = ?`,
