@@ -135,11 +135,11 @@ func BuildOccupationByInterval(bookings []IntervalBooking, interval int, setting
 	occ := make(map[string]int)
 
 	for _, b := range bookings {
-		start, _ := time.Parse("2006-01-02 15:04:05", b.StartDate)
+		start, _ := time.Parse("2006-01-02T15:04:05Z", b.StartDate)
 		end := start
 
 		if b.EndDate != nil {
-			end, _ = time.Parse("2006-01-02 15:04:05", *b.EndDate)
+			end, _ = time.Parse("2006-01-02T15:04:05Z", *b.EndDate)
 		} else if b.DurationMinutes != nil && *b.DurationMinutes > 0 {
 			end = start.Add(time.Duration(*b.DurationMinutes) * time.Minute)
 		} else {
