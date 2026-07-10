@@ -36,7 +36,7 @@ func SetupTasks(
 		taskManager.CapturePayments()
 		taskManager.CancelPayments()
 	})
-	c.AddFunc("@monthly", func() {
+	c.AddFunc("@every 1s", func() {
 		taskManager.UpdatePopularProducts()
 	})
 
