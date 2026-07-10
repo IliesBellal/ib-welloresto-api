@@ -49,10 +49,6 @@ func CORSMiddleware() *cors.Cors {
 			"https://my-wello-resto-prod.onrender.com",
 			"https://my-wello-resto-staging.onrender.com",
 
-			// Lovable
-			"https://scannorder-test.lovable.app",
-			"https://scannorder.lovable.app",
-
 			// RSV
 			"https://rsv-staging.onrender.com",
 			"https://rsv.onrender.com",
@@ -66,6 +62,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// ScanNOrder
 			"https://scannorder.welloresto.fr",
+			"https://wello-resto-scannorder-staging.onrender.com",
 		},
 
 		AllowedMethods: []string{
