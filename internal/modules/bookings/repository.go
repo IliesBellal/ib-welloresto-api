@@ -735,12 +735,17 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	//---------------------------------------------------------
 	// 2. Compute duration
 	//---------------------------------------------------------
-	start, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
 	if err != nil {
 		return "", err
 	}
 
-	end, err := time.Parse("2006-01-02 15:04:05", req.Booking.EndDate)
+	start, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
+	if err != nil {
+		return "", err
+	}
+
+	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, loc)
 	if err != nil {
 		return "", err
 	}
@@ -755,6 +760,9 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	//---------------------------------------------------------
 	// 3. Insert booking
 	//---------------------------------------------------------
+	startUTC := start.UTC().Format("2006-01-02 15:04:05")
+	endUTC := end.UTC().Format("2006-01-02 15:04:05")
+
 	res, err := db.ExecContext(ctx, `
         INSERT INTO bookings (
             booking_number, status, merchant_id, party_size,
@@ -769,8 +777,8 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		req.Booking.PartySize,
 		customerID,
 		req.Booking.Comment,
-		req.Booking.StartDate,
-		req.Booking.EndDate,
+		startUTC,
+		endUTC,
 		duration,
 		req.CreatedBy,
 	)
@@ -1068,13 +1076,20 @@ func (r *BookingsRepository) CheckCapacityForWindow(ctx context.Context, merchan
 	if err != nil {
 		return false, err
 	}
+	loc := time.UTC
+	if loadedLoc, tzErr := time.LoadLocation(params.Timezone); tzErr == nil {
+		loc = loadedLoc
+	}
 
-	timeRanges, _, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate)
+	timeRanges, _, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate, loc)
 	if err != nil {
 		return false, err
 	}
+	dayStart := requestedDate + " 00:00:00"
+	dayEndTime, _ := time.Parse("2006-01-02 15:04:05", dayStart)
+	dayEnd := dayEndTime.Add(24 * time.Hour).Format("2006-01-02 15:04:05")
 
-	existingBookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate, excludeBookingID)
+	existingBookings, err := r.loadExistingBookings(ctx, merchantID, dayStart, dayEnd, excludeBookingID)
 	if err != nil {
 		return false, err
 	}
@@ -1093,22 +1108,22 @@ func (r *BookingsRepository) CheckCapacityForWindow(ctx context.Context, merchan
 	for i := range timeRanges {
 		tr := &timeRanges[i]
 
-		rangeStart, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourFrom, from.Location())
+		rangeStart, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourFrom, time.UTC)
 		if err != nil {
 			continue
 		}
-		rangeEnd, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourTo, from.Location())
+		rangeEnd, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+tr.HourTo, time.UTC)
 		if err != nil {
 			continue
 		}
 
 		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
-			if fb, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.FirstBookingTime, from.Location()); err == nil && fb.After(rangeStart) {
+			if fb, parseErr := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.FirstBookingTime, time.UTC); parseErr == nil && fb.After(rangeStart) {
 				rangeStart = fb
 			}
 		}
 		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
-			if lb, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.LastBookingTime, from.Location()); err == nil && lb.Before(rangeEnd) {
+			if lb, parseErr := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+*tr.LastBookingTime, time.UTC); parseErr == nil && lb.Before(rangeEnd) {
 				rangeEnd = lb
 			}
 		}
@@ -1176,11 +1191,20 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	if err != nil {
 		return nil, err
 	}
+	loc, err := r.loadMerchantLocation(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, dayStartUTC, dayEndUTC, err := toUTCDayBounds(requestedDate, loc)
+	if err != nil {
+		return nil, err
+	}
 
 	// -------------------------------------------------------
 	// 2) Hours of operation
 	// -------------------------------------------------------
-	timeRanges, dayOfWeek, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate)
+	timeRanges, dayOfWeek, err := r.loadHoursOfOperation(ctx, merchantID, requestedDate, loc)
 	if err != nil {
 		return nil, err
 	}
@@ -1188,7 +1212,7 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	// -------------------------------------------------------
 	// 3) Existing bookings (start + end)
 	// -------------------------------------------------------
-	bookings, err := r.loadExistingBookings(ctx, merchantID, requestedDate, "")
+	bookings, err := r.loadExistingBookings(ctx, merchantID, dayStartUTC, dayEndUTC, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1209,6 +1233,8 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 	slots := r.buildAvailabilitySlots(
 		params,
 		requestedDate,
+		requestedDate,
+		loc,
 		timeRanges,
 		occupation,
 		durationRules,
@@ -1416,10 +1442,13 @@ func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merc
 	return &params, nil
 }
 
-func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantID, requestedDate string) ([]TimeRange, int, error) {
+func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantID, requestedDate string, loc *time.Location) ([]TimeRange, int, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	dateObj, _ := time.Parse("2006-01-02", requestedDate)
+	dateObj, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return nil, 0, err
+	}
 	dayOfWeek := int(dateObj.Weekday())
 	if dayOfWeek == 0 {
 		dayOfWeek = 7
@@ -1461,11 +1490,8 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 // loadExistingBookings charge les résas actives du jour demandé. excludeBookingID,
 // si non vide, retire cette résa du calcul d'occupation (revalidation d'un
 // créneau en excluant la résa que l'on est en train de modifier).
-func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, requestedDate, excludeBookingID string) ([]ExistingBooking, error) {
+func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, dayStartUTC, dayEndUTC, excludeBookingID string) ([]ExistingBooking, error) {
 	db := dbutils.GetDB(ctx, r.database)
-	dayStart := requestedDate + " 00:00:00"
-	dayEndTime, _ := time.Parse("2006-01-02 15:04:05", dayStart)
-	dayEnd := dayEndTime.Add(24 * time.Hour).Format("2006-01-02 15:04:05")
 
 	rows, err := db.QueryContext(ctx, `
 				SELECT party_size, booking_date_from, booking_date_to, booking_duration, status
@@ -1474,7 +1500,7 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 					AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
           AND merchant_id = ?
           AND (? = '' OR booking_id <> ?)
-		`, dayEnd, dayStart, merchantID, excludeBookingID, excludeBookingID)
+		`, dayEndUTC, dayStartUTC, merchantID, excludeBookingID, excludeBookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -1550,27 +1576,43 @@ func (r *BookingsRepository) computeOccupation(bookings []ExistingBooking, param
 	}, rules)
 }
 
-func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParams, requestedDate string, timeRanges []TimeRange, occupation map[string]int, rules []bookingcore.DurationRule) []BookingSlot {
-	loc, err := time.LoadLocation(params.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParams, requestedDateLocal, requestedDateForEngine string, loc *time.Location, timeRanges []TimeRange, occupation map[string]int, rules []bookingcore.DurationRule) []BookingSlot {
 
 	ranges := make([]bookingcore.SlotRange, 0, len(timeRanges))
 	for _, tr := range timeRanges {
+		hourFromUTC, errFrom := localClockToUTC(requestedDateLocal, tr.HourFrom, loc)
+		hourToUTC, errTo := localClockToUTC(requestedDateLocal, tr.HourTo, loc)
+		if errFrom != nil || errTo != nil {
+			continue
+		}
+
+		var firstBookingTimeUTC *string
+		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDateLocal, *tr.FirstBookingTime, loc); err == nil {
+				firstBookingTimeUTC = &converted
+			}
+		}
+
+		var lastBookingTimeUTC *string
+		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDateLocal, *tr.LastBookingTime, loc); err == nil {
+				lastBookingTimeUTC = &converted
+			}
+		}
+
 		ranges = append(ranges, bookingcore.SlotRange{
 			ID:               tr.ID,
-			HourFrom:         tr.HourFrom,
-			HourTo:           tr.HourTo,
+			HourFrom:         hourFromUTC,
+			HourTo:           hourToUTC,
 			BookingCapacity:  tr.BookingCapacity,
-			FirstBookingTime: tr.FirstBookingTime,
-			LastBookingTime:  tr.LastBookingTime,
+			FirstBookingTime: firstBookingTimeUTC,
+			LastBookingTime:  lastBookingTimeUTC,
 		})
 	}
 
 	computed := bookingcore.ComputeSlots(
 		bookingcore.SlotParams{
-			RequestedDate: requestedDate,
+			RequestedDate: requestedDateForEngine,
 			PartySize:     params.ReserveMinimumPartySize,
 			BookingSettings: bookingcore.BookingSettings{
 				DefaultBookingDuration:        params.DefaultBookingDuration,
@@ -1591,7 +1633,7 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 		},
 		ranges,
 		occupation,
-		time.Now().In(loc),
+		time.Now().UTC(),
 	)
 	computed = bookingcore.ConvertComputedSlotsFromUTC(computed, loc)
 
@@ -1611,6 +1653,47 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 	}
 
 	return slots
+}
+
+func (r *BookingsRepository) loadMerchantLocation(ctx context.Context, merchantID string) (*time.Location, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var timezone sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !timezone.Valid || strings.TrimSpace(timezone.String) == "" {
+		return time.UTC, nil
+	}
+
+	loc, err := time.LoadLocation(strings.TrimSpace(timezone.String))
+	if err != nil {
+		return time.UTC, nil
+	}
+
+	return loc, nil
+}
+
+func toUTCDayBounds(requestedDate string, loc *time.Location) (string, string, string, error) {
+	dayStartLocal, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	dayStartUTC := dayStartLocal.UTC()
+	dayEndUTC := dayStartUTC.Add(24 * time.Hour)
+
+	return dayStartUTC.Format("2006-01-02"), dayStartUTC.Format("2006-01-02 15:04:05"), dayEndUTC.Format("2006-01-02 15:04:05"), nil
+}
+
+func localClockToUTC(requestedDate string, clock string, loc *time.Location) (string, error) {
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+clock, loc)
+	if err != nil {
+		return "", err
+	}
+	return t.UTC().Format("15:04:05"), nil
 }
 
 func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchantID string) ([]Location, error) {

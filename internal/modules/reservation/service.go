@@ -453,7 +453,14 @@ func normalizeRequestedDateInput(raw string, loc *time.Location) (string, error)
 
 func (s *reservationService) buildComputedAvailability(ctx context.Context, merchant *Merchant, requestedDate string, partySize int, excludeBookingNumber string) ([]bookingcore.ComputedSlot, error) {
 	loc, _ := time.LoadLocation(merchant.Timezone)
+	if loc == nil {
+		loc = time.UTC
+	}
 	requestedDateTime, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return nil, err
+	}
+	requestedDateUTC, _, _, err := toUTCDayBounds(requestedDate, loc)
 	if err != nil {
 		return nil, err
 	}
@@ -469,9 +476,9 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 
 	var bookings []bookingcore.IntervalBooking
 	if excludeBookingNumber == "" {
-		bookings, err = s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDate)
+		bookings, err = s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDateUTC)
 	} else {
-		bookings, err = s.repo.GetBookedCapacityExcludingBooking(ctx, merchant.MerchantID, requestedDate, excludeBookingNumber)
+		bookings, err = s.repo.GetBookedCapacityExcludingBooking(ctx, merchant.MerchantID, requestedDateUTC, excludeBookingNumber)
 	}
 	if err != nil {
 		return nil, err
@@ -485,13 +492,36 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 	occupation := bookingcore.BuildOccupationByInterval(bookings, merchant.SlotIntervalMinutes, NewBookingSettingsFromMerchant(merchant), durationRules)
 	rawRanges := make([]bookingcore.SlotRange, 0, len(ranges))
 	for _, r := range ranges {
+		hourFromUTC, err := localClockToUTC(requestedDate, r.HourFrom, loc)
+		if err != nil {
+			continue
+		}
+		hourToUTC, err := localClockToUTC(requestedDate, r.HourTo, loc)
+		if err != nil {
+			continue
+		}
+
+		var firstBookingTimeUTC *string
+		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDate, *r.FirstBookingTime, loc); err == nil {
+				firstBookingTimeUTC = &converted
+			}
+		}
+
+		var lastBookingTimeUTC *string
+		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDate, *r.LastBookingTime, loc); err == nil {
+				lastBookingTimeUTC = &converted
+			}
+		}
+
 		rawRanges = append(rawRanges, bookingcore.SlotRange{
 			ID:               mustAtoi(r.ID),
-			HourFrom:         r.HourFrom,
-			HourTo:           r.HourTo,
+			HourFrom:         hourFromUTC,
+			HourTo:           hourToUTC,
 			BookingCapacity:  r.BookingCapacity,
-			FirstBookingTime: r.FirstBookingTime,
-			LastBookingTime:  r.LastBookingTime,
+			FirstBookingTime: firstBookingTimeUTC,
+			LastBookingTime:  lastBookingTimeUTC,
 		})
 	}
 
@@ -504,12 +534,12 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 		},
 		rawRanges,
 		occupation,
-		time.Now().In(loc),
+		time.Now().UTC(),
 	), nil
 }
 
 func (s *reservationService) findMatchingSlot(slots []bookingcore.ComputedSlot, startTime time.Time) (bool, int) {
-	target := startTime.Format("2006-01-02 15:04:05")
+	target := startTime.UTC().Format("2006-01-02 15:04:05")
 	for _, slot := range slots {
 		if slot.DateFrom == target {
 			return slot.Available, slot.DurationMinutes
@@ -599,4 +629,25 @@ func (s *reservationService) clearPendingIdempotency(ctx context.Context, slug, 
 	}
 
 	s.redis.Delete(ctx, "idem:"+slug+":"+strings.TrimSpace(idempotencyKey))
+}
+
+func toUTCDayBounds(requestedDate string, loc *time.Location) (string, string, string, error) {
+	dayStartLocal, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	dayStartUTC := dayStartLocal.UTC()
+	dayEndUTC := dayStartUTC.Add(24 * time.Hour)
+
+	return dayStartUTC.Format("2006-01-02"), dayStartUTC.Format("2006-01-02 15:04:05"), dayEndUTC.Format("2006-01-02 15:04:05"), nil
+}
+
+func localClockToUTC(requestedDate, clock string, loc *time.Location) (string, error) {
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+clock, loc)
+	if err != nil {
+		return "", err
+	}
+
+	return t.UTC().Format("15:04:05"), nil
 }

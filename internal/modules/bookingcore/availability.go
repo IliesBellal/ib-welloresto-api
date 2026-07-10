@@ -164,13 +164,13 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 	}
 
 	durationMinutes := ResolveDurationMinutes(params.PartySize, settings, params.DurationRules)
-	requestedDate, err := time.ParseInLocation("2006-01-02", params.RequestedDate, now.Location())
+	requestedDate, err := time.ParseInLocation("2006-01-02", params.RequestedDate, time.UTC)
 	if err != nil {
 		return nil
 	}
 
-	requestedDayStart := time.Date(requestedDate.Year(), requestedDate.Month(), requestedDate.Day(), 0, 0, 0, 0, now.Location())
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	requestedDayStart := time.Date(requestedDate.Year(), requestedDate.Month(), requestedDate.Day(), 0, 0, 0, 0, time.UTC)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if requestedDayStart.After(todayStart.AddDate(0, 0, settings.MaxBookingHorizonDays)) {
 		return nil
 	}
@@ -181,11 +181,11 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 	nowStr := now.Format("2006-01-02")
 
 	for _, tr := range ranges {
-		start, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourFrom, now.Location())
-		endOfService, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourTo, now.Location())
+		start, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourFrom, time.UTC)
+		endOfService, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourTo, time.UTC)
 
 		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
-			firstBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.FirstBookingTime, now.Location())
+			firstBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.FirstBookingTime, time.UTC)
 			if err == nil && firstBookingTime.After(start) {
 				start = firstBookingTime
 			}
@@ -193,7 +193,7 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 
 		last := endOfService.Add(-time.Duration(settings.LastBookingOffsetMinutes) * time.Minute)
 		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
-			lastBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.LastBookingTime, now.Location())
+			lastBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.LastBookingTime, time.UTC)
 			if err == nil && lastBookingTime.Before(last) {
 				last = lastBookingTime
 			}
@@ -207,6 +207,7 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 		for !start.After(last) {
 			available := true
 			maxOcc := 0
+			startOcc := occupation[start.Format("15:04:05")]
 
 			if params.RequestedDate == nowStr && start.Before(minBookingNoticeBoundary) {
 				available = false
@@ -229,8 +230,8 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 			}
 
 			capacity := (tr.BookingCapacity * capacityMultiplier) / 100
-			remaining := capacity - maxOcc
-			if remaining < params.PartySize {
+			remaining := capacity - startOcc
+			if capacity-maxOcc < params.PartySize {
 				available = false
 			}
 

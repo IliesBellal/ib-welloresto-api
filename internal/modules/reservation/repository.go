@@ -435,11 +435,16 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		return "", err
 	}
 
-	start, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
 	if err != nil {
 		return "", err
 	}
-	end, err := time.Parse("2006-01-02 15:04:05", req.Booking.EndDate)
+
+	start, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
+	if err != nil {
+		return "", err
+	}
+	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, loc)
 	if err != nil {
 		return "", err
 	}
@@ -447,6 +452,9 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 	if duration < 0 {
 		return "", fmt.Errorf("start date is after end date")
 	}
+
+	startUTC := start.UTC().Format("2006-01-02 15:04:05")
+	endUTC := end.UTC().Format("2006-01-02 15:04:05")
 
 	queryInsert := `
 		INSERT INTO bookings (
@@ -463,8 +471,8 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		req.Booking.PartySize,
 		*customerID,
 		req.Booking.Comment,
-		req.Booking.StartDate,
-		req.Booking.EndDate,
+		startUTC,
+		endUTC,
 		duration,
 		req.CreatedBy,
 	)
@@ -520,4 +528,25 @@ func stringPtr(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func (r *reservationRepository) loadMerchantLocation(ctx context.Context, merchantID string) (*time.Location, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var timezone sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !timezone.Valid || timezone.String == "" {
+		return time.UTC, nil
+	}
+
+	loc, err := time.LoadLocation(timezone.String)
+	if err != nil {
+		return time.UTC, nil
+	}
+
+	return loc, nil
 }
