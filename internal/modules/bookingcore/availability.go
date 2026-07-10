@@ -33,12 +33,12 @@ type DurationRule struct {
 }
 
 type SlotRange struct {
-	ID               int
-	HourFrom         string
-	HourTo           string
-	BookingCapacity  int
-	FirstBookingTime *string
-	LastBookingTime  *string
+	ID                  int
+	StartUTC            time.Time
+	EndUTC              time.Time
+	BookingCapacity     int
+	FirstBookingTimeUTC *time.Time
+	LastBookingTimeUTC  *time.Time
 }
 
 type SlotParams struct {
@@ -178,22 +178,16 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 	nowStr := now.Format("2006-01-02")
 
 	for _, tr := range ranges {
-		start, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourFrom, time.UTC)
-		endOfService, _ := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+tr.HourTo, time.UTC)
+		start := tr.StartUTC
+		endOfService := tr.EndUTC
 
-		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
-			firstBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.FirstBookingTime, time.UTC)
-			if err == nil && firstBookingTime.After(start) {
-				start = firstBookingTime
-			}
+		if tr.FirstBookingTimeUTC != nil && tr.FirstBookingTimeUTC.After(start) {
+			start = *tr.FirstBookingTimeUTC
 		}
 
 		last := endOfService.Add(-time.Duration(settings.LastBookingOffsetMinutes) * time.Minute)
-		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
-			lastBookingTime, err := time.ParseInLocation("2006-01-02 15:04:05", params.RequestedDate+" "+*tr.LastBookingTime, time.UTC)
-			if err == nil && lastBookingTime.Before(last) {
-				last = lastBookingTime
-			}
+		if tr.LastBookingTimeUTC != nil && tr.LastBookingTimeUTC.Before(last) {
+			last = *tr.LastBookingTimeUTC
 		}
 
 		lastByDuration := endOfService.Add(-time.Duration(durationMinutes) * time.Minute)

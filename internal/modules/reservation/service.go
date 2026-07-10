@@ -501,27 +501,29 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 			continue
 		}
 
-		var firstBookingTimeUTC *string
+		var firstBookingTimeUTC *time.Time
 		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
 			if converted, err := localClockToUTC(requestedDate, *r.FirstBookingTime, loc); err == nil {
-				firstBookingTimeUTC = &converted
+				convertedTime := converted
+				firstBookingTimeUTC = &convertedTime
 			}
 		}
 
-		var lastBookingTimeUTC *string
+		var lastBookingTimeUTC *time.Time
 		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
 			if converted, err := localClockToUTC(requestedDate, *r.LastBookingTime, loc); err == nil {
-				lastBookingTimeUTC = &converted
+				convertedTime := converted
+				lastBookingTimeUTC = &convertedTime
 			}
 		}
 
 		rawRanges = append(rawRanges, bookingcore.SlotRange{
-			ID:               mustAtoi(r.ID),
-			HourFrom:         hourFromUTC,
-			HourTo:           hourToUTC,
-			BookingCapacity:  r.BookingCapacity,
-			FirstBookingTime: firstBookingTimeUTC,
-			LastBookingTime:  lastBookingTimeUTC,
+			ID:                  mustAtoi(r.ID),
+			StartUTC:            hourFromUTC,
+			EndUTC:              hourToUTC,
+			BookingCapacity:     r.BookingCapacity,
+			FirstBookingTimeUTC: firstBookingTimeUTC,
+			LastBookingTimeUTC:  lastBookingTimeUTC,
 		})
 	}
 
@@ -643,11 +645,11 @@ func toUTCDayBounds(requestedDate string, loc *time.Location) (string, string, s
 	return dayStartUTC.Format("2006-01-02"), dayStartUTC.Format("2006-01-02 15:04:05"), dayEndUTC.Format("2006-01-02 15:04:05"), nil
 }
 
-func localClockToUTC(requestedDate, clock string, loc *time.Location) (string, error) {
+func localClockToUTC(requestedDate, clock string, loc *time.Location) (time.Time, error) {
 	t, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+clock, loc)
 	if err != nil {
-		return "", err
+		return time.Time{}, err
 	}
 
-	return t.UTC().Format("15:04:05"), nil
+	return t.UTC(), nil
 }

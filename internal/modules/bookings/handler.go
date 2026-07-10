@@ -481,6 +481,13 @@ func (h *BookingsHandler) PutBookingSettingsHours(w http.ResponseWriter, r *http
 
 	hours, err := h.svc.PutBookingHours(r.Context(), token, &req)
 	if err != nil {
+		if errors.Is(err, ErrHoursRequired) {
+			models.SendJSON(w, http.StatusBadRequest, "bookings", "put_settings_hours", map[string]string{
+				"error":   "hours_required",
+				"message": "hours payload is required and cannot be empty",
+			})
+			return
+		}
 		models.SendErrorJSON(w, "bookings", "put_settings_hours", err)
 		return
 	}

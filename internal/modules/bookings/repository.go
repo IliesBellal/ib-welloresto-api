@@ -1585,27 +1585,29 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 			continue
 		}
 
-		var firstBookingTimeUTC *string
+		var firstBookingTimeUTC *time.Time
 		if tr.FirstBookingTime != nil && *tr.FirstBookingTime != "" {
 			if converted, err := localClockToUTC(requestedDateLocal, *tr.FirstBookingTime, loc); err == nil {
-				firstBookingTimeUTC = &converted
+				convertedTime := converted
+				firstBookingTimeUTC = &convertedTime
 			}
 		}
 
-		var lastBookingTimeUTC *string
+		var lastBookingTimeUTC *time.Time
 		if tr.LastBookingTime != nil && *tr.LastBookingTime != "" {
 			if converted, err := localClockToUTC(requestedDateLocal, *tr.LastBookingTime, loc); err == nil {
-				lastBookingTimeUTC = &converted
+				convertedTime := converted
+				lastBookingTimeUTC = &convertedTime
 			}
 		}
 
 		ranges = append(ranges, bookingcore.SlotRange{
-			ID:               tr.ID,
-			HourFrom:         hourFromUTC,
-			HourTo:           hourToUTC,
-			BookingCapacity:  tr.BookingCapacity,
-			FirstBookingTime: firstBookingTimeUTC,
-			LastBookingTime:  lastBookingTimeUTC,
+			ID:                  tr.ID,
+			StartUTC:            hourFromUTC,
+			EndUTC:              hourToUTC,
+			BookingCapacity:     tr.BookingCapacity,
+			FirstBookingTimeUTC: firstBookingTimeUTC,
+			LastBookingTimeUTC:  lastBookingTimeUTC,
 		})
 	}
 
@@ -1684,12 +1686,12 @@ func toUTCDayBounds(requestedDate string, loc *time.Location) (string, string, s
 	return dayStartUTC.Format("2006-01-02"), dayStartUTC.Format("2006-01-02 15:04:05"), dayEndUTC.Format("2006-01-02 15:04:05"), nil
 }
 
-func localClockToUTC(requestedDate string, clock string, loc *time.Location) (string, error) {
+func localClockToUTC(requestedDate string, clock string, loc *time.Location) (time.Time, error) {
 	t, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+clock, loc)
 	if err != nil {
-		return "", err
+		return time.Time{}, err
 	}
-	return t.UTC().Format("15:04:05"), nil
+	return t.UTC(), nil
 }
 
 func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchantID string) ([]Location, error) {

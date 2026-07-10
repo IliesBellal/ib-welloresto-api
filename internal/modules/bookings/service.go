@@ -3,6 +3,7 @@ package bookings
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,8 @@ import (
 
 	"go.uber.org/zap"
 )
+
+var ErrHoursRequired = errors.New("hours_required")
 
 type BookingsService struct {
 	repo     *BookingsRepository
@@ -564,6 +567,12 @@ func (s *BookingsService) PutBookingHours(ctx context.Context, token string, req
 	}
 	if req == nil {
 		return nil, models.ErrInvalidInput
+	}
+	if req.Hours == nil || len(req.Hours) == 0 {
+		if s.log != nil {
+			s.log.Warn("rejecting empty booking hours payload", zap.String("merchant_id", user.MerchantID), zap.String("error", "hours_required"))
+		}
+		return nil, ErrHoursRequired
 	}
 
 	for _, h := range req.Hours {

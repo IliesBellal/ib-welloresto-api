@@ -157,6 +157,77 @@ func TestPutBookingHours_Validation(t *testing.T) {
 	}
 }
 
+func TestPutBookingHours_RejectsEmptyPayload(t *testing.T) {
+	svc := &BookingsService{log: zap.NewNop()}
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
+
+	_, err := svc.PutBookingHours(ctx, "tok", &PutBookingSettingsHoursRequest{Hours: []models.POSHoursOfOperationPatch{}})
+	if !errors.Is(err, ErrHoursRequired) {
+		t.Fatalf("expected ErrHoursRequired, got %v", err)
+	}
+}
+
+func TestPutBookingHours_ValidPayloadReturnsSevenRows(t *testing.T) {
+	db, mock, _ := newCapturingMockDB(t)
+	defer db.Close()
+
+	repo := NewBookingsRepository(db, zap.NewNop())
+	svc := NewBookingsService(repo, db, nil, nil, nil, nil, nil, zap.NewNop())
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
+
+	hours := make([]models.POSHoursOfOperationPatch, 0, 7)
+	for day := 1; day <= 7; day++ {
+		hours = append(hours, models.POSHoursOfOperationPatch{
+			DayOfWeekFrom:   day,
+			DayOfWeekTo:     day,
+			HourFrom:        "09:00:00",
+			HourTo:          "22:00:00",
+			BookingCapacity: intPtr(10),
+		})
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("anything").WillReturnResult(sqlmock.NewResult(0, 7))
+	for i := 0; i < 7; i++ {
+		mock.ExpectExec("anything").WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectCommit()
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"day_of_week_from",
+		"day_of_week_to",
+		"hour_from",
+		"hour_to",
+		"booking_capacity",
+		"first_booking_time",
+		"last_booking_time",
+		"valid_from",
+		"valid_to",
+		"enabled",
+	})
+	for day := 1; day <= 7; day++ {
+		rows.AddRow(fmt.Sprintf("%d", day), day, day, "09:00:00", "22:00:00", 10, nil, nil, nil, nil, 1)
+	}
+	mock.ExpectQuery("anything").WillReturnRows(rows)
+
+	result, err := svc.PutBookingHours(ctx, "tok", &PutBookingSettingsHoursRequest{Hours: hours})
+	if err != nil {
+		t.Fatalf("PutBookingHours() error = %v", err)
+	}
+	if len(result) != 7 {
+		t.Fatalf("expected 7 rows after replace, got %d", len(result))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
 func TestFindConflictingBookings_ExcludeSelf(t *testing.T) {
 	db, mock, _ := newCapturingMockDB(t)
 	defer db.Close()
