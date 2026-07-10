@@ -25,7 +25,17 @@ func (s *AvailabilitiesService) GetAvailabilitiesByMerchant(ctx context.Context)
 		return nil, err
 	}
 
-	return s.availabilitiesRepo.GetAvailabilitiesByMerchant(ctx, user.MerchantID)
+	availabilities, err := s.availabilitiesRepo.GetAvailabilitiesByMerchant(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	loc, locErr := time.LoadLocation(strings.TrimSpace(user.TimeZone))
+	if locErr != nil {
+		loc = time.UTC
+	}
+
+	return convertAvailabilitiesSchedulesFromUTC(availabilities, loc, time.Now().UTC()), nil
 }
 
 // GetAvailabilityByID récupère une disponibilité spécifique
@@ -224,6 +234,72 @@ func validateSchedules(schedules []CreateAvailabilityScheduleReq) error {
 	}
 
 	return nil
+}
+
+func convertAvailabilitiesSchedulesFromUTC(availabilities []Availability, loc *time.Location, refUTC time.Time) []Availability {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	converted := make([]Availability, 0, len(availabilities))
+	for _, a := range availabilities {
+		updated := a
+		updatedSchedules := make([]AvailabilitySchedule, 0, len(a.Schedules))
+		for _, schedule := range a.Schedules {
+			updatedSchedules = append(updatedSchedules, convertScheduleUTCToLocation(schedule, loc, refUTC))
+		}
+		updated.Schedules = updatedSchedules
+		converted = append(converted, updated)
+	}
+
+	return converted
+}
+
+func convertScheduleUTCToLocation(schedule AvailabilitySchedule, loc *time.Location, refUTC time.Time) AvailabilitySchedule {
+	updated := schedule
+
+	startHour, startMin, startSec, okStart := parseClockToHMS(schedule.StartTime)
+	endHour, endMin, endSec, okEnd := parseClockToHMS(schedule.EndTime)
+	if !okStart || !okEnd {
+		return updated
+	}
+
+	baseMondayUTC := mondayStartUTC(refUTC)
+	baseDayUTC := baseMondayUTC.AddDate(0, 0, schedule.DayOfWeek-1)
+
+	startUTC := time.Date(baseDayUTC.Year(), baseDayUTC.Month(), baseDayUTC.Day(), startHour, startMin, startSec, 0, time.UTC)
+	endUTC := time.Date(baseDayUTC.Year(), baseDayUTC.Month(), baseDayUTC.Day(), endHour, endMin, endSec, 0, time.UTC)
+
+	startLocal := startUTC.In(loc)
+	endLocal := endUTC.In(loc)
+
+	updated.DayOfWeek = getDayOfWeek(startLocal)
+	updated.StartTime = startLocal.Format("15:04:05")
+	updated.EndTime = endLocal.Format("15:04:05")
+
+	return updated
+}
+
+func parseClockToHMS(value string) (int, int, int, bool) {
+	normalized := normalizeTime(value)
+	var h, m, s int
+	if _, err := fmt.Sscanf(normalized, "%d:%d:%d", &h, &m, &s); err != nil {
+		return 0, 0, 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59 {
+		return 0, 0, 0, false
+	}
+	return h, m, s, true
+}
+
+func mondayStartUTC(refUTC time.Time) time.Time {
+	d := refUTC.UTC()
+	dayStart := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+	weekday := dayStart.Weekday()
+	if weekday == time.Sunday {
+		return dayStart.AddDate(0, 0, -6)
+	}
+	return dayStart.AddDate(0, 0, -(int(weekday) - 1))
 }
 
 // isValidTimeFormat vérifie si une chaîne est au format HH:MM:SS valide
