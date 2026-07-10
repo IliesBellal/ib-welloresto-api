@@ -162,6 +162,15 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 		return PublicBookingResponse{Status: "-4", Error: "Invalid booking payload"}
 	}
 
+	req.Customer.CustomerFirstName = strings.TrimSpace(req.Customer.CustomerFirstName)
+	req.Customer.CustomerLastName = strings.TrimSpace(req.Customer.CustomerLastName)
+	if req.Customer.CustomerFirstName == "" || req.Customer.CustomerLastName == "" {
+		return PublicBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+	// customer_name reste dérivé côté serveur : consommé par l'upsert client
+	// (recherche/tri back-office) et les messages de confirmation.
+	req.Customer.CustomerName = strings.TrimSpace(req.Customer.CustomerFirstName + " " + req.Customer.CustomerLastName)
+
 	// 1. Vérification Marchand (Utilise la connexion, puis la libère)
 
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)

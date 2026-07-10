@@ -16,10 +16,12 @@ import (
 // CustomerUpsert regroupe les champs client nécessaires à la création d'une
 // réservation, communs aux flux public (/rsv) et staff (/bookings).
 type CustomerUpsert struct {
-	CustomerID    *string
-	CustomerName  *string
-	CustomerTel   *string
-	CustomerEmail *string
+	CustomerID        *string
+	CustomerName      *string
+	CustomerFirstName *string
+	CustomerLastName  *string
+	CustomerTel       *string
+	CustomerEmail     *string
 	// Brand n'est renseigné que par les flux qui veulent taguer les nouveaux
 	// clients (le flux public ne le fait pas).
 	Brand *string
@@ -53,12 +55,14 @@ func CreateBooking(ctx context.Context, db *sql.DB, customerRepo *customers.Cust
 		}
 
 		customer := &models.Customer{
-			MerchantID:    p.MerchantID,
-			CustomerID:    p.Customer.CustomerID,
-			CustomerName:  p.Customer.CustomerName,
-			CustomerTel:   p.Customer.CustomerTel,
-			CustomerEmail: p.Customer.CustomerEmail,
-			CustomerBrand: p.Customer.Brand,
+			MerchantID:        p.MerchantID,
+			CustomerID:        p.Customer.CustomerID,
+			CustomerName:      p.Customer.CustomerName,
+			CustomerFirstName: p.Customer.CustomerFirstName,
+			CustomerLastName:  p.Customer.CustomerLastName,
+			CustomerTel:       p.Customer.CustomerTel,
+			CustomerEmail:     p.Customer.CustomerEmail,
+			CustomerBrand:     p.Customer.Brand,
 		}
 
 		customerID, err := customerRepo.UpdateOrCreateCustomer(txCtx, customer)

@@ -436,9 +436,11 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		StartLocal: start,
 		EndLocal:   end,
 		Customer: bookingcore.CustomerUpsert{
-			CustomerName:  stringPtr(req.Customer.CustomerName),
-			CustomerTel:   stringPtr(req.Customer.CustomerTel),
-			CustomerEmail: stringPtr(req.Customer.CustomerEmail),
+			CustomerName:      stringPtr(req.Customer.CustomerName),
+			CustomerFirstName: stringPtr(req.Customer.CustomerFirstName),
+			CustomerLastName:  stringPtr(req.Customer.CustomerLastName),
+			CustomerTel:       stringPtr(req.Customer.CustomerTel),
+			CustomerEmail:     stringPtr(req.Customer.CustomerEmail),
 		},
 	})
 	if err != nil {

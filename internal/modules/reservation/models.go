@@ -105,8 +105,14 @@ type BookingData struct {
 }
 
 type CustomerData struct {
-	CustomerID       string   `json:"customer_id"`
-	MerchantID       string   `json:"merchant_id"`
+	CustomerID        string `json:"customer_id"`
+	MerchantID        string `json:"merchant_id"`
+	CustomerFirstName string `json:"customer_first_name"`
+	CustomerLastName  string `json:"customer_last_name"`
+	// CustomerName est déduit de CustomerFirstName + CustomerLastName par le
+	// service (CreateReservation) ; toute valeur envoyée par le client public
+	// est ignorée. Conservé pour l'upsert client et les messages de
+	// confirmation qui l'utilisent déjà.
 	CustomerName     string   `json:"customer_name"`
 	CustomerTel      string   `json:"customer_tel"`
 	CustomerEmail    string   `json:"customer_email"`
