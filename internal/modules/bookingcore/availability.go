@@ -49,13 +49,13 @@ type SlotParams struct {
 }
 
 type ComputedSlot struct {
-	HourOfOperationID      int
-	DateFrom               string
-	DateTo                 string
-	DurationMinutes        int
-	Available              bool
-	Capacity               int
-	RemainingCapacity      int
+	HourOfOperationID int
+	DateFrom          string
+	DateTo            string
+	DurationMinutes   int
+	Available         bool
+	Capacity          int
+	RemainingCapacity int
 }
 
 func NormalizeRequestedDate(t time.Time) string {
@@ -233,13 +233,13 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 			}
 
 			slot := ComputedSlot{
-				HourOfOperationID:      tr.ID,
-				DateFrom:               start.Format("2006-01-02 15:04:05"),
-				DateTo:                 newEnd.Format("2006-01-02 15:04:05"),
-				DurationMinutes:        durationMinutes,
-				Available:              available,
-				Capacity:               capacity,
-				RemainingCapacity:      remaining,
+				HourOfOperationID: tr.ID,
+				DateFrom:          start.Format("2006-01-02 15:04:05"),
+				DateTo:            newEnd.Format("2006-01-02 15:04:05"),
+				DurationMinutes:   durationMinutes,
+				Available:         available,
+				Capacity:          capacity,
+				RemainingCapacity: remaining,
 			}
 
 			slots = append(slots, slot)

@@ -1639,12 +1639,12 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 	slots := make([]BookingSlot, 0, len(computed))
 	for _, slot := range computed {
 		slots = append(slots, BookingSlot{
-			HourOfOperationID:      slot.HourOfOperationID,
-			DateFrom:               slot.DateFrom,
-			DateTo:                 slot.DateTo,
-			Available:              slot.Available,
-			Capacity:               slot.Capacity,
-			RemainingCapacity:      slot.RemainingCapacity,
+			HourOfOperationID: slot.HourOfOperationID,
+			DateFrom:          slot.DateFrom,
+			DateTo:            slot.DateTo,
+			Available:         slot.Available,
+			Capacity:          slot.Capacity,
+			RemainingCapacity: slot.RemainingCapacity,
 		})
 	}
 
