@@ -145,9 +145,9 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 
 	allSlots := make([]Slot, 0, len(computed))
 	for _, slot := range computed {
-		timeFrom, _ := time.ParseInLocation("2006-01-02 15:04:05", slot.DateFrom, loc)
+		timeFrom, _ := time.ParseInLocation("2006-01-02 15:04:05", slot.DateFrom, time.UTC)
 		allSlots = append(allSlots, Slot{
-			Time:            timeFrom.Format("15:04"),
+			Time:            timeFrom.In(loc).Format("15:04"),
 			Available:       slot.Available,
 			DurationMinutes: slot.DurationMinutes,
 			HOOID:           fmt.Sprintf("%d", slot.HourOfOperationID),

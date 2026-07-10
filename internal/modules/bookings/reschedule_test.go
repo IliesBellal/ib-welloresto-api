@@ -98,7 +98,7 @@ func expectAvailabilityQueryChain(mock sqlmock.Sqlmock, existingPartySize int, h
 
 	existingRows := sqlmock.NewRows([]string{"party_size", "booking_date_from", "booking_date_to", "booking_duration", "status"})
 	if hasExisting {
-		existingRows = existingRows.AddRow(existingPartySize, "2026-07-10 19:00:00", "2026-07-10 20:30:00", 90, "confirmed")
+		existingRows = existingRows.AddRow(existingPartySize, "2026-07-10T19:00:00Z", "2026-07-10T20:30:00Z", 90, "confirmed")
 	}
 	mock.ExpectQuery("anything").WillReturnRows(existingRows)
 

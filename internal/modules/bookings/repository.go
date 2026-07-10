@@ -1593,6 +1593,7 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 		occupation,
 		time.Now().In(loc),
 	)
+	computed = bookingcore.ConvertComputedSlotsFromUTC(computed, loc)
 
 	slots := make([]BookingSlot, 0, len(computed))
 	for _, slot := range computed {

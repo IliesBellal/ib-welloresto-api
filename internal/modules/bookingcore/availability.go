@@ -254,3 +254,26 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 
 	return slots
 }
+
+func ConvertComputedSlotsFromUTC(slots []ComputedSlot, loc *time.Location) []ComputedSlot {
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	converted := make([]ComputedSlot, 0, len(slots))
+	for _, slot := range slots {
+		updated := slot
+
+		if from, err := time.ParseInLocation("2006-01-02 15:04:05", slot.DateFrom, time.UTC); err == nil {
+			updated.DateFrom = from.In(loc).Format("2006-01-02 15:04:05")
+		}
+
+		if to, err := time.ParseInLocation("2006-01-02 15:04:05", slot.DateTo, time.UTC); err == nil {
+			updated.DateTo = to.In(loc).Format("2006-01-02 15:04:05")
+		}
+
+		converted = append(converted, updated)
+	}
+
+	return converted
+}
