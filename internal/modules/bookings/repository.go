@@ -10,7 +10,6 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/customers"
-	"welloresto-api/internal/utils"
 	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
@@ -667,7 +666,9 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 }
 
 func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObjectRequest) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
+		return "", fmt.Errorf("start_date or end_date is empty")
+	}
 
 	var normalizedCustomerID *string
 	if req.Customer.CustomerID != nil {
@@ -677,64 +678,12 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		}
 	}
 
-	// 1️⃣ Construire un modèle Customer
-	customer := &models.Customer{
-		CustomerID:    normalizedCustomerID,
-		MerchantID:    req.MerchantID,
-		CustomerName:  req.Customer.CustomerName,
-		CustomerTel:   req.Customer.CustomerTel,
-		CustomerEmail: req.Customer.CustomerEmail,
-		// Tous les autres champs sont optionnels → nil
-	}
+	var brand *string
 	if normalizedCustomerID == nil {
-		brand := models.BrandWelloResto
-		customer.CustomerBrand = &brand
+		b := models.BrandWelloResto
+		brand = &b
 	}
 
-	// 2️⃣ Update or Create
-	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
-	if err != nil {
-		return "", fmt.Errorf("failed to update/create customer: %w", err)
-	}
-
-	// injecter l’MerchantID dans la requête
-	req.Customer.CustomerID = customerID
-
-	// 3️⃣ Check dates
-	if req.Booking.StartDate == "" || req.Booking.EndDate == "" {
-		return "", fmt.Errorf("start_date or end_date is empty")
-	}
-	/*
-		rollback := func(err error) (string, error) {
-			tx.Rollback()
-			return "", err
-		}
-	*/
-	//---------------------------------------------------------
-	// 1. Generate unique booking number
-	//---------------------------------------------------------
-	var exists string
-	var bookingNumber string
-
-	for {
-		bookingNumber = strings.ToUpper(utils.GenerateRandomString(6))
-
-		err = db.QueryRowContext(ctx,
-			`SELECT booking_id FROM bookings WHERE booking_number = ?`,
-			bookingNumber,
-		).Scan(&exists)
-
-		if err == sql.ErrNoRows {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-	}
-
-	//---------------------------------------------------------
-	// 2. Compute duration
-	//---------------------------------------------------------
 	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
 	if err != nil {
 		return "", err
@@ -744,76 +693,54 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	if err != nil {
 		return "", err
 	}
-
 	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, loc)
 	if err != nil {
 		return "", err
 	}
 
-	diff := end.Sub(start)
-	if diff < 0 {
-		return "", fmt.Errorf("start date is after end date")
-	}
-
-	duration := int(diff.Minutes())
-
-	//---------------------------------------------------------
-	// 3. Insert booking
-	//---------------------------------------------------------
-	startUTC := start.UTC().Format("2006-01-02 15:04:05")
-	endUTC := end.UTC().Format("2006-01-02 15:04:05")
-
-	res, err := db.ExecContext(ctx, `
-        INSERT INTO bookings (
-            booking_number, status, merchant_id, party_size,
-            customer_id, comment, creation_date,
-            booking_date_from, booking_date_to,
-            booking_duration, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?)
-    `,
-		bookingNumber,
-		req.Booking.Status,
-		req.MerchantID,
-		req.Booking.PartySize,
-		customerID,
-		req.Booking.Comment,
-		startUTC,
-		endUTC,
-		duration,
-		req.CreatedBy,
-	)
+	// Insertion partagée avec le flux public (bookingcore.CreateBooking) :
+	// upsert client, génération du booking_number et INSERT INTO bookings.
+	bookingID, bookingNumber, err := bookingcore.CreateBooking(ctx, r.database, r.customerUpdater, bookingcore.CreateBookingParams{
+		MerchantID: req.MerchantID,
+		Source:     "staff",
+		CreatedBy:  req.CreatedBy,
+		Status:     req.Booking.Status,
+		PartySize:  req.Booking.PartySize,
+		Comment:    req.Booking.Comment,
+		StartLocal: start,
+		EndLocal:   end,
+		Customer: bookingcore.CustomerUpsert{
+			CustomerID:    normalizedCustomerID,
+			CustomerName:  req.Customer.CustomerName,
+			CustomerTel:   req.Customer.CustomerTel,
+			CustomerEmail: req.Customer.CustomerEmail,
+			Brand:         brand,
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-
-	bookingID, _ := res.LastInsertId()
+	req.Booking.BookingNumber = bookingNumber
 
 	//---------------------------------------------------------
-	// 4. Insert locations
+	// Assignation des tables (particularité staff : le flux public n'assigne
+	// jamais de table à la création).
 	//---------------------------------------------------------
-	for _, loc := range req.Booking.Locations {
+	db := dbutils.GetDB(ctx, r.database)
+	for _, l := range req.Booking.Locations {
 		_, err := db.ExecContext(ctx, `
             INSERT INTO booked_location(booking_id, location_id)
             VALUES (?, ?)
         `,
 			bookingID,
-			loc.LocationID,
+			l.LocationID,
 		)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	//---------------------------------------------------------
-	// Commit
-	//---------------------------------------------------------
-	/*
-		if err := tx.Commit(); err != nil {
-			return rollback(err)
-		}
-	*/
-
-	return fmt.Sprintf("%d", bookingID), nil
+	return bookingID, nil
 }
 
 // FindConflictingBookings retourne les affectations de tables en collision avec

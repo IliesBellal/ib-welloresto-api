@@ -74,6 +74,9 @@ func (s *BookingsService) CreateBooking(ctx context.Context, req *BookingObjectR
 	}
 
 	req.MerchantID = user.MerchantID
+	// created_by est dérivé de l'utilisateur authentifié, pas de la valeur
+	// envoyée par le front (qui ne doit pas pouvoir l'usurper).
+	req.CreatedBy = user.UserID
 
 	// Variable pour stocker le résultat final hors de la closure
 	var result *Booking

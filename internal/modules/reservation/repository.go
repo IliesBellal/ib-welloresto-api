@@ -3,14 +3,10 @@ package reservation
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strconv"
 	"time"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/customers"
-	"welloresto-api/internal/utils"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -409,32 +405,11 @@ func (r *reservationRepository) CancelBookingDB(ctx context.Context, bookingNumb
 	return err
 }
 
-// CreateBookingTransaction gère la récupération du client et l'insertion de la réservation dans une transaction isolée.
+// CreateBookingTransaction gère la récupération du client et l'insertion de
+// la réservation. L'insertion elle-même est déléguée à bookingcore.CreateBooking,
+// partagée avec le flux staff (/bookings), et tourne dans une vraie
+// transaction SQL (dbutils.RunInTx).
 func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
-
-	customer := &models.Customer{
-		MerchantID:    req.MerchantID,
-		CustomerName:  stringPtr(req.Customer.CustomerName),
-		CustomerTel:   stringPtr(req.Customer.CustomerTel),
-		CustomerEmail: stringPtr(req.Customer.CustomerEmail),
-	}
-
-	customerID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
-	if err != nil {
-		log.Error(err.Error())
-		return "", err
-	}
-	if customerID == nil || *customerID == "" {
-		return "", fmt.Errorf("customer_upsert_failed")
-	}
-
-	bookingNumber, err := r.generateUniqueBookingNumber(ctx, req.MerchantID)
-	if err != nil {
-		return "", err
-	}
-
 	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
 	if err != nil {
 		return "", err
@@ -448,45 +423,30 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 	if err != nil {
 		return "", err
 	}
-	duration := int(end.Sub(start).Minutes())
-	if duration < 0 {
-		return "", fmt.Errorf("start date is after end date")
-	}
 
-	startUTC := start.UTC().Format("2006-01-02 15:04:05")
-	endUTC := end.UTC().Format("2006-01-02 15:04:05")
+	comment := stringPtr(req.Booking.Comment)
 
-	queryInsert := `
-		INSERT INTO bookings (
-			booking_number, status, source, merchant_id, party_size,
-			customer_id, comment, creation_date, booking_date_from,
-			booking_date_to, booking_duration, created_by
-		)
-		VALUES (?, ?, 'web', ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?)`
-
-	res, err := db.ExecContext(ctx, queryInsert,
-		bookingNumber,
-		bookingcore.NormalizeLegacyStatus(req.Booking.Status),
-		req.MerchantID,
-		req.Booking.PartySize,
-		*customerID,
-		req.Booking.Comment,
-		startUTC,
-		endUTC,
-		duration,
-		req.CreatedBy,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	bookingID, err := res.LastInsertId()
+	bookingID, bookingNumber, err := bookingcore.CreateBooking(ctx, r.database, r.customerUpdater, bookingcore.CreateBookingParams{
+		MerchantID: req.MerchantID,
+		Source:     "web",
+		CreatedBy:  req.CreatedBy,
+		Status:     bookingcore.NormalizeLegacyStatus(req.Booking.Status),
+		PartySize:  req.Booking.PartySize,
+		Comment:    comment,
+		StartLocal: start,
+		EndLocal:   end,
+		Customer: bookingcore.CustomerUpsert{
+			CustomerName:  stringPtr(req.Customer.CustomerName),
+			CustomerTel:   stringPtr(req.Customer.CustomerTel),
+			CustomerEmail: stringPtr(req.Customer.CustomerEmail),
+		},
+	})
 	if err != nil {
 		return "", err
 	}
 
 	req.Booking.BookingNumber = bookingNumber
-	return strconv.FormatInt(bookingID, 10), nil
+	return bookingID, nil
 }
 
 func (r *reservationRepository) CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error {
@@ -499,28 +459,6 @@ func (r *reservationRepository) CancelBookingPublic(ctx context.Context, merchan
 		bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("customer", ""), bookingNumber, merchantID,
 	)
 	return err
-}
-
-func (r *reservationRepository) generateUniqueBookingNumber(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
-
-	for {
-		bookingNumber := utils.GenerateRandomString(6)
-
-		var exists string
-		err := db.QueryRowContext(ctx,
-			`SELECT booking_id FROM bookings WHERE merchant_id = ? AND booking_number = ?`,
-			merchantID,
-			bookingNumber,
-		).Scan(&exists)
-
-		if err == sql.ErrNoRows {
-			return bookingNumber, nil
-		}
-		if err != nil {
-			return "", err
-		}
-	}
 }
 
 func stringPtr(v string) *string {
