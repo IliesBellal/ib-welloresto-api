@@ -56,9 +56,6 @@ type ComputedSlot struct {
 	Available              bool
 	Capacity               int
 	RemainingCapacity      int
-	DebugCapacity          int
-	DebugMaxBookedInWindow int
-	DebugRemainingCapacity int
 }
 
 func NormalizeRequestedDate(t time.Time) string {
@@ -243,9 +240,6 @@ func ComputeSlots(params SlotParams, ranges []SlotRange, occupation map[string]i
 				Available:              available,
 				Capacity:               capacity,
 				RemainingCapacity:      remaining,
-				DebugCapacity:          capacity,
-				DebugMaxBookedInWindow: maxOcc,
-				DebugRemainingCapacity: remaining,
 			}
 
 			slots = append(slots, slot)

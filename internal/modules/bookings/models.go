@@ -30,7 +30,6 @@ type BookingAvailabilityResponse struct {
 	Locations  []Location             `json:"locations"`
 	TimeRanges []TimeRange            `json:"time_ranges"`
 	Slots      []BookingSlot          `json:"booking_slots"`
-	Occupation map[string]int         `json:"occupation_by_slot"`
 	Date       string                 `json:"requested_date"`
 	DayOfWeek  int                    `json:"day_of_week"`
 }
@@ -93,28 +92,28 @@ type BookingObjectRequest struct {
 }
 
 type BookingListFilters struct {
-	Statuses []string
-	DateFrom *string
-	DateTo   *string
+	Statuses  []string
+	DateFrom  *string
+	DateTo    *string
 	PartySize *int
-	Search   *string
-	Source   *string
-	SortBy   string
-	SortDir  string
-	Page     int
-	Limit    int
+	Search    *string
+	Source    *string
+	SortBy    string
+	SortDir   string
+	Page      int
+	Limit     int
 }
 
 type BookingListItem struct {
-	BookingID      string   `json:"booking_id"`
-	BookingNumber  string   `json:"booking_number"`
-	Status         string   `json:"status"`
-	Source         string   `json:"source"`
-	BookingDateFrom string  `json:"booking_date_from"`
-	PartySize      int      `json:"party_size"`
-	CustomerName   string   `json:"customer_name"`
-	CustomerTel    string   `json:"customer_tel"`
-	AssignedTables []string `json:"assigned_tables"`
+	BookingID       string   `json:"booking_id"`
+	BookingNumber   string   `json:"booking_number"`
+	Status          string   `json:"status"`
+	Source          string   `json:"source"`
+	BookingDateFrom string   `json:"booking_date_from"`
+	PartySize       int      `json:"party_size"`
+	CustomerName    string   `json:"customer_name"`
+	CustomerTel     string   `json:"customer_tel"`
+	AssignedTables  []string `json:"assigned_tables"`
 }
 
 type BookingListResponse struct {
@@ -123,27 +122,27 @@ type BookingListResponse struct {
 }
 
 type BookingSettings struct {
-	Enabled                       bool                 `json:"enabled"`
-	Code                          string               `json:"code"`
-	AutoAcceptReserveBookings     bool                 `json:"auto_accept_reserve_bookings"`
-	SlotIntervalMinutes           int                  `json:"slot_interval_minutes"`
-	DefaultBookingDuration        int                  `json:"default_booking_duration"`
-	ReserveMaximumPartySize       int                  `json:"reserve_maximum_party_size"`
-	ReserveMinimumPartySize       int                  `json:"reserve_minimum_party_size"`
-	LastBookingOffsetMinutes      int                  `json:"last_booking_offset_minutes"`
-	MinBookingNoticeMinutes       int                  `json:"min_booking_notice_minutes"`
-	MaxBookingHorizonDays         int                  `json:"max_booking_horizon_days"`
-	OverbookingPercent            int                  `json:"overbooking_percent"`
-	CancelableByCustomer          bool                 `json:"cancelable_by_customer"`
-	CancelBookingLimitOffsetHours int                  `json:"cancel_booking_limit_offset_hours"`
-	PendingExpirationHours        int                  `json:"pending_expiration_hours"`
-	SMSEnabled                    bool                 `json:"sms_enabled"`
-	WaitlistEnabled               bool                 `json:"waitlist_enabled"`
-	WaitlistMaxSize               int                  `json:"waitlist_max_size"`
-	WaitlistSlotExpiryMinutes     int                  `json:"waitlist_slot_expiry_minutes"`
+	Enabled                       bool                  `json:"enabled"`
+	Code                          string                `json:"code"`
+	AutoAcceptReserveBookings     bool                  `json:"auto_accept_reserve_bookings"`
+	SlotIntervalMinutes           int                   `json:"slot_interval_minutes"`
+	DefaultBookingDuration        int                   `json:"default_booking_duration"`
+	ReserveMaximumPartySize       int                   `json:"reserve_maximum_party_size"`
+	ReserveMinimumPartySize       int                   `json:"reserve_minimum_party_size"`
+	LastBookingOffsetMinutes      int                   `json:"last_booking_offset_minutes"`
+	MinBookingNoticeMinutes       int                   `json:"min_booking_notice_minutes"`
+	MaxBookingHorizonDays         int                   `json:"max_booking_horizon_days"`
+	OverbookingPercent            int                   `json:"overbooking_percent"`
+	CancelableByCustomer          bool                  `json:"cancelable_by_customer"`
+	CancelBookingLimitOffsetHours int                   `json:"cancel_booking_limit_offset_hours"`
+	PendingExpirationHours        int                   `json:"pending_expiration_hours"`
+	SMSEnabled                    bool                  `json:"sms_enabled"`
+	WaitlistEnabled               bool                  `json:"waitlist_enabled"`
+	WaitlistMaxSize               int                   `json:"waitlist_max_size"`
+	WaitlistSlotExpiryMinutes     int                   `json:"waitlist_slot_expiry_minutes"`
 	DurationRules                 []BookingDurationRule `json:"duration_rules"`
-	CapacityWarning               bool                 `json:"capacity_warning"`
-	PhysicalCapacity              int                  `json:"physical_capacity"`
+	CapacityWarning               bool                  `json:"capacity_warning"`
+	PhysicalCapacity              int                   `json:"physical_capacity"`
 }
 
 type PutBookingSettingsRequest struct {
@@ -168,11 +167,11 @@ type PutBookingSettingsRequest struct {
 }
 
 type BookingDurationRule struct {
-	RuleID         string `json:"rule_id"`
-	MinPartySize   int    `json:"min_party_size"`
-	MaxPartySize   int    `json:"max_party_size"`
-	DurationMinutes int   `json:"duration_minutes"`
-	Enabled        bool   `json:"enabled"`
+	RuleID          string `json:"rule_id"`
+	MinPartySize    int    `json:"min_party_size"`
+	MaxPartySize    int    `json:"max_party_size"`
+	DurationMinutes int    `json:"duration_minutes"`
+	Enabled         bool   `json:"enabled"`
 }
 
 type CreateDurationRuleRequest struct {
@@ -266,11 +265,6 @@ type BookingSlot struct {
 	Available         bool   `json:"available"`
 	Capacity          int    `json:"capacity"`
 	RemainingCapacity int    `json:"remaining_capacity"`
-
-	// Debug
-	DebugCapacity          int `json:"debug_capacity"`
-	DebugMaxBookedInWindow int `json:"debug_max_booked_in_window"`
-	DebugRemainingCapacity int `json:"debug_remaining_capacity"`
 }
 
 // ----------------------------------------------------

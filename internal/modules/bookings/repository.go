@@ -1256,7 +1256,6 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 		Locations:  locations,
 		TimeRanges: timeRanges,
 		Slots:      slots,
-		Occupation: occupation,
 		Date:       requestedDate,
 		DayOfWeek:  dayOfWeek,
 		Status:     "1",
@@ -1646,9 +1645,6 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 			Available:              slot.Available,
 			Capacity:               slot.Capacity,
 			RemainingCapacity:      slot.RemainingCapacity,
-			DebugCapacity:          slot.DebugCapacity,
-			DebugMaxBookedInWindow: slot.DebugMaxBookedInWindow,
-			DebugRemainingCapacity: slot.DebugRemainingCapacity,
 		})
 	}
 
