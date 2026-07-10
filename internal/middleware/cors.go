@@ -18,9 +18,8 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		"https://my-wello-resto-prod.onrender.com":    true,
 		"https://my-wello-resto-staging.onrender.com": true,
 
-		"https://scannorder-test.lovable.app": true,
-		"https://scannorder.welloresto.fr":    true,
-		"https://scannorder.lovable.app":      true,
+		"https://wello-resto-scannorder-staging.onrender.com": true,
+		"https://scannorder.welloresto.fr":                    true,
 
 		"https://rsv-staging.onrender.com": true,
 		"https://rsv.onrender.com":         true,
