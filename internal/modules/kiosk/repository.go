@@ -525,6 +525,38 @@ func (r *Repository) GetTerminalLocationID(ctx context.Context, merchantID strin
 	return &loc.String, nil
 }
 
+// defaultKioskVariableFees / defaultKioskFixedFees sont les valeurs
+// appliquées tant qu'un merchant n'a pas encore sa propre ligne
+// kiosk_settings — mêmes valeurs que les DEFAULT de la migration 061
+// (alignées sur scannorder_settings au moment du rollout, voir
+// docs/KIOSK_DECISIONS.md).
+const (
+	defaultKioskVariableFees = 0.0070
+	defaultKioskFixedFees    = int64(15)
+)
+
+// GetKioskFees lit la commission plateforme configurée pour le Kiosk d'un
+// merchant (kiosk_settings.variable_fees/fixed_fees) — jamais exposée aux
+// clients (ni GET /kiosk/settings, ni GET /pos/settings/kiosk/settings),
+// consommée uniquement par CreateTerminalPaymentIntent pour calculer
+// application_fee_amount. Retourne les valeurs par défaut si le merchant n'a
+// pas encore de ligne kiosk_settings, jamais sql.ErrNoRows — une borne doit
+// pouvoir encaisser sans configuration préalable.
+func (r *Repository) GetKioskFees(ctx context.Context, merchantID string) (variableFees float64, fixedFees int64, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	err = db.QueryRowContext(ctx,
+		`SELECT variable_fees, fixed_fees FROM kiosk_settings WHERE merchant_id = ?`,
+		merchantID).Scan(&variableFees, &fixedFees)
+	if err == sql.ErrNoRows {
+		return defaultKioskVariableFees, defaultKioskFixedFees, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	return variableFees, fixedFees, nil
+}
+
 // getMerchantBusinessName récupère merchant.fullName — utilisé pour le
 // bandeau d'accueil du Menu côté borne (kiosk_settings n'a pas cette
 // information, voir docs/KIOSK_DECISIONS.md).

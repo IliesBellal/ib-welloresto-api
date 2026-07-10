@@ -2478,3 +2478,110 @@ puis rejouer le scénario Terminal ci-dessus en vérifiant en base : une ligne
 `payments` (`mop='STRIPE'`, `net_amount=amount`, `fee=0`, `cash_register_id`
 NULL) après `payment_intent.succeeded`, puis `fee`/`net_amount` mis à jour après
 `charge.captured`.
+
+---
+
+## Incrément Terminal 3 — frais d'application configurables par merchant (kiosk_settings)
+
+### Étape 0 — Audit obligatoire [CONSTAT]
+
+**1. Formule exacte (scannorder / Checkout web)** — `stripeclient.CreateCheckoutSession`
+(`internal/infrastructure/stripe/checkout.go:18-30`, le chemin réellement actif ;
+`CreateCheckoutSessionOld` est une variante legacy non appelée, avec le même calcul) :
+
+```go
+variableFees := *merchant.VariableFees
+fixedFees := *merchant.FixedFees
+ttc := order.TTC
+fees := int64(math.Floor(float64(ttc)*variableFees + float64(fixedFees) + 0.5))
+```
+
+Soit `application_fee_amount = floor(TTC_centimes * variable_fees + fixed_fees + 0.5)`
+(round-half-up manuel, `ttc` déjà en centimes).
+
+**2. Lecture de `scannorder_settings`** — `scannorder.Repository.GetMerchantByQR`
+(`internal/modules/scannorder/repository.go:33`) sélectionne
+`snos.variable_fees, snos.fixed_fees` dans la même requête qui résout le merchant
+depuis le QR code (`INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id`),
+au moment de `GetMerchant`/`computeGetMerchant` (mis en cache Redis, voir
+`ARCHITECTURE_API.md` §2.4). Le `models.MerchantRow` résultant porte
+`VariableFees *float64` / `FixedFees *int`, propagés jusqu'à
+`CheckoutSessionRequestObject.Merchant` au moment de créer la Checkout Session
+(paiement TAKE_AWAY/DELIVERY).
+
+**3. Valeur d'`ApplicationFeeAmount` dans `CreateTerminalPaymentIntent` AVANT cette
+tâche** — **déjà calculée et transmise** (ni `0`, ni absente) : implémentée à
+l'incrément "paiement carte borne (Stripe Terminal)" (ligne 2158 de ce document),
+avec exactement la même formule que le Checkout web
+(`internal/infrastructure/stripe/terminal.go`, ancien
+`fees := int64(math.Floor(float64(amountCents)*variableFees + float64(fixedFees) + 0.5))`).
+**Mais la source des frais était `scannorder_settings`**, pas une configuration
+Kiosk dédiée : l'ancien `terminalAccountStore.GetTerminalAccount` faisait
+`SELECT sa.account_id, snos.variable_fees, snos.fixed_fees FROM stripe_accounts sa
+INNER JOIN scannorder_settings snos ON snos.merchant_id = sa.merchant_id`. Deux
+conséquences concrètes de ce couplage, corrigées par cette tâche :
+- un merchant Kiosk actif sans ligne `scannorder_settings` (ScanNOrder jamais
+  activé) aurait fait échouer tout paiement Terminal (`INNER JOIN` vide →
+  `ErrNoStripeAccount`, alors que le compte Stripe existe bel et bien) ;
+- un merchant avec les deux canaux actifs ne pouvait pas avoir une commission
+  Kiosk différente de sa commission ScanNOrder — pas de configuration par canal.
+
+### Ce qui a été implémenté
+
+1. **Migration `061_kiosk_settings_fees`** (`migrations/`, non appliquée) :
+   `kiosk_settings.variable_fees DECIMAL(10,4) NOT NULL DEFAULT 0.0070` et
+   `kiosk_settings.fixed_fees INT NOT NULL DEFAULT 15`, placées après
+   `pay_at_counter_enabled`. Défauts alignés sur ceux de `scannorder_settings`
+   pour que les merchants existants gardent la même commission effective au
+   déploiement — aucun backfill nécessaire.
+   - **Écart de convention constaté et documenté** : le brief demandait
+     `migrations/todo/`. Ce dossier n'existe plus dans le repo (vérifié : seuls
+     `migrations/` racine et `migrations/done/` existent aujourd'hui ; les
+     migrations les plus récentes non appliquées, ex. `050`/`051`, vivent
+     directement à la racine). La migration `061` suit donc l'état réel actuel
+     du repo plutôt que la doc/le brief : posée à la racine de `migrations/`,
+     à déplacer vers `migrations/done/` une fois appliquée en base.
+2. **`kiosk.Repository.GetKioskFees(ctx, merchantID) (variableFees float64,
+   fixedFees int64, err error)`** (`internal/modules/kiosk/repository.go`) :
+   `SELECT variable_fees, fixed_fees FROM kiosk_settings WHERE merchant_id = ?`,
+   retombe sur les valeurs par défaut du module (`0.0070`, `15`) si aucune ligne
+   n'existe — jamais `sql.ErrNoRows` remonté à l'appelant, même garantie que
+   `GetKioskSettings`.
+3. **Non-exposition côté API** : `GetKioskFees` est une requête dédiée, distincte
+   de `GetSettingsByMerchant`/`KioskSettingsRow` (qui listent leurs colonnes
+   explicitement, pas de `SELECT *`) — `variable_fees`/`fixed_fees` n'entrent
+   donc dans aucune réponse `GET /kiosk/settings` (device) ni
+   `GET /pos/settings/kiosk/settings` (back-office). Vérifié : ces deux routes
+   passent par `Service.GetSettings`/`KioskSettingsResponse`, jamais par
+   `GetKioskFees`.
+4. **Calcul déplacé côté appelant, pas dans l'infra Stripe** :
+   `kiosk.Service.CreateTerminalPaymentIntent` appelle désormais
+   `s.repo.GetKioskFees(ctx, kiosk.MerchantID)` puis transmet
+   `variableFees, fixedFees` à `s.terminal.CreateTerminalPaymentIntent(...)`.
+   `TerminalGateway.CreateTerminalPaymentIntent` (interface, `models.go`) et
+   `stripeclient.TerminalService.CreateTerminalPaymentIntent` (implémentation,
+   `terminal.go`) prennent désormais ces deux valeurs en paramètres explicites
+   plutôt que de les résoudre eux-mêmes — la formule (`floor(amount*variable +
+   fixed + 0.5)`, identique à `CreateCheckoutSession`) reste dans
+   `stripeclient`, seule la **source** des frais change.
+5. **`TerminalAccountStore` simplifié** : ne résout plus que l'`account_id`
+   Stripe connecté (`SELECT account_id FROM stripe_accounts WHERE merchant_id = ?`,
+   sans jointure `scannorder_settings`) — `CreateConnectionToken` et
+   `cancelOnStripe` n'avaient d'ailleurs jamais utilisé les frais retournés par
+   l'ancienne signature à 4 valeurs, seul `CreateTerminalPaymentIntent` s'en
+   servait.
+
+### Vérifications
+
+`go build ./...` et `go vet ./...` clean (aucune erreur nouvelle — les warnings
+`go vet` préexistants sur `auth`/`ubereats`/`pos/accounting`/`tasks` sont sans
+rapport avec ce changement, non touchés). `go test ./internal/modules/kiosk/...
+./internal/infrastructure/stripe/...` passent. Tests manuels DB non exécutés
+(pas de `MYSQL_URL` dans ce sandbox) — avant mise en prod : appliquer la
+migration `061`, puis vérifier qu'un `POST /kiosk/terminal/payment-intent` sur un
+merchant **sans** ligne `kiosk_settings` calcule bien la commission avec les
+valeurs par défaut (`0.0070`/`15`), et qu'un `UPDATE kiosk_settings SET
+variable_fees = ..., fixed_fees = ...` change effectivement
+`application_fee_amount` sur le PaymentIntent créé (vérifiable côté dashboard
+Stripe ou en inspectant la réponse de l'API Stripe), sans toucher au comportement
+du Checkout ScanNOrder existant (toujours sur `scannorder_settings`, inchangé).

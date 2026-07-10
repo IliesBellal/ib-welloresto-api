@@ -384,7 +384,10 @@ type KioskDiscountsResponse struct {
 // couplée à KioskAuth (voir docs/KIOSK_DECISIONS.md, règle de découplage).
 type TerminalGateway interface {
 	CreateConnectionToken(ctx context.Context, merchantID string) (string, error)
-	CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64) (clientSecret, paymentIntentID string, err error)
+	// CreateTerminalPaymentIntent reçoit variableFees/fixedFees déjà résolus par
+	// l'appelant (kiosk.Repository.GetKioskFees, kiosk_settings) — l'infra Stripe
+	// ne connaît plus la source de la commission, seulement son calcul.
+	CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64, variableFees float64, fixedFees int64) (clientSecret, paymentIntentID string, err error)
 	CancelTerminalPaymentIntent(ctx context.Context, merchantID, paymentIntentID string) error
 	CancelActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) error
 }

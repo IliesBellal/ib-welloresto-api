@@ -57,14 +57,17 @@ func TerminalOrderKey(merchantID, orderID string) string {
 	return terminalOrderKeyPrefix + merchantID + ":" + orderID
 }
 
-// TerminalAccountStore résout le compte Stripe connecté et la commission d'un
-// merchant. Interface (plutôt qu'un import direct d'un module) pour que ce
-// package infrastructure reste découplé des modules métier.
+// TerminalAccountStore résout le compte Stripe connecté d'un merchant.
+// Interface (plutôt qu'un import direct d'un module) pour que ce package
+// infrastructure reste découplé des modules métier. La commission
+// (application_fee_amount) n'est plus résolue ici : elle est calculée par
+// l'appelant (kiosk.Service, depuis kiosk_settings.variable_fees/fixed_fees)
+// et transmise directement à CreateTerminalPaymentIntent — voir
+// docs/KIOSK_DECISIONS.md, "Incrément Terminal 3".
 type TerminalAccountStore interface {
-	// GetTerminalAccount retourne l'account_id Stripe connecté et le couple de
-	// commission (variable_fees ratio, fixed_fees en centimes) du merchant.
+	// GetTerminalAccount retourne l'account_id Stripe connecté du merchant.
 	// Doit retourner ErrNoStripeAccount quand aucun compte n'existe.
-	GetTerminalAccount(ctx context.Context, merchantID string) (accountID string, variableFees float64, fixedFees int64, err error)
+	GetTerminalAccount(ctx context.Context, merchantID string) (accountID string, err error)
 }
 
 // TerminalMappingStore est le sous-ensemble de l'API Redis dont ce service a
@@ -97,7 +100,7 @@ func NewTerminalService(sm *StripeManager, store TerminalAccountStore, mapping T
 // compte connecté du merchant — le SDK Stripe Terminal (côté Flutter) s'en sert
 // pour appairer le lecteur de carte physique.
 func (t *TerminalService) CreateConnectionToken(ctx context.Context, merchantID string) (string, error) {
-	accountID, _, _, err := t.store.GetTerminalAccount(ctx, merchantID)
+	accountID, err := t.store.GetTerminalAccount(ctx, merchantID)
 	if err != nil {
 		return "", err
 	}
@@ -114,18 +117,21 @@ func (t *TerminalService) CreateConnectionToken(ctx context.Context, merchantID 
 }
 
 // CreateTerminalPaymentIntent crée un PaymentIntent card_present sur le compte
-// connecté du merchant, avec la même commission (application_fee_amount) et le
-// même modèle de charge directe (SetStripeAccount) que le Checkout web existant
-// (voir stripe.checkout.go) — plutôt que le modèle destination charge
-// (OnBehalfOf/TransferData), pour rester cohérent avec l'existant. Stocke ensuite
+// connecté du merchant, avec le même modèle de charge directe (SetStripeAccount)
+// que le Checkout web existant (voir stripe.checkout.go) — plutôt que le modèle
+// destination charge (OnBehalfOf/TransferData), pour rester cohérent avec
+// l'existant. variableFees/fixedFees sont résolus par l'appelant (kiosk_settings,
+// pas scannorder_settings — voir docs/KIOSK_DECISIONS.md, "Incrément Terminal 3")
+// et appliqués ici avec la même formule que CreateCheckoutSession. Stocke ensuite
 // les deux mappings Redis (direct + inverse), TTL 1h.
-func (t *TerminalService) CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64) (clientSecret, paymentIntentID string, err error) {
-	accountID, variableFees, fixedFees, err := t.store.GetTerminalAccount(ctx, merchantID)
+func (t *TerminalService) CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64, variableFees float64, fixedFees int64) (clientSecret, paymentIntentID string, err error) {
+	accountID, err := t.store.GetTerminalAccount(ctx, merchantID)
 	if err != nil {
 		return "", "", err
 	}
 
 	// Commission identique à CreateCheckoutSession : floor(ttc*variable + fixed + 0.5).
+	// + 0.5 pour arrondir correctement à l'entier le plus proche (math.Floor tronque vers le bas).
 	fees := int64(math.Floor(float64(amountCents)*variableFees + float64(fixedFees) + 0.5))
 
 	params := &stripe.PaymentIntentParams{
@@ -191,7 +197,7 @@ func (t *TerminalService) CancelActivePaymentIntentForOrder(ctx context.Context,
 }
 
 func (t *TerminalService) cancelOnStripe(ctx context.Context, merchantID, paymentIntentID string) error {
-	accountID, _, _, err := t.store.GetTerminalAccount(ctx, merchantID)
+	accountID, err := t.store.GetTerminalAccount(ctx, merchantID)
 	if err != nil {
 		return err
 	}
@@ -246,35 +252,25 @@ type terminalAccountStore struct {
 	db *sql.DB
 }
 
-// NewTerminalAccountStore construit le résolveur compte+commission adossé à la
-// base, en réutilisant les tables déjà jointes par le Checkout ScanNOrder
-// (stripe_accounts + scannorder_settings).
+// NewTerminalAccountStore construit le résolveur de compte connecté adossé à
+// la base (table stripe_accounts).
 func NewTerminalAccountStore(db *sql.DB) TerminalAccountStore {
 	return &terminalAccountStore{db: db}
 }
 
-func (s *terminalAccountStore) GetTerminalAccount(ctx context.Context, merchantID string) (string, float64, int64, error) {
-	const q = `
-		SELECT sa.account_id, snos.variable_fees, snos.fixed_fees
-		FROM   stripe_accounts sa
-		INNER  JOIN scannorder_settings snos ON snos.merchant_id = sa.merchant_id
-		WHERE  sa.merchant_id = ?
-		LIMIT  1`
+func (s *terminalAccountStore) GetTerminalAccount(ctx context.Context, merchantID string) (string, error) {
+	const q = `SELECT account_id FROM stripe_accounts WHERE merchant_id = ? LIMIT 1`
 
-	var (
-		accountID    sql.NullString
-		variableFees sql.NullFloat64
-		fixedFees    sql.NullInt64
-	)
-	err := s.db.QueryRowContext(ctx, q, merchantID).Scan(&accountID, &variableFees, &fixedFees)
+	var accountID sql.NullString
+	err := s.db.QueryRowContext(ctx, q, merchantID).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, 0, ErrNoStripeAccount
+		return "", ErrNoStripeAccount
 	}
 	if err != nil {
-		return "", 0, 0, err
+		return "", err
 	}
 	if !accountID.Valid || accountID.String == "" {
-		return "", 0, 0, ErrNoStripeAccount
+		return "", ErrNoStripeAccount
 	}
-	return accountID.String, variableFees.Float64, fixedFees.Int64, nil
+	return accountID.String, nil
 }

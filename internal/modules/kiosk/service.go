@@ -1724,7 +1724,12 @@ func (s *Service) CreateTerminalPaymentIntent(ctx context.Context, kiosk Authent
 		return nil, models.ErrKioskAmountMismatch
 	}
 
-	clientSecret, piID, err := s.terminal.CreateTerminalPaymentIntent(ctx, kiosk.MerchantID, orderID, int64(order.TTC))
+	variableFees, fixedFees, err := s.repo.GetKioskFees(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	clientSecret, piID, err := s.terminal.CreateTerminalPaymentIntent(ctx, kiosk.MerchantID, orderID, int64(order.TTC), variableFees, fixedFees)
 	if err != nil {
 		return nil, mapTerminalError(err)
 	}
