@@ -25,30 +25,32 @@ func SetupTasks(
 	// Tâches dormantes hors périmètre réservation — NE PAS réactiver ici.
 	// Pour les réactiver un jour, décommenter au cas par cas.
 	//
-	c.AddFunc("@every 1s", func() {
-		taskManager.UpdateAverageDistributionTime()
-	})
-
-	c.AddFunc("@hourly", func() {
-		taskManager.CloseOrders()
-		taskManager.DenyOrders()
-		taskManager.SendLoyaltyProgrammReminder()
-		taskManager.CapturePayments()
-		taskManager.CancelPayments()
-	})
-	c.AddFunc("@every 1s", func() {
-		taskManager.UpdatePopularProducts()
-	})
-
-	// Chaque nuit à 3h : recalcul des patterns market basket
-	c.AddFunc("0 3 * * *", func() {
-		taskManager.RecomputeUpsellPatterns()
-	})
-
-	// 1er du mois à 4h : purge des anciennes suggestions
-	c.AddFunc("0 4 1 * *", func() {
-		taskManager.CleanupOldUpsellSuggestions()
-	})
+	// c.AddFunc("@every 15m", func() {
+	// 	taskManager.UpdateAverageDistributionTime()
+	// })
+	//
+	// c.AddFunc("@hourly", func() {
+	// 	taskManager.CloseOrders()
+	// 	taskManager.DenyOrders()
+	// 	taskManager.SendLoyaltyProgrammReminder()
+	//
+	// 	taskManager.CapturePayments()
+	// 	taskManager.CancelPayments()
+	// })
+	//
+	// c.AddFunc("@monthly", func() {
+	// 	taskManager.UpdatePopularProducts()
+	// })
+	//
+	// // Chaque nuit à 3h : recalcul des patterns market basket
+	// c.AddFunc("0 3 * * *", func() {
+	// 	taskManager.RecomputeUpsellPatterns()
+	// })
+	//
+	// // 1er du mois à 4h : purge des anciennes suggestions
+	// c.AddFunc("0 4 1 * *", func() {
+	// 	taskManager.CleanupOldUpsellSuggestions()
+	// })
 
 	// Démarrage du Cron en arrière-plan
 	c.Start()
