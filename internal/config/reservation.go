@@ -10,6 +10,6 @@ type ReservationConfig struct {
 
 func loadReservationConfig() ReservationConfig {
 	return ReservationConfig{
-		PublicBaseURL: getEnv("PUBLIC_RESERVATION_BASE_URL", "https://rsv.welloresto.fr"),
+		PublicBaseURL: getEnv("PUBLIC_RESERVATION_BASE_URL", "https://rsv-staging.onrender.com/"),
 	}
 }

@@ -469,10 +469,6 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 	if err != nil {
 		return nil, err
 	}
-	requestedDateUTC, _, _, err := toUTCDayBounds(requestedDate, loc)
-	if err != nil {
-		return nil, err
-	}
 	dayOfWeek := int(requestedDateTime.Weekday())
 	if dayOfWeek == 0 {
 		dayOfWeek = 7
@@ -485,9 +481,9 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 
 	var bookings []bookingcore.IntervalBooking
 	if excludeBookingNumber == "" {
-		bookings, err = s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDateUTC)
+		bookings, err = s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDate)
 	} else {
-		bookings, err = s.repo.GetBookedCapacityExcludingBooking(ctx, merchant.MerchantID, requestedDateUTC, excludeBookingNumber)
+		bookings, err = s.repo.GetBookedCapacityExcludingBooking(ctx, merchant.MerchantID, requestedDate, excludeBookingNumber)
 	}
 	if err != nil {
 		return nil, err
