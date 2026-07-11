@@ -148,7 +148,7 @@ type BookingPublic struct {
 	PartySize        int            `json:"party_size"`
 	DateFrom         string         `json:"date_from"`
 	DurationMinutes  int            `json:"duration_minutes"`
-	Comment          string         `json:"comment,omitempty"`
+	Comment          *string        `json:"comment,omitempty"`
 	Cancelable       bool           `json:"cancelable"`
 	Modifiable       bool           `json:"modifiable"`
 	RemainingUpdates int            `json:"remaining_updates"`

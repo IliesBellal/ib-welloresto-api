@@ -586,7 +586,7 @@ func (s *reservationService) toBookingPublic(merchant *Merchant, booking *Bookin
 		PartySize:        booking.PartySize,
 		DateFrom:         startDate,
 		DurationMinutes:  duration,
-		Comment:          *booking.Comment,
+		Comment:          booking.Comment,
 		Cancelable:       booking.Cancelable,
 		Modifiable:       booking.Cancelable,
 		RemainingUpdates: remainingUpdates,
