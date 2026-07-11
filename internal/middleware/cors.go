@@ -35,7 +35,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-BasicAuth, X-App-Source")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-BasicAuth, X-App-Source, Idempotency-Key")
 		w.Header().Set("Access-Control-Expose-Headers", "Link")
 	}
 }
@@ -80,6 +80,7 @@ func CORSMiddleware() *cors.Cors {
 			"Content-Type",
 			"X-CSRF-BasicAuth",
 			"X-App-Source",
+			"Idempotency-Key",
 		},
 
 		ExposedHeaders: []string{
