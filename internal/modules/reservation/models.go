@@ -91,17 +91,17 @@ type BookingRequest struct {
 }
 
 type BookingData struct {
-	BookingID       string `json:"booking_id"`
-	BookingNumber   string `json:"booking_number"`
-	MerchantID      string `json:"merchant_id"`
-	StartDate       string `json:"start_date"`
-	EndDate         string `json:"end_date"`
-	DurationMinutes int    `json:"duration_minutes,omitempty"`
-	PartySize       int    `json:"party_size"`
-	Comment         string `json:"comment,omitempty"`
-	Status          string `json:"status"`
-	SequenceNumber  int    `json:"sequence_number"` // Ajouté pour la limite de modif
-	Cancelable      bool   `json:"cancelable"`      // Champ calculé
+	BookingID       string  `json:"booking_id"`
+	BookingNumber   string  `json:"booking_number"`
+	MerchantID      string  `json:"merchant_id"`
+	StartDate       string  `json:"start_date"`
+	EndDate         string  `json:"end_date"`
+	DurationMinutes int     `json:"duration_minutes,omitempty"`
+	PartySize       int     `json:"party_size"`
+	Comment         *string `json:"comment,omitempty"`
+	Status          string  `json:"status"`
+	SequenceNumber  int     `json:"sequence_number"` // Ajouté pour la limite de modif
+	Cancelable      bool    `json:"cancelable"`      // Champ calculé
 }
 
 type CustomerData struct {

@@ -424,7 +424,7 @@ func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, re
 		return "", err
 	}
 
-	comment := stringPtr(req.Booking.Comment)
+	comment := stringPtr(*req.Booking.Comment)
 
 	bookingID, bookingNumber, err := bookingcore.CreateBooking(ctx, r.database, r.customerUpdater, bookingcore.CreateBookingParams{
 		MerchantID: req.MerchantID,
