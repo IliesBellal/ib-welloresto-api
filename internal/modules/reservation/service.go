@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/modules/bookingcomm"
 	"welloresto-api/internal/modules/bookingcore"
@@ -269,8 +270,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 }
 
 func (s *reservationService) normalizePhone(phone string) string {
-	// Implémente ici ta logique PHP normalizePhoneNumber
-	return phone
+	return helpers.NormalizePhoneNumber(phone, "FR")
 }
 
 func mustAtoi(v string) int {

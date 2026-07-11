@@ -65,6 +65,18 @@ func CreateBooking(ctx context.Context, db *sql.DB, customerRepo *customers.Cust
 			CustomerBrand:     p.Customer.Brand,
 		}
 
+		if customer.CustomerID == nil || *customer.CustomerID == "" {
+			if customer.CustomerTel != nil && strings.TrimSpace(*customer.CustomerTel) != "" {
+				existing, lookupErr := customerRepo.FindCustomerByPhone(txCtx, *customer.CustomerTel, p.MerchantID)
+				if lookupErr != nil && lookupErr != sql.ErrNoRows {
+					return fmt.Errorf("find customer by phone: %w", lookupErr)
+				}
+				if lookupErr == nil && existing != nil && existing.CustomerID != nil && *existing.CustomerID != "" {
+					customer.CustomerID = existing.CustomerID
+				}
+			}
+		}
+
 		customerID, err := customerRepo.UpdateOrCreateCustomer(txCtx, customer)
 		if err != nil {
 			return fmt.Errorf("upsert customer: %w", err)

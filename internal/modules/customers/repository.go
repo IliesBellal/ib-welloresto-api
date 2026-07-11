@@ -263,6 +263,27 @@ func (r *CustomersRepository) FindCustomerByEmail(ctx context.Context, email, me
 	return &c, nil
 }
 
+// FindCustomerByPhone recherche un client existant par numéro de téléphone,
+// après normalisation identique aux flux publics (SNO / réservation).
+// Retourne sql.ErrNoRows si aucun client actif n'est trouvé pour le marchand.
+func (r *CustomersRepository) FindCustomerByPhone(ctx context.Context, phone, merchantID string) (*models.Customer, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	normalizedPhone := helpers.NormalizePhoneNumber(phone, "FR")
+
+	var c models.Customer
+	err := db.QueryRowContext(ctx, `
+		SELECT customer_id, customer_first_name, customer_last_name, customer_email, customer_tel
+		FROM customer
+		WHERE customer_tel = ? AND enabled = true AND merchant_id = ?
+		LIMIT 1
+	`, normalizedPhone, merchantID).Scan(&c.CustomerID, &c.CustomerFirstName, &c.CustomerLastName, &c.CustomerEmail, &c.CustomerTel)
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
 func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID, merchantID string) (*CustomerLoyalty, error) {
 
 	loyalty := &CustomerLoyalty{
@@ -971,17 +992,19 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 
 	trimmedTerm := strings.TrimSpace(term)
 	if trimmedTerm != "" {
-		likeTerm := "%" + trimmedTerm + "%"
+		phoneSearchTerm := normalizePhoneSearchTerm(trimmedTerm)
+		phoneLikeTerm := "%" + phoneSearchTerm + "%"
+		nameLikeTerm := "%" + trimmedTerm + "%"
 		fromClause += `
       AND (
             c.customer_code = ?
-         OR UPPER(COALESCE(c.customer_tel, '')) LIKE UPPER(?)
+         OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.customer_tel, ''), ' ', ''), '-', ''), '.', ''), '(', ''), ')', '')) LIKE UPPER(?)
          OR UPPER(COALESCE(c.customer_name, '')) LIKE UPPER(?)
 		 OR UPPER(COALESCE(c.customer_first_name, '')) LIKE UPPER(?)
 		 OR UPPER(COALESCE(c.customer_last_name, '')) LIKE UPPER(?)
       )
 `
-		args = append(args, trimmedTerm, likeTerm, likeTerm, likeTerm, likeTerm)
+		args = append(args, trimmedTerm, phoneLikeTerm, nameLikeTerm, nameLikeTerm, nameLikeTerm)
 	}
 
 	countQuery := `SELECT COUNT(*) ` + fromClause
@@ -1046,7 +1069,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			continue
 		}
 
-		c.MatchScore = computeScore(term, &c)
+		c.MatchScore = computeScore(trimmedTerm, &c)
 		results = append(results, c)
 	}
 
@@ -1094,9 +1117,10 @@ func buildCustomerOrderByClause(sortField, sortDir string) string {
 func computeScore(term string, c *CustomerSearchResult) int {
 	score := 0
 	term = normalizeStr(&term)
+	phoneTerm := normalizePhoneSearchTerm(term)
 
 	code := normalizeStr(c.CustomerCode)
-	tel := normalizeStr(c.CustomerTel)
+	tel := normalizePhoneField(c.CustomerTel)
 	lastName := normalizeStr(c.CustomerLastName)
 	firstName := normalizeStr(c.CustomerFirstName)
 
@@ -1104,7 +1128,7 @@ func computeScore(term string, c *CustomerSearchResult) int {
 	if code == term {
 		score += 500
 	}
-	if tel == term {
+	if tel == phoneTerm {
 		score += 300
 	}
 	if lastName == term {
@@ -1122,7 +1146,7 @@ func computeScore(term string, c *CustomerSearchResult) int {
 		score += 80
 	}
 
-	if strings.Contains(tel, term) {
+	if strings.Contains(tel, phoneTerm) {
 		score += 120
 	}
 
@@ -1246,6 +1270,52 @@ func normalizeStr(s *string) string {
 	val := strings.TrimSpace(strings.ToUpper(*s))
 	val = strings.ReplaceAll(val, " ", "")
 	return val
+}
+
+func normalizePhoneSearchTerm(term string) string {
+	trimmed := strings.TrimSpace(term)
+	if trimmed == "" {
+		return ""
+	}
+
+	if !looksLikePhoneSearch(trimmed) {
+		return normalizePhoneComparable(trimmed)
+	}
+
+	return normalizePhoneComparable(helpers.NormalizePhoneNumber(trimmed, "FR"))
+}
+
+func normalizePhoneField(phone *string) string {
+	if phone == nil {
+		return ""
+	}
+	return normalizePhoneComparable(*phone)
+}
+
+func normalizePhoneComparable(v string) string {
+	if v == "" {
+		return ""
+	}
+
+	upper := strings.ToUpper(strings.TrimSpace(v))
+	replacer := strings.NewReplacer(" ", "", "-", "", ".", "", "(", "", ")", "")
+	return replacer.Replace(upper)
+}
+
+func looksLikePhoneSearch(term string) bool {
+	hasDigit := false
+	for _, r := range term {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r == '+' || r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
+			continue
+		default:
+			return false
+		}
+	}
+
+	return hasDigit
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {

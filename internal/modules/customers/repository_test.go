@@ -153,3 +153,69 @@ func TestFindCustomerByEmail_CaseInsensitiveLookup(t *testing.T) {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
+
+func TestFindCustomerByPhone_NormalizesPhoneBeforeLookup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewCustomerRepository(db)
+
+	rows := sqlmock.NewRows([]string{"customer_id", "customer_first_name", "customer_last_name", "customer_email", "customer_tel"}).
+		AddRow("cus_9", "Jean", "Dupont", "client@example.fr", "+33612345678")
+
+	mock.ExpectQuery("WHERE customer_tel = \\? AND enabled = true AND merchant_id = \\?").
+		WithArgs("+33612345678", "merchant_1").
+		WillReturnRows(rows)
+
+	c, err := repo.FindCustomerByPhone(context.Background(), "06 12 34 56 78", "merchant_1")
+	if err != nil {
+		t.Fatalf("FindCustomerByPhone() error = %v", err)
+	}
+	if c.CustomerID == nil || *c.CustomerID != "cus_9" {
+		t.Fatalf("FindCustomerByPhone() got customer_id = %v, want cus_9", c.CustomerID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestSearchCustomers_NormalizesPhoneSearchTerm(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewCustomerRepository(db)
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\)`).
+		WithArgs("merchant_1", "06 12 34 56 78", "%+33612345678%", "%06 12 34 56 78%", "%06 12 34 56 78%", "%06 12 34 56 78%").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	mock.ExpectQuery(`SELECT\s+c\.customer_id`).
+		WithArgs("merchant_1", "06 12 34 56 78", "%+33612345678%", "%06 12 34 56 78%", "%06 12 34 56 78%", "%06 12 34 56 78%", 10, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"customer_id", "customer_name", "customer_last_name", "customer_first_name", "customer_tel", "customer_address", "customer_email", "customer_nb_orders", "customer_total_spent", "creation_date", "last_order_date", "customer_code", "advertising_consent", "customer_brand",
+		}).AddRow(
+			"cus_1", "Jean Dupont", "Dupont", "Jean", "+33612345678", "1 rue de Paris", "client@example.fr", 2, 1500, nil, nil, "C001", true, "WELLORESTO",
+		))
+
+	results, total, err := repo.SearchCustomers(context.Background(), "merchant_1", "06 12 34 56 78", "", "", 1, 10)
+	if err != nil {
+		t.Fatalf("SearchCustomers() error = %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("SearchCustomers() total = %d, want 1", total)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchCustomers() len = %d, want 1", len(results))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}

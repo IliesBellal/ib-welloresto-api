@@ -5,18 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/customers"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
-	database *sql.DB
+	database     *sql.DB
+	customerRepo *customers.CustomersRepository
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{database: db}
+	return &Repository{database: db, customerRepo: customers.NewCustomerRepository(db)}
 }
 
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
@@ -634,30 +635,36 @@ func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	phone := helpers.NormalizePhoneNumber(*customer.Tel, "FR")
+	if customer.Tel == nil || customer.MerchantID == nil || *customer.Tel == "" || *customer.MerchantID == "" {
+		return &customer, nil
+	}
 
-	query := `
-        SELECT c.customer_id, mp.automatically_add_customer_rewards
-        FROM customer c
-        INNER JOIN merchant_parameters mp ON mp.merchant_id = c.merchant_id
-        WHERE c.customer_tel = $1
-        AND c.enabled = true
-        AND c.merchant_id = $2
-        LIMIT 1;
-    `
-
-	var customerID string
-	var autoRewards bool
-
-	err := db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
+	existing, err := r.customerRepo.FindCustomerByPhone(ctx, *customer.Tel, *customer.MerchantID)
 	if err == sql.ErrNoRows {
 		return &customer, nil
 	}
 	if err != nil {
 		return &customer, err
 	}
+	if existing == nil || existing.CustomerID == nil || *existing.CustomerID == "" {
+		return &customer, nil
+	}
 
-	customer.CustomerID = &customerID
+	query := `
+        SELECT mp.automatically_add_customer_rewards
+        FROM merchant_parameters mp
+        WHERE mp.merchant_id = ?
+        LIMIT 1;
+    `
+
+	var autoRewards bool
+
+	err = db.QueryRowContext(ctx, query, customer.MerchantID).Scan(&autoRewards)
+	if err != nil {
+		return &customer, err
+	}
+
+	customer.CustomerID = existing.CustomerID
 
 	// 🎁 Récupération rewards si activé
 	if autoRewards {
@@ -669,7 +676,7 @@ func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
             AND cr.usage_date IS NULL;
         `
 
-		rows, err := db.QueryContext(ctx, rewardsQuery, customerID)
+		rows, err := db.QueryContext(ctx, rewardsQuery, *existing.CustomerID)
 		if err != nil {
 			return &customer, nil // comme PHP → fail silencieux
 		}
