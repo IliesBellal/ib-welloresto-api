@@ -348,7 +348,11 @@ func (s *DeliverySessionsService) GetDeliverySession(ctx context.Context, token,
 	if !user.ManageDelivery {
 		return nil, models.ErrForbidden
 	}
-	return s.deliverySessionsRepo.GetDeliverySession(ctx, user.MerchantID, delivery_session_id)
+	return s.FetchDeliverySession(ctx, user.MerchantID, delivery_session_id)
+}
+
+func (s *DeliverySessionsService) FetchDeliverySession(ctx context.Context, merchantID, delivery_session_id string) (*models.DeliverySession, error) {
+	return s.deliverySessionsRepo.GetDeliverySession(ctx, merchantID, delivery_session_id)
 }
 
 func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {

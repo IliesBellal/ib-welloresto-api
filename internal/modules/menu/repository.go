@@ -234,7 +234,7 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 
 	// 2. Récupération des options
 	optQuery := `
-        SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled
+        SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url
         FROM configurable_attributes ca
         INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
         WHERE ca.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1`
@@ -249,7 +249,7 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 		var opt AttributeOption
 		var parentAttrID string
 
-		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled); err != nil {
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
 		}
 
@@ -295,7 +295,7 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 
 	// 2. Récupération des options
 	optQuery := `
-        SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled
+        SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled, image_url
         FROM configurable_attribute_options
         WHERE configurable_attribute_id = ? AND enabled = 1`
 
@@ -309,7 +309,7 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 		var opt AttributeOption
 		var parentAttrID string
 
-		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled); err != nil {
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
 		}
 
@@ -379,8 +379,9 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 				title,
 				extra_price,
 				max_quantity,
-				enabled
-			) VALUES (?, ?, ?, ?, ?, ?)
+				enabled,
+				image_url
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
 		`
 
 		optionID := helpers.GeneratePrefixedID(helpers.AttributeOptionIDPrefix)
@@ -390,7 +391,8 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 			opt.Title,
 			price,
 			maxQty,
-			enabled)
+			enabled,
+			opt.ImageURL)
 		if err != nil {
 			return "", fmt.Errorf("insert option error: %w", err)
 		}
@@ -462,13 +464,19 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				enabled = *opt.Enabled
 			}
 
+			// image_url passe par COALESCE : si le payload ne le fournit pas
+			// (cas du formulaire back-office actuel, qui ne connaît pas ce
+			// champ), l'image déjà uploadée via le endpoint dédié est
+			// préservée plutôt qu'écrasée à NULL à chaque sauvegarde de
+			// l'attribut.
 			updateOptQuery := `
 				UPDATE configurable_attribute_options
-				SET 
+				SET
 					title = ?,
 					extra_price = ?,
 					max_quantity = ?,
-					enabled = ?
+					enabled = ?,
+					image_url = COALESCE(?, image_url)
 				WHERE id = ? AND configurable_attribute_id = ?
 			`
 
@@ -477,6 +485,7 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				price,
 				maxQty,
 				enabled,
+				opt.ImageURL,
 				*opt.ID,
 				attributeID)
 			if err != nil {
@@ -505,8 +514,9 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 					title,
 					extra_price,
 					max_quantity,
-					enabled
-				) VALUES (?, ?, ?, ?, ?)
+					enabled,
+					image_url
+				) VALUES (?, ?, ?, ?, ?, ?)
 			`
 
 			_, err = db.ExecContext(ctx, insertOptQuery,
@@ -514,11 +524,67 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				opt.Title,
 				price,
 				maxQty,
-				enabled)
+				enabled,
+				opt.ImageURL)
 			if err != nil {
 				return fmt.Errorf("insert option error: %w", err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// GetAttributeOptionImageURL récupère l'URL d'image actuelle d'une option,
+// scopée au merchant via une jointure sur configurable_attributes (les
+// options n'ont pas de merchant_id direct).
+func (r *MenuRepository) GetAttributeOptionImageURL(ctx context.Context, merchantID, optionID string) (string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var imageURL sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT cao.image_url
+		 FROM configurable_attribute_options cao
+		 INNER JOIN configurable_attributes ca ON ca.id = cao.configurable_attribute_id
+		 WHERE cao.id = ? AND ca.merchant_id = ?`,
+		optionID, merchantID,
+	).Scan(&imageURL)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get attribute option image: %w", err)
+	}
+
+	if imageURL.Valid {
+		return imageURL.String, nil
+	}
+	return "", nil
+}
+
+// UpdateAttributeOptionImageURL met à jour l'URL d'image d'une option,
+// scopée au merchant via une jointure sur configurable_attributes.
+func (r *MenuRepository) UpdateAttributeOptionImageURL(ctx context.Context, merchantID, optionID, imageURL string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE configurable_attribute_options cao
+		 INNER JOIN configurable_attributes ca ON ca.id = cao.configurable_attribute_id
+		 SET cao.image_url = ?
+		 WHERE cao.id = ? AND ca.merchant_id = ?`,
+		imageURL, optionID, merchantID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update attribute option image: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check update result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("attribute_option_not_found")
 	}
 
 	return nil
@@ -807,13 +873,14 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var productID string
 			var c models.ComponentUsage
-			var uom sql.NullString
-			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &c.Status, &c.Quantity, &uom); err != nil {
+			var uom, status sql.NullString
+			if err := rows.Scan(&productID, &c.ComponentID, &c.Name, &c.Price, &status, &c.Quantity, &uom); err != nil {
 				return nil, err
 			}
 			if uom.Valid {
 				c.UnitOfMeasure = uom.String
 			}
+			c.Status = status.String
 			compMap[productID] = append(compMap[productID], c)
 			count++
 		}
@@ -824,7 +891,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	{
 		step := "configurable_options"
 		q := `
-            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity
+            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
             FROM products p
             INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
@@ -840,7 +907,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)
@@ -1470,7 +1537,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "configurable_options_all"
 		q := `
-            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity
+            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
             FROM products p
             INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
@@ -1486,7 +1553,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)
@@ -2265,7 +2332,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	{
 		step := "configurable_options_for_product"
 		q := `
-			SELECT DISTINCT ca.id, cao.id, cao.title, cao.extra_price, cao.max_quantity
+			SELECT DISTINCT ca.id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
 			FROM product_configurable_attribute pca
 			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
 			INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
@@ -2279,7 +2346,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)

@@ -48,6 +48,7 @@ type PrinterEntry struct {
 	Language              string    `json:"language"`
 	Enabled               bool      `json:"enabled"`
 	ProductionProductIDs  []string  `json:"production_product_ids"`
+	PaperWidthMm          int       `json:"paper_width_mm" db:"paper_width_mm"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
@@ -61,6 +62,7 @@ type CreatePrinterRequest struct {
 	BluetoothAddress     *string   `json:"bluetooth_address,omitempty"`
 	Role                 string    `json:"role"`
 	ProductionProductIDs *[]string `json:"production_product_ids,omitempty"`
+	PaperWidthMm         *int      `json:"paper_width_mm,omitempty"`
 }
 
 func (r *CreatePrinterRequest) Validate() error {
@@ -79,6 +81,9 @@ func (r *CreatePrinterRequest) Validate() error {
 	if !validRoles[r.Role] {
 		return models.ErrInvalidInput
 	}
+	if r.PaperWidthMm != nil && *r.PaperWidthMm != 57 && *r.PaperWidthMm != 80 {
+		return models.ErrInvalidInput
+	}
 	return nil
 }
 
@@ -92,6 +97,7 @@ type UpdatePrinterRequest struct {
 	BluetoothAddress     *string   `json:"bluetooth_address,omitempty"`
 	Role                 *string   `json:"role,omitempty"`
 	ProductionProductIDs *[]string `json:"production_product_ids,omitempty"`
+	PaperWidthMm         *int      `json:"paper_width_mm,omitempty"`
 }
 
 func (r *UpdatePrinterRequest) Validate() error {
@@ -102,6 +108,9 @@ func (r *UpdatePrinterRequest) Validate() error {
 		return models.ErrInvalidInput
 	}
 	if r.Role != nil && !validRoles[*r.Role] {
+		return models.ErrInvalidInput
+	}
+	if r.PaperWidthMm != nil && *r.PaperWidthMm != 57 && *r.PaperWidthMm != 80 {
 		return models.ErrInvalidInput
 	}
 	return nil

@@ -103,7 +103,7 @@ type ComponentUsage struct {
 	ProductID     string  `json:"product_id,omitempty"`
 	Name          string  `json:"name"`
 	Price         int64   `json:"price"`
-	Status        int     `json:"status"`
+	Status        string  `json:"status"` // textuel, aligné sur models.ComponentUsage
 	Quantity      float64 `json:"quantity"`
 	UnitOfMeasure string  `json:"unit_of_measure"`
 }
@@ -196,11 +196,12 @@ type Attribute struct {
 }
 
 type AttributeOption struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Price       int    `json:"price"`        // extra_price (idéalement stocké en centimes)
-	MaxQuantity int    `json:"max_quantity"` // max_quantity
-	Enabled     bool   `json:"enabled"`      // enabled
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Price       int     `json:"price"`        // extra_price (idéalement stocké en centimes)
+	MaxQuantity int     `json:"max_quantity"` // max_quantity
+	Enabled     bool    `json:"enabled"`      // enabled
+	ImageURL    *string `json:"image_url,omitempty"`
 }
 
 type CreateProductPayload struct {
@@ -256,18 +257,18 @@ type ProductAttributesPayload struct {
 
 // UpdateComponentPayload pour la mise à jour de composants
 type UpdateComponentPayload struct {
-	Name              *string  `json:"name"`               // Nom du composant (optionnel)
-	Price             *int     `json:"price"`              // Prix de vente en centimes (optionnel)
-	PurchaseCost      *int     `json:"purchase_cost"`      // Coût d'achat en centimes (optionnel)
-	PurchaseUnitID    *string  `json:"purchase_unit_id"`   // ID unité de mesure d'achat (optionnel)
-	PurchaseCostQty   *float64 `json:"purchase_cost_qty"`  // Quantité pour le coût d'achat (optionnel)
-	MerchantID        string   `json:"-"`                  // ID du marchand, à récupérer du token
-	CategoryID        *string  `json:"category_id"`        // ID de la catégorie
-	UnitID            *string  `json:"unit_id"`            // ID de l'unité de mesure
-	ConservationDays  *int     `json:"conservation_days"`  // Durée de conservation après ouverture, en jours (optionnel)
-	ConservationType  *string  `json:"conservation_type"`  // Type de conservation: froid, congele, sec, ambiant (optionnel)
-	StorageTempMin    *float64 `json:"storage_temp_min"`   // Température min de stockage en °C (optionnel)
-	StorageTempMax    *float64 `json:"storage_temp_max"`   // Température max de stockage en °C (optionnel)
+	Name             *string  `json:"name"`              // Nom du composant (optionnel)
+	Price            *int     `json:"price"`             // Prix de vente en centimes (optionnel)
+	PurchaseCost     *int     `json:"purchase_cost"`     // Coût d'achat en centimes (optionnel)
+	PurchaseUnitID   *string  `json:"purchase_unit_id"`  // ID unité de mesure d'achat (optionnel)
+	PurchaseCostQty  *float64 `json:"purchase_cost_qty"` // Quantité pour le coût d'achat (optionnel)
+	MerchantID       string   `json:"-"`                 // ID du marchand, à récupérer du token
+	CategoryID       *string  `json:"category_id"`       // ID de la catégorie
+	UnitID           *string  `json:"unit_id"`           // ID de l'unité de mesure
+	ConservationDays *int     `json:"conservation_days"` // Durée de conservation après ouverture, en jours (optionnel)
+	ConservationType *string  `json:"conservation_type"` // Type de conservation: froid, congele, sec, ambiant (optionnel)
+	StorageTempMin   *float64 `json:"storage_temp_min"`  // Température min de stockage en °C (optionnel)
+	StorageTempMax   *float64 `json:"storage_temp_max"`  // Température max de stockage en °C (optionnel)
 }
 
 // UpsertComponentCategoryPayload pour la création de catégories de composants
@@ -301,6 +302,7 @@ type UpdateAttributeOptionPayload struct {
 	MaxQuantity *int    `json:"max_quantity"` // Max quantity per option
 	Enabled     *bool   `json:"enabled"`      // Whether the option is enabled
 	ExtraPrice  *int    `json:"extra_price"`  // Extra price (deprecated, use Price)
+	ImageURL    *string `json:"image_url"`    // Image URL (managed primarily via the dedicated upload endpoint)
 }
 
 // UpdateAttributePayload for updating configurable attributes

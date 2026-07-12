@@ -207,6 +207,8 @@ var (
 
 	ErrTooLateToDeleteOrder = errors.New("too_late_to_delete_order")
 
+	ErrOrderAlreadyAccepted = errors.New("order_already_accepted")
+
 	ErrUserNotAllowed = errors.New("user_not_allowed")
 
 	ErrCartEmpty = errors.New("cart_is_empty")
@@ -214,6 +216,12 @@ var (
 	ErrInternalServerError = errors.New("internal_server_error")
 
 	ErrNoCashRegisterOpen = errors.New("no_cash_register_open")
+
+	// ErrLinkedDeviceRegisterClosed indique que le device est lié à un autre device dont le registre n'est pas ouvert
+	ErrLinkedDeviceRegisterClosed = errors.New("linked_device_register_closed")
+
+	// ErrCircularDeviceLink indique une tentative de liaison circulaire entre deux devices
+	ErrCircularDeviceLink = errors.New("circular_device_link")
 
 	ErrRefoundMustBeGreaterThanZero = errors.New("refund_amount_must_be_greater_than_zero")
 
@@ -334,10 +342,30 @@ var (
 	ErrKioskAdminPinInvalid       = errors.New("kiosk_admin_pin_invalid")
 	ErrKioskAdminPinNotConfigured = errors.New("kiosk_admin_pin_not_configured")
 
+	// Erreurs du module Kiosk — paiement carte (Stripe Terminal)
+	ErrKioskCardPaymentDisabled   = errors.New("kiosk_card_payment_disabled")
+	ErrKioskPaymentMethodInvalid  = errors.New("kiosk_payment_method_invalid")
+	ErrKioskOrderNotCardPending   = errors.New("kiosk_order_not_card_pending")
+	ErrKioskAmountMismatch        = errors.New("kiosk_amount_mismatch")
+	ErrKioskTerminalNotConfigured = errors.New("kiosk_terminal_not_configured")
+
 	// Erreurs de l'envoi de facture par email
 	ErrInvoiceInvalidEmail    = errors.New("invoice_invalid_email")
 	ErrInvoiceCustomerNotFound = errors.New("invoice_customer_not_found")
 	ErrInvoiceAttachmentTooLarge = errors.New("invoice_attachment_too_large")
+
+	// Erreurs du plan de salle (module locations)
+	ErrInvalidTableGeometry = errors.New("invalid_table_geometry")
+	ErrFloorNotEmpty        = errors.New("floor_not_empty")
+	ErrFloorNotFound        = errors.New("floor_not_found")
+
+	// Erreurs du module réservation
+	ErrTableConflict   = errors.New("table_conflict")
+	ErrSlotUnavailable = errors.New("slot_unavailable")
+
+	// Erreurs de la liste d'attente (module bookings, migration 059)
+	ErrWaitlistDisabled = errors.New("waitlist_disabled")
+	ErrWaitlistFull     = errors.New("waitlist_full")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -432,6 +460,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "too_late_to_delete_order"
 		errorMsg = "Too late to delete order, you can only delete an order within 60 seconds after its creation"
+
+	case errors.Is(err, ErrOrderAlreadyAccepted):
+		status = http.StatusConflict
+		errorStatus = "order_already_accepted"
+		errorMsg = "This order has already been accepted by the restaurant and can no longer be cancelled"
 
 	case errors.Is(err, ErrRedisNotAvailable):
 		status = http.StatusServiceUnavailable
@@ -783,6 +816,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "no_cash_register_opened"
 		errorMsg = "no cash register opened for this device id"
 
+	case errors.Is(err, ErrLinkedDeviceRegisterClosed):
+		status = http.StatusConflict
+		errorStatus = "linked_device_register_closed"
+		errorMsg = "Le registre de caisse doit être ouvert sur l'appareil principal auquel vous êtes lié."
+
+	case errors.Is(err, ErrCircularDeviceLink):
+		status = http.StatusConflict
+		errorStatus = "circular_device_link"
+		errorMsg = "Impossible de se lier à cet appareil : il est déjà lié au vôtre. Supprimez d'abord la liaison existante sur l'autre appareil."
+
 	case errors.Is(err, ErrCashRegisterStillOpen):
 		status = http.StatusConflict
 		errorStatus = "cash_register_still_open"
@@ -1073,6 +1116,31 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "kiosk_admin_pin_not_configured"
 		errorMsg = "This kiosk has no admin PIN configured yet. Regenerate one via POST .../regenerate-admin-pin."
 
+	case errors.Is(err, ErrKioskCardPaymentDisabled):
+		status = http.StatusForbidden
+		errorStatus = "kiosk_card_payment_disabled"
+		errorMsg = "Card payment is disabled for this merchant's kiosks."
+
+	case errors.Is(err, ErrKioskPaymentMethodInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_payment_method_invalid"
+		errorMsg = "payment_method must be either \"card\" or \"pay_at_counter\"."
+
+	case errors.Is(err, ErrKioskOrderNotCardPending):
+		status = http.StatusConflict
+		errorStatus = "kiosk_order_not_card_pending"
+		errorMsg = "This order is not awaiting a card payment (pending_card_payment)."
+
+	case errors.Is(err, ErrKioskAmountMismatch):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_amount_mismatch"
+		errorMsg = "amount_cents does not match the order total."
+
+	case errors.Is(err, ErrKioskTerminalNotConfigured):
+		status = http.StatusFailedDependency
+		errorStatus = "kiosk_terminal_not_configured"
+		errorMsg = "No Stripe connected account is configured for this merchant."
+
 	case errors.Is(err, ErrInvoiceInvalidEmail):
 		status = http.StatusBadRequest
 		errorStatus = "invoice_invalid_email"
@@ -1087,6 +1155,41 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadGateway
 		errorStatus = "invoice_attachment_too_large"
 		errorMsg = "The generated invoice PDF exceeds Brevo's attachment size limit."
+
+	case errors.Is(err, ErrInvalidTableGeometry):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "invalid_table_geometry"
+		errorMsg = "Table properties are out of bounds (x/y 0-1000, width/height 40-300, angle 0-359, seats >= 1, shape circle|square|rectangle)."
+
+	case errors.Is(err, ErrFloorNotEmpty):
+		status = http.StatusConflict
+		errorStatus = "floor_not_empty"
+		errorMsg = "The floor still has active tables attached. Move or delete them first."
+
+	case errors.Is(err, ErrFloorNotFound):
+		status = http.StatusNotFound
+		errorStatus = "floor_not_found"
+		errorMsg = "The requested floor does not exist for this merchant."
+
+	case errors.Is(err, ErrTableConflict):
+		status = http.StatusConflict
+		errorStatus = "table_conflict"
+		errorMsg = "One or more requested tables are already booked on an overlapping time slot."
+
+	case errors.Is(err, ErrSlotUnavailable):
+		status = http.StatusConflict
+		errorStatus = "slot_unavailable"
+		errorMsg = "The requested slot no longer has enough remaining capacity."
+
+	case errors.Is(err, ErrWaitlistDisabled):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "waitlist_disabled"
+		errorMsg = "The waitlist is not enabled for this merchant."
+
+	case errors.Is(err, ErrWaitlistFull):
+		status = http.StatusConflict
+		errorStatus = "waitlist_full"
+		errorMsg = "The waitlist has reached its maximum size."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

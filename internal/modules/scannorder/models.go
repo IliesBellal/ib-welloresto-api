@@ -228,16 +228,54 @@ type DiscountsResponse struct {
 	Discounts []Discount `json:"discounts"`
 }
 
-// --- Upsell ---
+// --- Public delivery tracking (GDPR-safe) ---
 
-type UpsellProduct struct {
-	ProductID   string  `json:"product_id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-	Price       int64   `json:"price"`
-	ImageURL    *string `json:"image_url,omitempty"`
+// PublicSNOOrder is the response returned by GET /scannorder/{slug}/orders/{order_id}.
+// It embeds the caller's own order (their own customer data is legitimate) but overrides
+// the delivery_session field with a filtered, GDPR-safe projection. The embedded
+// models.Order.DeliverySession (json:"delivery_session") is shadowed by the outer field
+// of the same JSON name, so the internal session (which lists every other customer of the
+// tour) is never serialized on this public endpoint.
+type PublicSNOOrder struct {
+	*models.Order
+	DeliverySession *PublicDeliverySession `json:"delivery_session"`
 }
 
+// PublicDeliverySession is the GDPR-safe projection of a delivery session exposed to the
+// unauthenticated ScanNOrder client tracking their own order. It deliberately omits every
+// other customer's order (names, addresses, phones, delivery notes) and the delivery man's
+// full identity / GPS of other stops. It is kept separate from models.DeliverySession (used
+// by authenticated merchant endpoints) so a new field added to the internal model can never
+// re-leak automatically through this public endpoint.
+type PublicDeliverySession struct {
+	DeliverySessionID string            `json:"delivery_session_id"`
+	Status            string            `json:"status"`
+	DeliveryMan       PublicDeliveryMan `json:"delivery_man"`
+	// StopsBeforeYou is the number of stops still to be served ahead of the caller's own
+	// order in the tour (non-terminal stops with a lower priority). Non-identifying: it is a
+	// count only, never the underlying orders. Nil when the caller's order is not found in
+	// the tour.
+	StopsBeforeYou *int `json:"stops_before_you,omitempty"`
+	// TotalStops is the total number of stops in the tour (a count, not the orders).
+	TotalStops *int `json:"total_stops,omitempty"`
+}
+
+// PublicDeliveryMan exposes only the minimal, non-identifying delivery man info a tracking
+// client legitimately needs: first name and live position. No last name, user id, phone.
+type PublicDeliveryMan struct {
+	FirstName *string  `json:"first_name"`
+	Lat       *float64 `json:"lat,omitempty"`
+	Lng       *float64 `json:"lng,omitempty"`
+	Status    *string  `json:"status,omitempty"`
+}
+
+// --- Upsell ---
+
+// UpsellResponse carries fully-configured products (same shape as the product detail
+// endpoint), so the frontend can open the configuration modal directly from an upsell suggestion.
+// SuggestionID is only populated by PostUpsell (cart-aware, tracked) — the deprecated
+// GetUpsell (static is_popular) leaves it empty since it never creates a tracked suggestion.
 type UpsellResponse struct {
-	Products []UpsellProduct `json:"products"`
+	Products     []models.ProductEntry `json:"products"`
+	SuggestionID string                 `json:"suggestion_id,omitempty"`
 }

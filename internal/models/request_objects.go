@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -196,11 +197,6 @@ type OrderHistoryRequest struct {
 	Limit      *int     `json:"limit"`
 }
 
-type UpdateLocationCoordinatesRequest struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-}
-
 type TRCheckResponse struct {
 	Status  string `json:"status"` // valid, used, expired, invalid_format, no_value
 	Message string `json:"message"`
@@ -229,6 +225,11 @@ type PricingRequest struct {
 
 	CheckoutSessionType string       `json:"checkout_session_type,omitempty"`
 	Merchant            *MerchantRow `json:"merchant,omitempty"`
+
+	// UpsellSuggestionID, when set on a CreateOrderSNO call, is carried into
+	// RequestObject.UpsellSuggestionID so OrdersLifeCycleService.CreateOrder can
+	// trigger upsell acceptance tracking (Phase C). Unused by pricing calls.
+	UpsellSuggestionID *string `json:"upsell_suggestion_id,omitempty"`
 }
 
 type MerchantRow struct {
@@ -458,7 +459,11 @@ type PricingResponse struct {
 type UnavailableProductInfo struct {
 	ProductID int64  `json:"product_id"`
 	Name      string `json:"name"`
-	Status    int    `json:"status"`
+	// Status est textuel : GetUnavailableProducts retourne soit products.status
+	// brut ('not_available', '0', ...), soit 'out_of_stock' dérivé quand un
+	// composant de recette est épuisé. L'ancien type int faisait échouer le
+	// rows.Scan dès qu'un statut non numérique remontait.
+	Status string `json:"status"`
 }
 
 type SelectedProduct struct {
@@ -609,6 +614,8 @@ type MerchantParametersSettings struct {
 	PagerNumberRequired               *bool   `json:"pager_number_required,omitempty"`
 	POSAutoLockEnabled                *bool   `json:"pos_auto_lock_enabled,omitempty"`
 	POSAutoLockDelayMinutes           *int    `json:"pos_auto_lock_delay_minutes,omitempty"`
+	POSUpsellEnabled                  *bool   `json:"pos_upsell_enabled,omitempty"`
+	CustomerFormRequirements          *json.RawMessage `json:"customer_form_requirements,omitempty"`
 	Currency                          *string `json:"currency,omitempty"`
 	IsOpen                            *bool   `json:"is_open,omitempty"`
 	PrimaryColor                      *string `json:"primary_color,omitempty"`
@@ -656,6 +663,7 @@ type UpdateMerchantSettingsRequest struct {
 	ScanOrder         *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
 	Security          *POSSettingsSecurityPatch   `json:"security,omitempty"`
 	HoursOfOperations *[]POSHoursOfOperationPatch `json:"hours_of_operations,omitempty"`
+	CustomerFormRequirements *json.RawMessage      `json:"customer_form_requirements,omitempty"`
 }
 
 type POSHoursOfOperation struct {
@@ -743,6 +751,8 @@ type POSSettingsOrdering struct {
 	ActiveOnSite       bool   `json:"active_on_site"`
 	ActiveTakeaway     bool   `json:"active_takeaway"`
 	ActiveDelivery     bool   `json:"active_delivery"`
+	UpsellEnabled      bool   `json:"upsell_enabled"`
+	CustomerFormRequirements *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
 
 type POSSettingsOrderingPatch struct {
@@ -754,6 +764,7 @@ type POSSettingsOrderingPatch struct {
 	ActiveOnSite       *bool   `json:"active_on_site,omitempty"`
 	ActiveTakeaway     *bool   `json:"active_takeaway,omitempty"`
 	ActiveDelivery     *bool   `json:"active_delivery,omitempty"`
+	UpsellEnabled      *bool   `json:"upsell_enabled,omitempty"`
 }
 
 type POSSettingsScanOrder struct {

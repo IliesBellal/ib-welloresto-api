@@ -1,6 +1,7 @@
 package kiosk
 
 import (
+	"context"
 	"time"
 
 	"welloresto-api/internal/middleware"
@@ -47,10 +48,10 @@ type KioskDeviceTokenRow struct {
 	CreatedAt  time.Time
 }
 
-// KioskSettingsRow mappe la table kiosk_settings. BusinessName n'est PAS une
-// colonne de kiosk_settings : c'est merchant.fullName, attaché à ce struct
-// après coup par GetKioskSettings (voir repository.go) pour que l'appelant
-// n'ait qu'une seule structure à lire — voir docs/KIOSK_DECISIONS.md.
+// KioskSettingsRow mappe la table kiosk_settings. BusinessName et Slug ne sont
+// PAS des colonnes de kiosk_settings : ils sont attachés à ce struct après coup
+// par GetKioskSettings (voir repository.go) pour que l'appelant n'ait qu'une
+// seule structure à lire — voir docs/KIOSK_DECISIONS.md.
 type KioskSettingsRow struct {
 	MerchantID           string
 	FulfillmentDineIn    bool
@@ -67,6 +68,7 @@ type KioskSettingsRow struct {
 	IdleVideoURL         *string
 	PrimaryColor         *string
 	BusinessName         *string
+	Slug                 *string
 	CreatedAt            time.Time
 	UpdatedAt            *time.Time
 }
@@ -224,6 +226,17 @@ type KioskSettingsResponse struct {
 	// via UpdateKioskSettingsRequest : le nom de l'établissement se gère
 	// ailleurs, pas dans les paramètres Kiosk) — voir docs/KIOSK_DECISIONS.md.
 	BusinessName *string `json:"business_name"`
+
+	// Slug — code QR principal du merchant (qrcodes.code, sans location_id ni
+	// user_id), en lecture seule. Correspond au {merchant_slug} des routes
+	// scannorder, permettant au kiosk de construire ou afficher l'URL SNO.
+	Slug *string `json:"slug"`
+
+	// TerminalLocationID — stripe_accounts.terminal_location_id (Stripe Terminal
+	// Location, tml_...), en lecture seule. Nécessaire côté Flutter pour connecter
+	// le lecteur de carte. null si pas de ligne stripe_accounts pour ce merchant
+	// ou si Terminal n'est pas activé (colonne NULL) — jamais une erreur.
+	TerminalLocationID *string `json:"terminal_location_id"`
 }
 
 // UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des
@@ -257,100 +270,63 @@ type KioskMenuResponse struct {
 }
 
 type KioskCategory struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	SortOrder int            `json:"sort_order"`
-	ImageURL  string         `json:"image_url,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sort_order"`
+	ImageURL  string `json:"image_url,omitempty"`
+	// Available reprend products_types.available (scannorder l'expose déjà) —
+	// une catégorie désactivée par le restaurateur ne doit pas apparaître sur
+	// la borne (voir GetMenu, le filtre est appliqué côté service).
+	Available bool           `json:"available"`
 	Products  []KioskProduct `json:"products"`
 }
 
 type KioskProduct struct {
-	ID               string               `json:"id"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description,omitempty"`
-	PriceCents       int64                `json:"price_cents"`
-	ImageURL         string               `json:"image_url,omitempty"`
-	Available        bool                 `json:"available"`
-	AvailableOnKiosk bool                 `json:"available_on_kiosk"`
-	Allergens        []string             `json:"allergens,omitempty"`
-	Tags             []string             `json:"tags,omitempty"`
-	ModifierGroups   []KioskModifierGroup `json:"modifier_groups,omitempty"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Description        string               `json:"description,omitempty"`
+	PriceCents         int64                `json:"price_cents"`
+	PriceTakeAwayCents *int64               `json:"price_take_away_cents,omitempty"`
+	ImageURL           string               `json:"image_url,omitempty"`
+	Available          bool                 `json:"available"`
+	AvailableOnKiosk   bool                 `json:"available_on_kiosk"`
+	Allergens          []string             `json:"allergens,omitempty"`
+	Tags               []string             `json:"tags,omitempty"`
+	ModifierGroups     []KioskModifierGroup `json:"modifier_groups,omitempty"`
+	IsPopular          bool                 `json:"is_popular,omitempty"`
+	TVARate            *float64             `json:"tva_rate,omitempty"`
+	MaxQuantity        *int                 `json:"max_quantity,omitempty"`
+	DisplayOrder       *int                 `json:"display_order,omitempty"`
+	Status             string               `json:"status,omitempty"`
 }
 
+// KioskModifierGroup/KioskModifierOption — champs JSON alignés sur
+// ConfigurableAttribute/ConfigurableOption (scannorder, internal/models/
+// menu_models.go), voir docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #5. Les
+// anciens noms (name/min/max/required/price_delta_cents) sont une rupture de
+// contrat JSON pour le client Flutter kiosk existant — voir
+// docs/KIOSK_DECISIONS.md.
 type KioskModifierGroup struct {
-	ID       string                `json:"id"`
-	Name     string                `json:"name"`
-	Min      int                   `json:"min"`
-	Max      int                   `json:"max"`
-	Required bool                  `json:"required"`
-	Options  []KioskModifierOption `json:"options"`
+	ID            string                `json:"id"`
+	Title         string                `json:"title"`
+	MinOptions    int                   `json:"min_options"`
+	MaxOptions    int                   `json:"max_options"`
+	AttributeType string                `json:"attribute_type"`
+	Options       []KioskModifierOption `json:"options"`
 }
 
 type KioskModifierOption struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	PriceDeltaCents int    `json:"price_delta_cents"`
+	ID                      string `json:"id"`
+	Title                   string `json:"title"`
+	ImageURL                string `json:"image_url,omitempty"`
+	ExtraPrice              int    `json:"extra_price"`
+	MaxQuantity             int    `json:"max_quantity"`
+	ConfigurableAttributeID string `json:"configurable_attribute_id"`
+	Selected                bool   `json:"selected,omitempty"`
 }
 
 type KioskUpsellRequest struct {
 	CartProductIDs []string `json:"cart_product_ids"`
-}
-
-type KioskUpsellResponse struct {
-	Suggestions []KioskUpsellSuggestion `json:"suggestions"`
-	Source      string                  `json:"source"`
-}
-
-type KioskUpsellSuggestion struct {
-	ProductID  string `json:"product_id"`
-	Name       string `json:"name"`
-	PriceCents int64  `json:"price_cents"`
-	ImageURL   string `json:"image_url,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-}
-
-type KioskPricingItem struct {
-	ProductID         string   `json:"product_id"`
-	Quantity          int      `json:"quantity"`
-	SelectedOptionIDs []string `json:"selected_option_ids,omitempty"`
-	Notes             string   `json:"notes,omitempty"`
-}
-
-type KioskPricingRequest struct {
-	FulfillmentType string             `json:"fulfillment_type"`
-	Items           []KioskPricingItem `json:"items"`
-	DiscountCode    *string            `json:"discount_code,omitempty"`
-}
-
-type KioskPricingResponse struct {
-	ItemsTotalCents int64 `json:"items_total_cents"`
-	DiscountCents   int64 `json:"discount_cents"`
-	TaxCents        int64 `json:"tax_cents"`
-	TotalCents      int64 `json:"total_cents"`
-}
-
-type KioskOrderItem struct {
-	ProductID           string   `json:"product_id"`
-	Quantity            int      `json:"quantity"`
-	SelectedOptionIDs   []string `json:"selected_option_ids,omitempty"`
-	Notes               string   `json:"notes,omitempty"`
-	WithoutComponentIDs []string `json:"without_component_ids,omitempty"`
-}
-
-type CreateKioskOrderRequest struct {
-	FulfillmentType string           `json:"fulfillment_type"` // DINE_IN | TAKE_AWAY
-	IdempotencyKey  string           `json:"idempotency_key"`
-	Items           []KioskOrderItem `json:"items"`
-	PaymentMethod   string           `json:"payment_method"` // pay_at_counter uniquement cet incrément
-	DiscountCode    *string          `json:"discount_code,omitempty"`
-	OrderNotes      string           `json:"order_notes,omitempty"`
-}
-
-type CreateKioskOrderResponse struct {
-	OrderID       string `json:"order_id"`
-	DisplayNumber string `json:"display_number"`
-	Status        string `json:"status"`
-	TotalCents    int64  `json:"total_cents"`
 }
 
 type CounterPaymentResponse struct {
@@ -358,7 +334,12 @@ type CounterPaymentResponse struct {
 	DisplayNumber string `json:"display_number"`
 	Status        string `json:"status"`
 	PickupCode    string `json:"pickup_code"`
-	QRPayload     string `json:"qr_payload"`
+
+	// QRPayload — URL de suivi ScanNOrder de la commande
+	// (https://scannorder.welloresto.fr/restaurants/{slug}/order/{order_id}),
+	// imprimée en QR sur le ticket. Retombe sur "KIOSK:{order_id}:{pickup_code}"
+	// si le merchant n'a pas de slug (qrcodes.code) configuré.
+	QRPayload string `json:"qr_payload"`
 }
 
 type KioskOrderResponse struct {
@@ -392,4 +373,41 @@ type KioskDiscount struct {
 
 type KioskDiscountsResponse struct {
 	Discounts []KioskDiscount `json:"discounts"`
+}
+
+// ---- Paiement carte (Stripe Terminal) ----
+
+// TerminalGateway est le sous-ensemble de stripeclient.TerminalService dont ce
+// module a besoin. Interface (plutôt qu'import du type concret) pour que le
+// service kiosk reste testable et découplé de l'infrastructure Stripe — la
+// logique Terminal elle-même vit côté infra, paramétrée par merchantID, jamais
+// couplée à KioskAuth (voir docs/KIOSK_DECISIONS.md, règle de découplage).
+type TerminalGateway interface {
+	CreateConnectionToken(ctx context.Context, merchantID string) (string, error)
+	// CreateTerminalPaymentIntent reçoit variableFees/fixedFees déjà résolus par
+	// l'appelant (kiosk.Repository.GetKioskFees, kiosk_settings) — l'infra Stripe
+	// ne connaît plus la source de la commission, seulement son calcul.
+	CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64, variableFees float64, fixedFees int64) (clientSecret, paymentIntentID string, err error)
+	CancelTerminalPaymentIntent(ctx context.Context, merchantID, paymentIntentID string) error
+	CancelActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) error
+}
+
+// TerminalConnectionTokenResponse — POST /kiosk/terminal/connection-token.
+type TerminalConnectionTokenResponse struct {
+	Secret string `json:"secret"`
+}
+
+// CreateTerminalPaymentIntentRequest — body de POST /kiosk/terminal/payment-intent.
+// amount_cents est re-validé côté serveur contre orders.TTC (jamais utilisé tel
+// quel comme montant à charger), voir Service.CreateTerminalPaymentIntent.
+type CreateTerminalPaymentIntentRequest struct {
+	OrderID     string `json:"order_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+// TerminalPaymentIntentResponse — client_secret consommé par le SDK Stripe
+// Terminal côté borne pour présenter le paiement sur le lecteur.
+type TerminalPaymentIntentResponse struct {
+	ClientSecret    string `json:"client_secret"`
+	PaymentIntentID string `json:"payment_intent_id"`
 }

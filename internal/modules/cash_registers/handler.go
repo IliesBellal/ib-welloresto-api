@@ -296,3 +296,23 @@ func (h *CashRegisterHandler) HandleLinkDevice(w http.ResponseWriter, r *http.Re
 	// 4. Succès
 	models.SendJSON(w, http.StatusOK, "cash_register", "link_device", map[string]string{"status": "success"})
 }
+
+func (h *CashRegisterHandler) HandleUnlinkDevice(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req DeviceUnlinkRequest
+	json.NewDecoder(r.Body).Decode(&req)
+
+	err := h.cashRegisterService.UnlinkDevice(ctx, req.DeviceID)
+	if err != nil {
+		if err == models.ErrNotFound {
+			models.SendJSON(w, http.StatusNotFound, "cash_register", "unlink_device", map[string]string{"error": "Aucune liaison trouvée pour cet appareil"})
+			return
+		}
+		logger.FromContext(ctx).Error("UnlinkDevice Error " + err.Error())
+		models.SendErrorJSON(w, "cash_register", "unlink_device", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cash_register", "unlink_device", map[string]string{"message": "Liaison supprimée"})
+}

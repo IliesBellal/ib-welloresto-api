@@ -94,6 +94,7 @@ type OrderProductPayload struct {
 	Config          *ProductConfiguration    `json:"configuration"`
 	Comment         *OrderItemCommentPayload `json:"comment"`
 	OrderItemID     *string                  `json:"order_item_id"`
+	IsUpsell        bool                     `json:"is_upsell"`
 }
 
 type OrderExtraPayload struct {
@@ -157,6 +158,7 @@ type CurrentServiceResponse struct {
 	Service      *PerformedService `json:"service"`
 	CashRegister *CashRegisterInfo `json:"cash_register"`
 	CashDesks    []CashDeskInfo    `json:"cash_desks"`
+	OnBehalfOf   *string           `json:"on_behalf_of"`
 }
 
 type PerformedService struct {

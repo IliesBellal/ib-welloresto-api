@@ -101,6 +101,18 @@ func (s *NotificationService) BroadcastToMerchant(merchantID string, payload map
 	return s.hub.BroadcastToMerchant(merchantID, payloadJSON)
 }
 
+// CloseKioskConnection ferme immédiatement la connexion WebSocket active
+// d'une borne (si elle est connectée à /ws-kiosk) avec le code 1008 (policy
+// violation) — utilisé à la révocation pour ne pas attendre l'expiration
+// naturelle de l'access token déjà émis. Retourne false si aucun hub ou
+// aucune connexion active pour cette borne.
+func (s *NotificationService) CloseKioskConnection(merchantID, kioskID string) bool {
+	if s.hub == nil {
+		return false
+	}
+	return s.hub.CloseKioskConnections(merchantID, kioskID, 1008, "kiosk_revoked") // 1008 = Policy Violation
+}
+
 func (s *NotificationService) SendNotificationAsyncWithPayload(
 	merchantID string,
 	nType string,

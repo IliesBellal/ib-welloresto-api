@@ -312,6 +312,126 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	return revenueData, orderData, nil
 }
 
+// UpsellTotals contient les totaux globaux upsell pour une période
+type UpsellTotals struct {
+	TotalLines     int64
+	RevenueHTCents int64
+}
+
+// UpsellServerRow contient le détail upsell d'un serveur pour une période
+type UpsellServerRow struct {
+	ServerID        string
+	ServerName      string
+	UpsellLines     int64
+	UpsellRevenueHT int64
+}
+
+// upsellLineHTExpr calcule le HT par ligne de commande à partir du TTC et du taux de TVA
+// du produit, comme dans GetTVAReportData (mêmes jointures produits/extra/tva_categories).
+const upsellLineHTExpr = `
+	CASE
+		WHEN tva.tva_rate = 0 THEN ((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity)
+		ELSE ((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+	END
+`
+
+const upsellLinesFromJoins = `
+	FROM orderitems oi
+	INNER JOIN orders o ON o.order_id = oi.order_id
+	INNER JOIN products p ON p.product_id = oi.product_id
+	INNER JOIN tva_categories tva ON tva.tva_id = (
+		CASE
+			WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
+			WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
+			ELSE p.tva_in_id
+		END
+	)
+	LEFT JOIN (
+		SELECT order_item_id, SUM(extra.price) AS extra_price
+		FROM extra
+		GROUP BY order_item_id
+	) e ON e.order_item_id = oi.order_item_id
+`
+
+const upsellLinesWhereClause = `
+	WHERE oi.is_upsell = 1
+	AND o.merchant_id = ?
+	AND o.creation_date >= ?
+	AND o.creation_date < ?
+	AND o.state IN ('CLOSED', 'DONE')
+	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+`
+
+const upsellLinesBaseQuery = upsellLinesFromJoins + upsellLinesWhereClause
+
+// GetUpsellTotals retourne le nombre de lignes upsell et leur CA HT pour la période
+func (r *StatsRepository) GetUpsellTotals(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (UpsellTotals, error) {
+	query := strings.TrimSpace(`
+		SELECT COUNT(*) AS total_lines, COALESCE(SUM(`+upsellLineHTExpr+`), 0) AS revenue_ht
+	`) + "\n" + upsellLinesBaseQuery
+
+	var totals UpsellTotals
+	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&totals.TotalLines, &totals.RevenueHTCents)
+	if err != nil {
+		return UpsellTotals{}, fmt.Errorf("failed to get upsell totals: %w", err)
+	}
+
+	return totals, nil
+}
+
+// GetOrdersWithUpsellCount retourne le nombre de commandes distinctes ayant au moins une ligne upsell sur la période
+func (r *StatsRepository) GetOrdersWithUpsellCount(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (int, error) {
+	query := strings.TrimSpace(`
+		SELECT COUNT(DISTINCT o.order_id)
+	`) + "\n" + upsellLinesBaseQuery
+
+	var count int
+	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get orders with upsell count: %w", err)
+	}
+
+	return count, nil
+}
+
+// ListUpsellByServer retourne le classement des serveurs par CA upsell HT décroissant.
+// Les commandes self-service (SCANNORDER / sans utilisateur) sont exclues : un serveur
+// ne peut pas être crédité d'une suggestion qu'il n'a pas portée.
+func (r *StatsRepository) ListUpsellByServer(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) ([]UpsellServerRow, error) {
+	query := strings.TrimSpace(`
+		SELECT o.created_by AS server_id,
+			COALESCE(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), o.created_by) AS server_name,
+			COUNT(*) AS upsell_lines,
+			COALESCE(SUM(`+upsellLineHTExpr+`), 0) AS upsell_revenue_ht
+	`) + "\n" + upsellLinesFromJoins + `
+		LEFT JOIN users u ON u.user_id = o.created_by
+	` + upsellLinesWhereClause + `
+		AND o.created_by NOT IN ('-1', 'SCANNORDER')
+		GROUP BY o.created_by, server_name
+		ORDER BY upsell_revenue_ht DESC
+	`
+
+	rows, err := r.database.QueryContext(ctx, query, merchantID, startTimeUTC, endTimeUTC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list upsell by server: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]UpsellServerRow, 0)
+	for rows.Next() {
+		var row UpsellServerRow
+		if err := rows.Scan(&row.ServerID, &row.ServerName, &row.UpsellLines, &row.UpsellRevenueHT); err != nil {
+			return nil, fmt.Errorf("failed to scan upsell by server row: %w", err)
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate upsell by server rows: %w", err)
+	}
+
+	return items, nil
+}
+
 // ============ HELPER FUNCTIONS ============
 
 // getWeekStart returns the start of the week (Monday) in the given timezone

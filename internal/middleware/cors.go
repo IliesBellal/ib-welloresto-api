@@ -18,9 +18,8 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		"https://my-wello-resto-prod.onrender.com":    true,
 		"https://my-wello-resto-staging.onrender.com": true,
 
-		"https://scannorder-test.lovable.app": true,
-		"https://scannorder.welloresto.fr":    true,
-		"https://scannorder.lovable.app":      true,
+		"https://wello-resto-scannorder-staging.onrender.com": true,
+		"https://scannorder.welloresto.fr":                    true,
 
 		"https://rsv-staging.onrender.com": true,
 		"https://rsv.onrender.com":         true,
@@ -36,7 +35,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-BasicAuth, X-App-Source")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-BasicAuth, X-App-Source, Idempotency-Key")
 		w.Header().Set("Access-Control-Expose-Headers", "Link")
 	}
 }
@@ -49,10 +48,6 @@ func CORSMiddleware() *cors.Cors {
 			"https://wello-back-office.onrender.com",
 			"https://my-wello-resto-prod.onrender.com",
 			"https://my-wello-resto-staging.onrender.com",
-
-			// Lovable
-			"https://scannorder-test.lovable.app",
-			"https://scannorder.lovable.app",
 
 			// RSV
 			"https://rsv-staging.onrender.com",
@@ -67,6 +62,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// ScanNOrder
 			"https://scannorder.welloresto.fr",
+			"https://wello-resto-scannorder-staging.onrender.com",
 		},
 
 		AllowedMethods: []string{
@@ -84,6 +80,7 @@ func CORSMiddleware() *cors.Cors {
 			"Content-Type",
 			"X-CSRF-BasicAuth",
 			"X-App-Source",
+			"Idempotency-Key",
 		},
 
 		ExposedHeaders: []string{

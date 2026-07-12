@@ -289,6 +289,77 @@ type UpdateDiscountRequest struct {
 	MaxRedemptionsPerCustomer *int           `json:"max_redemptions_per_customer,omitempty"`
 }
 
+// UpdateDiscountRequestHelper handles date parsing for UpdateDiscountRequest
+type UpdateDiscountRequestHelper struct {
+	DiscountName       *string                 `json:"discount_name,omitempty"`
+	DiscountDesc       *string                 `json:"discount_desc,omitempty"`
+	PreferredOrder     *int                    `json:"preferred_order,omitempty"`
+	DiscountCode       *string                 `json:"discount_code,omitempty"`
+	OrderType          *OrderType              `json:"order_type,omitempty"`
+	DiscountValue      *float64                `json:"discount_value,omitempty"`
+	DiscountUnit       *DiscountUnit           `json:"discount_unit,omitempty"`
+	ValidFrom          *string                 `json:"valid_from,omitempty"`         // YYYY-MM-DD format
+	ValidTo            *string                 `json:"valid_to,omitempty"`           // YYYY-MM-DD format
+	MinOrderValue      *float64                `json:"min_order_value,omitempty"`
+	MinOrderUnit       *MinOrderUnit           `json:"min_order_unit,omitempty"`
+	MaxDiscountValue   *float64                `json:"max_discount_value,omitempty"`
+	MaxDiscountUnit    *MaxDiscountUnit        `json:"max_discount_unit,omitempty"`
+	DiscountedQuantity *int                    `json:"discounted_quantity,omitempty"`
+	IsCumulative       *bool                   `json:"is_cumulative,omitempty"`
+	IsTimeLimited      *bool                   `json:"is_time_limited,omitempty"`
+	Available          *bool                   `json:"available,omitempty"`
+	Products           []CreateProductRequest  `json:"products,omitempty"`
+	Schedules          []CreateScheduleRequest `json:"schedules,omitempty"`
+	DiscountScope             *DiscountScope `json:"discount_scope,omitempty"`
+	MaxRedemptions            *int           `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerCustomer *int           `json:"max_redemptions_per_customer,omitempty"`
+}
+
+// UnmarshalJSON for UpdateDiscountRequest handles date format parsing
+func (r *UpdateDiscountRequest) UnmarshalJSON(data []byte) error {
+	var helper UpdateDiscountRequestHelper
+	if err := json.Unmarshal(data, &helper); err != nil {
+		return err
+	}
+
+	r.DiscountName = helper.DiscountName
+	r.DiscountDesc = helper.DiscountDesc
+	r.PreferredOrder = helper.PreferredOrder
+	r.DiscountCode = helper.DiscountCode
+	r.OrderType = helper.OrderType
+	r.DiscountValue = helper.DiscountValue
+	r.DiscountUnit = helper.DiscountUnit
+	r.MinOrderValue = helper.MinOrderValue
+	r.MinOrderUnit = helper.MinOrderUnit
+	r.MaxDiscountValue = helper.MaxDiscountValue
+	r.MaxDiscountUnit = helper.MaxDiscountUnit
+	r.DiscountedQuantity = helper.DiscountedQuantity
+	r.IsCumulative = helper.IsCumulative
+	r.IsTimeLimited = helper.IsTimeLimited
+	r.Available = helper.Available
+	r.Products = helper.Products
+	r.Schedules = helper.Schedules
+	r.DiscountScope = helper.DiscountScope
+	r.MaxRedemptions = helper.MaxRedemptions
+	r.MaxRedemptionsPerCustomer = helper.MaxRedemptionsPerCustomer
+
+	// Parse ValidFrom (YYYY-MM-DD format)
+	if helper.ValidFrom != nil {
+		if t, err := time.Parse("2006-01-02", *helper.ValidFrom); err == nil {
+			r.ValidFrom = &t
+		}
+	}
+
+	// Parse ValidTo (YYYY-MM-DD format)
+	if helper.ValidTo != nil {
+		if t, err := time.Parse("2006-01-02", *helper.ValidTo); err == nil {
+			r.ValidTo = &t
+		}
+	}
+
+	return nil
+}
+
 // Validate checks the CreateDiscountRequest validity
 func (r *CreateDiscountRequest) Validate() error {
 	if r.DiscountName == "" || len(r.DiscountName) > 50 {

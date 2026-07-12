@@ -20,8 +20,8 @@ import (
 
 const (
 	upsellTask         = "upsell"
-	cacheKeyResultFmt  = "upsell:result:%s:%s"   // merchantID, cartSignature
-	cacheKeyPatternFmt = "upsell:patterns:%s:%s" // merchantID, productID
+	cacheKeyResultFmt  = "upsell:result:%s:%s:%s" // merchantID, cartSignature, orderType
+	cacheKeyPatternFmt = "upsell:patterns:%s:%s"  // merchantID, productID
 	cacheResultTTL     = 30 * time.Minute
 	llmTimeout         = 1500 * time.Millisecond
 	maxAvailableForLLM = 50
@@ -87,16 +87,18 @@ func NewService(
 // GenerateUpsell produces upsell suggestions for the given cart.
 // It never returns a 5xx-worthy error: all internal failures fall back gracefully.
 // The only error it returns is ErrEmptyCart (→ 400 to the caller).
-func (s *Service) GenerateUpsell(ctx context.Context, merchantID string, cartProducts []models.ProductEntry) (*UpsellResult, error) {
+// channel identifies the calling platform (one of the Channel* constants) and
+// is persisted on the suggestion row for per-platform analytics.
+func (s *Service) GenerateUpsell(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, orderType string, channel string) (*UpsellResult, error) {
 	// Wrap the whole flow in a recover guard so the handler is always safe.
-	result, err := s.generateUpsellSafe(ctx, merchantID, cartProducts)
+	result, err := s.generateUpsellSafe(ctx, merchantID, cartProducts, orderType, channel)
 	if err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, cartProducts []models.ProductEntry) (res *UpsellResult, err error) {
+func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, orderType string, channel string) (res *UpsellResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("upsell: panic recovered in GenerateUpsell",
@@ -129,12 +131,12 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		s.logger.Warn("upsell: redis unavailable, skipping cache/patterns/llm, falling back to featured products",
 			zap.String("merchant_id", merchantID),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems)
+		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 
 	// ── 4.2 Cart signature & cache check ─────────────────────────────────────
 	cartSignature := cartSignatureFrom(cartProducts)
-	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature)
+	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature, normalizeOrderType(orderType))
 
 	if cached, hit, _ := s.aiCache.Get(ctx, cacheKey); hit {
 		var cachedResult UpsellResult
@@ -146,6 +148,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 				CartSignature:  cartSignature,
 				SuggestedItems: cachedResult.Suggestions,
 				Source:         cachedSource,
+				Channel:        channel,
 			})
 			if createErr != nil {
 				s.logger.Error("upsell: failed to persist cached suggestion",
@@ -168,7 +171,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 			zap.String("merchant_id", merchantID),
 			zap.Error(err),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems)
+		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 
 	// Build cart set for fast exclusion.
@@ -241,7 +244,9 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 			})
 		}
 
-		return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, SourcePattern, cacheKey, nil, nil)
+		s.enrichWithProductConfig(ctx, merchantID, suggestions)
+
+		return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, SourcePattern, cacheKey, nil, nil, channel)
 	}
 
 	// ── 4.5 LLM fallback ─────────────────────────────────────────────────────
@@ -251,7 +256,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 			zap.String("merchant_id", merchantID),
 			zap.Error(provErr),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems)
+		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 
 	taskCfg, _ := s.aiRegistry.TaskConfig(upsellTask)
@@ -262,13 +267,13 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	// Frequent pairs for LLM context (top by lift).
 	frequentPairs := buildFrequentPairsForPrompt(aggregated, candidateMap, maxFreqPairsForLLM)
 
-	userPrompt, promptErr := buildUserPrompt(cartProducts, available, llmAvailable, frequentPairs)
+	userPrompt, promptErr := buildUserPrompt(cartProducts, available, llmAvailable, frequentPairs, orderType)
 	if promptErr != nil {
 		s.logger.Error("upsell: failed to build user prompt",
 			zap.String("merchant_id", merchantID),
 			zap.Error(promptErr),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems)
+		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 
 	llmCtx, cancel := context.WithTimeout(context.Background(), llmTimeout)
@@ -308,7 +313,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 			zap.Error(llmErr),
 			zap.Error(parseErr),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems)
+		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 
 	// Enrich with product metadata.
@@ -320,6 +325,8 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		}
 	}
 
+	s.enrichWithProductConfig(ctx, merchantID, suggestions)
+
 	llmProvider := provider.Name()
 
 	return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, SourceLLM, cacheKey, &ai.CompletionResponse{
@@ -327,12 +334,12 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		InputTokens:  resp.InputTokens,
 		OutputTokens: resp.OutputTokens,
 		LatencyMs:    resp.LatencyMs,
-	}, &llmProvider)
+	}, &llmProvider, channel)
 }
 
 // featuredFallback is the last-resort path when both pattern and LLM fail.
 // It always persists (even for empty suggestions) to allow analytics.
-func (s *Service) featuredFallback(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, maxItems int) (*UpsellResult, error) {
+func (s *Service) featuredFallback(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, maxItems int, channel string) (*UpsellResult, error) {
 	cartSet := make(map[string]struct{}, len(cartProducts))
 	for _, p := range cartProducts {
 		cartSet[p.ProductID] = struct{}{}
@@ -360,11 +367,14 @@ func (s *Service) featuredFallback(ctx context.Context, merchantID string, cartP
 		}
 	}
 
+	s.enrichWithProductConfig(ctx, merchantID, filtered)
+
 	suggID, createErr := s.repo.CreateSuggestion(ctx, CreateSuggestionParams{
 		MerchantID:     merchantID,
 		CartSignature:  cartSignature,
 		SuggestedItems: filtered,
 		Source:         SourceFeaturedFallback,
+		Channel:        channel,
 	})
 	if createErr != nil {
 		s.logger.Error("upsell: failed to persist featured_fallback suggestion",
@@ -395,12 +405,14 @@ func (s *Service) persistAndCache(
 	cacheKey string,
 	llmResp *ai.CompletionResponse,
 	llmProvider *string,
+	channel string,
 ) (*UpsellResult, error) {
 	params := CreateSuggestionParams{
 		MerchantID:     merchantID,
 		CartSignature:  cartSignature,
 		SuggestedItems: suggestions,
 		Source:         source,
+		Channel:        channel,
 	}
 	if llmResp != nil {
 		tokIn := llmResp.InputTokens
@@ -440,6 +452,26 @@ func (s *Service) persistAndCache(
 	}, nil
 }
 
+// enrichWithProductConfig loads the full product configuration (attributes, options,
+// per-channel prices, allergens, tags) for each suggestion so every consumer
+// (POS, Kiosk, SNO) can open the product configuration modal without a follow-up
+// call. Best-effort and mutates in place: a failed lookup leaves Product nil for
+// that item rather than failing the whole suggestion list.
+func (s *Service) enrichWithProductConfig(ctx context.Context, merchantID string, suggestions []SuggestedItem) {
+	for i := range suggestions {
+		product, err := s.menuRepo.GetProduct(ctx, merchantID, suggestions[i].ProductID)
+		if err != nil {
+			s.logger.Warn("upsell: failed to load product configuration, leaving Product nil",
+				zap.String("merchant_id", merchantID),
+				zap.String("product_id", suggestions[i].ProductID),
+				zap.Error(err),
+			)
+			continue
+		}
+		suggestions[i].Product = product
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // cartSignatureFrom computes a stable SHA-256 hex digest from the sorted product IDs
@@ -456,6 +488,38 @@ func cartSignatureFrom(products []models.ProductEntry) string {
 	sort.Strings(ids)
 	sum := sha256.Sum256([]byte(strings.Join(ids, ",")))
 	return fmt.Sprintf("%x", sum)
+}
+
+// normalizeOrderType returns a stable, uppercase cache-key segment for orderType.
+// Empty/unknown values normalize to "ANY" so dine-in/takeaway/delivery results
+// never collide with each other or with the pre-channel cache generation.
+func normalizeOrderType(orderType string) string {
+	switch strings.ToUpper(strings.TrimSpace(orderType)) {
+	case models.OrderTypeIn:
+		return models.OrderTypeIn
+	case models.OrderTypeTakeAway:
+		return models.OrderTypeTakeAway
+	case models.OrderTypeDelivery:
+		return models.OrderTypeDelivery
+	default:
+		return "ANY"
+	}
+}
+
+// channelLabel returns a short human-readable description of the order channel
+// for inclusion in the LLM prompt, or "" when orderType is empty/unrecognized —
+// in which case the caller omits the field entirely.
+func channelLabel(orderType string) string {
+	switch strings.ToUpper(strings.TrimSpace(orderType)) {
+	case models.OrderTypeIn:
+		return "commande sur place"
+	case models.OrderTypeTakeAway:
+		return "commande à emporter"
+	case models.OrderTypeDelivery:
+		return "commande en livraison"
+	default:
+		return ""
+	}
 }
 
 // cachedSourceOf returns the "cached_*" variant of a source constant.
@@ -546,6 +610,7 @@ func buildUserPrompt(
 	allAvailable []menu.AvailableProduct,
 	llmCandidates []menu.AvailableProduct,
 	frequentPairs []map[string]interface{},
+	orderType string,
 ) (string, error) {
 	// Build a category lookup from all available products.
 	catByID := make(map[string]string, len(allAvailable))
@@ -582,6 +647,11 @@ func buildUserPrompt(
 		"cart":               cartItems,
 		"available_products": availItems,
 		"frequent_pairs":     frequentPairs,
+	}
+	// Channel context is omitted entirely when unknown/empty, so the prompt payload
+	// is byte-for-byte identical to the pre-channel behavior in that case.
+	if label := channelLabel(orderType); label != "" {
+		payload["order_channel"] = label
 	}
 
 	raw, err := json.Marshal(payload)

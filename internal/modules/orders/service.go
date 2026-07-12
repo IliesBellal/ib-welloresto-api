@@ -459,9 +459,12 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 
 	// --- Final response ---
 	return &models.PricingResponse{
-		Status:                    "success",
-		OrderRequest:              req,
-		EstimatedDistributionTime: estimatedTime,
+		Status:                      "success",
+		OrderRequest:                req,
+		EstimatedDistributionTime:   estimatedTime,
+		IsOrderable:                 req.IsOrderable,
+		NotOrderableReason:          req.NotOrderableReason,
+		MinimumCartForDeliveryOrder: float64(req.MinimumCartForDeliveryOrder),
 	}, nil
 }
 

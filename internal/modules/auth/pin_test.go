@@ -92,10 +92,10 @@ func seedAnchorInMemRedis(mem *memRedis, token, merchantID, userID string) {
 	mem.store[models.UserCachePrefix+token] = string(data)
 }
 
-// pinColumns returns the 74 column names expected by scanUserLoginRow.
-func pinColumns() []string { return makeColumns(74) }
+// pinColumns returns the 76 column names expected by scanUserLoginRow.
+func pinColumns() []string { return makeColumns(76) }
 
-// pinMinRow returns 74 driver.Value values for a minimal active users_rights row.
+// pinMinRow returns 76 driver.Value values for a minimal active users_rights row.
 // The filter columns (ur.enabled, ur.login_enabled) are in WHERE, not SELECT,
 // so they don't appear here — a non-empty result means the link passed the filter.
 func pinMinRow(userID, token, merchantID string) []driver.Value {
@@ -106,17 +106,17 @@ func pinMinRow(userID, token, merchantID string) []driver.Value {
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil,
 		// merchant (34-41)
 		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
-		// params (42-53)
-		0, 0, 0, true, true, true, false, false, false, false, "EUR", true,
-		// package (54-63)
+		// params (42-55)
+		0, 0, 0, true, true, true, false, false, false, false, nil, "EUR", true, false,
+		// package (56-65)
 		true, true, false, 0, false, true, true, true, false, true,
-		// SNO (64)
+		// SNO (66)
 		false,
-		// UE (65-70)
+		// UE (67-72)
 		nil, nil, nil, nil, nil, nil,
-		// UD (71)
+		// UD (73)
 		nil,
-		// Droo (72-73)
+		// Droo (74-75)
 		nil, nil,
 	}
 }
@@ -502,9 +502,9 @@ func TestGetUserByToken_PINTokenNotInDB(t *testing.T) {
 	}
 }
 
-// loginMinRow returns 81 driver.Value values for a minimal active row as scanned
-// by repo.Login (SELECT u.user_id, u.name, ... — 81 columns, different from the
-// 74-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
+// loginMinRow returns 83 driver.Value values for a minimal active row as scanned
+// by repo.Login (SELECT u.user_id, u.name, ... — 83 columns, different from the
+// 76-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
 func loginMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
 		// user (0-10): user_id, name, first_name, last_name, email, tel, enabled,
@@ -517,7 +517,7 @@ func loginMinRow(userID, token, merchantID string) []driver.Value {
 		// params (43-60): 12 base fields + kitchen_distribution_mode, production_display_mode,
 		//                  pager_number_required, pos_auto_lock_enabled, pos_auto_lock_delay_minutes,
 		//                  service_required_for_ordering, cash_register_required_for_ordering, ...
-		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, "EUR", true,
+		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false,
 		// package (61-70)
 		true, true, false, 0, false, true, true, true, false, true,
 		// SNO (71)
@@ -567,7 +567,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(81)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

@@ -79,7 +79,7 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 	return nil
 }
 
-func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, deviceID string) (string, error) {
+func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, merchantID, deviceID string) (string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -88,8 +88,9 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 		SELECT cr.cash_register_id
 		FROM cash_registers cr
 		WHERE cr.device_id = ?
+		AND cr.merchant_id = ?
 		AND cr.end_date IS NULL
-	`, deviceID).Scan(&cashRegisterID)
+	`, deviceID, merchantID).Scan(&cashRegisterID)
 
 	if err == sql.ErrNoRows {
 		err = db.QueryRowContext(ctx, `
@@ -97,10 +98,24 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 			FROM cash_registers cr
 			INNER JOIN device_link dl on dl.on_behalf_of = cr.device_id
 			WHERE dl.device_id = ?
+			AND cr.merchant_id = ?
 			AND cr.end_date IS NULL
-		`, deviceID).Scan(&cashRegisterID)
+		`, deviceID, merchantID).Scan(&cashRegisterID)
 
 		if err == sql.ErrNoRows {
+			var linkedDevice string
+			linkErr := db.QueryRowContext(ctx, `
+				SELECT on_behalf_of FROM device_link WHERE device_id = ?
+			`, deviceID).Scan(&linkedDevice)
+
+			if linkErr == nil {
+				return "", models.ErrLinkedDeviceRegisterClosed
+			}
+			if linkErr != sql.ErrNoRows {
+				log.Error("Error checking device_link: " + linkErr.Error())
+				return "", linkErr
+			}
+
 			return "", models.ErrNoCashRegisterOpen
 		}
 	}
@@ -158,12 +173,22 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash)
 
+	// cash_register_id vide -> NULL : un paiement sans caisse (ex. borne Kiosk /
+	// Stripe Terminal) ne rattache pas d'identifiant de caisse. Les appelants
+	// existants passent toujours une valeur non vide (caisse réelle,
+	// ScanNOrderCashRegisterID, ...), donc leur comportement est inchangé.
+	cashRegisterID := sql.NullString{String: payment.CashRegisterID, Valid: payment.CashRegisterID != ""}
+
+	// net_amount est initialisé à amount (valeur provisoire, avant réception des
+	// frais réels Stripe) pour TOUS les paiements, sans toucher aucun appelant :
+	// il est recalculé à amount - fee par le webhook charge.captured qui
+	// renseigne déjà payments.fee (voir internal/webhook/stripe, UpdateFees).
 	// 3. Insérer le paiement avec son hash
 	res, err := db.ExecContext(ctx, `
 	INSERT INTO payments
-	(merchant_id, cash_register_id, order_id, amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, payment.MerchantID, payment.CashRegisterID, payment.OrderID, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
+	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())
@@ -841,11 +866,13 @@ WHERE order_id = ?
 		return nil, err
 	}
 
-	// 4) Set bookings status = 0
-	qUpdBook := `UPDATE bookings SET status = '0' WHERE order_id = ?`
-	if _, err := db.ExecContext(ctx, qUpdBook, orderID); err != nil {
-		return nil, err
-	}
+	// Historique : cette etape ecrivait autrefois `UPDATE bookings SET
+	// status = '0' WHERE order_id = ?` directement ici. bookings.order_id
+	// n'etant renseigne par aucun chemin de code Go, cette ligne n'a jamais
+	// matche la moindre ligne en production. Le pont seated -> completed
+	// est desormais gere par OrdersLifeCycleService.DeliverOrder via
+	// bookingsSvc.AutoCompleteForOrder (transition via bookingcore,
+	// booking_events, notification POS).
 
 	// 5) Close delivery_session if last order
 	const qCloseDS = `
@@ -1032,7 +1059,7 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	req.Order.OrderNum = &orderNum
 
 	if req.DeviceID != nil && *req.DeviceID != "" {
-		activeRegister, err := r.GetActiveCashRegisterID(ctx, *req.DeviceID)
+		activeRegister, err := r.GetActiveCashRegisterID(ctx, req.MerchantID, *req.DeviceID)
 		if err != nil {
 			return nil, err
 		}
@@ -1220,9 +1247,9 @@ func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Cont
             SELECT DISTINCT r.product_id
             FROM requires rq
             INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-            INNER JOIN components c 
+            INNER JOIN components c
                    ON rq.component_id = c.component_id
-                  AND c.status IN ('0','out_of_stock')
+                  AND c.status IN ('0','out_of_stock','not_available')
                   AND rq.enabled = TRUE
         ) a ON a.product_id = p.product_id
         WHERE p.product_id IN (%s)
@@ -1280,8 +1307,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
 	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
 	stmtItem, err := db.PrepareContext(ctx, `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
 			-- Remet isDistributed à 0 seulement si la quantité distribuée ne correspond plus
 			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
@@ -1290,6 +1317,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			price         = VALUES(price),
 			discount_id   = VALUES(discount_id),
 			delay_id      = VALUES(delay_id),
+			is_upsell     = VALUES(is_upsell),
 			ordered_on    = VALUES(ordered_on)`)
 	if err != nil {
 		return fmt.Errorf("prepare orderitem upsert failed: %w", err)
@@ -1308,7 +1336,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 
 		res, err := stmtItem.ExecContext(ctx,
 			p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID)
+			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell)
 		if err != nil {
 			return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 		}
@@ -1955,9 +1983,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbutils.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?)
-		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell)
+		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
+		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell)
 	if err != nil {
 		return 0, err
 	}

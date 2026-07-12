@@ -3,11 +3,13 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"time"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
+
 	//requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
@@ -20,6 +22,7 @@ import (
 	"welloresto-api/internal/webhook/deliveroo_orders"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/httprate"
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
@@ -29,6 +32,8 @@ import (
 	allergensModule "welloresto-api/internal/modules/allergens"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
+	bookingcommModule "welloresto-api/internal/modules/bookingcomm"
+	bookingEventsModule "welloresto-api/internal/modules/bookingevents"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
 	customersModule "welloresto-api/internal/modules/customers"
@@ -66,6 +71,7 @@ import (
 	"welloresto-api/internal/ai/providers"
 
 	// ---- WEBHOOKS ----
+	brevoSMSReplyModule "welloresto-api/internal/webhook/brevo_sms_reply"
 	webhookstripe "welloresto-api/internal/webhook/stripe"
 	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
 	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
@@ -225,12 +231,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Stripe ----
 	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
 
+	// Service Stripe Terminal (paiement carte borne). Paramétré par merchantID,
+	// jamais couplé à KioskAuth — réutilisable par un futur /pos/terminal/*.
+	terminalService := stripeInternalClient.NewTerminalService(
+		stripeManager,
+		stripeInternalClient.NewTerminalAccountStore(mysqlDB),
+		redisClient,
+	)
+
 	// ---- Uber ----
 	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats, redisClient)
 	uberHandler := uberModule.NewUberHandler(uberService)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
-	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService)
+	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, redisClient)
 
 	// ---- Translation ----
 	translationRepo := translationModule.NewRepository(mysqlDB)
@@ -248,6 +262,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Stocks (initialized here because ordersLifeCycleService depends on it) ----
 	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
 	stocksService := stocksModule.NewStockService(stocksRepo)
+
+	// ---- Bookings (initialized here because ordersLifeCycleService depends on it
+	// for the auto-seat/auto-complete hooks, cf. CreateOrder/DeliverOrder) ----
+	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
+	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, log)
+	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
 	// ---- Orders Lifecycle ----
 	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, customersRepo)
@@ -269,11 +290,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		upsellTracker,
 		posAccountingRepo,
 		mailService,
+		bookingsService,
 	)
+
+	// ---- Delivery Sessions ----
+	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
+	messaggioClient := messaggioModule.NewMessaggioClient()
+	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(mysqlDB)
-	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
@@ -296,6 +324,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		ordersLifeCycleService,
 		notificationService,
 		redisClient,
+		mysqlDB,
 	)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
@@ -323,12 +352,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
-	// ---- Delivery Sessions ----
-	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
-	messaggioClient := messaggioModule.NewMessaggioClient()
-	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
-
 	// ---- Locations ----
 	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
 	locationsService := locModule.NewLocationsService(locationsRepo)
@@ -337,14 +360,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB)
 	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
 
-	// ---- Bookings ----
-	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB)
-
 	// ---- Reservation (externe) ----
 	reservationRepo := reservation.NewReservationRepository(mysqlDB)
-	reservationService := reservation.NewReservationService(reservationRepo, bookingsService)
+	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService, bookingCommService)
 	reservationHandler := reservation.NewReservationHandler(reservationService)
+
+	// ---- Webhook Brevo SMS entrant (réponses client) ----
+	brevoSMSReplyService := brevoSMSReplyModule.NewService(
+		brevoSMSReplyModule.NewRepository(mysqlDB),
+		bookingEventsRepo,
+		log,
+	)
+	brevoSMSReplyHandler := brevoSMSReplyModule.NewHandler(brevoSMSReplyService)
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
@@ -390,7 +417,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
 		Pepper:                    cfg.Kiosk.Pepper,
 	}
-	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService)
+	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
 
@@ -464,6 +491,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Get("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
+		r.Post("/brevo/sms-reply", brevoSMSReplyHandler.HandleWebhook)
 	})
 
 	// API externes
@@ -520,6 +548,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/dashboard", func(r chi.Router) {
 			r.Get("/summary", statsH.GetDashboardSummary)
 		})
+
+		r.Get("/upsell", statsH.GetUpsellStats)
 	})
 
 	// --- POS ---
@@ -573,7 +603,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/{merchant_slug}/loyalty_programs", scannHandler.GetLoyaltyPrograms)
 		r.Get("/{merchant_slug}/discounts", scannHandler.GetDiscounts)
 
-		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell)
+		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell) // deprecated, see handler comment
+		r.Post("/{merchant_slug}/upsell", scannHandler.PostUpsellSNO)
 		r.Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
 		r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
 
@@ -655,8 +686,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/products/{product_id}/marketing-category", menuH.AssignProductMarketingCategory)
 		r.Delete("/products/{product_id}/marketing-category", menuH.UnassignProductMarketingCategory)
 
-		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
-
 		r.Post("/products", menuH.CreateProduct) // used by: back-office
 		r.Get("/products/{product_id}", menuH.GetProduct)
 		r.Patch("/products/{product_id}", menuH.UpdateProduct)
@@ -673,6 +702,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/attributes", menuH.CreateAttribute)            // used by: back-office
 		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
 		r.Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
+		r.Put("/attribute_options/{option_id}/image", menuH.UploadAttributeOptionImage)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Route("/tags", func(r chi.Router) {
@@ -683,6 +713,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Patch("/{tag_id}", tagsH.UpdateTag)
 			r.Delete("/{tag_id}", tagsH.DeleteTag)
 		})
+
+		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
@@ -881,6 +913,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Post("/", locationsH.CreateFloor)
+		r.Patch("/{floor_id}", locationsH.UpdateFloor)
+		r.Delete("/{floor_id}", locationsH.DeleteFloor)
 	})
 
 	// --- LOCATIONS ---
@@ -888,7 +922,6 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Use(authMiddleware)
 
 		r.Get("/", locationsH.GetLocations)
-		r.Patch("/{location_id}/coordinates", locationsH.UpdateLocationCoordinates)
 
 		// Floor tables management
 		r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)
@@ -1025,6 +1058,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/history", cashRegisterH.GetHistory)
 		r.Post("/history", cashRegisterH.GetHistory)
 		r.Post("/link", cashRegisterH.HandleLinkDevice)
+		r.Delete("/link", cashRegisterH.HandleUnlinkDevice)
 
 		r.Route("/{cash_register_id}", func(r chi.Router) {
 			r.Get("/", cashRegisterH.GetCashRegisterHistoryByID)
@@ -1042,25 +1076,57 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/bookings", func(r chi.Router) {
 		r.Use(authMiddleware)
 
+		r.Get("/", bookingsH.ListBookingsBackOffice)
 		r.Post("/", bookingsH.SearchBookings)
 		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
+		r.Get("/settings", bookingsH.GetBookingSettings)
+		r.Put("/settings", bookingsH.PutBookingSettings)
+		r.Get("/settings/duration-rules", bookingsH.ListBookingDurationRules)
+		r.Post("/settings/duration-rules", bookingsH.CreateBookingDurationRule)
+		r.Patch("/settings/duration-rules/{rule_id}", bookingsH.PatchBookingDurationRule)
+		r.Delete("/settings/duration-rules/{rule_id}", bookingsH.DeleteBookingDurationRule)
+		r.Get("/settings/hours", bookingsH.GetBookingSettingsHours)
+		r.Put("/settings/hours", bookingsH.PutBookingSettingsHours)
 
 		r.Post("/create", bookingsH.CreateBooking)
 		r.Get("/{booking_id}", bookingsH.GetBooking)
 
 		r.Patch("/{booking_id}/accept", bookingsH.AcceptBooking)
 		r.Patch("/{booking_id}/deny", bookingsH.DenyBooking)
+		r.Patch("/{booking_id}/cancel", bookingsH.CancelBooking)
+		r.Patch("/{booking_id}/reschedule", bookingsH.RescheduleBooking)
+		r.Patch("/{booking_id}/seat", bookingsH.SeatBooking)
+		r.Patch("/{booking_id}/complete", bookingsH.CompleteBooking)
+		r.Patch("/{booking_id}/no-show", bookingsH.NoShowBooking)
+		r.Patch("/{booking_id}/locations", bookingsH.AssignBookingLocations)
+
+		// Liste d'attente salle (staff)
+		r.Get("/waitlist", bookingsH.ListWaitlist)
+		r.Post("/waitlist", bookingsH.CreateWaitlistEntry)
+		r.Patch("/waitlist/{id}/seat", bookingsH.SeatWaitlistEntry)
+		r.Patch("/waitlist/{id}/cancel", bookingsH.CancelWaitlistEntry)
+		r.Delete("/waitlist/{id}", bookingsH.DeleteWaitlistEntry)
 	})
 
 	// --- BOOKINGS ---
 	r.Route("/rsv/{slug}", func(r chi.Router) {
+		r.Use(httprate.LimitByIP(60, 1*time.Minute))
 
 		r.Get("/open-hours", reservationHandler.HandleGetOpenHours)
 		r.Get("/booking-availability", reservationHandler.HandleGetAvailability)
-		r.Post("/booking/create", reservationHandler.HandleCreateReservation)
-		r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
-		r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
-		r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+
+		r.Group(func(r chi.Router) {
+			r.Use(httprate.LimitByIP(10, 1*time.Minute))
+			r.Post("/booking/create", reservationHandler.HandleCreateReservation)
+			r.Get("/booking/{booking_id}", reservationHandler.HandleGetReservation)
+			r.Delete("/booking/{booking_id}/cancel", reservationHandler.HandleCancelReservation)
+			r.Post("/booking/{booking_id}/update", reservationHandler.HandleUpdateReservation)
+
+			// Liste d'attente (public, token = id d'entrée)
+			r.Post("/waitlist", reservationHandler.HandleJoinWaitlist)
+			r.Get("/waitlist/{waitlist_token}", reservationHandler.HandleGetWaitlistStatus)
+			r.Delete("/waitlist/{waitlist_token}", reservationHandler.HandleLeaveWaitlist)
+		})
 	})
 
 	r.Route("/integrations", func(r chi.Router) {
@@ -1117,7 +1183,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			r.Get("/orders/{order_id}", kioskHandler.GetKioskOrder)
 			r.Delete("/orders/{order_id}", kioskHandler.CancelKioskOrder)
 			r.Post("/orders/{order_id}/counter-payment", kioskHandler.ConfirmCounterPayment)
+			r.Post("/orders/{order_id}/switch-to-counter-payment", kioskHandler.SwitchToCounterPayment)
 			r.Post("/status/unavailable", kioskHandler.ReportUnavailable)
+
+			// Paiement carte (Stripe Terminal)
+			r.Post("/terminal/connection-token", kioskHandler.TerminalConnectionToken)
+			r.Post("/terminal/payment-intent", kioskHandler.TerminalCreatePaymentIntent)
+			r.Post("/terminal/payment-intent/{payment_intent_id}/cancel", kioskHandler.TerminalCancelPaymentIntent)
 		})
 	})
 

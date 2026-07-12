@@ -81,8 +81,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var productID, name, uom, compID sql.NullString
-			var price, status sql.NullInt64
+			var productID, name, uom, compID, status sql.NullString
+			var price sql.NullInt64
 			var qty sql.NullFloat64
 			if err := rows.Scan(&productID, &compID, &name, &price, &status, &qty, &uom); err != nil {
 				return nil, err
@@ -94,7 +94,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Price:         price.Int64,
 				Quantity:      &qty.Float64,
 				UnitOfMeasure: uom.String,
-				Status:        int(status.Int64),
+				Status:        status.String,
 			})
 		}
 	}

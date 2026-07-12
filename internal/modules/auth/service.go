@@ -622,6 +622,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 				CashRegisterRequiredForOrdering: user.CashRegisterRequiredForOrdering,
 				WarningNewOrderNotPaid:          user.WarningNewOrderNotPaid,
 				DisableSafetyStock:              user.DisableSafetyStock,
+				POSUpsellEnabled:                user.POSUpsellEnabled,
+				CustomerFormRequirements:        customerFormRequirementsRawMessage(user.CustomerFormRequirements),
 			},
 		},
 		Access:       access,
@@ -850,4 +852,15 @@ func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mod
 
 	// Mise à jour en base de données via le repository
 	return s.repo.MarkAsVerified(ctx, token, mode)
+}
+
+// customerFormRequirementsRawMessage converts the raw JSON bytes scanned from
+// merchant_parameters.customer_form_requirements into a *json.RawMessage, or
+// nil if the column was NULL/empty.
+func customerFormRequirementsRawMessage(raw []byte) *json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	msg := json.RawMessage(raw)
+	return &msg
 }

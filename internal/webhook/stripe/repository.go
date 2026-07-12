@@ -82,6 +82,7 @@ func (r *mysqlRepo) GetMerchantByStripeAccountID(cdb context.Context, accountID 
 	return &pm, nil
 }
 
+// Decom
 func (r *mysqlRepo) InsertPayment(cdb context.Context, p Payment) (int64, error) {
 	db := dbutils.GetDB(cdb, r.database)
 	log := logger.FromContext(cdb)
@@ -276,7 +277,11 @@ func (r *mysqlRepo) UpdateFees(cdb context.Context, paymentIntentID string, wrFe
 		return err
 	}
 
-	_, err = db.ExecContext(cdb, `UPDATE payments p INNER JOIN stripe_payments sp on sp.payment_id = p.payment_id SET p.fee = ? WHERE sp.payment_intent_id = ?`, totalFee, paymentIntentID)
+	// net_amount = amount - fee : montant réellement encaissé par le merchant une
+	// fois les frais Stripe (+ commission plateforme) déduits. Renseigne les
+	// paiements en ligne (Checkout) comme Terminal (card_present), qui passent
+	// tous deux par ce même mécanisme charge.captured -> UpdateFees.
+	_, err = db.ExecContext(cdb, `UPDATE payments p INNER JOIN stripe_payments sp on sp.payment_id = p.payment_id SET p.fee = ?, p.net_amount = p.amount - ? WHERE sp.payment_intent_id = ?`, totalFee, totalFee, paymentIntentID)
 	return err
 }
 

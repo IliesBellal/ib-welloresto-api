@@ -14,6 +14,15 @@ const (
 	FulfillmentTypeDeliveroo  = "DELIVEROO"
 
 	MerchantApprovalPendingApproval = "PENDING_APPROVAL"
+
+	// MerchantApprovalPendingCardPayment marque une commande borne (Kiosk) créée
+	// en paiement carte (Stripe Terminal) dont le paiement n'est pas encore
+	// confirmé. Valeur distincte de PENDING_APPROVAL (paiement comptoir) : une
+	// commande carte ne doit pas partir en cuisine tant que le webhook Stripe
+	// n'a pas confirmé le paiement (payment_intent.succeeded card_present).
+	// Le webhook la fait ensuite transiter vers ACCEPTED via SetOrderAccepted,
+	// même mécanisme que le paiement comptoir — voir docs/KIOSK_DECISIONS.md.
+	MerchantApprovalPendingCardPayment = "PENDING_CARD_PAYMENT"
 )
 
 // OrderItemInsert represents an order item insert
@@ -30,6 +39,7 @@ type OrderItemInsert struct {
 	DelayID         *string
 	Comment         *string
 	CreatedBy       string
+	IsUpsell        bool // true when this line was added from an upsell suggestion
 }
 
 type ExtraInsert struct {

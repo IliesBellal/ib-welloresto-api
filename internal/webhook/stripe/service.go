@@ -15,9 +15,11 @@ import (
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/infrastructure/sms"
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
+	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/balancetransaction"
@@ -31,9 +33,10 @@ type StripeWebhookService struct {
 	orderlifecycle *order_life_cycle.OrdersLifeCycleService
 	notification   *notification.NotificationService
 	redis          *redis.Client
+	db             *sql.DB
 }
 
-func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client) *StripeWebhookService {
+func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client, db *sql.DB) *StripeWebhookService {
 	stripe.Key = stripeKey
 	return &StripeWebhookService{
 		repo:           repo,
@@ -43,6 +46,7 @@ func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Ser
 		orderlifecycle: lifecycle,
 		notification:   notification,
 		redis:          redis,
+		db:             db,
 	}
 }
 
@@ -67,7 +71,10 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 		return s.HandlePaymentIntentUpdated(ctx, event.Data.Object, "CANCELED")
 
 	case "payment_intent.succeeded":
-		return s.HandlePaymentIntentUpdated(ctx, event.Data.Object, "CAPTURED")
+		return s.HandlePaymentIntentSucceeded(ctx, event.Data.Object)
+
+	case "payment_intent.payment_failed":
+		return s.HandlePaymentIntentFailed(ctx, event.Data.Object)
 
 	case "payout.paid":
 		return s.HandlePayoutPaid(ctx, event.Data.Object, event.Account)
@@ -96,83 +103,102 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	merchantID := session.Metadata["merchant_id"]
 	orderID := session.Metadata["order_id"]
 
-	key := helpers.GetRedisOrderKey(merchantID, orderID)
-	s.redis.Delete(ctx, key)
-
 	if merchantID == "" || orderID == "" {
 		return errors.New("missing metadata in stripe session")
 	}
 
-	// On utilise dbutils.RunInTx pour ouvrir la transaction.
-	// Toutes les fonctions à l'intérieur utiliseront 'txCtx'.
 	piID := ""
 	if session.PaymentIntent != nil {
 		piID = session.PaymentIntent.ID
 	}
 
-	// A. Insertion Payment
-	// Le repo de orderlifecycle utilisera GetDB(txCtx) en interne
-	err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
-		CashRegisterID:    models.ScanNOrderCashRegisterID,
-		MOP:               models.StripeMOP,
-		Amount:            int(session.AmountTotal),
-		OrderID:           orderID,
-		MerchantID:        merchantID,
-		UserID:            models.StripeWebhookUserID,
-		OperationType:     models.OperationTypeSale,
-		PaymentIntentID:   &piID,
-		CheckoutSessionID: &session.ID,
-		CustomerEmail:     &session.CustomerDetails.Email,
+	var isAppQRCode bool
+	var shouldAutoAccept bool
+
+	// Toutes les écritures liées au paiement s'exécutent dans une seule transaction :
+	// l'invalidation du cache Redis et la mise à jour du statut de la commande doivent
+	// être atomiques, sinon un GetOrder concurrent peut recacher un statut périmé
+	// (ex: ONLINE_PAYMENT_PENDING) pour la durée du TTL.
+	err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		key := helpers.GetRedisOrderKey(merchantID, orderID)
+		if s.redis != nil {
+			s.redis.Delete(txCtx, key)
+		}
+
+		// A. Insertion Payment
+		if err := s.orderlifecycle.CreatePaymentNoNotification(txCtx, models.Payment{
+			CashRegisterID:    models.ScanNOrderCashRegisterID,
+			MOP:               models.StripeMOP,
+			Amount:            int(session.AmountTotal),
+			OrderID:           orderID,
+			MerchantID:        merchantID,
+			UserID:            models.StripeWebhookUserID,
+			OperationType:     models.OperationTypeSale,
+			PaymentIntentID:   &piID,
+			CheckoutSessionID: &session.ID,
+			CustomerEmail:     &session.CustomerDetails.Email,
+		}); err != nil {
+			return fmt.Errorf("insert payment: %w", err)
+		}
+
+		// B. Update Order Creation Date to current time upon successful payment
+		if err := s.repo.UpdateOrderCreationDate(txCtx, orderID); err != nil {
+			return fmt.Errorf("update order creation date: %w", err)
+		}
+
+		// C. Update Order Status
+		if err := s.repo.UpdateOrderPaymentStatus(txCtx, orderID); err != nil {
+			return fmt.Errorf("update order payment status: %w", err)
+		}
+
+		// D. Cas Spécial: App QR Code
+		if session.Metadata["checkout_session_type"] == "app_qr_code" {
+			isAppQRCode = true
+			if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
+				log.Printf("Warning: failed to update customer: %v", err)
+			}
+			return nil
+		}
+
+		// E. Flow Standard
+		if err := s.repo.UpdateOrderDetails(txCtx, session.ID, orderID); err != nil {
+			return fmt.Errorf("update order details: %w", err)
+		}
+		if err := s.repo.UpdateOrderItemsPaid(txCtx, session.ID, orderID); err != nil {
+			return fmt.Errorf("update items paid: %w", err)
+		}
+
+		// F. Auto Accept Logic
+		orderType, merchantParams, err := s.repo.GetAutoAcceptSettings(txCtx, orderID, merchantID)
+		if err == nil {
+			shouldAutoAccept = (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
+				(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
+		}
+
+		// G. Update Customer
+		if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
+			log.Printf("Warning: customer update failed: %v", err)
+		}
+
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("insert payment: %w", err)
+		return err
 	}
 
-	// B. Update Order Creation Date to current time upon successful payment
-	if err := s.repo.UpdateOrderCreationDate(ctx, orderID); err != nil {
-		return fmt.Errorf("update order creation date: %w", err)
-	}
+	// --- ACTIONS POST-COMMIT (effets de bord) ---
+	// Tout ce qui suit ne s'exécute qu'une fois la transaction validée, pour ne jamais
+	// notifier/envoyer un email pour un paiement qui aurait finalement été annulé (rollback).
 
-	// C. Update Order Status
-	if err := s.repo.UpdateOrderPaymentStatus(ctx, orderID); err != nil {
-		return fmt.Errorf("update order payment status: %w", err)
-	}
-
-	// D. Cas Spécial: App QR Code
-	if session.Metadata["checkout_session_type"] == "app_qr_code" {
-		if err := s.handleCustomerUpdate(ctx, &session, orderID, merchantID); err != nil {
-			log.Printf("Warning: failed to update customer: %v", err)
-		}
-		// Async : On utilise context.Background() car la transaction va se fermer
+	if isAppQRCode {
 		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-		return nil // Succès -> Commit
+		return nil
 	}
 
-	// E. Flow Standard
-	if err := s.repo.UpdateOrderDetails(ctx, session.ID, orderID); err != nil {
-		return fmt.Errorf("update order details: %w", err)
-	}
-	if err := s.repo.UpdateOrderItemsPaid(ctx, session.ID, orderID); err != nil {
-		return fmt.Errorf("update items paid: %w", err)
-	}
+	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 
-	// F. Auto Accept Logic
-	orderType, merchantParams, err := s.repo.GetAutoAcceptSettings(ctx, orderID, merchantID)
-	if err == nil {
-		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-
-		shouldAccept := (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
-			(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
-
-		if shouldAccept {
-			// IMPORTANT: context.Background() pour les appels asynchrones hors transaction
-			go s.orderlifecycle.SetOrderAccepted(context.Background(), "SYSTEM", merchantID, orderID)
-		}
-	}
-
-	// G. Update Customer
-	if err := s.handleCustomerUpdate(ctx, &session, orderID, merchantID); err != nil {
-		log.Printf("Warning: customer update failed: %v", err)
+	if shouldAutoAccept {
+		go s.orderlifecycle.SetOrderAccepted(context.Background(), "SYSTEM", merchantID, orderID)
 	}
 
 	// Récupération des infos pour notifications
@@ -203,9 +229,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		}
 	}
 
-	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
-
-	return nil // Fin du bloc : Commit automatique
+	return nil
 }
 
 // 2. HandleCheckoutSessionCanceled
@@ -300,6 +324,132 @@ func (s *StripeWebhookService) HandlePaymentIntentUpdated(ctx context.Context, d
 	}
 
 	return s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, status)
+}
+
+// HandlePaymentIntentSucceeded traite payment_intent.succeeded. Un paiement
+// Stripe Terminal (card_present) créé par une borne Kiosk est reconnu par la
+// présence du mapping Redis terminal_pi:{id} — plus fiable que de parser
+// payment_method_details.type sur l'objet PaymentIntent (non expansé dans
+// l'événement, il faudrait un appel API supplémentaire), et ce mapping donne
+// directement la commande à confirmer. À défaut de mapping, on retombe sur le
+// comportement existant du flux Checkout en ligne (statut CAPTURED en base),
+// strictement inchangé.
+func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context, data json.RawMessage) error {
+	var pi stripe.PaymentIntent
+	if err := json.Unmarshal(data, &pi); err != nil {
+		return fmt.Errorf("unmarshal payment intent: %w", err)
+	}
+
+	if handled, err := s.handleTerminalPaymentSucceeded(ctx, &pi); handled || err != nil {
+		return err
+	}
+
+	return s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED")
+}
+
+// HandlePaymentIntentFailed traite payment_intent.payment_failed. Seuls les
+// paiements Terminal Kiosk (mapping Redis présent) sont concernés : la commande
+// reste en pending_card_payment (le client peut réessayer ou basculer vers la
+// caisse) — on ne touche pas au statut serveur, on informe seulement un
+// éventuel écran de suivi via une notification order_updated. Tout autre
+// payment_intent.payment_failed (paiement en ligne) est ignoré, comme avant
+// (aucun case n'existait auparavant).
+func (s *StripeWebhookService) HandlePaymentIntentFailed(ctx context.Context, data json.RawMessage) error {
+	var pi stripe.PaymentIntent
+	if err := json.Unmarshal(data, &pi); err != nil {
+		return fmt.Errorf("unmarshal payment intent: %w", err)
+	}
+
+	mapping, found := s.lookupTerminalMapping(ctx, pi.ID)
+	if !found {
+		return nil
+	}
+
+	go s.notification.SendNotificationAsync(mapping.MerchantID, mapping.OrderID, notification.NotificationTypeOrderUpdate)
+	return nil
+}
+
+// handleTerminalPaymentSucceeded confirme la commande liée à un PaymentIntent
+// Terminal. Retourne (true, err) quand le PaymentIntent est bien un paiement
+// Terminal Kiosk (mapping trouvé), (false, nil) sinon.
+func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) (bool, error) {
+	mapping, found := s.lookupTerminalMapping(ctx, pi.ID)
+	if !found {
+		return false, nil
+	}
+
+	// pending_card_payment -> ACCEPTED : même transition que le paiement
+	// comptoir (SetOrderAccepted), qui déclenche en interne KDS/impression et la
+	// notification order_updated vers le merchant.
+	if _, err := s.orderlifecycle.SetOrderAccepted(ctx, "KIOSK", mapping.MerchantID, mapping.OrderID); err != nil {
+		return true, err
+	}
+
+	// Enregistrement du paiement Terminal via l'UNIQUE point d'insertion du
+	// projet (order_life_cycle : AddPaymentAndReturnID), le même que le Checkout
+	// en ligne — cohérence multi-canal du reporting payments.mop. En best-effort :
+	// la commande est déjà acceptée (action métier critique déjà faite) ; un échec
+	// d'insertion ici est un trou de reporting, pas un échec fonctionnel, et ne
+	// doit pas provoquer un retour d'erreur qui ferait rejouer le webhook Stripe
+	// (SetOrderAccepted déjà passé + re-insertion = doublon rejeté par le garde
+	// fiscal de montant).
+	s.recordTerminalPayment(ctx, mapping, pi)
+
+	if s.redis != nil {
+		s.redis.Delete(ctx, stripeclient.TerminalPaymentIntentKey(pi.ID))
+		s.redis.Delete(ctx, stripeclient.TerminalOrderKey(mapping.MerchantID, mapping.OrderID))
+	}
+	return true, nil
+}
+
+// recordTerminalPayment insère la ligne payments d'un encaissement Terminal
+// (card_present) via l'unique fonction d'insertion du projet
+// (CreatePaymentNoNotification -> AddPaymentAndReturnID), la même que le
+// Checkout en ligne. Champs :
+//   - amount   : montant du PaymentIntent en centimes ;
+//   - mop      : models.StripeMOP (identique au Checkout carte en ligne) ;
+//   - fee      : 0 initialement, net_amount initialisé à amount par l'INSERT —
+//     tous deux mis à jour par le webhook charge.captured (UpdateFees) ;
+//   - user_id  : "KIOSK" (created_by des commandes borne) ;
+//   - cash_register_id : laissé vide -> NULL (une borne n'a pas de caisse).
+//
+// L'insertion de la ligne stripe_payments (payment_intent_id) est faite en
+// interne par AddPaymentAndReturnID pour MOP=STRIPE : c'est ce qui permettra au
+// webhook charge.captured de retrouver ce paiement et d'y écrire fee/net_amount.
+func (s *StripeWebhookService) recordTerminalPayment(ctx context.Context, mapping stripeclient.TerminalPaymentMapping, pi *stripe.PaymentIntent) {
+	piID := pi.ID
+	if err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
+		OrderID:         mapping.OrderID,
+		MerchantID:      mapping.MerchantID,
+		MOP:             models.StripeMOP,
+		Amount:          int(pi.Amount),
+		UserID:          "KIOSK",
+		OperationType:   models.OperationTypeSale,
+		PaymentIntentID: &piID,
+	}); err != nil {
+		log.Printf("[stripe webhook] terminal payment record failed for order %s: %v", mapping.OrderID, err)
+	}
+}
+
+// lookupTerminalMapping lit et décode le mapping terminal_pi:{id} (partagé avec
+// l'infra Stripe Terminal, jamais dupliqué). Retourne found=false si Redis est
+// absent, la clé introuvable, le JSON illisible ou les identifiants vides.
+func (s *StripeWebhookService) lookupTerminalMapping(ctx context.Context, paymentIntentID string) (stripeclient.TerminalPaymentMapping, bool) {
+	if s.redis == nil {
+		return stripeclient.TerminalPaymentMapping{}, false
+	}
+	val, found := s.redis.Get(ctx, stripeclient.TerminalPaymentIntentKey(paymentIntentID))
+	if !found {
+		return stripeclient.TerminalPaymentMapping{}, false
+	}
+	var m stripeclient.TerminalPaymentMapping
+	if err := json.Unmarshal([]byte(val), &m); err != nil {
+		return stripeclient.TerminalPaymentMapping{}, false
+	}
+	if m.OrderID == "" || m.MerchantID == "" {
+		return stripeclient.TerminalPaymentMapping{}, false
+	}
+	return m, true
 }
 
 // 5. HandleRefund

@@ -476,8 +476,8 @@ func defaultKioskSettingsRow(merchantID string) *KioskSettingsRow {
 
 // GetKioskSettings récupère les paramètres Kiosk d'un merchant, ou les
 // valeurs par défaut si la ligne n'existe pas encore — jamais sql.ErrNoRows.
-// BusinessName vient toujours de la table merchant (jamais de kiosk_settings),
-// donc il est attaché que la ligne kiosk_settings existe ou non.
+// BusinessName et Slug viennent d'autres tables (jamais de kiosk_settings),
+// donc ils sont attachés que la ligne kiosk_settings existe ou non.
 func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*KioskSettingsRow, error) {
 	row, err := r.GetSettingsByMerchant(ctx, merchantID)
 	if err != nil {
@@ -493,7 +493,68 @@ func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*
 	}
 	row.BusinessName = businessName
 
+	slug, err := r.getMerchantSlug(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	row.Slug = slug
+
 	return row, nil
+}
+
+// GetTerminalLocationID lit stripe_accounts.terminal_location_id pour un
+// merchant. Retourne (nil, nil) si aucune ligne stripe_accounts n'existe ou si
+// la colonne est NULL (Terminal non activé) — jamais sql.ErrNoRows, pour que
+// GET /kiosk/settings renvoie null sans erreur (voir docs/KIOSK_DECISIONS.md).
+func (r *Repository) GetTerminalLocationID(ctx context.Context, merchantID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var loc sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT terminal_location_id FROM stripe_accounts WHERE merchant_id = ? LIMIT 1`,
+		merchantID).Scan(&loc)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !loc.Valid {
+		return nil, nil
+	}
+	return &loc.String, nil
+}
+
+// defaultKioskVariableFees / defaultKioskFixedFees sont les valeurs
+// appliquées tant qu'un merchant n'a pas encore sa propre ligne
+// kiosk_settings — mêmes valeurs que les DEFAULT de la migration 061
+// (alignées sur scannorder_settings au moment du rollout, voir
+// docs/KIOSK_DECISIONS.md).
+const (
+	defaultKioskVariableFees = 0.0070
+	defaultKioskFixedFees    = int64(15)
+)
+
+// GetKioskFees lit la commission plateforme configurée pour le Kiosk d'un
+// merchant (kiosk_settings.variable_fees/fixed_fees) — jamais exposée aux
+// clients (ni GET /kiosk/settings, ni GET /pos/settings/kiosk/settings),
+// consommée uniquement par CreateTerminalPaymentIntent pour calculer
+// application_fee_amount. Retourne les valeurs par défaut si le merchant n'a
+// pas encore de ligne kiosk_settings, jamais sql.ErrNoRows — une borne doit
+// pouvoir encaisser sans configuration préalable.
+func (r *Repository) GetKioskFees(ctx context.Context, merchantID string) (variableFees float64, fixedFees int64, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	err = db.QueryRowContext(ctx,
+		`SELECT variable_fees, fixed_fees FROM kiosk_settings WHERE merchant_id = ?`,
+		merchantID).Scan(&variableFees, &fixedFees)
+	if err == sql.ErrNoRows {
+		return defaultKioskVariableFees, defaultKioskFixedFees, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	return variableFees, fixedFees, nil
 }
 
 // getMerchantBusinessName récupère merchant.fullName — utilisé pour le
@@ -511,6 +572,28 @@ func (r *Repository) getMerchantBusinessName(ctx context.Context, merchantID str
 		return nil, err
 	}
 	return fullName, nil
+}
+
+// getMerchantSlug récupère le code QR principal du merchant (sans location_id
+// ni user_id) — c'est le {merchant_slug} utilisé dans les routes scannorder.
+func (r *Repository) getMerchantSlug(ctx context.Context, merchantID string) (*string, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var slug *string
+	err := db.QueryRowContext(ctx, `
+		SELECT code FROM qrcodes
+		WHERE merchant_id = ?
+		  AND location_id IS NULL
+		  AND user_id IS NULL
+		  AND deleted = false
+		LIMIT 1`, merchantID).Scan(&slug)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return slug, nil
 }
 
 // GetAvailableKioskProductIDs filtre productIDs et ne retourne que ceux qui
@@ -587,11 +670,15 @@ func (r *Repository) GetKioskProductAvailabilityMap(ctx context.Context, merchan
 	return result, nil
 }
 
-// GetExistingConfigurationOptionIDs vérifie l'existence réelle d'options de
+// GetConfigurationOptionAttributeIDs vérifie l'existence réelle des options de
 // configuration (rejette les IDs fabriqués côté client — même esprit que
-// GetProductPricesForSNO dans scannorder).
-func (r *Repository) GetExistingConfigurationOptionIDs(ctx context.Context, optionIDs []string) (map[string]bool, error) {
-	result := make(map[string]bool)
+// GetProductPricesForSNO dans scannorder) ET retourne le vrai
+// configurable_attribute_id de chacune, pour regrouper correctement les
+// options sélectionnées par groupe de modificateur (voir
+// docs/KIOSK_VS_SCANNORDER_STRUCTS.md écart #2 — buildOrderProducts utilisait
+// auparavant un id fictif "kiosk-options" pour tout regrouper).
+func (r *Repository) GetConfigurationOptionAttributeIDs(ctx context.Context, optionIDs []string) (map[string]string, error) {
+	result := make(map[string]string)
 	if len(optionIDs) == 0 {
 		return result, nil
 	}
@@ -608,22 +695,22 @@ func (r *Repository) GetExistingConfigurationOptionIDs(ctx context.Context, opti
 		args = append(args, id)
 	}
 
-	query := fmt.Sprintf(`SELECT id FROM configurable_attribute_options WHERE id IN (%s)`, placeholders)
+	query := fmt.Sprintf(`SELECT id, configurable_attribute_id FROM configurable_attribute_options WHERE id IN (%s)`, placeholders)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query configuration option existence: %w", err)
+		return nil, fmt.Errorf("failed to query configuration option attribute ids: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan configuration option id: %w", err)
+		var id, attributeID string
+		if err := rows.Scan(&id, &attributeID); err != nil {
+			return nil, fmt.Errorf("failed to scan configuration option attribute id: %w", err)
 		}
-		result[id] = true
+		result[id] = attributeID
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error during configuration option existence fetch: %w", err)
+		return nil, fmt.Errorf("rows error during configuration option attribute id fetch: %w", err)
 	}
 	return result, nil
 }
@@ -637,6 +724,19 @@ func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskID str
 
 	query := `UPDATE orders SET kiosk_id = ? WHERE order_id = ?`
 	_, err := db.ExecContext(ctx, query, kioskID, orderID)
+	return err
+}
+
+// UpdateOrderMerchantApproval force merchant_approval sur une commande, scopé au
+// merchant. Utilisé par le basculement carte -> caisse (PENDING_CARD_PAYMENT ->
+// PENDING_APPROVAL) : OrdersLifeCycleService n'expose pas de mutation générique
+// de ce champ, et SetOrderAccepted/DeliverOrder ne couvrent pas cette transition
+// précise. last_update est rafraîchi comme partout ailleurs dans le projet.
+func (r *Repository) UpdateOrderMerchantApproval(ctx context.Context, merchantID, orderID, approval string) error {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `UPDATE orders SET merchant_approval = ?, last_update = UTC_TIMESTAMP WHERE order_id = ? AND merchant_id = ?`
+	_, err := db.ExecContext(ctx, query, approval, orderID, merchantID)
 	return err
 }
 

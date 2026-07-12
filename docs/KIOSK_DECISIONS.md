@@ -1629,3 +1629,959 @@ curl -s "$BASE_URL/kiosk/discounts" -H "Authorization: Bearer $ACCESS_TOKEN"
 Non exécuté dans ce sandbox (pas de `MYSQL_URL`/`REDIS_URL`) — seul `go
 build ./...` a été vérifié (clean).
 ```
+
+## Incrément 11 — alignement structurel avec ScanNOrder
+
+Suite à `docs/KIOSK_VS_SCANNORDER_STRUCTS.md` (audit comparatif des structs
+entre `scannorder` et `kiosk` sur les flux menu/pricing/commande), les écarts
+suivants ont été corrigés **côté kiosk uniquement** — `scannorder` n'a pas
+été modifié.
+
+### Correction 1 (requalifiée non-bloquante après revue) — `MerchantApproval` forcé à `ACCEPTED`
+
+`Service.CreateKioskOrder` forçait `merchant_approval = "ACCEPTED"` dès la
+création, sans paiement réel encaissé. **Mise à jour (Ilies)** : la
+qualification initiale "bloquante" était une erreur d'appréciation de
+l'audit — ce n'est pas un bug, les commandes Kiosk aboutissent de toute
+façon à `ACCEPTED` (immédiatement ou après encaissement comptoir), c'est
+l'un des seuls comportements **volontairement différents** de Kiosk par
+rapport à ScanNOrder. Voir `docs/KIOSK_VS_SCANNORDER_STRUCTS.md` (note en
+tête de document) pour le détail de cette requalification.
+
+Le correctif suivant a néanmoins été appliqué (et reste en place, sans
+besoin de revert) : **toute commande kiosk part en `PENDING_APPROVAL`
+à la création, qu'elle soit `DINE_IN` ou `TAKE_AWAY`** — contrairement à
+`scannorder.CreateOrderSNO` où `IN` part directement en `ACCEPTED` (le client
+scanne à table, le staff voit la commande live, pas de paiement à confirmer).
+Le kiosk n'a, à cet incrément, que le paiement comptoir (`pay_at_counter`) :
+DINE_IN comme TAKE_AWAY doivent attendre que le staff encaisse réellement.
+
+`Service.ConfirmCounterPayment` fait maintenant la transition
+`PENDING_APPROVAL → ACCEPTED` via
+`OrdersLifeCycleService.SetOrderAccepted(ctx, kioskCreatedBy, merchantID,
+orderID)` — le même mécanisme que `AcceptOrder`/POS, appelé directement
+(sans passer par `middleware.UserFromContext`, qui n'existe pas pour un
+appelant authentifié par device).
+
+### Correction 2 (majeure) — regroupement des options par vrai `configurable_attribute_id`
+
+`Service.buildOrderProducts` regroupait toutes les options sélectionnées
+sous un id fictif unique `"kiosk-options"`, perdant l'information de groupe
+de modificateur (ticket cuisine, audit). `Repository.
+GetConfigurationOptionAttributeIDs` (remplace `GetExistingConfigurationOptionIDs`)
+retourne désormais `configurable_attribute_id` par option, et
+`buildOrderProducts` reconstruit un `models.ConfigurationAttribute` par
+groupe réel — même structure que ce qu'envoie le client ScanNOrder.
+
+### Correction 3 (majeure) — champs manquants sur `KioskProduct`
+
+Ajout de `price_take_away_cents`, `is_popular`, `tva_rate`, `display_order`,
+`status` (mappés depuis `models.ProductEntry`). `max_quantity` reste `nil` :
+il n'existe pas de limite de quantité par produit en base (seule
+`ConfigurableOption.MaxQuantity`, par option de modificateur, existe — déjà
+porté par `KioskModifierOption.MaxQuantity`).
+
+### Correction 4 (majeure) — `KioskCategory.available`
+
+Ajout du champ `available`, alimenté depuis `ProductCategory.Available`.
+`GetMenu` filtre désormais les catégories désactivées par le restaurateur
+(`available = false`) avant de les inclure dans la réponse — auparavant
+elles restaient visibles sur la borne.
+
+### Correction 5 (majeure, **breaking change client**) — nommage `KioskModifierGroup`/`KioskModifierOption`
+
+Champs JSON renommés pour s'aligner sur `ConfigurableAttribute`/
+`ConfigurableOption` (`internal/models/menu_models.go`, référence ScanNOrder) :
+
+| Avant (kiosk) | Après (kiosk = scannorder) |
+|---|---|
+| `KioskModifierGroup.name` | `title` |
+| `KioskModifierGroup.min` | `min_options` |
+| `KioskModifierGroup.max` | `max_options` |
+| `KioskModifierGroup.required` (déduit de `min>0`) | supprimé, remplacé par `attribute_type` |
+| `KioskModifierOption.name` | `title` |
+| `KioskModifierOption.price_delta_cents` | `extra_price` |
+| — | `max_quantity` (nouveau) |
+| — | `configurable_attribute_id` (nouveau) |
+| — | `selected` (nouveau) |
+
+**⚠️ Le client Flutter kiosk doit être mis à jour en conséquence** (modèles
+Dart consommant `GET /kiosk/menu` / `GET /kiosk/products/{id}`) — prévu dans
+la session Flutter suivante.
+
+### Correction 6 (majeure) — champs manquants sur `KioskPricingResponse`
+
+Ajout de `ht_cents`, `is_orderable`, `not_orderable_reason`,
+`applied_discounts`, `unavailable_products` — déjà calculés par
+`OrdersService.ComputePricing` mais jusqu'ici non mappés. Point notable :
+`OrdersService.ComputePricing` ne renseigne **pas** `PricingResponse.
+IsOrderable`/`NotOrderableReason` (champs de réponse) — seulement
+`PricingRequest.IsOrderable`/`NotOrderableReason` (champs internes à la
+requête, json `"-"`, donc invisibles sur le wire). `scannorder.GetPricingSNO`
+les recopie explicitement après l'appel ; `pricingResponseToKiosk` fait
+désormais la même chose (`pricing.OrderRequest.IsOrderable` →
+`KioskPricingResponse.IsOrderable`).
+
+### Correction 7 — `validateAndCleanPricingPayload` : **non applicable**, vérifié plutôt qu'implémenté
+
+L'audit suggérait de porter `scannorder.validateAndCleanPricingPayload`
+(anti-fraude prix) côté kiosk avant `ComputePricing`. Vérification du code
+réel de `OrdersService.ComputePricing` (`internal/modules/orders/
+service.go`) : `buildSelectedProducts` recalcule **toujours** `Price`/`TvaRate`
+depuis `dbProducts` (jamais depuis le payload client), et
+`applyConfigurationOptionPrices` réécrit toujours `ExtraPrice` depuis
+`GetConfigurationOptionPrices` (DB). `validateAndCleanPricingPayload`
+côté scannorder ne fait donc, pour le prix, qu'un travail déjà refait
+(de façon redondante) par le moteur partagé — sa seule valeur ajoutée réelle
+est de rejeter explicitement un `product_id`/`option_id` inconnu avant
+l'appel. Le kiosk fait déjà cette validation d'existence, mais via un
+mécanisme différent : `buildOrderProducts` vérifie `GetAvailableKioskProductIDs`
+(produits) et `GetConfigurationOptionAttributeIDs` (options, Correction 2)
+**avant** d'appeler `ComputePricing`, et retourne `models.ErrInvalidInput`/
+`ErrKioskProductUnavailable` si un id n'existe pas. Dupliquer
+`validateAndCleanPricingPayload` aurait donc ajouté du code mort. Aucun
+changement appliqué pour cette correction.
+
+### M2 — `order_id`/`IsSNO` sur `CreateKioskOrder`
+
+Ajout de `orderReq.IsSNO = false` (explicite, alignement avec
+`scannorder.CreateOrderSNO` qui pose `IsSNO = true`). Le mapping
+`fulfillment_type → order_type` (M1) et le report des `TTC`/`TVA`/`HT`
+calculés par `ComputePricing` avant l'appel à `CreateOrder` (M3) étaient déjà
+en place avant cet incrément — vérifiés, non modifiés.
+
+### Tests
+
+`go build ./...` clean. `go test ./internal/modules/kiosk/...` : OK (suite
+existante, non étendue dans cet incrément — la Correction 5 étant un
+breaking change JSON, des tests dédiés au format de `GET /kiosk/menu`
+seraient à ajouter avant la mise à jour du client Flutter).
+
+---
+
+## Incrément 6 — alignement complet des contrats pricing/commande sur scannorder
+
+### Décision [FAIT]
+
+Suppression des quatre types fantômes propres au module Kiosk qui
+dupliquaient les structs partagées sans y ajouter de logique métier réelle :
+`KioskPricingRequest`, `KioskPricingResponse`, `CreateKioskOrderRequest`,
+`CreateKioskOrderResponse` (ainsi que leurs types satellites `KioskPricingItem`
+et `KioskOrderItem`, devenus inutiles pour la même raison). Les endpoints
+`POST /kiosk/pricing` et `POST /kiosk/orders` consomment désormais
+directement `models.PricingRequest` / `models.PricingResponse` /
+`models.RequestObject` / `models.CreateOrderResult` (`internal/models/`) —
+**exactement le même contrat wire que** `scannorder.GetPricingSNO` /
+`scannorder.CreateOrderSNO`.
+
+**Pourquoi** : cohérence multi-canal (un seul format de payload pricing/
+commande à maintenir pour POS, ScanNOrder et Kiosk, au lieu de trois) et
+simplicité de maintenance (un changement de `models.OrderProductPayload`,
+ex. un nouveau champ de configuration produit, se propage désormais
+automatiquement au Kiosk sans mapping intermédiaire à mettre à jour).
+
+### Changement de contrat wire côté client Kiosk (breaking change assumé)
+
+Avant cet incrément, le client Kiosk envoyait un format simplifié pour les
+items (`product_id`, `quantity`, `selected_option_ids`, `notes`), traduit
+côté serveur (`buildOrderProducts`) vers le `models.OrderProductPayload`
+complet (`Configuration`/`Attributes`/`Options`) via des lookups DB
+(`GetConfigurationOptionAttributeIDs`). Ce mapping intermédiaire est
+supprimé : le client Kiosk doit désormais envoyer les items directement au
+format `models.OrderProductPayload` (même structure que le client
+ScanNOrder), `Configuration`/`Attributes`/`Options` inclus. **Le client
+Flutter `wello-kiosk` devra être mis à jour en conséquence** (pas fait dans
+cet incrément, hors scope backend).
+
+Seule traduction kiosk-spécifique conservée, faite dans le handler avant
+d'appeler le service (pas dans une struct dédiée) : `fulfillment_type`
+(`DINE_IN`/`TAKE_AWAY`, vocabulaire écran borne) → `order_type` (`IN`/
+`TAKE_AWAY`, convention partagée POS/ScanNOrder/Kiosk), via
+`kioskFulfillmentToOrderType` (inchangée, déjà testée par
+`menu_pricing_test.go`). `fulfillment_type` lui-même est lu depuis
+`models.OrderRequest.FulfillmentType` (champ déjà présent dans la struct
+partagée, json `"fulfillment_type"`) — aucune struct nouvelle introduite
+pour le porter.
+
+La clé d'idempotence (`idempotency_key`, sans équivalent dans les structs
+partagées) n'est plus un champ JSON du body : elle est désormais lue depuis
+le header HTTP `Idempotency-Key`, pattern REST standard pour ce type de
+donnée orthogonale au payload métier.
+
+### Ce qui reste spécifique au Kiosk côté service (pas de la duplication de logique pricing/commande)
+
+- **`validateKioskProductAvailability`** (remplace `buildOrderProducts`) :
+  vérifie `is_available_on_kiosk` pour chaque `product_id` du panier, avant
+  d'appeler `ordersService.ComputePricing`. Ce n'est pas du calcul de prix
+  (entièrement délégué à `orders`), c'est une règle d'accès au canal —
+  un produit peut être vendable en salle/POS mais désactivé sur la borne.
+- **`checkFulfillmentEnabled`** : vérifie que le mode (`IN`/`TAKE_AWAY`) est
+  activé dans `kiosk_settings` pour ce merchant — gate métier Kiosk, pas du
+  pricing.
+- **Idempotence** (`Service.CreateOrder`) et **forçage des champs paiement**
+  (`OnlinePayment = false`, `Payments = []`, `MerchantApproval = "ACCEPTED"`,
+  `CreatedBy`/`CashRegisterId` kiosk) : logique de session/device Kiosk, pas
+  de recalcul de prix ou de montant.
+
+### Changement de réponse `POST /kiosk/orders`
+
+Avant : `{order_id, display_number, status: "pending_counter_payment",
+total_cents}` (type `CreateKioskOrderResponse`, supprimé). Après :
+`models.CreateOrderResult` brut — `{status, order_id, order_num, message,
+action, checkout_session}`, identique à la réponse de
+`scannorder.CreateOrderSNO`. Le statut `"pending_counter_payment"`
+n'apparaît plus dans la réponse de création — il reste accessible via
+`GET /kiosk/orders/{order_id}` (`KioskOrderResponse`, non touché par cet
+incrément, toujours dérivé de `orders.merchant_approval` via
+`mapMerchantApprovalToKioskStatus`).
+
+### Fichiers modifiés
+
+- `internal/modules/kiosk/models.go` : suppression de `KioskPricingItem`,
+  `KioskPricingRequest`, `KioskPricingResponse`, `KioskOrderItem`,
+  `CreateKioskOrderRequest`, `CreateKioskOrderResponse`.
+- `internal/modules/kiosk/service.go` : suppression de `buildOrderProducts`,
+  `computeOrderPricing`, `pricingResponseToKiosk` ; `ComputePricing` et
+  `CreateKioskOrder` (renommée `CreateOrder`) réécrites pour prendre/
+  retourner les structs partagées ; `checkFulfillmentEnabled` adaptée pour
+  recevoir `order_type` (`IN`/`TAKE_AWAY`) au lieu de `fulfillment_type`
+  brut ; ajout de `validateKioskProductAvailability`.
+- `internal/modules/kiosk/handler.go` : `GetKioskPricing`/`CreateKioskOrder`
+  décodent désormais `models.PricingRequest`/`models.RequestObject`
+  directement, font le mapping `fulfillment_type` → `order_type`, lisent
+  l'idempotence depuis le header `Idempotency-Key`.
+
+### Tests
+
+`go build ./...` clean (aucune référence restante aux types supprimés en
+dehors de la documentation). `go vet ./...` : aucun nouvel avertissement
+introduit par ce changement (les avertissements existants — `ubereats`,
+`auth`, `tasks`, `webhook/ubereats/client` — sont préexistants, sans rapport
+avec ce module). `go test ./internal/modules/kiosk/...` : OK.
+
+---
+
+## Incrément 7 — bug `POST /kiosk/pricing` retourne toujours `is_orderable: false`
+
+### Cause exacte
+
+`OrdersService.ComputePricing` (`internal/modules/orders/service.go`) calcule
+correctement `req.IsOrderable` / `req.NotOrderableReason` sur le
+`*models.PricingRequest` (`applyDeliveryRules`, ligne ~1167) — mais ces
+champs sont marqués `json:"-"` sur `PricingRequest` (internes, jamais sur le
+wire). Le retour final de `ComputePricing` ne les recopiait **jamais** sur
+les champs équivalents de `PricingResponse` (`IsOrderable`,
+`NotOrderableReason`, `MinimumCartForDeliveryOrder`, eux bien sérialisés en
+JSON) : la réponse partait donc toujours avec la valeur zéro de Go,
+`is_orderable: false`, quel que soit le résultat réel du calcul.
+
+`scannorder.GetPricingSNO` (ligne 449) fait ce recopiage explicitement après
+avoir appelé `ComputePricing` :
+```go
+pricing.IsOrderable = pricing.OrderRequest.IsOrderable
+```
+C'est pour ça que ScanNOrder a toujours renvoyé la bonne valeur, alors que
+tout autre appelant de `ComputePricing` sans ce recopiage était cassé par
+construction.
+
+Le kiosk avait initialement le même recopiage, dans `pricingResponseToKiosk`
+(voir Correction 6, Incrément 5) : *"`OrdersService.ComputePricing` ne
+renseigne pas `PricingResponse.IsOrderable` (...) `pricingResponseToKiosk`
+fait désormais la même chose"*. Ce recopiage a été perdu **sans intention**
+lors de l'Incrément 6, quand `pricingResponseToKiosk` (et tout le mapping
+vers les structs kiosk dédiées) a été supprimé pour faire consommer
+`models.PricingResponse` directement par le handler kiosk — le bug latent de
+`ComputePricing` est alors redevenu visible côté Kiosk, **sans aucune
+modification volontaire de la logique d'éligibilité**.
+
+`POST /pos/pricing` (`OrdersHandler.GetPricing` → `OrdersService.GetPricing`
+→ `ComputePricing`, sans recopiage non plus) a exactement le même bug — pas
+spécifique au Kiosk, juste jamais remarqué côté POS.
+
+### Pourquoi `estimated_distribution_time: 1080` n'est pas la cause
+
+Ce champ (`GetEstimatedDistributionTime`) est calculé indépendamment de
+`is_orderable` et ne le bloque jamais dans `ComputePricing` — aucun lien
+entre les deux. La valeur élevée n'est qu'une coïncidence de données de
+test, pas un seuil de blocage.
+
+### Correction appliquée (Option A — fix dans `ComputePricing`, root cause)
+
+`internal/modules/orders/service.go`, retour final de `ComputePricing` :
+recopie désormais `req.IsOrderable` → `PricingResponse.IsOrderable`,
+`req.NotOrderableReason` → `PricingResponse.NotOrderableReason`,
+`req.MinimumCartForDeliveryOrder` → `PricingResponse.MinimumCartForDeliveryOrder`.
+
+Corrigé à la source plutôt que côté kiosk uniquement, parce que le bug
+n'est pas propre au Kiosk : le contrat de `ComputePricing` (une fonction
+partagée par POS, ScanNOrder et Kiosk) doit produire une réponse correcte
+par lui-même, sans dépendre de chaque appelant pour "réparer" le résultat
+après coup. Aucune modification de `scannorder.GetPricingSNO` :
+son recopiage (ligne 449) devient redondant (même valeur déjà posée par
+`ComputePricing`) mais reste inoffensif, y compris pour son cas
+spécifique `IsInDeliveryZone` (lignes 450-454, toujours appliqué après,
+inchangé). `OrdersService.GetPricing` (route POS `/pricing`) profite du même
+correctif sans changement de code supplémentaire.
+
+La logique d'éligibilité elle-même (`applyDeliveryRules`) n'a pas été
+touchée : `IsOrderable` ne devient `false` que pour `OrderType == "DELIVERY"
+&& IsSNO && TTC < MinimumCartForDeliveryOrder` — ce check ne s'applique déjà
+pas à `TAKE_AWAY`/`DINE_IN`, donc pas au cas Kiosk pizza Margarita (qui est
+`order_type` Kiosk, jamais `"DELIVERY"`).
+
+### Vérification
+
+- `go build ./...` et `go vet ./...` clean.
+- `go test ./internal/modules/orders/... ./internal/modules/kiosk/...
+  ./internal/modules/scannorder/...` : OK (aucun test cassé).
+- Pour le cas concret du brief (pizza Margarita Jambon, quantity 3, remise
+  appliquée, `order_type` Kiosk DINE_IN/TAKE_AWAY) : `applyDeliveryRules`
+  pose `req.IsOrderable = true` (pas de branche `DELIVERY`, donc jamais mis
+  à `false`) ; ce flag est désormais recopié sur la réponse →
+  `is_orderable: true`, `not_orderable_reason` absent. À reconfirmer en
+  conditions réelles après déploiement (pas de `MYSQL_URL` dans ce sandbox,
+  mêmes limites que les incréments précédents).
+- Cas bloquants toujours corrects : panier vide → `unavailable_products`
+  non vide, réponse retournée avant `applyDeliveryRules` (la valeur zéro
+  Go de `PricingResponse.IsOrderable`, `false`, reste correcte ici, jamais
+  écrasée) ; minimum panier livraison non atteint → toujours `IsOrderable =
+  false` + `NotOrderableReason = "minimum_cart_for_delivery_not_reached"`,
+  désormais effectivement visible sur le wire (ce qui ne l'était pas avant
+  ce correctif, autre bug latent corrigé au passage).
+
+---
+
+## Incrément 8 — `/ws-kiosk` : relais `kiosk_unavailable` entrant + fermeture ciblée à la révocation
+
+### Constat de départ
+
+`/ws-kiosk` (Incrément 7) couvrait déjà l'enregistrement de la borne dans le
+Hub sous son `merchant_id`, la réception des broadcasts merchant (ping/pong,
+désenregistrement propre à la déconnexion). Deux écarts subsistaient par
+rapport au besoin (auth device sur un canal WS persistant, pas seulement
+broadcast sortant) :
+1. `kiosk_unavailable` n'existait que côté REST (`POST
+   /kiosk/status/unavailable`) — aucun message entrant lu sur `/ws-kiosk`
+   n'était traité, `readPump` ne reconnaissait que `{"type":"PING"}`.
+2. La révocation d'une borne (`RevokeKiosk`) ne fermait pas sa connexion
+   `/ws-kiosk` active — le `Hub` n'avait aucune notion de `kioskID` (seulement
+   `merchantID -> connID -> *Client`), donc aucun moyen de cibler une
+   connexion précise.
+
+**Décision : étendre `/ws-kiosk` existant plutôt que créer un second
+endpoint `/ws/device` dupliquant `Client`/`Register`/`Unregister`/`serveWS`**
+— cohérent avec le rejet explicite de cette duplication en Incrément 7.
+
+### Hub : `kioskID` sur `Client`, fermeture ciblée, broadcast avec exclusion
+
+`internal/infrastructure/websocket/hub.go` :
+- `Client.kioskID string` — vide pour une connexion humaine (POS/back-office
+  sur `/ws`), renseigné pour une connexion device (`/ws-kiosk`).
+- `Hub.CloseKioskConnections(merchantID, kioskID string, code int, reason
+  string) bool` — itère les clients du merchant, ferme (via
+  `conn.WriteControl(CloseMessage, ...)` puis `conn.Close()`) celles dont le
+  `kioskID` correspond. `conn.Close()` déclenche `ReadMessage` en erreur côté
+  `readPump`, qui fait son nettoyage habituel (`hub.Unregister` +
+  `conn.Close()` à nouveau, sans effet car déjà fermée).
+- `Hub.BroadcastToMerchantExcept(merchantID, excludeConnID string, message
+  []byte) bool` — même logique que `BroadcastToMerchant`, sauf qu'elle
+  saute la connexion émettrice (utilisé pour ne pas renvoyer à la borne le
+  message qu'elle vient d'envoyer).
+
+### Relais de `kiosk_unavailable` (`internal/infrastructure/websocket/handler.go`)
+
+`readPump` reconnaît désormais, en plus de `{"type":"PING"}`, tout message
+JSON dont `type == "kiosk_unavailable"` — **uniquement si la connexion est
+une connexion device** (`c.kioskID != ""` : une connexion `/ws` humaine ne
+peut pas émettre ce type de message, il est silencieusement ignoré). Le
+`kiosk_id` du message est **toujours réécrit** avec `c.kioskID` (valeur
+authentifiée par `KioskAuth` à la connexion) avant relais via
+`BroadcastToMerchantExcept` — empêche une borne compromise d'usurper l'id
+d'une autre borne du même merchant.
+
+Format attendu de la borne vers le hub (inchangé par rapport à la doc
+Incrément 6, désormais réellement consommé) :
+```json
+{ "type": "kiosk_unavailable", "reason": "connection_lost" }
+```
+(`kiosk_id` peut être omis ou contenir n'importe quelle valeur — il est
+ignoré et remplacé côté serveur.)
+
+### Endpoint REST `POST /kiosk/status/unavailable` : conservé, pas déprécié
+
+Les deux canaux coexistent désormais pour `kiosk_unavailable` (REST et WS) —
+décision : **garder le REST en fallback**, ne pas le déprécier. Une borne
+peut signaler un problème de connectivité WS via REST précisément dans le
+cas où sa connexion `/ws-kiosk` est elle-même la chose qui a un problème
+(WS coupé mais réseau HTTP encore fonctionnel) ; le déprécier aurait
+supprimé le seul canal fiable dans ce scénario précis.
+
+### Révocation (`Service.RevokeKiosk`, `internal/modules/kiosk/service.go`)
+
+Après la transaction DB (révocation des `kiosk_device_tokens` +
+`kiosks.status = 'revoked'`), appel best-effort à
+`notificationSvc.CloseKioskConnection(merchantID, kiosk.ID)` (nouvelle
+méthode sur `NotificationService`, même pattern que `BroadcastToMerchant` —
+pas de dépendance directe de `kiosk` vers `internal/infrastructure/websocket`,
+cohérent avec l'injection déjà en place). Code de fermeture WebSocket **1008
+(Policy Violation)**, raison `"kiosk_revoked"`. Si la borne n'a pas de
+connexion `/ws-kiosk` active, `CloseKioskConnection` retourne simplement
+`false`, sans erreur.
+
+Le heartbeat (`POST /kiosk/auth/heartbeat`) reste également bloqué
+immédiatement après révocation (`status == "revoked"`, déjà en place) — la
+fermeture WS est un mécanisme de notification immédiate complémentaire, pas
+un remplacement de cette vérification serveur.
+
+### Tests manuels incrément 8
+
+`go build ./...`, `go vet ./...` (packages touchés) et `go test
+./internal/modules/kiosk/...` clean. Pas de `MYSQL_URL`/`REDIS_URL` dans ce
+sandbox — non exécuté en conditions réelles.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token back-office>"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll>"
+KIOSK_ID="kiosk-..."
+
+# 1. Connexion device WS
+wscat -c "$BASE_URL/ws-kiosk/" -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 2. Depuis cette même connexion, envoyer :
+{"type":"kiosk_unavailable","reason":"connection_lost"}
+# -> un client POS connecté sur /ws du même merchant doit recevoir :
+# {"type":"kiosk_unavailable","reason":"connection_lost","kiosk_id":"kiosk-..."}
+# (kiosk_id = identité authentifiée, quelle que soit la valeur envoyée par la borne)
+
+# 3. Révocation pendant que la connexion /ws-kiosk est ouverte
+curl -s -X POST "$BASE_URL/pos/settings/kiosk/devices/$KIOSK_ID/revoke" \
+  -H "Authorization: Bearer $USER_TOKEN"
+# -> la connexion wscat de l'étape 1 doit se fermer immédiatement avec le
+#    code 1008 ("kiosk_revoked"), sans attendre l'expiration de l'access token
+```
+
+---
+
+## Incrément — images sur les options de configuration produit
+
+Basé sur `docs/CONFIG_OPTIONS_IMAGES_AUDIT.md` (audit préalable, lecture
+seule). Décisions actées : taille max **2 Mo**, formats JPEG/PNG/WebP
+(`r2.ValidateImageType`, inchangé), pas de fallback serveur si
+`image_url` est `NULL`, portée d'affichage **Kiosk uniquement** (mais la
+struct partagée `models.ConfigurableOption` porte quand même le champ,
+pour ne pas créer de dette si ScanNOrder/POS l'exploitent plus tard).
+
+### Migration
+
+`migrations/todo/046_configurable_attribute_options_image_url.{up,down}.sql` —
+`ALTER TABLE configurable_attribute_options ADD COLUMN image_url
+VARCHAR(500) NULL DEFAULT NULL AFTER extra_price`. Numéro suivant le
+dernier réellement utilisé (045, déjà présent non commité dans
+`migrations/todo/` au moment de cet incrément). Comme `upsell_suggestions`
+documenté ailleurs, c'est la première migration à référencer cette table
+legacy (jamais créée par migration).
+
+### Écart corrigé par rapport au plan initial : la vraie source de
+`models.ConfigurableOption` côté Kiosk
+
+Le plan initial listait uniquement les 4 requêtes CRUD back-office
+(`GetAttributes`, `GetAttribute`, `CreateAttribute`, `UpdateAttribute` —
+struct `menu.AttributeOption`, page `Attributes.tsx`). **Ce n'est pas ce
+qui alimente le Kiosk.** `models.ConfigurableOption` (la struct partagée,
+celle qui porte le nouveau champ `ImageURL`) est en réalité construite par
+trois requêtes séparées dans `internal/modules/menu/repository.go` :
+`GetMenu`, `GetAllProducts`, `GetProduct` — c'est leur résultat
+(`ProductEntry.Configuration`) qui devient `KioskModifierOption` côté
+`kiosk.Service.toKioskProduct` (`internal/modules/kiosk/service.go`).
+Sans étendre ces trois requêtes, `image_url` serait toujours vide dans
+`GET /kiosk/menu`/`GET /kiosk/products/{id}` malgré une implémentation
+"complète" sur le papier. **Étendues dans cet incrément**, en plus des 4
+requêtes CRUD listées initialement.
+
+`internal/modules/kiosk/repository.go:615`
+(`GetConfigurationOptionAttributeIDs`) n'a, à l'inverse, **pas** été
+étendue malgré la demande initiale : cette requête ne retourne qu'une
+`map[string]string` (id → attribute_id) pour la validation de panier
+côté commande, jamais consommée pour l'affichage — y ajouter `image_url`
+aurait été du code mort sans aucun consommateur.
+
+### Risque de perte silencieuse corrigé : `UpdateAttribute` (PATCH back-office)
+
+`UpdateAttribute` désactive puis recrée/met à jour toutes les options à
+chaque sauvegarde de l'attribut (comportement existant, documenté dans
+l'audit). Le formulaire back-office actuel (`Attributes.tsx`) ne connaît
+pas encore `image_url` et ne l'envoie donc jamais dans son payload — un
+`UPDATE ... SET image_url = ?` inconditionnel aurait effacé à chaque
+sauvegarde l'image uploadée séparément via le nouvel endpoint dédié.
+Corrigé avec `image_url = COALESCE(?, image_url)` : seule une valeur
+explicitement fournie écrase l'existant, sinon l'image déjà uploadée est
+préservée.
+
+### Endpoint d'upload
+
+`PUT /menu/attribute_options/{option_id}/image`, calqué à l'identique sur
+`UploadProductImage` (form field `photo`, JOIN sur
+`configurable_attributes` pour le scoping merchant — les options n'ont pas
+de `merchant_id` direct). Plafond dédié `maxAttributeOptionImageBytes = 2
+<< 20` (2 Mo, distinct des 5 Mo produit). Clé R2 :
+`r2.GenerateConfigOptionKey(merchantID, optionID, ext)` →
+`wello_resto_images_storage/merchants/{merchant_id}/config_options/{option_id}{ext}`.
+Pas de middleware de permission dédié sur le groupe `/menu` (seul
+`authMiddleware`) — cohérent avec toutes les autres routes du groupe.
+
+### Tests manuels
+
+Non exécutés dans cet incrément (pas de `MYSQL_URL`/`REDIS_URL` dans ce
+sandbox) — seuls `go build ./...` et `go vet ./...` ont été vérifiés
+(propres sur les fichiers touchés ; mêmes avertissements préexistants et
+sans rapport ailleurs). Avant exécution réelle : appliquer
+`migrations/todo/046_configurable_attribute_options_image_url.up.sql`.
+
+```bash
+BASE_URL="http://localhost:8080"
+USER_TOKEN="<token back-office>"
+OPTION_ID="<id d'une option existante via GET /menu/attributes>"
+
+curl -s -X PUT "$BASE_URL/menu/attribute_options/$OPTION_ID/image" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -F "photo=@./option.png;type=image/png"
+# -> { "data": { "image_url": "https://.../wello_resto_images_storage/merchants/.../config_options/....png" } }
+
+# Vérifier la propagation : GET /menu/attributes (image_url sur l'option),
+# GET /kiosk/menu et GET /kiosk/products/{id} (image_url sur le modifier
+# correspondant, via un access_token kiosk valide)
+```
+
+---
+
+## Incrément — paiement carte borne (Stripe Terminal)
+
+Implémentation des endpoints Stripe Terminal côté API pour le canal Kiosk :
+lecteur de carte physique intégré à la borne (décision actée G.3 — Stripe
+Terminal retenu). Le document `docs/STRIPE_TERMINAL_AUDIT.md` mentionné dans le
+brief **n'existe pas dans le repo** — la règle de découplage appliquée est
+celle restituée dans le brief lui-même : la logique Terminal vit dans un
+service Go interne paramétré par `merchantID`, jamais couplé à `KioskAuth` ;
+les handlers `/kiosk/terminal/*` restent des adaptateurs minces qui extraient
+`merchantID` du contexte `KioskAuth` puis appellent ce service (objectif :
+pouvoir ajouter `/pos/terminal/*` plus tard sans dupliquer la logique).
+
+### 1. Nouveau statut de commande : `pending_card_payment`
+
+**Décision : nouvelle valeur `merchant_approval = "PENDING_CARD_PAYMENT"`**
+(`models.MerchantApprovalPendingCardPayment`, `internal/models/orders_model.go`),
+et non une réutilisation de `PENDING_APPROVAL`. Justification :
+
+- `pending_counter_payment` est le nom Kiosk de `PENDING_APPROVAL` (incrément 2).
+  Pour que `pending_card_payment` soit **réellement distinct** (le brief l'exige :
+  `POST /kiosk/terminal/payment-intent` et `switch-to-counter-payment` doivent
+  vérifier « la commande est en `pending_card_payment` »), il faut une valeur
+  stockée distincte — sinon les deux états seraient indiscernables en base.
+- Une commande carte **ne doit pas partir en cuisine** avant confirmation du
+  paiement. `PENDING_CARD_PAYMENT` ≠ `ACCEPTED` la tient hors du flux KDS (qui
+  ne traite que les commandes `ACCEPTED`) jusqu'au webhook Stripe.
+
+**Blast radius vérifié** (le brief demandait que ce statut ne casse aucun
+filtre/affichage) :
+- `internal/modules/orders/orders_fetcher_builder.go` scanne `merchant_approval`
+  en `string` sans `switch`/enum — une nouvelle valeur passe sans erreur.
+- `internal/tasks/orders.go` (`DenyOrders`, cron par ailleurs désactivé) filtre
+  `merchant_approval = 'PENDING_APPROVAL'` : une commande carte n'y est **pas**
+  capturée — voulu (elle a son propre cycle : retry, cancel PI, ou bascule
+  caisse).
+- Aucun autre `WHERE merchant_approval = ...` ne cible cette valeur.
+- `mapMerchantApprovalToKioskStatus` mappe `PENDING_CARD_PAYMENT` →
+  `"pending_card_payment"` (visible sur `GET /kiosk/orders/{id}`).
+
+**Détermination du statut initial** — `Service.CreateOrder` prend désormais un
+paramètre `paymentMethod`, lu depuis le champ **racine** `payment_method` du body
+de création (via un wrapper de handler qui étend `models.RequestObject`, sans
+polluer la struct partagée) :
+- `"card"` → gate `card_payment_enabled`, `MerchantApproval = PENDING_CARD_PAYMENT`.
+- `"pay_at_counter"` **ou vide** (rétrocompatible avec le client existant) →
+  comportement inchangé : gate `pay_at_counter_enabled`, `MerchantApproval = "ACCEPTED"`.
+- toute autre valeur → `400 kiosk_payment_method_invalid`.
+
+Dans les deux cas : `OnlinePayment=false`, `Payments=[]` — le Terminal est
+encaissé hors bande (pas de Checkout web).
+
+### 2. Service Stripe Terminal — `internal/infrastructure/stripe/terminal.go`
+
+`TerminalService` (package `stripeclient`), construit dans `routes.go` à partir
+du `StripeManager` existant, d'un `TerminalAccountStore` (SQL) et de Redis :
+
+- **`CreateConnectionToken(ctx, merchantID)`** → `TerminalConnectionTokens.New`
+  scopé au compte connecté (`SetStripeAccount`). Retourne le `secret`.
+- **`CreateTerminalPaymentIntent(ctx, merchantID, orderID, amountCents)`** →
+  PaymentIntent `card_present`, `CaptureMethod=automatic`, `Currency=eur`, sur le
+  **compte connecté** (`SetStripeAccount`) avec `ApplicationFeeAmount` — **même
+  modèle de charge directe + commission que `CreateCheckoutSession`** (checkout.go :
+  `floor(ttc*variable_fees + fixed_fees + 0.5)`), plutôt que le modèle destination
+  charge (`OnBehalfOf`/`TransferData`) : cohérence avec l'existant. Stocke deux
+  mappings Redis (TTL 1h) : direct `terminal_pi:{piID}` →
+  `{order_id, merchant_id}` (lu par le webhook) et inverse
+  `terminal_order_pi:{merchant}:{order}` → `piID` (pour retrouver le PI actif au
+  basculement caisse). Le brief ne demandait que `order_id` dans le mapping ;
+  `merchant_id` est ajouté car le webhook en a besoin pour `SetOrderAccepted` +
+  notification, et le mapping inverse pour le basculement caisse.
+- **`CancelTerminalPaymentIntent(ctx, merchantID, paymentIntentID)`** → annule le
+  PI sur le compte connecté et supprime les mappings. `merchantID` ajouté à la
+  signature du brief : nécessaire pour résoudre le compte connecté (l'annulation
+  exige `SetStripeAccount`) et pour refuser qu'une borne annule le PI d'un autre
+  merchant.
+- **`CancelActivePaymentIntentForOrder(ctx, merchantID, orderID)`** (helper,
+  hors liste du brief) → retrouve le PI actif via le mapping inverse et l'annule ;
+  no-op si aucun. Utilisé par le basculement caisse.
+
+Clés Redis + struct `TerminalPaymentMapping` **exportées** et réutilisées par le
+webhook (jamais dupliquées).
+
+### 3. Handlers et routes Kiosk (groupe `/kiosk`, `KioskAuth`)
+
+- `POST /kiosk/terminal/connection-token` → `{ "secret": "..." }` (gate
+  `card_payment_enabled`).
+- `POST /kiosk/terminal/payment-intent` — body `{order_id, amount_cents}` :
+  vérifie que la commande appartient au merchant **et** est en
+  `PENDING_CARD_PAYMENT` ; le montant est re-lu depuis `orders.TTC` (jamais
+  depuis le client), `amount_cents` n'est accepté que s'il **correspond**
+  (`400 kiosk_amount_mismatch` sinon). Retourne `{client_secret, payment_intent_id}`.
+- `POST /kiosk/terminal/payment-intent/{payment_intent_id}/cancel` → annule le PI
+  (abandon/timeout). La commande **reste** en `PENDING_CARD_PAYMENT` (retry ou
+  bascule caisse possibles).
+- `POST /kiosk/orders/{order_id}/switch-to-counter-payment` → vérifie
+  `PENDING_CARD_PAYMENT`, annule le PI actif (best-effort), repasse la commande en
+  `PENDING_APPROVAL` (+ invalidation du cache Redis order), puis réutilise
+  `ConfirmCounterPayment` tel quel (transition `ACCEPTED` + code de retrait + QR +
+  notification). Réponse = `CounterPaymentResponse`.
+
+Le service kiosk dépend d'une interface locale `TerminalGateway` (pas du type
+concret) — découplage/testabilité.
+
+### 4. Webhook — events Terminal (`internal/webhook/stripe/service.go`)
+
+Le switch `event.Type` est étendu sans casser le flux Checkout en ligne :
+
+- **`payment_intent.succeeded`** → `HandlePaymentIntentSucceeded`. Discriminant
+  card_present : **présence du mapping Redis `terminal_pi:{id}`** (plus fiable que
+  parser `payment_method_details.type`, non expansé sur l'objet PaymentIntent
+  reçu — il faudrait un appel API en plus — et le mapping donne directement la
+  commande). Si mapping trouvé → `SetOrderAccepted(ctx, "KIOSK", merchantID,
+  orderID)` (`PENDING_CARD_PAYMENT` → `ACCEPTED`, **même mécanisme que
+  ConfirmCounterPayment** ; déclenche KDS/impression + broadcast `order_updated`
+  en interne) puis suppression des mappings. Sinon → comportement existant
+  inchangé (`UpdatePaymentIntentStatus(..., "CAPTURED")`). La suppression du
+  mapping rend la confirmation idempotente (redélivrance Stripe → mapping absent →
+  no-op).
+- **`payment_intent.payment_failed`** (nouveau case) → si mapping trouvé, la
+  commande **reste** en `PENDING_CARD_PAYMENT` (aucune annulation serveur, le
+  client réessaie ou bascule caisse), on diffuse seulement `order_updated`. Sinon
+  ignoré (aucun case n'existait avant).
+
+**Hors périmètre (assumé)** : aucun enregistrement `payments` n'est inséré pour la
+charge Terminal (le brief liste explicitement les actions webhook et n'inclut pas
+l'insertion d'un paiement) — à ajouter si le reporting `payments.mop` doit couvrir
+les encaissements carte borne.
+
+### Variables d'environnement
+
+Aucune nouvelle : le Terminal réutilise `STRIPE_API_KEY` (déjà dans
+`StripeManager`), la base et Redis existants. Prérequis : le merchant doit avoir
+un compte Stripe connecté (`stripe_accounts`) et `kiosk_settings.card_payment_enabled = TRUE`.
+
+### Tests manuels
+
+Non exécutés dans ce sandbox (pas de `MYSQL_URL`/`REDIS_URL`/clé Stripe test) —
+seuls `go build ./...`, `go vet` (paquets touchés) et
+`go test ./internal/modules/kiosk/...` ont été vérifiés (clean ; les 2 warnings
+`go vet` restants — `cmd/api` copie de lock `NewAuthHandler`, `tasks.go`
+unreachable — sont préexistants et sans rapport). Le webhook doit être configuré
+pour envoyer `payment_intent.succeeded` **et** `payment_intent.payment_failed`.
+
+```bash
+BASE_URL="http://localhost:8080"
+ACCESS_TOKEN="<access_token via /kiosk/auth/enroll ou /kiosk/auth/token/refresh>"
+AUTH="Authorization: Bearer $ACCESS_TOKEN"
+PRODUCT_ID="<product_id is_available_on_kiosk=TRUE>"
+# Prérequis : kiosk_settings.card_payment_enabled = TRUE, stripe_accounts renseigné.
+
+# 0. Connection token (appairage du lecteur)
+curl -s -X POST "$BASE_URL/kiosk/terminal/connection-token" -H "$AUTH"
+# -> { "data": { "secret": "pst_test_..." } }
+
+# 1. Créer une commande carte -> statut pending_card_payment
+curl -s -X POST "$BASE_URL/kiosk/orders" -H "$AUTH" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: card-$(date +%s)" \
+  -d "{\"payment_method\":\"card\",\"order\":{\"fulfillment_type\":\"DINE_IN\",\"products\":[{\"product_id\":\"$PRODUCT_ID\",\"quantity\":1}]}}" \
+  | tee card_order.json
+ORDER_ID=$(jq -r .data.order_id card_order.json)
+
+curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+# -> { "data": { "status": "pending_card_payment", ... } }
+
+# 2. PaymentIntent Terminal (amount_cents DOIT = orders.TTC)
+TTC=$(curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH" | jq -r .data.total_cents)
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"order_id\":\"$ORDER_ID\",\"amount_cents\":$TTC}" | tee pi.json
+# -> { "data": { "client_secret": "pi_..._secret_...", "payment_intent_id": "pi_..." } }
+PI_ID=$(jq -r .data.payment_intent_id pi.json)
+
+# 2bis. Montant incohérent -> 400 kiosk_amount_mismatch
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"order_id\":\"$ORDER_ID\",\"amount_cents\":1}"
+# -> 400 kiosk_amount_mismatch
+
+# --- CAS SUCCÈS ---
+# Après paiement réussi sur le lecteur, Stripe envoie payment_intent.succeeded
+# (card_present). Le webhook confirme la commande :
+curl -s "$BASE_URL/kiosk/orders/$ORDER_ID" -H "$AUTH"
+# -> { "data": { "status": "accepted", ... } }  (partie en cuisine)
+
+# --- CAS ÉCHEC ---
+# Stripe envoie payment_intent.payment_failed -> la commande reste
+# pending_card_payment, un order_updated est diffusé. Le client peut relancer
+# un PaymentIntent (retry) ou basculer vers la caisse (ci-dessous).
+
+# 3. Annulation d'un PaymentIntent (abandon/timeout) — commande inchangée
+curl -s -X POST "$BASE_URL/kiosk/terminal/payment-intent/$PI_ID/cancel" -H "$AUTH"
+# -> { "data": { "status": "cancelled" } } ; GET /kiosk/orders/$ORDER_ID reste pending_card_payment
+
+# --- CAS BASCULE CAISSE ---
+# 4. Basculer carte -> caisse (après échec/abandon) sans recréer de commande
+curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/switch-to-counter-payment" -H "$AUTH"
+# -> { "data": { "order_id": "...", "pickup_code": "...", "qr_payload": "...", "status": "accepted" } }
+#    (PI actif annulé, commande passée en caisse puis encaissée via le flux ConfirmCounterPayment)
+
+# 4bis. Rejouer sur une commande qui n'est plus pending_card_payment -> 409
+curl -s -X POST "$BASE_URL/kiosk/orders/$ORDER_ID/switch-to-counter-payment" -H "$AUTH"
+# -> 409 kiosk_order_not_card_pending
+```
+
+---
+
+## Incrément Terminal 2 — enregistrement `payments`, `net_amount`, `terminal_location_id`
+
+Complète l'increment Terminal précédent (qui acceptait la commande via
+`SetOrderAccepted` mais **n'insérait aucune ligne `payments`** — trou signalé
+« Hors périmètre (assumé) » ci-dessus, désormais comblé).
+
+### Audit 0.A — capture des frais Stripe existante [CONSTAT]
+
+- **Event déclencheur** : `charge.captured`. Le switch `ProcessEvent`
+  (`internal/webhook/stripe/service.go`) route ce type vers
+  `HandleRetrieveFees` (commentaire du code : « En PHP c'était retrieveFees »).
+- **Lecture des frais** : `HandleRetrieveFees` récupère le `balance_transaction`
+  **sur le compte connecté** (`params.SetStripeAccount(event.Account)` puis
+  `balancetransaction.Get`), somme `FeeDetails` par type (`application_fee` →
+  `wrFees`, `stripe_fee` → `stripeFees`), et lit le total `bt.Fee`.
+- **Écriture du champ `fee`** : `repo.UpdateFees(ctx, piID, wrFees, stripeFees,
+  bt.Fee)` fait **deux UPDATE** : `stripe_payments` (`wello_resto_total_fees`,
+  `stripe_total_fees`) puis `payments.fee = bt.Fee` via la jointure
+  `payments p INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
+  WHERE sp.payment_intent_id = ?`. C'est **le seul endroit** où `payments.fee`
+  est renseigné.
+- **Synchrone ou asynchrone** : **asynchrone** — `payments.fee` est mis à jour à
+  la réception ultérieure du webhook `charge.captured`, pas à la création du
+  paiement (où `fee` vaut sa valeur par défaut). La jointure passe par
+  `stripe_payments.payment_intent_id` : tout paiement dont
+  `AddPaymentAndReturnID` a inséré la ligne `stripe_payments` (cas `MOP=STRIPE`)
+  est éligible à cette mise à jour — y compris désormais les encaissements
+  Terminal.
+
+**Conséquence pour `net_amount`** : le point 4 du brief (« mettre à jour
+`net_amount` quand les frais réels arrivent ») est branché exactement ici —
+`UpdateFees` écrit désormais `payments.fee = bt.Fee` **et**
+`payments.net_amount = payments.amount - bt.Fee` dans le même UPDATE. Le
+mécanisme existe donc bien pour les paiements en ligne (pas de limitation à
+documenter) et couvre Terminal par la même jointure.
+
+**Réserve** : la mise à jour de `net_amount` dépend entièrement de l'émission de
+`charge.captured` par Stripe. Pour un `card_present` en capture automatique, si
+Stripe n'émettait pas cet event, `net_amount` resterait à sa valeur provisoire
+(`= amount`, `fee = 0`) — même comportement que le Checkout en ligne, qui repose
+sur la même hypothèse. Aucune régression : c'est le mécanisme existant, réutilisé
+tel quel.
+
+### Audit 0.B — création de paiements (point d'insertion unique) [CONSTAT]
+
+- **Fonction unique** : `OrdersLifeCycleRepository.AddPaymentAndReturnID`
+  (`internal/modules/order_life_cycle/repository.go`). C'est le seul INSERT INTO
+  `payments` réellement utilisé : il porte le chaînage fiscal NF525
+  (`previous_hash`/`hash`/`signature`), le garde de montant
+  (`OrderNotFullyPaidError`), les effets de bord (`restaurant_ticket` pour
+  `MOP=TR`, `stripe_payments` pour `MOP=STRIPE`) et le recalcul de `orders.isPaid`.
+- **Wrappers** : `AddPayment` (ignore l'ID) ; côté service
+  `CreatePayment` / `CreatePaymentNoNotification` /
+  `CreatePaymentAndReturnID` (enveloppent dans `ExecuteOrderMutation` : tx +
+  audit). Le Checkout en ligne utilise `CreatePaymentNoNotification`.
+- **Second INSERT ignoré** : `internal/webhook/stripe/repository.go` porte un
+  `InsertPayment` (INSERT simplifié, sans hash), mais il est **explicitement
+  marqué `// Decom`** (décommissionné) et n'est appelé nulle part dans le flux
+  actif — le Checkout est passé à `orderlifecycle.CreatePaymentNoNotification`.
+  Il n'a **pas** été étendu : le paiement Terminal passe par la même fonction
+  canonique que le reste du projet.
+- **Paramètres acceptés** : `models.Payment{ OrderID, MerchantID, MOP, Amount,
+  CashRegisterID, UserID, OperationType, Comment, StatusCheck, Code,
+  PaymentIntentID, CheckoutSessionID, CustomerEmail }`.
+
+### Ce qui a été implémenté
+
+1. **Migrations** (`053`, `054`, dans `migrations/` — non appliquées) :
+   `payments.net_amount INT NOT NULL DEFAULT 0 AFTER fee` et
+   `stripe_accounts.terminal_location_id VARCHAR(255) NULL`. Aucun renommage de
+   colonne existante.
+2. **`net_amount` initialisé à la création** : `AddPaymentAndReturnID` insère
+   `net_amount = amount` **pour tous les paiements**, en injectant `payment.Amount`
+   dans la colonne `net_amount` de l'INSERT — **aucun appelant modifié** (pas de
+   nouveau champ obligatoire à renseigner partout, `net_amount` ne peut donc pas
+   rester à 0 par omission d'un appelant).
+3. **`net_amount` mis à jour aux frais réels** : `UpdateFees` (webhook) — voir
+   audit 0.A ci-dessus.
+4. **`cash_register_id` vide → NULL** : `AddPaymentAndReturnID` convertit une
+   `CashRegisterID` vide en `NULL` (`sql.NullString`), pour qu'un paiement borne
+   (sans caisse) respecte le point 5 du brief. Les appelants existants passent
+   toujours une valeur non vide → comportement inchangé.
+5. **Enregistrement du paiement Terminal** : dans
+   `handleTerminalPaymentSucceeded` (webhook `payment_intent.succeeded`,
+   card_present), après `SetOrderAccepted`, appel de
+   `recordTerminalPayment` → `CreatePaymentNoNotification` avec `amount =
+   pi.Amount`, `mop = models.StripeMOP` (**même valeur que le Checkout carte en
+   ligne**, cohérence multi-canal), `fee = 0` (défaut) / `net_amount = amount`
+   (via l'INSERT), `user_id = "KIOSK"`, `cash_register_id = NULL`, `order_id` /
+   `merchant_id` depuis le mapping Redis. **Best-effort** : la commande est déjà
+   acceptée ; un échec d'insertion est loggé sans faire échouer le webhook (éviter
+   un rejeu Stripe qui re-déclencherait l'accept et se heurterait au garde de
+   montant à la ré-insertion). L'insertion de `stripe_payments` (faite en interne
+   pour `MOP=STRIPE`) relie `payment_intent_id`, ce qui rend le paiement Terminal
+   éligible à la mise à jour `fee`/`net_amount` par `charge.captured`.
+6. **`terminal_location_id` dans `GET /kiosk/settings`** : nouveau champ
+   `terminal_location_id` (nullable) dans `KioskSettingsResponse`, alimenté par
+   `Repository.GetTerminalLocationID` (lecture `stripe_accounts` par
+   `merchant_id`). `null` si pas de ligne `stripe_accounts` ou colonne NULL —
+   jamais d'erreur. Exposé aussi dans le `GET /pos/settings/kiosk` back-office
+   (même méthode `GetSettings`), sans effet indésirable.
+7. **Annulation `pending_card_payment`** : `CancelKioskOrder` accepte désormais
+   `PENDING_APPROVAL` **et** `PENDING_CARD_PAYMENT`. Pour une commande carte, le
+   PaymentIntent actif est annulé (`CancelActivePaymentIntentForOrder`,
+   best-effort avec warning — cohérent avec `SwitchToCounterPayment`) **avant**
+   `DeleteOrder`, pour éviter un PaymentIntent orphelin capturé plus tard.
+
+### Vérifications
+
+`go build ./...` et `go vet` (paquets touchés : webhook/stripe, kiosk,
+order_life_cycle, infrastructure/stripe) clean.
+`go test ./internal/modules/kiosk/... ./internal/modules/order_life_cycle/...`
+passent. Tests manuels DB/Stripe non exécutés (pas de `MYSQL_URL`/clé Stripe test
+dans ce sandbox) — appliquer les migrations `053`/`054`, renseigner
+`stripe_accounts.terminal_location_id` manuellement pour le merchant de test,
+puis rejouer le scénario Terminal ci-dessus en vérifiant en base : une ligne
+`payments` (`mop='STRIPE'`, `net_amount=amount`, `fee=0`, `cash_register_id`
+NULL) après `payment_intent.succeeded`, puis `fee`/`net_amount` mis à jour après
+`charge.captured`.
+
+---
+
+## Incrément Terminal 3 — frais d'application configurables par merchant (kiosk_settings)
+
+### Étape 0 — Audit obligatoire [CONSTAT]
+
+**1. Formule exacte (scannorder / Checkout web)** — `stripeclient.CreateCheckoutSession`
+(`internal/infrastructure/stripe/checkout.go:18-30`, le chemin réellement actif ;
+`CreateCheckoutSessionOld` est une variante legacy non appelée, avec le même calcul) :
+
+```go
+variableFees := *merchant.VariableFees
+fixedFees := *merchant.FixedFees
+ttc := order.TTC
+fees := int64(math.Floor(float64(ttc)*variableFees + float64(fixedFees) + 0.5))
+```
+
+Soit `application_fee_amount = floor(TTC_centimes * variable_fees + fixed_fees + 0.5)`
+(round-half-up manuel, `ttc` déjà en centimes).
+
+**2. Lecture de `scannorder_settings`** — `scannorder.Repository.GetMerchantByQR`
+(`internal/modules/scannorder/repository.go:33`) sélectionne
+`snos.variable_fees, snos.fixed_fees` dans la même requête qui résout le merchant
+depuis le QR code (`INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id`),
+au moment de `GetMerchant`/`computeGetMerchant` (mis en cache Redis, voir
+`ARCHITECTURE_API.md` §2.4). Le `models.MerchantRow` résultant porte
+`VariableFees *float64` / `FixedFees *int`, propagés jusqu'à
+`CheckoutSessionRequestObject.Merchant` au moment de créer la Checkout Session
+(paiement TAKE_AWAY/DELIVERY).
+
+**3. Valeur d'`ApplicationFeeAmount` dans `CreateTerminalPaymentIntent` AVANT cette
+tâche** — **déjà calculée et transmise** (ni `0`, ni absente) : implémentée à
+l'incrément "paiement carte borne (Stripe Terminal)" (ligne 2158 de ce document),
+avec exactement la même formule que le Checkout web
+(`internal/infrastructure/stripe/terminal.go`, ancien
+`fees := int64(math.Floor(float64(amountCents)*variableFees + float64(fixedFees) + 0.5))`).
+**Mais la source des frais était `scannorder_settings`**, pas une configuration
+Kiosk dédiée : l'ancien `terminalAccountStore.GetTerminalAccount` faisait
+`SELECT sa.account_id, snos.variable_fees, snos.fixed_fees FROM stripe_accounts sa
+INNER JOIN scannorder_settings snos ON snos.merchant_id = sa.merchant_id`. Deux
+conséquences concrètes de ce couplage, corrigées par cette tâche :
+- un merchant Kiosk actif sans ligne `scannorder_settings` (ScanNOrder jamais
+  activé) aurait fait échouer tout paiement Terminal (`INNER JOIN` vide →
+  `ErrNoStripeAccount`, alors que le compte Stripe existe bel et bien) ;
+- un merchant avec les deux canaux actifs ne pouvait pas avoir une commission
+  Kiosk différente de sa commission ScanNOrder — pas de configuration par canal.
+
+### Ce qui a été implémenté
+
+1. **Migration `061_kiosk_settings_fees`** (`migrations/`, non appliquée) :
+   `kiosk_settings.variable_fees DECIMAL(10,4) NOT NULL DEFAULT 0.0070` et
+   `kiosk_settings.fixed_fees INT NOT NULL DEFAULT 15`, placées après
+   `pay_at_counter_enabled`. Défauts alignés sur ceux de `scannorder_settings`
+   pour que les merchants existants gardent la même commission effective au
+   déploiement — aucun backfill nécessaire.
+   - **Écart de convention constaté et documenté** : le brief demandait
+     `migrations/todo/`. Ce dossier n'existe plus dans le repo (vérifié : seuls
+     `migrations/` racine et `migrations/done/` existent aujourd'hui ; les
+     migrations les plus récentes non appliquées, ex. `050`/`051`, vivent
+     directement à la racine). La migration `061` suit donc l'état réel actuel
+     du repo plutôt que la doc/le brief : posée à la racine de `migrations/`,
+     à déplacer vers `migrations/done/` une fois appliquée en base.
+2. **`kiosk.Repository.GetKioskFees(ctx, merchantID) (variableFees float64,
+   fixedFees int64, err error)`** (`internal/modules/kiosk/repository.go`) :
+   `SELECT variable_fees, fixed_fees FROM kiosk_settings WHERE merchant_id = ?`,
+   retombe sur les valeurs par défaut du module (`0.0070`, `15`) si aucune ligne
+   n'existe — jamais `sql.ErrNoRows` remonté à l'appelant, même garantie que
+   `GetKioskSettings`.
+3. **Non-exposition côté API** : `GetKioskFees` est une requête dédiée, distincte
+   de `GetSettingsByMerchant`/`KioskSettingsRow` (qui listent leurs colonnes
+   explicitement, pas de `SELECT *`) — `variable_fees`/`fixed_fees` n'entrent
+   donc dans aucune réponse `GET /kiosk/settings` (device) ni
+   `GET /pos/settings/kiosk/settings` (back-office). Vérifié : ces deux routes
+   passent par `Service.GetSettings`/`KioskSettingsResponse`, jamais par
+   `GetKioskFees`.
+4. **Calcul déplacé côté appelant, pas dans l'infra Stripe** :
+   `kiosk.Service.CreateTerminalPaymentIntent` appelle désormais
+   `s.repo.GetKioskFees(ctx, kiosk.MerchantID)` puis transmet
+   `variableFees, fixedFees` à `s.terminal.CreateTerminalPaymentIntent(...)`.
+   `TerminalGateway.CreateTerminalPaymentIntent` (interface, `models.go`) et
+   `stripeclient.TerminalService.CreateTerminalPaymentIntent` (implémentation,
+   `terminal.go`) prennent désormais ces deux valeurs en paramètres explicites
+   plutôt que de les résoudre eux-mêmes — la formule (`floor(amount*variable +
+   fixed + 0.5)`, identique à `CreateCheckoutSession`) reste dans
+   `stripeclient`, seule la **source** des frais change.
+5. **`TerminalAccountStore` simplifié** : ne résout plus que l'`account_id`
+   Stripe connecté (`SELECT account_id FROM stripe_accounts WHERE merchant_id = ?`,
+   sans jointure `scannorder_settings`) — `CreateConnectionToken` et
+   `cancelOnStripe` n'avaient d'ailleurs jamais utilisé les frais retournés par
+   l'ancienne signature à 4 valeurs, seul `CreateTerminalPaymentIntent` s'en
+   servait.
+
+### Vérifications
+
+`go build ./...` et `go vet ./...` clean (aucune erreur nouvelle — les warnings
+`go vet` préexistants sur `auth`/`ubereats`/`pos/accounting`/`tasks` sont sans
+rapport avec ce changement, non touchés). `go test ./internal/modules/kiosk/...
+./internal/infrastructure/stripe/...` passent. Tests manuels DB non exécutés
+(pas de `MYSQL_URL` dans ce sandbox) — avant mise en prod : appliquer la
+migration `061`, puis vérifier qu'un `POST /kiosk/terminal/payment-intent` sur un
+merchant **sans** ligne `kiosk_settings` calcule bien la commission avec les
+valeurs par défaut (`0.0070`/`15`), et qu'un `UPDATE kiosk_settings SET
+variable_fees = ..., fixed_fees = ...` change effectivement
+`application_fee_amount` sur le PaymentIntent créé (vérifiable côté dashboard
+Stripe ou en inspectant la réponse de l'API Stripe), sans toucher au comportement
+du Checkout ScanNOrder existant (toujours sur `scannorder_settings`, inchangé).

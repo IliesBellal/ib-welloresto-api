@@ -3,29 +3,50 @@ package reservation
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
-	"welloresto-api/internal/logger"
+	"welloresto-api/internal/helpers"
+	redisclient "welloresto-api/internal/infrastructure/redis"
+	"welloresto-api/internal/modules/bookingcomm"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/bookings"
+	"welloresto-api/internal/modules/notification"
 )
 
 // ReservationService définit le contrat pour la logique métier
 type ReservationService interface {
 	GetOpenHours(ctx context.Context, qr string) OpenHoursResponse
-	GetBookingAvailability(ctx context.Context, qr string, requestedUnix int64, partySize int) AvailabilityResponse
-	CreateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse
-	GetReservation(ctx context.Context, qr string, bookingNumber string) CreateBookingResponse
-	UpdateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse
+	GetBookingAvailability(ctx context.Context, qr string, requestedDate string, partySize int) AvailabilityResponse
+	CreateReservation(ctx context.Context, qr string, idempotencyKey string, req BookingRequest) PublicBookingResponse
+	GetReservation(ctx context.Context, qr string, bookingNumber string) PublicBookingResponse
+	UpdateReservation(ctx context.Context, qr string, req BookingRequest) PublicBookingResponse
 	CancelReservation(ctx context.Context, qr string, bookingNumber string) GenericResponse
+	JoinWaitlist(ctx context.Context, qr string, req WaitlistJoinRequest) WaitlistPublicResponse
+	GetWaitlistStatus(ctx context.Context, qr string, token string) WaitlistPublicResponse
+	LeaveWaitlist(ctx context.Context, qr string, token string) GenericResponse
 }
 
 type reservationService struct {
 	repo       ReservationRepository
 	bookingSvc *bookings.BookingsService
+	redis      *redisclient.Client
+	notifier   *notification.NotificationService
+	comm       *bookingcomm.Service
 }
 
 // NewReservationService instancie le service avec son repository
-func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService) ReservationService {
-	return &reservationService{repo: repo, bookingSvc: bookingSvc}
+func NewReservationService(repo ReservationRepository, bookingSvc *bookings.BookingsService, redis *redisclient.Client, notifier *notification.NotificationService, comm *bookingcomm.Service) ReservationService {
+	return &reservationService{repo: repo, bookingSvc: bookingSvc, redis: redis, notifier: notifier, comm: comm}
+}
+
+// notifyPOS pousse un événement temps réel (WebSocket + FCM) vers le POS du
+// marchand via le canal existant. No-op si le service n'est pas câblé.
+func (s *reservationService) notifyPOS(merchantID, entityID, nType string) {
+	if s.notifier == nil {
+		return
+	}
+	_ = s.notifier.SendNotificationAsync(merchantID, entityID, nType)
 }
 
 func (s *reservationService) GetOpenHours(ctx context.Context, qr string) OpenHoursResponse {
@@ -98,8 +119,7 @@ func formatTime(dbTime string) string {
 	return dbTime
 }
 
-// Signature mise à jour : requestedUnix int64
-func (s *reservationService) GetBookingAvailability(ctx context.Context, qr string, requestedUnix int64, partySize int) AvailabilityResponse {
+func (s *reservationService) GetBookingAvailability(ctx context.Context, qr string, requestedDate string, partySize int) AvailabilityResponse {
 	// 1. Params marchand
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
@@ -109,172 +129,167 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 	if merchant.ReserveMaximumPartySize < partySize {
 		return AvailabilityResponse{Status: "maximum_party_size_reached", Error: "Maximum party size reached"}
 	}
+	if merchant.ReserveMinimumPartySize > 0 && partySize < merchant.ReserveMinimumPartySize {
+		return AvailabilityResponse{Status: "minimum_party_size_not_reached", Error: "Minimum party size not reached"}
+	}
 
-	// 2. Préparation de la date via le timestamp Unix
 	loc, _ := time.LoadLocation(merchant.Timezone)
-	// On convertit le timestamp en heure locale du marchand
-	t := time.Unix(requestedUnix, 0).In(loc)
-
-	// On recrée la string YYYY-MM-DD pour que tes requêtes SQL continuent de fonctionner parfaitement !
-	requestedDateStr := t.Format("2006-01-02")
-
-	dayOfWeek := int(t.Weekday())
-	if dayOfWeek == 0 {
-		dayOfWeek = 7
+	requestedDateStr, err := normalizeRequestedDateInput(requestedDate, loc)
+	if err != nil {
+		return AvailabilityResponse{Status: "error", Error: "Invalid requested date"}
 	}
-	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 
-	// 3. Récupération data (on passe requestedDateStr)
-	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDateStr)
+	computed, err := s.buildComputedAvailability(ctx, merchant, requestedDateStr, partySize, "")
 	if err != nil {
 		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
 	}
 
-	bookings, err := s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDateStr)
-	if err != nil {
-		return AvailabilityResponse{Status: "error_pdo", Error: err.Error()}
-	}
-
-	// 4. Calcul de l'heure actuelle chez le marchand
-	nowMerchant := time.Now().In(loc)
-
-	var allSlots []Slot
-
-	for _, r := range ranges {
-		// Parsing des bornes en utilisant la date string qu'on a formatée
-		startService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourFrom, loc)
-		endService, _ := time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+r.HourTo, loc)
-
-		firstBookable := startService
-		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
-			firstBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.FirstBookingTime, loc)
-		}
-
-		lastBookable := endService
-		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
-			lastBookable, _ = time.ParseInLocation("2006-01-02 15:04:05", requestedDateStr+" "+*r.LastBookingTime, loc)
-		}
-
-		currentSlot := firstBookable
-		interval := time.Duration(merchant.SlotIntervalMinutes) * time.Minute
-		duration := time.Duration(merchant.DefaultBookingDuration) * time.Minute
-
-		for !currentSlot.After(lastBookable) {
-			isAvailable := true
-
-			// Déjà passé ?
-			if currentSlot.Before(nowMerchant) {
-				isAvailable = false
-			}
-
-			if isAvailable {
-				// Vérification capacité
-				maxBooked := 0
-				endBookingWindow := currentSlot.Add(duration)
-
-				tempSlot := currentSlot
-				for tempSlot.Before(endBookingWindow) {
-					slotKey := tempSlot.Format("15:04:05")
-					if booked, ok := bookings[slotKey]; ok {
-						if booked > maxBooked {
-							maxBooked = booked
-						}
-					}
-					tempSlot = tempSlot.Add(interval)
-				}
-
-				if (r.BookingCapacity - maxBooked) < partySize {
-					isAvailable = false
-				}
-			}
-
-			allSlots = append(allSlots, Slot{
-				// FIX: "H:i" c'est pour le PHP. En Go, on utilise "15:04" pour extraire l'heure.
-				Time:      currentSlot.Format("15:04"),
-				Available: isAvailable,
-				HOOID:     r.ID,
-				// Facultatif mais très pratique pour le front :
-				// UnixTime: currentSlot.Unix(),
-			})
-
-			currentSlot = currentSlot.Add(interval)
-		}
+	allSlots := make([]Slot, 0, len(computed))
+	for _, slot := range computed {
+		timeFrom, _ := time.ParseInLocation("2006-01-02 15:04:05", slot.DateFrom, time.UTC)
+		allSlots = append(allSlots, Slot{
+			Time:            timeFrom.In(loc).Format("15:04"),
+			Available:       slot.Available,
+			DurationMinutes: slot.DurationMinutes,
+			HOOID:           fmt.Sprintf("%d", slot.HourOfOperationID),
+		})
 	}
 
 	return AvailabilityResponse{Slots: allSlots}
 }
 
-func (s *reservationService) CreateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse {
+func (s *reservationService) CreateReservation(ctx context.Context, qr string, idempotencyKey string, req BookingRequest) PublicBookingResponse {
+	if req.Booking == nil || req.Customer == nil {
+		return PublicBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+
+	req.Customer.CustomerFirstName = strings.TrimSpace(req.Customer.CustomerFirstName)
+	req.Customer.CustomerLastName = strings.TrimSpace(req.Customer.CustomerLastName)
+	if req.Customer.CustomerFirstName == "" || req.Customer.CustomerLastName == "" {
+		return PublicBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+	// customer_name reste dérivé côté serveur : consommé par l'upsert client
+	// (recherche/tri back-office) et les messages de confirmation.
+	req.Customer.CustomerName = strings.TrimSpace(req.Customer.CustomerFirstName + " " + req.Customer.CustomerLastName)
+
 	// 1. Vérification Marchand (Utilise la connexion, puis la libère)
-	log := logger.FromContext(ctx)
 
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
-		return CreateBookingResponse{Status: "-1", Error: "QR Code expired"}
+		return PublicBookingResponse{Status: "-1", Error: "QR Code expired"}
 	}
 
+	if req.Booking.PartySize < merchant.ReserveMinimumPartySize {
+		return PublicBookingResponse{Status: "minimum_party_size_not_reached", Error: "Minimum party size not reached"}
+	}
 	if merchant.ReserveMaximumPartySize < req.Booking.PartySize {
-		return CreateBookingResponse{Status: "maximum_party_size_reached", Error: "Maximum party size reached"}
+		return PublicBookingResponse{Status: "maximum_party_size_reached", Error: "Maximum party size reached"}
 	}
 
-	// 2. Préparation des dates et infos métier
-	startTime, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	if replay, ok := s.tryIdempotentReplay(ctx, qr, idempotencyKey, merchant); ok {
+		return replay
+	}
+
+	loc, _ := time.LoadLocation(merchant.Timezone)
+	startTime, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
 	if err != nil {
-		return CreateBookingResponse{Status: "-4", Error: "Invalid start date format"}
+		return PublicBookingResponse{Status: "-4", Error: "Invalid start date format"}
+	}
+	requestedDateStr := bookingcore.NormalizeRequestedDate(startTime)
+
+	computed, err := s.buildComputedAvailability(ctx, merchant, requestedDateStr, req.Booking.PartySize, "")
+	if err != nil {
+		return PublicBookingResponse{Status: "-2", Error: err.Error()}
+	}
+	available, durationMinutes := s.findMatchingSlot(computed, startTime)
+	if !available {
+		return PublicBookingResponse{Status: "slot_unavailable", Error: "Slot unavailable"}
 	}
 
 	req.MerchantID = merchant.MerchantID
 	req.Booking.MerchantID = merchant.MerchantID
-	req.Booking.Status = "PENDING_APPROVAL"
+	req.Booking.Status = bookingcore.StatusPending
+	if merchant.AutoAcceptReserveBookings {
+		req.Booking.Status = bookingcore.StatusConfirmed
+	}
 	req.CreatedBy = "WR_ONLINE_BOOKING"
 
-	// Calcul de la date de fin
-	duration := time.Duration(merchant.DefaultBookingDuration) * time.Minute
-	req.Booking.EndDate = startTime.Add(duration).Format("2006-01-02 15:04:05")
+	req.Booking.DurationMinutes = durationMinutes
+	req.Booking.EndDate = startTime.Add(time.Duration(durationMinutes) * time.Minute).UTC().Format("2006-01-02 15:04:05")
+	req.Booking.StartDate = startTime.UTC().Format("2006-01-02 15:04:05")
 
 	// 3. Nettoyage des données
 	req.Customer.MerchantID = merchant.MerchantID
+	req.Customer.CustomerID = "" // ignore toute valeur fournie par le client public
 	req.Customer.CustomerTel = s.normalizePhone(req.Customer.CustomerTel)
+	warning, err := s.repo.FindExistingActiveBookingWarning(ctx, merchant.MerchantID, req.Customer.CustomerTel, req.Booking.StartDate)
+	if err != nil {
+		return PublicBookingResponse{Status: "-2", Error: err.Error()}
+	}
 
 	// 4. Délégation de la persistance transactionnelle au Repository
 	// La transaction sera gérée de A à Z par cette méthode.
 	bookingID, err := s.repo.CreateBookingTransaction(ctx, &req)
 	if err != nil {
-		return CreateBookingResponse{Status: "-2", Error: "Insert failed: " + err.Error()}
+		s.clearPendingIdempotency(ctx, qr, idempotencyKey)
+		return PublicBookingResponse{Status: "-2", Error: "Insert failed: " + err.Error()}
 	}
 	req.Booking.BookingID = bookingID
-
-	// 5. Auto-acceptation si activée
-	// À ce stade, la transaction de création est terminée et commitée. La connexion est libre !
-	if merchant.AutoAcceptReserveBookings {
-		_, err := s.bookingSvc.AcceptBooking(ctx, "nil", bookingID)
-		if err != nil {
-			log.Error(err.Error())
-			return CreateBookingResponse{Status: "-2", Error: "Auto-accept failed"}
-		}
-		req.Booking.Status = "ACCEPTED"
+	stored, err := s.repo.GetBookingByNumber(ctx, req.Booking.BookingNumber, merchant.MerchantID)
+	if err != nil || stored == nil {
+		s.clearPendingIdempotency(ctx, qr, idempotencyKey)
+		return PublicBookingResponse{Status: "-2", Error: "Unable to load created booking"}
 	}
 
-	return CreateBookingResponse{Status: "1", Booking: req.Booking}
+	response := PublicBookingResponse{Status: "1", Booking: s.toBookingPublic(merchant, stored)}
+	if warning {
+		response.Warning = "possible_duplicate_same_phone_same_slot"
+	}
+	s.saveIdempotencyResult(ctx, qr, idempotencyKey, req.Booking.BookingNumber)
+
+	// Notification temps réel POS : nouvelle demande de réservation publique.
+	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeNewBooking)
+
+	// Confirmation immédiate au client si la réservation est auto-acceptée.
+	if s.comm != nil && merchant.AutoAcceptReserveBookings {
+		s.comm.SendConfirmation(ctx, bookingcomm.BookingMessage{
+			MerchantSlug:  qr,
+			MerchantName:  merchant.BusinessName,
+			CustomerName:  req.Customer.CustomerName,
+			CustomerEmail: req.Customer.CustomerEmail,
+			CustomerPhone: req.Customer.CustomerTel,
+			BookingNumber: req.Booking.BookingNumber,
+			DateLabel:     bookingcore.FormatDateLabelFR(startTime),
+			TimeLabel:     startTime.Format("15:04"),
+			PartySize:     req.Booking.PartySize,
+			SMSEnabled:    merchant.SMSEnabled,
+		})
+	}
+
+	return response
 }
 
 func (s *reservationService) normalizePhone(phone string) string {
-	// Implémente ici ta logique PHP normalizePhoneNumber
-	return phone
+	return helpers.NormalizePhoneNumber(phone, "FR")
+}
+
+func mustAtoi(v string) int {
+	n, _ := strconv.Atoi(v)
+	return n
 }
 
 const MaximumSequenceNumber = 3
 
-func (s *reservationService) GetReservation(ctx context.Context, qr string, bookingNumber string) CreateBookingResponse {
+func (s *reservationService) GetReservation(ctx context.Context, qr string, bookingNumber string) PublicBookingResponse {
 	merchant, _ := s.repo.GetMerchantByQR(ctx, qr)
 	if merchant == nil {
-		return CreateBookingResponse{Status: "-1", Error: "QR Code expired"}
+		return PublicBookingResponse{Status: "-1", Error: "QR Code expired"}
 	}
 
 	// 2. Récupération résa
 	booking, err := s.repo.GetBookingByNumber(ctx, bookingNumber, merchant.MerchantID)
 	if err != nil || booking == nil {
-		return CreateBookingResponse{Status: "0", Error: "Booking not found"}
+		return PublicBookingResponse{Status: "0", Error: "Booking not found"}
 	}
 
 	// 3. Logique de calcul du "Cancelable"
@@ -283,7 +298,8 @@ func (s *reservationService) GetReservation(ctx context.Context, qr string, book
 
 	// On parse la date de début de résa (MySQL format)
 	layout := "2006-01-02 15:04:05"
-	bookingDateFrom, _ := time.ParseInLocation(layout, booking.StartDate, loc)
+	bookingDateFromUTC, _ := time.Parse(layout, booking.StartDate)
+	bookingDateFrom := bookingDateFromUTC.In(loc)
 
 	// Date limite = Date résa - X heures
 	cancelLimit := bookingDateFrom.Add(time.Duration(-merchant.CancelBookingLimitOffsetHours) * time.Hour)
@@ -293,43 +309,84 @@ func (s *reservationService) GetReservation(ctx context.Context, qr string, book
 		(now.Before(cancelLimit) || now.Equal(cancelLimit)) &&
 		(booking.SequenceNumber < MaximumSequenceNumber)
 
-	return CreateBookingResponse{Status: "1", Booking: booking}
+	return PublicBookingResponse{Status: "1", Booking: s.toBookingPublic(merchant, booking)}
 }
 
-func (s *reservationService) UpdateReservation(ctx context.Context, qr string, req BookingRequest) CreateBookingResponse {
+func (s *reservationService) UpdateReservation(ctx context.Context, qr string, req BookingRequest) PublicBookingResponse {
+	if req.Booking == nil {
+		return PublicBookingResponse{Status: "-4", Error: "Invalid booking payload"}
+	}
+
 	// 1. Vérifier si c'est encore modifiable (Pas de transaction globale = pas de deadlock)
 	current := s.GetReservation(ctx, qr, req.Booking.BookingNumber)
 	if current.Booking == nil || !current.Booking.Cancelable {
-		return CreateBookingResponse{Status: "too_late_to_edit"}
+		return PublicBookingResponse{Status: "too_late_to_edit"}
 	}
 
 	// 2. Récupérer les paramètres du marchand
 	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil || merchant == nil {
-		return CreateBookingResponse{Status: "-1", Error: "QR Code expired or merchant not found"}
+		return PublicBookingResponse{Status: "-1", Error: "QR Code expired or merchant not found"}
+	}
+	stored, err := s.repo.GetBookingByNumber(ctx, req.Booking.BookingNumber, merchant.MerchantID)
+	if err != nil || stored == nil {
+		return PublicBookingResponse{Status: "0", Error: "Booking not found"}
 	}
 
 	// 3. Préparation des dates
-	startTime, err := time.Parse("2006-01-02 15:04:05", req.Booking.StartDate)
+	loc, _ := time.LoadLocation(merchant.Timezone)
+	startTime, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
 	if err != nil {
-		return CreateBookingResponse{Status: "-4", Error: "Invalid start date format"}
+		return PublicBookingResponse{Status: "-4", Error: "Invalid start date format"}
+	}
+	requestedDateStr := bookingcore.NormalizeRequestedDate(startTime)
+	computed, err := s.buildComputedAvailability(ctx, merchant, requestedDateStr, req.Booking.PartySize, req.Booking.BookingNumber)
+	if err != nil {
+		return PublicBookingResponse{Status: "-2", Error: err.Error()}
+	}
+	available, durationMinutes := s.findMatchingSlot(computed, startTime)
+	if !available {
+		return PublicBookingResponse{Status: "slot_unavailable", Error: "Slot unavailable"}
 	}
 
-	duration := time.Duration(merchant.DefaultBookingDuration) * time.Minute
-
-	req.Booking.BookingID = current.Booking.BookingID // On récupère l'ID interne
-	req.Booking.EndDate = startTime.Add(duration).Format("2006-01-02 15:04:05")
-	req.Booking.Status = "PENDING_APPROVAL"
+	req.Booking.BookingID = stored.BookingID
+	req.Booking.DurationMinutes = durationMinutes
+	req.Booking.StartDate = startTime.UTC().Format("2006-01-02 15:04:05")
+	req.Booking.EndDate = startTime.Add(time.Duration(durationMinutes) * time.Minute).UTC().Format("2006-01-02 15:04:05")
+	req.Booking.Status = bookingcore.StatusPending
 
 	// 4. Auto-acceptation si activée
 	if merchant.AutoAcceptReserveBookings {
-		req.Booking.Status = "ACCEPTED"
+		req.Booking.Status = bookingcore.StatusConfirmed
 	}
 
 	// 5. Exécution de la mise à jour via le Repository
 	err = s.repo.UpdateBooking(ctx, req.Booking)
 	if err != nil {
-		return CreateBookingResponse{Status: "-2", Error: err.Error()}
+		return PublicBookingResponse{Status: "-2", Error: err.Error()}
+	}
+
+	// Notification temps réel POS : modification d'une réservation par le client.
+	s.notifyPOS(merchant.MerchantID, stored.BookingID, notification.NotificationTypeUpdateBooking)
+
+	// Notification modification au client (coordonnées relues en base — le
+	// corps de la requête publique ne contient pas forcément le customer).
+	if s.comm != nil {
+		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, req.Booking.BookingNumber, merchant.MerchantID)
+		if cerr == nil {
+			s.comm.SendModification(ctx, bookingcomm.BookingMessage{
+				MerchantSlug:  qr,
+				MerchantName:  merchant.BusinessName,
+				CustomerName:  name,
+				CustomerEmail: email,
+				CustomerPhone: phone,
+				BookingNumber: req.Booking.BookingNumber,
+				DateLabel:     bookingcore.FormatDateLabelFR(startTime),
+				TimeLabel:     startTime.Format("15:04"),
+				PartySize:     req.Booking.PartySize,
+				SMSEnabled:    merchant.SMSEnabled,
+			})
+		}
 	}
 
 	// 6. On retourne la réservation à jour
@@ -338,17 +395,266 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 
 func (s *reservationService) CancelReservation(ctx context.Context, qr string, bookingNumber string) GenericResponse {
 	// 1. Vérifier si annulable
+	merchant, err := s.repo.GetMerchantByQR(ctx, qr)
+	if err != nil || merchant == nil {
+		return GenericResponse{Status: "-1", Error: "QR Code expired"}
+	}
+
 	current := s.GetReservation(ctx, qr, bookingNumber)
 	if current.Booking == nil || !current.Booking.Cancelable {
 		return GenericResponse{Status: "too_late_to_edit"}
 	}
 
-	// 2. Annulation via le service Booking existant
-	// C'est ce service qui gérera ses propres accès DB ou transactions s'il en a besoin !
-	_, err := s.bookingSvc.DenyBooking(ctx, "", bookingNumber)
+	err = s.repo.CancelBookingPublic(ctx, merchant.MerchantID, bookingNumber)
 	if err != nil {
 		return GenericResponse{Status: "2", Error: err.Error()}
 	}
 
+	// Notification annulation au client.
+	if s.comm != nil {
+		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, bookingNumber, merchant.MerchantID)
+		if cerr == nil {
+			loc, _ := time.LoadLocation(merchant.Timezone)
+			if loc == nil {
+				loc = time.UTC
+			}
+			dateLabel, timeLabel := "", ""
+			if startTime, perr := time.Parse(time.RFC3339, current.Booking.DateFrom); perr == nil {
+				startTime = startTime.In(loc)
+				dateLabel = bookingcore.FormatDateLabelFR(startTime)
+				timeLabel = startTime.Format("15:04")
+			}
+			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				MerchantSlug:  qr,
+				MerchantName:  merchant.BusinessName,
+				CustomerName:  name,
+				CustomerEmail: email,
+				CustomerPhone: phone,
+				BookingNumber: bookingNumber,
+				DateLabel:     dateLabel,
+				TimeLabel:     timeLabel,
+				PartySize:     current.Booking.PartySize,
+				SMSEnabled:    merchant.SMSEnabled,
+			})
+		}
+	}
+
 	return GenericResponse{Status: "1"}
+}
+
+func normalizeRequestedDateInput(raw string, loc *time.Location) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty requested date")
+	}
+
+	if unix, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return bookingcore.NormalizeRequestedDate(time.Unix(unix, 0).In(loc)), nil
+	}
+
+	t, err := time.ParseInLocation("2006-01-02", trimmed, loc)
+	if err != nil {
+		return "", err
+	}
+
+	return bookingcore.NormalizeRequestedDate(t), nil
+}
+
+func (s *reservationService) buildComputedAvailability(ctx context.Context, merchant *Merchant, requestedDate string, partySize int, excludeBookingNumber string) ([]bookingcore.ComputedSlot, error) {
+	loc, _ := time.LoadLocation(merchant.Timezone)
+	if loc == nil {
+		loc = time.UTC
+	}
+	requestedDateTime, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return nil, err
+	}
+	dayOfWeek := int(requestedDateTime.Weekday())
+	if dayOfWeek == 0 {
+		dayOfWeek = 7
+	}
+
+	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDate)
+	if err != nil {
+		return nil, err
+	}
+
+	var bookings []bookingcore.IntervalBooking
+	if excludeBookingNumber == "" {
+		bookings, err = s.repo.GetBookedCapacity(ctx, merchant.MerchantID, requestedDate)
+	} else {
+		bookings, err = s.repo.GetBookedCapacityExcludingBooking(ctx, merchant.MerchantID, requestedDate, excludeBookingNumber)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	durationRules, err := s.repo.GetBookingDurationRules(ctx, merchant.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	occupation := bookingcore.BuildOccupationByInterval(bookings, merchant.SlotIntervalMinutes, NewBookingSettingsFromMerchant(merchant), durationRules)
+	rawRanges := make([]bookingcore.SlotRange, 0, len(ranges))
+	for _, r := range ranges {
+		hourFromUTC, err := localClockToUTC(requestedDate, r.HourFrom, loc)
+		if err != nil {
+			continue
+		}
+		hourToUTC, err := localClockToUTC(requestedDate, r.HourTo, loc)
+		if err != nil {
+			continue
+		}
+
+		var firstBookingTimeUTC *time.Time
+		if r.FirstBookingTime != nil && *r.FirstBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDate, *r.FirstBookingTime, loc); err == nil {
+				convertedTime := converted
+				firstBookingTimeUTC = &convertedTime
+			}
+		}
+
+		var lastBookingTimeUTC *time.Time
+		if r.LastBookingTime != nil && *r.LastBookingTime != "" {
+			if converted, err := localClockToUTC(requestedDate, *r.LastBookingTime, loc); err == nil {
+				convertedTime := converted
+				lastBookingTimeUTC = &convertedTime
+			}
+		}
+
+		rawRanges = append(rawRanges, bookingcore.SlotRange{
+			ID:                  mustAtoi(r.ID),
+			StartUTC:            hourFromUTC,
+			EndUTC:              hourToUTC,
+			BookingCapacity:     r.BookingCapacity,
+			FirstBookingTimeUTC: firstBookingTimeUTC,
+			LastBookingTimeUTC:  lastBookingTimeUTC,
+		})
+	}
+
+	return bookingcore.ComputeSlots(
+		bookingcore.SlotParams{
+			RequestedDate:   requestedDate,
+			PartySize:       partySize,
+			BookingSettings: NewBookingSettingsFromMerchant(merchant),
+			DurationRules:   durationRules,
+		},
+		rawRanges,
+		occupation,
+		time.Now().UTC(),
+	), nil
+}
+
+func (s *reservationService) findMatchingSlot(slots []bookingcore.ComputedSlot, startTime time.Time) (bool, int) {
+	target := startTime.UTC().Format("2006-01-02 15:04:05")
+	for _, slot := range slots {
+		if slot.DateFrom == target {
+			return slot.Available, slot.DurationMinutes
+		}
+	}
+	return false, 0
+}
+
+func (s *reservationService) toBookingPublic(merchant *Merchant, booking *BookingData) *BookingPublic {
+	loc, _ := time.LoadLocation(merchant.Timezone)
+	startDate := booking.StartDate
+	if parsed, err := time.Parse("2006-01-02 15:04:05", booking.StartDate); err == nil {
+		startDate = parsed.In(loc).Format(time.RFC3339)
+	}
+
+	duration := booking.DurationMinutes
+	if duration == 0 {
+		start, startErr := time.Parse("2006-01-02 15:04:05", booking.StartDate)
+		end, endErr := time.Parse("2006-01-02 15:04:05", booking.EndDate)
+		if startErr == nil && endErr == nil {
+			duration = int(end.Sub(start).Minutes())
+		}
+	}
+
+	remainingUpdates := MaximumSequenceNumber - booking.SequenceNumber
+	if remainingUpdates < 0 {
+		remainingUpdates = 0
+	}
+
+	return &BookingPublic{
+		BookingNumber:    booking.BookingNumber,
+		Status:           booking.Status,
+		PartySize:        booking.PartySize,
+		DateFrom:         startDate,
+		DurationMinutes:  duration,
+		Comment:          booking.Comment,
+		Cancelable:       booking.Cancelable,
+		Modifiable:       booking.Cancelable,
+		RemainingUpdates: remainingUpdates,
+		Merchant: MerchantPublic{
+			BusinessName: merchant.BusinessName,
+			Phone:        merchant.Phone,
+			Address:      merchant.Address,
+			LogoURL:      merchant.LogoURL,
+			Design:       merchant.Design,
+			Timezone:     merchant.Timezone,
+		},
+	}
+}
+
+func (s *reservationService) tryIdempotentReplay(ctx context.Context, slug, idempotencyKey string, merchant *Merchant) (PublicBookingResponse, bool) {
+	if s.redis == nil || strings.TrimSpace(idempotencyKey) == "" {
+		return PublicBookingResponse{}, false
+	}
+
+	key := "idem:" + slug + ":" + strings.TrimSpace(idempotencyKey)
+	if bookingNumber, found := s.redis.Get(ctx, key); found && bookingNumber != "" && bookingNumber != "__pending__" {
+		stored, err := s.repo.GetBookingByNumber(ctx, bookingNumber, merchant.MerchantID)
+		if err == nil && stored != nil {
+			return PublicBookingResponse{Status: "1", Booking: s.toBookingPublic(merchant, stored)}, true
+		}
+	}
+
+	if !s.redis.SetNX(ctx, key, "__pending__", 15*time.Minute) {
+		if bookingNumber, found := s.redis.Get(ctx, key); found && bookingNumber != "" && bookingNumber != "__pending__" {
+			stored, err := s.repo.GetBookingByNumber(ctx, bookingNumber, merchant.MerchantID)
+			if err == nil && stored != nil {
+				return PublicBookingResponse{Status: "1", Booking: s.toBookingPublic(merchant, stored)}, true
+			}
+		}
+	}
+
+	return PublicBookingResponse{}, false
+}
+
+func (s *reservationService) saveIdempotencyResult(ctx context.Context, slug, idempotencyKey, bookingNumber string) {
+	if s.redis == nil || strings.TrimSpace(idempotencyKey) == "" || bookingNumber == "" {
+		return
+	}
+
+	s.redis.Set(ctx, "idem:"+slug+":"+strings.TrimSpace(idempotencyKey), bookingNumber, 15*time.Minute)
+}
+
+func (s *reservationService) clearPendingIdempotency(ctx context.Context, slug, idempotencyKey string) {
+	if s.redis == nil || strings.TrimSpace(idempotencyKey) == "" {
+		return
+	}
+
+	s.redis.Delete(ctx, "idem:"+slug+":"+strings.TrimSpace(idempotencyKey))
+}
+
+func toUTCDayBounds(requestedDate string, loc *time.Location) (string, string, string, error) {
+	dayStartLocal, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	dayStartUTC := dayStartLocal.UTC()
+	dayEndUTC := dayStartUTC.Add(24 * time.Hour)
+
+	return dayStartUTC.Format("2006-01-02"), dayStartUTC.Format("2006-01-02 15:04:05"), dayEndUTC.Format("2006-01-02 15:04:05"), nil
+}
+
+func localClockToUTC(requestedDate, clock string, loc *time.Location) (time.Time, error) {
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", requestedDate+" "+clock, loc)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return t.UTC(), nil
 }

@@ -3,8 +3,10 @@ package reservation
 import (
 	"context"
 	"database/sql"
-	"strconv"
+	"time"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/modules/bookingcore"
+	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -13,23 +15,32 @@ type ReservationRepository interface {
 	GetMerchantByQR(ctx context.Context, qr string) (*Merchant, error)
 	GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error)
 	GetOperationRanges(ctx context.Context, merchantID string, dayOfWeek int, requestedDate string) ([]OperationRange, error)
-	GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) (map[string]int, error)
+	GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error)
+	GetBookedCapacityExcludingBooking(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error)
+	GetBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error)
+	FindExistingActiveBookingWarning(ctx context.Context, merchantID, phone, startDate string) (bool, error)
 	GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error)
 	GetRewards(ctx context.Context, customerID string) ([]Reward, error)
 	CreateBooking(ctx context.Context, b *BookingRequest) (int64, error)
 	GetBookingByNumber(ctx context.Context, bookingNumber string, merchantID string) (*BookingData, error)
 	UpdateBooking(ctx context.Context, b *BookingData) error
 	CancelBookingDB(ctx context.Context, bookingNumber string) error
+	CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error
 	CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error)
+	GetBookingCustomerContact(ctx context.Context, bookingNumber, merchantID string) (name, email, phone string, err error)
 }
 
 type reservationRepository struct {
-	database *sql.DB
+	database        *sql.DB
+	customerUpdater *customers.CustomersRepository
 }
 
 // NewReservationRepository instancie le repository
 func NewReservationRepository(db *sql.DB) ReservationRepository {
-	return &reservationRepository{database: db}
+	return &reservationRepository{
+		database:        db,
+		customerUpdater: customers.NewCustomerRepository(db),
+	}
 }
 
 func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) (*Merchant, error) {
@@ -37,11 +48,15 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 	log := logger.FromContext(ctx)
 
 	query := `
-		SELECT 
-			m.id, m.timezone, m.merchantTel, m.street_number, m.street, m.zip_code, m.city, m.handicap_access, m.logo_url, m.fullName as business_name, 
-			bs.default_booking_duration, bs.slot_interval_minutes, bs.auto_accept_reserve_bookings, bs.reserve_maximum_party_size, bs.last_booking_offset_minutes,
-			bs.cancelable_by_customer, bs.cancel_booking_limit_offset_hours, bs.first_booking_offset_minutes,
-			mp.primary_color, mp.text_color_on_primary_color 
+		SELECT
+			m.id, m.timezone, m.merchantTel, m.street_number, m.street, m.zip_code, m.city, m.handicap_access, m.logo_url, m.fullName as business_name,
+			COALESCE(bs.default_booking_duration, 90), COALESCE(bs.slot_interval_minutes, 15), COALESCE(bs.auto_accept_reserve_bookings, 0),
+			COALESCE(bs.reserve_maximum_party_size, 8), COALESCE(bs.reserve_minimum_party_size, 1),
+			COALESCE(bs.last_booking_offset_minutes, 60), COALESCE(bs.overbooking_percent, 0), COALESCE(bs.max_booking_horizon_days, 90),
+			COALESCE(bs.pending_expiration_hours, 24),
+			COALESCE(bs.cancelable_by_customer, 1), COALESCE(bs.cancel_booking_limit_offset_hours, 48), COALESCE(bs.first_booking_offset_minutes, 0),
+			COALESCE(bs.sms_enabled, 0),
+			mp.primary_color, mp.text_color_on_primary_color
 		FROM bookings_settings bs
 		INNER JOIN merchant m ON bs.merchant_id = m.id
 		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
@@ -49,12 +64,15 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 
 	var m Merchant
 	var handicapAccess, autoAccept, cancelable string
+	var smsEnabled int
 
 	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&m.MerchantID, &m.Timezone, &m.Phone, &m.Address.StreetNumber, &m.Address.Street, &m.Address.ZipCode, &m.Address.City,
 		&handicapAccess, &m.LogoURL, &m.BusinessName,
-		&m.DefaultBookingDuration, &m.SlotIntervalMinutes, &autoAccept, &m.ReserveMaximumPartySize, &m.LastBookingOffsetMinutes,
+		&m.DefaultBookingDuration, &m.SlotIntervalMinutes, &autoAccept, &m.ReserveMaximumPartySize, &m.ReserveMinimumPartySize, &m.LastBookingOffsetMinutes, &m.OverbookingPercent, &m.MaxBookingHorizonDays,
+		&m.PendingExpirationHours,
 		&cancelable, &m.CancelBookingLimitOffsetHours, &m.FirstBookingOffsetMinutes,
+		&smsEnabled,
 		&m.Design.PrimaryColor, &m.Design.TextColorOnPrimaryColor,
 	)
 
@@ -69,8 +87,30 @@ func (r *reservationRepository) GetMerchantByQR(ctx context.Context, qr string) 
 	m.HandicapAccess = handicapAccess == "1"
 	m.AutoAcceptReserveBookings = autoAccept == "1"
 	m.CancelableByCustomer = cancelable == "1"
+	m.SMSEnabled = smsEnabled == 1
 
 	return &m, nil
+}
+
+// GetBookingCustomerContact retourne les coordonnées client (nom, email,
+// téléphone) associées à une réservation, indépendamment de ce que le corps
+// de la requête publique contient — utilisé pour notifier modification et
+// annulation même quand le client n'a pas renvoyé ses coordonnées.
+func (r *reservationRepository) GetBookingCustomerContact(ctx context.Context, bookingNumber, merchantID string) (name, email, phone string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var n, e, p sql.NullString
+	err = db.QueryRowContext(ctx, `
+		SELECT c.customer_name, c.customer_email, c.customer_tel
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.booking_number = ? AND b.merchant_id = ?
+		LIMIT 1
+	`, bookingNumber, merchantID).Scan(&n, &e, &p)
+	if err != nil {
+		return "", "", "", err
+	}
+	return n.String, e.String, p.String, nil
 }
 
 func (r *reservationRepository) GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error) {
@@ -120,11 +160,15 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 		FROM hours_of_operation
 		WHERE merchant_id = ?
 		  AND enabled = 1
-		  AND day_of_week_from = ?
+		  AND (
+				(day_of_week_from <= day_of_week_to AND ? BETWEEN day_of_week_from AND day_of_week_to)
+				OR
+				(day_of_week_from > day_of_week_to AND (? >= day_of_week_from OR ? <= day_of_week_to))
+			  )
 		  AND (valid_from IS NULL OR valid_from <= ?)
 		  AND (valid_to IS NULL OR valid_to >= ?)`
 
-	rows, err := db.QueryContext(ctx, query, merchantID, dayOfWeek, requestedDate, requestedDate)
+	rows, err := db.QueryContext(ctx, query, merchantID, dayOfWeek, dayOfWeek, dayOfWeek, requestedDate, requestedDate)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -144,36 +188,108 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 	return ranges, nil
 }
 
-func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) (map[string]int, error) {
+func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error) {
+	return r.getBookedCapacity(ctx, merchantID, requestedDate, "")
+}
+
+func (r *reservationRepository) GetBookedCapacityExcludingBooking(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error) {
+	return r.getBookedCapacity(ctx, merchantID, requestedDate, excludeBookingNumber)
+}
+
+func (r *reservationRepository) getBookedCapacity(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error) {
 	db := dbutils.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
+	dayStart := requestedDate + " 00:00:00"
+	dayEndTime, _ := time.Parse("2006-01-02 15:04:05", dayStart)
+	dayEnd := dayEndTime.Add(24 * time.Hour).Format("2006-01-02 15:04:05")
 
 	query := `
-		SELECT TIME(booking_date_from) AS slot_time, SUM(party_size) AS total_booked
+		SELECT party_size, booking_date_from, booking_date_to, booking_duration, status
 		FROM bookings
-		WHERE CAST(booking_date_from as DATE) = ?
-		  AND status IN ('ACCEPTED','ORDER_OPEN')
+		WHERE booking_date_from < ?
+		  AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
 		  AND merchant_id = ?
-		GROUP BY TIME(booking_date_from)`
+		  AND (? = '' OR booking_number <> ?)
+	`
 
-	rows, err := db.QueryContext(ctx, query, requestedDate, merchantID)
+	rows, err := db.QueryContext(ctx, query, dayEnd, dayStart, merchantID, excludeBookingNumber, excludeBookingNumber)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
 	defer rows.Close()
 
-	bookings := make(map[string]int)
+	bookings := []bookingcore.IntervalBooking{}
 	for rows.Next() {
-		var slotTime string
-		var total int
-		if err := rows.Scan(&slotTime, &total); err != nil {
+		var booking bookingcore.IntervalBooking
+		var status string
+		if err := rows.Scan(&booking.PartySize, &booking.StartDate, &booking.EndDate, &booking.DurationMinutes, &status); err != nil {
 			log.Error(err.Error())
 			return nil, err
 		}
-		bookings[slotTime] = total
+		if !bookingcore.IsActiveForConflict(status) {
+			continue
+		}
+		bookings = append(bookings, booking)
 	}
 	return bookings, nil
+}
+
+func (r *reservationRepository) GetBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT min_party_size, max_party_size, duration_minutes, enabled
+		FROM booking_duration_rules
+		WHERE merchant_id = ?
+		ORDER BY min_party_size, max_party_size
+	`, merchantID)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	defer rows.Close()
+
+	rules := []bookingcore.DurationRule{}
+	for rows.Next() {
+		var rule bookingcore.DurationRule
+		if err := rows.Scan(&rule.MinPartySize, &rule.MaxPartySize, &rule.DurationMinutes, &rule.Enabled); err != nil {
+			log.Error(err.Error())
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+
+	return rules, rows.Err()
+}
+
+func (r *reservationRepository) FindExistingActiveBookingWarning(ctx context.Context, merchantID, phone, startDate string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	row := db.QueryRowContext(ctx, `
+		SELECT b.status
+		FROM bookings b
+		INNER JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.merchant_id = ?
+		  AND c.customer_tel = ?
+		  AND b.booking_date_from = ?
+		ORDER BY b.booking_id DESC
+		LIMIT 1
+	`, merchantID, phone, startDate)
+
+	var status string
+	if err := row.Scan(&status); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		log.Error(err.Error())
+		return false, err
+	}
+
+	normalized := bookingcore.NormalizeLegacyStatus(status)
+	return normalized == bookingcore.StatusPending || normalized == bookingcore.StatusConfirmed, nil
 }
 
 func (r *reservationRepository) GetCustomerByPhone(ctx context.Context, phone string, merchantID string) (*CustomerData, error) {
@@ -245,7 +361,7 @@ func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingN
 	log := logger.FromContext(ctx)
 
 	query := `
-		SELECT booking_id, booking_number, merchant_id, booking_date_from, booking_date_to, party_size, status, sequence_number
+		SELECT booking_id, booking_number, merchant_id, booking_date_from, booking_date_to, booking_duration, party_size, comment, status, sequence_number
 		FROM bookings
 		WHERE booking_number = ? AND merchant_id = ?`
 
@@ -253,7 +369,7 @@ func (r *reservationRepository) GetBookingByNumber(ctx context.Context, bookingN
 	var err error
 
 	row := db.QueryRowContext(ctx, query, bookingNumber, merchantID)
-	err = row.Scan(&b.BookingID, &b.BookingNumber, &b.MerchantID, &b.StartDate, &b.EndDate, &b.PartySize, &b.Status, &b.SequenceNumber)
+	err = row.Scan(&b.BookingID, &b.BookingNumber, &b.MerchantID, &b.StartDate, &b.EndDate, &b.DurationMinutes, &b.PartySize, &b.Comment, &b.Status, &b.SequenceNumber)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -289,53 +405,88 @@ func (r *reservationRepository) CancelBookingDB(ctx context.Context, bookingNumb
 	return err
 }
 
-// CreateBookingTransaction gère la récupération du client et l'insertion de la réservation dans une transaction isolée.
+// CreateBookingTransaction gère la récupération du client et l'insertion de
+// la réservation. L'insertion elle-même est déléguée à bookingcore.CreateBooking,
+// partagée avec le flux staff (/bookings), et tourne dans une vraie
+// transaction SQL (dbutils.RunInTx).
 func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error) {
+	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
+	if err != nil {
+		return "", err
+	}
+
+	start, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
+	if err != nil {
+		return "", err
+	}
+	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, loc)
+	if err != nil {
+		return "", err
+	}
+
+	comment := stringPtr(*req.Booking.Comment)
+
+	bookingID, bookingNumber, err := bookingcore.CreateBooking(ctx, r.database, r.customerUpdater, bookingcore.CreateBookingParams{
+		MerchantID: req.MerchantID,
+		Source:     "web",
+		CreatedBy:  req.CreatedBy,
+		Status:     bookingcore.NormalizeLegacyStatus(req.Booking.Status),
+		PartySize:  req.Booking.PartySize,
+		Comment:    comment,
+		StartLocal: start,
+		EndLocal:   end,
+		Customer: bookingcore.CustomerUpsert{
+			CustomerName:      stringPtr(req.Customer.CustomerName),
+			CustomerFirstName: stringPtr(req.Customer.CustomerFirstName),
+			CustomerLastName:  stringPtr(req.Customer.CustomerLastName),
+			CustomerTel:       stringPtr(req.Customer.CustomerTel),
+			CustomerEmail:     stringPtr(req.Customer.CustomerEmail),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req.Booking.BookingNumber = bookingNumber
+	return bookingID, nil
+}
+
+func (r *reservationRepository) CancelBookingPublic(ctx context.Context, merchantID, bookingNumber string) error {
 	db := dbutils.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
 
-	// 2. Recherche du client (en utilisant la transaction courante)
-	queryCustomer := `
-		SELECT customer_id 
-		FROM customer 
-		WHERE customer_tel = ? AND enabled = 1 AND merchant_id = ?`
-
-	var customerID string
-	err := db.QueryRowContext(ctx, queryCustomer, req.Customer.CustomerTel, req.MerchantID).Scan(&customerID)
-
-	if err != nil && err != sql.ErrNoRows {
-		// Erreur SQL autre que "non trouvé"
-		log.Error(err.Error())
-		return "", err
-	}
-
-	if err == nil {
-		// Client trouvé
-		req.Customer.CustomerID = customerID
-	}
-
-	// 3. Insertion de la réservation
-	queryInsert := `
-		INSERT INTO bookings (merchant_id, customer_id, booking_date_from, booking_date_to, party_size, status, created_by) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
-
-	res, err := db.ExecContext(ctx, queryInsert,
-		req.MerchantID,
-		req.Customer.CustomerID,
-		req.Booking.StartDate,
-		req.Booking.EndDate,
-		req.Booking.PartySize,
-		req.Booking.Status,
-		req.CreatedBy,
+	_, err := db.ExecContext(ctx, `
+		UPDATE bookings
+		SET status = ?, cancelled_by = ?, deletion_reason_id = NULL
+		WHERE booking_number = ? AND merchant_id = ?`,
+		bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("customer", ""), bookingNumber, merchantID,
 	)
+	return err
+}
+
+func stringPtr(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func (r *reservationRepository) loadMerchantLocation(ctx context.Context, merchantID string) (*time.Location, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	var timezone sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&timezone)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	bookingID, err := res.LastInsertId()
-	if err != nil {
-		return "", err
+	if !timezone.Valid || timezone.String == "" {
+		return time.UTC, nil
 	}
 
-	return strconv.FormatInt(bookingID, 10), nil
+	loc, err := time.LoadLocation(timezone.String)
+	if err != nil {
+		return time.UTC, nil
+	}
+
+	return loc, nil
 }

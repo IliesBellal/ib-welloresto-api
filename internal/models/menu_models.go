@@ -133,11 +133,15 @@ type OrderProductWithout struct {
 
 // components required
 type ComponentUsage struct {
-	ComponentID     string   `json:"component_id"`
-	ProductID       string   `json:"product_id,omitempty"`
-	Name            string   `json:"name"`
-	Price           int64    `json:"price,omitempty"`
-	Status          int      `json:"status,omitempty"`
+	ComponentID string `json:"component_id"`
+	ProductID   string `json:"product_id,omitempty"`
+	Name        string `json:"name"`
+	Price       int64  `json:"price,omitempty"`
+	// Status est textuel en base (components.status VARCHAR : 'available',
+	// 'not_available', 'out_of_stock', '0', '1'...). L'ancien type int faisait
+	// échouer le rows.Scan du menu dès qu'un composant portait un statut
+	// textuel — ex. désactivé depuis le toggle POS ('not_available').
+	Status          string   `json:"status,omitempty"`
 	Quantity        *float64 `json:"quantity,omitempty"`
 	UnitOfMeasure   string   `json:"unit_of_measure"`
 	UnitOfMeasureID string   `json:"unit_of_measure_id,omitempty"`
@@ -191,14 +195,15 @@ type ConfigurableAttribute struct {
 }
 
 type ConfigurableOption struct {
-	ID                string `json:"id"`
-	Title             string `json:"title"`
-	ExtraPrice        int    `json:"extra_price"`
-	MaxQuantity       int    `json:"max_quantity"`
-	ConfigAttributeID string `json:"configurable_attribute_id"`
-	OrderItemID       string `json:"order_item_id"`
-	Quantity          int    `json:"quantity"`
-	Selected          bool   `json:"selected"`
+	ID                string  `json:"id"`
+	Title             string  `json:"title"`
+	ExtraPrice        int     `json:"extra_price"`
+	MaxQuantity       int     `json:"max_quantity"`
+	ConfigAttributeID string  `json:"configurable_attribute_id"`
+	OrderItemID       string  `json:"order_item_id"`
+	Quantity          int     `json:"quantity"`
+	Selected          bool    `json:"selected"`
+	ImageURL          *string `json:"image_url,omitempty"`
 }
 
 // delays

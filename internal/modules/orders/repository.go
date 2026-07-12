@@ -418,54 +418,6 @@ AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 	return blocked, nil
 }
 
-/*
-// OrderInsert is the minimal data to create an order row
-type OrderInsert struct {
-	CashRegisterID interface{}
-	MerchantID     int64
-	CustomerID     interface{}
-	OrderNum       int64
-	Price          float64
-	TVA            float64
-	HT             float64
-	// other fields omitted for brevity
-}
-*/
-// InsertOrder inserts order and returns order_id
-/*
-func (r *OrdersRepository) InsertOrder(ctx context.Context, tx *sql.Tx, o *OrderInsert) (int64, error) {
-	res, err := tx.ExecContext(ctx, `
-INSERT INTO orders (cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, creation_date, dateCall, last_update)
-VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP)
-`, o.CashRegisterID, o.MerchantID, o.CustomerID, o.OrderNum, o.Price, o.TVA, o.HT)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-*/
-// ResetOrderItems conservé pour compatibilité ascendante (utilisé éventuellement ailleurs).
-// Préférer deleteRemovedOrderItems dans UpdateOrder.
-/*
-func (r *OrdersRepository) ResetOrderItems(ctx context.Context, tx *sql.Tx, req *models.RequestObject) error {
-	_, err := tx.ExecContext(ctx, `
-		UPDATE orderitems
-		SET quantity = 0
-		WHERE order_id = ?`,
-		req.Order.OrderID,
-	)
-	return err
-}*/
-/*
-func (r *OrdersRepository) InsertPayment(ctx context.Context, p *models.Payment) error {
-	db := dbutils.GetDB(ctx, r.database)
-	_, err := db.ExecContext(ctx, `
-INSERT INTO payments (merchant_id, cash_register_id, order_id, amount, mop, payment_date, user_id, operation_type)
-VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
-`, p.MerchantID, p.CashRegisterID, p.OrderID, p.Amount, p.MOP, p.UserID, p.OperationType)
-	return err
-}*/
-
 func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantID string) (*models.MerchantPricingInfo, error) {
 	q := `
 		SELECT m.timezone, mp.currency, COALESCE(mp.delivery_fees,0) as delivery_fees,
@@ -516,8 +468,8 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
            SELECT DISTINCT r.product_id
            FROM requires rq
            INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-           INNER JOIN components c ON rq.component_id = c.component_id 
-               AND c.status IN ('0','out_of_stock')      -- Composant inactif/épuisé
+           INNER JOIN components c ON rq.component_id = c.component_id
+               AND c.status IN ('0','out_of_stock','not_available') -- Composant inactif/épuisé ('not_available' = valeur écrite par le toggle POS)
                AND rq.enabled = TRUE -- Recette active
        ) a ON a.product_id = p.product_id
        WHERE p.merchant_id = ?

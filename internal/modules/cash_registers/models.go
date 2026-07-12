@@ -110,3 +110,7 @@ type DeviceLink struct {
 	OnBehalfOf   string `json:"on_behalf_of"`
 	CreationDate string `json:"creation_date"`
 }
+
+type DeviceUnlinkRequest struct {
+	DeviceID string `json:"device_id" binding:"required"`
+}

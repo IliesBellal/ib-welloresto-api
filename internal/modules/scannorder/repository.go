@@ -5,18 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/customers"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
-	database *sql.DB
+	database     *sql.DB
+	customerRepo *customers.CustomersRepository
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{database: db}
+	return &Repository{database: db, customerRepo: customers.NewCustomerRepository(db)}
 }
 
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
@@ -533,6 +534,12 @@ func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID stri
 	return result, nil
 }
 
+// GetDeliverySessionByOrderID resolves the delivery session currently linked to an order.
+// An order can have been dispatched more than once (delivery_session_order gets a new row
+// each time), so this always returns the most recent non-canceled session — ORDER BY
+// start_date DESC (delivery_session has no created_at column) with a status filter that
+// excludes 'canceled' but keeps 'active' and 'done' (a just-finished session must stay
+// visible for the post-delivery SNO display).
 func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID string) (deliverySessionID *string, err error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -541,7 +548,9 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 	FROM delivery_session ds
 	INNER JOIN delivery_session_order dso ON ds.id = dso.delivery_session_id
 	INNER JOIN orders o ON o.order_id = dso.order_id
-	WHERE o.order_id = ?`
+	WHERE o.order_id = ? AND ds.status != 'canceled'
+	ORDER BY ds.start_date DESC
+	LIMIT 1`
 
 	row := db.QueryRowContext(ctx, query, orderID)
 
@@ -574,6 +583,28 @@ func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string,
 	return &merchantID, nil
 }
 
+// GetStripePaymentForOrder returns the intent_id and account_id of the active Stripe
+// payment for a given order. Returns ("", "", nil) when no Stripe payment exists.
+func (r *Repository) GetStripePaymentForOrder(ctx context.Context, orderID string) (intentID string, accountID string, err error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	q := `
+		SELECT sp.payment_intent_id, sa.account_id
+		FROM payments p
+		INNER JOIN stripe_payments sp ON sp.payment_id = p.payment_id
+		INNER JOIN stripe_accounts sa ON sa.merchant_id = p.merchant_id
+		WHERE p.order_id = ?
+		  AND p.mop = 'STRIPE'
+		  AND p.enabled = 1
+		LIMIT 1`
+
+	err = db.QueryRowContext(ctx, q, orderID).Scan(&intentID, &accountID)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	return intentID, accountID, err
+}
+
 func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -604,30 +635,36 @@ func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
-	phone := helpers.NormalizePhoneNumber(*customer.Tel, "FR")
+	if customer.Tel == nil || customer.MerchantID == nil || *customer.Tel == "" || *customer.MerchantID == "" {
+		return &customer, nil
+	}
 
-	query := `
-        SELECT c.customer_id, mp.automatically_add_customer_rewards
-        FROM customer c
-        INNER JOIN merchant_parameters mp ON mp.merchant_id = c.merchant_id
-        WHERE c.customer_tel = $1
-        AND c.enabled = true
-        AND c.merchant_id = $2
-        LIMIT 1;
-    `
-
-	var customerID string
-	var autoRewards bool
-
-	err := db.QueryRowContext(ctx, query, phone, customer.MerchantID).Scan(&customerID, &autoRewards)
+	existing, err := r.customerRepo.FindCustomerByPhone(ctx, *customer.Tel, *customer.MerchantID)
 	if err == sql.ErrNoRows {
 		return &customer, nil
 	}
 	if err != nil {
 		return &customer, err
 	}
+	if existing == nil || existing.CustomerID == nil || *existing.CustomerID == "" {
+		return &customer, nil
+	}
 
-	customer.CustomerID = &customerID
+	query := `
+        SELECT mp.automatically_add_customer_rewards
+        FROM merchant_parameters mp
+        WHERE mp.merchant_id = ?
+        LIMIT 1;
+    `
+
+	var autoRewards bool
+
+	err = db.QueryRowContext(ctx, query, customer.MerchantID).Scan(&autoRewards)
+	if err != nil {
+		return &customer, err
+	}
+
+	customer.CustomerID = existing.CustomerID
 
 	// 🎁 Récupération rewards si activé
 	if autoRewards {
@@ -639,7 +676,7 @@ func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
             AND cr.usage_date IS NULL;
         `
 
-		rows, err := db.QueryContext(ctx, rewardsQuery, customerID)
+		rows, err := db.QueryContext(ctx, rewardsQuery, *existing.CustomerID)
 		if err != nil {
 			return &customer, nil // comme PHP → fail silencieux
 		}
@@ -815,20 +852,20 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 	return brand, merchants, nil
 }
 
-func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]UpsellProduct, error) {
+// GetUpsellProducts retrieves the IDs of "popular" products (is_popular = 1) eligible for
+// upsell. Product groups are excluded since they are not orderable on their own — only their
+// sub-products are (same rule as the SNO menu, which flattens groups into their sub-products).
+func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]string, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-	SELECT 
-		p.product_id,
-		p.name,
-		p.product_desc,
-		p.price,
-		p.image_url
+	SELECT
+		p.product_id
 	FROM products p
 	WHERE p.merchant_id = ?
 	AND p.is_popular = 1
 	AND p.status in ('available','1')
+	AND (p.is_product_group IS NULL OR p.is_product_group != 1)
 	ORDER BY p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
@@ -837,37 +874,20 @@ func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) (
 	}
 	defer rows.Close()
 
-	var products []UpsellProduct
+	var productIDs []string
 	for rows.Next() {
-		var product UpsellProduct
-		var description sql.NullString
-		var imageURL sql.NullString
-
-		if err := rows.Scan(
-			&product.ProductID,
-			&product.Name,
-			&description,
-			&product.Price,
-			&imageURL,
-		); err != nil {
+		var productID string
+		if err := rows.Scan(&productID); err != nil {
 			return nil, err
 		}
-
-		if description.Valid {
-			product.Description = &description.String
-		}
-		if imageURL.Valid {
-			product.ImageURL = &imageURL.String
-		}
-
-		products = append(products, product)
+		productIDs = append(productIDs, productID)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return products, nil
+	return productIDs, nil
 }
 
 // GetProductPricesForSNO retrieves official product prices for SNO from database

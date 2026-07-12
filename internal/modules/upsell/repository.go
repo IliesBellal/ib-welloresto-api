@@ -37,15 +37,16 @@ func (r *Repository) CreateSuggestion(ctx context.Context, params CreateSuggesti
 
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO upsell_suggestions
-			(id, merchant_id, cart_signature, suggested_items, source,
+			(id, merchant_id, cart_signature, suggested_items, source, channel,
 			 llm_provider, llm_model, tokens_in, tokens_out, latency_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		id,
 		params.MerchantID,
 		params.CartSignature,
 		itemsJSON,
 		params.Source,
+		params.Channel,
 		params.LLMProvider,
 		params.LLMModel,
 		params.TokensIn,

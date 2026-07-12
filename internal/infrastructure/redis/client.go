@@ -75,6 +75,21 @@ func (c *Client) Set(ctx context.Context, key string, value string, ttl time.Dur
 	return true
 }
 
+// SetNX stocke une valeur uniquement si la cle n'existe pas deja.
+func (c *Client) SetNX(ctx context.Context, key string, value string, ttl time.Duration) bool {
+	if c == nil || c.rdb == nil {
+		return false
+	}
+
+	ok, err := c.rdb.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		logger.FromContext(ctx).Warn("⚠️ Redis Error (SetNX): " + err.Error())
+		return false
+	}
+
+	return ok
+}
+
 // Delete pareil : on ne veut pas bloquer un flow métier pour un problème de cache
 func (c *Client) Delete(ctx context.Context, key string) bool {
 	if c == nil || c.rdb == nil {
@@ -84,22 +99,28 @@ func (c *Client) Delete(ctx context.Context, key string) bool {
 	return true
 }
 
-// DeleteAllMerchantKeys supprime toutes les clés liées à un merchant spécifique (ex: après une mise à jour des infos du merchant)
-func (c *Client) DeleteAllMerchantKeys(ctx context.Context, merchantID string) error {
-	pattern := fmt.Sprintf("%s%s*", models.ScannorderMerchant, merchantID)
-	iter := c.rdb.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		err := c.rdb.Del(ctx, iter.Val()).Err()
-		if err != nil {
-			return err
+// InvalidateMerchantMenuCaches supprime les caches Redis dérivés du catalogue
+// produits d'un merchant : menus scannorder et kiosk (toutes variantes
+// deliveryType/orderType) et upsell scannorder. À appeler après toute mutation
+// du menu (produit, catégorie, attribut, tag, prix…). Best-effort : les
+// erreurs sont loguées mais jamais propagées, pour ne pas bloquer la mutation
+// métier qui vient de réussir — au pire le cache expire par TTL.
+func (c *Client) InvalidateMerchantMenuCaches(ctx context.Context, merchantID string) {
+	if c == nil || c.rdb == nil || merchantID == "" {
+		return
+	}
+
+	patterns := []string{
+		models.ScannorderMerchantMenu + merchantID + ":*",
+		models.ScannorderMerchantUpsell + merchantID,
+		models.KioskMerchantMenu + merchantID + ":*",
+	}
+	for _, pattern := range patterns {
+		if _, err := c.ScanDeleteByPattern(ctx, pattern); err != nil {
+			logger.FromContext(ctx).Warn("⚠️ Redis Error (InvalidateMerchantMenuCaches): " + err.Error())
 		}
 	}
-	if err := iter.Err(); err != nil {
-		return err
-	}
-	return nil
 }
-
 
 // ScanDeleteByPattern supprime toutes les clés correspondant au pattern via SCAN + DEL par batch.
 // Retourne le nombre total de clés supprimées.

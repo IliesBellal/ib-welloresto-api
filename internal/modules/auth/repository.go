@@ -82,8 +82,10 @@ SELECT
     mp.service_required_for_ordering,
     mp.warning_new_order_not_paid,
     mp.disable_components_under_safety_stock,
+    mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
+	mp.pos_upsell_enabled,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -156,7 +158,8 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
 		&data.KitchenShowOnlyPaid, &data.ServiceRequiredForOrdering,
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
-		&data.Currency, &data.IsOpen,
+		&data.CustomerFormRequirements,
+		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
@@ -245,8 +248,10 @@ SELECT
     mp.cash_register_required_for_ordering,
     mp.warning_new_order_not_paid,
     mp.disable_components_under_safety_stock,
+    mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
+	mp.pos_upsell_enabled,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -326,7 +331,8 @@ LIMIT 1;
 		&data.KitchenShowOnlyPaid, &data.KitchenDistributionMode, &data.ProductionDisplayMode, &data.PagerNumberRequired,
 		&data.POSAutoLockEnabled, &data.POSAutoLockDelayMinutes, &data.ServiceRequiredForOrdering,
 		&data.CashRegisterRequiredForOrdering, &data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
-		&data.Currency, &data.IsOpen,
+		&data.CustomerFormRequirements,
+		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
@@ -444,6 +450,7 @@ SELECT
     mp.service_required_for_ordering,
     mp.warning_new_order_not_paid,
     mp.disable_components_under_safety_stock,
+    mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
 

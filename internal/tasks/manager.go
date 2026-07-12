@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	aicache "welloresto-api/internal/ai/cache"
 	"welloresto-api/internal/infrastructure/mailer"
@@ -44,5 +45,75 @@ func NewTasksManager(
 		AICache:        aiCache,
 		UpsellRepo:     upsellRepo,
 		Logger:         logger,
+	}
+}
+
+func (tm *TasksManager) ExpirePendingBookings() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("booking pending expiration skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.ExpirePendingBookings(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("booking pending expiration failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("booking pending expiration finished", zap.Int64("rows_affected", rows))
+	}
+}
+
+// ExpireWaitlistNotifications expire les entrées de liste d'attente notified
+// dont le délai est dépassé et notifie l'entrée suivante. Même schéma dormant
+// que ExpirePendingBookings : tâche prête, activée manuellement dans SetupTasks.
+func (tm *TasksManager) ExpireWaitlistNotifications() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("waitlist expiration skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.ExpireWaitlistNotifications(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("waitlist expiration failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("waitlist expiration finished", zap.Int64("rows_affected", rows))
+	}
+}
+
+// SendBookingReminders envoie le rappel avant service (J-1 par défaut) aux
+// réservations confirmed à venir qui n'en ont pas encore reçu. Même schéma
+// dormant que les deux autres tâches réservation : prête, activée
+// sélectivement dans SetupTasks.
+func (tm *TasksManager) SendBookingReminders() {
+	if tm.BookingService == nil {
+		if tm.Logger != nil {
+			tm.Logger.Warn("booking reminders skipped: booking service unavailable")
+		}
+		return
+	}
+
+	rows, err := tm.BookingService.SendBookingReminders(context.Background())
+	if err != nil {
+		if tm.Logger != nil {
+			tm.Logger.Error("booking reminders failed", zap.Error(err))
+		}
+		return
+	}
+
+	if tm.Logger != nil {
+		tm.Logger.Info("booking reminders finished", zap.Int64("rows_affected", rows))
 	}
 }
