@@ -44,7 +44,7 @@ func (h *BookingsHandler) SearchBookings(w http.ResponseWriter, r *http.Request)
 	}
 
 	models.SendJSON(w, http.StatusOK, "bookings", "search", map[string]interface{}{
-		"status":   "1",
+		"status":   "ok",
 		"bookings": bookings,
 	})
 }
@@ -66,7 +66,7 @@ func (h *BookingsHandler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "bookings", "get", map[string]interface{}{
-		"status":  "1",
+		"status":  "ok",
 		"booking": booking,
 	})
 }
@@ -98,7 +98,7 @@ func (h *BookingsHandler) CreateBooking(w http.ResponseWriter, r *http.Request) 
 	}
 
 	models.SendJSON(w, http.StatusOK, "bookings", "create", map[string]interface{}{
-		"status":  "1",
+		"status":  "ok",
 		"booking": booking,
 	})
 }
