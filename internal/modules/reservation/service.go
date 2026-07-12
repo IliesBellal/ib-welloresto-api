@@ -151,7 +151,7 @@ func (s *reservationService) GetBookingAvailability(ctx context.Context, qr stri
 			Time:            timeFrom.In(loc).Format("15:04"),
 			Available:       slot.Available,
 			DurationMinutes: slot.DurationMinutes,
-			HOOID:           fmt.Sprintf("%d", slot.HourOfOperationID),
+			HOOID:           slot.HourOfOperationID,
 		})
 	}
 
@@ -271,11 +271,6 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 
 func (s *reservationService) normalizePhone(phone string) string {
 	return helpers.NormalizePhoneNumber(phone, "FR")
-}
-
-func mustAtoi(v string) int {
-	n, _ := strconv.Atoi(v)
-	return n
 }
 
 const MaximumSequenceNumber = 3
@@ -523,7 +518,7 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 		}
 
 		rawRanges = append(rawRanges, bookingcore.SlotRange{
-			ID:                  mustAtoi(r.ID),
+			ID:                  r.ID,
 			StartUTC:            hourFromUTC,
 			EndUTC:              hourToUTC,
 			BookingCapacity:     r.BookingCapacity,

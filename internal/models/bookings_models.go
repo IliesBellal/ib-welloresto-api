@@ -24,7 +24,7 @@ type Booking struct {
 // ----------------------------------------------------
 
 type BookingSlot struct {
-	HourOfOperationID int    `json:"hour_of_operation_id"`
+	HourOfOperationID string `json:"hour_of_operation_id"`
 	DateFrom          string `json:"date_from"`
 	DateTo            string `json:"date_to"`
 	Available         bool   `json:"available"`
