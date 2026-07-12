@@ -222,23 +222,23 @@ type AssignBookingLocationsRequest struct {
 // ----------------------------------------------------
 
 type MerchantBookingParams struct {
-	MerchantID                    int    `json:"merchant_id"`
-	Timezone                      string `json:"timezone"`
-	LogoURL                       string `json:"logo_url"`
-	BusinessName                  string `json:"business_name"`
-	DefaultBookingDuration        int    `json:"default_booking_duration"`
-	SlotIntervalMinutes           int    `json:"slot_interval_minutes"`
-	ReserveMaximumPartySize       int    `json:"reserve_maximum_party_size"`
-	ReserveMinimumPartySize       int    `json:"reserve_minimum_party_size"`
-	FirstBookingOffsetMinutes     int    `json:"first_booking_offset_minutes"`
-	LastBookingOffsetMinutes      int    `json:"last_booking_offset_minutes"`
-	CancelableByCustomer          bool   `json:"cancelable_by_customer"`
-	CancelBookingLimitOffsetHours int    `json:"cancel_booking_limit_offset_hours"`
-	AutoAcceptReserveBookings     bool   `json:"auto_accept_reserve_bookings"`
-	Enabled                       bool   `json:"enabled"`
-	OverbookingPercent            int    `json:"overbooking_percent"`
-	MaxBookingHorizonDays         int    `json:"max_booking_horizon_days"`
-	PendingExpirationHours        int    `json:"pending_expiration_hours"`
+	MerchantID                    int     `json:"merchant_id"`
+	Timezone                      string  `json:"timezone"`
+	LogoURL                       *string `json:"logo_url"`
+	BusinessName                  string  `json:"business_name"`
+	DefaultBookingDuration        int     `json:"default_booking_duration"`
+	SlotIntervalMinutes           int     `json:"slot_interval_minutes"`
+	ReserveMaximumPartySize       int     `json:"reserve_maximum_party_size"`
+	ReserveMinimumPartySize       int     `json:"reserve_minimum_party_size"`
+	FirstBookingOffsetMinutes     int     `json:"first_booking_offset_minutes"`
+	LastBookingOffsetMinutes      int     `json:"last_booking_offset_minutes"`
+	CancelableByCustomer          bool    `json:"cancelable_by_customer"`
+	CancelBookingLimitOffsetHours int     `json:"cancel_booking_limit_offset_hours"`
+	AutoAcceptReserveBookings     bool    `json:"auto_accept_reserve_bookings"`
+	Enabled                       bool    `json:"enabled"`
+	OverbookingPercent            int     `json:"overbooking_percent"`
+	MaxBookingHorizonDays         int     `json:"max_booking_horizon_days"`
+	PendingExpirationHours        int     `json:"pending_expiration_hours"`
 }
 
 // ----------------------------------------------------
