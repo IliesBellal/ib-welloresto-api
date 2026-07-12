@@ -246,7 +246,7 @@ type MerchantBookingParams struct {
 // ----------------------------------------------------
 
 type TimeRange struct {
-	ID               int     `json:"id"`
+	ID               string  `json:"id"`
 	HourFrom         string  `json:"hour_from"`
 	HourTo           string  `json:"hour_to"`
 	BookingCapacity  int     `json:"booking_capacity"`
@@ -259,7 +259,7 @@ type TimeRange struct {
 // ----------------------------------------------------
 
 type BookingSlot struct {
-	HourOfOperationID int    `json:"hour_of_operation_id"`
+	HourOfOperationID string `json:"hour_of_operation_id"`
 	DateFrom          string `json:"date_from"`
 	DateTo            string `json:"date_to"`
 	Available         bool   `json:"available"`

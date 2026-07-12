@@ -29,7 +29,7 @@ func slotRangeForLocalDay(t *testing.T, date string, loc *time.Location, hourFro
 	t.Helper()
 
 	return SlotRange{
-		ID:              1,
+		ID:              "1",
 		StartUTC:        mustClockToUTC(t, date, hourFrom, loc),
 		EndUTC:          mustClockToUTC(t, date, hourTo, loc),
 		BookingCapacity: capacity,
@@ -78,7 +78,7 @@ func TestComputeSlots_AppliesOverbookingAndRangeTimes(t *testing.T) {
 			BookingSettings: settings,
 			DurationRules:   []DurationRule{{MinPartySize: 1, MaxPartySize: 8, DurationMinutes: 90, Enabled: true}},
 		},
-		[]SlotRange{{ID: 1, StartUTC: mustClockToUTC(t, "2026-07-08", "12:00:00", time.UTC), EndUTC: mustClockToUTC(t, "2026-07-08", "15:00:00", time.UTC), BookingCapacity: 40, FirstBookingTimeUTC: &first, LastBookingTimeUTC: &last}},
+		[]SlotRange{{ID: "1", StartUTC: mustClockToUTC(t, "2026-07-08", "12:00:00", time.UTC), EndUTC: mustClockToUTC(t, "2026-07-08", "15:00:00", time.UTC), BookingCapacity: 40, FirstBookingTimeUTC: &first, LastBookingTimeUTC: &last}},
 		map[string]int{},
 		time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC),
 	)
@@ -104,7 +104,7 @@ func TestComputeSlots_RejectsPartySizeOutsideBounds(t *testing.T) {
 
 	slots := ComputeSlots(
 		SlotParams{RequestedDate: "2026-07-08", PartySize: 1, BookingSettings: settings},
-		[]SlotRange{{ID: 1, StartUTC: mustClockToUTC(t, "2026-07-08", "12:00:00", time.UTC), EndUTC: mustClockToUTC(t, "2026-07-08", "15:00:00", time.UTC), BookingCapacity: 20}},
+		[]SlotRange{{ID: "1", StartUTC: mustClockToUTC(t, "2026-07-08", "12:00:00", time.UTC), EndUTC: mustClockToUTC(t, "2026-07-08", "15:00:00", time.UTC), BookingCapacity: 20}},
 		map[string]int{},
 		time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC),
 	)

@@ -33,7 +33,7 @@ type DurationRule struct {
 }
 
 type SlotRange struct {
-	ID                  int
+	ID                  string
 	StartUTC            time.Time
 	EndUTC              time.Time
 	BookingCapacity     int
@@ -49,7 +49,7 @@ type SlotParams struct {
 }
 
 type ComputedSlot struct {
-	HourOfOperationID int
+	HourOfOperationID string
 	DateFrom          string
 	DateTo            string
 	DurationMinutes   int

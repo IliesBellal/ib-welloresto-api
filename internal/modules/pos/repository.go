@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
-
-	"github.com/google/uuid"
 )
 
 type POSRepository struct {
@@ -674,7 +673,7 @@ func (r *POSRepository) CreateHourOfOperation(ctx context.Context, merchantID st
 
 	db := dbutils.GetDB(ctx, r.database)
 
-	hourID := uuid.NewString()
+	hourID := helpers.GeneratePrefixedID("hoo")
 	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
 		hourID = strings.TrimSpace(*req.ID)
 	}
