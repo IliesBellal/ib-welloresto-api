@@ -212,7 +212,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 				MerchantLogo: merchant.LogoURL,
 				MerchantName: merchant.BusinessName,
 				OrderDate:    order.CreationDate.String(),
-				TrackingURL:  "https://scannorder.welloresto.fr/restaurant/" + merchant.Code + "/order/" + order.OrderID,
+				TrackingURL:  "https://wello-resto-scannorder-prod.onrender.com/restaurant/" + merchant.Code + "/order/" + order.OrderID,
 				SupportEmail: "contact@welloresto.fr",
 			}
 			go s.email.SendOrderConfirmationToCustomer(session.CustomerDetails.Email, emailPayload)
@@ -222,7 +222,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 					MerchantName: merchant.BusinessName,
 					OrderID:      order.OrderID,
 					OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
-					TrackingURL:  "https://scannorder.welloresto.fr/restaurant/" + merchant.Code + "/order/" + order.OrderID,
+					TrackingURL:  "https://wello-resto-scannorder-prod.onrender.com/restaurant/" + merchant.Code + "/order/" + order.OrderID,
 				}
 				go s.smsService.SendOrderConfirmationSMS("Wello", session.CustomerDetails.Phone, smsData)
 			}
