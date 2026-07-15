@@ -97,6 +97,7 @@ SELECT
 	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
+	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
 
     sset.activated,
 
@@ -164,6 +165,7 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
+		&data.KiosksEnabled,
 
 		&data.SNOActivated,
 
@@ -263,6 +265,7 @@ SELECT
 	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
+	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
 
     sset.activated,
 
@@ -289,7 +292,7 @@ LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_tok
 LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
 LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
 
-WHERE 
+WHERE
     (
         (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
         OR (UPPER(u.email)=UPPER(?) AND u.email <> '' AND u.email IS NOT NULL)
@@ -337,6 +340,7 @@ LIMIT 1;
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
+		&data.KiosksEnabled,
 
 		&data.SNOActivated,
 
@@ -464,6 +468,7 @@ SELECT
 	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
+	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
 
     sset.activated,
 

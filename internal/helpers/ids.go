@@ -54,6 +54,10 @@ const (
 	KioskIDPrefix                        = "kiosk"
 	KioskEnrollmentCodeIDPrefix          = "kiosk-enrl-cd"
 	KioskDeviceTokenIDPrefix             = "kiosk-dev-tkn"
+	LocationIDPrefix                     = "loc"
+	FloorIDPrefix                        = "flr"
+	FloorAreaIDPrefix                    = "fra"
+	ObstacleIDPrefix                     = "obs"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

@@ -728,16 +728,42 @@ func (r *Repository) SetKioskIDOnOrder(ctx context.Context, orderID, kioskID str
 }
 
 // UpdateOrderMerchantApproval force merchant_approval sur une commande, scopé au
-// merchant. Utilisé par le basculement carte -> caisse (PENDING_CARD_PAYMENT ->
-// PENDING_APPROVAL) : OrdersLifeCycleService n'expose pas de mutation générique
-// de ce champ, et SetOrderAccepted/DeliverOrder ne couvrent pas cette transition
-// précise. last_update est rafraîchi comme partout ailleurs dans le projet.
+// merchant. Depuis l'homogénéisation du statut paiement carte Kiosk
+// (merchant_approval="ACCEPTED" immédiat dans tous les cas, voir
+// docs/KIOSK_DECISIONS.md), plus aucun appelant n'utilise cette méthode — le
+// basculement carte->caisse transite désormais brand_status via
+// ConfirmKioskCardToCounterBrandStatus. Conservée (pas supprimée) : signalée
+// comme code potentiellement mort à nettoyer dans une session dédiée.
 func (r *Repository) UpdateOrderMerchantApproval(ctx context.Context, merchantID, orderID, approval string) error {
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `UPDATE orders SET merchant_approval = ?, last_update = UTC_TIMESTAMP WHERE order_id = ? AND merchant_id = ?`
 	_, err := db.ExecContext(ctx, query, approval, orderID, merchantID)
 	return err
+}
+
+// ConfirmKioskCardToCounterBrandStatus fait transiter brand_status de
+// PENDING_CARD_PAYMENT vers PENDING lors d'un basculement manuel carte -> caisse
+// (SwitchToCounterPayment, après échec/abandon du paiement Terminal).
+// merchant_approval n'est plus touché : il est déjà "ACCEPTED" depuis la
+// création (voir Service.CreateOrder) — c'est exactement la même transition
+// brand_status que celle appliquée par le webhook Stripe au succès du paiement
+// Terminal (stripe.Repository.ConfirmKioskCardPayment), déclenchée ici
+// manuellement par le staff/client plutôt que par payment_intent.succeeded.
+// Guard WHERE brand_status = 'PENDING_CARD_PAYMENT' : no-op si déjà transitionné
+// (ex. webhook Stripe arrivé entre-temps). Retourne true si une ligne a été
+// modifiée.
+func (r *Repository) ConfirmKioskCardToCounterBrandStatus(ctx context.Context, merchantID, orderID string) (bool, error) {
+	db := dbutils.GetDB(ctx, r.database)
+
+	query := `UPDATE orders SET brand_status = 'PENDING', last_update = UTC_TIMESTAMP
+              WHERE order_id = ? AND merchant_id = ? AND brand_status = 'PENDING_CARD_PAYMENT'`
+	res, err := db.ExecContext(ctx, query, orderID, merchantID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // GetMerchantTimezone récupère le fuseau horaire du merchant, nécessaire pour

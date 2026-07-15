@@ -29,7 +29,15 @@ func NewOrdersRepository(db *sql.DB, ordersF *OrdersFetcher) *OrdersRepository {
 // GetPendingOrderIDs : Récupère uniquement les IDs des commandes répondant aux critères (Requête légère)
 func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, app string) ([]string, error) {
 	// 1. Construction de la clause WHERE complexe
-	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING'))) "
+	// PENDING_CARD_PAYMENT (commande Kiosk en attente de confirmation carte
+	// Terminal) est exclue au même titre que ONLINE_PAYMENT_PENDING (commande
+	// ScanNOrder en attente de Checkout Stripe) : merchant_approval="ACCEPTED"
+	// est posé immédiatement pour ces commandes (voir docs/KIOSK_DECISIONS.md),
+	// donc seul ce filtre backend les tient hors de la liste envoyée au
+	// POS/back-office tant que le paiement n'est pas confirmé — sans lui, une
+	// commande carte non payée apparaîtrait en préparation cuisine avant même
+	// que le client ait présenté sa carte.
+	criteria := " AND ((o.state IN ('OPEN') AND o.brand_status NOT IN('ONLINE_PAYMENT_PENDING', 'PENDING_CARD_PAYMENT'))) "
 
 	// Ajout filtre spécifique à l'application
 	if app == "1" || app == "WR_DELIVERY" {
@@ -70,18 +78,10 @@ func (r *OrdersRepository) GetOrdersByIDs(ctx context.Context, merchantID string
 	}
 
 	// ========================================================================
-	// ÉTAPE : Construction du filtre OPTIMISÉ (IN)
+	// ÉTAPE : Construction du filtre OPTIMISÉ (IN), en placeholders `?`
 	// ========================================================================
-	idsStr := ""
-	for i, oid := range orderIDs {
-		if i > 0 {
-			idsStr += ","
-		}
-		idsStr += fmt.Sprintf("'%s'", oid)
-	}
-
 	// Le filtre qui rend les sous-requêtes de FetchAndBuildOrders instantanées
-	filterOptimized := fmt.Sprintf(" AND o.order_id IN (%s) ", idsStr)
+	filterOptimized := InFilter("o.order_id", orderIDs)
 
 	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filterOptimized, "", "")
 	if err != nil {
@@ -93,7 +93,7 @@ func (r *OrdersRepository) GetOrdersByIDs(ctx context.Context, merchantID string
 
 func (r *OrdersRepository) GetOrder(ctx context.Context, merchantID string, orderID string) (*models.PendingOrdersResponse, error) {
 	// Filtre strict sur l'MerchantID
-	filter := fmt.Sprintf(" AND o.order_id = '%s' ", orderID)
+	filter := NewFilter(" AND o.order_id = ? ", orderID)
 
 	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
@@ -118,15 +118,7 @@ func (r *OrdersRepository) GetOrders(ctx context.Context, merchantID string, req
 	}
 
 	// build IN (...)
-	in := ""
-	for i, id := range ids {
-		if i > 0 {
-			in += ","
-		}
-		in += fmt.Sprintf("'%s'", id)
-	}
-
-	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", in)
+	filter := InFilter("o.order_id", ids)
 
 	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
@@ -312,15 +304,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	// =========================
 	// 4️⃣ BUILD IN (...) FILTER
 	// =========================
-	var inParts []string
-	for _, id := range orderIDs {
-		inParts = append(inParts, fmt.Sprintf("'%s'", id))
-	}
-
-	whereFilter := fmt.Sprintf(
-		" AND o.order_id IN (%s) ",
-		strings.Join(inParts, ","),
-	)
+	whereFilter := InFilter("o.order_id", orderIDs)
 
 	orderBy := " ORDER BY o.creation_date DESC "
 

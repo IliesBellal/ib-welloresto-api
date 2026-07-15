@@ -140,6 +140,7 @@ type LoginCapabilityModulesResponse struct {
 	Settings   bool `json:"settings"`
 	HACCP      bool `json:"haccp"`
 	Bookings   bool `json:"bookings"`
+	Kiosks     bool `json:"kiosks"`
 	Reports    bool `json:"reports"`
 	Financials bool `json:"financials"`
 	Customers  bool `json:"customers"`

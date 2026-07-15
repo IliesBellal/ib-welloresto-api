@@ -2585,3 +2585,326 @@ variable_fees = ..., fixed_fees = ...` change effectivement
 `application_fee_amount` sur le PaymentIntent créé (vérifiable côté dashboard
 Stripe ou en inspectant la réponse de l'API Stripe), sans toucher au comportement
 du Checkout ScanNOrder existant (toujours sur `scannorder_settings`, inchangé).
+
+---
+
+## Incrément — composants produit dans `KioskProduct` [DÉCIDÉ]
+
+La donnée existait déjà côté source (`models.ProductEntry.Components
+[]models.ComponentUsage`, peuplée par le pipeline menu existant) mais n'était
+jamais recopiée vers `KioskProduct` — seul blocage pour l'UI de retrait de
+composants côté borne.
+
+**Champs exposés** : nouvelle struct `KioskProductComponent{ID, Name}`
+(`internal/modules/kiosk/models.go`), champ `KioskProduct.Components
+[]KioskProductComponent` avec `omitempty` (absent du JSON pour les produits
+sans composant). Peuplé dans `mapProductEntryToKioskProduct`
+(`internal/modules/kiosk/service.go`) par simple recopiage de
+`p.Components` (id + name uniquement).
+
+**Décision — pas de `price`/`status`** : `ComponentUsage` porte aussi
+`Price`/`Status`/`Quantity`/`UnitOfMeasure`/`Cost`, mais le payload `without`
+envoyé par le client à la commande n'utilise que `component_id` (voir
+`OrderProductWithout`, `internal/models/menu_models.go`) — les autres champs
+sont ignorés côté serveur pour ce flux. Les exposer aurait ajouté du poids au
+payload menu sans usage réel côté kiosk ; à revoir uniquement si l'UI veut un
+jour afficher un supplément de prix par composant retiré.
+
+**Hors périmètre (inchangé)** : logique de pricing/commande, validation
+min/max côté serveur, bug `computeTotals` — aucun n'a été touché.
+
+**Vérifications** : `go build ./internal/modules/kiosk/...` et
+`go vet ./internal/modules/kiosk/...` clean. Les échecs de `go build ./...`
+sur `internal/tasks`/`auth`/`ubereats`/`pos/accounting` préexistent (vérifié
+en stashant ce changement) et sont sans rapport.
+
+---
+
+## Bloquant identifié — homogénéisation du statut paiement carte Kiosk (`merchant_approval=ACCEPTED` + `brand_status=PENDING_CARD_PAYMENT`)
+
+> Audit du 2026-07-15, préalable à la décision produit demandant :
+> `merchant_approval = "ACCEPTED"` immédiat pour toutes les commandes Kiosk
+> (carte et comptoir), et `brand_status = "PENDING_CARD_PAYMENT"` →
+> `"PENDING"` pour porter l'attente de confirmation carte. **Aucune
+> implémentation n'a été faite** — ce changement est bloqué par un problème
+> de sécurité fonctionnelle identifié ci-dessous, à trancher avant tout code.
+
+### Constat — le KDS-équivalent (écran cuisine POS Flutter) filtre uniquement sur `merchant_approval`
+
+Il n'existe pas de module `internal/modules/kds/` dans ce backend — l'écran
+de préparation cuisine est un composant du POS Flutter
+(`wello_resto_flutter/lib/controllers/production_controller.dart`), alimenté
+par la liste de commandes ouvertes que le backend expose déjà (filtre
+`internal/modules/orders/repository.go:32` : `state IN ('OPEN') AND
+brand_status NOT IN ('ONLINE_PAYMENT_PENDING')` — ce filtre backend ne
+connaît pas `PENDING_CARD_PAYMENT` et laisse **déjà** passer ces commandes
+vers le client, comportement inchangé par la présente demande).
+
+Le filtre qui décide réellement qu'une commande doit s'afficher en
+préparation est **côté client**, dans `production_controller.dart` :
+
+```dart
+// wello_resto_flutter/lib/controllers/production_controller.dart:121-132
+List<OrderDto> get orders =>
+    orderController.orders
+        .where(
+          (order) => order.merchantApproval == MerchantApprovalEnum.accepted,
+        )
+        .where(
+          (order) =>
+              !ProductionSettingsNotifier.displayOnlyPaidOrders.value ||
+              order.isPaid == true,
+        )
+        .where((order) => getDisplayableProducts(order).isNotEmpty)
+        .where((order) => order.isDistributed != true)
+        ...
+```
+
+Trois gardes s'appliquent en cascade, mais **une seule est fiable dans tous
+les cas** :
+
+1. `merchantApproval == accepted` — **seul filtre garanti actif**, aucune
+   dépendance à une configuration merchant.
+2. `!displayOnlyPaidOrders.value || isPaid == true` — **filtre optionnel,
+   désactivé par défaut**. `ProductionSettingsNotifier.displayOnlyPaidOrders`
+   est initialisé à `false`
+   (`wello_resto_flutter/lib/helpers/production_settings_notifier.dart:9-11`,
+   confirmé rechargé depuis les préférences avec fallback `false` si absent
+   — `:24-30`). Tant qu'un restaurateur n'a pas explicitement activé ce
+   toggle dans les réglages production, cette clause est un no-op
+   (`!false || ...` = toujours `true`) : elle ne filtre **aucune** commande
+   non payée.
+3. `isDistributed != true` / produits affichables non vides — sans lien avec
+   le paiement.
+
+**Aucune des trois clauses ne teste `brand_status`.**
+
+### Pourquoi c'est bloquant avec le changement demandé
+
+Aujourd'hui, une commande Kiosk carte en attente porte
+`merchant_approval = "PENDING_CARD_PAYMENT"` (voir
+`internal/modules/kiosk/service.go:1481`) — elle échoue donc **déjà** la
+clause 1 (`== accepted`) et n'apparaît jamais en préparation avant
+confirmation du paiement. C'est un filtrage *accidentel* (absence de `case`
+plutôt que traitement explicite — déjà signalé dans
+`docs/BRAND_STATUS_MERCHANT_APPROVAL_AUDIT.md` §2), mais il fonctionne.
+
+Avec le changement demandé, `merchant_approval` devient `"ACCEPTED"`
+**immédiatement à la création**, y compris pour `payment_method == "card"`.
+La seule différence entre une commande carte en attente et une commande
+carte confirmée serait alors `brand_status`
+(`PENDING_CARD_PAYMENT` vs `PENDING`) — **un champ que
+`production_controller.dart` ne lit jamais**.
+
+**Conséquence concrète** : par défaut (`displayOnlyPaidOrders = false`, qui
+est le réglage initial pour tout merchant tant qu'il ne l'a pas changé), une
+commande Kiosk payée par carte apparaîtrait **en préparation cuisine avant
+même que le client ait présenté sa carte au Terminal** — entre l'appel
+`CreateOrder` et la réception du webhook `payment_intent.succeeded`
+(`card_present`). Un client qui annule ou dont la carte est refusée
+laisserait une commande déjà partie en cuisine, potentiellement déjà
+préparée, sans paiement confirmé. C'est une régression fonctionnelle et un
+risque financier direct (perte de marchandise préparée sans paiement), pas
+un simple problème d'affichage.
+
+### Correction nécessaire avant d'implémenter le changement demandé
+
+Le filtre `production_controller.dart:121-125` doit être étendu pour exclure
+explicitement `brand_status == "PENDING_CARD_PAYMENT"`, indépendamment de
+`merchant_approval` :
+
+```dart
+.where(
+  (order) =>
+      order.merchantApproval == MerchantApprovalEnum.accepted &&
+      order.brandStatus != 'PENDING_CARD_PAYMENT',
+)
+```
+
+Cela suppose que `OrderDto` expose déjà `brandStatus` en clair (à vérifier —
+`lib/models/orders/order_dto.dart`, voir aussi
+`lib/models/orders/brand_status_enum.dart` cité dans
+`docs/BRAND_STATUS_MERCHANT_APPROVAL_AUDIT.md` §1 : `BrandStatusEnum` est un
+enum **fermé** à 12 valeurs avec `fromServerValue` retournant `null` sur
+valeur inconnue — `"PENDING_CARD_PAYMENT"` n'y figure pas aujourd'hui et
+devra y être ajoutée pour que la comparaison fonctionne de façon fiable,
+plutôt que de comparer une chaîne brute côté Dart).
+
+Cette correction touche le **client POS Flutter**
+(`wello_resto_flutter`), pas ce backend — elle sort du périmètre de ce repo
+et doit être livrée **avant ou en même temps** que le changement backend
+demandé, jamais après (sinon fenêtre de régression en prod entre le déploi
+backend et le déploi Flutter).
+
+### Décision requise avant de poursuivre
+
+Deux options, à trancher avec Ilies avant tout code :
+
+- **Option A (recommandée)** : livrer la correction `production_controller.dart`
+  (+ ajout de la valeur à `BrandStatusEnum`) **dans le même incrément** que
+  le changement backend, coordonné avec un déploi simultané des deux
+  applications. Nécessite d'ouvrir ce travail dans le repo
+  `wello_resto_flutter` (hors scope de ce repo backend).
+- **Option B** : conserver `merchant_approval = "PENDING_CARD_PAYMENT"` côté
+  Kiosk (annuler la demande d'homogénéisation), qui a l'avantage de rester
+  protégé par le filtre Flutter existant sans aucune modification côté
+  client. C'est le statu quo documenté dans
+  `docs/SCANNORDER_ONLINE_PAYMENT_LIFECYCLE_AUDIT.md` §7 comme
+  "plus simple et plus robuste" que le pattern ScanNOrder.
+
+**Aucune modification de code backend n'a été effectuée dans cette session**
+tant que ce point n'est pas tranché — voir demande initiale, étape 0,
+condition d'arrêt.
+
+---
+
+## Déblocage — homogénéisation appliquée (Option A backend, filtre étendu côté serveur)
+
+> Session du 2026-07-15 (suite). Le blocage ci-dessus est levé en étendant
+> **côté backend** le même filtre qui protège déjà `ONLINE_PAYMENT_PENDING` —
+> approche différente des options A/B envisagées plus haut : au lieu de
+> corriger le client Flutter, on empêche la commande carte en attente
+> d'atteindre le POS en premier lieu, à la source (liste de commandes
+> ouvertes). Détails de l'audit d'exhaustivité, de l'implémentation, et **un
+> résidu de risque non couvert par le backend seul** (voir dernière section)
+> ci-dessous.
+
+### Étape 0 — audit d'exhaustivité de `ONLINE_PAYMENT_PENDING`
+
+Grep exhaustif du repo (`ONLINE_PAYMENT_PENDING`, code uniquement, hors
+docs/commentaires d'exemple) :
+
+| Fichier:ligne | Rôle | Doit exclure `PENDING_CARD_PAYMENT` ? |
+|---|---|---|
+| `internal/modules/orders/repository.go:32` (`GetPendingOrderIDs`) | Alimente `GetPendingOrders` (`orders/service.go:132`) — **c'est la liste que le POS Flutter récupère au chargement/refresh** (`order_network_manager.dart: fetchPendingOrders/getPendingOrders`), source de `orderController.orders` filtré ensuite par `production_controller.dart`. | **Oui — étendu.** Seul point qui, à lui seul, empêchait déjà une commande `ONLINE_PAYMENT_PENDING` d'atteindre le POS. Sans extension, une commande Kiosk carte en attente (nouveau `brand_status='PENDING_CARD_PAYMENT'`, `merchant_approval` déjà `'ACCEPTED'`) l'aurait traversé sans être filtrée. |
+| `internal/modules/integrations/repository.go:13` (`kpiExcludedStatuses`) | Utilisé uniquement par 3 requêtes de KPI revenus/nombre de commandes : `GetUberEatsIntegration` (`brand='UBER_EATS'`), `GetDeliverooIntegration` (`brand='DELIVEROO'`), `GetScanNOrderIntegration` (`brand='WELLO_RESTO' AND created_by='SCANNORDER'`). | **Non — vérifié, aucun changement.** Une commande Kiosk a `brand='WELLO_RESTO'` et `created_by='KIOSK'` (`kiosk/service.go`, constante `kioskCreatedBy`) : elle ne peut matcher **aucune** des trois clauses `WHERE` (ni `brand='UBER_EATS'`/`'DELIVEROO'`, ni `created_by='SCANNORDER'`). Il n'existe pas de `GetKioskIntegration` dans ce fichier. Structurellement impossible pour une commande Kiosk d'apparaître dans ces KPI, indépendamment de `brand_status`. De plus ces requêtes filtrent déjà `isPaid = 1`, ce qui exclurait `PENDING_CARD_PAYMENT` (toujours `isPaid=0`) même si le filtre `brand`/`created_by` ne le faisait pas. |
+| `internal/webhook/stripe/service.go:121` | Commentaire (exemple illustratif dans un commentaire sur la fraîcheur du cache Redis), pas une clause SQL. | Non concerné — aucun code exécutable. |
+
+**Autres clauses `brand_status` du repo, hors périmètre `ONLINE_PAYMENT_PENDING`** (vérifiées mais non modifiées, car elles ne citent jamais `ONLINE_PAYMENT_PENDING` et ne sont pas dans le périmètre demandé) : `internal/tasks/payments.go:22,39` (crons capture/annulation Stripe, filtrent `DENIED`/`CANCELED`), `internal/modules/orders/repository.go:234` (recherche admin par liste explicite de statuts, pas une exclusion), `internal/modules/pos/reports/*`, `internal/modules/pos/accounting/*`, `internal/modules/stats/repository.go` (tous filtrent `'DELETED','CANCELED'`, sans rapport avec le paiement en attente).
+
+**Décision — pas de constante SQL partagée** : une seule occurrence de code a nécessité une modification (`orders/repository.go:32`). Conformément à la consigne ("ne pas factoriser sauf si plusieurs endroits identiques"), la chaîne reste écrite en clair, cohérente avec le style déjà en place pour `ONLINE_PAYMENT_PENDING` (aucune constante Go pour les valeurs de `brand_status`, voir `docs/order-lifecycle.md` §P8).
+
+### Implémentation appliquée
+
+1. **`internal/modules/orders/repository.go:32`** — `o.brand_status NOT IN('ONLINE_PAYMENT_PENDING', 'PENDING_CARD_PAYMENT')`.
+2. **`internal/modules/kiosk/service.go` — `CreateOrder`** : `merchant_approval = "ACCEPTED"` dans tous les cas (carte et comptoir). Pour `payment_method == "card"`, `brand_status = "PENDING_CARD_PAYMENT"` est désormais écrit explicitement (sinon `setOrderDefaults` aurait posé `'PENDING'` par défaut, identique au comptoir — la commande carte serait indiscernable d'une commande déjà encaissée). Pour `pay_at_counter`, rien n'est forcé sur `brand_status` : le défaut existant (`'PENDING'`, car `OnlinePayment=false`) s'applique tel quel, comportement inchangé.
+3. **`internal/webhook/stripe/service.go` — `handleTerminalPaymentSucceeded`** : remplace l'appel à `orderlifecycle.SetOrderAccepted` (qui touchait `merchant_approval`) par un appel à la nouvelle méthode `stripe.Repository.ConfirmKioskCardPayment(merchantID, orderID)` (`internal/webhook/stripe/repository.go`), qui exécute :
+   ```sql
+   UPDATE orders SET brand_status = 'PENDING', last_update = UTC_TIMESTAMP()
+   WHERE order_id = ? AND merchant_id = ? AND brand_status = 'PENDING_CARD_PAYMENT'
+   ```
+   Guard `WHERE brand_status = 'PENDING_CARD_PAYMENT'` : idempotent si le webhook est rejoué. `merchant_approval` n'est plus touché par cette transition (déjà `'ACCEPTED'`). Invalidation du cache Redis de la commande et notification `order_update` reproduites manuellement (elles faisaient partie de `SetOrderAccepted`, désormais plus appelé pour ce chemin).
+4. **`internal/modules/kiosk/service.go` — `CancelKioskOrder`** : la garde d'autorisation d'annulation vérifie désormais `brand_status == "PENDING_CARD_PAYMENT"` (via le nouveau helper `isKioskCardPending`) au lieu de `merchant_approval == "PENDING_CARD_PAYMENT"` — ce dernier ne peut plus jamais être vrai pour une commande créée après ce déploiement, puisque `merchant_approval` est toujours `"ACCEPTED"`.
+
+### Écarts au-delà de la liste explicite du prompt (correctifs nécessaires trouvés en cours d'implémentation)
+
+Le prompt listait `CreateKioskOrder`, le webhook, et `CancelKioskOrder`. En traçant tous les appelants de `models.MerchantApprovalPendingCardPayment` (`grep` exhaustif sur `PENDING_CARD_PAYMENT`), deux fonctions supplémentaires gataient exclusivement sur `merchant_approval == PENDING_CARD_PAYMENT` et **auraient cessé de fonctionner à 100%** sans correction (plus aucune commande n'aurait jamais matché cette condition, puisque `merchant_approval` est désormais toujours `"ACCEPTED"`) :
+
+- **`CreateTerminalPaymentIntent`** (`kiosk/service.go`) — gate `order.MerchantApproval != PendingCardPayment` → remplacé par `!isKioskCardPending(order)`. Sans ce correctif, plus aucun PaymentIntent Terminal n'aurait pu être créé pour aucune commande carte.
+- **`SwitchToCounterPayment`** (`kiosk/service.go`) — même gate, **et** la transition elle-même : elle appelait `UpdateOrderMerchantApproval(..., PENDING_APPROVAL)`, ce qui aurait fait régresser l'invariant "merchant_approval toujours ACCEPTED" à chaque bascule carte→caisse. Remplacé par une nouvelle méthode `kiosk.Repository.ConfirmKioskCardToCounterBrandStatus` (transition `brand_status: PENDING_CARD_PAYMENT → PENDING`, symétrique à `stripe.Repository.ConfirmKioskCardPayment`), `merchant_approval` n'est plus touché. Le reste de la fonction (réutilisation de `ConfirmCounterPayment` pour le code de retrait/QR/notification) est inchangé — son branchement interne sur `merchant_approval=="PENDING_APPROVAL"` ne s'active simplement plus (il est déjà `"ACCEPTED"`), ce qui est le comportement correct.
+- **`mapMerchantApprovalToKioskStatus`** (`kiosk/service.go`) — sans mise à jour, cette fonction aurait renvoyé `"accepted"` à la borne dès la création d'une commande carte (puisque `merchant_approval` est `"ACCEPTED"` immédiatement), masquant l'attente de paiement à l'écran kiosk. Vérifie désormais `order.BrandStatus == "PENDING_CARD_PAYMENT"` **avant** le switch sur `merchant_approval`.
+
+**Nouveau helper `isKioskCardPending(order)`** (`kiosk/service.go`) : `true` si `brand_status == "PENDING_CARD_PAYMENT"` **ou** (fallback) `merchant_approval == models.MerchantApprovalPendingCardPayment`. Le fallback n'est pas demandé explicitement par le prompt — ajouté pour la sécurité du déploiement : une commande créée par l'**ancien** code juste avant le déploiement (donc `merchant_approval="PENDING_CARD_PAYMENT"`, `brand_status="PENDING"` par défaut de l'ancien comportement) resterait sinon totalement bloquée après déploiement du nouveau code (ni annulable, ni capable de recevoir un PaymentIntent Terminal, ni basculable vers la caisse) jusqu'à intervention manuelle. Ce fallback — comme le fallback équivalent dans `mapMerchantApprovalToKioskStatus` — **est à retirer dans une session de nettoyage dédiée** une fois qu'aucune commande créée par l'ancien code ne peut plus être en vol (quelques heures/jours après le déploiement).
+
+### Vérifications
+
+`go build ./...` clean. `go vet ./...` clean sur les fichiers modifiés (warnings pré-existants et sans rapport sur `auth`/`pos/accounting`/`ubereats`/`cmd/api/routes.go`, déjà signalés dans les incréments précédents). `go test ./internal/modules/kiosk/... ./internal/webhook/stripe/... ./internal/modules/orders/...` passent. Tests manuels DB non exécutés (pas de `MYSQL_URL` dans ce sandbox) — avant mise en prod, valider en particulier : création carte → vérifier `brand_status='PENDING_CARD_PAYMENT'` et absence de la commande dans `/orders/pending` ; webhook `payment_intent.succeeded` (`card_present`) → vérifier `brand_status='PENDING'`, `merchant_approval` inchangé (`'ACCEPTED'`) ; annulation d'une commande carte en attente ; bascule carte→caisse.
+
+### Nettoyage différé — `models.MerchantApprovalPendingCardPayment`
+
+**Non supprimée dans cette session** (risque de casser un usage non détecté).
+État réel après ce changement : la constante n'est plus jamais **écrite** en
+base par le code actuel (`CreateOrder` pose désormais `merchant_approval =
+"ACCEPTED"` dans tous les cas). Elle est encore **lue** à trois endroits, tous
+en fallback rétrocompatibilité pour des commandes créées par l'ancien code :
+`mapMerchantApprovalToKioskStatus` (switch), `isKioskCardPending` (fallback),
+et implicitement partout où `isKioskCardPending` est appelé
+(`CancelKioskOrder`, `CreateTerminalPaymentIntent`, `SwitchToCounterPayment`).
+À supprimer, avec ses trois usages de fallback, dans une session dédiée une
+fois confirmé qu'aucune commande en base ne porte plus
+`merchant_approval='PENDING_CARD_PAYMENT'` (`SELECT COUNT(*) FROM orders WHERE
+merchant_approval='PENDING_CARD_PAYMENT'` doit retourner 0 avant ce nettoyage).
+`internal/modules/kiosk/repository.go` : `UpdateOrderMerchantApproval` est
+également signalée comme potentiellement morte (plus aucun appelant après le
+remplacement de `SwitchToCounterPayment`) — même remarque, à vérifier/retirer
+dans la même session.
+
+### ⚠️ Note critique pour la session POS Flutter — le backend seul NE ferme PAS complètement la boucle
+
+Le déblocage ci-dessus étend le filtre **backend** (`GetPendingOrderIDs`), ce
+qui protège le chemin de rafraîchissement standard du POS (polling au
+chargement / après notification, `fetchPendingOrders()`). **Mais
+`ONLINE_PAYMENT_PENDING` bénéficie aujourd'hui d'une deuxième protection, côté
+client, que `PENDING_CARD_PAYMENT` n'a pas encore** — et cette deuxième
+protection couvre un chemin que le filtre backend ne couvre pas :
+
+**`wello_resto_flutter/lib/controllers/order/order_network_manager.dart` — `updateOrderFromPushNotificationData` (lignes ~117-160)**, le handler appelé à la réception d'une notification push/WebSocket `order_update` :
+
+```dart
+// order_network_manager.dart:141-143
+if (orderFromServer.state == 'CLOSED' ||
+    orderFromServer.brandStatus ==
+        BrandStatusEnum.onlinePaymentPending.value) {
+  // commande retirée/non ajoutée à la liste locale `orders`
+  ...
+  return null;
+}
+```
+
+Ce handler **ne passe jamais par `GetPendingOrderIDs`** : à la réception d'une
+notification, il appelle `_getOrder(orderId)` pour récupérer **cette commande
+précise par son ID**, directement — le filtre SQL backend étendu dans cette
+session ne s'applique pas à cet appel (il ne s'applique qu'à la liste
+paginée). Seule cette vérification côté client (`brandStatus ==
+onlinePaymentPending`) empêche aujourd'hui une commande `ONLINE_PAYMENT_PENDING`
+d'être ajoutée à `orders` (et donc de potentiellement apparaître en
+production, selon `production_controller.dart`) via ce chemin.
+
+**Conséquence concrète** : `internal/modules/order_life_cycle/service.go:981`
+(`OrdersLifeCycleService.CreateOrder`) envoie un `SendNotificationAsync(...,
+NotificationTypeOrderUpdate)` à **chaque** création de commande, y compris
+Kiosk carte. Un POS connecté en WebSocket au moment de la création recevrait
+donc cette notification, appellerait `_getOrder`, obtiendrait la commande
+avec `brand_status='PENDING_CARD_PAYMENT'` — non exclu par la condition
+ci-dessus — et l'ajouterait à `orders`, où elle passerait le filtre
+`production_controller.dart:124` (`merchantApproval == accepted`, vrai
+immédiatement avec ce changement). **La faille identifiée dans la section
+"Bloquant identifié" plus haut n'est donc que partiellement corrigée par le
+changement backend seul** : le chemin de polling est fermé, le chemin
+notification temps réel reste ouvert.
+
+Fenêtre de risque réelle : la commande resterait visible jusqu'au prochain
+rafraîchissement complet de la liste via `fetchPendingOrders()` (qui, lui,
+bénéficiera correctement du filtre backend étendu une fois ce changement
+déployé) — donc une fenêtre courte plutôt qu'indéfinie, mais bien réelle et
+non nulle, potentiellement suffisante pour qu'un plat parte en préparation
+sur une commande non payée.
+
+**Correctif nécessaire, session POS (ne pas implémenter ici)** :
+
+1. `order_network_manager.dart:141-143` — étendre la condition existante,
+   même modèle qu'`onlinePaymentPending` :
+   ```dart
+   if (orderFromServer.state == 'CLOSED' ||
+       orderFromServer.brandStatus == BrandStatusEnum.onlinePaymentPending.value ||
+       orderFromServer.brandStatus == BrandStatusEnum.pendingCardPayment.value) {
+   ```
+2. **Pré-requis** : `BrandStatusEnum` (`lib/models/orders/brand_status_enum.dart:4-37`)
+   est un enum **fermé** — `"PENDING_CARD_PAYMENT"` n'y figure pas
+   aujourd'hui (seul `onlinePaymentPending("ONLINE_PAYMENT_PENDING")` existe
+   pour ce genre de statut). Il faut l'y ajouter (`pendingCardPayment
+   ("PENDING_CARD_PAYMENT")`) avant que la comparaison ci-dessus fonctionne —
+   sinon comparer contre une valeur inexistante dans l'enum, ou comparer une
+   chaîne brute `'PENDING_CARD_PAYMENT'` sans passer par l'enum (fonctionnellement
+   correct mais incohérent avec le reste du fichier qui utilise
+   `BrandStatusEnum.x.value` partout).
+3. **`production_controller.dart:121-125`** (déjà documenté dans la section
+   "Bloquant identifié" plus haut) reste également à corriger pour une défense
+   en profondeur — même si `order_network_manager.dart` est corrigé, une
+   commande pourrait théoriquement atteindre `orders` par un autre chemin futur
+   non audité ; un filtre `brand_status` au niveau de l'écran production
+   lui-même est plus robuste qu'un filtre unique en amont.
+4. **Coordination de déploi** : tant que ces trois points Flutter ne sont pas
+   livrés, le risque résiduel décrit ci-dessus subsiste. Recommandation :
+   traiter la session POS comme un prérequis au déploiement production du
+   changement backend de cette session, pas comme un simple suivi optionnel.

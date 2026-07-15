@@ -3,7 +3,6 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 
 	upsellModule "welloresto-api/internal/modules/upsell"
@@ -26,44 +25,21 @@ const (
 // Each merchant is processed independently — an error on one does not stop others.
 func (tm *TasksManager) RecomputeUpsellPatterns() {
 	ctx := context.Background()
-	logger := tm.Logger
 
-	if !tm.AICache.IsAvailable() {
-		if logger != nil {
-			logger.Warn("upsell: redis unavailable, skipping market basket batch",
-				zap.String("job", "RecomputeUpsellPatterns"),
-			)
-		} else {
-			log.Println("upsell: redis unavailable, skipping market basket batch")
-		}
+	if tm.AICache == nil || !tm.AICache.IsAvailable() {
+		tm.logWarn("[CRON] RecomputeUpsellPatterns: redis indisponible, batch ignoré")
 		return
 	}
 
-	if logger != nil {
-		logger.Info("upsell: market basket batch started",
-			zap.String("job", "RecomputeUpsellPatterns"),
-		)
-	}
-
-	log.Println("[CRON] Démarrage: RecomputeUpsellPatterns")
+	tm.logInfo("[CRON] RecomputeUpsellPatterns: démarrage")
 	start := time.Now()
 
-	// ── 1. Fetch active merchants ─────────────────────────────────────────────
-	rows, err := tm.DB.QueryContext(ctx,
-		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = m.id",
-	)
+	// ── 1. Fetch active merchants (lecture complète : 1 connexion max) ───────
+	merchants, err := tm.collectIDs(ctx,
+		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = m.id")
 	if err != nil {
-		log.Printf("[CRON] RecomputeUpsellPatterns: failed to list merchants: %v", err)
+		tm.logError("[CRON] RecomputeUpsellPatterns: liste marchands échouée", zap.Error(err))
 		return
-	}
-	defer rows.Close()
-
-	var merchants []string
-	for rows.Next() {
-		var id string
-		if scanErr := rows.Scan(&id); scanErr == nil {
-			merchants = append(merchants, id)
-		}
 	}
 
 	merchantsProcessed := 0
@@ -73,7 +49,8 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 	for _, merchantID := range merchants {
 		pairs, processErr := tm.processUpsellPatternsForMerchant(ctx, merchantID)
 		if processErr != nil {
-			log.Printf("[CRON] RecomputeUpsellPatterns: merchant %s failed: %v", merchantID, processErr)
+			tm.logError("[CRON] RecomputeUpsellPatterns: marchand en échec",
+				zap.String("merchant_id", merchantID), zap.Error(processErr))
 			merchantsFailed++
 			continue
 		}
@@ -81,8 +58,11 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 		totalPairs += pairs
 	}
 
-	log.Printf("[CRON] RecomputeUpsellPatterns: done in %dms | merchants_processed=%d | merchants_failed=%d | total_patterns=%d",
-		time.Since(start).Milliseconds(), merchantsProcessed, merchantsFailed, totalPairs)
+	tm.logInfo("[CRON] RecomputeUpsellPatterns: terminé",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int("merchants_processed", merchantsProcessed),
+		zap.Int("merchants_failed", merchantsFailed),
+		zap.Int("total_patterns", totalPairs))
 }
 
 // processUpsellPatternsForMerchant computes market basket patterns for a single merchant
@@ -253,16 +233,20 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 
 // CleanupOldUpsellSuggestions deletes suggestion rows older than upsellCleanupMonths.
 func (tm *TasksManager) CleanupOldUpsellSuggestions() {
-	log.Println("[CRON] Démarrage: CleanupOldUpsellSuggestions")
+	if tm.UpsellRepo == nil {
+		tm.logWarn("[CRON] CleanupOldUpsellSuggestions: repo indisponible, tâche ignorée")
+		return
+	}
 
 	ctx := context.Background()
 
 	deleted, err := tm.UpsellRepo.DeleteOldSuggestions(ctx, upsellCleanupMonths)
 	if err != nil {
-		log.Printf("[CRON] CleanupOldUpsellSuggestions error: %v", err)
+		tm.logError("[CRON] CleanupOldUpsellSuggestions: échec", zap.Error(err))
 		return
 	}
 
-	log.Printf("[CRON] CleanupOldUpsellSuggestions: deleted %d rows older than %d months",
-		deleted, upsellCleanupMonths)
+	tm.logInfo("[CRON] CleanupOldUpsellSuggestions: terminé",
+		zap.Int64("deleted", deleted),
+		zap.Int("older_than_months", upsellCleanupMonths))
 }

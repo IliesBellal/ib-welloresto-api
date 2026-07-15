@@ -19,7 +19,7 @@ func NewOrdersFetcher(db *sql.DB) *OrdersFetcher {
 		database: db}
 }
 
-func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters, orderByFilter, limitsFilters string) ([]models.Order, error) {
+func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters QueryFilter, orderByFilter, limitsFilters string) ([]models.Order, error) {
 
 	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le contexte
 	db := dbutils.GetDB(ctx, r.database)
@@ -34,6 +34,16 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		return rows, nil
 	}
 
+	// args pour les requêtes filtrées par whereFilters : merchantID d'abord (son `?`
+	// apparaît toujours en premier dans le SQL), puis les args de whereFilters dans
+	// l'ordre de leurs `?` respectifs.
+	filteredArgs := func() []interface{} {
+		args := make([]interface{}, 0, 1+len(whereFilters.Args))
+		args = append(args, merchantID)
+		args = append(args, whereFilters.Args...)
+		return args
+	}
+
 	// --- 9. LOCATIONS ---
 	locationsByOrderID := map[string][]models.Location{}
 	{
@@ -42,11 +52,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		FROM orders o
 		INNER JOIN order_location ol on ol.order_id = o.order_id
 		INNER JOIN locations l on l.merchant_id = o.merchant_id and l.location_id = ol.location_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -109,11 +119,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
 		INNER JOIN extra e on e.order_item_id = oi.order_item_id
 		INNER JOIN components ce on e.component_id = ce.component_id and ce.merchant_id = o.merchant_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -146,11 +156,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orderitems oi on o.order_id = oi.order_id and oi.merchant_id = o.merchant_id
 		INNER JOIN without w on w.order_item_id = oi.order_item_id
 		INNER JOIN components cw on w.component_id = cw.component_id and cw.merchant_id = o.merchant_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -222,11 +232,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
 		INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
 		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -264,11 +274,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
 		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -308,9 +318,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		left join users u on u.user_id = oc.user_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? and oc.order_item_id is null ` + whereFilters
+		WHERE o.merchant_id = ? and oc.order_item_id is null ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -338,9 +348,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN orders o on o.order_id = p.order_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? ` + whereFilters
+		WHERE o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -389,11 +399,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
 		LEFT JOIN discounts d ON d.discount_id = oi.discount_id
 		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
-		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id 
-		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id 
-		WHERE oi.quantity > 0 AND o.merchant_id = ? ` + whereFilters
+		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
+		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE oi.quantity > 0 AND o.merchant_id = ? ` + whereFilters.SQL
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}
@@ -604,9 +614,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
 	LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
     LEFT JOIN cash_registers cr on cr.cash_register_id = o.cash_register_id
-	WHERE o.merchant_id = ? ` + whereFilters + " " + orderByFilter + " " + limitsFilters
+	WHERE o.merchant_id = ? ` + whereFilters.SQL + " " + orderByFilter + " " + limitsFilters
 
-		rows, err := runQuery(step, q, merchantID)
+		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
 			return nil, err
 		}

@@ -480,6 +480,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Settings:   user.HasSettingsAccess(),
 			HACCP:      user.HasHACCPAccess() && user.HACCPEnabled,
 			Bookings:   user.BookingsEnabled,
+			Kiosks:     user.KiosksEnabled,
 			Reports:    user.HasReportsViewAccess() || user.HasReportsExportAccess(),
 			Financials: user.HasFinancialsViewAccess() || user.HasFinancialsExportAccess(),
 			Customers:  user.HasCustomerManagementAccess() || user.HasCustomerExportAccess(),

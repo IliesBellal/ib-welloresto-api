@@ -378,22 +378,34 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 		return false, nil
 	}
 
-	// pending_card_payment -> ACCEPTED : même transition que le paiement
-	// comptoir (SetOrderAccepted), qui déclenche en interne KDS/impression et la
-	// notification order_updated vers le merchant.
-	if _, err := s.orderlifecycle.SetOrderAccepted(ctx, "KIOSK", mapping.MerchantID, mapping.OrderID); err != nil {
+	// brand_status: PENDING_CARD_PAYMENT -> PENDING. merchant_approval reste
+	// "ACCEPTED" (déjà posé à la création côté Kiosk, jamais touché ici) — le
+	// kiosk n'a pas d'étape d'acceptation restaurateur, contrairement au
+	// paiement comptoir ScanNOrder/POS. Guard côté SQL (WHERE brand_status =
+	// 'PENDING_CARD_PAYMENT') : un replay du webhook Stripe est un no-op.
+	// Voir docs/KIOSK_DECISIONS.md.
+	confirmed, err := s.repo.ConfirmKioskCardPayment(ctx, mapping.MerchantID, mapping.OrderID)
+	if err != nil {
 		return true, err
+	}
+
+	if s.redis != nil {
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(mapping.MerchantID, mapping.OrderID))
 	}
 
 	// Enregistrement du paiement Terminal via l'UNIQUE point d'insertion du
 	// projet (order_life_cycle : AddPaymentAndReturnID), le même que le Checkout
 	// en ligne — cohérence multi-canal du reporting payments.mop. En best-effort :
-	// la commande est déjà acceptée (action métier critique déjà faite) ; un échec
+	// la commande est déjà confirmée (action métier critique déjà faite) ; un échec
 	// d'insertion ici est un trou de reporting, pas un échec fonctionnel, et ne
 	// doit pas provoquer un retour d'erreur qui ferait rejouer le webhook Stripe
-	// (SetOrderAccepted déjà passé + re-insertion = doublon rejeté par le garde
-	// fiscal de montant).
+	// (transition brand_status déjà passée + re-insertion = doublon rejeté par le
+	// garde fiscal de montant).
 	s.recordTerminalPayment(ctx, mapping, pi)
+
+	if confirmed {
+		go s.notification.SendNotificationAsync(mapping.MerchantID, mapping.OrderID, notification.NotificationTypeOrderUpdate)
+	}
 
 	if s.redis != nil {
 		s.redis.Delete(ctx, stripeclient.TerminalPaymentIntentKey(pi.ID))

@@ -1,12 +1,7 @@
 package tasks
 
-import "log"
-
-// SendLoyaltyProgrammReminder : Rappel points fidélité (mentionné dans votre script PHP)
+// SendLoyaltyProgrammReminder : Rappel points fidélité — non implémenté.
+// Log en Debug uniquement pour ne pas polluer les logs de prod à chaque heure.
 func (tm *TasksManager) SendLoyaltyProgrammReminder() {
-	log.Println("[CRON] Démarrage: SendLoyaltyProgrammReminder")
-
-	// TODO: Logique de rappel fidélité
-
-	log.Println("[CRON] Terminé: SendLoyaltyProgrammReminder")
+	tm.logDebug("[CRON] SendLoyaltyProgrammReminder: non implémenté, aucune action")
 }

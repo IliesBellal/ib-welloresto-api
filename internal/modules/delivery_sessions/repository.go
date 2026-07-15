@@ -115,19 +115,11 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 		orderIDList = append(orderIDList, oid)
 	}
 
-	ordersFilter := ""
-	for i, oid := range orderIDList {
-		if i > 0 {
-			ordersFilter += ","
-		}
-		ordersFilter += fmt.Sprintf("'%s'", oid)
-	}
-
 	// Le filtre magique : on tape directement sur la Primary Key ou l'index principal
-	filter := fmt.Sprintf(" AND o.order_id IN (%s) ", ordersFilter)
+	filter := orders.InFilter("o.order_id", orderIDList)
 
 	// 4. On appelle le monstre partagé avec ce filtre optimisé
-	orders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
+	fetchedOrders, err := r.ordersFetcher.FetchAndBuildOrders(ctx, merchantID, filter, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +127,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 	// 5. Assemblage : Mettre les commandes (avec leur delivery_stop) dans les bonnes sessions
 	ordersBySession := make(map[string][]models.Order)
 
-	for _, o := range orders {
+	for _, o := range fetchedOrders {
 		if o.DeliverySessionID != nil {
 			key := *o.DeliverySessionID
 			if stop, ok := stopsBySession[key][o.OrderID]; ok {
@@ -683,7 +675,7 @@ func (r *DeliverySessionsRepository) assembleDeliverySessionDetails(ctx context.
 	var allOrders []models.Order
 
 	for _, oid := range orderIDs {
-		filter := fmt.Sprintf(" AND o.order_id = '%s' ", oid)
+		filter := orders.NewFilter(" AND o.order_id = ? ", oid)
 		fetchedOrders, err := r.ordersFetcher.FetchAndBuildOrders(context.Background(), merchantID, filter, "", "")
 		if err != nil {
 			return nil, err

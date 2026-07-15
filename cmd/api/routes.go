@@ -915,6 +915,18 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/", locationsH.CreateFloor)
 		r.Patch("/{floor_id}", locationsH.UpdateFloor)
 		r.Delete("/{floor_id}", locationsH.DeleteFloor)
+
+		r.Route("/{floor_id}/obstacles", func(r chi.Router) {
+			r.Post("/", locationsH.CreateObstacle)
+			r.Patch("/{obstacle_id}", locationsH.UpdateObstacle)
+			r.Delete("/{obstacle_id}", locationsH.DeleteObstacle)
+		})
+
+		r.Route("/{floor_id}/areas", func(r chi.Router) {
+			r.Post("/", locationsH.CreateArea)
+			r.Patch("/{area_id}", locationsH.UpdateArea)
+			r.Delete("/{area_id}", locationsH.DeleteArea)
+		})
 	})
 
 	// --- LOCATIONS ---

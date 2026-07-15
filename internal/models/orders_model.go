@@ -71,30 +71,53 @@ type OrderComment struct {
 	CreationDate *time.Time `json:"creation_date,omitempty"`
 }
 
+type TableAttributes struct {
+	PMR     bool `json:"pmr"`
+	Terrace bool `json:"terrace"`
+	VIP     bool `json:"vip"`
+	Window  bool `json:"window"`
+}
+
 type Location struct {
-	LocationID   string    `json:"location_id"`
-	OrderID      *string   `json:"order_id"`
-	BookingID    *string   `json:"booking_id"`
-	LocationName string    `json:"location_name"`
-	LocationDesc *string   `json:"location_desc"`
-	Seats        int       `json:"seats"`
-	Order        int       `json:"order"`
-	FloorID      string    `json:"floor_id,omitempty"`
-	Shape        string    `json:"shape,omitempty"`
-	X            float64   `json:"x,omitempty"`
-	Y            float64   `json:"y,omitempty"`
-	W            float64   `json:"width,omitempty"`
-	H            float64   `json:"height,omitempty"`
-	Angle        float64   `json:"angle,omitempty"`
-	OpenOrderID  *string   `json:"open_order_id,omitempty"`
-	Available    bool      `json:"available,omitempty"`
-	Bookings     []Booking `json:"bookings"`
+	LocationID    string           `json:"location_id"`
+	OrderID       *string          `json:"order_id"`
+	BookingID     *string          `json:"booking_id"`
+	LocationName  string           `json:"location_name"`
+	LocationDesc  *string          `json:"location_desc"`
+	Seats         int              `json:"seats"`
+	Order         int              `json:"order"`
+	FloorID       string           `json:"floor_id,omitempty"`
+	Shape         string           `json:"shape,omitempty"`
+	X             float64          `json:"x,omitempty"`
+	Y             float64          `json:"y,omitempty"`
+	W             float64          `json:"width,omitempty"`
+	H             float64          `json:"height,omitempty"`
+	Angle         float64          `json:"angle,omitempty"`
+	OpenOrderID   *string          `json:"open_order_id,omitempty"`
+	OrderOpenedAt *string          `json:"order_opened_at,omitempty"` // ISO 8601 UTC, nil si pas de commande ouverte
+	Available     bool             `json:"available,omitempty"`
+	Bookings      []Booking        `json:"bookings"`
+	Booking       *LocationBooking `json:"booking,omitempty"`
+	Attributes    *TableAttributes `json:"attributes,omitempty"`
+}
+
+// LocationBooking résume, pour une table du plan de salle, la prochaine
+// réservation ACCEPTED sur le créneau actif (dérivée de Location.Bookings,
+// déjà chargées via la jointure booked_location de GetLocations).
+type LocationBooking struct {
+	BookingID     string `json:"booking_id"`
+	BookingNumber string `json:"booking_number"`
+	PartySize     int    `json:"party_size"`
+	StartsAt      string `json:"starts_at"` // ISO 8601 UTC
+	EndsAt        string `json:"ends_at"`   // ISO 8601 UTC
+	CustomerName  string `json:"customer_name"`
 }
 
 type LocationResponse struct {
 	Locations []Location `json:"locations"`
 	Floors    []Floor    `json:"floors"`
 	Areas     []Area     `json:"areas"`
+	Obstacles []Obstacle `json:"obstacles"`
 }
 
 type Floor struct {
@@ -112,6 +135,19 @@ type Area struct {
 	Angle       float64         `json:"angle"`
 	StrokeColor string          `json:"stroke_color"`
 	Color       string          `json:"color"`
+}
+
+type Obstacle struct {
+	ID        string   `json:"id"`
+	FloorID   string   `json:"floor_id"`
+	Type      string   `json:"type"`
+	X         float64  `json:"x"`
+	Y         float64  `json:"y"`
+	Width     float64  `json:"width"`
+	Height    float64  `json:"height"`
+	Angle     float64  `json:"angle"`
+	Direction *float64 `json:"direction"`
+	Enabled   bool     `json:"enabled"`
 }
 
 type PaymentItem struct {
@@ -157,48 +193,48 @@ type Customer struct {
 }
 
 type Order struct {
-	OrderID           string           `json:"order_id"`
-	MerchantID        *string          `json:"merchant_id,omitempty"`
-	OrderNum          *string          `json:"order_num"`
-	DeliverySessionID *string          `json:"delivery_session_id"`
-	DeliveryPriority  *int             `json:"delivery_priority"`
-	Brand             *string          `json:"brand"`
-	BrandOrderID      *string          `json:"brand_order_id"`
-	BrandOrderNum     *string          `json:"brand_order_num"`
-	BrandStatus       *string          `json:"brand_status"`
-	OrderType         *string          `json:"order_type"`
-	CutleryNotes      *string          `json:"cutlery_notes"`
-	State             *string          `json:"state"`
-	Scheduled         bool             `json:"scheduled"`
-	TTC               int64            `json:"TTC"`
-	TVA               *int64           `json:"TVA"`
-	HT                *int64           `json:"HT"`
-	CartDiscountID    *string          `json:"cart_discount_id,omitempty"`
-	CartDiscountCode  *string          `json:"cart_discount_code,omitempty"`
-	CartDiscountAmount int64           `json:"cart_discount_amount"`
-	PlacesSettings    *int64           `json:"places_settings"`
-	PagerNumber       *string          `json:"pager_number"`
-	IsPaid            bool             `json:"isPaid"`
-	IsDistributed     bool             `json:"isDistributed"`
-	IsSNO             bool             `json:"isSNO"`
-	CallHour          *string          `json:"callHour"`
-	EstimatedReady    *int             `json:"estimated_ready"`
-	IsDelivery        int              `json:"isDelivery"`
-	MerchantApproval  string           `json:"merchant_approval"`
-	DeliveryFees      *int64           `json:"delivery_fees"`
-	Customer          *Customer        `json:"customer"`
-	Comments          []OrderComment   `json:"comments"`
-	Payments          []Payment        `json:"payments"`
-	Responsible       *OrderUser       `json:"responsible"`
-	Location          []Location       `json:"location"`
-	Products          []ProductEntry   `json:"products"`
-	Priority          *int             `json:"priority"`
-	CreationDate      int64            `json:"creation_date"`
-	FulfillmentType   *string          `json:"fulfillment_type"`
-	LastUpdate        int64            `json:"last_update"`
-	DeliverySession   *DeliverySession `json:"delivery_session"`
-	CashRegister      *CashRegister    `json:"cash_register"`
-	DeliveryStop      *DeliveryStop    `json:"delivery_stop,omitempty"`
+	OrderID            string           `json:"order_id"`
+	MerchantID         *string          `json:"merchant_id,omitempty"`
+	OrderNum           *string          `json:"order_num"`
+	DeliverySessionID  *string          `json:"delivery_session_id"`
+	DeliveryPriority   *int             `json:"delivery_priority"`
+	Brand              *string          `json:"brand"`
+	BrandOrderID       *string          `json:"brand_order_id"`
+	BrandOrderNum      *string          `json:"brand_order_num"`
+	BrandStatus        *string          `json:"brand_status"`
+	OrderType          *string          `json:"order_type"`
+	CutleryNotes       *string          `json:"cutlery_notes"`
+	State              *string          `json:"state"`
+	Scheduled          bool             `json:"scheduled"`
+	TTC                int64            `json:"TTC"`
+	TVA                *int64           `json:"TVA"`
+	HT                 *int64           `json:"HT"`
+	CartDiscountID     *string          `json:"cart_discount_id,omitempty"`
+	CartDiscountCode   *string          `json:"cart_discount_code,omitempty"`
+	CartDiscountAmount int64            `json:"cart_discount_amount"`
+	PlacesSettings     *int64           `json:"places_settings"`
+	PagerNumber        *string          `json:"pager_number"`
+	IsPaid             bool             `json:"isPaid"`
+	IsDistributed      bool             `json:"isDistributed"`
+	IsSNO              bool             `json:"isSNO"`
+	CallHour           *string          `json:"callHour"`
+	EstimatedReady     *int             `json:"estimated_ready"`
+	IsDelivery         int              `json:"isDelivery"`
+	MerchantApproval   string           `json:"merchant_approval"`
+	DeliveryFees       *int64           `json:"delivery_fees"`
+	Customer           *Customer        `json:"customer"`
+	Comments           []OrderComment   `json:"comments"`
+	Payments           []Payment        `json:"payments"`
+	Responsible        *OrderUser       `json:"responsible"`
+	Location           []Location       `json:"location"`
+	Products           []ProductEntry   `json:"products"`
+	Priority           *int             `json:"priority"`
+	CreationDate       int64            `json:"creation_date"`
+	FulfillmentType    *string          `json:"fulfillment_type"`
+	LastUpdate         int64            `json:"last_update"`
+	DeliverySession    *DeliverySession `json:"delivery_session"`
+	CashRegister       *CashRegister    `json:"cash_register"`
+	DeliveryStop       *DeliveryStop    `json:"delivery_stop,omitempty"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

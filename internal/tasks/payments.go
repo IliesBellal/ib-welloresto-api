@@ -1,17 +1,16 @@
 package tasks
 
 import (
-	"log"
+	"context"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
+
+	"go.uber.org/zap"
 )
 
-// const autoCaptureDelay = 720 // 12 heures en minutes
-const autoCaptureDelay = 720 // 12 heures
+const autoCaptureDelay = 720 // 12 heures en minutes
 
 // CapturePayments : Valide les paiements Stripe différés
 func (tm *TasksManager) CapturePayments() {
-	//log.Println("[CRON] Démarrage: CapturePayments")
-
 	query := `
 		SELECT sp.payment_intent_id, sa.account_id
 		FROM payments p
@@ -25,14 +24,10 @@ func (tm *TasksManager) CapturePayments() {
 		AND TIMESTAMPDIFF(MINUTE, p.payment_date, UTC_TIMESTAMP) >= ?;`
 
 	tm.processStripePayments(query, "CAPTURE")
-
-	//log.Println("[CRON] Terminé: CapturePayments")
 }
 
 // CancelPayments : Annule les empreintes bancaires si commande annulée
 func (tm *TasksManager) CancelPayments() {
-	//log.Println("[CRON] Démarrage: CancelPayments")
-
 	query := `
 		SELECT sp.payment_intent_id, sa.account_id
 		FROM payments p
@@ -46,51 +41,49 @@ func (tm *TasksManager) CancelPayments() {
 		AND TIMESTAMPDIFF(MINUTE, p.payment_date, UTC_TIMESTAMP) >= ?;`
 
 	tm.processStripePayments(query, "CANCEL")
-
-	//log.Println("[CRON] Terminé: CancelPayments")
 }
 
-// Helper pour éviter la duplication entre Capture et Cancel
+// Helper pour éviter la duplication entre Capture et Cancel.
+// Les paires (intent, account) sont collectées puis le rows fermé avant les
+// appels Stripe : les Async ne touchent pas la DB mais on libère l'unique
+// connexion du pool au plus tôt.
 func (tm *TasksManager) processStripePayments(query string, action string) {
-	rows, err := tm.DB.Query(query, autoCaptureDelay)
+	ctx := context.Background()
+
+	rows, err := tm.DB.QueryContext(ctx, query, autoCaptureDelay)
 	if err != nil {
-		log.Printf("[CRON] Erreur Stripe Query: %v", err)
+		tm.logError("[CRON] Stripe "+action+": requête échouée", zap.Error(err))
 		return
 	}
-	defer rows.Close()
 
+	type paymentRef struct{ intentID, accountID string }
+	var payments []paymentRef
 	for rows.Next() {
-		var intentID, accountID string
-		// On scanne les colonnes retournées par ta requête SQL
-		if err := rows.Scan(&intentID, &accountID); err != nil {
-			log.Printf("[CRON] Erreur Scan: %v", err)
+		var ref paymentRef
+		if err := rows.Scan(&ref.intentID, &ref.accountID); err != nil {
+			tm.logError("[CRON] Stripe "+action+": scan échoué", zap.Error(err))
 			continue
 		}
+		payments = append(payments, ref)
+	}
+	if err := rows.Err(); err != nil {
+		tm.logError("[CRON] Stripe "+action+": itération interrompue", zap.Error(err))
+	}
+	rows.Close()
 
+	for _, ref := range payments {
 		if action == "CAPTURE" {
-			// On prépare la requête pour la capture
-			req := stripeclient.PaymentRequest{
-				IntentID:  intentID,
-				AccountID: accountID,
-				// Note: Amount, Currency, CustomerID ne sont plus nécessaires ici
-				// car le PI existe déjà chez Stripe.
-			}
-			log.Printf("[CRON] Attempting Capture for " + intentID)
-
-			// Appel de la nouvelle fonction adaptée
-			tm.StripeService.CaptureExistingPaymentAsync(req)
-
+			tm.logInfo("[CRON] Stripe: tentative de capture", zap.String("intent_id", ref.intentID))
+			tm.StripeService.CaptureExistingPaymentAsync(stripeclient.PaymentRequest{
+				IntentID:  ref.intentID,
+				AccountID: ref.accountID,
+			})
 		} else {
-			// ACTION == CANCEL
-			// On utilise la logique RefundRequest qui contient aussi l'ID du compte
-			req := stripeclient.RefundRequest{
-				IntentID:  intentID,
-				AccountID: accountID,
-			}
-			log.Printf("[CRON] Attempting Refund/Cancel for " + intentID)
-
-			// Appel de la nouvelle fonction "Intelligente" (Refund ou Cancel selon statut)
-			tm.StripeService.RefundOrCancelAsync(req)
+			tm.logInfo("[CRON] Stripe: tentative de refund/cancel", zap.String("intent_id", ref.intentID))
+			tm.StripeService.RefundOrCancelAsync(stripeclient.RefundRequest{
+				IntentID:  ref.intentID,
+				AccountID: ref.accountID,
+			})
 		}
 	}
 }

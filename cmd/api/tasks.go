@@ -11,48 +11,56 @@ func SetupTasks(
 	log *zap.Logger,
 	taskManager *tasks.TasksManager,
 ) {
-	// 3. Configuration du Planificateur (Cron)
-	c := cron.New()
+	// Logger cron branché sur zap (verbose pour tracer les skips).
+	cronLog := cron.VerbosePrintfLogger(zap.NewStdLog(log.Named("cron")))
 
-	// Réactivation sélective (Phase 5 Lot 1) : uniquement les 3 tâches
-	// réservation préparées. Aucune autre tâche dormante n'est réactivée —
-	// leurs appels restent commentés ci-dessous plutôt que protégés par un
-	// return global, pour qu'un futur ajout de tâche n'ait pas à y penser.
-	c.AddFunc("@hourly", func() { taskManager.ExpirePendingBookings() })
-	c.AddFunc("@every 5m", func() { taskManager.ExpireWaitlistNotifications() })
-	c.AddFunc("@every 30m", func() { taskManager.SendBookingReminders() })
+	// Chaîne appliquée à chaque job :
+	//  - SkipIfStillRunning : jamais deux exécutions parallèles d'un même job
+	//    (critique avec le pool MySQL limité à 1 connexion) ;
+	//  - Recover : un panic dans une tâche ne tue pas le process.
+	// Recover est volontairement À L'INTÉRIEUR de SkipIfStillRunning : un panic
+	// non récupéré laisserait le job marqué "en cours" et il ne serait plus
+	// jamais exécuté.
+	c := cron.New(cron.WithChain(
+		cron.SkipIfStillRunning(cronLog),
+		cron.Recover(cronLog),
+	))
 
-	// Tâches dormantes hors périmètre réservation — NE PAS réactiver ici.
-	// Pour les réactiver un jour, décommenter au cas par cas.
-	//
-	// c.AddFunc("@every 15m", func() {
-	// 	taskManager.UpdateAverageDistributionTime()
-	// })
-	//
-	// c.AddFunc("@hourly", func() {
-	// 	taskManager.CloseOrders()
-	// 	taskManager.DenyOrders()
-	// 	taskManager.SendLoyaltyProgrammReminder()
-	//
-	// 	taskManager.CapturePayments()
-	// 	taskManager.CancelPayments()
-	// })
-	//
-	// c.AddFunc("@monthly", func() {
-	// 	taskManager.UpdatePopularProducts()
-	// })
-	//
-	// // Chaque nuit à 3h : recalcul des patterns market basket
-	// c.AddFunc("0 3 * * *", func() {
-	// 	taskManager.RecomputeUpsellPatterns()
-	// })
-	//
-	// // 1er du mois à 4h : purge des anciennes suggestions
-	// c.AddFunc("0 4 1 * *", func() {
-	// 	taskManager.CleanupOldUpsellSuggestions()
-	// })
+	add := func(spec string, job func()) {
+		if _, err := c.AddFunc(spec, job); err != nil {
+			log.Error("CRON: enregistrement de tâche échoué",
+				zap.String("spec", spec), zap.Error(err))
+		}
+	}
+
+	// ── Réservation ──────────────────────────────────────────────────────────
+	add("@hourly", taskManager.ExpirePendingBookings)
+	add("@every 5m", taskManager.ExpireWaitlistNotifications)
+	add("@every 30m", taskManager.SendBookingReminders)
+
+	// ── Commandes / paiements ────────────────────────────────────────────────
+	// Un job par tâche : SkipIfStillRunning protège chaque tâche
+	// indépendamment et une tâche lente n'en retarde pas une autre.
+	add("@hourly", taskManager.CloseOrders)
+	add("@every 1m", taskManager.DenyOrders)
+	add("@hourly", taskManager.SendLoyaltyProgrammReminder) // stub non implémenté (no-op)
+	add("@hourly", taskManager.CapturePayments)
+	add("@hourly", taskManager.CancelPayments)
+
+	// ── Temps de préparation moyen (simulation capacité parallèle) ──────────
+	add("@every 15m", taskManager.UpdateAverageDistributionTime)
+
+	// ── Produits populaires : fenêtre glissante 30 jours, recalcul quotidien
+	// à 2h du matin (un recalcul mensuel laissait les flags périmés). ────────
+	add("0 2 * * *", taskManager.UpdatePopularProducts)
+
+	// Chaque nuit à 3h : recalcul des patterns market basket
+	add("0 3 * * *", taskManager.RecomputeUpsellPatterns)
+
+	// 1er du mois à 4h : purge des anciennes suggestions
+	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 
 	// Démarrage du Cron en arrière-plan
 	c.Start()
-	log.Info("✅ Système CRON démarré (réservation uniquement : ExpirePendingBookings @hourly, ExpireWaitlistNotifications @every 5m, SendBookingReminders @every 30m)")
+	log.Info("✅ Système CRON démarré (toutes tâches actives, protégées par SkipIfStillRunning + Recover)")
 }

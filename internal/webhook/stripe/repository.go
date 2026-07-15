@@ -17,6 +17,13 @@ type Repository interface {
 	UpdateOrderDetails(cdb context.Context, checkoutSessionID, orderID string) error
 	UpdateOrderItemsPaid(cdb context.Context, checkoutSessionID, orderID string) error
 	UpdateOrderCreationDate(cdb context.Context, orderID string) error
+	// ConfirmKioskCardPayment fait transiter brand_status de PENDING_CARD_PAYMENT
+	// vers PENDING pour une commande Kiosk dont le paiement Terminal a réussi.
+	// Ne touche jamais merchant_approval (déjà ACCEPTED depuis la création côté
+	// Kiosk, voir docs/KIOSK_DECISIONS.md). Guard WHERE brand_status =
+	// 'PENDING_CARD_PAYMENT' : idempotent si le webhook est rejoué après une
+	// transition déjà effectuée. Retourne true si une ligne a été modifiée.
+	ConfirmKioskCardPayment(cdb context.Context, merchantID, orderID string) (bool, error)
 	GetOrder(cdb context.Context, orderID string) (*Order, error)
 	GetMerchant(cdb context.Context, merchantID string) (*Merchant, error)
 	GetAutoAcceptSettings(cdb context.Context, orderID, merchantID string) (string, *Merchant, error) // Returns orderType and settings
@@ -155,6 +162,19 @@ func (r *mysqlRepo) UpdateOrderCreationDate(cdb context.Context, orderID string)
 	query := `UPDATE orders SET creation_date = UTC_TIMESTAMP() WHERE order_id = ?`
 	_, err := db.ExecContext(cdb, query, orderID)
 	return err
+}
+
+func (r *mysqlRepo) ConfirmKioskCardPayment(cdb context.Context, merchantID, orderID string) (bool, error) {
+	db := dbutils.GetDB(cdb, r.database)
+
+	query := `UPDATE orders SET brand_status = 'PENDING', last_update = UTC_TIMESTAMP()
+              WHERE order_id = ? AND merchant_id = ? AND brand_status = 'PENDING_CARD_PAYMENT'`
+	res, err := db.ExecContext(cdb, query, orderID, merchantID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (r *mysqlRepo) GetOrder(cdb context.Context, orderID string) (*Order, error) {

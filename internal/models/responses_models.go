@@ -355,9 +355,11 @@ var (
 	ErrInvoiceAttachmentTooLarge = errors.New("invoice_attachment_too_large")
 
 	// Erreurs du plan de salle (module locations)
-	ErrInvalidTableGeometry = errors.New("invalid_table_geometry")
-	ErrFloorNotEmpty        = errors.New("floor_not_empty")
-	ErrFloorNotFound        = errors.New("floor_not_found")
+	ErrInvalidTableGeometry    = errors.New("invalid_table_geometry")
+	ErrFloorNotEmpty           = errors.New("floor_not_empty")
+	ErrFloorNotFound           = errors.New("floor_not_found")
+	ErrInvalidObstacleGeometry = errors.New("invalid_obstacle_geometry")
+	ErrInvalidAreaGeometry     = errors.New("invalid_area_geometry")
 
 	// Erreurs du module réservation
 	ErrTableConflict   = errors.New("table_conflict")
@@ -1170,6 +1172,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "floor_not_found"
 		errorMsg = "The requested floor does not exist for this merchant."
+
+	case errors.Is(err, ErrInvalidObstacleGeometry):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "invalid_obstacle_geometry"
+		errorMsg = "Obstacle properties are out of bounds (x/y 0-1000, width/height 10-500, angle 0-359, direction only for type=door)."
+
+	case errors.Is(err, ErrInvalidAreaGeometry):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "invalid_area_geometry"
+		errorMsg = "Area properties are invalid (name 1-50 chars, stroke_color/color must be hex #RRGGBB[AA], points >= 3, angle 0-359)."
 
 	case errors.Is(err, ErrTableConflict):
 		status = http.StatusConflict

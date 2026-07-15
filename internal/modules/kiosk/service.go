@@ -1182,6 +1182,10 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 	for _, t := range p.Tags {
 		tags = append(tags, t.Name)
 	}
+	components := make([]KioskProductComponent, 0, len(p.Components))
+	for _, c := range p.Components {
+		components = append(components, KioskProductComponent{ID: c.ComponentID, Name: c.Name})
+	}
 
 	var modifierGroups []KioskModifierGroup
 	for _, attr := range p.Configuration.Attributes {
@@ -1233,6 +1237,7 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 		MaxQuantity:  nil,
 		DisplayOrder: p.DisplayOrder,
 		Status:       p.Status,
+		Components:   components,
 	}
 }
 
@@ -1401,19 +1406,34 @@ func (s *Service) ComputePricing(ctx context.Context, req *models.PricingRequest
 	return s.ordersService.ComputePricing(ctx, req)
 }
 
-// mapMerchantApprovalToKioskStatus traduit orders.merchant_approval — déjà
-// utilisé partout ailleurs dans le projet (KDS, rapports, back-office) — en
-// un statut Kiosk lisible côté borne. "pending_counter_payment" n'est PAS
-// une nouvelle valeur stockée en base : c'est le nom Kiosk de la valeur
-// existante "PENDING_APPROVAL" (voir docs/KIOSK_DECISIONS.md, incrément 2).
+// mapMerchantApprovalToKioskStatus traduit l'état d'une commande Kiosk en un
+// statut lisible côté borne. Depuis l'homogénéisation merchant_approval =
+// "ACCEPTED" immédiat pour toute commande Kiosk (carte ET comptoir, voir
+// docs/KIOSK_DECISIONS.md), l'attente de paiement carte n'est plus visible
+// sur merchant_approval — elle est portée par brand_status
+// ("PENDING_CARD_PAYMENT" jusqu'à confirmation Terminal). Ce champ est donc
+// vérifié en priorité, avant le switch sur merchant_approval.
+//
+// Le cas models.MerchantApprovalPendingCardPayment est conservé en fallback
+// dans le switch pour les commandes déjà en base avant ce déploiement (créées
+// par l'ancien code, merchant_approval="PENDING_CARD_PAYMENT" et
+// brand_status="PENDING" par défaut) — sans ce fallback, une commande en
+// transit au moment du déploiement serait mappée à tort sur "accepted".
+//
+// "pending_counter_payment" n'est PAS une nouvelle valeur stockée en base :
+// c'est le nom Kiosk de la valeur existante "PENDING_APPROVAL" (voir
+// docs/KIOSK_DECISIONS.md, incrément 2).
 func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 	if order.State != nil && (*order.State == "CLOSED" || *order.State == "DONE") {
 		return "closed"
 	}
+	if order.BrandStatus != nil && *order.BrandStatus == "PENDING_CARD_PAYMENT" {
+		return "pending_card_payment"
+	}
 	switch order.MerchantApproval {
 	case models.MerchantApprovalPendingApproval:
 		return "pending_counter_payment"
-	case models.MerchantApprovalPendingCardPayment:
+	case models.MerchantApprovalPendingCardPayment: // fallback rétrocompat, voir doc ci-dessus
 		return "pending_card_payment"
 	case "ACCEPTED":
 		return "accepted"
@@ -1422,21 +1442,44 @@ func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 	}
 }
 
+// isKioskCardPending indique si une commande Kiosk attend encore une
+// confirmation de paiement carte. Source de vérité : brand_status =
+// "PENDING_CARD_PAYMENT" (posé par CreateOrder, confirmé par
+// stripe.StripeWebhookService.handleTerminalPaymentSucceeded). Le fallback
+// sur merchant_approval couvre les commandes créées par l'ancien code avant
+// ce déploiement (merchant_approval="PENDING_CARD_PAYMENT",
+// brand_status="PENDING") — même rationale que mapMerchantApprovalToKioskStatus.
+func isKioskCardPending(order *models.Order) bool {
+	if order.BrandStatus != nil && *order.BrandStatus == "PENDING_CARD_PAYMENT" {
+		return true
+	}
+	return order.MerchantApproval == models.MerchantApprovalPendingCardPayment
+}
+
 // Modes de paiement acceptés par CreateOrder (champ payment_method du body).
 const (
 	kioskPaymentMethodCounter = "pay_at_counter"
 	kioskPaymentMethodCard    = "card"
 )
 
-// CreateOrder crée une commande borne. Le mode de paiement (paymentMethod,
-// champ payment_method du body) détermine le statut initial :
-//   - "pay_at_counter" (ou vide, rétrocompatible) : comportement existant
-//     inchangé — commande créée directement en ACCEPTED, encaissement comptoir
-//     géré ensuite par ConfirmCounterPayment.
-//   - "card" : commande créée en PENDING_CARD_PAYMENT (Stripe Terminal). Elle ne
-//     part pas en cuisine tant que le webhook Stripe n'a pas confirmé le paiement
-//     (voir docs/KIOSK_DECISIONS.md). Le paiement carte lui-même passe par les
-//     endpoints /kiosk/terminal/*, hors de ce flux de création.
+// CreateOrder crée une commande borne. merchant_approval = "ACCEPTED" est
+// posé immédiatement dans tous les cas (carte ET comptoir) : le kiosk n'a
+// jamais d'étape d'acceptation restaurateur, contrairement à scannorder
+// (voir docs/KIOSK_DECISIONS.md, section "Bloquant identifié" +
+// homogénéisation qui la débloque). L'attente de confirmation carte est
+// portée par brand_status, pas par merchant_approval :
+//   - "pay_at_counter" (ou vide, rétrocompatible) : comportement inchangé —
+//     brand_status suit son défaut existant (setOrderDefaults pose 'PENDING'
+//     puisque OnlinePayment=false), encaissement comptoir géré ensuite par
+//     ConfirmCounterPayment.
+//   - "card" : brand_status = "PENDING_CARD_PAYMENT" (écrit explicitement
+//     ici — sans ça, setOrderDefaults appliquerait le même défaut 'PENDING'
+//     que pay_at_counter, ce qui ferait apparaître la commande dans la liste
+//     de commandes ouvertes AVANT confirmation du paiement carte, voir
+//     internal/modules/orders/repository.go GetPendingOrderIDs). Le webhook
+//     Stripe (payment_intent.succeeded card_present) fait ensuite transiter
+//     brand_status vers "PENDING" — la commande part en cuisine une fois
+//     cette transition faite, jamais avant.
 //
 // Aucun paiement en ligne (OnlinePayment=false, Payments=[]) dans les deux cas :
 // le Terminal est encaissé hors bande, pas via un Checkout web. Idempotent via
@@ -1466,19 +1509,18 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 		return nil, err
 	}
 
-	// Le mode de paiement détermine le statut initial et la gate à vérifier.
-	var initialApproval string
+	// Le mode de paiement détermine uniquement la gate de configuration à
+	// vérifier ici — merchant_approval est désormais toujours "ACCEPTED"
+	// (posé plus bas), quel que soit le mode.
 	switch paymentMethod {
 	case kioskPaymentMethodCard:
 		if !settings.CardPaymentEnabled {
 			return nil, models.ErrKioskCardPaymentDisabled
 		}
-		initialApproval = models.MerchantApprovalPendingCardPayment
 	case "", kioskPaymentMethodCounter:
 		if !settings.PayAtCounterEnabled {
 			return nil, models.ErrKioskPayAtCounterDisabled
 		}
-		initialApproval = "ACCEPTED"
 	default:
 		return nil, models.ErrKioskPaymentMethodInvalid
 	}
@@ -1500,7 +1542,13 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	}
 
 	orderReq := pricing.OrderRequest.Order
-	orderReq.MerchantApproval = initialApproval
+	orderReq.MerchantApproval = "ACCEPTED"
+	if paymentMethod == kioskPaymentMethodCard {
+		// Écrit explicitement : sans ça, setOrderDefaults appliquerait le
+		// défaut 'PENDING' (OnlinePayment=false), identique au comptoir, et
+		// la commande apparaîtrait en cuisine avant confirmation du paiement.
+		orderReq.BrandStatus = "PENDING_CARD_PAYMENT"
+	}
 	orderReq.CreatedBy = strPtr(kioskCreatedBy)
 	orderReq.CashRegisterId = strPtr(kioskCashRegister)
 	orderReq.OnlinePayment = false
@@ -1607,11 +1655,14 @@ func (s *Service) CancelKioskOrder(ctx context.Context, orderID string, kiosk Au
 	order := orderResp.Orders[0]
 
 	// Deux statuts sont annulables depuis la borne : une commande en attente de
-	// paiement comptoir (PENDING_APPROVAL) et une commande en attente de paiement
-	// carte (PENDING_CARD_PAYMENT). Toute commande déjà encaissée/acceptée
-	// (ACCEPTED, CLOSED, ...) ne l'est pas.
-	if order.MerchantApproval != models.MerchantApprovalPendingApproval &&
-		order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
+	// paiement comptoir (merchant_approval=PENDING_APPROVAL, cas du switch
+	// carte->comptoir en cours de finalisation) et une commande en attente de
+	// paiement carte (brand_status=PENDING_CARD_PAYMENT — merchant_approval est
+	// "ACCEPTED" dans ce cas, plus discriminant depuis l'homogénéisation, voir
+	// docs/KIOSK_DECISIONS.md). Toute commande déjà encaissée/acceptée
+	// (brand_status=PENDING et plus, CLOSED, ...) ne l'est pas.
+	cardPending := isKioskCardPending(&order)
+	if order.MerchantApproval != models.MerchantApprovalPendingApproval && !cardPending {
 		return models.ErrKioskOrderNotCancellable
 	}
 
@@ -1621,7 +1672,7 @@ func (s *Service) CancelKioskOrder(ctx context.Context, orderID string, kiosk Au
 	// Best-effort (comme SwitchToCounterPayment) : un échec Stripe ne doit pas
 	// empêcher l'annulation de la commande côté borne. CancelActivePaymentIntentForOrder
 	// est un no-op s'il n'existe aucun PaymentIntent actif.
-	if order.MerchantApproval == models.MerchantApprovalPendingCardPayment && s.terminal != nil {
+	if cardPending && s.terminal != nil {
 		if err := s.terminal.CancelActivePaymentIntentForOrder(ctx, kiosk.MerchantID, orderID); err != nil {
 			logger.FromContext(ctx).Warn("kiosk cancel order: cancel active payment intent failed: " + err.Error())
 		}
@@ -1717,7 +1768,7 @@ func (s *Service) CreateTerminalPaymentIntent(ctx context.Context, kiosk Authent
 	if err != nil {
 		return nil, err
 	}
-	if order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
+	if !isKioskCardPending(order) {
 		return nil, models.ErrKioskOrderNotCardPending
 	}
 	if amountCents != int64(order.TTC) {
@@ -1753,16 +1804,18 @@ func (s *Service) CancelTerminalPaymentIntent(ctx context.Context, kiosk Authent
 
 // SwitchToCounterPayment bascule une commande du paiement carte vers le paiement
 // caisse après échec/abandon, sans recréer de commande. Annule le PaymentIntent
-// actif s'il en existe un, repasse la commande en PENDING_APPROVAL
-// (= pending_counter_payment), puis réutilise le flux ConfirmCounterPayment
-// existant tel quel (transition vers ACCEPTED + code de retrait + QR +
-// notification).
+// actif s'il en existe un, fait transiter brand_status de PENDING_CARD_PAYMENT
+// vers PENDING (merchant_approval reste "ACCEPTED", déjà posé à la création —
+// voir docs/KIOSK_DECISIONS.md), puis réutilise le flux ConfirmCounterPayment
+// existant tel quel pour le code de retrait + QR + notification (son branchement
+// sur merchant_approval=="PENDING_APPROVAL" ne s'active pas ici puisque ce champ
+// est déjà "ACCEPTED", ce qui est correct : rien à ré-accepter).
 func (s *Service) SwitchToCounterPayment(ctx context.Context, kiosk AuthenticatedKiosk, orderID string) (*CounterPaymentResponse, error) {
 	order, err := s.getKioskOrder(ctx, kiosk.MerchantID, orderID)
 	if err != nil {
 		return nil, err
 	}
-	if order.MerchantApproval != models.MerchantApprovalPendingCardPayment {
+	if !isKioskCardPending(order) {
 		return nil, models.ErrKioskOrderNotCardPending
 	}
 
@@ -1774,11 +1827,11 @@ func (s *Service) SwitchToCounterPayment(ctx context.Context, kiosk Authenticate
 		}
 	}
 
-	if err := s.repo.UpdateOrderMerchantApproval(ctx, kiosk.MerchantID, orderID, models.MerchantApprovalPendingApproval); err != nil {
+	if _, err := s.repo.ConfirmKioskCardToCounterBrandStatus(ctx, kiosk.MerchantID, orderID); err != nil {
 		return nil, err
 	}
 	// La commande est cachée dans Redis par ComputeGetOrder : on invalide pour
-	// que ConfirmCounterPayment relise l'état PENDING_APPROVAL fraîchement écrit.
+	// que ConfirmCounterPayment relise le brand_status="PENDING" fraîchement écrit.
 	if s.redis != nil {
 		s.redis.Delete(ctx, helpers.GetRedisOrderKey(kiosk.MerchantID, orderID))
 	}

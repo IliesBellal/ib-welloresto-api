@@ -2,8 +2,9 @@ package tasks
 
 import (
 	"context"
-	"log"
 	"welloresto-api/internal/models"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -11,9 +12,14 @@ const (
 	autoCloseOtherOrdersDelay = 720 // minutes (12h)
 )
 
-// CloseOrders : Ferme les commandes payées et livrées après délai
+// CloseOrders : Ferme les commandes payées et livrées après délai.
+//
+// Contrainte pool MySQL (1 connexion max) : les résultats sont intégralement
+// collectés en mémoire et le rows fermé AVANT d'appeler le service commande,
+// sinon la requête suivante attendrait indéfiniment la connexion tenue par
+// l'itération en cours (deadlock qui gèle toute l'API).
 func (tm *TasksManager) CloseOrders() {
-	log.Println("[CRON] Démarrage: CloseOrders")
+	ctx := context.Background()
 
 	query := `
 		SELECT o.order_id, p.stock_management, o.merchant_id
@@ -31,35 +37,51 @@ func (tm *TasksManager) CloseOrders() {
 			(o.state <> 'CLOSED' AND o.order_type IN ('TAKE_AWAY') AND o.brand_status IN ('READY_FOR_HANDOFF','READY_FOR_TAKE_AWAY') AND TIMESTAMPDIFF(MINUTE, o.creation_date, UTC_TIMESTAMP) >= ?)
 		);`
 
-	rows, err := tm.DB.Query(query, autoCloseOtherOrdersDelay)
+	rows, err := tm.DB.QueryContext(ctx, query, autoCloseOtherOrdersDelay)
 	if err != nil {
-		log.Printf("[CRON] Erreur Query CloseOrders: %v", err)
+		tm.logError("[CRON] CloseOrders: requête échouée", zap.Error(err))
 		return
 	}
-	defer rows.Close()
 
+	type orderRef struct{ orderID, merchantID string }
+	var toClose []orderRef
 	for rows.Next() {
-		var orderID, merchantID string
-		var stockManagement bool // Ou int selon ton schéma
-		if err := rows.Scan(&orderID, &stockManagement, &merchantID); err != nil {
-			log.Printf("[CRON] Erreur Scan CloseOrders: %v", err)
+		var ref orderRef
+		var stockManagement bool // colonne héritée du PHP, non utilisée ici
+		if err := rows.Scan(&ref.orderID, &stockManagement, &ref.merchantID); err != nil {
+			tm.logError("[CRON] CloseOrders: scan échoué", zap.Error(err))
 			continue
 		}
+		toClose = append(toClose, ref)
+	}
+	if err := rows.Err(); err != nil {
+		tm.logError("[CRON] CloseOrders: itération interrompue", zap.Error(err))
+	}
+	rows.Close()
 
-		log.Printf("[CRON] Clôture automatique commande: %s", orderID)
-		// On appelle le service injecté (signature supposée basée sur ton PHP)
-		err := tm.OrderService.DeliverOrder(context.Background(), "SYSTEM", merchantID, orderID)
-		if err != nil {
-			log.Printf("[CRON] Erreur SetDelivered pour %s: %v", orderID, err)
+	closed := 0
+	for _, ref := range toClose {
+		if err := tm.OrderService.DeliverOrder(ctx, "SYSTEM", ref.merchantID, ref.orderID); err != nil {
+			tm.logError("[CRON] CloseOrders: clôture échouée",
+				zap.String("order_id", ref.orderID),
+				zap.String("merchant_id", ref.merchantID),
+				zap.Error(err))
+			continue
 		}
+		closed++
 	}
 
-	log.Println("[CRON] Terminé: CloseOrders")
+	if len(toClose) > 0 {
+		tm.logInfo("[CRON] CloseOrders: terminé",
+			zap.Int("eligibles", len(toClose)),
+			zap.Int("fermees", closed))
+	}
 }
 
-// DenyOrders : Refuse les commandes en attente depuis trop longtemps
+// DenyOrders : Refuse les commandes en attente depuis trop longtemps.
+// Même schéma que CloseOrders : collecte complète avant action (1 connexion max).
 func (tm *TasksManager) DenyOrders() {
-	log.Println("[CRON] Démarrage: DenyOrders")
+	ctx := context.Background()
 
 	query := `
 		SELECT o.order_id, o.merchant_id
@@ -71,31 +93,48 @@ func (tm *TasksManager) DenyOrders() {
 		AND o.scheduled = false
 		AND TIMESTAMPDIFF(MINUTE, o.creation_date, UTC_TIMESTAMP) >= ?;`
 
-	rows, err := tm.DB.Query(query, autoDenyDelay)
+	rows, err := tm.DB.QueryContext(ctx, query, autoDenyDelay)
 	if err != nil {
-		log.Printf("[CRON] Erreur Query DenyOrders: %v", err)
+		tm.logError("[CRON] DenyOrders: requête échouée", zap.Error(err))
 		return
 	}
-	defer rows.Close()
 
+	type orderRef struct{ orderID, merchantID string }
+	var toDeny []orderRef
 	for rows.Next() {
-		var orderID, merchantID string
-		if err := rows.Scan(&orderID, &merchantID); err != nil {
-			log.Printf("[CRON] Erreur Scan DenyOrders: %v", err)
+		var ref orderRef
+		if err := rows.Scan(&ref.orderID, &ref.merchantID); err != nil {
+			tm.logError("[CRON] DenyOrders: scan échoué", zap.Error(err))
 			continue
 		}
+		toDeny = append(toDeny, ref)
+	}
+	if err := rows.Err(); err != nil {
+		tm.logError("[CRON] DenyOrders: itération interrompue", zap.Error(err))
+	}
+	rows.Close()
 
-		deny_reason := models.DenyOrderRequest{
-			MerchantID:       merchantID,
+	denied := 0
+	for _, ref := range toDeny {
+		denyReason := models.DenyOrderRequest{
+			MerchantID:       ref.merchantID,
 			UserID:           "SYSTEM",
 			DeletionReasonID: "42",
 			DeletionComment:  "Commande non approuvée dans les délais",
 		}
-		err := tm.OrderService.SetOrderDenied(context.Background(), orderID, deny_reason)
-		if err != nil {
-			log.Printf("[CRON] Erreur SetOrderDenied pour %s: %v", orderID, err)
+		if err := tm.OrderService.SetOrderDenied(ctx, ref.orderID, denyReason); err != nil {
+			tm.logError("[CRON] DenyOrders: refus échoué",
+				zap.String("order_id", ref.orderID),
+				zap.String("merchant_id", ref.merchantID),
+				zap.Error(err))
+			continue
 		}
+		denied++
 	}
 
-	log.Println("[CRON] Terminé: DenyOrders")
+	if len(toDeny) > 0 {
+		tm.logInfo("[CRON] DenyOrders: terminé",
+			zap.Int("eligibles", len(toDeny)),
+			zap.Int("refusees", denied))
+	}
 }

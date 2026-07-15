@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"database/sql"
+	"log"
 	aicache "welloresto-api/internal/ai/cache"
 	"welloresto-api/internal/infrastructure/mailer"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
@@ -48,25 +49,52 @@ func NewTasksManager(
 	}
 }
 
+// logDebug / logInfo / logWarn / logError : wrappers nil-safe autour du
+// zap.Logger injecté. Fallback stdlib si le logger est absent, pour qu'aucune
+// tâche CRON ne panique ni ne perde ses logs.
+func (tm *TasksManager) logDebug(msg string, fields ...zap.Field) {
+	if tm.Logger != nil {
+		tm.Logger.Debug(msg, fields...)
+	}
+}
+
+func (tm *TasksManager) logInfo(msg string, fields ...zap.Field) {
+	if tm.Logger != nil {
+		tm.Logger.Info(msg, fields...)
+		return
+	}
+	log.Println(msg)
+}
+
+func (tm *TasksManager) logWarn(msg string, fields ...zap.Field) {
+	if tm.Logger != nil {
+		tm.Logger.Warn(msg, fields...)
+		return
+	}
+	log.Println(msg)
+}
+
+func (tm *TasksManager) logError(msg string, fields ...zap.Field) {
+	if tm.Logger != nil {
+		tm.Logger.Error(msg, fields...)
+		return
+	}
+	log.Println(msg)
+}
+
 func (tm *TasksManager) ExpirePendingBookings() {
 	if tm.BookingService == nil {
-		if tm.Logger != nil {
-			tm.Logger.Warn("booking pending expiration skipped: booking service unavailable")
-		}
+		tm.logWarn("booking pending expiration skipped: booking service unavailable")
 		return
 	}
 
 	rows, err := tm.BookingService.ExpirePendingBookings(context.Background())
 	if err != nil {
-		if tm.Logger != nil {
-			tm.Logger.Error("booking pending expiration failed", zap.Error(err))
-		}
+		tm.logError("booking pending expiration failed", zap.Error(err))
 		return
 	}
 
-	if tm.Logger != nil {
-		tm.Logger.Info("booking pending expiration finished", zap.Int64("rows_affected", rows))
-	}
+	tm.logInfo("booking pending expiration finished", zap.Int64("rows_affected", rows))
 }
 
 // ExpireWaitlistNotifications expire les entrées de liste d'attente notified
@@ -74,23 +102,17 @@ func (tm *TasksManager) ExpirePendingBookings() {
 // que ExpirePendingBookings : tâche prête, activée manuellement dans SetupTasks.
 func (tm *TasksManager) ExpireWaitlistNotifications() {
 	if tm.BookingService == nil {
-		if tm.Logger != nil {
-			tm.Logger.Warn("waitlist expiration skipped: booking service unavailable")
-		}
+		tm.logWarn("waitlist expiration skipped: booking service unavailable")
 		return
 	}
 
 	rows, err := tm.BookingService.ExpireWaitlistNotifications(context.Background())
 	if err != nil {
-		if tm.Logger != nil {
-			tm.Logger.Error("waitlist expiration failed", zap.Error(err))
-		}
+		tm.logError("waitlist expiration failed", zap.Error(err))
 		return
 	}
 
-	if tm.Logger != nil {
-		tm.Logger.Info("waitlist expiration finished", zap.Int64("rows_affected", rows))
-	}
+	tm.logInfo("waitlist expiration finished", zap.Int64("rows_affected", rows))
 }
 
 // SendBookingReminders envoie le rappel avant service (J-1 par défaut) aux
@@ -99,21 +121,15 @@ func (tm *TasksManager) ExpireWaitlistNotifications() {
 // sélectivement dans SetupTasks.
 func (tm *TasksManager) SendBookingReminders() {
 	if tm.BookingService == nil {
-		if tm.Logger != nil {
-			tm.Logger.Warn("booking reminders skipped: booking service unavailable")
-		}
+		tm.logWarn("booking reminders skipped: booking service unavailable")
 		return
 	}
 
 	rows, err := tm.BookingService.SendBookingReminders(context.Background())
 	if err != nil {
-		if tm.Logger != nil {
-			tm.Logger.Error("booking reminders failed", zap.Error(err))
-		}
+		tm.logError("booking reminders failed", zap.Error(err))
 		return
 	}
 
-	if tm.Logger != nil {
-		tm.Logger.Info("booking reminders finished", zap.Int64("rows_affected", rows))
-	}
+	tm.logInfo("booking reminders finished", zap.Int64("rows_affected", rows))
 }

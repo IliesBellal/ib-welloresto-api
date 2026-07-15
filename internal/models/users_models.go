@@ -76,6 +76,7 @@ type UserLoginRow struct {
 	StockEnabled         bool
 	ScanNOrderEnabled    bool
 	BookingsEnabled      bool
+	KiosksEnabled        bool
 
 	// SNO
 	SNOActivated bool

@@ -51,6 +51,7 @@ func CORSMiddleware() *cors.Cors {
 
 			// RSV
 			"https://rsv-staging.onrender.com",
+			"https://rsv-prod.onrender.com",
 			"https://rsv.onrender.com",
 
 			// Postman
@@ -63,6 +64,7 @@ func CORSMiddleware() *cors.Cors {
 			// ScanNOrder
 			"https://scannorder.welloresto.fr",
 			"https://wello-resto-scannorder-staging.onrender.com",
+			"https://wello-resto-scannorder-prod.onrender.com",
 		},
 
 		AllowedMethods: []string{

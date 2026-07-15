@@ -282,22 +282,33 @@ type KioskCategory struct {
 }
 
 type KioskProduct struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	Description        string               `json:"description,omitempty"`
-	PriceCents         int64                `json:"price_cents"`
-	PriceTakeAwayCents *int64               `json:"price_take_away_cents,omitempty"`
-	ImageURL           string               `json:"image_url,omitempty"`
-	Available          bool                 `json:"available"`
-	AvailableOnKiosk   bool                 `json:"available_on_kiosk"`
-	Allergens          []string             `json:"allergens,omitempty"`
-	Tags               []string             `json:"tags,omitempty"`
-	ModifierGroups     []KioskModifierGroup `json:"modifier_groups,omitempty"`
-	IsPopular          bool                 `json:"is_popular,omitempty"`
-	TVARate            *float64             `json:"tva_rate,omitempty"`
-	MaxQuantity        *int                 `json:"max_quantity,omitempty"`
-	DisplayOrder       *int                 `json:"display_order,omitempty"`
-	Status             string               `json:"status,omitempty"`
+	ID                 string                  `json:"id"`
+	Name               string                  `json:"name"`
+	Description        string                  `json:"description,omitempty"`
+	PriceCents         int64                   `json:"price_cents"`
+	PriceTakeAwayCents *int64                  `json:"price_take_away_cents,omitempty"`
+	ImageURL           string                  `json:"image_url,omitempty"`
+	Available          bool                    `json:"available"`
+	AvailableOnKiosk   bool                    `json:"available_on_kiosk"`
+	Allergens          []string                `json:"allergens,omitempty"`
+	Tags               []string                `json:"tags,omitempty"`
+	ModifierGroups     []KioskModifierGroup    `json:"modifier_groups,omitempty"`
+	IsPopular          bool                    `json:"is_popular,omitempty"`
+	TVARate            *float64                `json:"tva_rate,omitempty"`
+	MaxQuantity        *int                    `json:"max_quantity,omitempty"`
+	DisplayOrder       *int                    `json:"display_order,omitempty"`
+	Status             string                  `json:"status,omitempty"`
+	Components         []KioskProductComponent `json:"components,omitempty"`
+}
+
+// KioskProductComponent — composants retirables d'un produit (ex. "sans
+// oignons"). Seuls id/name sont exposés côté kiosk : le payload `without`
+// envoyé par la borne à la commande n'utilise que component_id, les autres
+// champs de models.ComponentUsage (price, status, quantity...) sont ignorés
+// côté serveur pour ce flux.
+type KioskProductComponent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // KioskModifierGroup/KioskModifierOption — champs JSON alignés sur
