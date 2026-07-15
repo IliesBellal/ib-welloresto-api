@@ -115,7 +115,7 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 	baseURL := req.BaseURL
 	sessionType := req.CheckoutSessionType
 
-	successURL := baseURL + "/restaurant/" + qrCode + "/" + orderID
+	successURL := baseURL + "/restaurant/" + qrCode + "/order/" + orderID
 	cancelURL := successURL
 	captureMethod := stripe.PaymentIntentCaptureMethodManual
 
