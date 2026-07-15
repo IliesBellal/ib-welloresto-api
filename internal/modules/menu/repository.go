@@ -2814,11 +2814,6 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		purchaseCost = *p.PurchaseCost
 	}
 
-	var purchaseCostQty interface{} = nil
-	if p.PurchaseCostQty != nil {
-		purchaseCostQty = *p.PurchaseCostQty
-	}
-
 	// Conserver l'unité de vente et déduire séparément l'unité d'achat.
 	saleUnitOfMeasure := p.UnitID
 	purchaseUnitID := p.UnitID
@@ -2856,14 +2851,13 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 			unit_of_measure,
 			purchase_unit_id,
 			purchase_price,
-			purchase_price_quantity,
 			conservation_days,
 			conservation_type,
 			storage_temp_min,
 			storage_temp_max,
 			enabled,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
 	`
 
 	res, err := db.ExecContext(
@@ -2876,7 +2870,6 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		saleUnitOfMeasure,
 		purchaseUnitID,
 		purchaseCost,
-		purchaseCostQty,
 		conservationDays,
 		conservationType,
 		storageTempMin,
