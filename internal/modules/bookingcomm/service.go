@@ -59,7 +59,7 @@ func (m BookingMessage) managementLink(baseURL string) string {
 	if baseURL == "" || strings.TrimSpace(m.MerchantSlug) == "" || strings.TrimSpace(m.BookingNumber) == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/restaurant/%s/reservation/%s", baseURL, m.MerchantSlug, m.BookingNumber)
+	return fmt.Sprintf("%s/restaurant/%s/booking/%s", baseURL, m.MerchantSlug, m.BookingNumber)
 }
 
 func (s *Service) emailData(m BookingMessage) mailer.BookingMessageData {
