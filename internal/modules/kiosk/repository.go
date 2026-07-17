@@ -233,10 +233,17 @@ func (r *Repository) ListKiosksByMerchant(ctx context.Context, merchantID string
 
 	query := `
 	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, os_version,
-	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
+       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
 	FROM kiosks
 	WHERE merchant_id = ?
-	ORDER BY created_at DESC`
+	AND (
+		status = 'active'
+		OR (
+		status = 'revoked'
+		AND last_heartbeat_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
+		)
+	)
+	ORDER BY created_at DESC;`
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
 	if err != nil {
