@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/utils"
@@ -94,30 +95,7 @@ func CreateBooking(ctx context.Context, db *sql.DB, customerRepo *customers.Cust
 		startUTC := p.StartLocal.UTC().Format("2006-01-02 15:04:05")
 		endUTC := p.EndLocal.UTC().Format("2006-01-02 15:04:05")
 
-		conn := dbutils.GetDB(txCtx, db)
-		res, err := conn.ExecContext(txCtx, `
-			INSERT INTO bookings (
-				booking_number, status, source, merchant_id, party_size,
-				customer_id, comment, creation_date, booking_date_from,
-				booking_date_to, booking_duration, created_by
-			) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?, ?, ?)`,
-			number,
-			p.Status,
-			p.Source,
-			p.MerchantID,
-			p.PartySize,
-			*customerID,
-			p.Comment,
-			startUTC,
-			endUTC,
-			duration,
-			p.CreatedBy,
-		)
-		if err != nil {
-			return err
-		}
-
-		id, err := res.LastInsertId()
+		id, err := insertBooking(txCtx, db, p, *customerID, number, startUTC, endUTC, duration)
 		if err != nil {
 			return err
 		}
@@ -130,12 +108,36 @@ func CreateBooking(ctx context.Context, db *sql.DB, customerRepo *customers.Cust
 	return bookingID, bookingNumber, err
 }
 
+// insertBooking insère la réservation et retourne le booking_id auto-généré.
+func insertBooking(ctx context.Context, db *sql.DB, p CreateBookingParams, customerID, number, startUTC, endUTC string, duration int) (int64, error) {
+	conn := dbx.GetDB(ctx, db)
+	return conn.InsertReturningID(ctx, `
+		INSERT INTO bookings (
+			booking_number, status, source, merchant_id, party_size,
+			customer_id, comment, creation_date, booking_date_from,
+			booking_date_to, booking_duration, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?)`,
+		"booking_id",
+		number,
+		p.Status,
+		p.Source,
+		p.MerchantID,
+		p.PartySize,
+		customerID,
+		p.Comment,
+		startUTC,
+		endUTC,
+		duration,
+		p.CreatedBy,
+	)
+}
+
 // generateUniqueBookingNumber tire un code aléatoire (majuscule) et vérifie
 // son unicité au sein du marchand — GetBookingByNumber est toujours appelé
 // scoped merchant_id, l'unicité n'a donc besoin d'être garantie qu'à ce
 // niveau, pas globalement tous marchands confondus.
 func generateUniqueBookingNumber(ctx context.Context, db *sql.DB, merchantID string) (string, error) {
-	conn := dbutils.GetDB(ctx, db)
+	conn := dbx.GetDB(ctx, db)
 
 	for {
 		number := strings.ToUpper(utils.GenerateRandomString(6))

@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/infrastructure/sms"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
@@ -419,27 +420,31 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 // (CreatePaymentNoNotification -> AddPaymentAndReturnID), la même que le
 // Checkout en ligne. Champs :
 //   - amount   : montant du PaymentIntent en centimes ;
-//   - mop      : models.StripeMOP (identique au Checkout carte en ligne) ;
+//   - mop      : models.CardMOP ('CB', identique aux paiements carte POS —
+//     rattachable à la clôture de caisse comme n'importe quel paiement carte) ;
 //   - fee      : 0 initialement, net_amount initialisé à amount par l'INSERT —
 //     tous deux mis à jour par le webhook charge.captured (UpdateFees) ;
 //   - user_id  : "KIOSK" (created_by des commandes borne) ;
-//   - cash_register_id : laissé vide -> NULL (une borne n'a pas de caisse).
+//   - cash_register_id : laissé vide -> NULL (une borne n'a pas de caisse ; le
+//     paiement est rattaché à la prochaine clôture de caisse du merchant).
 //
 // L'insertion de la ligne stripe_payments (payment_intent_id) est faite en
-// interne par AddPaymentAndReturnID pour MOP=STRIPE : c'est ce qui permettra au
-// webhook charge.captured de retrouver ce paiement et d'y écrire fee/net_amount.
+// interne par AddPaymentAndReturnID dès qu'un PaymentIntentID est fourni :
+// c'est ce qui permettra au webhook charge.captured de retrouver ce paiement
+// et d'y écrire fee/net_amount.
 func (s *StripeWebhookService) recordTerminalPayment(ctx context.Context, mapping stripeclient.TerminalPaymentMapping, pi *stripe.PaymentIntent) {
+	log := logger.FromContext(ctx)
 	piID := pi.ID
 	if err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
 		OrderID:         mapping.OrderID,
 		MerchantID:      mapping.MerchantID,
-		MOP:             models.StripeMOP,
+		MOP:             models.CardMOP,
 		Amount:          int(pi.Amount),
 		UserID:          "KIOSK",
 		OperationType:   models.OperationTypeSale,
 		PaymentIntentID: &piID,
 	}); err != nil {
-		log.Printf("[stripe webhook] terminal payment record failed for order %s: %v", mapping.OrderID, err)
+		log.Info("[stripe webhook] terminal payment record failed for order " + mapping.OrderID + ":" + err.Error())
 	}
 }
 

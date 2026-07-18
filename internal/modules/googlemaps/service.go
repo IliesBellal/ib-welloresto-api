@@ -2,7 +2,6 @@ package googlemaps
 
 import (
 	"context"
-	"strconv"
 
 	"welloresto-api/internal/logger"
 )
@@ -48,13 +47,7 @@ func (s *routeService) recordCallAsync(merchantID string) {
 		ctx := context.Background()
 		log := logger.FromContext(ctx)
 
-		merchantIDInt, err := strconv.ParseInt(merchantID, 10, 64)
-		if err != nil {
-			log.Error("GetAndLogRoute: invalid merchant id " + merchantID + ": " + err.Error())
-			return
-		}
-
-		if err := s.repo.RecordGoogleMapsCall(ctx, merchantIDInt, 1); err != nil {
+		if err := s.repo.RecordGoogleMapsCall(ctx, merchantID, 1); err != nil {
 			log.Error("GetAndLogRoute: failed to record google maps call: " + err.Error())
 		}
 	}()

@@ -13,6 +13,7 @@ const (
 
 	StripeMOP      = "STRIPE"
 	TicketRestoMOP = "TR"
+	CardMOP        = "CB"
 )
 
 // Top-level response

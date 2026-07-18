@@ -8,7 +8,7 @@ import (
 )
 
 type SMSService interface {
-	SendOrderTrackingSMS(ctx context.Context, merchantID int64, orderID string, customerPhone string) error
+	SendOrderTrackingSMS(ctx context.Context, merchantID string, orderID string, customerPhone string) error
 }
 
 type smsService struct {
@@ -45,7 +45,7 @@ func normalizePhone(phone string) (string, error) {
 
 func (s *smsService) SendOrderTrackingSMS(
 	ctx context.Context,
-	merchantID int64,
+	merchantID string,
 	orderID string,
 	customerPhone string,
 ) error {

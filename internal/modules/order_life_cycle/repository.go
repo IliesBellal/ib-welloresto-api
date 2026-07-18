@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/utils/dbutils"
 	"welloresto-api/internal/utils/security"
 
@@ -208,9 +209,12 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 			log.Error("Error inserting TR: " + err.Error())
 			return 0, err
 		}
-	} else if payment.MOP == models.StripeMOP {
-
-		query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, stripe_session_date) 
+	} else if payment.MOP == models.StripeMOP || (payment.PaymentIntentID != nil && *payment.PaymentIntentID != "") {
+		// La ligne stripe_payments est aussi requise pour les encaissements
+		// Stripe Terminal (borne Kiosk), enregistrés en MOP 'CB' : sans elle, le
+		// webhook charge.captured ne peut pas retrouver le paiement pour écrire
+		// fee/net_amount, ni le refund le désactiver.
+		query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, stripe_session_date)
 				VALUES(?, ?, ?, ?, ?, UTC_TIMESTAMP())`
 		_, err = db.ExecContext(ctx, query, payment.OrderID, paymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail)
 	}
@@ -540,7 +544,7 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 	`
 	row := db.QueryRowContext(ctx, q, orderID)
 	var m models.OrderMeta
-	var merchantID sql.NullInt64
+	var merchantID sql.NullString
 	var brand sql.NullString
 	var brandOrder sql.NullString
 	var creation sql.NullTime
@@ -553,8 +557,7 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 		m.Brand = brand.String
 	}
 	if merchantID.Valid {
-		// convert int64 -> string to match your models (in PHP merchant_id was int)
-		m.MerchantID = fmt.Sprintf("%d", merchantID.Int64)
+		m.MerchantID = merchantID.String
 	}
 	if brandOrder.Valid {
 		m.BrandOrderID = brandOrder.String
@@ -1713,26 +1716,14 @@ func (r *OrdersLifeCycleRepository) GetNextOrderNum(ctx context.Context, merchan
 }
 
 func (r *OrdersLifeCycleRepository) ComputeEstimatedReady(ctx context.Context, merchantID string, productsCount int) (string, error) {
-	db := dbutils.GetDB(ctx, r.database) // Gère tout seul si on est en transaction ou non
-
-	rows, err := db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, productsCount)
-	if err != nil {
-		return "", nil
-	}
-	defer rows.Close()
-
-	var seconds sql.NullInt64
-	if rows.Next() {
-		if err := rows.Scan(&seconds); err != nil {
-			return "", nil
-		}
-	}
-
-	if !seconds.Valid || seconds.Int64 <= 0 {
+	// Comme avec l'ancien CALL, toute erreur SQL est avalée : estimated_ready
+	// reste simplement vide.
+	seconds, found, err := distributiontime.EstimatedSeconds(ctx, r.database, merchantID, productsCount)
+	if err != nil || !found || seconds <= 0 {
 		return "", nil
 	}
 
-	t := time.Now().UTC().Add(time.Duration(seconds.Int64) * time.Second)
+	t := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
 	return t.Format("2006-01-02 15:04:05"), nil
 }
 

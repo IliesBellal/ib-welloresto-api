@@ -3,7 +3,6 @@ package delivery_sessions
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -52,12 +51,6 @@ func (s *DeliverySessionsService) sendDeliveryTrackingSMS(merchantID string, ord
 		ctx := context.Background()
 		log := logger.FromContext(ctx)
 
-		merchantIDInt, err := strconv.ParseInt(merchantID, 10, 64)
-		if err != nil {
-			log.Error("sendDeliveryTrackingSMS: invalid merchant id " + merchantID + ": " + err.Error())
-			return
-		}
-
 		phones, err := s.deliverySessionsRepo.GetOrderCustomerPhones(ctx, orderIDs)
 		if err != nil {
 			log.Error("sendDeliveryTrackingSMS: failed to load customer phones: " + err.Error())
@@ -72,7 +65,7 @@ func (s *DeliverySessionsService) sendDeliveryTrackingSMS(merchantID string, ord
 			}
 			sentToPhone[phone] = true
 
-			if err := s.smsService.SendOrderTrackingSMS(ctx, merchantIDInt, orderID, phone); err != nil {
+			if err := s.smsService.SendOrderTrackingSMS(ctx, merchantID, orderID, phone); err != nil {
 				log.Error("sendDeliveryTrackingSMS: failed to send tracking SMS for order " + orderID + ": " + err.Error())
 			}
 		}

@@ -1,7 +1,7 @@
 package messaggio
 
 type MarketingSettings struct {
-	MerchantID       int64
+	MerchantID       string
 	SMSEnabled       bool
 	MessaggioLogin   string
 	MessaggioFrom    string

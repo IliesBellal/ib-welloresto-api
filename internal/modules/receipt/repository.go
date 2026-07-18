@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type ReceiptRepository interface {
@@ -24,7 +24,7 @@ func NewReceiptRepository(db *sql.DB) ReceiptRepository {
 
 // GetLastReceiptData verrouille la lecture pour éviter les doublons de numérotation
 func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID string) (string, string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var lastNumber sql.NullString
 	var lastHash sql.NullString
@@ -51,7 +51,7 @@ func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID s
 }
 
 func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.Receipt) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		INSERT INTO receipts 
@@ -68,7 +68,7 @@ func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.R
 }
 
 func (r *receiptRepository) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT 

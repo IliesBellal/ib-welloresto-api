@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/openinghours"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -123,7 +124,6 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	}
 
 	now := time.Now().In(loc)
-	currentDate := now.Format("2006-01-02 15:04:05")
 	currentTime := now.Format("15:04:05")
 	currentDay := int(now.Weekday())
 	if currentDay == 0 {
@@ -137,28 +137,13 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	}
 	forcedClosed := holiday.IsOpen != nil && !*holiday.IsOpen
 
-	// CALL GET_POS_STATUS
-	_, err = db.ExecContext(ctx,
-		`CALL GET_POS_STATUS(?, ?, @p_is_open, @p_last_start, @p_last_end, @p_current_start, @p_current_end, @p_next_start, @p_next_end)`,
-		merchantID, currentDate,
-	)
-
+	// Statut horaires : ex-procédure GET_POS_STATUS, calculée en Go
+	slots, err := openinghours.FetchActiveSlots(ctx, r.database, merchantID, now)
 	if err != nil {
-		log.Error(fmt.Sprintf("Error calling GET_POS_STATUS for ID %s: %v", merchantID, err))
+		log.Error(fmt.Sprintf("Error fetching hours of operation for ID %s: %v", merchantID, err))
 		return nil, err
 	}
-
-	var isOpen int
-	var nextStart, nextEnd sql.NullString
-
-	err = db.QueryRowContext(ctx,
-		`SELECT @p_is_open, @p_next_start, @p_next_end`,
-	).Scan(&isOpen, &nextStart, &nextEnd)
-
-	if err != nil {
-		log.Error(fmt.Sprintf("Error fetching POS status for ID %s: %v", merchantID, err))
-		return nil, err
-	}
+	hoursStatus := openinghours.ComputePOSStatus(now, slots)
 
 	// OPEN/CLOSED based on hours
 	var status string
@@ -213,9 +198,9 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	}
 
 	// Next schedules
-	result.Wello.NextStart = nextStart.String
-	result.Wello.NextEnd = nextEnd.String
-	effectiveOpen := result.Wello.IsOpen == 1 && status == "OPEN" && isOpen == 1 && !forcedClosed
+	result.Wello.NextStart = openinghours.FormatDateTime(hoursStatus.NextStart)
+	result.Wello.NextEnd = openinghours.FormatDateTime(hoursStatus.NextEnd)
+	effectiveOpen := result.Wello.IsOpen == 1 && status == "OPEN" && hoursStatus.IsOpen && !forcedClosed
 	if effectiveOpen {
 		result.Wello.IsOpen = 1
 		result.Wello.Status = "OPEN"

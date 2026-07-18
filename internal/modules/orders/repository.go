@@ -8,6 +8,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -838,19 +839,10 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 }
 
 func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req *models.PricingRequest, count int) (int, error) {
-	rows, err := r.database.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", req.MerchantID, count)
+	sec, _, err := distributiontime.EstimatedSeconds(ctx, r.database, req.MerchantID, count)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return 0, err
-	}
-	defer rows.Close()
-
-	var sec int
-	if rows.Next() {
-		if err := rows.Scan(&sec); err != nil {
-			logger.FromContext(ctx).Error(err.Error())
-			return 0, err
-		}
 	}
 
 	return sec, nil

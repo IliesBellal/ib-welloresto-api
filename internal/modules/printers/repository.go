@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/go-sql-driver/mysql"
-
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -58,11 +56,11 @@ const selectCols = `
 
 // ListPrinters returns all enabled printers for a merchant.
 func (r *Repository) ListPrinters(ctx context.Context, merchantID string) ([]PrinterEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
-		selectCols+` WHERE merchant_id = ? AND enabled = 1 ORDER BY name ASC`,
+		selectCols+` WHERE merchant_id = ? AND enabled = TRUE ORDER BY name ASC`,
 		merchantID,
 	)
 	if err != nil {
@@ -84,11 +82,11 @@ func (r *Repository) ListPrinters(ctx context.Context, merchantID string) ([]Pri
 
 // GetPrinter returns a single enabled printer, verifying merchant ownership.
 func (r *Repository) GetPrinter(ctx context.Context, merchantID, printerID string) (*PrinterEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	row := db.QueryRowContext(ctx,
-		selectCols+` WHERE printer_id = ? AND merchant_id = ? AND enabled = 1`,
+		selectCols+` WHERE printer_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		printerID, merchantID,
 	)
 	p, err := scanPrinter(row)
@@ -104,7 +102,7 @@ func (r *Repository) GetPrinter(ctx context.Context, merchantID, printerID strin
 
 // CreatePrinter inserts a new printer and returns the created entry.
 func (r *Repository) CreatePrinter(ctx context.Context, merchantID string, req *CreatePrinterRequest, printerID, language string) (*PrinterEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	port := 9100
@@ -140,13 +138,13 @@ func (r *Repository) CreatePrinter(ctx context.Context, merchantID string, req *
 // UpdatePrinter applies a partial update to a printer owned by the merchant.
 // When role changes, language is automatically recalculated.
 func (r *Repository) UpdatePrinter(ctx context.Context, merchantID, printerID string, req *UpdatePrinterRequest) (*PrinterEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Verify ownership before mutating.
 	var count int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM printers WHERE printer_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(1) FROM printers WHERE printer_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		printerID, merchantID,
 	).Scan(&count); err != nil {
 		log.Error(err.Error())
@@ -212,13 +210,13 @@ func (r *Repository) UpdatePrinter(ctx context.Context, merchantID, printerID st
 
 // DeletePrinter soft-deletes a printer (enabled = 0) owned by the merchant.
 func (r *Repository) DeletePrinter(ctx context.Context, merchantID, printerID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Verify ownership before mutating.
 	var count int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM printers WHERE printer_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(1) FROM printers WHERE printer_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		printerID, merchantID,
 	).Scan(&count); err != nil {
 		log.Error(err.Error())
@@ -229,7 +227,7 @@ func (r *Repository) DeletePrinter(ctx context.Context, merchantID, printerID st
 	}
 
 	result, err := db.ExecContext(ctx,
-		`UPDATE printers SET enabled = 0 WHERE printer_id = ? AND merchant_id = ?`,
+		`UPDATE printers SET enabled = FALSE WHERE printer_id = ? AND merchant_id = ?`,
 		printerID, merchantID,
 	)
 	if err != nil {
@@ -270,8 +268,5 @@ func productIDsToNullString(ids *[]string) sql.NullString {
 }
 
 func isUniqueConstraintError(err error) bool {
-	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
-		return mysqlErr.Number == 1062
-	}
-	return false
+	return dbx.IsDuplicateEntry(err)
 }

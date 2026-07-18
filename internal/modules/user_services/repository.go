@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type ServicesRepository struct {
@@ -16,7 +16,7 @@ func NewServicesRepository(db *sql.DB) *ServicesRepository {
 }
 
 func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merchantID, deviceID string) (*models.CurrentServiceResponse, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// ------------------------------------------------------
 	// 1 — CURRENT SERVICE
@@ -99,7 +99,7 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merc
 		LEFT JOIN cash_registers cr ON cr.cash_desk_id = cd.cash_desk_id AND cr.end_date IS NULL
 		LEFT JOIN users opened_by ON opened_by.user_id = cr.user_id
 		WHERE cd.merchant_id = ?
-		AND cd.enabled = 1
+		AND cd.enabled = TRUE
 	`
 
 	rows, err := db.QueryContext(ctx, qDesks, merchantID)

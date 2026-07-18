@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -84,8 +85,154 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 	}, nil
 }
 
+// Traduction SQL inline de l'ex-procédure stockée MySQL GET_CASH_REGISTER_REPORT
+// (jamais versionnée dans ce repo — corps récupéré depuis la base, voir
+// docs/migration-postgres/22-cash-register-procedures-translation.md).
+// Compatible MySQL et Postgres :
+//   - IFNULL → COALESCE ;
+//   - ROUND(x, 0) exige un numeric en Postgres → CAST(... AS DECIMAL(20,6)) ;
+//   - GROUP BY explicites (MySQL tolérait des colonnes non agrégées, pas Postgres) ;
+//     l'agrégat interne est groupé par tva.tva_id (PK) au lieu de
+//     (tva_title, delivery_type) — déterministe et équivalent tant que les
+//     libellés de catégories ne sont pas dupliqués ;
+//   - la jointure INNER JOIN merchant (purement restrictive, aucune colonne
+//     projetée) est supprimée : merchant.id est resté integer face à
+//     orders.merchant_id varchar(64) en Postgres, et orders.merchant_id
+//     référence toujours un merchant existant.
+//
+// Le paramètre (répété dans chaque branche de l'UNION) est l'id numérique du
+// registre, comparé à orders.cash_register_id (varchar dans les deux
+// dialectes) — passer la forme string.
+const cashRegisterReportSQL = `
+SELECT all_tva.delivery_type,
+       l.label,
+       all_tva.tva_title,
+       COALESCE(ROUND(CAST(cash_report.ht  AS DECIMAL(20,6)), 0), 0) AS ht,
+       COALESCE(ROUND(CAST(cash_report.ttc AS DECIMAL(20,6)), 0), 0) AS ttc,
+       COALESCE(ROUND(CAST(cash_report.tva AS DECIMAL(20,6)), 0), 0) AS tva
+FROM tva_categories all_tva
+LEFT JOIN (
+    SELECT tva.tva_id,
+           SUM(oi.price * oi.quantity / (1 + tva.tva_rate / 100)) AS ht,
+           SUM(oi.price * oi.quantity) AS ttc,
+           SUM(oi.price * oi.quantity) - SUM(oi.price * oi.quantity / (1 + tva.tva_rate / 100)) AS tva
+    FROM orders o
+    INNER JOIN orderitems oi ON oi.order_id = o.order_id
+    INNER JOIN products p ON p.product_id = oi.product_id
+    INNER JOIN tva_categories tva ON tva.tva_id = (CASE
+            WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
+            WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
+            ELSE p.tva_in_id
+        END)
+    WHERE o.cash_register_id = ?
+      AND o.state IN ('CLOSED')
+      AND o.brand_status NOT IN ('CANCELED','DELETED')
+    GROUP BY tva.tva_id
+) cash_report ON cash_report.tva_id = all_tva.tva_id
+LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
+    AND l.lang = 'FR'
+    AND l.label_type = 'delivery_type'
+WHERE all_tva.show_in_report IS TRUE
+
+UNION
+
+SELECT all_tva.delivery_type,
+       l.label,
+       all_tva.tva_title,
+       COALESCE(ROUND(CAST(SUM(cash_fees.ht)  AS DECIMAL(20,6)), 0), 0) AS ht,
+       COALESCE(ROUND(CAST(SUM(cash_fees.ttc) AS DECIMAL(20,6)), 0), 0) AS ttc,
+       COALESCE(ROUND(CAST(SUM(cash_fees.tva) AS DECIMAL(20,6)), 0), 0) AS tva
+FROM tva_categories all_tva
+LEFT JOIN (
+    SELECT -1 AS tva_id,
+           SUM(o_fees.delivery_fees * (100 - tva_fees.tva_rate) / 100) AS ht,
+           SUM(o_fees.delivery_fees) AS ttc,
+           SUM(o_fees.delivery_fees * tva_fees.tva_rate / 100) AS tva
+    FROM orders o_fees
+    INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
+    WHERE o_fees.cash_register_id = ?
+      AND o_fees.state IN ('CLOSED')
+      AND o_fees.brand_status NOT IN ('CANCELED','DELETED')
+) cash_fees ON cash_fees.tva_id = all_tva.tva_id
+LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
+    AND l.lang = 'FR'
+    AND l.label_type = 'delivery_type'
+WHERE all_tva.tva_id = -1
+GROUP BY all_tva.tva_id, all_tva.delivery_type, all_tva.tva_title, l.label`
+
+// Traduction SQL inline de l'ex-procédure stockée MySQL
+// GET_CASH_REGISTER_REPORT_MOP. Le corps d'origine portait deux filtres
+// commentés (o.cash_register_id = ? et o.state IN ('CLOSED','DONE')) —
+// volontairement non repris, seul p.cash_register_id fait foi (cohérent avec
+// la requalification des paiements à la clôture, cf. rapports 19/20).
+// SUM(...) est re-casté en DECIMAL(20,0) : p.amount est un entier (centimes),
+// mais round(numeric, 2) Postgres produirait un "123.00" que database/sql ne
+// sait pas scanner dans un int Go.
+const cashRegisterReportMOPSQL = `
+SELECT p.mop, CAST(SUM(ROUND(p.amount, 2)) AS DECIMAL(20,0)) AS amount
+FROM orders o
+INNER JOIN payments p ON p.order_id = o.order_id
+WHERE p.cash_register_id = ?
+  AND o.brand_status NOT IN ('DELETED','CANCELED')
+  AND p.enabled IS TRUE
+GROUP BY p.mop`
+
+func (r *CashRegisterRepository) queryCashRegisterReportLines(ctx context.Context, cashRegisterID string) ([]models.CashReportLine, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, cashRegisterReportSQL, cashRegisterID, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lines []models.CashReportLine
+	for rows.Next() {
+		var line models.CashReportLine
+		if err := rows.Scan(
+			&line.DeliveryType,
+			&line.Label,
+			&line.TVATitle,
+			&line.HT,
+			&line.TTC,
+			&line.TVA,
+		); err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, rows.Err()
+}
+
+func (r *CashRegisterRepository) queryCashRegisterReportMOP(ctx context.Context, cashRegisterID string) ([]models.MOPLine, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, cashRegisterReportMOPSQL, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lines []models.MOPLine
+	for rows.Next() {
+		var line models.MOPLine
+		if err := rows.Scan(&line.MOP, &line.Amount); err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, rows.Err()
+}
+
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
+
+	// cash_registers.cash_register_id est un PK numérique dans les deux
+	// dialectes (integer en Postgres) — le paramètre doit être typé int.
+	regID, err := strconv.Atoi(cashRegisterID)
+	if err != nil {
+		return nil, fmt.Errorf("cash_register_id non numérique %q: %w", cashRegisterID, err)
+	}
 
 	var (
 		startDate string
@@ -100,91 +247,43 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 		SELECT start_date, end_date, cash_fund
 		FROM cash_registers
 		WHERE cash_register_id = ?
-	`, cashRegisterID)
+	`, regID)
 
-	err := row.Scan(&startDate, &endDate, &cashFund)
+	err = row.Scan(&startDate, &endDate, &cashFund)
 	if err != nil {
 		return nil, err
 	}
 
 	// --------------------------------------------------------------
-	// 2) CALL GET_CASH_REGISTER_REPORT
+	// 2) Ventilation TVA (ex CALL GET_CASH_REGISTER_REPORT)
 	// --------------------------------------------------------------
-	rows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
+	reportRows, err := r.queryCashRegisterReportLines(ctx, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	type ReportRow struct {
-		DeliveryType string
-		Label        string
-		TVATitle     string
-		HT           int
-		TTC          int
-		TVA          int
-	}
-
-	var reportRows []ReportRow
 
 	var (
 		HT_CR  int
 		TTC_CR int
 		TVA_CR int
 	)
-
-	for rows.Next() {
-		var rr ReportRow
-		err := rows.Scan(
-			&rr.DeliveryType,
-			&rr.Label,
-			&rr.TVATitle,
-			&rr.HT,
-			&rr.TTC,
-			&rr.TVA,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		reportRows = append(reportRows, rr)
-
+	for _, rr := range reportRows {
 		HT_CR += rr.HT
 		TTC_CR += rr.TTC
 		TVA_CR += rr.TVA
 	}
-	// obligatoire :
-	for rows.NextResultSet() {
-		// just drain
-	}
 
 	// --------------------------------------------------------------
-	// 3) CALL GET_CASH_REGISTER_REPORT_MOP
+	// 3) Ventilation MOP (ex CALL GET_CASH_REGISTER_REPORT_MOP)
 	// --------------------------------------------------------------
-	mopRows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
+	mopList, err := r.queryCashRegisterReportMOP(ctx, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
-	defer mopRows.Close()
 
-	var mopList []models.MOPLine
 	var TTC_MOP int
-
-	for mopRows.Next() {
-		var line models.MOPLine
-		err := mopRows.Scan(
-			&line.MOP,
-			&line.Amount,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		mopList = append(mopList, line)
+	for _, line := range mopList {
 		TTC_MOP += line.Amount
-	}
-	for mopRows.NextResultSet() {
-		// just drain
 	}
 
 	// --------------------------------------------------------------
@@ -315,6 +414,23 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		return false, err
 	}
 
+	// 3bis. Associer paiements carte sans caisse (borne Kiosk via Stripe
+	// Terminal, ou paiement CB différé) : tout paiement 'CB' d'une commande
+	// clôturée sans registre associé est rattaché à la première caisse du
+	// merchant qui se ferme ensuite, pour qu'il apparaisse dans son rapport Z.
+	_, err = db.ExecContext(ctx, `
+		UPDATE payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+		SET p.cash_register_id = ?
+		WHERE o.state = 'CLOSED'
+		  AND p.mop = 'CB'
+		  AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK')
+		  AND p.merchant_id = ?
+	`, cashRegisterID, merchantID)
+	if err != nil {
+		return false, err
+	}
+
 	// 4. Récupérer rapport caisse
 	report, err := r.GetCashRegisterReport(ctx, cashRegisterID)
 	if err != nil {
@@ -345,7 +461,6 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 			return false, err
 		}
 
-		// Remplacer "CASH" par l'ID exact que tu utilises pour l'espèce (ex: "ESPECES")
 		if mopLine.MOP == "ES" {
 			cashSales += mopLine.Amount
 		}
@@ -1009,8 +1124,13 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 }
 
 func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, merchantID, cashRegisterID string) (*models.CashRegisterDetails, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
+
+	regID, err := strconv.Atoi(cashRegisterID)
+	if err != nil {
+		return nil, fmt.Errorf("cash_register_id non numérique %q: %w", cashRegisterID, err)
+	}
 
 	// 1. Retrieve header info
 	var header struct {
@@ -1019,12 +1139,12 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		CashFund  int
 	}
 
-	err := db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
         SELECT start_date, end_date, cash_fund
         FROM cash_registers
         WHERE cash_register_id = ?
         AND merchant_id = ?
-    `, cashRegisterID, merchantID).Scan(
+    `, regID, merchantID).Scan(
 		&header.StartDate, &header.EndDate, &header.CashFund,
 	)
 
@@ -1036,59 +1156,25 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		return nil, err
 	}
 
-	// 2. Call stored procedure GET_CASH_REGISTER_REPORT
-	rows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT(?)`, cashRegisterID)
+	// 2. Ventilation TVA (ex CALL GET_CASH_REGISTER_REPORT)
+	items, err := r.queryCashRegisterReportLines(ctx, cashRegisterID)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
-	defer rows.Close()
 
-	var items []models.CashReportLine
 	var totalHT, totalTTC, totalTVA int
-
-	for rows.Next() {
-		var line models.CashReportLine
-		if err := rows.Scan(
-			&line.DeliveryType,
-			&line.Label,
-			&line.TVATitle,
-			&line.HT,
-			&line.TTC,
-			&line.TVA,
-		); err != nil {
-			return nil, err
-		}
+	for _, line := range items {
 		totalHT += line.HT
 		totalTTC += line.TTC
 		totalTVA += line.TVA
-		items = append(items, line)
-	}
-	for rows.NextResultSet() {
-		// just drain
 	}
 
-	// 3. Call MOP stored procedure
-	mopRows, err := db.QueryContext(ctx, `CALL GET_CASH_REGISTER_REPORT_MOP(?)`, cashRegisterID)
+	// 3. Ventilation MOP (ex CALL GET_CASH_REGISTER_REPORT_MOP)
+	mops, err := r.queryCashRegisterReportMOP(ctx, cashRegisterID)
 	if err != nil {
+		log.Error(err.Error())
 		return nil, err
-	}
-	defer mopRows.Close()
-
-	var mops []models.MOPLine
-	var totalMop int
-
-	for mopRows.Next() {
-		var m models.MOPLine
-		if err := mopRows.Scan(&m.MOP, &m.Amount); err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-		totalMop += m.Amount
-		mops = append(mops, m)
-	}
-	for mopRows.NextResultSet() {
-		// just drain
 	}
 
 	// 4. Group by delivery_type like PHP

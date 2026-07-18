@@ -1,0 +1,16 @@
+services:
+  postgres-dev:
+    image: postgres:16
+    container_name: welloresto-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: welloresto
+      POSTGRES_PASSWORD: dev_local_only
+      POSTGRES_DB: welloresto_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - welloresto_pg_dev_data:/var/lib/postgresql/data
+
+volumes:
+  welloresto_pg_dev_data:

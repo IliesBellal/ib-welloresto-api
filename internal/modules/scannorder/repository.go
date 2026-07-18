@@ -7,6 +7,7 @@ import (
 	"time"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/modules/openinghours"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -338,7 +339,6 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 
 	loc, _ := time.LoadLocation(timezone)
 	localNow := time.Now().In(loc)
-	now := localNow.Format("2006-01-02 15:04:05")
 	holidayDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
 	holiday, err := holidayRepo.ResolvePlanningHoliday(ctx, merchantID, holidayDate)
 	if err != nil {
@@ -346,37 +346,16 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 	}
 	forcedClosed := holiday.IsOpen != nil && !*holiday.IsOpen
 
-	// 4️⃣ Stored procedure
-	if _, err := db.ExecContext(ctx,
-		`CALL GET_POS_STATUS(
-			?, ?, 
-			@p_is_open, 
-			@p_last_start, 
-			@p_last_end, 
-			@p_current_start, 
-			@p_current_end, 
-			@p_next_start, 
-			@p_next_end
-		)`,
-		merchantID,
-		now,
-	); err != nil {
+	// 4️⃣ Statut horaires : ex-procédure GET_POS_STATUS, calculée en Go
+	slots, err := openinghours.FetchActiveSlots(ctx, r.database, merchantID, localNow)
+	if err != nil {
 		return nil, err
 	}
+	hoursStatus := openinghours.ComputePOSStatus(localNow, slots)
 
-	// 5️⃣ Read output vars (SAME CONN)
-	var isOpen sql.NullInt64
-	var nextStart sql.NullString
-
-	if err := db.QueryRowContext(ctx,
-		"SELECT @p_is_open, @p_next_start",
-	).Scan(&isOpen, &nextStart); err != nil {
-		return nil, err
-	}
-
-	status.IsOpen = isMerchantEnabled && isOpenNow && isOpen.Valid && isOpen.Int64 == 1 && !forcedClosed
-	if nextStart.Valid && !forcedClosed {
-		status.NextStart = nextStart.String
+	status.IsOpen = isMerchantEnabled && isOpenNow && hoursStatus.IsOpen && !forcedClosed
+	if hoursStatus.NextStart != nil && !forcedClosed {
+		status.NextStart = openinghours.FormatDateTime(hoursStatus.NextStart)
 	}
 
 	openHours, err := r.GetMerchantOpenHours(ctx, merchantID)

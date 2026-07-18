@@ -6,9 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type AuditRepository interface {
@@ -25,7 +25,7 @@ func NewAuditRepository(db *sql.DB) AuditRepository {
 }
 
 func (r *auditRepository) InsertLog(ctx context.Context, log *models.AuditLog) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	query := `
 		INSERT INTO audit_logs 
@@ -56,7 +56,7 @@ func (r *auditRepository) InsertLog(ctx context.Context, log *models.AuditLog) e
 }
 
 func (r *auditRepository) InsertLogWithChain(ctx context.Context, log *models.AuditLog) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	// 1. Récupération du hash précédent avec verrouillage (FOR UPDATE)
 	// On filtre par merchant_id car le chaînage est propre à chaque client

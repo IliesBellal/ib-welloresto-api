@@ -67,7 +67,7 @@ CREATE TABLE allergens (
 -- ---------------------------------------------------------------------
 CREATE TABLE api_calls (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    user_id integer NOT NULL,
+    user_id varchar(64) NOT NULL,
     query varchar(50) NOT NULL,
     uri text NOT NULL,
     date timestamptz NOT NULL DEFAULT now(),
@@ -84,7 +84,7 @@ CREATE TABLE api_calls (
 CREATE TABLE api_request_logs (
     id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
     user_id bigint,
-    merchant_id bigint,
+    merchant_id varchar(64),
     method varchar(10),
     url text,
     payload jsonb,
@@ -117,7 +117,7 @@ COMMENT ON COLUMN app_version.app_id IS '0 => merchant / 1 => delivery / 2 => wa
 CREATE TABLE app_version_merchant (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     version_code integer NOT NULL,
-    merchant_id varchar(25) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     PRIMARY KEY (id)
 );
 
@@ -132,7 +132,7 @@ CREATE TABLE app_version_merchant (
 CREATE TABLE audit_logs (
     id varchar(36) NOT NULL,
     user_id varchar(36),
-    merchant_id varchar(36),
+    merchant_id varchar(64),
     action varchar(50),
     resource_type varchar(50),
     resource_id varchar(36),
@@ -151,7 +151,7 @@ CREATE TABLE audit_logs (
 -- ---------------------------------------------------------------------
 CREATE TABLE availabilities (
     availability_id varchar(50) NOT NULL,
-    merchant_id varchar(50) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     availability_name varchar(50) NOT NULL,
     unavailable_message varchar(50) NOT NULL,
     available boolean NOT NULL DEFAULT true,
@@ -215,7 +215,7 @@ CREATE TABLE available_languages (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE average_distribution_time (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     distribution_time integer NOT NULL,
     PRIMARY KEY (merchant_id)
 );
@@ -227,7 +227,7 @@ COMMENT ON COLUMN average_distribution_time.distribution_time IS 'In seconds';
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE average_distribution_time_by_category (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     category varchar(11) NOT NULL,
     distribution_time integer NOT NULL,
     PRIMARY KEY (merchant_id)
@@ -240,7 +240,7 @@ COMMENT ON COLUMN average_distribution_time_by_category.distribution_time IS 'In
 -- ---------------------------------------------------------------------
 CREATE TABLE average_distribution_time_history (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     category varchar(30) NOT NULL,
     distribution_time integer NOT NULL,
     calculation_date timestamptz NOT NULL DEFAULT now(),
@@ -256,7 +256,7 @@ CREATE UNIQUE INDEX uq_average_distribution_time_history_merchant_id ON average_
 -- ---------------------------------------------------------------------
 CREATE TABLE barcodes (
     barcode varchar(25) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     component_id integer NOT NULL,
     quantity integer NOT NULL DEFAULT 0,
     uom integer NOT NULL DEFAULT 0,
@@ -295,7 +295,7 @@ CREATE UNIQUE INDEX uq_booked_location_uq_booked_location ON booked_location (bo
 CREATE TABLE bookings (
     booking_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     booking_number varchar(6) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     order_id integer,
     party_size integer NOT NULL,
     customer_id integer NOT NULL,
@@ -329,7 +329,7 @@ CREATE UNIQUE INDEX uq_bookings_uq_bookings_merchant_number ON bookings (merchan
 -- ---------------------------------------------------------------------
 CREATE TABLE bookings_settings (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     code varchar(30) NOT NULL,
     default_booking_duration integer NOT NULL DEFAULT 90,
     auto_accept_reserve_bookings boolean NOT NULL DEFAULT true,
@@ -456,7 +456,7 @@ CREATE TABLE calendar (
 -- ---------------------------------------------------------------------
 CREATE TABLE cash_desks (
     cash_desk_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(50) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
     creation_date timestamptz NOT NULL DEFAULT now(),
@@ -473,7 +473,7 @@ CREATE TABLE cash_funds (
     cash_fund_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     cash_register_id integer NOT NULL,
     sub_cash_register_id integer,
-    user_id integer NOT NULL,
+    user_id varchar(64) NOT NULL,
     initial_amount integer NOT NULL DEFAULT 0,
     expected_amount integer NOT NULL DEFAULT 0,
     actual_amount integer,
@@ -497,7 +497,7 @@ CREATE TABLE cash_funds (
 -- ---------------------------------------------------------------------
 CREATE TABLE cash_registers (
     cash_register_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     cash_desk_id integer NOT NULL,
     device_id varchar(50) NOT NULL,
     user_id varchar(64) NOT NULL,
@@ -526,7 +526,7 @@ CREATE TABLE cash_registers_custom_items (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     label varchar(25) NOT NULL,
     amount integer NOT NULL,
-    merchant_id varchar(35),
+    merchant_id varchar(64),
     created_by varchar(35),
     enabled boolean NOT NULL DEFAULT true,
     cash_register_id integer NOT NULL,
@@ -557,8 +557,8 @@ COMMENT ON COLUMN cash_registers_items.amount IS 'in cents';
 -- ---------------------------------------------------------------------
 CREATE TABLE cash_reports (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    user_id integer,
-    merchant_id integer NOT NULL,
+    user_id varchar(64),
+    merchant_id varchar(64) NOT NULL,
     cash_desk_id integer NOT NULL,
     period_from timestamptz,
     period_to timestamptz NOT NULL,
@@ -575,7 +575,7 @@ CREATE TABLE cash_reports (
 CREATE TABLE category_discount (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     categ_id integer NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     merchant_discount_id integer NOT NULL,
     discount_desc text NOT NULL,
     discount_order_type integer,
@@ -710,7 +710,7 @@ CREATE INDEX idx_cleaning_zones_idx_cleaning_zones_merchant_name ON cleaning_zon
 -- ---------------------------------------------------------------------
 CREATE TABLE components (
     component_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(100) NOT NULL,
     component_price integer NOT NULL DEFAULT 0,
     category_id varchar(15),
@@ -745,7 +745,7 @@ COMMENT ON COLUMN components.storage_temp_max IS 'Température max de stockage e
 -- ---------------------------------------------------------------------
 CREATE TABLE component_category (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     merchant_categ_id varchar(11) NOT NULL,
     name text NOT NULL,
     categ_order integer NOT NULL,
@@ -763,7 +763,7 @@ CREATE TABLE component_category (
 CREATE TABLE configurable_attributes (
     id varchar(64) NOT NULL,
     product_id integer NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     brand varchar(20) NOT NULL DEFAULT 'WELLO_RESTO',
     attribute_type varchar(20) NOT NULL DEFAULT 'CHECK',
     name varchar(50) NOT NULL,
@@ -800,7 +800,7 @@ CREATE INDEX idx_configurable_attribute_options_configurable_attribute_id ON con
 -- ---------------------------------------------------------------------
 CREATE TABLE consumables (
     consumable_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(50) NOT NULL,
     unit_of_measure integer NOT NULL,
     purchase_price integer,
@@ -822,7 +822,7 @@ CREATE TABLE customer (
     customer_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     customer_brand varchar(20) NOT NULL DEFAULT 'WELLO_RESTO',
     customer_brand_id varchar(50),
-    merchant_id integer,
+    merchant_id varchar(64),
     customer_name varchar(50),
     customer_first_name varchar(50),
     customer_last_name varchar(50),
@@ -885,7 +885,7 @@ CREATE TABLE customer_advertisement_emails (
 -- ---------------------------------------------------------------------
 CREATE TABLE customer_loyalty_programs (
     id varchar(50) NOT NULL,
-    merchant_id varchar(30) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(50) NOT NULL,
     description varchar(120) NOT NULL,
     type varchar(30) NOT NULL,
@@ -953,7 +953,7 @@ CREATE TABLE customer_loyalty_progress_order (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     loyalty_program_id varchar(30) NOT NULL,
     progress_id varchar(30) NOT NULL,
-    order_id varchar(30) NOT NULL,
+    order_id integer NOT NULL,
     increment_value integer NOT NULL,
     PRIMARY KEY (id)
 );
@@ -973,7 +973,7 @@ CREATE TABLE customer_rewards (
     is_used boolean NOT NULL DEFAULT false,
     issue_date timestamptz,
     usage_date timestamptz,
-    used_on_order_id varchar(20),
+    used_on_order_id integer,
     creation_date timestamptz NOT NULL,
     PRIMARY KEY (reward_id)
 );
@@ -1041,7 +1041,7 @@ CREATE INDEX idx_delivery_position_idx_delivery_position_user ON delivery_positi
 CREATE TABLE delivery_session (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     user_id varchar(64) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     start_date timestamptz NOT NULL,
     end_date timestamptz,
     distance integer NOT NULL DEFAULT 0,
@@ -1097,7 +1097,7 @@ CREATE TABLE device_link (
 -- ---------------------------------------------------------------------
 CREATE TABLE discounts (
     discount_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     discount_name varchar(50) NOT NULL,
     discount_desc varchar(100) NOT NULL,
     prefered_order integer NOT NULL DEFAULT 0,
@@ -1263,7 +1263,7 @@ CREATE INDEX idx_employee_documents_idx_empdocs_employee ON employee_documents (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE employment_agreement (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     weekly_limit integer NOT NULL DEFAULT 2100,
     monthly_limit integer NOT NULL DEFAULT 9100,
     PRIMARY KEY (merchant_id)
@@ -1279,8 +1279,8 @@ COMMENT ON COLUMN employment_agreement.monthly_limit IS 'in minuts';
 -- ---------------------------------------------------------------------
 CREATE TABLE employment_contract (
     contract_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
-    user_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    user_id varchar(64) NOT NULL,
     hourly_rate real NOT NULL,
     schedule integer NOT NULL,
     creation_date integer NOT NULL,
@@ -1296,7 +1296,7 @@ COMMENT ON COLUMN employment_contract.schedule IS 'nombre d''heures à travaille
 -- ---------------------------------------------------------------------
 CREATE TABLE expiration_dates (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     component_id integer NOT NULL,
     comment varchar(150),
     purchased_component_id integer,
@@ -1334,7 +1334,7 @@ CREATE TABLE extra (
     product_id integer NOT NULL,
     quantity integer NOT NULL DEFAULT 1,
     price integer NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     PRIMARY KEY (id)
 );
 COMMENT ON COLUMN extra.price IS 'in cents';
@@ -1358,7 +1358,7 @@ CREATE TABLE firebase_fcm_access_token (
 -- ---------------------------------------------------------------------
 CREATE TABLE floors (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(50) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     enabled boolean NOT NULL DEFAULT true,
@@ -1539,7 +1539,7 @@ CREATE INDEX idx_hours_amendments_idx_hours_amendments_employee ON hours_amendme
 -- ---------------------------------------------------------------------
 CREATE TABLE hours_of_operation (
     id varchar(64) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     day_of_week_from integer NOT NULL,
     hour_from time NOT NULL,
     day_of_week_to integer NOT NULL,
@@ -1563,7 +1563,7 @@ COMMENT ON COLUMN hours_of_operation.day_of_week_from IS '1 => Monday, 7 => Sund
 --   FK candidate (non creee) : brand_id -> brands.brand_id
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_deliveroo (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     location_id varchar(20) NOT NULL,
     brand_id varchar(150) NOT NULL,
     auto_accept_orders boolean NOT NULL DEFAULT false,
@@ -1585,7 +1585,7 @@ COMMENT ON COLUMN integration_deliveroo.synced_items IS 'Number of products in l
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_deliveroo_attributes_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     configurable_attribute_id integer NOT NULL,
     modifier_group_pos_id varchar(255) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -1605,7 +1605,7 @@ CREATE TABLE integration_deliveroo_components_mapping (
     id integer NOT NULL,
     item_id varchar(50) NOT NULL,
     component_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     deletion_date timestamptz,
     enabled boolean NOT NULL DEFAULT true
@@ -1619,7 +1619,7 @@ CREATE TABLE integration_deliveroo_components_mapping (
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_deliveroo_options_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     configurable_attribute_option_id integer NOT NULL,
     item_id varchar(255) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -1638,7 +1638,7 @@ CREATE TABLE integration_deliveroo_products_mapping (
     item_id varchar(50) NOT NULL,
     item_name varchar(50) NOT NULL,
     product_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     deletion_date timestamptz,
     enabled boolean NOT NULL DEFAULT true,
@@ -1652,7 +1652,7 @@ CREATE TABLE integration_deliveroo_products_mapping (
 --   FK candidate (non creee) : customer_id -> customer.customer_id
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_uber_direct (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     bearer_token text,
     customer_id text NOT NULL,
     client_id text NOT NULL,
@@ -1667,7 +1667,7 @@ CREATE TABLE integration_uber_direct (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_uber_eats (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     store_id varchar(150) NOT NULL,
     pos_provisioning_token text,
     pos_provisionning_refresh_token text NOT NULL,
@@ -1701,7 +1701,7 @@ COMMENT ON COLUMN integration_uber_eats.synced_items IS 'Number of products curr
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_uber_eats_attributes_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     configurable_attribute_id integer NOT NULL,
     modifier_group_id varchar(255) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -1720,7 +1720,7 @@ CREATE TABLE integration_uber_eats_components_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     item_id varchar(50) NOT NULL,
     component_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     deletion_date timestamptz,
     enabled boolean NOT NULL DEFAULT true,
@@ -1735,7 +1735,7 @@ CREATE TABLE integration_uber_eats_components_mapping (
 -- ---------------------------------------------------------------------
 CREATE TABLE integration_uber_eats_options_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(20) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     configurable_attribute_option_id integer NOT NULL,
     item_id varchar(255) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -1754,7 +1754,7 @@ CREATE TABLE integration_uber_eats_products_mapping (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     item_id varchar(50) NOT NULL,
     product_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     deletion_date timestamptz,
     enabled boolean NOT NULL DEFAULT true,
@@ -1786,7 +1786,7 @@ COMMENT ON COLUMN integration_uber_eats_reports.workflow_id IS 'job_id in webhoo
 CREATE TABLE invoices (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     invoice_id varchar(50),
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     order_id integer NOT NULL,
     customer_email varchar(100) NOT NULL,
     PRIMARY KEY (id)
@@ -1929,7 +1929,7 @@ CREATE TABLE labor_rules (
 -- ---------------------------------------------------------------------
 CREATE TABLE locations (
     location_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     location_name varchar(20) NOT NULL,
     location_desc varchar(20),
     location_order integer NOT NULL DEFAULT 0,
@@ -1979,6 +1979,10 @@ CREATE INDEX idx_marketing_categories_idx_marketing_categories_merchant_enab ON 
 --   SIRET: identifiant mixed-case 'SIRET' : PG replie en 'siret' (sans impact pour les requetes Go non quotees)
 --   merchantTel: identifiant mixed-case 'merchantTel' : PG replie en 'merchanttel' (sans impact pour les requetes Go non quotees)
 --   FK candidate (non creee) : brand_id -> brands.brand_id
+--   ATTENTION type : merchant.id reste INTEGER (identity, non concerne par l'unification 13-merchant-id-schema-update.md).
+--   Toutes les colonnes merchant_id listees en commentaire "FK candidate" a travers ce fichier sont
+--   desormais varchar(64) : aucune de ces FK candidates non creees n'est donc type-compatible avec
+--   merchant.id sans cast explicite (merchant.id::varchar) si une vraie contrainte est ajoutee un jour.
 -- ---------------------------------------------------------------------
 CREATE TABLE merchant (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -2014,7 +2018,7 @@ CREATE TABLE merchant (
 -- ---------------------------------------------------------------------
 CREATE TABLE merchant_code (
     code_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     code varchar(6) NOT NULL,
     creation_date timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (code_id)
@@ -2065,7 +2069,7 @@ CREATE TABLE merchant_marketing_settings (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE merchant_parameters (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     manage_on_site boolean NOT NULL DEFAULT true,
     manage_take_away boolean NOT NULL DEFAULT true,
     manage_delivery boolean NOT NULL DEFAULT true,
@@ -2135,7 +2139,7 @@ COMMENT ON COLUMN merchant_parameters.pager_number_required IS 'Demande un numé
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE merchant_sms_monthly (
-    merchant_id varchar(50) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     month date NOT NULL,
     sms_count integer NOT NULL DEFAULT 0,
     total_cost integer NOT NULL DEFAULT 0,
@@ -2198,7 +2202,7 @@ CREATE TABLE migration_users (
 -- ---------------------------------------------------------------------
 CREATE TABLE notifications (
     notification_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    notification_user_id integer NOT NULL,
+    notification_user_id varchar(64) NOT NULL,
     notification_title varchar(60) NOT NULL,
     notification_desc varchar(150) NOT NULL,
     done boolean NOT NULL DEFAULT false,
@@ -2219,9 +2223,9 @@ COMMENT ON COLUMN notifications.notification_date IS 'UTC';
 CREATE TABLE orderitems (
     order_item_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     brand_order_item_id varchar(100),
-    order_id varchar(20) NOT NULL,
+    order_id integer NOT NULL,
     product_id integer NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     quantity integer NOT NULL,
     paid_quantity integer NOT NULL DEFAULT 0,
     distributed_quantity integer NOT NULL DEFAULT 0,
@@ -2259,7 +2263,7 @@ CREATE INDEX idx_orderitems_idx_orderitems_product_id ON orderitems (product_id)
 CREATE TABLE orders (
     order_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     public_id varchar(64),
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     customer_id integer,
     use_customer_temporary_address boolean DEFAULT false,
     cash_register_id varchar(11),
@@ -2267,7 +2271,7 @@ CREATE TABLE orders (
     order_num integer NOT NULL,
     brand varchar(20) NOT NULL DEFAULT 'WELLO_RESTO',
     brand_order_id varchar(50),
-    parent_order_id varchar(50),
+    parent_order_id integer,
     brand_order_num varchar(10),
     brand_status varchar(30) NOT NULL,
     scheduled boolean NOT NULL DEFAULT false,
@@ -2435,7 +2439,7 @@ COMMENT ON COLUMN packages.scannorder_ready IS 'Allow access SNO options in Quic
 CREATE TABLE payments (
     payment_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     cash_register_id varchar(20),
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     user_id varchar(64) NOT NULL,
     order_id integer NOT NULL,
     amount integer NOT NULL,
@@ -2463,7 +2467,7 @@ COMMENT ON COLUMN payments.enabled IS '1 enabled, 0 disabled';
 -- ---------------------------------------------------------------------
 CREATE TABLE pictures (
     picture_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     img text NOT NULL,
     PRIMARY KEY (picture_id)
 );
@@ -2476,10 +2480,10 @@ CREATE TABLE pictures (
 -- ---------------------------------------------------------------------
 CREATE TABLE planned_shifts (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     created_by integer NOT NULL,
     planning_role_id integer NOT NULL,
-    user_id integer NOT NULL,
+    user_id varchar(64) NOT NULL,
     start_date timestamptz NOT NULL,
     end_date timestamptz NOT NULL,
     department_id integer,
@@ -2591,7 +2595,7 @@ CREATE INDEX idx_planning_revenue_forecasts_idx_planning_revenue_forecasts_m ON 
 -- ---------------------------------------------------------------------
 CREATE TABLE planning_roles (
     role_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     role_name varchar(50) NOT NULL,
     role_color varchar(11) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -2845,7 +2849,7 @@ CREATE TABLE printers (
 -- ---------------------------------------------------------------------
 CREATE TABLE productcateg (
     categ_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     merchant_categ_id varchar(20) NOT NULL,
     categ_name text NOT NULL,
     categ_order integer NOT NULL,
@@ -2863,7 +2867,7 @@ CREATE TABLE productcateg (
 CREATE TABLE products (
     product_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     by_product_of integer,
-    merchant_Id integer NOT NULL,
+    merchant_Id varchar(64) NOT NULL,
     name varchar(255) NOT NULL,
     product_desc text,
     img text,
@@ -2985,7 +2989,7 @@ CREATE TABLE product_tags (
 -- ---------------------------------------------------------------------
 CREATE TABLE purchased_components (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     component_id integer NOT NULL,
     barcode varchar(25) NOT NULL,
     price real NOT NULL,
@@ -3009,9 +3013,9 @@ CREATE TABLE purchased_components (
 -- ---------------------------------------------------------------------
 CREATE TABLE qrcodes (
     QR_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     description varchar(70),
-    user_id integer,
+    user_id varchar(64),
     location_id integer,
     menu_only boolean NOT NULL DEFAULT false,
     delivery smallint NOT NULL DEFAULT 0,
@@ -3037,7 +3041,7 @@ COMMENT ON COLUMN qrcodes.last_waiter_call IS 'SERVER DATE of last call to waite
 -- ---------------------------------------------------------------------
 CREATE TABLE receipts (
     receipt_id varchar(50) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     order_id integer NOT NULL,
     receipt_number varchar(50) NOT NULL,
     total_ttc integer NOT NULL,
@@ -3067,7 +3071,7 @@ COMMENT ON COLUMN receipts.payments_snapshot IS 'Copie des paiements';
 -- ---------------------------------------------------------------------
 CREATE TABLE recipes (
     recipe_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     product_id integer NOT NULL,
     preparation_time integer NOT NULL DEFAULT 0,
     PRIMARY KEY (recipe_id)
@@ -3106,7 +3110,7 @@ COMMENT ON COLUMN requires.last_update IS 'deactivation date (server time)';
 -- ---------------------------------------------------------------------
 CREATE TABLE restaurant_ticket (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     payment_id integer,
     barcode varchar(20) NOT NULL,
     PRIMARY KEY (id)
@@ -3128,7 +3132,7 @@ CREATE TABLE scannorder_session (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE scannorder_settings (
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     activated boolean NOT NULL DEFAULT false,
     show_address boolean NOT NULL DEFAULT false,
     header_background text,
@@ -3213,8 +3217,8 @@ COMMENT ON COLUMN scannorder_settings.closed_until IS 'If set in the future (UTC
 -- ---------------------------------------------------------------------
 CREATE TABLE services_performed (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    user_id integer NOT NULL,
-    merchant_id integer NOT NULL,
+    user_id varchar(64) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     cash_desk_id integer NOT NULL,
     cash_register_id integer,
     planned_shift_id integer,
@@ -3249,7 +3253,7 @@ CREATE TABLE session_orderitem (
 -- ---------------------------------------------------------------------
 CREATE TABLE shift_templates (
     shift_template_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     created_by integer NOT NULL,
     template_name varchar(50) NOT NULL,
     planning_role_id integer NOT NULL,
@@ -3296,13 +3300,13 @@ CREATE TABLE stock_evolution_records (
 -- ---------------------------------------------------------------------
 CREATE TABLE stock_movements (
     id varchar(50) NOT NULL,
-    merchant_id varchar(50) NOT NULL,
-    user_id varchar(50) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    user_id varchar(64) NOT NULL,
     component_id varchar(50),
     consumable_id varchar(50),
     product_id varchar(50),
     order_item_id varchar(50),
-    order_id varchar(50),
+    order_id integer,
     source varchar(20) NOT NULL,
     movement varchar(20) NOT NULL,
     quantity real NOT NULL,
@@ -3349,7 +3353,7 @@ CREATE TABLE stock_movements_source (
 CREATE TABLE stripe_accounts (
     account_id varchar(255) NOT NULL,
     customer_id varchar(50),
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     verification_status varchar(50) NOT NULL DEFAULT 'action_required',
     terminal_location_id varchar(255),
     PRIMARY KEY (merchant_id)
@@ -3387,7 +3391,7 @@ CREATE UNIQUE INDEX uq_stripe_payments_stripe_order_link ON stripe_payments (lin
 CREATE TABLE subscriptions (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     stripe_subscription_id varchar(150) NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     package_id integer NOT NULL,
     planning_enabled boolean NOT NULL DEFAULT false,
     haccp_enabled boolean NOT NULL DEFAULT false,
@@ -3408,7 +3412,7 @@ COMMENT ON COLUMN subscriptions.max_kiosks IS 'Nombre max de bornes actives (0 =
 -- ---------------------------------------------------------------------
 CREATE TABLE subscription_invoices (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     invoice_id varchar(50) NOT NULL,
     status integer NOT NULL DEFAULT 0,
     invoice_date timestamptz NOT NULL DEFAULT now(),
@@ -3425,9 +3429,12 @@ COMMENT ON COLUMN subscription_invoices.amount IS 'in cents';
 --   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : cash_register_id -> cash_registers.cash_register_id
 --   FK candidate (non creee) : device_id -> device_link.device_id | users_devices.device_id
+--   [tier1] cash_register_id aligne varchar(20) -> integer (source MySQL incoherente :
+--   varchar referencant un PK int ; jointure user_services impossible en PG sans cast).
+--   Migration de donnees : CAST(cash_register_id AS UNSIGNED) a la copie.
 -- ---------------------------------------------------------------------
 CREATE TABLE sub_cash_registers (
-    cash_register_id varchar(20) NOT NULL,
+    cash_register_id integer NOT NULL,
     sub_cash_register_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     device_id varchar(50) NOT NULL,
     cash_fund integer NOT NULL,
@@ -3479,7 +3486,7 @@ CREATE TABLE sys_planning_event_types (
 -- ---------------------------------------------------------------------
 CREATE TABLE tags (
     tag_id varchar(42) NOT NULL,
-    merchant_id varchar(35) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     name varchar(50) NOT NULL,
     color varchar(9) NOT NULL DEFAULT '#ffffff',
     display_order integer NOT NULL DEFAULT 0,
@@ -3640,7 +3647,7 @@ CREATE TABLE unit_of_measure_desc (
 CREATE TABLE upsell_suggestions (
     id varchar(64) NOT NULL,
     merchant_id varchar(64) NOT NULL,
-    order_id varchar(64),
+    order_id integer,
     cart_signature varchar(64) NOT NULL,
     suggested_items jsonb NOT NULL,
     source varchar(32) NOT NULL,
@@ -3673,8 +3680,8 @@ CREATE INDEX idx_upsell_suggestions_idx_upsell_acceptance ON upsell_suggestions 
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE users (
-    user_id varchar(50) NOT NULL,
-    merchant_id integer,
+    user_id varchar(64) NOT NULL,
+    merchant_id varchar(64),
     name varchar(255) NOT NULL,
     first_name varchar(40) NOT NULL,
     last_name varchar(40) NOT NULL,
@@ -3738,8 +3745,8 @@ CREATE UNIQUE INDEX uq_users_name ON users (name);
 --   FK candidate (non creee) : device_id -> device_link.device_id
 -- ---------------------------------------------------------------------
 CREATE TABLE users_devices (
-    user_id integer NOT NULL,
-    merchant_id varchar(25),
+    user_id varchar(64) NOT NULL,
+    merchant_id varchar(64),
     app varchar(20) NOT NULL,
     device_id varchar(255) NOT NULL,
     fcm_token text NOT NULL,
@@ -3756,8 +3763,8 @@ CREATE TABLE users_devices (
 -- ---------------------------------------------------------------------
 CREATE TABLE users_nfc_tags (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id integer NOT NULL,
-    user_id integer,
+    merchant_id varchar(64) NOT NULL,
+    user_id varchar(64),
     tag_id integer NOT NULL,
     tag_token varchar(50) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
@@ -3774,7 +3781,7 @@ CREATE UNIQUE INDEX uq_users_nfc_tags_tag_token ON users_nfc_tags (tag_token);
 CREATE TABLE users_rights (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     user_id varchar(64),
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     token varchar(255) NOT NULL,
     enabled boolean NOT NULL DEFAULT true,
     access_wrwaiter boolean NOT NULL DEFAULT true,
@@ -3826,7 +3833,7 @@ CREATE TABLE users_rights (
 -- ---------------------------------------------------------------------
 CREATE TABLE user_vacations (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    user_id integer NOT NULL,
+    user_id varchar(64) NOT NULL,
     start_date timestamptz NOT NULL,
     end_date timestamptz NOT NULL,
     reason varchar(255),
@@ -3840,8 +3847,8 @@ CREATE TABLE user_vacations (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE welloresto_stripe_customers (
-    merchant_id integer NOT NULL,
-    creator_user_id integer,
+    merchant_id varchar(64) NOT NULL,
+    creator_user_id varchar(64),
     stripe_customer_id varchar(255) NOT NULL,
     PRIMARY KEY (merchant_id)
 );
@@ -3860,7 +3867,7 @@ CREATE TABLE without (
     order_item_id integer NOT NULL DEFAULT 0,
     component_id integer NOT NULL,
     product_id integer NOT NULL,
-    merchant_id integer NOT NULL,
+    merchant_id varchar(64) NOT NULL,
     PRIMARY KEY (id)
 );
 
@@ -3888,7 +3895,7 @@ SELECT
     u.lng,
     u.heading,
     CASE
-        WHEN u.enabled = false THEN 'DISABLED'
+        WHEN u.enabled = 0 THEN 'DISABLED'
         WHEN ds.id IS NOT NULL AND ds.status IN ('1', 'PENDING', 'active') THEN 'IN_DELIVERY_SESSION'
         WHEN EXISTS (
             SELECT 1 FROM user_vacations v

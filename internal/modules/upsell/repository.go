@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 // Repository handles all persistence operations for the upsell_suggestions table
@@ -24,7 +24,7 @@ func NewRepository(db *sql.DB) *Repository {
 // CreateSuggestion inserts a new suggestion row and returns the generated ID.
 // suggested_items is serialised to JSON before insertion.
 func (r *Repository) CreateSuggestion(ctx context.Context, params CreateSuggestionParams) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	id := helpers.GeneratePrefixedID(helpers.UpsellSuggestionIDPrefix)
@@ -68,7 +68,7 @@ func (r *Repository) CreateSuggestion(ctx context.Context, params CreateSuggesti
 // Returns ErrSuggestionMerchantMismatch when the suggestion belongs to a
 // different merchant; the caller is responsible for logging a security warning.
 func (r *Repository) RecordAcceptance(ctx context.Context, suggestionID string, merchantID string, params RecordAcceptanceParams) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Read the current row to enforce idempotency and ownership.
@@ -123,7 +123,7 @@ func (r *Repository) RecordAcceptance(ctx context.Context, suggestionID string, 
 // GetSuggestion fetches a single suggestion by ID and deserialises the JSON columns.
 // Returns ErrSuggestionNotFound when the row does not exist.
 func (r *Repository) GetSuggestion(ctx context.Context, suggestionID string) (*Suggestion, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var s Suggestion
@@ -186,13 +186,21 @@ func (r *Repository) GetSuggestion(ctx context.Context, suggestionID string) (*S
 // DeleteOldSuggestions removes suggestions older than olderThanMonths months.
 // Returns the number of deleted rows, intended for cron logging.
 func (r *Repository) DeleteOldSuggestions(ctx context.Context, olderThanMonths int) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	res, err := db.ExecContext(ctx, `
+	// Pas de syntaxe d'intervalle commune aux deux dialectes.
+	query := `
 		DELETE FROM upsell_suggestions
 		WHERE created_at < DATE_SUB(NOW(), INTERVAL ? MONTH)
-	`, olderThanMonths)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+		DELETE FROM upsell_suggestions
+		WHERE created_at < now() - (? * interval '1 month')
+	`
+	}
+	res, err := db.ExecContext(ctx, query, olderThanMonths)
 	if err != nil {
 		log.Error("upsell: DeleteOldSuggestions failed: " + err.Error())
 		return 0, err
@@ -210,16 +218,16 @@ func (r *Repository) DeleteOldSuggestions(ctx context.Context, olderThanMonths i
 // ListFeaturedProducts returns up to limit products marked as popular for a merchant.
 // Each result is shaped into a SuggestedItem with a default title template and score 0.5.
 func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string, limit int) ([]SuggestedItem, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT product_id, name, price, image_url
 		FROM products
 		WHERE merchant_id = ?
-		  AND is_popular  = 1
-		  AND available   = 1
-		  AND enabled     = 1
+		  AND is_popular  = TRUE
+		  AND available   = TRUE
+		  AND enabled     = TRUE
 		  AND status      IN ('available', '1')
 		LIMIT ?
 	`, merchantID, limit)
@@ -259,7 +267,7 @@ func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string
 // Returns safe defaults (false, 3, nil) when no row exists for the merchant.
 // maxItems is capped between 1 and 10 regardless of the stored value.
 func (r *Repository) GetMerchantUpsellSettings(ctx context.Context, merchantID string) (enabled bool, maxItems int, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var rawEnabled sql.NullBool

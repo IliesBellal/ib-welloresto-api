@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -18,7 +18,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 // ListAllergens returns all 14 system allergens (no merchant scope – they are global).
 func (r *Repository) ListAllergens(ctx context.Context) ([]models.AllergenEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,

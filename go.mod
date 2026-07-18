@@ -9,12 +9,16 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0
 	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/httprate v0.16.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jmoiron/sqlx v1.4.0
+	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/nyaruka/phonenumbers v1.7.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/cors v1.11.1
+	github.com/stripe/stripe-go/v78 v78.12.0
 	github.com/stripe/stripe-go/v84 v84.2.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.37.0
@@ -36,11 +40,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
-	github.com/go-chi/httprate v0.16.0 // indirect
-	github.com/jung-kurt/gofpdf v1.16.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/stripe/stripe-go/v78 v78.12.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

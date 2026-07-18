@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -19,7 +21,7 @@ func (r *Repository) GetBrandIDBySiteID(ctx context.Context, locationID string) 
 	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.location_id = ? LIMIT 1`
 
 	var brandID sql.NullString
-	if err := r.db.QueryRowContext(ctx, q, locationID).Scan(&brandID); err != nil {
+	if err := dbx.GetDB(ctx, r.db).QueryRowContext(ctx, q, locationID).Scan(&brandID); err != nil {
 		return "", err
 	}
 	if !brandID.Valid || brandID.String == "" {

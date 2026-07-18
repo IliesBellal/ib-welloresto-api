@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -132,14 +133,14 @@ func (r *UberRepository) GetOrderMetadata(ctx context.Context, localOrderID stri
 	db := dbutils.GetDB(ctx, r.database)
 
 	query := `
-       SELECT o.order_id, o.brand_order_id, o.creation_date
+       SELECT o.brand_order_id, o.creation_date
        FROM orders o
        INNER JOIN integration_uber_eats iue on iue.merchant_id = o.merchant_id
        WHERE o.order_id = ?`
 
 	var meta UberOrderMetadata
 
-	err := db.QueryRowContext(ctx, query, localOrderID).Scan(&meta.OrderID, &meta.BrandOrderID, &meta.CreationDate)
+	err := db.QueryRowContext(ctx, query, localOrderID).Scan(&meta.BrandOrderID, &meta.CreationDate)
 
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve uber order id: %v", err)
@@ -161,7 +162,7 @@ func (r *UberRepository) UpdateOrderAccepted(ctx context.Context, orderID string
 	return err
 }
 
-// CalculateAutoPrepTime appelle la procédure stockée
+// CalculateAutoPrepTime calcule le temps de préparation automatique
 func (r *UberRepository) CalculateAutoPrepTime(ctx context.Context, merchantID, orderID string) (int, error) {
 	db := dbutils.GetDB(ctx, r.database)
 
@@ -172,24 +173,14 @@ func (r *UberRepository) CalculateAutoPrepTime(ctx context.Context, merchantID, 
 		return 0, err
 	}
 
-	// 2. Call Procedure
-	// Note: Pour récupérer le résultat d'un CALL et d'un SELECT interne, c'est parfois tricky en Go selon le driver.
-	// Une approche simplifiée si la procédure fait un SELECT à la fin :
-	rows, err := db.QueryContext(ctx, "CALL GET_AVERAGE_DISTRIBUTION_TIME(?, ?)", merchantID, qty)
+	// 2. Temps de distribution estimé (ex-procédure GET_AVERAGE_DISTRIBUTION_TIME)
+	estTime, _, err := distributiontime.EstimatedSeconds(ctx, r.database, merchantID, qty)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-
-	var estTime float64
-	if rows.Next() {
-		if err := rows.Scan(&estTime); err != nil {
-			return 0, err
-		}
-	}
 
 	// Logique PHP: intval($data['estimated_distribution_time'])/60*0.7
-	return int((estTime / 60) * 0.7), nil
+	return int((float64(estTime) / 60) * 0.7), nil
 }
 
 // SetOrderStatusDenied met à jour le statut en DENIED

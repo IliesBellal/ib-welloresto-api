@@ -35,7 +35,6 @@ type UberToken struct {
 
 // UberOrderMetadata stocke les IDs liés à la commande
 type UberOrderMetadata struct {
-	OrderID      int       `db:"order_id"`
 	BrandOrderID string    `db:"brand_order_id"`
 	CreationDate time.Time `db:"creation_date"`
 }

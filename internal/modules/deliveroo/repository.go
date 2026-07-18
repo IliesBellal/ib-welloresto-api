@@ -69,7 +69,7 @@ func (r *DeliverooRepository) MarkDeliverooDeliveryStarted(ctx context.Context, 
 
 	// 1) Retrieve order_id and merchant_id
 	var orderID string
-	var merchantID int
+	var merchantID string
 	row := db.QueryRowContext(ctx, `
 		SELECT order_id, merchant_id
 		FROM orders

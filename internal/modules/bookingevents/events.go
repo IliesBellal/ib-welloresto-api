@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 // Types d'événements journalisés.
@@ -63,7 +63,7 @@ func NewRepository(db *sql.DB) *Repository {
 // Log insère un événement. Best-effort côté appelant : l'erreur est retournée
 // mais ne doit pas faire échouer l'action métier principale.
 func (r *Repository) Log(ctx context.Context, e Event) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var bookingID interface{}
 	if strings.TrimSpace(e.BookingID) != "" {
