@@ -1,6 +1,6 @@
 # Audit `ON UPDATE current_timestamp()` — dépendance du code Go
 
-Contexte : en MySQL, les 40 colonnes listées dans `docs/migration-postgres/04-schema-postgres-target.sql`
+Contexte : en MySQL, les 41 colonnes listées dans `docs/migration-postgres/04-schema-postgres-target.sql`
 ont un `ON UPDATE current_timestamp()` qui rafraîchit automatiquement la colonne à **chaque** UPDATE
 touchant la ligne, que la colonne soit ou non dans la clause `SET`. PostgreSQL n'a pas d'équivalent
 déclaratif : sans trigger, seule une colonne explicitement mise à jour par le code Go continuera de
@@ -41,28 +41,29 @@ Légende :
 | 18 | migration_users.updatedAt | AUCUN UPDATE (table jamais référencée en Go) |
 | 19 | order_comments.creation_date | CONFIRMÉ |
 | 20 | payments.payment_date | ABSENT |
-| 21 | planning_holiday_overrides.updated_at | CONFIRMÉ |
-| 22 | planning_leave_requests.updated_at | CONFIRMÉ |
-| 23 | planning_positions.updated_at | CONFIRMÉ |
-| 24 | planning_revenue_forecasts.updated_at | ABSENT |
-| 25 | planning_settings.updated_at | CONFIRMÉ |
-| 26 | planning_shifts.updated_at | CONFIRMÉ |
-| 27 | planning_shift_swap_requests.updated_at | CONFIRMÉ |
-| 28 | planning_shift_templates.updated_at | CONFIRMÉ |
-| 29 | planning_time_entries.updated_at | CONFIRMÉ |
-| 30 | planning_weeks.updated_at | CONFIRMÉ |
-| 31 | planning_week_templates.updated_at | CONFIRMÉ |
-| 32 | planning_week_template_shifts.updated_at | AUCUN UPDATE (delete+reinsert, pas d'UPDATE) |
-| 33 | printers.updated_at | ABSENT |
-| 34 | product_marketing_categories.updated_at | CONFIRMÉ |
-| 35 | purchased_components.registration_date | AUCUN UPDATE (INSERT seul) |
-| 36 | subscription_invoices.invoice_date | ABSENT |
-| 37 | temperature_readings.updated_at | AUCUN UPDATE (INSERT seul) |
-| 38 | temperature_reading_corrective_actions.updated_at | AUCUN UPDATE (INSERT seul) |
-| 39 | temperature_sessions.updated_at | AUCUN UPDATE (INSERT seul) |
-| 40 | temperature_zones.updated_at | CONFIRMÉ |
+| 21 | planning_day_comments.updated_at | CONFIRMÉ |
+| 22 | planning_holiday_overrides.updated_at | CONFIRMÉ |
+| 23 | planning_leave_requests.updated_at | CONFIRMÉ |
+| 24 | planning_positions.updated_at | CONFIRMÉ |
+| 25 | planning_revenue_forecasts.updated_at | ABSENT |
+| 26 | planning_settings.updated_at | CONFIRMÉ |
+| 27 | planning_shifts.updated_at | CONFIRMÉ |
+| 28 | planning_shift_swap_requests.updated_at | CONFIRMÉ |
+| 29 | planning_shift_templates.updated_at | CONFIRMÉ |
+| 30 | planning_time_entries.updated_at | CONFIRMÉ |
+| 31 | planning_weeks.updated_at | CONFIRMÉ |
+| 32 | planning_week_templates.updated_at | CONFIRMÉ |
+| 33 | planning_week_template_shifts.updated_at | AUCUN UPDATE (delete+reinsert, pas d'UPDATE) |
+| 34 | printers.updated_at | ABSENT |
+| 35 | product_marketing_categories.updated_at | CONFIRMÉ |
+| 36 | purchased_components.registration_date | AUCUN UPDATE (INSERT seul) |
+| 37 | subscription_invoices.invoice_date | ABSENT |
+| 38 | temperature_readings.updated_at | AUCUN UPDATE (INSERT seul) |
+| 39 | temperature_reading_corrective_actions.updated_at | AUCUN UPDATE (INSERT seul) |
+| 40 | temperature_sessions.updated_at | AUCUN UPDATE (INSERT seul) |
+| 41 | temperature_zones.updated_at | CONFIRMÉ |
 
-Décompte : **CONFIRMÉ = 16**, **PARTIEL = 1**, **ABSENT = 8**, **AUCUN UPDATE = 15**.
+Décompte : **CONFIRMÉ = 17**, **PARTIEL = 1**, **ABSENT = 8**, **AUCUN UPDATE = 15**.
 
 ---
 
@@ -146,7 +147,7 @@ De nombreuses UPDATE touchent `payments` mais aucune ne set `payment_date` :
 
 `payment_date` semble être la date d'encaissement initiale (posée à l'INSERT) — comme pour `creation_date`, il n'y a a priori pas d'intention de la faire changer après coup, mais c'est un changement de comportement MySQL → Postgres à documenter (elle ne sera plus jamais "rafraîchie silencieusement" par un UPDATE annexe).
 
-### 24. planning_revenue_forecasts.updated_at — ABSENT
+### 25. planning_revenue_forecasts.updated_at — ABSENT
 
 Un seul point de mutation, un upsert :
 - `internal/modules/planning/revenueforecast/repository.go:21-27` `Upsert` :
@@ -159,7 +160,7 @@ Un seul point de mutation, un upsert :
 
 **Action recommandée** : ajouter `updated_at = NOW()` à la clause `ON CONFLICT ... DO UPDATE`.
 
-### 33. printers.updated_at — ABSENT
+### 34. printers.updated_at — ABSENT
 
 Deux UPDATE dans `internal/modules/printers/repository.go`, aucune ne set `updated_at` :
 - `:159-208` (`UpdatePrinter`, construction dynamique de `SET`, champs `name`/`connection_type`/`ip_address`/`port`/`bluetooth_address`/`role`/`language`/`production_product_ids`/`paper_width_mm`)
@@ -167,7 +168,7 @@ Deux UPDATE dans `internal/modules/printers/repository.go`, aucune ne set `updat
 
 **Action recommandée** : ajouter `updated_at = NOW()` dans `UpdatePrinter` au minimum.
 
-### 36. subscription_invoices.invoice_date — ABSENT
+### 37. subscription_invoices.invoice_date — ABSENT
 
 Un seul UPDATE :
 - `internal/webhook/stripe/repository.go:318-323` `PayInvoice` :

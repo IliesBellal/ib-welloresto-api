@@ -7,11 +7,23 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
+
+// custCastChar retourne un cast texte de expr selon le dialecte, pour les
+// comparaisons entre colonnes integer (customer.customer_id,
+// products.product_id, orderitems.product_id) et les colonnes varchar des
+// tables de fidelite — MySQL coercait, Postgres exige le cast (CHAR nu =
+// char(1) en PG, d'ou TEXT).
+func custCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
 
 type CustomersRepository struct {
 	database *sql.DB
@@ -22,7 +34,7 @@ func NewCustomerRepository(db *sql.DB) *CustomersRepository {
 }
 
 func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *models.Customer) (*string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Liste des colonnes vraiment existantes et autorisées
 	allowed := map[string]bool{
@@ -111,14 +123,22 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
         INSERT INTO customer (` + strings.Join(cols, ", ") + `)
         VALUES (` + strings.Join(placeholders, ", ") + `)
     `
-	res, err := db.ExecContext(ctx, query, values...)
+	id, err := db.InsertReturningID(ctx, query, "customer_id", values...)
 	if err != nil {
 		return nil, err
 	}
 
-	id, _ := res.LastInsertId()
-
 	return helpers.Int64ToStringPtr(id), nil
+}
+
+// truncateVarchar reproduit la troncature silencieuse MySQL non-strict sur
+// les colonnes varchar trop courtes pour les IDs prefixes generes (Postgres
+// leve 22001 sinon) — la valeur stockee reste identique aux deux dialectes.
+func truncateVarchar(s string, max int) string {
+	if len(s) > max {
+		return s[:max]
+	}
+	return s
 }
 
 func extractFieldValue(c *models.Customer, field string) interface{} {
@@ -230,7 +250,7 @@ func getStringField(c *models.Customer, name string) *string {
 
 // GetCustomerByID récupère un client par son ID, scopé au merchant
 func (r *CustomersRepository) GetCustomerByID(ctx context.Context, customerID, merchantID string) (*models.Customer, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var c models.Customer
 	err := db.QueryRowContext(ctx, `
@@ -247,7 +267,7 @@ func (r *CustomersRepository) GetCustomerByID(ctx context.Context, customerID, m
 
 // FindCustomerByEmail recherche un client par email (insensible à la casse), scopé au merchant
 func (r *CustomersRepository) FindCustomerByEmail(ctx context.Context, email, merchantID string) (*models.Customer, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var c models.Customer
 	err := db.QueryRowContext(ctx, `
@@ -267,7 +287,7 @@ func (r *CustomersRepository) FindCustomerByEmail(ctx context.Context, email, me
 // après normalisation identique aux flux publics (SNO / réservation).
 // Retourne sql.ErrNoRows si aucun client actif n'est trouvé pour le marchand.
 func (r *CustomersRepository) FindCustomerByPhone(ctx context.Context, phone, merchantID string) (*models.Customer, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	normalizedPhone := helpers.NormalizePhoneNumber(phone, "FR")
 
 	var c models.Customer
@@ -291,21 +311,22 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 		AvailableRewards: make([]LoyaltyReward, 0),
 	}
 
-	// progress
-	rows, err := r.database.QueryContext(ctx, `
-        SELECT 
-            p.id, 
-            COALESCE(clp.current_value, 0), 
-            COALESCE(clp.last_update, UTC_TIMESTAMP),
+	// progress — clp.customer_id est varchar face au PK integer de customer
+	// (cast par dialecte) ; enabled est boolean en cible.
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, fmt.Sprintf(`
+        SELECT
+            p.id,
+            COALESCE(clp.current_value, 0),
+            COALESCE(clp.last_update, %s),
             p.type,
             p.target_value,
             p.name,
             p.description
         FROM customer c
         INNER JOIN customer_loyalty_programs p ON p.merchant_id = c.merchant_id
-        LEFT JOIN customer_loyalty_progress clp ON clp.loyalty_program_id = p.id AND clp.customer_id = c.customer_id
-        WHERE c.customer_id = ? AND c.merchant_id = ? AND p.enabled = 1
-    `, customerID, merchantID)
+        LEFT JOIN customer_loyalty_progress clp ON clp.loyalty_program_id = p.id AND clp.customer_id = %s
+        WHERE c.customer_id = ? AND c.merchant_id = ? AND p.enabled = TRUE
+    `, dbx.UTCNow(), custCastChar("c.customer_id")), customerID, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,15 +348,15 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 		loyalty.LoyaltyProgress = append(loyalty.LoyaltyProgress, p)
 	}
 
-	// rewards
-	rows2, err := r.database.QueryContext(ctx, `
+	// rewards — cr.customer_id est varchar face au PK integer de customer.
+	rows2, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, fmt.Sprintf(`
         SELECT cr.customer_id, cr.reward_id, cr.loyalty_program_id, cr.creation_date, cr.reward_type, cr.reward_value, cr.is_used
         FROM customer_rewards cr
-		INNER JOIN customer c ON c.customer_id = cr.customer_id
+		INNER JOIN customer c ON %s = cr.customer_id
         WHERE cr.customer_id = ?
 		  AND c.merchant_id = ?
 		ORDER BY is_used ASC, creation_date DESC
-    `, customerID, merchantID)
+    `, custCastChar("c.customer_id")), customerID, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +382,7 @@ func (r *CustomersRepository) GetCustomerLoyalty(ctx context.Context, customerID
 }
 
 func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID string) ([]LoyaltyProgram, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT
@@ -380,7 +401,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 			max_discount_value,
 			COALESCE(max_rewards_per_order, 0)
 		FROM customer_loyalty_programs
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 		ORDER BY id DESC
 	`
 
@@ -456,9 +477,9 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 	targetProductsQuery := fmt.Sprintf(`
 		SELECT tp.loyalty_program_id, p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_target_products tp
-		INNER JOIN products p ON p.product_id = tp.product_id
+		INNER JOIN products p ON %s = tp.product_id
 		WHERE tp.loyalty_program_id IN (%s)
-	`, inClause)
+	`, custCastChar("p.product_id"), inClause)
 
 	targetRows, err := db.QueryContext(ctx, targetProductsQuery, ids...)
 	if err != nil {
@@ -484,9 +505,9 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 	rewardProductsQuery := fmt.Sprintf(`
 		SELECT rp.loyalty_program_id, p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_reward_products rp
-		INNER JOIN products p ON p.product_id = rp.product_id
+		INNER JOIN products p ON %s = rp.product_id
 		WHERE rp.loyalty_program_id IN (%s)
-	`, inClause)
+	`, custCastChar("p.product_id"), inClause)
 
 	rewardRows, err := db.QueryContext(ctx, rewardProductsQuery, ids...)
 	if err != nil {
@@ -513,7 +534,7 @@ func (r *CustomersRepository) GetLoyaltyPrograms(ctx context.Context, merchantID
 }
 
 func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchantID, loyaltyProgramID string) (*LoyaltyProgram, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT
@@ -521,7 +542,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 			merchant_id,
 			COALESCE(name, ''),
 			COALESCE(description, ''),
-			COALESCE(available, 0),
+			COALESCE(available, FALSE),
 			COALESCE(type, ''),
 			COALESCE(target_value, 0),
 			COALESCE(target_order_type, ''),
@@ -532,7 +553,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 			max_discount_value,
 			COALESCE(max_rewards_per_order, 0)
 		FROM customer_loyalty_programs
-		WHERE merchant_id = ? AND id = ? and enabled = 1
+		WHERE merchant_id = ? AND id = ? and enabled = TRUE
 		LIMIT 1
 	`
 
@@ -570,12 +591,12 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 	p.Target.Products = make([]LoyaltyProgramProduct, 0)
 	p.Reward.Products = make([]LoyaltyProgramProduct, 0)
 
-	targetRows, err := db.QueryContext(ctx, `
+	targetRows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_target_products tp
-		INNER JOIN products p ON p.product_id = tp.product_id
+		INNER JOIN products p ON %s = tp.product_id
 		WHERE tp.loyalty_program_id = ?
-	`, loyaltyProgramID)
+	`, custCastChar("p.product_id")), loyaltyProgramID)
 	if err != nil {
 		return nil, err
 	}
@@ -589,12 +610,12 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 		p.Target.Products = append(p.Target.Products, LoyaltyProgramProduct{ID: productID, Name: productName})
 	}
 
-	rewardRows, err := db.QueryContext(ctx, `
+	rewardRows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT p.product_id, COALESCE(p.name, '')
 		FROM customer_loyalty_program_reward_products rp
-		INNER JOIN products p ON p.product_id = rp.product_id
+		INNER JOIN products p ON %s = rp.product_id
 		WHERE rp.loyalty_program_id = ?
-	`, loyaltyProgramID)
+	`, custCastChar("p.product_id")), loyaltyProgramID)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +638,7 @@ func (r *CustomersRepository) GetLoyaltyProgramByID(ctx context.Context, merchan
 }
 
 func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string, req *CreateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	available := true
 	if req.Available != nil {
@@ -673,7 +694,7 @@ func (r *CustomersRepository) CreateLoyaltyProgram(ctx context.Context, merchant
 }
 
 func (r *CustomersRepository) UpdateLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string, req *UpdateLoyaltyProgramRequest) (*LoyaltyProgram, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := make([]string, 0)
 	args := make([]interface{}, 0)
@@ -759,11 +780,11 @@ func (r *CustomersRepository) UpdateLoyaltyProgram(ctx context.Context, merchant
 }
 
 func (r *CustomersRepository) DeleteLoyaltyProgram(ctx context.Context, merchantID, loyaltyProgramID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE customer_loyalty_programs
-		SET enabled = 0, available = 0
+		SET enabled = FALSE, available = FALSE
 		WHERE id = ? AND merchant_id = ?
 	`, loyaltyProgramID, merchantID)
 
@@ -771,7 +792,7 @@ func (r *CustomersRepository) DeleteLoyaltyProgram(ctx context.Context, merchant
 }
 
 func (r *CustomersRepository) replaceLoyaltyProgramTargetProducts(ctx context.Context, loyaltyProgramID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx, `DELETE FROM customer_loyalty_program_target_products WHERE loyalty_program_id = ?`, loyaltyProgramID); err != nil {
 		return err
@@ -794,7 +815,7 @@ func (r *CustomersRepository) replaceLoyaltyProgramTargetProducts(ctx context.Co
 }
 
 func (r *CustomersRepository) replaceLoyaltyProgramRewardProducts(ctx context.Context, loyaltyProgramID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx, `DELETE FROM customer_loyalty_program_reward_products WHERE loyalty_program_id = ?`, loyaltyProgramID); err != nil {
 		return err
@@ -867,7 +888,7 @@ func isOrderTypeAllowed(rawOrderTypes, orderType string) bool {
 }
 
 func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *LoyaltyProgressUpdateRequest, merchantID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if req.CurrentValue < 0 {
 		return 0, fmt.Errorf("current_value must be >= 0")
@@ -882,7 +903,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	err := db.QueryRowContext(ctx, `
         SELECT target_value, reward_type, reward_value, rewards_order_type
         FROM customer_loyalty_programs
-        WHERE id = ? AND merchant_id = ? AND available = 1 AND enabled = 1
+        WHERE id = ? AND merchant_id = ? AND available = TRUE AND enabled = TRUE
     `, req.LoyaltyProgramID, merchantID).Scan(&targetValue, &rewardType, &rewardValue, &rewardOrderType)
 	if err != nil {
 		return 0, err
@@ -897,7 +918,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	var oldValue int
 
 	err = db.QueryRowContext(ctx, `
-        SELECT id, current_value 
+        SELECT id, current_value
         FROM customer_loyalty_progress
         WHERE customer_id = ? AND loyalty_program_id = ?
     `, req.CustomerID, req.LoyaltyProgramID).Scan(&progressID, &oldValue)
@@ -920,11 +941,11 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	rewardToCreate := newRewards - oldRewards
 
 	if exists {
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
             UPDATE customer_loyalty_progress
-            SET current_value = ?, last_update = UTC_TIMESTAMP
+            SET current_value = ?, last_update = %s
             WHERE id = ?
-        `, req.CurrentValue, progressID)
+        `, dbx.UTCNow()), req.CurrentValue, progressID)
 		if err != nil {
 			return 0, err
 		}
@@ -932,7 +953,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 		_, err = db.ExecContext(ctx, `
             INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value)
             VALUES (?, ?, ?, ?)
-        `, helpers.GeneratePrefixedID("loyalty-progress"), req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
+        `, truncateVarchar(helpers.GeneratePrefixedID("loyalty-progress"), 50), req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
 		if err != nil {
 			return 0, err
 		}
@@ -941,10 +962,16 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 	// rewards creation
 	if rewardToCreate > 0 {
 		for i := 0; i < rewardToCreate; i++ {
-			_, err = db.ExecContext(ctx, `
-                INSERT INTO customer_rewards (id, customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
-                VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP)
-            `, helpers.GeneratePrefixedID("cus-reward"), req.CustomerID, req.LoyaltyProgramID, rewardType, rewardOrderType, rewardValue)
+			// CORRECTIF (bug preexistant identique aux deux dialectes) :
+			// customer_rewards n'a pas de colonne id (PK = reward_id
+			// auto-genere) — l'INSERT listant id echouait a l'execution dans
+			// les deux dialectes. Colonne fantome retiree ; a valider/deployer
+			// separement de la migration (meme precedent que GetUserByPIN,
+			// rapport 25).
+			_, err = db.ExecContext(ctx, fmt.Sprintf(`
+                INSERT INTO customer_rewards (customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
+                VALUES (?, ?, ?, ?, ?, %s)
+            `, dbx.UTCNow()), req.CustomerID, req.LoyaltyProgramID, rewardType, rewardOrderType, rewardValue)
 			if err != nil {
 				return 0, err
 			}
@@ -956,22 +983,22 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 
 func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *LoyaltyRewardUpdateRequest, merchantID string) error {
 	// TODO : Vérifier que la reward appartient bien au client et au marchand avant de l'updater (sécurité)
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
         UPDATE customer_rewards
 		SET is_used = ?,
-			usage_date = CASE WHEN ? THEN UTC_TIMESTAMP ELSE NULL END
+			usage_date = CASE WHEN ? THEN %s ELSE NULL END
 		WHERE reward_id = ?
 		  AND customer_id = ?
-		  AND customer_id IN (SELECT customer_id FROM customer WHERE merchant_id = ? AND enabled = 1)
-	`, req.IsUsed, req.IsUsed, req.RewardID, req.CustomerID, merchantID)
+		  AND customer_id IN (SELECT %s FROM customer WHERE merchant_id = ? AND enabled = TRUE)
+	`, dbx.UTCNow(), custCastChar("customer_id")), req.IsUsed, req.IsUsed, req.RewardID, req.CustomerID, merchantID)
 
 	return err
 }
 
 func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
 
 	if page <= 0 {
@@ -1170,7 +1197,7 @@ func computeScore(term string, c *CustomerSearchResult) int {
 }
 
 func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
 
 	if page <= 0 {
@@ -1215,7 +1242,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 	LIMIT ? OFFSET ?
 `
 
-	rows, err := r.database.QueryContext(ctx, query, merchantID, pageSize, offset)
+	rows, err := db.QueryContext(ctx, query, merchantID, pageSize, offset)
 	if err != nil {
 		return results, 0, err
 	}
@@ -1319,7 +1346,7 @@ func looksLikePhoneSearch(term string) bool {
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE customer_rewards
@@ -1335,7 +1362,7 @@ func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID str
 // Internal struct pour récupérer les données du programme de fidélité
 func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderID string) error {
 	log := logger.FromContext(ctx)
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Récupérer les infos de la commande
 	const qGetOrder = `
@@ -1354,16 +1381,28 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		return err
 	}
 
-	// 2. Mise à jour des stats globales du client (uniquement après validation de la commande)
-	const qUpdateStats = `
+	// 2. Mise à jour des stats globales du client (uniquement après validation
+	// de la commande) — UPDATE...JOIN MySQL vs UPDATE...FROM Postgres.
+	qUpdateStats := fmt.Sprintf(`
 		UPDATE customer c
 		INNER JOIN orders o ON o.customer_id = c.customer_id
 		SET c.customer_nb_orders = c.customer_nb_orders + 1,
 			c.customer_total_spent = c.customer_total_spent + o.price,
-			c.last_order_date = UTC_TIMESTAMP(),
+			c.last_order_date = %s,
 			c.loyalty_reminder_count = 0
 		WHERE o.order_id = ?
-	`
+	`, dbx.UTCNow())
+	if dbx.ActiveDialect() == dbx.Postgres {
+		qUpdateStats = `
+		UPDATE customer c
+		SET customer_nb_orders = c.customer_nb_orders + 1,
+			customer_total_spent = c.customer_total_spent + o.price,
+			last_order_date = now(),
+			loyalty_reminder_count = 0
+		FROM orders o
+		WHERE o.customer_id = c.customer_id
+		  AND o.order_id = ?`
+	}
 	if _, err := db.ExecContext(ctx, qUpdateStats, orderID); err != nil {
 		return err
 	}
@@ -1372,7 +1411,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 	const qGetPrograms = `
 		SELECT id, type, target_value, target_order_type, reward_type, reward_value, rewards_order_type
 		FROM customer_loyalty_programs
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`
 	rows, err := db.QueryContext(ctx, qGetPrograms, merchantID)
 	if err != nil {
@@ -1413,7 +1452,7 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		if err == sql.ErrNoRows {
 			// Créer la progression
 			newProgressID := helpers.GeneratePrefixedID("cus-progress")
-			_, err := db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, ?, 0, UTC_TIMESTAMP())", newProgressID, customerID, p.ID)
+			_, err := db.ExecContext(ctx, fmt.Sprintf("INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, ?, 0, %s)", dbx.UTCNow()), newProgressID, customerID, p.ID)
 			if err != nil {
 				return err
 			}
@@ -1434,12 +1473,12 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			fallthrough // Même logique que products_count
 		case "products_count":
 			// OPTIMISATION GO : On fait le sum() et la vérification des produits cibles directement en SQL !
-			const qSumProducts = `
+			qSumProducts := fmt.Sprintf(`
 				SELECT COALESCE(SUM(oi.quantity), 0)
 				FROM orderitems oi
-				INNER JOIN customer_loyalty_program_target_products tp ON tp.product_id = oi.product_id
+				INNER JOIN customer_loyalty_program_target_products tp ON tp.product_id = %s
 				WHERE oi.order_id = ? AND tp.loyalty_program_id = ?
-			`
+			`, custCastChar("oi.product_id"))
 			_ = db.QueryRowContext(ctx, qSumProducts, orderID, p.ID).Scan(&increment)
 		}
 
@@ -1450,13 +1489,17 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 		newValue := currentValue + increment
 
 		// 6. Mettre à jour la progression et loguer
-		_, err = db.ExecContext(ctx, "UPDATE customer_loyalty_progress SET current_value = ?, last_update = UTC_TIMESTAMP() WHERE id = ?", newValue, progressID)
+		_, err = db.ExecContext(ctx, fmt.Sprintf("UPDATE customer_loyalty_progress SET current_value = ?, last_update = %s WHERE id = ?", dbx.UTCNow()), newValue, progressID)
 		if err != nil {
 			return err
 		}
 
-		newProgressOrderID := helpers.GeneratePrefixedID("cus-progress-order")
-		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (id, loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?, ?)", newProgressOrderID, p.ID, progressID, orderID, increment)
+		// id est une colonne auto-generee (identity en PG ; en MySQL la
+		// coercition string->0 declenchait deja l'auto_increment) : on la
+		// laisse se generer. progress_id est varchar(30) : MySQL tronquait
+		// silencieusement l'ID prefixe de 49 caracteres — troncature Go
+		// identique.
+		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, truncateVarchar(progressID, 30), orderID, increment)
 		if err != nil {
 			return err
 		}
@@ -1468,11 +1511,12 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			rewardsToAdd := rewardsExpected - rewardsAlready
 
 			for i := 0; i < rewardsToAdd; i++ {
-				newRewardID := helpers.GeneratePrefixedID("cus-reward")
-				_, err = db.ExecContext(ctx, `
-					INSERT INTO customer_rewards(id, loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
-					VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
-				`, newRewardID, p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
+				// Meme correctif que UpdateLoyaltyProgress : pas de colonne id
+				// dans customer_rewards (PK reward_id auto-genere).
+				_, err = db.ExecContext(ctx, fmt.Sprintf(`
+					INSERT INTO customer_rewards(loyalty_program_id, customer_id, reward_type, reward_order_type, reward_value, creation_date)
+					VALUES (?, ?, ?, ?, ?, %s)
+				`, dbx.UTCNow()), p.ID, customerID, p.RewardType, p.RewardsOrderType, p.RewardValue)
 
 				if err != nil {
 					return err

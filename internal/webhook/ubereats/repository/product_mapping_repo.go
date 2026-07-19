@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type ProductMappingRepository struct {
@@ -16,7 +16,7 @@ func NewProductMappingRepository(db *sql.DB) *ProductMappingRepository {
 }
 
 func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context, merchantID, uberItemID string) (*string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var productID string
@@ -37,7 +37,7 @@ func (r *ProductMappingRepository) FindProductIDByUberItemID(ctx context.Context
 }
 
 func (r *ProductMappingRepository) CreateProductMapping(ctx context.Context, merchantID, productID, uberItemID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,

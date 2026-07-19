@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -20,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 // GetActiveDiscounts retrieves all active discounts for a merchant (valid now)
 func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) ([]Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	now := time.Now().UTC()
@@ -32,7 +32,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 		       d.max_discount_unit, d.discounted_quantity, d.is_cumulative,
 		       d.is_time_limited, d.available, d.enabled, d.creation_date
 		FROM discounts d
-		WHERE d.merchant_id = ? AND d.enabled = 1 AND d.available = 1
+		WHERE d.merchant_id = ? AND d.enabled = true AND d.available = true
 		  AND d.valid_from <= ? AND (d.valid_to IS NULL OR d.valid_to > ?)
 		ORDER BY d.prefered_order ASC
 	`, merchantID, now, now)
@@ -91,7 +91,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 
 // GetAllDiscounts retrieves all discounts for a merchant (regardless of validity)
 func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
@@ -102,7 +102,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 		       d.max_discount_unit, d.discounted_quantity, d.is_cumulative,
 		       d.is_time_limited, d.available, d.enabled, d.creation_date
 		FROM discounts d
-		WHERE d.merchant_id = ? AND d.enabled = 1
+		WHERE d.merchant_id = ? AND d.enabled = true
 		ORDER BY d.prefered_order ASC
 	`, merchantID)
 	if err != nil {
@@ -160,7 +160,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 
 // GetDiscountByID retrieves a single discount by ID
 func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, discountID string) (*Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var d Discount
@@ -175,7 +175,7 @@ func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, dis
 		       d.max_discount_unit, d.discounted_quantity, d.is_cumulative,
 		       d.is_time_limited, d.available, d.enabled, d.creation_date
 		FROM discounts d
-		WHERE d.discount_id = ? AND d.merchant_id = ? AND d.enabled = 1
+		WHERE d.discount_id = ? AND d.merchant_id = ? AND d.enabled = true
 	`, discountID, merchantID).Scan(
 		&d.DiscountID, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
 		&d.PreferredOrder, &d.DiscountCode, &orderType,
@@ -213,7 +213,7 @@ func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, dis
 
 // CreateDiscount creates a new discount with products and schedules
 func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req *CreateDiscountRequest) (*Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Insert discount
@@ -230,7 +230,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
 		req.ValidFrom, req.ValidTo, req.MinOrderValue, req.MinOrderUnit,
 		req.MaxDiscountValue, req.MaxDiscountUnit, req.DiscountedQuantity,
-		req.IsCumulative, req.IsTimeLimited, req.Available, 1, time.Now().UTC(),
+		req.IsCumulative, req.IsTimeLimited, req.Available, true, time.Now().UTC(),
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -241,7 +241,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	for _, p := range req.Products {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO discounts_products (discount_id, product_id, new_price, enabled)
-			VALUES (?, ?, ?, 1)
+			VALUES (?, ?, ?, true)
 		`, req.DiscountID, p.ProductID, p.NewPrice)
 		if err != nil {
 			log.Error(err.Error())
@@ -257,7 +257,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-			VALUES (?, ?, ?, ?, 1)
+			VALUES (?, ?, ?, ?, true)
 		`, req.DiscountID, s.DayOfWeek, availableFromStr, availableToStr)
 		if err != nil {
 			log.Error(err.Error())
@@ -271,7 +271,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 
 // UpdateDiscount updates an existing discount
 func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, discountID string, req *UpdateDiscountRequest) (*Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Build dynamic UPDATE query
@@ -350,7 +350,7 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 	// Execute update if there are updates
 	if len(updates) > 0 {
 		args = append(args, discountID, merchantID)
-		updateSQL := "UPDATE discounts SET " + strings.Join(updates, ", ") + " WHERE discount_id = ? AND merchant_id = ? AND enabled = 1"
+		updateSQL := "UPDATE discounts SET " + strings.Join(updates, ", ") + " WHERE discount_id = ? AND merchant_id = ? AND enabled = true"
 		if _, err := db.ExecContext(ctx, updateSQL, args...); err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -368,7 +368,7 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 		for _, p := range req.Products {
 			_, err := db.ExecContext(ctx, `
 				INSERT INTO discounts_products (discount_id, product_id, new_price, enabled)
-				VALUES (?, ?, ?, 1)
+				VALUES (?, ?, ?, true)
 			`, discountID, p.ProductID, p.NewPrice)
 			if err != nil {
 				log.Error(err.Error())
@@ -386,10 +386,16 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 		}
 		// Insert new schedules
 		for _, s := range req.Schedules {
+			// Format TIME columns as HH:MM:SS strings (matches CreateDiscount;
+			// avoids pgx inferring a timestamptz parameter type for a time.Time
+			// bound to a `time` column).
+			availableFromStr := s.AvailableFrom.Format("15:04:05")
+			availableToStr := s.AvailableTo.Format("15:04:05")
+
 			_, err := db.ExecContext(ctx, `
 				INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-				VALUES (?, ?, ?, ?, 1)
-			`, discountID, s.DayOfWeek, s.AvailableFrom, s.AvailableTo)
+				VALUES (?, ?, ?, ?, true)
+			`, discountID, s.DayOfWeek, availableFromStr, availableToStr)
 			if err != nil {
 				log.Error(err.Error())
 				return nil, err
@@ -402,11 +408,16 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 
 // DeleteDiscount performs a soft delete on a discount
 func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, discountID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// "AND enabled = true" makes RowsAffected consistent across dialects: MySQL's
+	// default affected-rows counts only changed rows (a second delete would already
+	// report 0), Postgres counts matched rows regardless of value change (would
+	// report 1 without this guard) — scoping the match to still-enabled rows keeps
+	// the not-found semantics identical on both.
 	result, err := db.ExecContext(ctx, `
-		UPDATE discounts SET enabled = 0 WHERE discount_id = ? AND merchant_id = ?
+		UPDATE discounts SET enabled = false WHERE discount_id = ? AND merchant_id = ? AND enabled = true
 	`, discountID, merchantID)
 	if err != nil {
 		log.Error(err.Error())
@@ -428,14 +439,14 @@ func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, disc
 // Helper functions
 
 func (r *Repository) getDiscountProducts(ctx context.Context, discountID string) ([]DiscountProduct, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	log.Debug("Executing getDiscountProducts with discountID: " + discountID)
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, discount_id, product_id, new_price, enabled
 		FROM discounts_products
-		WHERE discount_id = ? AND enabled = 1
+		WHERE discount_id = ? AND enabled = true
 	`, discountID)
 	if err != nil {
 		return nil, err
@@ -455,12 +466,12 @@ func (r *Repository) getDiscountProducts(ctx context.Context, discountID string)
 }
 
 func (r *Repository) getDiscountSchedules(ctx context.Context, discountID string) ([]DiscountSchedule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT schedule_id, discount_id, day_of_week, available_from, available_to, enabled
 		FROM discounts_schedules
-		WHERE discount_id = ? AND enabled = 1
+		WHERE discount_id = ? AND enabled = true
 	`, discountID)
 	if err != nil {
 		return nil, err

@@ -6,22 +6,22 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID string, filters MerchantUserListFilters) ([]MerchantUserListItem, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	baseQuery := `
 		FROM users_rights ur
 		INNER JOIN users u ON u.user_id = ur.user_id
 		LEFT JOIN (
 			SELECT merchant_id, user_id, MIN(id) AS employee_id, MIN(CONCAT(first_name, ' ', last_name)) AS employee_name
 			FROM employees
-			WHERE enabled = 1 AND user_id IS NOT NULL
+			WHERE enabled = TRUE AND user_id IS NOT NULL
 			GROUP BY merchant_id, user_id
 		) employee_link ON employee_link.merchant_id = ur.merchant_id AND employee_link.user_id = ur.user_id
-		WHERE ur.merchant_id = ? AND ur.enabled = 1
+		WHERE ur.merchant_id = ? AND ur.enabled = TRUE
 	`
 	args := []interface{}{merchantID}
 
@@ -31,8 +31,14 @@ func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID stri
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	if filters.Active != nil {
+		// users.enabled is an integer column (not boolean): bind 0/1 — pgx
+		// refuses a Go bool on int4, MySQL accepts both.
+		active := 0
+		if *filters.Active {
+			active = 1
+		}
 		baseQuery += ` AND u.enabled = ?`
-		args = append(args, *filters.Active)
+		args = append(args, active)
 	}
 	if filters.LinkedEmployee != nil {
 		if *filters.LinkedEmployee {
@@ -109,7 +115,7 @@ func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID stri
 }
 
 func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, userID string) (*MerchantUserDetail, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	row := db.QueryRowContext(ctx, `
 		SELECT
 			u.user_id,
@@ -147,10 +153,10 @@ func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, u
 		LEFT JOIN (
 			SELECT merchant_id, user_id, MIN(id) AS employee_id, MIN(CONCAT(first_name, ' ', last_name)) AS employee_name
 			FROM employees
-			WHERE enabled = 1 AND user_id IS NOT NULL
+			WHERE enabled = TRUE AND user_id IS NOT NULL
 			GROUP BY merchant_id, user_id
 		) employee_link ON employee_link.merchant_id = ur.merchant_id AND employee_link.user_id = ur.user_id
-		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = 1
+		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 
@@ -163,7 +169,7 @@ func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, u
 }
 
 func (r *UsersRepository) SearchLinkableUsers(ctx context.Context, merchantID string, filters LinkableUserSearchFilters) ([]LinkableUser, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	search := strings.TrimSpace(filters.Search)
 	if search == "" {
 		return []LinkableUser{}, 0, nil
@@ -176,7 +182,7 @@ func (r *UsersRepository) SearchLinkableUsers(ctx context.Context, merchantID st
 			FROM users_rights ur
 			WHERE ur.user_id = u.user_id
 			  AND ur.merchant_id = ?
-			  AND ur.enabled = 1
+			  AND ur.enabled = TRUE
 		)
 		AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.tel LIKE ?)
 	`
@@ -212,7 +218,7 @@ func (r *UsersRepository) SearchLinkableUsers(ctx context.Context, merchantID st
 }
 
 func (r *UsersRepository) GetMerchantUserRights(ctx context.Context, merchantID, userID string) (*MerchantUserRights, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	row := db.QueryRowContext(ctx, `
 		SELECT
 			id,
@@ -237,7 +243,7 @@ func (r *UsersRepository) GetMerchantUserRights(ctx context.Context, merchantID,
 			COALESCE(manage_customers, FALSE),
 			COALESCE(export_customers, FALSE)
 		FROM users_rights
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 
@@ -245,12 +251,12 @@ func (r *UsersRepository) GetMerchantUserRights(ctx context.Context, merchantID,
 }
 
 func (r *UsersRepository) GetUsersRightsToken(ctx context.Context, merchantID, userID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var token string
 	err := db.QueryRowContext(ctx, `
 		SELECT token
 		FROM users_rights
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID)).Scan(&token)
 	if err == sql.ErrNoRows {
@@ -260,7 +266,7 @@ func (r *UsersRepository) GetUsersRightsToken(ctx context.Context, merchantID, u
 }
 
 func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, merchantID, token string, rights MerchantUserRightsUpsertRequest) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var existingID int64
 	var existingEnabled bool
@@ -277,7 +283,7 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 		_, updateErr := db.ExecContext(ctx, `
 			UPDATE users_rights
 			SET token = ?,
-				enabled = 1,
+				enabled = TRUE,
 				admin = ?,
 				access_wrreception = ?,
 				access_wrdelivery = ?,
@@ -321,7 +327,7 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 		return existingID, nil
 	}
 
-	res, err := db.ExecContext(ctx, `
+	insertID, err := db.InsertReturningID(ctx, `
 		INSERT INTO users_rights (
 			user_id,
 			merchant_id,
@@ -344,8 +350,8 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 			manage_customers,
 			export_customers,
 			enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-	`, userID, merchantID, token, rights.Admin,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+	`, "id", userID, merchantID, token, rights.Admin,
 		rights.Permissions.AccessReception,
 		rights.Permissions.AccessDelivery,
 		rights.Permissions.AccessWaiter,
@@ -367,16 +373,11 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 		return 0, err
 	}
 
-	insertID, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-
 	return insertID, nil
 }
 
 func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchantID, userID string, rights MerchantUserRightsUpsertRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
 		UPDATE users_rights
 		SET admin = ?,
@@ -397,7 +398,7 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 			manage_customers = ?,
 			export_customers = ?,
 			login_enabled = ?
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 	`, rights.Admin,
 		rights.Permissions.AccessReception,
 		rights.Permissions.AccessDelivery,
@@ -435,7 +436,7 @@ func (r *UsersRepository) UpdateMerchantUserRights(ctx context.Context, merchant
 }
 
 func (r *UsersRepository) UserExists(ctx context.Context, userID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var count int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE user_id = ?`, strings.TrimSpace(userID)).Scan(&count); err != nil {
 		return false, err
@@ -444,12 +445,12 @@ func (r *UsersRepository) UserExists(ctx context.Context, userID string) (bool, 
 }
 
 func (r *UsersRepository) MerchantUserLinkExists(ctx context.Context, merchantID, userID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var count int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM users_rights
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 	`, merchantID, strings.TrimSpace(userID)).Scan(&count); err != nil {
 		return false, err
 	}
@@ -457,11 +458,11 @@ func (r *UsersRepository) MerchantUserLinkExists(ctx context.Context, merchantID
 }
 
 func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantID, userID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
 		UPDATE users_rights
-		SET enabled = 0
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		SET enabled = FALSE
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 	`, merchantID, strings.TrimSpace(userID))
 	if err != nil {
 		return false, err
@@ -478,11 +479,11 @@ func (r *UsersRepository) DisableMerchantUserLink(ctx context.Context, merchantI
 }
 
 func (r *UsersRepository) ClearMerchantEmployeeLinks(ctx context.Context, merchantID, userID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
 		SET user_id = NULL
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 	`, merchantID, strings.TrimSpace(userID))
 	if err != nil {
 		return 0, err

@@ -97,7 +97,7 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 		return nil, fmt.Errorf("store error: %v", err)
 	}
 	if merchantID == nil {
-		return nil, fmt.Errorf("No store " + storeID)
+		return nil, fmt.Errorf("No store %s", storeID)
 	}
 
 	// 3. Récupérer le store

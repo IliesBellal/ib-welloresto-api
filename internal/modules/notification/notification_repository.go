@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
-	"welloresto-api/internal/utils/dbutils"
+
+	"welloresto-api/internal/database/dbx"
 )
 
 type NotificationRepository struct {
@@ -19,14 +21,18 @@ func NewNotificationRepository(db *sql.DB) *NotificationRepository {
 }
 
 func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID string) ([]string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	rows, err := db.QueryContext(ctx, `
+	cutoff := "DATE_SUB(UTC_TIMESTAMP(), INTERVAL 2 DAY)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		cutoff = "now() - interval '2 days'"
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
         SELECT fcm_token
         FROM users_devices ud
         WHERE ud.merchant_id = ?
-		AND ud.last_used >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 2 DAY)
-    `, merchantID)
+		AND ud.last_used >= %s
+    `, cutoff), merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +53,7 @@ func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID
 
 // DeleteDeviceToken : Supprime un token FCM invalide de la base de données
 func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		DELETE FROM users_devices 
@@ -59,7 +65,7 @@ func (r *NotificationRepository) DeleteDeviceToken(ctx context.Context, token st
 
 // DeleteAccessToken : Supprime le jeton d'accès FCM actuel (OAuth2) car il est rejeté par Google
 func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		DELETE FROM firebase_fcm_access_token 
@@ -69,16 +75,16 @@ func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token st
 }
 
 func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var token string
 
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, fmt.Sprintf(`
         SELECT access_token
         FROM firebase_fcm_access_token
-        WHERE UTC_TIMESTAMP() <= expiration_date
+        WHERE %s <= expiration_date
         LIMIT 1
-    `).Scan(&token)
+    `, dbx.UTCNow())).Scan(&token)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -88,17 +94,17 @@ func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (strin
 }
 
 func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, time.Time, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var token string
 	var expiration time.Time
 
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, fmt.Sprintf(`
         SELECT access_token, expiration_date
         FROM firebase_fcm_access_token
-        WHERE UTC_TIMESTAMP() <= expiration_date
+        WHERE %s <= expiration_date
         ORDER BY expiration_date DESC
         LIMIT 1
-    `).Scan(&token, &expiration)
+    `, dbx.UTCNow())).Scan(&token, &expiration)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", time.Time{}, nil
@@ -109,11 +115,15 @@ func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, 
 
 // Optionnel : On peut aussi uniformiser StoreFCMToken pour qu'il soit explicite
 func (r *NotificationRepository) StoreFCMToken(ctx context.Context, token string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	expiresAt := "DATE_ADD(UTC_TIMESTAMP(), INTERVAL 50 MINUTE)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		expiresAt = "now() + interval '50 minutes'"
+	}
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
         INSERT INTO firebase_fcm_access_token(access_token, expiration_date)
-        VALUES(?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 50 MINUTE))
-    `, token)
+        VALUES(?, %s)
+    `, expiresAt), token)
 	return err
 }

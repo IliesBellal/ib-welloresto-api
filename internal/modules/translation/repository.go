@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"time"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 // Language represents a platform-level language from available_languages.
@@ -41,7 +41,7 @@ func NewRepository(db *sql.DB) *Repository {
 // ListAvailableLanguages returns all globally enabled languages,
 // ordered by code ASC.
 func (r *Repository) ListAvailableLanguages(ctx context.Context) ([]Language, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
@@ -73,7 +73,7 @@ func (r *Repository) ListAvailableLanguages(ctx context.Context) ([]Language, er
 // (including disabled ones), joined with available_languages for the name,
 // ordered by lang_code ASC.
 func (r *Repository) ListMerchantLanguages(ctx context.Context, merchantID string) ([]MerchantLanguage, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
@@ -116,7 +116,7 @@ func (r *Repository) ListMerchantLanguages(ctx context.Context, merchantID strin
 //
 // Returns (false, nil) — not an error — when the language does not exist at all.
 func (r *Repository) IsLanguageEnabledForMerchant(ctx context.Context, merchantID string, langCode string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var count int
@@ -144,14 +144,10 @@ func (r *Repository) IsLanguageEnabledForMerchant(ctx context.Context, merchantI
 // ActivateLanguageForMerchant ensures the row exists for (merchant_id, lang_code).
 // Activation is represented by row presence in merchant_translation_languages.
 func (r *Repository) ActivateLanguageForMerchant(ctx context.Context, merchantID string, langCode string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO merchant_translation_languages (merchant_id, lang_code, enabled)
-		VALUES (?, ?, true)
-		ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)
-	`, merchantID, langCode)
+	_, err := db.ExecContext(ctx, activateLanguageQuery(), merchantID, langCode)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -160,13 +156,31 @@ func (r *Repository) ActivateLanguageForMerchant(ctx context.Context, merchantID
 	return nil
 }
 
+// activateLanguageQuery upserts the (merchant_id, lang_code) row as enabled.
+// No syntax common to both dialects: ON DUPLICATE KEY UPDATE (MySQL) vs
+// ON CONFLICT ... DO UPDATE (Postgres, on the PK (merchant_id, lang_code)).
+func activateLanguageQuery() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return `
+		INSERT INTO merchant_translation_languages (merchant_id, lang_code, enabled)
+		VALUES (?, ?, true)
+		ON CONFLICT (merchant_id, lang_code) DO UPDATE SET enabled = EXCLUDED.enabled
+	`
+	}
+	return `
+		INSERT INTO merchant_translation_languages (merchant_id, lang_code, enabled)
+		VALUES (?, ?, true)
+		ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)
+	`
+}
+
 // ActivateLanguageForMerchantWithLimit activates a language only if the merchant
 // has not exceeded maxLanguages active rows.
 // It verifies the limit both before and after activation inside a transaction.
 func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, merchantID string, langCode string, maxLanguages int) error {
 	log := logger.FromContext(ctx)
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var alreadyEnabled int
 	err := db.QueryRowContext(ctx, `
@@ -198,11 +212,7 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 		return models.ErrTranslationLanguagesLimitReached
 	}
 
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO merchant_translation_languages (merchant_id, lang_code, enabled)
-		VALUES (?, ?, true)
-		ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)
-	`, merchantID, langCode)
+	_, err = db.ExecContext(ctx, activateLanguageQuery(), merchantID, langCode)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -229,7 +239,7 @@ func (r *Repository) ActivateLanguageForMerchantWithLimit(ctx context.Context, m
 // DeactivateLanguageForMerchant removes the language row for a merchant.
 // Deactivation is represented by row deletion.
 func (r *Repository) DeactivateLanguageForMerchant(ctx context.Context, merchantID string, langCode string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `

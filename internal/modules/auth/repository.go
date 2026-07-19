@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type AuthRepository struct {
@@ -20,12 +21,30 @@ func NewAuthRepository(db *sql.DB) AuthRepository {
 	return AuthRepository{database: db}
 }
 
+// authMerchantJoinCast returns the SQL fragment used to join varchar
+// merchant_id columns (users_rights, merchant_parameters, subscriptions,
+// scannorder_settings, integration_uber_eats, integration_uber_direct,
+// integration_deliveroo) against merchant.id, which is an integer identity —
+// merchant_id is carried as a string everywhere else in the Go code (see
+// 12-merchant-id-unification.md). MySQL implicitly casts across the join,
+// Postgres requires an explicit one, and CAST syntax itself differs per
+// dialect (CHAR vs TEXT). Shared by GetUserByToken/Login/GetUserByPIN, which
+// all join the same set of tables identically.
+func authMerchantJoinCast() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(m.id AS TEXT)"
+	}
+	return "CAST(m.id AS CHAR)"
+}
+
 func (r *AuthRepository) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, nil // ou une erreur métier type ErrUnauthorized
 	}
 
-	query := `
+	db := dbx.GetDB(ctx, r.database)
+	joinCast := authMerchantJoinCast()
+	query := fmt.Sprintf(`
 SELECT
     u.user_id,
     u.password,
@@ -115,20 +134,20 @@ SELECT
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
-INNER JOIN merchant m ON m.id = ur.merchant_id
-LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
-LEFT JOIN subscriptions s ON s.merchant_id = m.id
+INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
-LEFT JOIN scannorder_settings sset ON sset.merchant_id = m.id
-LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_token IS NOT NULL
-LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
-LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
+LEFT JOIN scannorder_settings sset ON sset.merchant_id = %[1]s
+LEFT JOIN integration_uber_eats iue ON iue.merchant_id = %[1]s AND iue.bearer_token IS NOT NULL
+LEFT JOIN integration_uber_direct iud ON iud.merchant_id = %[1]s AND iud.bearer_token IS NOT NULL
+LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 
 WHERE ur.token = ?
 LIMIT 1;
-`
+`, joinCast)
 
-	row := r.database.QueryRowContext(ctx, query, token)
+	row := db.QueryRowContext(ctx, query, token)
 	return scanUserLoginRow(row)
 }
 
@@ -186,7 +205,9 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 }
 
 func (r *AuthRepository) Login(ctx context.Context, username, plainPwd, token string) (*UserLoginRow, error) {
-	query := `
+	db := dbx.GetDB(ctx, r.database)
+	joinCast := authMerchantJoinCast()
+	query := fmt.Sprintf(`
 SELECT
     u.user_id,
     u.name,
@@ -283,14 +304,14 @@ SELECT
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
-INNER JOIN merchant m ON m.id = ur.merchant_id
-LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
-LEFT JOIN subscriptions s ON s.merchant_id = m.id
+INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
-LEFT JOIN scannorder_settings sset ON sset.merchant_id = m.id
-LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_token IS NOT NULL
-LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
-LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
+LEFT JOIN scannorder_settings sset ON sset.merchant_id = %[1]s
+LEFT JOIN integration_uber_eats iue ON iue.merchant_id = %[1]s AND iue.bearer_token IS NOT NULL
+LEFT JOIN integration_uber_direct iud ON iud.merchant_id = %[1]s AND iud.bearer_token IS NOT NULL
+LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 
 WHERE
     (
@@ -299,9 +320,9 @@ WHERE
         OR ur.token = ?
     )
 LIMIT 1;
-`
+`, joinCast)
 
-	row := r.database.QueryRowContext(ctx, query,
+	row := db.QueryRowContext(ctx, query,
 		username,
 		username,
 		token,
@@ -389,15 +410,18 @@ LIMIT 1;
 
 // UpdatePassword overwrites a user's stored password hash.
 func (r *AuthRepository) UpdatePassword(ctx context.Context, userID, newHash string) error {
-	_, err := r.database.ExecContext(ctx, `UPDATE users SET password = ? WHERE user_id = ?`, newHash, userID)
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx, `UPDATE users SET password = ? WHERE user_id = ?`, newHash, userID)
 	return err
 }
 
 // GetUserByPIN looks up the employee whose PIN matches within a merchant.
-// Requires ur.enabled = 1 AND ur.login_enabled = 1 so a deactivated link cannot
-// authenticate even if its pin_hash was not cleared.
+// Requires ur.enabled = true AND ur.login_enabled = true so a deactivated link
+// cannot authenticate even if its pin_hash was not cleared.
 func (r *AuthRepository) GetUserByPIN(ctx context.Context, merchantID, pinHash string) (*UserLoginRow, error) {
-	query := `
+	db := dbx.GetDB(ctx, r.database)
+	joinCast := authMerchantJoinCast()
+	query := fmt.Sprintf(`
 SELECT
     u.user_id,
     u.password,
@@ -457,6 +481,7 @@ SELECT
     mp.customer_form_requirements,
     mp.currency,
     mp.is_open,
+	mp.pos_upsell_enabled,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -486,32 +511,34 @@ SELECT
 
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
-INNER JOIN merchant m ON m.id = ur.merchant_id
-LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
-LEFT JOIN subscriptions s ON s.merchant_id = m.id
+INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
-LEFT JOIN scannorder_settings sset ON sset.merchant_id = m.id
-LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_token IS NOT NULL
-LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
-LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
+LEFT JOIN scannorder_settings sset ON sset.merchant_id = %[1]s
+LEFT JOIN integration_uber_eats iue ON iue.merchant_id = %[1]s AND iue.bearer_token IS NOT NULL
+LEFT JOIN integration_uber_direct iud ON iud.merchant_id = %[1]s AND iud.bearer_token IS NOT NULL
+LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 
-WHERE ur.merchant_id = ? AND ur.pin_hash = ? AND ur.enabled = 1 AND ur.login_enabled = 1
+WHERE ur.merchant_id = ? AND ur.pin_hash = ? AND ur.enabled = true AND ur.login_enabled = true
 LIMIT 1;
-`
-	row := r.database.QueryRowContext(ctx, query, merchantID, pinHash)
+`, joinCast)
+	row := db.QueryRowContext(ctx, query, merchantID, pinHash)
 	return scanUserLoginRow(row)
 }
 
 func (r *AuthRepository) SetPINHash(ctx context.Context, merchantID, userID string, pinHash *string) error {
-	_, err := r.database.ExecContext(ctx,
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx,
 		`UPDATE users_rights SET pin_hash = ? WHERE merchant_id = ? AND user_id = ?`,
 		pinHash, merchantID, userID)
 	return err
 }
 
 func (r *AuthRepository) CheckPINConflict(ctx context.Context, merchantID, pinHash, excludeUserID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
 	var exists int
-	err := r.database.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT 1 FROM users_rights WHERE merchant_id = ? AND pin_hash = ? AND user_id != ? LIMIT 1`,
 		merchantID, pinHash, excludeUserID).Scan(&exists)
 	if err == sql.ErrNoRows {
@@ -521,8 +548,9 @@ func (r *AuthRepository) CheckPINConflict(ctx context.Context, merchantID, pinHa
 }
 
 func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]MerchantRow, error) {
-	query := `
-SELECT 
+	db := dbx.GetDB(ctx, r.database)
+	query := fmt.Sprintf(`
+SELECT
     m.id,
     m.fullName,
     m.lat,
@@ -534,10 +562,10 @@ SELECT
 	m.logo_url,
     ur.token
 FROM merchant m
-INNER JOIN users_rights ur ON ur.merchant_id = m.id
+INNER JOIN users_rights ur ON ur.merchant_id = %s
 WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
-`
-	rows, err := r.database.QueryContext(ctx, query, userID)
+`, authMerchantJoinCast())
+	rows, err := db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -554,18 +582,18 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 }
 
 func (r *AuthRepository) CheckAppVersion(ctx context.Context, currentVersion int, app, merchantID string) (map[string]interface{}, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Step 1: get highest version > currentVersion
-	q1 := `
+	q1 := fmt.Sprintf(`
 SELECT id, version_code, download_url
 FROM app_version
 WHERE app_id = ?
   AND version_code > ?
-  AND release_date < UTC_TIMESTAMP()
+  AND release_date < %s
 ORDER BY version_code DESC
 LIMIT 1;
-`
+`, dbx.UTCNow())
 	row := db.QueryRowContext(ctx, q1, app, currentVersion)
 
 	var versionID int
@@ -624,18 +652,32 @@ LIMIT 1;
 }
 
 func (r *AuthRepository) SaveDevice(ctx context.Context, userID, merchantID, app, deviceID, fcmToken string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	q := `
+	// No syntax common to both dialects: ON DUPLICATE KEY UPDATE (MySQL) vs
+	// ON CONFLICT ... DO UPDATE (Postgres, on the PK device_id).
+	q := fmt.Sprintf(`
 INSERT INTO users_devices
 (user_id, merchant_id, app, device_id, fcm_token, last_used)
-VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
+VALUES (?, ?, ?, ?, ?, %[1]s)
 ON DUPLICATE KEY UPDATE
     fcm_token = VALUES(fcm_token),
-    last_used = UTC_TIMESTAMP(),
+    last_used = %[1]s,
     user_id = VALUES(user_id),
     merchant_id = VALUES(merchant_id)
-`
+`, dbx.UTCNow())
+	if dbx.ActiveDialect() == dbx.Postgres {
+		q = fmt.Sprintf(`
+INSERT INTO users_devices
+(user_id, merchant_id, app, device_id, fcm_token, last_used)
+VALUES (?, ?, ?, ?, ?, %[1]s)
+ON CONFLICT (device_id) DO UPDATE SET
+    fcm_token = EXCLUDED.fcm_token,
+    last_used = %[1]s,
+    user_id = EXCLUDED.user_id,
+    merchant_id = EXCLUDED.merchant_id
+`, dbx.UTCNow())
+	}
 
 	_, execErr := db.ExecContext(ctx, q, userID, merchantID, app, deviceID, fcmToken)
 	if execErr != nil {
@@ -647,13 +689,10 @@ ON DUPLICATE KEY UPDATE
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné
 func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, status string) error {
+	db := dbx.GetDB(ctx, r.database)
 	query := `UPDATE users SET mfa_status = ? WHERE user_id = ?`
 
-	_, err := r.database.ExecContext(ctx, query, status, userID)
-	if err != nil {
-		return err
-	}
-
+	_, err := db.ExecContext(ctx, query, status, userID)
 	if err != nil {
 		return err
 	}
@@ -662,9 +701,10 @@ func (r *AuthRepository) UpdateMFAStatus(ctx context.Context, userID string, sta
 }
 
 func (r *AuthRepository) MarkAsOTPSent(ctx context.Context, userID string) error {
-	query := `UPDATE users SET mfa_otp_sent_at = UTC_TIMESTAMP() WHERE user_id = ?`
+	db := dbx.GetDB(ctx, r.database)
+	query := fmt.Sprintf(`UPDATE users SET mfa_otp_sent_at = %s WHERE user_id = ?`, dbx.UTCNow())
 
-	_, err := r.database.ExecContext(ctx, query, userID)
+	_, err := db.ExecContext(ctx, query, userID)
 	if err != nil {
 		return err
 	}
@@ -673,13 +713,10 @@ func (r *AuthRepository) MarkAsOTPSent(ctx context.Context, userID string) error
 }
 
 func (r *AuthRepository) MarkAsMFAVerified(ctx context.Context, userID string) error {
-	query := `UPDATE users SET mfa_status = ?, mfa_verified_at = UTC_TIMESTAMP() WHERE user_id = ?`
+	db := dbx.GetDB(ctx, r.database)
+	query := fmt.Sprintf(`UPDATE users SET mfa_status = ?, mfa_verified_at = %s WHERE user_id = ?`, dbx.UTCNow())
 
-	_, err := r.database.ExecContext(ctx, query, models.MFAStatusVerified, userID)
-	if err != nil {
-		return err
-	}
-
+	_, err := db.ExecContext(ctx, query, models.MFAStatusVerified, userID)
 	if err != nil {
 		return err
 	}
@@ -688,32 +725,35 @@ func (r *AuthRepository) MarkAsMFAVerified(ctx context.Context, userID string) e
 }
 
 func (r *AuthRepository) MarkLastLoginAt(ctx context.Context, userID string) error {
-	_, err := r.database.ExecContext(ctx, `UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE user_id = ?`, userID)
+	db := dbx.GetDB(ctx, r.database)
+	query := fmt.Sprintf(`UPDATE users SET last_login_at = %s WHERE user_id = ?`, dbx.UTCNow())
+	_, err := db.ExecContext(ctx, query, userID)
 	return err
 }
 
 // MarkAsVerified met à jour la date de validation pour l'email ou le téléphone
 func (r *AuthRepository) MarkAsVerified(ctx context.Context, token string, mode string) error {
+	db := dbx.GetDB(ctx, r.database)
 	var column string
 
 	// On détermine quelle colonne mettre à jour selon le mode
 	switch strings.ToUpper(mode) {
 	case "EMAIL":
-		column = "u.email_verified_at"
+		column = "email_verified_at"
 	case "SMS", "TEL":
-		column = "u.tel_verified_at"
+		column = "tel_verified_at"
 	default:
 		return errors.New("mode de vérification invalide")
 	}
 
-	// On joint users et users_rights pour identifier l'user via son token
+	// UPDATE...JOIN rewritten as EXISTS (portable MySQL/Postgres). Postgres
+	// does not allow qualifying SET target columns with the table alias.
 	query := fmt.Sprintf(`
 		UPDATE users u
-		INNER JOIN users_rights ur ON u.user_id = ur.user_id
 		SET %s = NOW()
-		WHERE ur.token = ?`, column)
+		WHERE EXISTS (SELECT 1 FROM users_rights ur WHERE ur.user_id = u.user_id AND ur.token = ?)`, column)
 
-	result, err := r.database.ExecContext(ctx, query, token)
+	result, err := db.ExecContext(ctx, query, token)
 	if err != nil {
 		return err
 	}

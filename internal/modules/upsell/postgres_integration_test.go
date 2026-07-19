@@ -63,7 +63,7 @@ func TestUpsellRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected merchant mismatch error, got %v", err)
 	}
 	if err := repo.RecordAcceptance(ctx, id, merchantID, RecordAcceptanceParams{
-		OrderID:       "itest-order-1",
+		OrderID:       "998877",
 		AcceptedItems: []AcceptedItem{{ProductID: "p1", Quantity: 1}},
 		RevenueImpact: 4.50,
 	}); err != nil {

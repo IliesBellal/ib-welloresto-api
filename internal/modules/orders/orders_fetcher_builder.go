@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersFetcher struct {
@@ -19,10 +19,24 @@ func NewOrdersFetcher(db *sql.DB) *OrdersFetcher {
 		database: db}
 }
 
+// castChar retourne un cast texte de expr selon le dialecte, pour les
+// jointures entre colonnes integer et varchar que MySQL coerçait
+// implicitement (Postgres exige le cast, et sa syntaxe CHAR nu signifie
+// char(1) — d'où TEXT côté PG).
+func castChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
+
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters QueryFilter, orderByFilter, limitsFilters string) ([]models.Order, error) {
 
-	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le contexte
-	db := dbutils.GetDB(ctx, r.database)
+	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le
+	// contexte, avec rebind des placeholders selon le dialecte (le SQL final —
+	// fragments statiques + whereFilters.SQL — est rebindé d'un bloc à
+	// l'exécution, cf. 02-security-fix-orders-builder.md).
+	db := dbx.GetDB(ctx, r.database)
 
 	// --- HELPER FUNCTIONS ---
 	// Le helper utilise maintenant 'db' (qui peut être un *sql.DB ou un *sql.Tx)
@@ -223,12 +237,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "configuration_attributes_options"
 		q := `
-		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price, 
+		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price,
 		case when oic.id is null then false else true end as selected,
 		COALESCE(oic.quantity, 0) as quantity, cao.max_quantity
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
-		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
 		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
 		INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
 		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
@@ -272,7 +286,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
-		INNER JOIN product_configurable_attribute pca on pca.product_id = oi.product_id
+		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
 		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -384,9 +398,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	productsByOrderID := map[string][]models.ProductEntry{}
 	{
 		step := "products"
+		// oi.isPaid / oi.isDistributed sont boolean en Postgres mais scannés en
+		// NullInt64 côté Go — CASE 1/0 valide dans les deux dialectes.
 		q := `
 		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id,
-		       oi.isPaid, oi.isDistributed, oi.ordered_on, oi.base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
+		       CASE WHEN oi.isPaid THEN 1 ELSE 0 END AS isPaid,
+		       CASE WHEN oi.isDistributed THEN 1 ELSE 0 END AS isDistributed,
+		       oi.ordered_on, oi.base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
 		       oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery
@@ -397,7 +415,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
 		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
 		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
-		LEFT JOIN discounts d ON d.discount_id = oi.discount_id
+		LEFT JOIN discounts d ON d.discount_id = ` + castChar("oi.discount_id") + `
 		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -581,15 +599,19 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	var orders []models.Order
 	{
 		step := "header"
+		// o.isDelivery / o.use_customer_temporary_address sont boolean en
+		// Postgres mais scannés en NullInt64 côté Go — CASE 1/0 portable.
 		q := `
 	SELECT
 		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
 		o.brand, o.merchant_id, o.brand_status, o.brand_order_id, o.brand_order_num,
 		o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
-		o.isPaid, o.isDistributed, o.dateCall, o.isDelivery,
+		o.isPaid, o.isDistributed, o.dateCall,
+		CASE WHEN o.isDelivery THEN 1 ELSE 0 END AS isDelivery,
 		o.merchant_approval, o.delivery_fees, o.last_update,
-		o.fulfillment_type, o.use_customer_temporary_address,
+		o.fulfillment_type,
+		CASE WHEN o.use_customer_temporary_address THEN 1 ELSE 0 END AS use_customer_temporary_address,
 		o.creation_date, o.places_settings, o.pager_number,
 
 		c.customer_id, c.customer_name, c.customer_last_name, c.customer_first_name, c.customer_tel,
@@ -612,8 +634,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	
 	FROM orders o
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
-	LEFT JOIN users u ON o.responsible = u.user_id AND o.merchant_id = u.merchant_id
-    LEFT JOIN cash_registers cr on cr.cash_register_id = o.cash_register_id
+	LEFT JOIN users u ON ` + castChar("o.responsible") + ` = u.user_id AND o.merchant_id = u.merchant_id
+    LEFT JOIN cash_registers cr on ` + castChar("cr.cash_register_id") + ` = o.cash_register_id
 	WHERE o.merchant_id = ? ` + whereFilters.SQL + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, filteredArgs()...)

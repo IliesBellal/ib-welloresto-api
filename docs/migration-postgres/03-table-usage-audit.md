@@ -174,6 +174,7 @@ Regroupées par domaine fonctionnel. "Fichiers" liste jusqu'à 4 emplacements re
 |---|---|
 | `employees` | `internal/modules/planning/employees/*.go` (13 fichiers) |
 | `employee_documents` | `internal/modules/planning/documents/repository.go` |
+| `planning_day_comments` ⁽¹⁾ | `internal/modules/planning/daycomments/repository.go` |
 | `planning_positions` | `internal/modules/planning/employees/*.go`, `internal/modules/planning/schedule/repository.go` (10 fichiers) |
 | `planning_settings` | `internal/modules/planning/settings/repository.go`, `migrations/done/023_planning_shift_swap_approval_mode.sql` |
 | `planning_shifts` | `internal/modules/planning/leave/repository.go`, `internal/modules/planning/performance/repository.go` (11 fichiers) |
@@ -191,6 +192,8 @@ Regroupées par domaine fonctionnel. "Fichiers" liste jusqu'à 4 emplacements re
 | `sys_attendance_sources` | `internal/modules/planning/refs/repository.go`, `migrations/done/014_planning_socle.sql` |
 | `sys_contract_types` | `migrations/done/014_planning_socle.sql` (créée, pas de lecture directe repérée dans une requête `SELECT`/`JOIN` du code Go — probablement consultée uniquement via l'ORM implicite des jointures `employees`) |
 | `sys_planning_event_types` | `migrations/done/014_planning_socle.sql` (idem) |
+
+⁽¹⁾ `planning_day_comments` est une table **vivante et nouvelle**, créée par `migrations/065_planning_day_comments.up.sql` **après** l'audit initial des 180 tables de production (elle n'entre donc pas dans le décompte "143/180" ci-dessus, ni dans la liste des 37 orphelines — c'est une addition postérieure). Portée par le nouveau module `internal/modules/planning/daycomments/`, déjà fonctionnel sur MySQL ; traduction DDL Postgres documentée dans [26-planning-day-comments-integration.md](26-planning-day-comments-integration.md).
 
 ---
 

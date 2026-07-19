@@ -4,13 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/utils/dbutils"
 )
+
+// dsCastChar retourne un cast texte de expr selon le dialecte, pour les
+// comparaisons entre colonnes integer et varchar que MySQL coerçait
+// implicitement (en PG, CAST AS CHAR nu signifie char(1) — d'où TEXT).
+func dsCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
 
 // LegacyOrdersRepository implements the PHP-style (legacy) data retrieval for pending orders
 type DeliverySessionsRepository struct {
@@ -23,7 +35,7 @@ func NewDeliverySessionsRepository(db *sql.DB, ordersF *orders.OrdersFetcher) *D
 }
 
 func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Context, merchantID string) ([]models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1. Récupérer les sessions actives (en-tête + livreur, cf. fetchDeliverySessions)
@@ -168,7 +180,7 @@ func (r *DeliverySessionsRepository) GetPendingDeliverySessions(ctx context.Cont
 // current_order_id) and delivery man info (including status) - same shape as the
 // canonical assembleDeliverySessionDetails. Orders are left empty; filled in by the caller.
 func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, merchantID string, filterStatus string) ([]models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	q := `
@@ -251,21 +263,22 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 	var sessionID int64
 
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
-		// 2. Insert new delivery_session
-		res, err := db.ExecContext(txCtx, `
+		// 2. Insert new delivery_session.
+		// distance/duration sont des colonnes integer alimentées par des
+		// strings client : MySQL non-strict coerçait ("" ou invalide → 0),
+		// pgx/Postgres rejette une valeur non numérique — normalisation Go
+		// reproduisant la coercition MySQL.
+		distance, _ := strconv.Atoi(req.Distance)
+		duration, _ := strconv.Atoi(req.Duration)
+		var err error
+		sessionID, err = db.InsertReturningID(txCtx, fmt.Sprintf(`
 			INSERT INTO delivery_session (user_id, merchant_id, start_date, distance, duration, status)
-			VALUES (?, ?, UTC_TIMESTAMP, ?, ?, 'active')
-		`, userID, merchantID, req.Distance, req.Duration)
+			VALUES (?, ?, %s, ?, ?, 'active')
+		`, dbx.UTCNow()), "id", userID, merchantID, distance, duration)
 		if err != nil {
 			log.Error("StartDeliverySession: failed to insert delivery session: " + err.Error())
-			return err
-		}
-
-		sessionID, err = res.LastInsertId()
-		if err != nil {
-			log.Error("StartDeliverySession: failed to read inserted session id: " + err.Error())
 			return err
 		}
 
@@ -280,13 +293,20 @@ func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, r
 			}
 		}
 
-		// 4. Update orders brand_status
-		if _, err := db.ExecContext(txCtx, `
+		// 4. Update orders brand_status (UPDATE...JOIN MySQL vs UPDATE...FROM PG)
+		updateBrand := `
 			UPDATE orders o
 			INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
 			SET o.brand_status = 'EN_ROUTE_TO_DROPOFF'
-			WHERE dso.delivery_session_id = ?
-		`, sessionID); err != nil {
+			WHERE dso.delivery_session_id = ?`
+		if dbx.ActiveDialect() == dbx.Postgres {
+			updateBrand = `
+			UPDATE orders o
+			SET brand_status = 'EN_ROUTE_TO_DROPOFF'
+			FROM delivery_session_order dso
+			WHERE dso.order_id = o.order_id AND dso.delivery_session_id = ?`
+		}
+		if _, err := db.ExecContext(txCtx, updateBrand, sessionID); err != nil {
 			log.Error("StartDeliverySession: failed to update order brand status: " + err.Error())
 			return err
 		}
@@ -328,7 +348,7 @@ func (r *DeliverySessionsRepository) GetOrderCustomerPhones(ctx context.Context,
 		return phones, nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	placeholders := make([]string, len(orderIDs))
 	args := make([]interface{}, len(orderIDs))
@@ -364,18 +384,28 @@ func (r *DeliverySessionsRepository) GetOrderCustomerPhones(ctx context.Context,
 }
 
 func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1) Revert orders to READY_FOR_HANDOFF
-	_, err := db.ExecContext(ctx, `
+	revertQuery := `
         UPDATE orders o
         INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
         SET o.brand_status = 'READY_FOR_HANDOFF'
         WHERE ds.id = ?
-        AND o.brand_status = 'EN_ROUTE_TO_DROPOFF'
-	`, sessionID)
+        AND o.brand_status = 'EN_ROUTE_TO_DROPOFF'`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		revertQuery = `
+        UPDATE orders o
+        SET brand_status = 'READY_FOR_HANDOFF'
+        FROM delivery_session_order dso
+        JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+        WHERE dso.order_id = o.order_id
+        AND ds.id = ?
+        AND o.brand_status = 'EN_ROUTE_TO_DROPOFF'`
+	}
+	_, err := db.ExecContext(ctx, revertQuery, sessionID)
 	if err != nil {
 		log.Error("CancelDeliverySession: failed to update order brand status: " + err.Error())
 		return nil, err
@@ -415,11 +445,11 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 }
 
 func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1) Update orders
-	_, err := db.ExecContext(ctx, `
+	closeOrdersQuery := `
         UPDATE orders o
         INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -427,8 +457,19 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
             o.brand_status = 'DONE',
             o.state = 'CLOSED'
         WHERE ds.id = ?
-        AND ds.status NOT IN ('done','canceled')
-	`, sessionID)
+        AND ds.status NOT IN ('done','canceled')`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		closeOrdersQuery = `
+        UPDATE orders o
+        SET brand_status = 'DONE',
+            state = 'CLOSED'
+        FROM delivery_session_order dso
+        JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+        WHERE dso.order_id = o.order_id
+        AND ds.id = ?
+        AND ds.status NOT IN ('done','canceled')`
+	}
+	_, err := db.ExecContext(ctx, closeOrdersQuery, sessionID)
 	if err != nil {
 		log.Error("CloseDeliverySession: failed to update order status: " + err.Error())
 		return nil, err
@@ -447,13 +488,22 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
 	}
 
 	// 3) Update payments user_id
-	_, err = db.ExecContext(ctx, `
+	payQuery := `
         UPDATE payments p
         INNER JOIN delivery_session_order dso ON dso.order_id = p.order_id
         INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
         SET p.user_id = ds.user_id
-        WHERE ds.id = ?
-	`, sessionID)
+        WHERE ds.id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		payQuery = `
+        UPDATE payments p
+        SET user_id = ds.user_id
+        FROM delivery_session_order dso
+        JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+        WHERE dso.order_id = p.order_id
+        AND ds.id = ?`
+	}
+	_, err = db.ExecContext(ctx, payQuery, sessionID)
 	if err != nil {
 		log.Error("CloseDeliverySession: failed to update payment user ID: " + err.Error())
 		return nil, err
@@ -483,7 +533,7 @@ func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, s
 // GetDeliverySessionByIDForUser (delivery man + status, per-order delivery_stop,
 // current_order_id, customer delivery_notes).
 func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, merchantID, sessionID string) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1️⃣ Fetch session header info
@@ -515,7 +565,7 @@ func (r *DeliverySessionsRepository) GetDeliverySession(ctx context.Context, mer
 // GetDeliverySession but additionally exposing the per-stop FSM
 // (delivery_session_order) and the customer's delivery notes.
 func (r *DeliverySessionsRepository) GetActiveDeliverySessionForUser(ctx context.Context, merchantID, userID string) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1️⃣ Fetch the most recent active session for this user
@@ -554,7 +604,7 @@ func (r *DeliverySessionsRepository) GetActiveDeliverySessionForUser(ctx context
 // auto-closed the session (status='done', §0.3) - the response must still reflect the
 // final state of that session, not "no active session".
 func (r *DeliverySessionsRepository) GetDeliverySessionByIDForUser(ctx context.Context, merchantID, userID, sessionID string) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var session models.DeliverySession
@@ -589,21 +639,26 @@ func (r *DeliverySessionsRepository) GetDeliverySessionByIDForUser(ctx context.C
 // delivery_session row already fetched into `session`. Shared by
 // GetActiveDeliverySessionForUser and GetDeliverySessionByIDForUser.
 func (r *DeliverySessionsRepository) assembleDeliverySessionDetails(ctx context.Context, merchantID string, session *models.DeliverySession, currentOrderID sql.NullString) (*models.DeliverySession, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 2️⃣ Fetch delivery man info
+	// NOTE: la jointure `ur.id = usv.user_id` (PK integer users_rights vs
+	// user_id varchar) est héritée telle quelle — MySQL coerçait le varchar en
+	// nombre, Postgres exige le cast. Sémantique préservée à l'identique (ne
+	// matche que les user_id numériques), même anomalie préexistante que
+	// users.GetUserLocation.
 	var deliveryMan models.OrderUser
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT DISTINCT usv.user_id, usv.first_name, usv.last_name, usv.lat, usv.lng, usv.status
 		FROM user_status_view usv
-		INNER JOIN users_rights ur ON ur.id = usv.user_id
-		INNER JOIN merchant m ON m.id = ur.merchant_id
+		INNER JOIN users_rights ur ON %s = usv.user_id
+		INNER JOIN merchant m ON %s = ur.merchant_id
 		INNER JOIN delivery_session ds ON ds.user_id = usv.user_id
 		WHERE ur.merchant_id = ?
 		  AND ur.enabled
 		  AND ds.id = ?
-	`, merchantID, session.DeliverySessionID).Scan(
+	`, dsCastChar("ur.id"), dsCastChar("m.id")), merchantID, session.DeliverySessionID).Scan(
 		&deliveryMan.UserID,
 		&deliveryMan.FirstName,
 		&deliveryMan.LastName,
@@ -751,7 +806,7 @@ func (r *DeliverySessionsRepository) assembleDeliverySessionDetails(ctx context.
 // is undone). Returns the session id on success.
 func (r *DeliverySessionsRepository) SelectDeliveryStop(ctx context.Context, merchantID, userID, orderID string) (sessionID string, err error) {
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		// 1. Resolve the caller's active session
 		txErr := db.QueryRowContext(txCtx, `
@@ -820,7 +875,7 @@ func (r *DeliverySessionsRepository) SelectDeliveryStop(ctx context.Context, mer
 // session id on success.
 func (r *DeliverySessionsRepository) MarkDeliveryStopArrived(ctx context.Context, merchantID, userID, orderID string) (sessionID string, err error) {
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		var currentOrderID sql.NullString
 		txErr := db.QueryRowContext(txCtx, `
@@ -839,10 +894,10 @@ func (r *DeliverySessionsRepository) MarkDeliveryStopArrived(ctx context.Context
 			return models.ErrDeliveryStopNotCurrent
 		}
 
-		res, txErr := db.ExecContext(txCtx, `
-			UPDATE delivery_session_order SET status = 'arrived', arrived_at = UTC_TIMESTAMP()
+		res, txErr := db.ExecContext(txCtx, fmt.Sprintf(`
+			UPDATE delivery_session_order SET status = 'arrived', arrived_at = %s
 			WHERE delivery_session_id = ? AND order_id = ? AND status = 'en_route'
-		`, sessionID, orderID)
+		`, dbx.UTCNow()), sessionID, orderID)
 		if txErr != nil {
 			return txErr
 		}
@@ -867,7 +922,7 @@ func (r *DeliverySessionsRepository) MarkDeliveryStopArrived(ctx context.Context
 // split across SetDelivered (own transaction, called by the service) and
 // FinalizeDeliveredStop (steps 5-7, below).
 func (r *DeliverySessionsRepository) ResolveDeliverableStop(ctx context.Context, merchantID, userID, orderID string) (sessionID string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var currentOrderID sql.NullString
 	err = db.QueryRowContext(ctx, `
@@ -916,25 +971,34 @@ func (r *DeliverySessionsRepository) ResolveDeliverableStop(ctx context.Context,
 // see the handler-level note on the non-atomic window (§3.4).
 func (r *DeliverySessionsRepository) FinalizeDeliveredStop(ctx context.Context, sessionID, orderID string) error {
 	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		// 1. Mark the stop delivered
-		if _, err := db.ExecContext(txCtx, `
+		if _, err := db.ExecContext(txCtx, fmt.Sprintf(`
 			UPDATE delivery_session_order
-			SET status = 'delivered', delivered_at = UTC_TIMESTAMP()
+			SET status = 'delivered', delivered_at = %s
 			WHERE delivery_session_id = ? AND order_id = ?
-		`, sessionID, orderID); err != nil {
+		`, dbx.UTCNow()), sessionID, orderID); err != nil {
 			return err
 		}
 
 		// 2. Reassign the order's payment to the delivery person (ds.user_id)
-		if _, err := db.ExecContext(txCtx, `
+		reassignQuery := `
 			UPDATE payments p
 			INNER JOIN delivery_session_order dso ON dso.order_id = p.order_id
 			INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
 			SET p.user_id = ds.user_id
-			WHERE ds.id = ? AND dso.order_id = ?
-		`, sessionID, orderID); err != nil {
+			WHERE ds.id = ? AND dso.order_id = ?`
+		if dbx.ActiveDialect() == dbx.Postgres {
+			reassignQuery = `
+			UPDATE payments p
+			SET user_id = ds.user_id
+			FROM delivery_session_order dso
+			JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+			WHERE dso.order_id = p.order_id
+			AND ds.id = ? AND dso.order_id = ?`
+		}
+		if _, err := db.ExecContext(txCtx, reassignQuery, sessionID, orderID); err != nil {
 			return err
 		}
 
@@ -948,7 +1012,7 @@ func (r *DeliverySessionsRepository) FinalizeDeliveredStop(ctx context.Context, 
 // current_order_id. Shared by transitions 3/4/5 (§1.3) - reused directly by future
 // /failed and /cancel implementations.
 func (r *DeliverySessionsRepository) advanceCurrentStop(ctx context.Context, sessionID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var nextOrderID string
 	err := db.QueryRowContext(ctx, `
@@ -992,7 +1056,7 @@ func (r *DeliverySessionsRepository) advanceCurrentStop(ctx context.Context, ses
 // NULL and only fail_reason is written (legacy behavior, unchanged).
 func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context, merchantID, userID, orderID, reason string, deletionReasonID, deletionComment *string, newStatus, brandStatus string) (sessionID string, err error) {
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		var currentOrderID sql.NullString
 		txErr := db.QueryRowContext(txCtx, `
@@ -1029,15 +1093,15 @@ func (r *DeliverySessionsRepository) terminalizeDeliveryStop(ctx context.Context
 		var updateStopQuery string
 		switch newStatus {
 		case "failed":
-			updateStopQuery = `
+			updateStopQuery = fmt.Sprintf(`
 				UPDATE delivery_session_order
-				SET status = 'failed', failed_at = UTC_TIMESTAMP(), fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
-				WHERE delivery_session_id = ? AND order_id = ?`
+				SET status = 'failed', failed_at = %s, fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
+				WHERE delivery_session_id = ? AND order_id = ?`, dbx.UTCNow())
 		case "canceled":
-			updateStopQuery = `
+			updateStopQuery = fmt.Sprintf(`
 				UPDATE delivery_session_order
-				SET status = 'canceled', canceled_at = UTC_TIMESTAMP(), fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
-				WHERE delivery_session_id = ? AND order_id = ?`
+				SET status = 'canceled', canceled_at = %s, fail_reason = ?, deletion_reason_id = ?, deletion_comment = ?
+				WHERE delivery_session_id = ? AND order_id = ?`, dbx.UTCNow())
 		default:
 			return fmt.Errorf("terminalizeDeliveryStop: unsupported status %q", newStatus)
 		}
@@ -1079,7 +1143,7 @@ func (r *DeliverySessionsRepository) CancelDeliveryStop(ctx context.Context, mer
 // position is retained only while a session is active, §3.7/§6).
 func (r *DeliverySessionsRepository) CloseMyDeliverySession(ctx context.Context, merchantID, userID string) (sessionID string, err error) {
 	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		txErr := db.QueryRowContext(txCtx, `
 			SELECT id FROM delivery_session
@@ -1105,14 +1169,17 @@ func (r *DeliverySessionsRepository) CloseMyDeliverySession(ctx context.Context,
 			return models.ErrSessionHasPendingStops
 		}
 
-		if _, txErr = db.ExecContext(txCtx, `
-			UPDATE delivery_session SET status = 'done', end_date = UTC_TIMESTAMP() WHERE id = ?
-		`, sessionID); txErr != nil {
+		if _, txErr = db.ExecContext(txCtx, fmt.Sprintf(`
+			UPDATE delivery_session SET status = 'done', end_date = %s WHERE id = ?
+		`, dbx.UTCNow()), sessionID); txErr != nil {
 			return txErr
 		}
 
+		// users.heading est NOT NULL DEFAULT 0 : le SET NULL MySQL non-strict
+		// retombait sur 0 avec warning, Postgres le refuse — 0 explicite,
+		// même résultat.
 		if _, txErr = db.ExecContext(txCtx, `
-			UPDATE users SET lat = NULL, lng = NULL, heading = NULL, last_position_at = NULL WHERE user_id = ?
+			UPDATE users SET lat = NULL, lng = NULL, heading = 0, last_position_at = NULL WHERE user_id = ?
 		`, userID); txErr != nil {
 			return txErr
 		}

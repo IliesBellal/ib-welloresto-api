@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
+
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersRepository struct {
@@ -17,7 +19,7 @@ func NewOrdersRepository(db *sql.DB) *OrdersRepository {
 
 // Utilisé pour récupérer merchant_id et order_id
 func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandOrderID string) (merchantID string, orderID string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	err = db.QueryRowContext(ctx, `
@@ -35,13 +37,13 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 
 // --- CANCEL ORDER ---
 func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `
-		UPDATE orders 
+		UPDATE orders
 		SET brand_status = 'CANCELED',
-		    deletion_reason_id = 39,
+		    deletion_reason_id = '39',
 		    state = 'CLOSED'
 		WHERE brand_order_id = ?
 	`, brandOrderID)
@@ -50,12 +52,23 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 		return err
 	}
 
-	_, err = db.ExecContext(ctx, `
+	// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
+	// UPDATE...FROM instead.
+	disablePaymentsQuery := `
 		UPDATE payments p
 		JOIN orders o ON p.order_id = o.order_id
 		SET p.enabled = FALSE
 		WHERE o.brand_order_id = ?
-	`, brandOrderID)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		disablePaymentsQuery = `
+		UPDATE payments
+		SET enabled = FALSE
+		FROM orders
+		WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?
+	`
+	}
+	_, err = db.ExecContext(ctx, disablePaymentsQuery, brandOrderID)
 
 	if err != nil {
 		log.Error("Error updating payment status: " + err.Error())
@@ -66,7 +79,7 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 
 // --- DELIVERY STATUS UPDATES ---
 func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var orderID string
@@ -88,25 +101,25 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 	}
 
 	// 2. Update de la commande
-	_, err = db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status = 'EN_ROUTE_TO_DROPOFF',
-		    delivery_start = UTC_TIMESTAMP(),
-			isDistributed = 1
+		    delivery_start = %s,
+			isDistributed = true
 		WHERE order_id = ?
-	`, orderID)
+	`, dbx.UTCNow()), orderID)
 	if err != nil {
 		log.Error("Error updating order status: " + err.Error())
 		return err
 	}
 
 	// 3. Update des items (sans JOIN)
-	_, err = db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE orderitems
-		SET distributed_on = UTC_TIMESTAMP(),
-		    isDistributed = 1
+		SET distributed_on = %s,
+		    isDistributed = true
 		WHERE order_id = ?
-	`, orderID)
+	`, dbx.UTCNow()), orderID)
 	if err != nil {
 		log.Error("Error updating order items: " + err.Error())
 		return err
@@ -116,7 +129,7 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 }
 
 func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `

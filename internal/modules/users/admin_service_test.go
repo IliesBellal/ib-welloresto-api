@@ -35,14 +35,14 @@ func TestUsersHandlerListMerchantUsers(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(1)
 		FROM users_rights ur`)).
-		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", true).
+		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	createdAt := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	lastLoginAt := time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
 			u.user_id,`)).
-		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", true, 20, 0).
+		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", 1, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
 			"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
@@ -147,7 +147,7 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT token
 		FROM users_rights
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "user_9").
@@ -246,7 +246,7 @@ func TestUsersServiceLinkMerchantUserRejectsAlreadyLinked(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT COUNT(1)
 		FROM users_rights
-		WHERE merchant_id = ? AND user_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE
 	`)).
 		WithArgs("merchant_1", "user_7").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))

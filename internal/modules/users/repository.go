@@ -6,10 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type UsersRepository struct {
@@ -20,14 +21,35 @@ func NewUserRepository(db *sql.DB) *UsersRepository {
 	return &UsersRepository{database: db}
 }
 
-func (r *UsersRepository) SetUserLocation(ctx context.Context, req models.UpdateLocationRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+// usersMerchantJoinCast returns the SQL fragment used to compare merchant.id
+// (integer identity) against varchar merchant_id columns — merchant_id is
+// carried as a string everywhere in Go (12-merchant-id-unification.md).
+// Same pattern as auth.authMerchantJoinCast.
+func usersMerchantJoinCast() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(m.id AS TEXT)"
+	}
+	return "CAST(m.id AS CHAR)"
+}
 
-	_, err := db.ExecContext(ctx, `
+func (r *UsersRepository) SetUserLocation(ctx context.Context, req models.UpdateLocationRequest) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	// users.lat/lng are text columns and users.heading is an integer NOT NULL:
+	// MySQL coerced the float64 params implicitly, Postgres (pgx) refuses to
+	// bind float64 on text / NULL on NOT NULL int — format and round in Go.
+	lat := strconv.FormatFloat(req.Lat, 'f', -1, 64)
+	lng := strconv.FormatFloat(req.Lng, 'f', -1, 64)
+	heading := 0
+	if req.Heading != nil {
+		heading = int(math.Round(*req.Heading))
+	}
+
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE users
-		SET lat = ?, lng = ?, heading = ?, last_position_at = UTC_TIMESTAMP()
+		SET lat = ?, lng = ?, heading = ?, last_position_at = %s
 		WHERE user_id = ?
-	`, req.Lat, req.Lng, req.Heading, req.UserID)
+	`, dbx.UTCNow()), lat, lng, heading, req.UserID)
 	if err != nil {
 		return err
 	}
@@ -38,7 +60,7 @@ func (r *UsersRepository) SetUserLocation(ctx context.Context, req models.Update
 // GetActiveDeliverySessionForUser returns the id and current stop (order_id) of the
 // caller's active delivery session, if any. sessionID is "" if there is none.
 func (r *UsersRepository) GetActiveDeliverySessionForUser(ctx context.Context, merchantID, userID string) (sessionID string, currentOrderID string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var id string
 	var orderID sql.NullString
@@ -59,12 +81,12 @@ func (r *UsersRepository) GetActiveDeliverySessionForUser(ctx context.Context, m
 
 // InsertDeliveryPosition records a raw position sample for the driver's active session.
 func (r *UsersRepository) InsertDeliveryPosition(ctx context.Context, userID, sessionID string, lat, lng float64, heading, accuracy, speed *float64) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO delivery_position (user_id, delivery_session_id, lat, lng, heading, accuracy, speed, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
-	`, userID, sessionID, lat, lng, heading, accuracy, speed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, %s)
+	`, dbx.UTCNow()), userID, sessionID, lat, lng, heading, accuracy, speed)
 	if err != nil {
 		return err
 	}
@@ -76,7 +98,7 @@ func (r *UsersRepository) InsertDeliveryPosition(ctx context.Context, userID, se
 // the given session/order, resolving the temporary-vs-permanent address switch. ok is
 // false when no destination coordinates are available (status is still returned).
 func (r *UsersRepository) GetDeliveryStopDestination(ctx context.Context, sessionID, orderID string) (status string, lat, lng float64, ok bool, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var useTemporary bool
 	var customerLat, customerLng sql.NullFloat64
@@ -120,12 +142,12 @@ func (r *UsersRepository) GetDeliveryStopDestination(ctx context.Context, sessio
 // MarkStopArrived transitions a stop from en_route to arrived (geofence trigger).
 // Returns true if a row was updated (idempotent: a no-op returns false).
 func (r *UsersRepository) MarkStopArrived(ctx context.Context, sessionID, orderID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	res, err := db.ExecContext(ctx, `
-		UPDATE delivery_session_order SET status='arrived', arrived_at=UTC_TIMESTAMP()
+	res, err := db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE delivery_session_order SET status='arrived', arrived_at=%s
 		WHERE delivery_session_id = ? AND order_id = ? AND status = 'en_route'
-	`, sessionID, orderID)
+	`, dbx.UTCNow()), sessionID, orderID)
 	if err != nil {
 		return false, err
 	}
@@ -143,7 +165,7 @@ func (r *UsersRepository) GetUserByToken(ctx context.Context, token string) (*mo
 		return nil, nil
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 SELECT
     u.user_id,
     u.password,
@@ -214,20 +236,20 @@ SELECT
 
 FROM users u
 INNER JOIN users_rights ur ON ur.id = u.access_id
-INNER JOIN merchant m ON m.id = ur.merchant_id
-LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id
-LEFT JOIN subscriptions s ON s.merchant_id = m.id
+INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
-LEFT JOIN scannorder_settings sset ON sset.merchant_id = m.id
-LEFT JOIN integration_uber_eats iue ON iue.merchant_id = m.id AND iue.bearer_token IS NOT NULL
-LEFT JOIN integration_uber_direct iud ON iud.merchant_id = m.id AND iud.bearer_token IS NOT NULL
-LEFT JOIN integration_deliveroo ind ON ind.merchant_id = m.id
+LEFT JOIN scannorder_settings sset ON sset.merchant_id = %[1]s
+LEFT JOIN integration_uber_eats iue ON iue.merchant_id = %[1]s AND iue.bearer_token IS NOT NULL
+LEFT JOIN integration_uber_direct iud ON iud.merchant_id = %[1]s AND iud.bearer_token IS NOT NULL
+LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 
 WHERE ur.token = ? OR u.token = ?
 LIMIT 1;
-`
+`, usersMerchantJoinCast())
 
-	row := r.database.QueryRowContext(ctx, query, token, token)
+	row := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, token, token)
 
 	data := &models.UserLoginRow{}
 
@@ -269,8 +291,17 @@ LIMIT 1;
 
 func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userID string) (*models.OrderUser, error) {
 
-	query := `
-        SELECT 
+	// NOTE: the join `ur.id = usv.user_id` (users_rights integer PK vs users
+	// varchar user_id) is inherited as-is: MySQL coerced the varchar to a
+	// number silently, Postgres needs an explicit cast. Both dialects only
+	// match when user_id is a plain numeric string — preserved verbatim (no
+	// behaviour fix) per the Tier 1/2 precedent on preexisting anomalies.
+	idCast := "CAST(ur.id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		idCast = "CAST(ur.id AS TEXT)"
+	}
+	query := fmt.Sprintf(`
+        SELECT
             usv.user_id,
             usv.first_name,
             usv.last_name,
@@ -278,15 +309,15 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
             usv.lng,
             usv.status
         FROM user_status_view usv
-        INNER JOIN users_rights ur ON ur.id = usv.user_id
-        INNER JOIN merchant m ON m.id = ur.merchant_id
+        INNER JOIN users_rights ur ON %s = usv.user_id
+        INNER JOIN merchant m ON %s = ur.merchant_id
         WHERE usv.user_id = ?
         AND ur.merchant_id = ?
         AND ur.enabled = TRUE
         LIMIT 1;
-    `
+    `, idCast, usersMerchantJoinCast())
 
-	row := r.database.QueryRowContext(ctx, query, userID, merchantID)
+	row := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, userID, merchantID)
 
 	var res models.OrderUser
 	err := row.Scan(
@@ -308,7 +339,7 @@ func (r *UsersRepository) GetUserLocation(ctx context.Context, merchantID, userI
 }
 
 func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, merchantID string, hash string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	newUserToken, err := generateToken()
 	if err != nil {
 		return "", err
@@ -317,6 +348,14 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 	newMerchantToken, err := generateToken()
 	if err != nil {
 		return "", err
+	}
+
+	// users.token is varchar(30): MySQL (non-strict) silently truncated the
+	// 128-char generated token, Postgres rejects it — truncate Go-side to keep
+	// the historical stored value identical in both dialects. The rotated value
+	// only serves to invalidate the previous user token.
+	if len(newUserToken) > 30 {
+		newUserToken = newUserToken[:30]
 	}
 
 	// 1. Update password
@@ -359,7 +398,7 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 }
 
 func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*models.UserProfileResponse, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT first_name, last_name, email, tel, address, street, city, zip_code, country, lat, lng, profile_picture, mfa_type, email_verified_at, tel_verified_at
@@ -415,7 +454,7 @@ func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*m
 }
 
 func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, req *models.UpdateUserProfileRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -471,13 +510,14 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 		updates = append(updates, "country = ?")
 		args = append(args, *req.Country)
 	}
+	// users.lat/lng are text columns — format Go-side (pgx refuses float64 on text).
 	if req.Lat != nil {
 		updates = append(updates, "lat = ?")
-		args = append(args, *req.Lat)
+		args = append(args, strconv.FormatFloat(*req.Lat, 'f', -1, 64))
 	}
 	if req.Lng != nil {
 		updates = append(updates, "lng = ?")
-		args = append(args, *req.Lng)
+		args = append(args, strconv.FormatFloat(*req.Lng, 'f', -1, 64))
 	}
 	if req.MFAType != nil {
 		updates = append(updates, "mfa_type = ?")
@@ -501,7 +541,7 @@ func (r *UsersRepository) UpdateUserProfile(ctx context.Context, userID string, 
 }
 
 func (r *UsersRepository) GetUserAvatarURL(ctx context.Context, userID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var avatar sql.NullString
 	err := db.QueryRowContext(ctx, `SELECT profile_picture FROM users WHERE user_id = ?`, userID).Scan(&avatar)
@@ -512,7 +552,7 @@ func (r *UsersRepository) GetUserAvatarURL(ctx context.Context, userID string) (
 }
 
 func (r *UsersRepository) GetMerchantCountryCode(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var country sql.NullString
 	err := db.QueryRowContext(ctx, `SELECT country FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&country)
@@ -524,21 +564,21 @@ func (r *UsersRepository) GetMerchantCountryCode(ctx context.Context, merchantID
 }
 
 func (r *UsersRepository) UpdateUserAvatar(ctx context.Context, userID, avatarURL string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `UPDATE users SET profile_picture = ? WHERE user_id = ?`, avatarURL, userID)
 	return err
 }
 
 func (r *UsersRepository) GetOutOfStockComponents(ctx context.Context, merchantID string, maxNames int) (int, []string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var count int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM components
 		WHERE merchant_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 		  AND category_id <> 'UBER_EATS_TEMP'
 		  AND stock <= 0
 	`, merchantID).Scan(&count); err != nil {
@@ -553,7 +593,7 @@ func (r *UsersRepository) GetOutOfStockComponents(ctx context.Context, merchantI
 		SELECT name
 		FROM components
 		WHERE merchant_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 		  AND category_id <> 'UBER_EATS_TEMP'
 		  AND stock <= 0
 		ORDER BY name ASC
@@ -583,7 +623,7 @@ func (r *UsersRepository) GetOutOfStockComponents(ctx context.Context, merchantI
 }
 
 func (r *UsersRepository) GetUserVerificationStatus(ctx context.Context, userID string) (*UserVerificationStatus, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var email sql.NullString
 	var phone sql.NullString

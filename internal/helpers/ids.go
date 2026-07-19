@@ -48,6 +48,7 @@ const (
 	PlanningEmployeeAmendmentIDPrefix    = "plan-ame"
 	PlanningSystemRuleIDPrefix           = "plan-rule"
 	PlanningHolidayIDPrefix              = "plan-hol"
+	PlanningDayCommentIDPrefix           = "plan-day-comment"
 	StockMovementPrefix                  = "stock-mvt"
 	UpsellSuggestionIDPrefix             = "upsell-sugg"
 	PrinterIDPrefix                      = "printer"

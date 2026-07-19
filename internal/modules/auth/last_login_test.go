@@ -24,24 +24,24 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
-		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(
+		WillReturnRows(sqlmock.NewRows(makeColumns(84)).AddRow(
 			// user (0-10)
 			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, true, "ignored", nil,
 			// rights (11-34)
 			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil,
 			// merchant (35-42)
 			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil,
-			// merchant params (43-62)
+			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62)
 			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false,
-			// package (61-70)
-			true, true, false, 0, false, true, true, true, false, true,
-			// SNO (71)
+			// package (63-73): AllowWaiterAccount..KiosksEnabled
+			true, true, false, 0, false, true, true, true, false, true, true,
+			// SNO (74)
 			false,
-			// uber eats (72-77)
+			// uber eats (75-80)
 			nil, nil, nil, nil, nil, nil,
-			// uber direct (78)
+			// uber direct (81)
 			nil,
-			// deliveroo (79-80)
+			// deliveroo (82-83)
 			nil, nil,
 		))
 

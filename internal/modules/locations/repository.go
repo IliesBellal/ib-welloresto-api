@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"time"
+
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type LocationsRepository struct {
@@ -19,7 +22,7 @@ func NewLocationsRepository(db *sql.DB) *LocationsRepository {
 }
 
 func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) (*models.LocationResponse, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	res := &models.LocationResponse{
 		Locations: []models.Location{},
 		Floors:    []models.Floor{},
@@ -82,9 +85,15 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 
 	// 2. CHARGEMENT DES RÉSERVATIONS (BOOKINGS)
 	// On gère le fait qu'une résa peut avoir plusieurs tables
-	queryBookings := `
-		SELECT 
-			b.booking_id, b.booking_number, b.status, 
+	windowStart := "UTC_TIMESTAMP - INTERVAL 5 HOUR"
+	windowEnd := "UTC_TIMESTAMP() + INTERVAL 8 HOUR"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		windowStart = "now() - interval '5 hours'"
+		windowEnd = "now() + interval '8 hours'"
+	}
+	queryBookings := fmt.Sprintf(`
+		SELECT
+			b.booking_id, b.booking_number, b.status,
 			b.sequence_number, b.booking_date_from, b.booking_date_to, b.party_size,
 			b.creation_date, b.created_by, b.comment, b.booking_date_from, b.booking_date_to,
 			bl.location_id, c.customer_id, c.customer_name, COALESCE(c.customer_tel, '')
@@ -92,8 +101,8 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		INNER JOIN booked_location bl ON bl.booking_id = b.booking_id
 		INNER JOIN customer c ON c.customer_id = b.customer_id
 		WHERE b.merchant_id = ? AND b.status = 'ACCEPTED'
-		AND b.booking_date_to > UTC_TIMESTAMP - INTERVAL 5 HOUR
-		AND b.booking_date_from < UTC_TIMESTAMP() + INTERVAL 8 HOUR;`
+		AND b.booking_date_to > %s
+		AND b.booking_date_from < %s;`, windowStart, windowEnd)
 
 	rowsBook, err := db.QueryContext(ctx, queryBookings, merchantID)
 	if err != nil {
@@ -272,7 +281,7 @@ func nextActiveBooking(bookings []models.Booking) *models.LocationBooking {
 // GetObstaclesByMerchant charge tous les obstacles actifs du plan de salle
 // d'un marchand (tous étages confondus), utilisé pour enrichir GetLocations.
 func (r *LocationsRepository) GetObstaclesByMerchant(ctx context.Context, merchantID string) ([]Obstacle, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, floor_id, type, x, y, width, height, angle, direction
@@ -299,7 +308,7 @@ func (r *LocationsRepository) GetObstaclesByMerchant(ctx context.Context, mercha
 // GetObstacleByID récupère un obstacle pour vérifier son appartenance au
 // marchand (et donc, indirectement, au floor demandé dans l'URL).
 func (r *LocationsRepository) GetObstacleByID(ctx context.Context, merchantID, obstacleID string) (Obstacle, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	var o Obstacle
 	err := db.QueryRowContext(ctx, `
@@ -321,7 +330,7 @@ func (r *LocationsRepository) GetObstacleByID(ctx context.Context, merchantID, o
 // FloorExists vérifie que le floor_id appartient bien au marchand (utilisé
 // par le service pour valider CreateObstacle).
 func (r *LocationsRepository) FloorExists(ctx context.Context, merchantID, floorID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	var exists int
 	err := db.QueryRowContext(ctx,
@@ -339,14 +348,14 @@ func (r *LocationsRepository) FloorExists(ctx context.Context, merchantID, floor
 }
 
 func (r *LocationsRepository) CreateObstacle(ctx context.Context, merchantID string, req CreateObstacleRequest) (string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	obstacleID := helpers.GeneratePrefixedID(helpers.ObstacleIDPrefix)
 
-	_, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO floor_obstacles
 		(id, floor_id, merchant_id, type, x, y, width, height, angle, direction, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, UTC_TIMESTAMP())`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, %s)`, dbx.UTCNow()),
 		obstacleID, req.FloorID, merchantID, req.Type, req.X, req.Y, req.Width, req.Height, req.Angle, req.Direction,
 	)
 	if err != nil {
@@ -357,7 +366,7 @@ func (r *LocationsRepository) CreateObstacle(ctx context.Context, merchantID str
 }
 
 func (r *LocationsRepository) UpdateObstacle(ctx context.Context, merchantID, obstacleID string, req UpdateObstacleRequest) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	res, err := db.ExecContext(ctx, `
 		UPDATE floor_obstacles SET
@@ -384,7 +393,7 @@ func (r *LocationsRepository) UpdateObstacle(ctx context.Context, merchantID, ob
 }
 
 func (r *LocationsRepository) DeleteObstacle(ctx context.Context, merchantID, obstacleID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	res, err := db.ExecContext(ctx, `
 		UPDATE floor_obstacles SET enabled = FALSE
@@ -407,26 +416,29 @@ func (r *LocationsRepository) DeleteObstacle(ctx context.Context, merchantID, ob
 // FloorExists — floor_areas ne porte pas de colonne merchant_id, seulement
 // floor_id (voir migration 050_baseline_floorplan).
 func (r *LocationsRepository) CreateArea(ctx context.Context, req CreateAreaRequest) (string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
-	areaID := helpers.GeneratePrefixedID(helpers.FloorAreaIDPrefix)
+	// floor_areas.id is an auto-increment identity column — same fix as
+	// CreateFloor above (read back the generated id instead of inserting a
+	// client-generated prefixed string). Changes the returned id format.
 	pointsJSON, _ := json.Marshal(req.Points)
 
-	_, err := db.ExecContext(ctx, `
+	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO floor_areas
-		(id, floor_id, name, stroke_color, color, x, y, points, angle, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
-		areaID, req.FloorID, req.Name, req.StrokeColor, req.Color, req.X, req.Y, pointsJSON, req.Angle,
+		(floor_id, name, stroke_color, color, x, y, points, angle, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+		"id", req.FloorID, req.Name, req.StrokeColor, req.Color, req.X, req.Y, pointsJSON, req.Angle,
 	)
 	if err != nil {
 		return "", err
 	}
+	areaID := strconv.FormatInt(id, 10)
 
 	return areaID, nil
 }
 
 func (r *LocationsRepository) UpdateArea(ctx context.Context, merchantID, areaID string, req UpdateAreaRequest) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	var pointsJSON []byte
 	if req.Points != nil {
@@ -459,7 +471,7 @@ func (r *LocationsRepository) UpdateArea(ctx context.Context, merchantID, areaID
 }
 
 func (r *LocationsRepository) DeleteArea(ctx context.Context, merchantID, areaID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	res, err := db.ExecContext(ctx, `
 		UPDATE floor_areas SET enabled = FALSE
@@ -479,12 +491,16 @@ func (r *LocationsRepository) DeleteArea(ctx context.Context, merchantID, areaID
 }
 
 func (r *LocationsRepository) CreateTable(ctx context.Context, merchantID, floorID string, req CreateTableRequest) (string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
+	// locations.location_id is an auto-increment identity column — same fix
+	// as CreateFloor/CreateArea above (read back the generated id instead of
+	// inserting a client-generated prefixed string). Changes the returned id
+	// format.
 	query := `
 		INSERT INTO locations
-		(location_id, merchant_id, floor_id, location_name, seats, shape, current_x, current_y, current_width, current_height, angle, location_order, enabled, attributes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
+		(merchant_id, floor_id, location_name, seats, shape, current_x, current_y, current_width, current_height, angle, location_order, enabled, attributes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
 	`
 
 	// Obtenir le prochain location_order pour ce floor
@@ -496,15 +512,13 @@ func (r *LocationsRepository) CreateTable(ctx context.Context, merchantID, floor
 
 	nextOrder := int(maxOrder.Int64) + 1
 
-	locationID := helpers.GeneratePrefixedID(helpers.LocationIDPrefix)
-
 	var attrJSON []byte
 	if req.Attributes != nil {
 		attrJSON, _ = json.Marshal(req.Attributes)
 	}
 
-	_, err := db.ExecContext(ctx, query,
-		locationID, merchantID, floorID, req.LocationName, req.Seats, req.Shape,
+	id, err := db.InsertReturningID(ctx, query, "location_id",
+		merchantID, floorID, req.LocationName, req.Seats, req.Shape,
 		req.X, req.Y, req.Width, req.Height, req.Angle, nextOrder, attrJSON,
 	)
 
@@ -512,11 +526,11 @@ func (r *LocationsRepository) CreateTable(ctx context.Context, merchantID, floor
 		return "", err
 	}
 
-	return locationID, nil
+	return strconv.FormatInt(id, 10), nil
 }
 
 func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locationID string, req UpdateTableRequest) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	angle := req.TableAngle()
 
 	query := `
@@ -552,7 +566,7 @@ func (r *LocationsRepository) UpdateTable(ctx context.Context, merchantID, locat
 }
 
 func (r *LocationsRepository) DeleteTable(ctx context.Context, merchantID, locationID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	query := `
 		UPDATE locations
@@ -565,7 +579,7 @@ func (r *LocationsRepository) DeleteTable(ctx context.Context, merchantID, locat
 }
 
 func (r *LocationsRepository) UpdateFloor(ctx context.Context, merchantID, floorID, name string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE floors SET name = ? WHERE id = ? AND merchant_id = ? AND enabled IS TRUE`,
@@ -593,7 +607,7 @@ func (r *LocationsRepository) UpdateFloor(ctx context.Context, merchantID, floor
 }
 
 func (r *LocationsRepository) DeleteFloor(ctx context.Context, merchantID, floorID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	var activeTables int
 	err := db.QueryRowContext(ctx,
@@ -623,16 +637,23 @@ func (r *LocationsRepository) DeleteFloor(ctx context.Context, merchantID, floor
 }
 
 func (r *LocationsRepository) CreateFloor(ctx context.Context, merchantID, name string) (string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
-	query := `INSERT INTO floors (id, merchant_id, name, enabled) VALUES (?, ?, ?, TRUE)`
+	// floors.id is an auto-increment identity column, not a client-generated
+	// prefixed id (unlike most other Wello Resto entities) — MySQL silently
+	// coerced the previous prefixed-string insert to 0 and auto-generated a
+	// real id anyway, but then returned the WRONG (prefixed-string) id to the
+	// caller; Postgres's GENERATED ALWAYS rejects the explicit value outright.
+	// Fixed to read back the real generated id. NOTE: this changes the id
+	// format returned by this endpoint from a prefixed string ("flr-xxx") to
+	// a plain integer string ("42") — frontend clients must be updated to
+	// treat floor ids as opaque strings rather than assuming a "flr-" prefix.
+	query := `INSERT INTO floors (merchant_id, name, enabled) VALUES (?, ?, TRUE)`
 
-	floorID := helpers.GeneratePrefixedID(helpers.FloorIDPrefix)
-
-	_, err := db.ExecContext(ctx, query, floorID, merchantID, name)
+	id, err := db.InsertReturningID(ctx, query, "id", merchantID, name)
 	if err != nil {
 		return "", err
 	}
 
-	return floorID, nil
+	return strconv.FormatInt(id, 10), nil
 }

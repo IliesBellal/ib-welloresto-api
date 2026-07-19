@@ -52,47 +52,50 @@ Quatre modules appellent des procédures stockées MySQL dont le corps n'est pas
 | 4 | `receipt` | 3 | 0 | 0 | 0 | non | non | **3** |
 | 5 | `user_services` | 4 | 0 | 0 | 0 | non | non | **4** |
 | 6 | `bookingcore` | 2 | 0 | 1 (UTC_TIMESTAMP) | 0 | non | oui (3) | **5** |
-| 7 | `audit` | 3 | 0 | 1 (NOW) | 0 | non | non | **6** |
-| 7 | `messaggio` | 2 | 0 | 1 (DATE_FORMAT+UTC_TIMESTAMP) | 1 | non | non | **6** |
-| 9 | `googlemaps` | 3 | 0 | 1 (DATE_FORMAT+UTC_TIMESTAMP) | 1 | non | non | **7** |
-| 9 | `printers` | 7 | 0 | 0 | 0 | non | non | **7** |
-| 11 | `upsell` | 7 | 0 | 1 (DATE_SUB/NOW) | 0 | non | non | **10** |
-| 12 | `translation` | 9 | 0 | 0 | 2 | non | non | **11** |
-| 13 | `webhook/brevo_sms_reply` | 3 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | oui (1) | **12** |
-| 13 | `tags` | 12 | 0 | 0 | 0 | non | non | **12** |
-| 15 | `discounts` | 14 | 0 | 0 | 0 | non | non | **14** |
-| 16 | `integrations` | 17 | 0 | 0 | 0 | non | non | **17** |
-| 17 | `notification` | 6 | 0 | 4 (DATE_SUB/ADD, UTC_TIMESTAMP) | 0 | non | non | **18** |
-| 18 | `availabilities` | 15 | 2 | 0 | 0 | non | oui (1) | **19** |
-| 19 | `webhook/ubereats` | 15 | 0 | 2 (UTC_TIMESTAMP) | 0 | non | non | **21** |
-| 19 | `webhook/deliveroo_orders` | 21 | 0 | 0 | 0 | non | non | **21** |
-| 21 | `stats` | 12 | 0 | 4 (DATE_FORMAT, CONVERT_TZ) | 0 | non | oui (1) | **24** |
-| 22 | `deliveroo` | 11 | 0 | 5 (UTC_TIMESTAMP, DATE_ADD) | 0 | non | non | **26** |
-| 23 | `reservation` | 19 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | non | **28** |
-| 24 | `locations` | 22 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | non | **31** |
-| 25 | `webhook/stripe` | 24 | 0 | 7 (UTC_TIMESTAMP, FROM_UNIXTIME) | 0 | non | non | **45** |
-| 26 | `auth` | 16 | 1 | 9 (UTC_TIMESTAMP, NOW) | 1 | non | oui (2) | **46** |
-| 27 | `stocks` | 31 | 0 | 6 (UTC_TIMESTAMP, DATE_FORMAT) | 0 | non | non | **49** |
-| 28 | `users` | 42 | 1 | 3 (UTC_TIMESTAMP) | 0 | non | oui (1) | **53** |
-| 29 | `cash_registers` | 32 | 3 | 5 (UTC_TIMESTAMP) | 1 | **oui** | non | **59** |
-| 30 | `orders` | 19 | 14 | 4 (UTC_TIMESTAMP) | 0 | **oui** | oui (2) | **64** |
-| 31 | `haccp` | 51 | 6 | 2 (UTC_TIMESTAMP) | 0 | non | oui (3) | **69** |
-| 32 | `delivery_sessions` | 42 | 5 | 6 (UTC_TIMESTAMP) | 0 | non | non | **70** |
-| 33 | `ubereats` | 24 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 2 | **oui** | non | **73** |
-| 34 | `scannorder` | 31 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 0 | **oui** | non | **78** |
-| 35 | `kiosk` | 39 | 2 | 12 (UTC_TIMESTAMP) | 1 | non | oui (1) | **80** |
-| 36 | `customers` | 50 | 4 | 8 (UTC_TIMESTAMP) | 0 | non | oui (1) | **82** |
-| 37 | `pos` (+ accounting, reports) | 47 | 8 | 20 (DATE_FORMAT, UTC_TIMESTAMP) | 1 | **oui** | non | **129** |
-| 38 | `menu` | 109 | 11 | 1 (UTC_TIMESTAMP) | 3 | non | oui (1) | **137** |
-| 39 | `bookings` | 58 | 3 | 27 (UTC_TIMESTAMP, DATE_FORMAT, TIMESTAMPDIFF) | 2 | non | oui (7) | **147** |
-| 40 | `order_life_cycle` | 69 | 7 | 26 (UTC_TIMESTAMP, TIMESTAMPADD) | 4 | **oui** | oui (3) | **170** |
-| 41 | `planning` (12 sous-packages) | 143 | 2 | 11 (DATE_FORMAT, TIMESTAMPDIFF, DATE_ADD, CONVERT_TZ, NOW) | 2 | non | oui (22) | **182** |
+| 6 | `planning/daycomments` | 4 | 0 | 0 | 1 | non | oui (1) | **5** |
+| 8 | `audit` | 3 | 0 | 1 (NOW) | 0 | non | non | **6** |
+| 8 | `messaggio` | 2 | 0 | 1 (DATE_FORMAT+UTC_TIMESTAMP) | 1 | non | non | **6** |
+| 10 | `googlemaps` | 3 | 0 | 1 (DATE_FORMAT+UTC_TIMESTAMP) | 1 | non | non | **7** |
+| 10 | `printers` | 7 | 0 | 0 | 0 | non | non | **7** |
+| 12 | `upsell` | 7 | 0 | 1 (DATE_SUB/NOW) | 0 | non | non | **10** |
+| 13 | `translation` | 9 | 0 | 0 | 2 | non | non | **11** |
+| 14 | `webhook/brevo_sms_reply` | 3 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | oui (1) | **12** |
+| 14 | `tags` | 12 | 0 | 0 | 0 | non | non | **12** |
+| 16 | `discounts` | 14 | 0 | 0 | 0 | non | non | **14** |
+| 17 | `integrations` | 17 | 0 | 0 | 0 | non | non | **17** |
+| 18 | `notification` | 6 | 0 | 4 (DATE_SUB/ADD, UTC_TIMESTAMP) | 0 | non | non | **18** |
+| 19 | `availabilities` | 15 | 2 | 0 | 0 | non | oui (1) | **19** |
+| 20 | `webhook/ubereats` | 15 | 0 | 2 (UTC_TIMESTAMP) | 0 | non | non | **21** |
+| 20 | `webhook/deliveroo_orders` | 21 | 0 | 0 | 0 | non | non | **21** |
+| 22 | `stats` | 12 | 0 | 4 (DATE_FORMAT, CONVERT_TZ) | 0 | non | oui (1) | **24** |
+| 23 | `deliveroo` | 11 | 0 | 5 (UTC_TIMESTAMP, DATE_ADD) | 0 | non | non | **26** |
+| 24 | `reservation` | 19 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | non | **28** |
+| 25 | `locations` | 22 | 0 | 3 (UTC_TIMESTAMP) | 0 | non | non | **31** |
+| 26 | `webhook/stripe` | 24 | 0 | 7 (UTC_TIMESTAMP, FROM_UNIXTIME) | 0 | non | non | **45** |
+| 27 | `auth` | 16 | 1 | 9 (UTC_TIMESTAMP, NOW) | 1 | non | oui (2) | **46** |
+| 28 | `stocks` | 31 | 0 | 6 (UTC_TIMESTAMP, DATE_FORMAT) | 0 | non | non | **49** |
+| 29 | `users` | 42 | 1 | 3 (UTC_TIMESTAMP) | 0 | non | oui (1) | **53** |
+| 30 | `cash_registers` | 32 | 3 | 5 (UTC_TIMESTAMP) | 1 | **oui** | non | **59** |
+| 31 | `orders` | 19 | 14 | 4 (UTC_TIMESTAMP) | 0 | **oui** | oui (2) | **64** |
+| 32 | `haccp` | 51 | 6 | 2 (UTC_TIMESTAMP) | 0 | non | oui (3) | **69** |
+| 33 | `delivery_sessions` | 42 | 5 | 6 (UTC_TIMESTAMP) | 0 | non | non | **70** |
+| 34 | `ubereats` | 24 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 2 | **oui** | non | **73** |
+| 35 | `scannorder` | 31 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 0 | **oui** | non | **78** |
+| 36 | `kiosk` | 39 | 2 | 12 (UTC_TIMESTAMP) | 1 | non | oui (1) | **80** |
+| 37 | `customers` | 50 | 4 | 8 (UTC_TIMESTAMP) | 0 | non | oui (1) | **82** |
+| 38 | `pos` (+ accounting, reports) | 47 | 8 | 20 (DATE_FORMAT, UTC_TIMESTAMP) | 1 | **oui** | non | **129** |
+| 39 | `menu` | 109 | 11 | 1 (UTC_TIMESTAMP) | 3 | non | oui (1) | **137** |
+| 40 | `bookings` | 58 | 3 | 27 (UTC_TIMESTAMP, DATE_FORMAT, TIMESTAMPDIFF) | 2 | non | oui (7) | **147** |
+| 41 | `order_life_cycle` | 69 | 7 | 26 (UTC_TIMESTAMP, TIMESTAMPADD) | 4 | **oui** | oui (3) | **170** |
+| 42 | `planning` (12 sous-packages) | 143 | 2 | 11 (DATE_FORMAT, TIMESTAMPDIFF, DATE_ADD, CONVERT_TZ, NOW) | 2 | non | oui (22) | **182** |
 
 `planning` regroupe `documents`, `employees`, `leave`, `performance`, `refs`, `revenueforecast`, `schedule`, `settings`, `shifttemplates`, `swaps`, `timeentries`, `weektemplates` — un seul module fonctionnel avec un seul owner de schéma, décomposer la conversion en sous-packages est possible en pratique (voir recommandations) mais le score global reflète la charge totale de la migration planning.
 
+`planning/daycomments` (table `planning_day_comments`, migration 065) est un **13ᵉ sous-package**, ajouté **après** cet audit initial — il n'est donc pas compté dans les "12 sous-packages"/le score 182 de la ligne `planning` ci-dessus, et suit son propre cycle de conversion indépendant (score **5**, ligne dédiée dans le tableau) plutôt que d'être noyé dans l'agrégat Tier 4. Détail dans [26-planning-day-comments-integration.md](26-planning-day-comments-integration.md).
+
 ## Ordre de conversion recommandé
 
-**Tier 1 — quasi gratuit (score ≤ 10), à faire en premier pour valider l'outillage/patterns de conversion** : `bookingevents`, `webhook/deliveroo_menu`, `allergens`, `receipt`, `user_services`, `bookingcore`, `audit`, `messaggio`, `googlemaps`, `printers`, `upsell`. Aucun de ces modules n'a de procédure stockée ni de placeholders dynamiques ; la plupart n'ont qu'une seule fonction de date `UTC_TIMESTAMP()` (→ `now() AT TIME ZONE 'UTC'` ou `timezone('UTC', now())`). Bon lot pour établir la convention de traduction MySQL→Postgres (driver, placeholders `?`→`$1`, gestion des erreurs `sql.ErrNoRows`) sans risque métier significatif.
+**Tier 1 — quasi gratuit (score ≤ 10), à faire en premier pour valider l'outillage/patterns de conversion** : `bookingevents`, `webhook/deliveroo_menu`, `allergens`, `receipt`, `user_services`, `bookingcore`, `planning/daycomments`, `audit`, `messaggio`, `googlemaps`, `printers`, `upsell`. Aucun de ces modules n'a de procédure stockée ni de placeholders dynamiques ; la plupart n'ont qu'une seule fonction de date `UTC_TIMESTAMP()` (→ `now() AT TIME ZONE 'UTC'` ou `timezone('UTC', now())`) ou aucune. Bon lot pour établir la convention de traduction MySQL→Postgres (driver, placeholders `?`→`$1`, gestion des erreurs `sql.ErrNoRows`) sans risque métier significatif. `planning/daycomments` est le seul de ce lot dont le seul chemin d'UPDATE est un `ON DUPLICATE KEY UPDATE` (upsert) — aucune fonction de date MySQL dans ses requêtes (`created_at`/`updated_at` sont posés côté Go via `time.Now().UTC()`, pas en SQL).
 
 **Tier 2 — risque faible à modéré (11–50)** : `translation`, `webhook/brevo_sms_reply`, `tags`, `discounts`, `integrations`, `notification`, `availabilities`, `webhook/ubereats`, `webhook/deliveroo_orders`, `stats`, `deliveroo`, `reservation`, `locations`, `webhook/stripe`, `auth`, `stocks`. `auth` mérite une attention particulière malgré son score modéré : il gère les tokens/MFA/sessions, donc les tests existants (`last_login_test.go`, `pin_test.go`) doivent rester verts à chaque étape. `webhook/stripe` a le plus de fonctions de date de ce tier (`FROM_UNIXTIME` — Stripe envoie des epochs Unix, vérifier la conversion `to_timestamp()` still en UTC).
 

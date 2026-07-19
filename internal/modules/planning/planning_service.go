@@ -3,6 +3,7 @@ package planning
 import (
 	"welloresto-api/internal/infrastructure/r2"
 	auditpkg "welloresto-api/internal/modules/audit"
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
@@ -17,6 +18,7 @@ import (
 	weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
 )
 
+type DayCommentsService = daycommentspkg.Service
 type DocumentsService = documentspkg.Service
 type SettingsService = settingspkg.Service
 type RefsService = refspkg.Service
@@ -33,6 +35,7 @@ type RevenueForecastService = revenueforecastpkg.Service
 type PlanningService struct {
 	repo      *PlanningRepository
 	privateR2 *r2.Client
+	*DayCommentsService
 	*DocumentsService
 	*SettingsService
 	*RefsService
@@ -52,6 +55,7 @@ func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService aud
 	return &PlanningService{
 		repo:                   repo,
 		privateR2:              privateR2,
+		DayCommentsService:     daycommentspkg.NewService(repo.DayCommentsRepository, auditService),
 		DocumentsService:       documentspkg.NewService(repo.DocumentsRepository, repo.EmployeesRepository, privateR2),
 		SettingsService:        settingspkg.NewService(repo.SettingsRepository),
 		RefsService:            refspkg.NewService(repo.RefsRepository),

@@ -2423,9 +2423,11 @@ CREATE TABLE packages (
     stock_enabled boolean NOT NULL DEFAULT false,
     scannorder_enabled boolean NOT NULL DEFAULT true,
     bookings_enabled boolean NOT NULL DEFAULT false,
+    kiosks_enabled boolean NOT NULL DEFAULT false,
     PRIMARY KEY (id)
 );
 COMMENT ON COLUMN packages.scannorder_ready IS 'Allow access SNO options in Quick Management (Reception App) and order via SNO';
+COMMENT ON COLUMN packages.kiosks_enabled IS 'Added to MySQL source after the 07/13 DDL dump this migration was audited against — not present in wello-resto-mysql-ddl.md, confirmed by the user as a recent production addition (see 25-tier2-conversion-log.md).';
 
 -- ---------------------------------------------------------------------
 -- payments
@@ -2491,6 +2493,27 @@ CREATE TABLE planned_shifts (
     enabled integer NOT NULL DEFAULT 1,
     PRIMARY KEY (id)
 );
+
+-- ---------------------------------------------------------------------
+-- planning_day_comments
+--   nouvelle table (migration 065, non presente dans le dump wello-resto-mysql-ddl.md audite) ; module internal/modules/planning/daycomments
+--   updated_at: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes) ; CONFIRME cependant, voir docs/migration-postgres/05-on-update-timestamp-audit.md #41 (Upsert du module set explicitement updated_at)
+--   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
+--   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+-- ---------------------------------------------------------------------
+CREATE TABLE planning_day_comments (
+    id varchar(64) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    comment_date date NOT NULL,
+    comment text NOT NULL,
+    created_by varchar(64),
+    updated_by varchar(64),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_planning_day_comments_uq_planning_day_comments_merchant_date ON planning_day_comments (merchant_id, comment_date);
+CREATE INDEX idx_planning_day_comments_idx_planning_day_comments_merchant_ra ON planning_day_comments (merchant_id, comment_date);
 
 -- ---------------------------------------------------------------------
 -- planning_holiday_overrides

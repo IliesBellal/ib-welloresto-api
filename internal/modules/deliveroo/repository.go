@@ -9,8 +9,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type DeliverooRepository struct {
@@ -47,7 +48,7 @@ func (r *DeliverooRepository) GetBearerToken(ctx context.Context) (string, error
 }
 
 func (r *DeliverooRepository) GetBrandOrderID(ctx context.Context, orderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	const q = `SELECT brand_order_id FROM orders WHERE order_id = ? LIMIT 1`
@@ -64,7 +65,7 @@ func (r *DeliverooRepository) GetBrandOrderID(ctx context.Context, orderID strin
 }
 
 func (r *DeliverooRepository) MarkDeliverooDeliveryStarted(ctx context.Context, brandOrderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1) Retrieve order_id and merchant_id
@@ -86,25 +87,29 @@ func (r *DeliverooRepository) MarkDeliverooDeliveryStarted(ctx context.Context, 
 	}
 
 	// 2) Update orders
-	_, err := db.ExecContext(ctx, `
+	// NOTE: orders.dateDeparture does not exist in either the MySQL source DDL
+	// or the Postgres target schema — pre-existing bug, identical failure on
+	// both dialects (not a dialect-translation issue). Left unfixed, see
+	// Tier2 report.
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE orders
-		SET brand_status = 'DELIVERING', status = '1', isDistributed = '1', dateDeparture = UTC_TIMESTAMP()
+		SET brand_status = 'DELIVERING', status = '1', isDistributed = '1', dateDeparture = %s
 		WHERE order_id = ?
-	`, orderID)
+	`, dbx.UTCNow()), orderID)
 	if err != nil {
 		log.Error("MarkDeliverooDeliveryStarted: failed to update order status: " + err.Error())
 		return "", err
 	}
 
 	// 3) Update orderitems
-	_, err = db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE orderitems
 		SET distributed_quantity = quantity,
 		    ready_for_distribution_quantity = quantity,
-		    isDistributed = 1,
-		    distributed_on = UTC_TIMESTAMP()
+		    isDistributed = true,
+		    distributed_on = %s
 		WHERE order_id = ?
-	`, orderID)
+	`, dbx.UTCNow()), orderID)
 	if err != nil {
 		log.Error("MarkDeliverooDeliveryStarted: failed to update order items: " + err.Error())
 		return "", err
@@ -114,18 +119,22 @@ func (r *DeliverooRepository) MarkDeliverooDeliveryStarted(ctx context.Context, 
 }
 
 func (r *DeliverooRepository) UpdateAcceptedStatus(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	const updateQ = `
+	deliveryDeadline := "DATE_ADD(UTC_TIMESTAMP(), INTERVAL 30 MINUTE)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		deliveryDeadline = "(now() + interval '30 minutes')"
+	}
+	updateQ := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status =
 			CASE
-				WHEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL 30 MINUTE) < estimated_ready THEN 'scheduled'
+				WHEN %s < estimated_ready THEN 'scheduled'
 				ELSE 'accepted'
 			END
 		WHERE brand_order_id = ?
-	`
+	`, deliveryDeadline)
 
 	if _, err := db.ExecContext(ctx, updateQ, brandOrderID); err != nil {
 		log.Error("UpdateAcceptedStatus: failed to update order status: " + err.Error())
@@ -136,7 +145,7 @@ func (r *DeliverooRepository) UpdateAcceptedStatus(ctx context.Context, brandOrd
 }
 
 func (r *DeliverooRepository) GetBrandOrderIDAndMerchant(ctx context.Context, orderID int) (string, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var brandOrderID string
 	var merchantID int
@@ -152,35 +161,35 @@ func (r *DeliverooRepository) GetBrandOrderIDAndMerchant(ctx context.Context, or
 }
 
 func (r *DeliverooRepository) UpdateReadyForHandoffLocal(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	const q = `
+	q := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status='READY_FOR_COLLECTION',
-		    last_update = UTC_TIMESTAMP()
+		    last_update = %s
 		WHERE order_id = ?
-	`
+	`, dbx.UTCNow())
 	_, err := db.ExecContext(ctx, q, orderID)
 	return err
 }
 
 func (r *DeliverooRepository) MarkOrderCanceledLocal(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	const q = `
+	q := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status='CANCELED',
 		    status='-1',
-		    last_update=UTC_TIMESTAMP()
+		    last_update=%s
 		WHERE order_id = ?
-	`
+	`, dbx.UTCNow())
 	_, err := db.ExecContext(ctx, q, orderID)
 	return err
 }
 
 // GetBrandIDByMerchant récupère le brand_id Deliveroo associé à un merchant
 func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? LIMIT 1`
 
@@ -196,7 +205,7 @@ func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchant
 
 // UpdateMerchantBrandID met à jour le brand_id Deliveroo pour un restaurant donné
 func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchantID string, brandID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `UPDATE integration_deliveroo SET brand_id = ? WHERE merchant_id = ?`
 
@@ -206,7 +215,7 @@ func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchan
 
 // GetSiteIDByMerchant récupère le site_id (unique par site) stocké en base
 func (r *DeliverooRepository) GetSiteIDByMerchant(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? LIMIT 1`
 

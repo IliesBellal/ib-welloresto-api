@@ -3,6 +3,7 @@ package planning
 import (
 	"database/sql"
 
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
@@ -18,6 +19,7 @@ import (
 	statspkg "welloresto-api/internal/modules/stats"
 )
 
+type DayCommentsRepository = daycommentspkg.Repository
 type DocumentsRepository = documentspkg.Repository
 type SettingsRepository = settingspkg.Repository
 type RefsRepository = refspkg.Repository
@@ -33,6 +35,7 @@ type RevenueForecastRepository = revenueforecastpkg.Repository
 
 type PlanningRepository struct {
 	db *sql.DB
+	*DayCommentsRepository
 	*DocumentsRepository
 	*SettingsRepository
 	*RefsRepository
@@ -51,6 +54,7 @@ func NewRepository(db *sql.DB) *PlanningRepository {
 	statsRepository := statspkg.NewStatsRepository(db)
 	return &PlanningRepository{
 		db:                        db,
+		DayCommentsRepository:     daycommentspkg.NewRepository(db),
 		DocumentsRepository:       documentspkg.NewRepository(db),
 		SettingsRepository:        settingspkg.NewRepository(db),
 		RefsRepository:            refspkg.NewRepository(db),

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 )
 
 // Vérifie la traduction SQL des ex-procédures GET_CASH_REGISTER_REPORT et
@@ -206,5 +208,226 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	}
 	if other != nil {
 		t.Fatalf("GetCashRegisterTVADetails (mauvais merchant): attendu nil, got %+v", other)
+	}
+}
+
+// Cycle de vie complet du registre converti à dbx : ouverture (InsertReturningID),
+// clôture (requalification des paiements UPDATE...FROM, items, hash), résumé,
+// items personnalisés, en-clôture, historique (IN dynamique) et device_link
+// (upsert ON CONFLICT).
+func TestCashRegisterLifecycle_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const (
+		merchantID = "999925"
+		userID     = "itest-cr-lc-user"
+		deviceID   = "itest-cashreg-lc-device"
+	)
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM device_link WHERE device_id = $1`, deviceID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_custom_items WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_items WHERE cash_register_id IN (SELECT cash_register_id FROM cash_registers WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_desks WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (user_id, name, first_name, last_name, password, email, token)
+		VALUES ($1, 'ITest CR', 'Caisse', 'Testeur', 'x', 'itest-cr-lc@example.com', 'cr-tok')`, userID); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO merchant_parameters (merchant_id, last_menu_update, currency, is_open)
+		VALUES ($1, now(), 'EUR', true)`, merchantID); err != nil {
+		t.Fatalf("seed merchant_parameters: %v", err)
+	}
+	var cashDeskID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO cash_desks (merchant_id, name) VALUES ($1, 'ITest Desk')
+		RETURNING cash_desk_id`, merchantID).Scan(&cashDeskID); err != nil {
+		t.Fatalf("seed cash_desks: %v", err)
+	}
+
+	repo := NewCashRegisterRepository(db)
+
+	// --- OpenCashRegister ---
+	openReq := &models.OpenCashRegisterRequest{DeviceID: deviceID}
+	openReq.CashRegister.CashDeskID = strconv.FormatInt(cashDeskID, 10)
+	openReq.CashRegister.UserID = userID
+	openReq.CashRegister.CashFund = 5000
+	openResp, err := repo.OpenCashRegister(ctx, openReq, merchantID)
+	if err != nil {
+		t.Fatalf("OpenCashRegister failed against postgres: %v", err)
+	}
+	if openResp.Status != "cash_register_created" || openResp.CashRegister == nil {
+		t.Fatalf("unexpected open response: %+v", openResp)
+	}
+	regID := openResp.CashRegister.CashRegisterId
+
+	// Réouverture même device → refusée.
+	dupResp, err := repo.OpenCashRegister(ctx, openReq, merchantID)
+	if err != nil {
+		t.Fatalf("OpenCashRegister (dup) failed: %v", err)
+	}
+	if dupResp.Status != "device_already_opened_cash_register" {
+		t.Fatalf("expected duplicate status, got %+v", dupResp)
+	}
+
+	// --- commandes + paiements à requalifier ---
+	var closedOrder int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, cash_register_id, order_num, brand_status, state, price, TVA, HT, created_by)
+		VALUES ($1, $2, 1, 'ACCEPTED', 'CLOSED', 0, 0, 0, $3)
+		RETURNING order_id`, merchantID, regID, userID).Scan(&closedOrder); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	addPayment := func(mop string, amount int, cashRegisterID interface{}) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+			VALUES ($1, $2, $3, $4, $5, $6, true)`, merchantID, userID, closedOrder, amount, mop, cashRegisterID); err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+	}
+	addPayment("ES", 500, regID)             // déjà rattaché
+	addPayment("STRIPE", 600, "SCANNORDER")  // étape 2
+	addPayment("UBER_EATS", 400, nil)        // étape 3
+	addPayment("CB", 800, "KIOSK")           // étape 3bis (Kiosk)
+	addPayment("CB", 200, nil)               // étape 3bis (NULL)
+
+	// --- CloseCashRegister ---
+	already, err := repo.CloseCashRegister(ctx, regID, merchantID, &models.CloseCashRegisterRequest{})
+	if err != nil {
+		t.Fatalf("CloseCashRegister failed against postgres: %v", err)
+	}
+	if already {
+		t.Fatal("expected first close to report not-already-closed")
+	}
+
+	var requalified int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM payments WHERE merchant_id = $1 AND cash_register_id = $2`, merchantID, regID).Scan(&requalified); err != nil {
+		t.Fatalf("count requalified payments: %v", err)
+	}
+	if requalified != 5 {
+		t.Fatalf("expected all 5 payments attached to the register after close, got %d", requalified)
+	}
+
+	var closed bool
+	var finalCashFund int
+	var hash *string
+	if err := db.QueryRowContext(ctx, `SELECT closed, final_cash_fund, hash FROM cash_registers WHERE cash_register_id = $1`, regID).Scan(&closed, &finalCashFund, &hash); err != nil {
+		t.Fatalf("read back register: %v", err)
+	}
+	if !closed || hash == nil || *hash == "" {
+		t.Fatalf("expected closed register with fiscal hash, got closed=%v hash=%v", closed, hash)
+	}
+	if finalCashFund != 5000+500 {
+		t.Fatalf("expected final cash fund 5500 (fund + ES), got %d", finalCashFund)
+	}
+
+	// Seconde clôture → idempotente (déjà fermée).
+	already, err = repo.CloseCashRegister(ctx, regID, merchantID, &models.CloseCashRegisterRequest{})
+	if err != nil {
+		t.Fatalf("CloseCashRegister (repeat) failed: %v", err)
+	}
+	if !already {
+		t.Fatal("expected second close to report already-closed")
+	}
+
+	// --- custom items ---
+	user := &auth.UserLoginRow{UserID: userID, MerchantID: merchantID}
+	itemID, err := repo.AddCustomItem(ctx, regID, &models.AddCustomItemRequest{Label: "Pourboire", Value: 150}, user)
+	if err != nil {
+		t.Fatalf("AddCustomItem failed against postgres: %v", err)
+	}
+	if itemID == "" || itemID == "0" {
+		t.Fatalf("expected generated custom item id, got %q", itemID)
+	}
+
+	// --- EncloseCashRegister (SET non qualifié) ---
+	if err := repo.EncloseCashRegister(ctx, userID, regID, "clôture ok"); err != nil {
+		t.Fatalf("EncloseCashRegister failed against postgres: %v", err)
+	}
+
+	// --- GetCashRegisterSummary ---
+	summary, err := repo.GetCashRegisterSummary(ctx, regID, merchantID)
+	if err != nil {
+		t.Fatalf("GetCashRegisterSummary failed against postgres: %v", err)
+	}
+	cr := summary.CashRegister
+	if cr.CashRegisterID != regID || !cr.Closed || !cr.Enclosed || cr.Currency != "EUR" {
+		t.Fatalf("unexpected summary: %+v", cr)
+	}
+	if len(cr.Payments) != 5 || len(cr.Orders) != 1 {
+		t.Fatalf("expected 5 payments / 1 order in summary, got %d / %d", len(cr.Payments), len(cr.Orders))
+	}
+	if len(cr.Items) == 0 || len(cr.CustomItems) != 1 {
+		t.Fatalf("expected MOP items + 1 custom item, got %d / %d", len(cr.Items), len(cr.CustomItems))
+	}
+
+	// --- DeleteCustomItem (soft delete boolean) ---
+	if err := repo.DeleteCustomItem(ctx, regID, itemID, user); err != nil {
+		t.Fatalf("DeleteCustomItem failed against postgres: %v", err)
+	}
+	summary, err = repo.GetCashRegisterSummary(ctx, regID, merchantID)
+	if err != nil {
+		t.Fatalf("GetCashRegisterSummary (after delete) failed: %v", err)
+	}
+	if len(summary.CashRegister.CustomItems) != 0 {
+		t.Fatalf("expected no custom items after soft delete, got %+v", summary.CashRegister.CustomItems)
+	}
+
+	// --- GetCashRegisterHistory (IN dynamique + agrégats paiements) ---
+	history, err := repo.GetCashRegisterHistory(ctx, merchantID, userID, CashRegisterHistoryRequest{})
+	if err != nil {
+		t.Fatalf("GetCashRegisterHistory failed against postgres: %v", err)
+	}
+	if history.Metadata.TotalItems != 1 || len(history.CashRegisters) != 1 {
+		t.Fatalf("expected 1 history item, got %+v", history.Metadata)
+	}
+	item := history.CashRegisters[0]
+	if item.CashRegisterID != regID || !item.Closed || !item.Enclosed {
+		t.Fatalf("unexpected history item: %+v", item)
+	}
+	if item.TransactionCount != 5 || item.TotalRevenu != 2500 {
+		t.Fatalf("expected 5 transactions / 2500 revenu, got %d / %d", item.TransactionCount, item.TotalRevenu)
+	}
+	if len(item.PaymentMethods) == 0 {
+		t.Fatal("expected payment methods breakdown in history")
+	}
+
+	// --- device_link : upsert + circularité + delete ---
+	if err := repo.UpsertDeviceLink(ctx, deviceID, userID, deviceID+"-2"); err != nil {
+		t.Fatalf("UpsertDeviceLink (insert) failed against postgres: %v", err)
+	}
+	if err := repo.UpsertDeviceLink(ctx, deviceID, userID, deviceID+"-3"); err != nil {
+		t.Fatalf("UpsertDeviceLink (update) failed against postgres: %v", err)
+	}
+	var onBehalf string
+	if err := db.QueryRowContext(ctx, `SELECT on_behalf_of FROM device_link WHERE device_id = $1`, deviceID).Scan(&onBehalf); err != nil {
+		t.Fatalf("read back device_link: %v", err)
+	}
+	if onBehalf != deviceID+"-3" {
+		t.Fatalf("expected upsert to update on_behalf_of, got %q", onBehalf)
+	}
+	circular, err := repo.IsCircularDeviceLink(ctx, deviceID+"-3", deviceID)
+	if err != nil {
+		t.Fatalf("IsCircularDeviceLink failed against postgres: %v", err)
+	}
+	if !circular {
+		t.Fatal("expected circular link to be detected")
+	}
+	deleted, err := repo.DeleteDeviceLink(ctx, deviceID)
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteDeviceLink = (%d, %v), want (1, nil)", deleted, err)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"welloresto-api/internal/database/dbx"
 )
 
 // StatsRepository handles data access for stats module
@@ -28,7 +30,7 @@ func (r *StatsRepository) GetMerchantTimezone(ctx context.Context, merchantID st
 	query := `SELECT timezone FROM merchant WHERE id = ?`
 
 	var timezone string
-	err := r.database.QueryRowContext(ctx, query, merchantID).Scan(&timezone)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, merchantID).Scan(&timezone)
 	if err != nil {
 		return "", fmt.Errorf("failed to get merchant timezone: %w", err)
 	}
@@ -98,7 +100,7 @@ func (r *StatsRepository) getRevenueForPeriod(ctx context.Context, merchantID st
 	query, args := buildOrdersAggregateQuery("COALESCE(SUM(o.price), 0) as total", merchantID, startTimeUTC, endTimeUTC)
 
 	var total int64
-	err := r.database.QueryRowContext(ctx, query, args...).Scan(&total)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get revenue for period: %w", err)
 	}
@@ -111,7 +113,7 @@ func (r *StatsRepository) getRevenueHTForPeriod(ctx context.Context, merchantID 
 	query, args := buildOrdersAggregateQuery("COALESCE(SUM(o.HT), 0) as total", merchantID, startTimeUTC, endTimeUTC)
 
 	var total int64
-	err := r.database.QueryRowContext(ctx, query, args...).Scan(&total)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get revenue HT for period: %w", err)
 	}
@@ -121,8 +123,17 @@ func (r *StatsRepository) getRevenueHTForPeriod(ctx context.Context, merchantID 
 
 func (r *StatsRepository) ListRevenueHTByLocalDay(ctx context.Context, merchantID, tzOffset string, startTimeUTC, endTimeUTC time.Time) ([]RevenueHTByLocalDay, error) {
 	whereClause := sharedOrdersRevenueWhereClause()
+	// CONVERT_TZ(x, '+00:00', tzOffset) has no direct Postgres equivalent.
+	// AT TIME ZONE with a *text* offset follows the POSIX sign convention
+	// (inverted vs. tzOffset's ISO sign) — casting the offset to INTERVAL
+	// first makes AT TIME ZONE add it with the expected (ISO) sign, matching
+	// CONVERT_TZ, and returns a naive timestamp immune to session tz reinterpretation.
+	localDayExpr := "DATE_FORMAT(CONVERT_TZ(o.creation_date, '+00:00', ?), '%Y-%m-%d')"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		localDayExpr = "to_char(o.creation_date AT TIME ZONE (?::interval), 'YYYY-MM-DD')"
+	}
 	query := strings.TrimSpace(`
-		SELECT DATE_FORMAT(CONVERT_TZ(o.creation_date, '+00:00', ?), '%Y-%m-%d') AS local_day,
+		SELECT `+localDayExpr+` AS local_day,
 			COALESCE(SUM(o.HT), 0) AS revenue_ht_cents
 		FROM orders o
 	`) + "\n" + whereClause + `
@@ -134,7 +145,7 @@ func (r *StatsRepository) ListRevenueHTByLocalDay(ctx context.Context, merchantI
 	args = append(args, tzOffset)
 	args = append(args, sharedOrdersRevenueWhereArgs(merchantID, startTimeUTC, endTimeUTC)...)
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list HT revenue by local day: %w", err)
 	}
@@ -181,7 +192,7 @@ func (r *StatsRepository) getOrderCountForPeriod(ctx context.Context, merchantID
 	query, args := buildOrdersAggregateQuery("COUNT(*) as count", merchantID, startTimeUTC, endTimeUTC)
 
 	var count int
-	err := r.database.QueryRowContext(ctx, query, args...).Scan(&count)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get order count for period: %w", err)
 	}
@@ -215,7 +226,7 @@ func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchan
 	query, args := buildOrdersAggregateQuery("ROUND(COALESCE(AVG(o.price), 0),0) as avg_basket", merchantID, startTimeUTC, endTimeUTC)
 
 	var avgBasket int64
-	err := r.database.QueryRowContext(ctx, query, args...).Scan(&avgBasket)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, args...).Scan(&avgBasket)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get average basket for period: %w", err)
 	}
@@ -233,9 +244,15 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	startDayUTC := startDay.UTC()
 	endDayUTC := endDay.UTC()
 
+	// Same CONVERT_TZ translation as ListRevenueHTByLocalDay: cast the offset
+	// to INTERVAL so AT TIME ZONE adds it with the expected (ISO) sign.
+	hourExpr := "HOUR(CONVERT_TZ(o.creation_date, '+00:00', ?))"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		hourExpr = "EXTRACT(HOUR FROM (o.creation_date AT TIME ZONE (?::interval)))::int"
+	}
 	query := `
-	SELECT 
-		HOUR(CONVERT_TZ(o.creation_date, '+00:00', ?)) as hour,
+	SELECT
+		` + hourExpr + ` as hour,
 		SUM(CASE WHEN o.order_type = 'IN' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.price ELSE 0 END) as sur_place_revenue,
 		COUNT(DISTINCT CASE WHEN o.order_type = 'IN' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.order_id END) as sur_place_count,
 		SUM(CASE WHEN o.order_type = 'TAKE_AWAY' AND (o.brand IS NULL OR o.brand = 'WELLO_RESTO') THEN o.price ELSE 0 END) as emporter_revenue,
@@ -252,15 +269,15 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
-	AND o.isPaid = 1
-	GROUP BY HOUR(CONVERT_TZ(o.creation_date, '+00:00', ?))
+	AND o.isPaid = true
+	GROUP BY hour
 	ORDER BY hour
 	`
 
 	// Convert timezone to UTC offset format (+HH:MM)
 	tzOffset := GetTZOffset(merchantTz, dateInMerchantTz)
 
-	rows, err := r.database.QueryContext(ctx, query, tzOffset, merchantID, startDayUTC, endDayUTC, tzOffset)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, tzOffset, merchantID, startDayUTC, endDayUTC)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get hourly data: %w", err)
 	}
@@ -330,8 +347,8 @@ type UpsellServerRow struct {
 // du produit, comme dans GetTVAReportData (mêmes jointures produits/extra/tva_categories).
 const upsellLineHTExpr = `
 	CASE
-		WHEN tva.tva_rate = 0 THEN ((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity)
-		ELSE ((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+		WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
+		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
 	END
 `
 
@@ -354,7 +371,7 @@ const upsellLinesFromJoins = `
 `
 
 const upsellLinesWhereClause = `
-	WHERE oi.is_upsell = 1
+	WHERE oi.is_upsell = true
 	AND o.merchant_id = ?
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
@@ -364,14 +381,27 @@ const upsellLinesWhereClause = `
 
 const upsellLinesBaseQuery = upsellLinesFromJoins + upsellLinesWhereClause
 
+// roundToIntExpr wraps a fractional SQL expression (upsellLineHTExpr divides
+// by 100+tva_rate, which is rarely a whole number of cents) so it scans
+// cleanly into an int64. ROUND(x, 0) accepts any numeric type in MySQL, but
+// Postgres's two-argument ROUND only accepts numeric, not double precision —
+// the tva_rate column (real) forces float arithmetic, so an explicit cast is
+// required on the Postgres side.
+func roundToIntExpr(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "ROUND(CAST(" + expr + " AS numeric), 0)"
+	}
+	return "ROUND(" + expr + ", 0)"
+}
+
 // GetUpsellTotals retourne le nombre de lignes upsell et leur CA HT pour la période
 func (r *StatsRepository) GetUpsellTotals(ctx context.Context, merchantID string, startTimeUTC, endTimeUTC time.Time) (UpsellTotals, error) {
 	query := strings.TrimSpace(`
-		SELECT COUNT(*) AS total_lines, COALESCE(SUM(`+upsellLineHTExpr+`), 0) AS revenue_ht
+		SELECT COUNT(*) AS total_lines, `+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS revenue_ht
 	`) + "\n" + upsellLinesBaseQuery
 
 	var totals UpsellTotals
-	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&totals.TotalLines, &totals.RevenueHTCents)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&totals.TotalLines, &totals.RevenueHTCents)
 	if err != nil {
 		return UpsellTotals{}, fmt.Errorf("failed to get upsell totals: %w", err)
 	}
@@ -386,7 +416,7 @@ func (r *StatsRepository) GetOrdersWithUpsellCount(ctx context.Context, merchant
 	`) + "\n" + upsellLinesBaseQuery
 
 	var count int
-	err := r.database.QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&count)
+	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, query, merchantID, startTimeUTC, endTimeUTC).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get orders with upsell count: %w", err)
 	}
@@ -402,7 +432,7 @@ func (r *StatsRepository) ListUpsellByServer(ctx context.Context, merchantID str
 		SELECT o.created_by AS server_id,
 			COALESCE(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), o.created_by) AS server_name,
 			COUNT(*) AS upsell_lines,
-			COALESCE(SUM(`+upsellLineHTExpr+`), 0) AS upsell_revenue_ht
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht
 	`) + "\n" + upsellLinesFromJoins + `
 		LEFT JOIN users u ON u.user_id = o.created_by
 	` + upsellLinesWhereClause + `
@@ -411,7 +441,7 @@ func (r *StatsRepository) ListUpsellByServer(ctx context.Context, merchantID str
 		ORDER BY upsell_revenue_ht DESC
 	`
 
-	rows, err := r.database.QueryContext(ctx, query, merchantID, startTimeUTC, endTimeUTC)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, merchantID, startTimeUTC, endTimeUTC)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list upsell by server: %w", err)
 	}

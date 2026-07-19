@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/distributiontime"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersRepository struct {
@@ -54,7 +55,7 @@ func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, a
              LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status = 'active'
              WHERE o.merchant_id = ? ` + criteria
 
-	rows, err := r.database.QueryContext(ctx, qIDs, merchantID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, qIDs, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch pending order ids: %w", err)
 	}
@@ -157,7 +158,7 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
         LIMIT 10
     `
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -201,15 +202,18 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		searchTerm := strings.TrimSpace(*req.Search)
 		if searchTerm != "" {
 			likeTerm := "%" + searchTerm + "%"
+			// c.customer_id et o.order_id sont des colonnes integer : le
+			// COALESCE(x, '') MySQL les coerçait en texte, Postgres exige un
+			// cast explicite (castChar, dialecte-dépendant).
 			where += `
 				AND (
 					LOWER(COALESCE(c.customer_name, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(c.customer_first_name, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(c.customer_last_name, '')) LIKE LOWER(?)
-					OR LOWER(COALESCE(c.customer_id, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(` + castChar("c.customer_id") + `, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(c.customer_code, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(o.brand_order_num, '')) LIKE LOWER(?)
-					OR LOWER(COALESCE(o.order_id, '')) LIKE LOWER(?)
+					OR LOWER(COALESCE(` + castChar("o.order_id") + `, '')) LIKE LOWER(?)
 				)
 			`
 			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm)
@@ -261,7 +265,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	` + fromClause + where
 
 	var totalItems int
-	if err := r.database.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
+	if err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
 		return nil, 0, page, limit, err
 	}
 
@@ -279,7 +283,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	args = append(args, limit, offset)
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, page, limit, err
 	}
@@ -334,7 +338,7 @@ func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID stri
 		ORDER BY payment_date ASC
 	`
 
-	rows, err := r.database.QueryContext(ctx, q, orderID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, q, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -372,8 +376,15 @@ func (r *OrdersRepository) ValidateProducts(ctx context.Context, tx *sql.Tx, mer
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	// merchant id as first arg
-	args = append([]interface{}{merchantID}, args...)
+	// merchant id as first arg — converti en string : products.merchant_Id est
+	// une colonne varchar, pgx refuse d'y lier un int64 (MySQL coerçait).
+	args = append([]interface{}{strconv.FormatInt(merchantID, 10)}, args...)
+	// products.status / components.status sont des varchar : le `= 0` MySQL
+	// coerçait toute valeur non numérique en 0 (donc « bloqué ») — Postgres
+	// refuse la comparaison int/varchar. Traduit avec l'énumération explicite
+	// des statuts bloquants déjà utilisée par GetUnavailableProducts ; seul le
+	// cas pathologique d'un statut non numérique inconnu diverge (MySQL le
+	// comptait bloqué, l'énumération non).
 	query := fmt.Sprintf(`
 SELECT DISTINCT p.product_id
 FROM products p
@@ -381,13 +392,13 @@ LEFT JOIN (
     SELECT DISTINCT r.product_id
     FROM requires rq
     INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-    INNER JOIN components c ON rq.component_id = c.component_id AND c.status = 0 AND rq.enabled = true
+    INNER JOIN components c ON rq.component_id = c.component_id AND c.status IN ('0','out_of_stock','not_available') AND rq.enabled = true
 ) a ON a.product_id = p.product_id
 WHERE p.merchant_id = ?
 AND p.product_id IN (%s)
-AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
+AND (CASE WHEN a.product_id IS NOT NULL THEN '0' ELSE p.status END) IN ('0','out_of_stock','not_available')
 `, strings.Join(placeholders, ","))
-	rows, err := tx.QueryContext(ctx, query, args...)
+	rows, err := dbx.Wrap(tx).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -404,16 +415,18 @@ AND (CASE WHEN a.product_id IS NOT NULL THEN 0 ELSE p.status END) = 0
 }
 
 func (r *OrdersRepository) GetMerchantPricingInfo(ctx context.Context, MerchantID string) (*models.MerchantPricingInfo, error) {
+	// mp.merchant_id est varchar face au PK integer merchant.id — cast requis
+	// en Postgres (MySQL coerçait), même pattern que le module auth.
 	q := `
 		SELECT m.timezone, mp.currency, COALESCE(mp.delivery_fees,0) as delivery_fees,
 			   COALESCE(mp.delivery_fees_limit,0) as delivery_fees_limit,
 			   COALESCE(mp.minimum_cart_for_delivery_order,0) as minimum_cart_for_delivery_order
 		FROM merchant m
-		JOIN merchant_parameters mp ON mp.merchant_id = m.id
+		JOIN merchant_parameters mp ON mp.merchant_id = ` + castChar("m.id") + `
 		WHERE m.id = ? LIMIT 1;
 		`
 	var cfg models.MerchantPricingInfo
-	row := r.database.QueryRowContext(ctx, q, MerchantID)
+	row := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, q, MerchantID)
 	if err := row.Scan(&cfg.Timezone, &cfg.Currency, &cfg.DeliveryFees, &cfg.DeliveryFeesLimit, &cfg.MinimumCartForDeliveryOrder); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -439,27 +452,31 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(productIDs)), ",")
 
 	// 2. La Query (Identique au PHP)
-	// On utilise le CASE pour déterminer le statut et HAVING pour filtrer
+	// Le HAVING sans GROUP BY sur l'alias `status` (tolérance MySQL) est
+	// remplacé par une sous-requête filtrée en WHERE — valide dans les deux
+	// dialectes, même résultat.
 	query := fmt.Sprintf(`
-       SELECT 
-           p.product_id, 
-           p.name,
-           CASE
-               WHEN a.product_id IS NOT NULL THEN 'out_of_stock' -- Composant manquant = Indisponible (changer par "missing_component")
-               ELSE p.status                        -- Sinon statut du produit
-           END as status
-       FROM products p
-       LEFT JOIN (
-           SELECT DISTINCT r.product_id
-           FROM requires rq
-           INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
-           INNER JOIN components c ON rq.component_id = c.component_id
-               AND c.status IN ('0','out_of_stock','not_available') -- Composant inactif/épuisé ('not_available' = valeur écrite par le toggle POS)
-               AND rq.enabled = TRUE -- Recette active
-       ) a ON a.product_id = p.product_id
-       WHERE p.merchant_id = ?
-       AND p.product_id IN (%s)
-       HAVING status NOT IN ('available','1')
+       SELECT product_id, name, status FROM (
+           SELECT
+               p.product_id,
+               p.name,
+               CASE
+                   WHEN a.product_id IS NOT NULL THEN 'out_of_stock' -- Composant manquant = Indisponible (changer par "missing_component")
+                   ELSE p.status                        -- Sinon statut du produit
+               END as status
+           FROM products p
+           LEFT JOIN (
+               SELECT DISTINCT r.product_id
+               FROM requires rq
+               INNER JOIN recipes r ON r.recipe_id = rq.recipe_id
+               INNER JOIN components c ON rq.component_id = c.component_id
+                   AND c.status IN ('0','out_of_stock','not_available') -- Composant inactif/épuisé ('not_available' = valeur écrite par le toggle POS)
+                   AND rq.enabled = TRUE -- Recette active
+           ) a ON a.product_id = p.product_id
+           WHERE p.merchant_id = ?
+           AND p.product_id IN (%s)
+       ) filtered
+       WHERE status NOT IN ('available','1')
     `, placeholders)
 
 	// 3. Préparation des arguments (MerchantID + Liste des ProductIDs)
@@ -468,7 +485,7 @@ func (r *OrdersRepository) GetUnavailableProducts(ctx context.Context, req *mode
 	args = append(args, productIDs...)
 
 	// 4. Exécution
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +546,7 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 		args = append(args, id)
 	}
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -560,9 +577,22 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 	return out, nil
 }
 
+// scheduleWindowPred retourne le prédicat « le créneau horaire du jour courant
+// (UTC, horloge base) matche la ligne discounts_schedules » selon le dialecte.
+// MySQL : TIME(UTC_TIMESTAMP()) + DAYOFWEEK converti en ISO (1=lundi..7=dimanche).
+// Postgres : cast time du now() UTC + EXTRACT(ISODOW), déjà en convention ISO.
+func scheduleWindowPred() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return `(CAST(now() AT TIME ZONE 'UTC' AS time) BETWEEN ds.available_from AND ds.available_to
+		         AND EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC') = ds.day_of_week)`
+	}
+	return `(TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to
+	         AND (CASE WHEN DAYOFWEEK(UTC_TIMESTAMP()) = 1 THEN 7 ELSE DAYOFWEEK(UTC_TIMESTAMP()) - 1 END) = ds.day_of_week)`
+}
+
 func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.PricingRequest) ([]*models.DBDiscount, error) {
-	query := `
-		SELECT 
+	query := fmt.Sprintf(`
+		SELECT
 			d.discount_id,
 			d.discount_order_type,
 			d.discount_code,
@@ -581,14 +611,14 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 		FROM discounts d
 		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
 		WHERE d.merchant_id = ?
-		  AND (d.valid_from < UTC_TIMESTAMP() AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
-		  AND ((TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to AND (CASE WHEN DAYOFWEEK(UTC_TIMESTAMP()) = 1 THEN 7 ELSE DAYOFWEEK(UTC_TIMESTAMP()) - 1 END) = ds.day_of_week)
+		  AND (d.valid_from < %[1]s AND (d.valid_to > %[1]s OR d.valid_to IS NULL))
+		  AND (%[2]s
 		       OR NOT d.is_time_limited)
 		  AND d.available = TRUE
 		ORDER BY d.prefered_order ASC
-	`
+	`, dbx.UTCNow(), scheduleWindowPred())
 
-	rows, err := r.database.QueryContext(ctx, query, req.MerchantID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, req.MerchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +663,7 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 		WHERE d.merchant_id = ?
 	`
 
-	rows, err := r.database.QueryContext(ctx, query, merchantID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -669,19 +699,28 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 }
 
 func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, merchantID string) (map[string]map[string][]models.DiscountOptionInfo, error) {
-	query := `
+	// La comparaison MySQL d'origine `available_from < UTC_TIMESTAMP` mêlait
+	// une colonne time à un datetime (coercition MySQL implicite) — Postgres
+	// la refuse ; traduite en comparaison d'heure du jour (UTC, horloge base),
+	// cohérente avec le prédicat de GetDiscounts. Le fragment MySQL est
+	// conservé tel quel sous DB_DIALECT=mysql (comportement prod inchangé).
+	timeWindow := `(available_from < UTC_TIMESTAMP AND available_to > UTC_TIMESTAMP)`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		timeWindow = `(available_from < CAST(now() AT TIME ZONE 'UTC' AS time) AND available_to > CAST(now() AT TIME ZONE 'UTC' AS time))`
+	}
+	query := fmt.Sprintf(`
 		SELECT dpo.option_id, dpo.product_id, dpo.discount_id, dpo.new_price, dpo.is_option_mandatory
                 FROM discounts d
                 INNER JOIN discounts_products dp ON dp.discount_id = d.discount_id
-                INNER JOIN discounts_products_options dpo ON dpo.discount_id = d.discount_id AND dpo.product_id = dp.product_id
+                INNER JOIN discounts_products_options dpo ON dpo.discount_id = d.discount_id AND dpo.product_id = ` + castChar("dp.product_id") + `
                 LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
-                WHERE merchant_id = ?
-                  AND (valid_from < UTC_TIMESTAMP AND (valid_to > UTC_TIMESTAMP OR valid_to IS NULL))
-                  AND ((available_from < UTC_TIMESTAMP AND available_to > UTC_TIMESTAMP) OR NOT is_time_limited)
+                WHERE d.merchant_id = ?
+                  AND (valid_from < %[1]s AND (valid_to > %[1]s OR valid_to IS NULL))
+                  AND (%[2]s OR NOT is_time_limited)
                   AND d.available IS TRUE
-	`
+	`, dbx.UTCNow(), timeWindow)
 
-	rows, err := r.database.QueryContext(ctx, query, merchantID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -754,7 +793,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		args[i] = id
 	}
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -812,7 +851,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		args2 = append(args2, id)
 	}
 
-	rows2, err := r.database.QueryContext(ctx, query2, args2...)
+	rows2, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query2, args2...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -866,7 +905,7 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(ctx context.Context, opt
 		args[i] = id
 	}
 
-	rows, err := r.database.QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -890,7 +929,7 @@ func (r *OrdersRepository) GetConfigurationOptionPrices(ctx context.Context, opt
 
 func (r *OrdersRepository) ExistsByBrandOrderID(ctx context.Context, brand, brandOrderID string) (bool, error) {
 	var exists bool
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// La requête SELECT 1 est très légère pour la DB
 	query := `

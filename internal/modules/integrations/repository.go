@@ -3,9 +3,10 @@ package integrations
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"time"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 // kpiExcludedStatuses lists brand_status values that represent failed / unpaid orders.
@@ -23,14 +24,14 @@ func NewRepository(db *sql.DB) *Repository {
 // GetUberEatsIntegration returns the Uber Eats integration row plus live KPIs.
 // Returns (nil, nil) when the merchant has no Uber Eats integration configured.
 func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID string) (*UberEatsIntegration, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `
 		SELECT
 			iue.enabled,
 			iue.commission_rate,
 			iue.auto_accept_orders,
-			COALESCE(iue.estimated_preparation_time, 0) AS preparation_time_minutes,
+			COALESCE(iue.estimated_preparation_time, '0') AS preparation_time_minutes,
 			iue.closed_until,
 			iue.last_sync,
 			(
@@ -43,7 +44,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 				FROM   orders
 				WHERE  merchant_id = ?
 				  AND  brand       = 'UBER_EATS'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS revenue,
 			(
@@ -51,7 +52,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 				FROM   orders
 				WHERE  merchant_id = ?
 				  AND  brand       = 'UBER_EATS'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS orders_count
 		FROM   integration_uber_eats iue
@@ -119,7 +120,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 // GetDeliverooIntegration returns the Deliveroo integration row plus live KPIs.
 // Returns (nil, nil) when the merchant has no Deliveroo integration configured.
 func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID string) (*DeliverooIntegration, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `
 		SELECT
@@ -138,7 +139,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 				FROM   orders
 				WHERE  merchant_id = ?
 				  AND  brand       = 'DELIVEROO'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS revenue,
 			(
@@ -146,7 +147,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 				FROM   orders
 				WHERE  merchant_id = ?
 				  AND  brand       = 'DELIVEROO'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS orders_count
 		FROM   integration_deliveroo ind
@@ -209,7 +210,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 // GetScanNOrderIntegration returns the ScanNOrder integration row plus live KPIs.
 // Returns (nil, nil) when the merchant has no ScanNOrder settings row.
 func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID string) (*ScanNOrderIntegration, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `
 		SELECT
@@ -237,7 +238,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 				WHERE  merchant_id = ?
 				  AND  brand       = 'WELLO_RESTO'
 				  AND  created_by  = 'SCANNORDER'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS revenue,
 			(
@@ -246,7 +247,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 				WHERE  merchant_id = ?
 				  AND  brand       = 'WELLO_RESTO'
 				  AND  created_by  = 'SCANNORDER'
-				  AND  isPaid      = 1
+				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
 			) AS orders_count
 		FROM   scannorder_settings snos
@@ -357,7 +358,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 // GetScanNOrderCurrentImageURL returns the current logo_url or banner_url for a merchant.
 // column must be "logo_url" or "banner_url".
 func (r *Repository) GetScanNOrderCurrentImageURL(ctx context.Context, merchantID, column string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	q := `SELECT COALESCE(` + column + `, '') FROM scannorder_settings WHERE merchant_id = ? LIMIT 1`
 
@@ -371,7 +372,7 @@ func (r *Repository) GetScanNOrderCurrentImageURL(ctx context.Context, merchantI
 // UpdateScanNOrderImageURL persists a new logo_url or banner_url for a merchant.
 // column must be "logo_url" or "banner_url".
 func (r *Repository) UpdateScanNOrderImageURL(ctx context.Context, merchantID, column, publicURL string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	q := `UPDATE scannorder_settings SET ` + column + ` = ? WHERE merchant_id = ?`
 
@@ -381,7 +382,7 @@ func (r *Repository) UpdateScanNOrderImageURL(ctx context.Context, merchantID, c
 
 // UpdateUberEatsSettings updates editable settings for the Uber Eats integration.
 func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	setClauses := []string{}
 	args := []interface{}{}
@@ -395,10 +396,13 @@ func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID stri
 		args = append(args, *autoAccept)
 	}
 	if preparationTimeMinutes != nil {
+		// estimated_preparation_time / last_estimated_preparation_time are varchar
+		// columns; MySQL implicitly casts an int parameter to text, pgx does not.
+		prepStr := strconv.Itoa(*preparationTimeMinutes)
 		setClauses = append(setClauses, "estimated_preparation_time = ?")
-		args = append(args, *preparationTimeMinutes)
+		args = append(args, prepStr)
 		setClauses = append(setClauses, "last_estimated_preparation_time = ?")
-		args = append(args, *preparationTimeMinutes)
+		args = append(args, prepStr)
 	}
 
 	if len(setClauses) == 0 {
@@ -414,7 +418,7 @@ func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID stri
 
 // DisableUberEats sets is_active = 0 for the Uber Eats integration.
 func (r *Repository) DisableUberEats(ctx context.Context, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `UPDATE integration_uber_eats SET is_active = 0 WHERE merchant_id = ?`
 
@@ -424,7 +428,7 @@ func (r *Repository) DisableUberEats(ctx context.Context, merchantID string) err
 
 // UpdateDeliverooSettings updates editable settings for the Deliveroo integration.
 func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	setClauses := []string{}
 	args := []interface{}{}
@@ -455,9 +459,9 @@ func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID str
 
 // DisableDeliveroo sets enabled = 0 for the Deliveroo integration.
 func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	const q = `UPDATE integration_deliveroo SET enabled = 0 WHERE merchant_id = ?`
+	const q = `UPDATE integration_deliveroo SET enabled = false WHERE merchant_id = ?`
 
 	_, err := db.ExecContext(ctx, q, merchantID)
 	return err
@@ -465,7 +469,7 @@ func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) er
 
 // SetScanNOrderClosedUntil sets the temporary closure timestamp for ScanNOrder.
 func (r *Repository) SetScanNOrderClosedUntil(ctx context.Context, merchantID string, closedUntil time.Time) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `UPDATE scannorder_settings SET closed_until = ? WHERE merchant_id = ?`
 
@@ -475,7 +479,7 @@ func (r *Repository) SetScanNOrderClosedUntil(ctx context.Context, merchantID st
 
 // UpdateScanNOrderSettings updates editable settings for the ScanNOrder integration.
 func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// --- 1. Update scannorder_settings ---
 	setClauses := []string{}
@@ -565,7 +569,7 @@ type stripeBrandingData struct {
 // for a merchant in a single query. Returns sql.ErrNoRows when either the
 // stripe_accounts or scannorder_settings row is missing.
 func (r *Repository) GetStripeBrandingData(ctx context.Context, merchantID string) (*stripeBrandingData, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	const q = `
 		SELECT sa.account_id,
@@ -592,7 +596,7 @@ func (r *Repository) GetStripeBrandingData(ctx context.Context, merchantID strin
 // GetStripeAccountID returns the Stripe connected account ID for a merchant.
 // Returns ("", sql.ErrNoRows) when no stripe_accounts row exists.
 func (r *Repository) GetStripeAccountID(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var accountID string
 	err := db.QueryRowContext(ctx,
@@ -605,7 +609,7 @@ func (r *Repository) GetStripeAccountID(ctx context.Context, merchantID string) 
 // UpsertStripeAccountID stores the Stripe connected account ID for a merchant.
 // It updates an existing stripe_accounts row first; if none exists, it inserts one.
 func (r *Repository) UpsertStripeAccountID(ctx context.Context, merchantID, accountID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE stripe_accounts SET account_id = ? WHERE merchant_id = ?`,
@@ -633,7 +637,7 @@ func (r *Repository) UpsertStripeAccountID(ctx context.Context, merchantID, acco
 // UpdateStripeVerificationStatus caches the Stripe verification status in stripe_accounts.
 // Called by the webhook handler when an account.updated event arrives.
 func (r *Repository) UpdateStripeVerificationStatus(ctx context.Context, accountID, status string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE stripe_accounts SET verification_status = ? WHERE account_id = ?`,

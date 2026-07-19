@@ -288,6 +288,8 @@ var (
 	ErrPlanningShiftNotFound                    = errors.New("planning_shift_not_found")
 	ErrPlanningShiftConflict                    = errors.New("planning_shift_conflict")
 	ErrPlanningShiftInvalidRange                = errors.New("planning_shift_invalid_range")
+	ErrPlanningDayCommentNotFound               = errors.New("planning_day_comment_not_found")
+	ErrPlanningDayCommentTooLong                = errors.New("planning_day_comment_too_long")
 	ErrPlanningTimeEntryNotFound                = errors.New("planning_time_entry_not_found")
 	ErrPlanningTimeEntryAlreadyOpen             = errors.New("planning_time_entry_already_open")
 	ErrPlanningTimeEntryNotOpen                 = errors.New("planning_time_entry_not_open")
@@ -350,8 +352,8 @@ var (
 	ErrKioskTerminalNotConfigured = errors.New("kiosk_terminal_not_configured")
 
 	// Erreurs de l'envoi de facture par email
-	ErrInvoiceInvalidEmail    = errors.New("invoice_invalid_email")
-	ErrInvoiceCustomerNotFound = errors.New("invoice_customer_not_found")
+	ErrInvoiceInvalidEmail       = errors.New("invoice_invalid_email")
+	ErrInvoiceCustomerNotFound   = errors.New("invoice_customer_not_found")
 	ErrInvoiceAttachmentTooLarge = errors.New("invoice_attachment_too_large")
 
 	// Erreurs du plan de salle (module locations)
@@ -672,6 +674,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "planning_shift_invalid_range"
 		errorMsg = "The shift time range is invalid."
+
+	case errors.Is(err, ErrPlanningDayCommentNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_day_comment_not_found"
+		errorMsg = "Planning day comment not found"
+
+	case errors.Is(err, ErrPlanningDayCommentTooLong):
+		status = http.StatusBadRequest
+		errorStatus = "planning_day_comment_too_long"
+		errorMsg = "The day comment exceeds the maximum allowed length."
 
 	case errors.Is(err, ErrPlanningTimeEntryNotFound):
 		status = http.StatusNotFound

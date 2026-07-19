@@ -1,6 +1,7 @@
 package planning
 
 import (
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	documentspkg "welloresto-api/internal/modules/planning/documents"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	leavepkg "welloresto-api/internal/modules/planning/leave"
@@ -15,6 +16,7 @@ import (
 	weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
 )
 
+type DayCommentsHandler = daycommentspkg.Handler
 type DocumentsHandler = documentspkg.Handler
 type SettingsHandler = settingspkg.Handler
 type RefsHandler = refspkg.Handler
@@ -30,6 +32,7 @@ type RevenueForecastHandler = revenueforecastpkg.Handler
 
 type PlanningHandler struct {
 	svc *PlanningService
+	*DayCommentsHandler
 	*DocumentsHandler
 	*SettingsHandler
 	*RefsHandler
@@ -47,6 +50,7 @@ type PlanningHandler struct {
 func NewHandler(svc *PlanningService) *PlanningHandler {
 	return &PlanningHandler{
 		svc:                    svc,
+		DayCommentsHandler:     daycommentspkg.NewHandler(svc.DayCommentsService),
 		DocumentsHandler:       documentspkg.NewHandler(svc.DocumentsService),
 		SettingsHandler:        settingspkg.NewHandler(svc.SettingsService),
 		RefsHandler:            refspkg.NewHandler(svc.RefsService),

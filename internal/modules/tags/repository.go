@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/go-sql-driver/mysql"
-
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -22,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 // ListTags returns all tags belonging to a merchant with the count of linked products.
 func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx,
@@ -54,7 +52,7 @@ func (r *Repository) ListTags(ctx context.Context, merchantID string) ([]models.
 
 // TagBelongsToMerchant verifies a tag is owned by the given merchant.
 func (r *Repository) TagBelongsToMerchant(ctx context.Context, tagID string, merchantID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var count int
 	err := db.QueryRowContext(ctx,
@@ -67,7 +65,7 @@ func (r *Repository) TagBelongsToMerchant(ctx context.Context, tagID string, mer
 // CreateTag inserts a new tag for a merchant.
 // Returns the created tag entry.
 func (r *Repository) CreateTag(ctx context.Context, merchantID string, req *CreateTagRequest) (*models.TagEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Get the next display order (count of existing tags)
@@ -90,7 +88,7 @@ func (r *Repository) CreateTag(ctx context.Context, merchantID string, req *Crea
 	if err != nil {
 		log.Error(err.Error())
 		// Check for duplicate constraint violation
-		if isUniqueConstraintError(err) {
+		if dbx.IsDuplicateEntry(err) {
 			return nil, models.ErrInvalidInput // "Tag with this name already exists for this merchant"
 		}
 		return nil, err
@@ -109,7 +107,7 @@ func (r *Repository) CreateTag(ctx context.Context, merchantID string, req *Crea
 // DeleteTag removes a tag by ID (if it belongs to the merchant).
 // Also cascades to product_tags due to FK constraint.
 func (r *Repository) DeleteTag(ctx context.Context, merchantID string, tagID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Verify ownership first
@@ -150,7 +148,7 @@ func (r *Repository) DeleteTag(ctx context.Context, merchantID string, tagID str
 
 // UpdateTagsDisplayOrder updates the display order of tags for a merchant.
 func (r *Repository) UpdateTagsDisplayOrder(ctx context.Context, merchantID string, tags []TagDisplayOrderItem) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Update display_order for each tag
@@ -185,7 +183,7 @@ func (r *Repository) UpdateTagsDisplayOrder(ctx context.Context, merchantID stri
 // UpdateTag updates a tag's properties (name, color, display_order).
 // Only updates the fields that are provided (non-nil).
 func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID string, req *UpdateTagRequest) (*models.TagEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1. Verify tag belongs to merchant and exists
@@ -244,7 +242,7 @@ func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID str
 	if _, err := db.ExecContext(ctx, updateSQL, args...); err != nil {
 		log.Error(err.Error())
 		// Check for duplicate constraint violation
-		if isUniqueConstraintError(err) {
+		if dbx.IsDuplicateEntry(err) {
 			return nil, models.ErrInvalidInput
 		}
 		return nil, err
@@ -267,13 +265,4 @@ func (r *Repository) UpdateTag(ctx context.Context, merchantID string, tagID str
 	}
 
 	return &t, nil
-}
-
-// Helper to detect unique constraint violations (MySQL-specific).
-func isUniqueConstraintError(err error) bool {
-	// MySQL specific error code for unique constraint violation is 1062
-	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
-		return mysqlErr.Number == 1062
-	}
-	return false
 }

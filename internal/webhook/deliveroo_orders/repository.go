@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -30,27 +32,38 @@ func (r *Repository) GetMerchantByLocationID(ctx context.Context, locationID str
 		return nil, errors.New("location_id is empty")
 	}
 
-	query := `
+	db := dbx.GetDB(ctx, r.database)
+
+	// merchant.id is an integer identity while integration_deliveroo.merchant_id
+	// is varchar (merchant_id is carried as a string everywhere else in the Go
+	// code, see 12-merchant-id-unification.md) — MySQL implicitly casts across
+	// the join, Postgres requires an explicit one, and CAST syntax itself
+	// differs per dialect (CHAR vs TEXT).
+	joinCast := "CAST(m.id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		joinCast = "CAST(m.id AS TEXT)"
+	}
+	query := fmt.Sprintf(`
 		SELECT id.merchant_id, id.auto_accept_orders
 		FROM merchant m
-		INNER JOIN integration_deliveroo id on id.merchant_id = m.id
-		WHERE id.location_id = ?`
+		INNER JOIN integration_deliveroo id on id.merchant_id = %s
+		WHERE id.location_id = ?`, joinCast)
 
 	var data MerchantData
-	var autoAccept int // Souvent stocké en int/tinyint en SQL
-	err := r.database.QueryRowContext(ctx, query, locationID).Scan(&data.MerchantID, &autoAccept)
+	err := db.QueryRowContext(ctx, query, locationID).Scan(&data.MerchantID, &data.AutoAcceptOrders)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("no merchant found for location_id %s", locationID)
 		}
 		return nil, err
 	}
-	data.AutoAcceptOrders = autoAccept == 1
 	return &data, nil
 }
 
 // GetNextOrderNum réplique la logique du switch case 99 -> 1 du PHP
 func (r *Repository) GetNextOrderNum(ctx context.Context, merchantID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
 	query := `
 		SELECT order_num
 		FROM orders
@@ -59,7 +72,7 @@ func (r *Repository) GetNextOrderNum(ctx context.Context, merchantID string) (st
 		LIMIT 1`
 
 	var lastOrderNumStr string
-	err := r.database.QueryRowContext(ctx, query, merchantID).Scan(&lastOrderNumStr)
+	err := db.QueryRowContext(ctx, query, merchantID).Scan(&lastOrderNumStr)
 	if err != nil && err != sql.ErrNoRows {
 		return "1", err
 	}
@@ -78,7 +91,7 @@ func (r *Repository) GetNextOrderNum(ctx context.Context, merchantID string) (st
 // SyncOption gère la logique complexe des attributs et options (sync ou création)
 // Retourne (ConfigurableAttributeID, ConfigurableAttributeOptionID)
 func (r *Repository) SyncOption(ctx context.Context, merchantID string, productID string, mod DeliverooModifier) (string, string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	// 1. Essayer de trouver le mapping
 	query := `
 		SELECT opt.id AS option_id, opt.configurable_attribute_id AS attribute_id
@@ -104,14 +117,13 @@ func (r *Repository) SyncOption(ctx context.Context, merchantID string, productI
 	}
 
 	// b. Create Option
-	resOpt, err := db.ExecContext(ctx, `
+	optIDInt, err := db.InsertReturningID(ctx, `
 		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price)
 		VALUES (?, ?, ?)`,
-		attributeID, mod.Name, mod.UnitPrice.Fractional)
+		"id", attributeID, mod.Name, mod.UnitPrice.Fractional)
 	if err != nil {
 		return "", "", err
 	}
-	optIDInt, _ := resOpt.LastInsertId()
 	optionID = strconv.FormatInt(optIDInt, 10)
 
 	// c. Create Mapping
@@ -138,65 +150,85 @@ func (r *Repository) SyncOption(ctx context.Context, merchantID string, productI
 }
 
 func (r *Repository) ensureProductAttributeLink(ctx context.Context, productID, attributeID string) error {
+	db := dbx.GetDB(ctx, r.database)
+
 	var count int
-	err := r.database.QueryRowContext(ctx, "SELECT COUNT(*) FROM product_configurable_attribute WHERE product_id = ? AND configurable_attribute_id = ?", productID, attributeID).Scan(&count)
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM product_configurable_attribute WHERE product_id = ? AND configurable_attribute_id = ?", productID, attributeID).Scan(&count)
 	if err != nil {
 		return err
 	}
 	if count == 0 {
-		_, err := r.database.ExecContext(ctx, "INSERT INTO product_configurable_attribute (product_id, configurable_attribute_id) VALUES (?, ?)", productID, attributeID)
+		_, err := db.ExecContext(ctx, "INSERT INTO product_configurable_attribute (product_id, configurable_attribute_id) VALUES (?, ?)", productID, attributeID)
 		return err
 	}
 	return nil
 }
 
 func (r *Repository) getOrCreateDefaultGroupTx(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	name := "Deliveroo Options"
-	var id int
+	// configurable_attributes.id is a varchar PK with no default (same as
+	// menu.CreateAttribute / webhook/ubereats.CreateAttributeFromUberGroup) —
+	// it is never an auto-increment integer, so the previous SELECT id INTO
+	// int / LastInsertId() pair could never have worked.
+	var id string
 	err := db.QueryRowContext(ctx, "SELECT id FROM configurable_attributes WHERE merchant_id = ? AND name = ?", merchantID, name).Scan(&id)
 	if err == nil {
-		return strconv.Itoa(id), nil
+		return id, nil
 	}
 
-	res, err := db.ExecContext(ctx, `
-		INSERT INTO configurable_attributes (merchant_id, brand, name, title, is_required, min_options, max_options)
-		VALUES (?, 'DELIVEROO', ?, 'Options Deliveroo', 0, 0, 99)`,
-		merchantID, name)
+	newID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
+
+	// NOTE: configurable_attributes.product_id is also NOT NULL with no
+	// default and is not set here — same pre-existing bug as
+	// webhook/ubereats.CreateAttributeFromUberGroup (confirmed present in the
+	// MySQL source DDL too, so this insert has likely never actually
+	// succeeded in production). Left unfixed, see Tier2 report.
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, merchant_id, brand, name, title, is_required, min_options, max_options)
+		VALUES (?, ?, 'DELIVEROO', ?, 'Options Deliveroo', false, 0, 99)`,
+		newID, merchantID, name)
 
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return "", err
 	}
 
-	newID, _ := res.LastInsertId()
-	return strconv.FormatInt(newID, 10), nil
+	return newID, nil
 }
 
 // SyncProduct : Logique de synchronisation/création de produit
 func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item DeliverooItem) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	// (Code identique à la version précédente - simplifié ici pour la lecture mais à inclure complet)
+	// products.product_id is an integer identity while
+	// integration_deliveroo_products_mapping.product_id is varchar — same
+	// cross-type join issue as GetMerchantByLocationID above.
+	productIDCast := "CAST(p.product_id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		productIDCast = "CAST(p.product_id AS TEXT)"
+	}
+
 	// 1. Check Mapping
-	queryMap := `
+	queryMap := fmt.Sprintf(`
 		SELECT p.product_id
 		FROM products p
-		INNER JOIN integration_deliveroo_products_mapping map on p.product_id = map.product_id
-		WHERE map.item_id = ? AND map.merchant_id = ? AND map.enabled = '1' AND p.enabled = '1'`
+		INNER JOIN integration_deliveroo_products_mapping map on %s = map.product_id
+		WHERE map.item_id = ? AND map.merchant_id = ? AND map.enabled = '1' AND p.enabled = '1'`, productIDCast)
 	var productID string
 	err := db.QueryRowContext(ctx, queryMap, item.PosItemID, merchantID).Scan(&productID)
 	if err == nil {
 		return productID, nil
 	}
 
-	res, err := db.ExecContext(ctx, `INSERT INTO products (merchant_id, name, product_desc, price) VALUES(?, ?, ?, ?)`, merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional)
+	newID, err := db.InsertReturningID(ctx,
+		`INSERT INTO products (merchant_id, name, product_desc, price) VALUES(?, ?, ?, ?)`,
+		"product_id", merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return "", err
 	}
-	newID, _ := res.LastInsertId()
 	productID = strconv.FormatInt(newID, 10)
 
 	_, err = db.ExecContext(ctx, `INSERT INTO integration_deliveroo_products_mapping(merchant_id, product_id, item_id, item_name) VALUES(?, ?, ?, ?)`, merchantID, productID, item.PosItemID, item.OperationalName)
@@ -212,7 +244,7 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 
 // UpdateOrderRejected met à jour la commande en REJECTED/CANCELED
 func (r *Repository) UpdateOrderRejected(ctx context.Context, brandOrderID string, status string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		UPDATE orders
@@ -224,13 +256,22 @@ func (r *Repository) UpdateOrderRejected(ctx context.Context, brandOrderID strin
 
 // DisablePayments désactive les paiements pour une commande annulée
 func (r *Repository) DisablePayments(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
+	// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
+	// UPDATE...FROM instead.
 	query := `
 		UPDATE payments p
 		JOIN orders o ON p.order_id = o.order_id
 		SET p.enabled = FALSE
 		WHERE o.brand_order_id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+		UPDATE payments
+		SET enabled = FALSE
+		FROM orders
+		WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?`
+	}
 	_, err := db.ExecContext(ctx, query, brandOrderID)
 
 	return err
@@ -238,7 +279,7 @@ func (r *Repository) DisablePayments(ctx context.Context, brandOrderID string) e
 
 // UpdateOrderAccepted met à jour le statut ACCEPTED (avec logique toggle scheduled du PHP)
 func (r *Repository) UpdateOrderAccepted(ctx context.Context, brandOrderID string, isScheduledToggle bool) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var query string
 	if isScheduledToggle {
@@ -261,7 +302,7 @@ func (r *Repository) UpdateOrderAccepted(ctx context.Context, brandOrderID strin
 
 // UpdateOrderConfirmed met à jour le statut CONFIRMED
 func (r *Repository) UpdateOrderConfirmed(ctx context.Context, brandOrderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		UPDATE orders
@@ -273,7 +314,7 @@ func (r *Repository) UpdateOrderConfirmed(ctx context.Context, brandOrderID stri
 
 // GetOrderIDByBrandID récupère l'ID interne (order_id) via l'ID Deliveroo
 func (r *Repository) GetOrderIDByBrandIDTx(ctx context.Context, brandOrderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `SELECT order_id FROM orders WHERE brand_order_id = ?`
 	var orderID string
@@ -285,7 +326,7 @@ func (r *Repository) GetOrderIDByBrandIDTx(ctx context.Context, brandOrderID str
 }
 
 func (r *Repository) GetOrderIDByBrandID(ctx context.Context, brandOrderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `SELECT order_id FROM orders WHERE brand_order_id = ?`
 
@@ -300,18 +341,22 @@ func (r *Repository) GetOrderIDByBrandID(ctx context.Context, brandOrderID strin
 
 // GetProductMapping récupère le mapping d'un produit Deliveroo pour un marchand donné
 func (r *Repository) GetProductMapping(ctx context.Context, merchantID string, deliverooItemID string) (*DeliverooProductMapping, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	// La requête SQL issue de ton code PHP
-	// J'utilise ? comme placeholder (standard MySQL/MariaDB).
-	// Si tu es sur PostgreSQL, remplace par $1, $2
-	query := `
+	// products.product_id is an integer identity while
+	// integration_deliveroo_products_mapping.product_id is varchar — same
+	// cross-type join issue as SyncProduct/GetMerchantByLocationID above.
+	productIDCast := "CAST(p.product_id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		productIDCast = "CAST(p.product_id AS TEXT)"
+	}
+	query := fmt.Sprintf(`
         SELECT map.item_name, map.item_id
         FROM integration_deliveroo_products_mapping map
-        INNER JOIN products p ON p.product_id = map.product_id
+        INNER JOIN products p ON %s = map.product_id
         WHERE map.item_id = ?
         AND map.merchant_id = ?
-    `
+    `, productIDCast)
 
 	var mapping DeliverooProductMapping
 

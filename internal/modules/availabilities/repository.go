@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -21,7 +22,7 @@ func NewAvailabilitiesRepository(db *sql.DB) *AvailabilitiesRepository {
 // GetAvailabilitiesByMerchant récupère toutes les disponibilités pour un commerçant
 // avec les produits et créneaux associés
 func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Context, merchantID string) ([]Availability, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Récupérer les availabilities principales
 	query := `
@@ -34,7 +35,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 			creation_date,
 			update_date
 		FROM availabilities
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = true
 		ORDER BY creation_date DESC
 	`
 
@@ -97,7 +98,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesByMerchant(ctx context.Conte
 
 // GetAvailabilityByID récupère une disponibilité spécifique avec tous ses détails
 func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merchantID, availabilityID string) (*Availability, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT 
@@ -109,7 +110,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 			creation_date,
 			update_date
 		FROM availabilities
-		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
+		WHERE availability_id = ? AND merchant_id = ? AND enabled = true
 	`
 
 	row := db.QueryRowContext(ctx, query, availabilityID, merchantID)
@@ -151,7 +152,7 @@ func (r *AvailabilitiesRepository) GetAvailabilityByID(ctx context.Context, merc
 // Create crée une nouvelle disponibilité avec ses produits et créneaux (atomique)
 func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string, req CreateAvailabilityRequest) (*Availability, error) {
 	// Démarrer une transaction
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Générer l'ID
 	availabilityID := helpers.GeneratePrefixedID(helpers.AvailabilityIDPrefix)
@@ -167,7 +168,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 			available,
 			creation_date,
 			update_date
-		) VALUES (?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, true, ?, ?)
 	`
 
 	_, err := db.ExecContext(ctx, insertQuery,
@@ -258,7 +259,7 @@ func (r *AvailabilitiesRepository) Create(ctx context.Context, merchantID string
 
 // Update met à jour une disponibilité existante (atomique)
 func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, availabilityID string, req UpdateAvailabilityRequest) (*Availability, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	now := time.Now().UTC()
 
@@ -411,12 +412,12 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 
 // Delete effectue une suppression logique (enabled = 0)
 func (r *AvailabilitiesRepository) Delete(ctx context.Context, merchantID, availabilityID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		UPDATE availabilities
-		SET enabled = 0, update_date = ?
-		WHERE availability_id = ? AND merchant_id = ? AND enabled = 1
+		SET enabled = false, update_date = ?
+		WHERE availability_id = ? AND merchant_id = ? AND enabled = true
 	`
 
 	result, err := db.ExecContext(ctx, query, time.Now().UTC(), availabilityID, merchantID)
@@ -437,7 +438,7 @@ func (r *AvailabilitiesRepository) Delete(ctx context.Context, merchantID, avail
 
 // GetAvailabilitiesForProduct récupère toutes les disponibilités actives pour un produit
 func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Context, merchantID, productID string) ([]Availability, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT DISTINCT
@@ -450,7 +451,7 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 			a.update_date
 		FROM availabilities a
 		INNER JOIN availabilities_products ap ON a.availability_id = ap.availability_id
-		WHERE a.merchant_id = ? AND ap.product_id = ? AND a.enabled = 1
+		WHERE a.merchant_id = ? AND ap.product_id = ? AND a.enabled = true
 		ORDER BY a.creation_date DESC
 	`
 

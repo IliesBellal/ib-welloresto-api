@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
-	"welloresto-api/internal/utils/dbutils"
 	"welloresto-api/internal/utils/security"
 
 	"go.uber.org/zap"
@@ -29,7 +29,7 @@ func NewCashRegisterRepository(db *sql.DB) *CashRegisterRepository {
 }
 
 func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (*models.CashRegisterOpenResponse, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1) Vérifier si un registre est déjà ouvert pour ce device
@@ -52,26 +52,25 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 		return nil, err
 	}
 
-	// 2) Nouveau registre principal
-	res, err := db.ExecContext(ctx, `
+	// 2) Nouveau registre principal.
+	// closure_comment est NOT NULL sans défaut : MySQL non-strict insérait ''
+	// implicitement, Postgres refuse l'omission — '' explicite, comportement
+	// identique. cash_fund est une colonne integer alimentée par un float64
+	// JSON : arrondi côté Go (MySQL arrondissait à l'assignation, pgx refuse
+	// un float64 sur int4).
+	lai, err := db.InsertReturningID(ctx, fmt.Sprintf(`
 		INSERT INTO cash_registers
-		(cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date)
-		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP)
-	`,
+		(cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date, closure_comment)
+		VALUES (?, ?, ?, ?, ?, %s, '')
+	`, dbx.UTCNow()), "cash_register_id",
 		req.CashRegister.CashDeskID,
 		req.DeviceID,
 		req.CashRegister.UserID,
 		merchantID,
-		req.CashRegister.CashFund,
+		int(math.Round(req.CashRegister.CashFund)),
 	)
 	if err != nil {
 		log.Error("Erreur lors de l'insertion du registre", zap.Error(err))
-		return nil, err
-	}
-
-	lai, err := res.LastInsertId()
-	if err != nil {
-		log.Error("Erreur lors de la récupération de l'ID inséré", zap.Error(err))
 		return nil, err
 	}
 
@@ -356,8 +355,34 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	return res, nil
 }
 
+// paymentsRequalifySQL retourne l'UPDATE de requalification des paiements vers
+// la caisse qui se ferme (étapes 2 / 3 / 3bis de CloseCashRegister), selon le
+// dialecte : MySQL utilise UPDATE ... INNER JOIN, Postgres UPDATE ... FROM
+// (cible SET non qualifiée — PG refuse `SET p.colonne`). `cond` porte les
+// filtres mop/cash_register_id, avec l'alias p. valide dans les deux formes.
+// Arguments attendus, dans l'ordre : cashRegisterID, merchantID.
+func paymentsRequalifySQL(cond string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return `
+			UPDATE payments p
+			SET cash_register_id = ?
+			FROM orders o
+			WHERE o.order_id = p.order_id
+			  AND o.state = 'CLOSED'
+			  AND ` + cond + `
+			  AND p.merchant_id = ?`
+	}
+	return `
+		UPDATE payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+		SET p.cash_register_id = ?
+		WHERE o.state = 'CLOSED'
+		  AND ` + cond + `
+		  AND p.merchant_id = ?`
+}
+
 func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	alreadyClosed, err := r.isCashRegisterClosedForMerchant(ctx, cashRegisterID, merchantID)
@@ -370,14 +395,14 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 
 	// 1. Vérifier commandes encore ouvertes
 	var tmp string
-	err = db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT o.order_id
 		FROM orders o
 		WHERE o.cash_register_id = ?
 		AND o.state NOT IN ('CLOSED','DONE')
-		AND (o.scheduled = false OR (o.scheduled = true AND UTC_TIMESTAMP > o.estimated_ready))
+		AND (o.scheduled = false OR (o.scheduled = true AND %s > o.estimated_ready))
 		LIMIT 1
-	`, cashRegisterID).Scan(&tmp)
+	`, dbx.UTCNow()), cashRegisterID).Scan(&tmp)
 
 	if err == nil {
 		log.Warn("Orders still opened, cannot close cash register", zap.String("cash_register_id", cashRegisterID))
@@ -387,29 +412,18 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	}
 
 	// 2. Associer paiements (STRIPE)
-	_, err = db.ExecContext(ctx, `
-		UPDATE payments p
-		INNER JOIN orders o ON o.order_id = p.order_id
-		SET p.cash_register_id = ?
-		WHERE o.state = 'CLOSED'
-		  AND p.mop = 'STRIPE'
-		  AND p.cash_register_id = 'SCANNORDER'
-		  AND p.merchant_id = ?
-	`, cashRegisterID, merchantID)
+	_, err = db.ExecContext(ctx, paymentsRequalifySQL(
+		`p.mop = 'STRIPE' AND p.cash_register_id = 'SCANNORDER'`,
+	), cashRegisterID, merchantID)
 	if err != nil {
 		return false, err
 	}
 
 	// 3. Associer paiements Uber / Deliveroo
-	_, err = db.ExecContext(ctx, `
-		UPDATE payments p
-		INNER JOIN orders o ON o.order_id = p.order_id
-		SET p.cash_register_id = ?
-		WHERE o.state = 'CLOSED'
-		  AND p.mop IN ('UBER_EATS','DELIVEROO')
-		  AND (p.cash_register_id IS NULL OR p.cash_register_id IN ('UBER_EATS','DELIVEROO'))
-		  AND p.merchant_id = ?
-	`, cashRegisterID, merchantID)
+	_, err = db.ExecContext(ctx, paymentsRequalifySQL(
+		`p.mop IN ('UBER_EATS','DELIVEROO')
+		  AND (p.cash_register_id IS NULL OR p.cash_register_id IN ('UBER_EATS','DELIVEROO'))`,
+	), cashRegisterID, merchantID)
 	if err != nil {
 		return false, err
 	}
@@ -418,15 +432,9 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	// Terminal, ou paiement CB différé) : tout paiement 'CB' d'une commande
 	// clôturée sans registre associé est rattaché à la première caisse du
 	// merchant qui se ferme ensuite, pour qu'il apparaisse dans son rapport Z.
-	_, err = db.ExecContext(ctx, `
-		UPDATE payments p
-		INNER JOIN orders o ON o.order_id = p.order_id
-		SET p.cash_register_id = ?
-		WHERE o.state = 'CLOSED'
-		  AND p.mop = 'CB'
-		  AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK')
-		  AND p.merchant_id = ?
-	`, cashRegisterID, merchantID)
+	_, err = db.ExecContext(ctx, paymentsRequalifySQL(
+		`p.mop = 'CB' AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK')`,
+	), cashRegisterID, merchantID)
 	if err != nil {
 		return false, err
 	}
@@ -495,9 +503,9 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	signature := security.SignHash(newHash)
 
 	// 8. Fermer le registre (avec MAJ des infos fiscales et du calculatedFinalCash)
-	_, err = db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE cash_registers
-		SET end_date = UTC_TIMESTAMP,
+		SET end_date = %s,
 			closed = true,
 			final_cash_fund = ?,
 			previous_hash = ?,
@@ -505,7 +513,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 			signature = ?
 		WHERE cash_register_id = ?
 			AND closed = false
-	`, calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
+	`, dbx.UTCNow()), calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
 
 	if err != nil {
 		return false, err
@@ -515,7 +523,7 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 }
 
 func (r *CashRegisterRepository) isCashRegisterClosedForMerchant(ctx context.Context, cashRegisterID, merchantID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var closed bool
 	err := db.QueryRowContext(ctx, `
@@ -537,7 +545,7 @@ func (r *CashRegisterRepository) isCashRegisterClosedForMerchant(ctx context.Con
 }
 
 func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cashRegisterID string, merchantID string) (*models.CashRegisterSummaryResponse, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
@@ -644,7 +652,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		LEFT JOIN labels l ON l.label_value = crci.label
 			AND l.lang = 'FR'
 		WHERE cash_register_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 		ORDER BY id ASC
 	`, cashRegisterID)
 	if err != nil {
@@ -703,8 +711,11 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	// ----------------------------------------------------------------
 	// PAYMENTS
 	// ----------------------------------------------------------------
+	// p.enabled est boolean en Postgres mais scanné dans un int Go (CRPayment.Enabled) :
+	// CASE 1/0 valide dans les deux dialectes (MySQL évalue le tinyint comme booléen).
 	payRows, err := db.QueryContext(ctx, `
-		SELECT p.order_id, o.order_num, p.payment_id, p.amount, p.mop, p.enabled,
+		SELECT p.order_id, o.order_num, p.payment_id, p.amount, p.mop,
+		       CASE WHEN p.enabled THEN 1 ELSE 0 END AS enabled,
 		       p.payment_date, u.user_id, u.first_name, u.last_name
 		FROM payments p
 		INNER JOIN orders o ON o.order_id = p.order_id
@@ -748,7 +759,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 }
 
 func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegisterID string, req *models.AddCustomItemRequest, user *auth.UserLoginRow) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
@@ -756,23 +767,21 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	}
 
 	// Insert custom item
-	res, err := db.ExecContext(ctx, `
+	insertID, err := db.InsertReturningID(ctx, `
 		INSERT INTO cash_registers_custom_items (label, amount, cash_register_id, merchant_id, created_by)
 		VALUES (?, ?, ?, ?, ?)
-	`, req.Label, req.Value, cashRegisterID, user.MerchantID, user.UserID)
+	`, "id", req.Label, req.Value, cashRegisterID, user.MerchantID, user.UserID)
 
 	if err != nil {
 		log.Error(err.Error())
 		return "", err
 	}
 
-	insertID, _ := res.LastInsertId()
-
 	return fmt.Sprintf("%d", insertID), nil
 }
 
 func (r *CashRegisterRepository) isCashRegisterClosed(ctx context.Context, cashRegisterID string) bool {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Check if cash register is closed (using the closed column)
@@ -791,7 +800,7 @@ func (r *CashRegisterRepository) isCashRegisterClosed(ctx context.Context, cashR
 }
 
 func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string, user *auth.UserLoginRow) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
@@ -800,7 +809,7 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE cash_registers_custom_items
-		SET enabled = 0
+		SET enabled = FALSE
 		WHERE cash_register_id = ? AND id = ? AND merchant_id = ?
 	`, cashRegisterID, itemID, user.MerchantID)
 	if err != nil {
@@ -812,20 +821,21 @@ func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegis
 }
 
 func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID, cashRegisterID, comment string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
 		return models.ErrCashRegisterStillOpen
 	}
 
-	// Update: set enclosed (not closed!)
+	// Update: set enclosed (not closed!). Cibles SET non qualifiées : Postgres
+	// refuse `SET alias.colonne` (valide aussi en MySQL sans alias).
 	_, err := db.ExecContext(ctx, `
-		UPDATE cash_registers cr
-		SET cr.enclosed = true,
-		    cr.closed_by = ?,
-		    cr.closure_comment = ?
-		WHERE cr.cash_register_id = ?
+		UPDATE cash_registers
+		SET enclosed = true,
+		    closed_by = ?,
+		    closure_comment = ?
+		WHERE cash_register_id = ?
 	`, userID, comment, cashRegisterID)
 
 	if err != nil {
@@ -837,7 +847,7 @@ func (r *CashRegisterRepository) EncloseCashRegister(ctx context.Context, userID
 }
 
 func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, merchantID string, userID string, req CashRegisterHistoryRequest) (*CashRegisterHistoryResult, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// ==========================================
@@ -955,6 +965,13 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	// ==========================================
 	// 5️⃣ RÉCUPÉRATION DES DONNÉES COMPLÈTES
 	// ==========================================
+	// payments.cash_register_id est varchar (colonne hybride id/sentinelles)
+	// face au PK integer de cash_registers : MySQL coerçait la jointure,
+	// Postgres exige un cast explicite (syntaxe CHAR/TEXT selon dialecte).
+	crIDCast := "CAST(cr.cash_register_id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		crIDCast = "CAST(cr.cash_register_id AS TEXT)"
+	}
 	fullQuery := fmt.Sprintf(`
 		SELECT cr.cash_register_id,
 		       cr.start_date,
@@ -978,12 +995,12 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			       COUNT(*) AS transaction_count,
 			       COALESCE(SUM(p.amount), 0) AS total_revenu
 			FROM payments p
-			WHERE p.enabled = 1
+			WHERE p.enabled = TRUE
 			GROUP BY p.cash_register_id
-		) pstats ON pstats.cash_register_id = cr.cash_register_id
+		) pstats ON pstats.cash_register_id = %s
         WHERE cr.cash_register_id IN (%s)
         ORDER BY cr.start_date DESC
-    `, strings.Join(inParts, ","))
+    `, crIDCast, strings.Join(inParts, ","))
 
 	fullRows, err := db.QueryContext(ctx, fullQuery)
 	if err != nil {
@@ -1221,7 +1238,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 }
 
 func (r *CashRegisterRepository) IsCircularDeviceLink(ctx context.Context, deviceID, onBehalfOf string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var exists int
@@ -1241,16 +1258,28 @@ func (r *CashRegisterRepository) IsCircularDeviceLink(ctx context.Context, devic
 }
 
 func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID, userID, onBehalfOf string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	query := `
-		INSERT INTO device_link (device_id, user_id, on_behalf_of, creation_date)
-		VALUES (?, ?, ?, UTC_TIMESTAMP())
-		ON DUPLICATE KEY UPDATE 
-			on_behalf_of = VALUES(on_behalf_of), 
-			user_id = VALUES(user_id), 
-			creation_date = UTC_TIMESTAMP()`
+	// Upsert par dialecte (PK device_link.device_id) — mêmes paramètres.
+	var query string
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+			INSERT INTO device_link (device_id, user_id, on_behalf_of, creation_date)
+			VALUES (?, ?, ?, now())
+			ON CONFLICT (device_id) DO UPDATE SET
+				on_behalf_of = EXCLUDED.on_behalf_of,
+				user_id = EXCLUDED.user_id,
+				creation_date = now()`
+	} else {
+		query = `
+			INSERT INTO device_link (device_id, user_id, on_behalf_of, creation_date)
+			VALUES (?, ?, ?, UTC_TIMESTAMP())
+			ON DUPLICATE KEY UPDATE
+				on_behalf_of = VALUES(on_behalf_of),
+				user_id = VALUES(user_id),
+				creation_date = UTC_TIMESTAMP()`
+	}
 
 	_, err := db.ExecContext(ctx, query, deviceID, userID, onBehalfOf)
 	if err != nil {
@@ -1260,7 +1289,7 @@ func (r *CashRegisterRepository) UpsertDeviceLink(ctx context.Context, deviceID,
 }
 
 func (r *CashRegisterRepository) DeleteDeviceLink(ctx context.Context, deviceID string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	res, err := db.ExecContext(ctx, `DELETE FROM device_link WHERE device_id = ?`, deviceID)

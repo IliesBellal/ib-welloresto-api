@@ -9,8 +9,18 @@ import (
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/openinghours"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
+
+// snoMerchantJoinCast retourne le fragment merchant.id (integer) comparable a
+// une colonne merchant_id varchar selon le dialecte (MySQL coercait, Postgres
+// exige le cast ; CHAR nu = char(1) en PG, d'ou TEXT).
+func snoMerchantJoinCast() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(m.id AS TEXT)"
+	}
+	return "CAST(m.id AS CHAR)"
+}
 
 type Repository struct {
 	database     *sql.DB
@@ -22,31 +32,31 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone, m.merchantTel,
 		   mp.currency, mp.primary_color, mp.text_color_on_primary_color,
 		   snos.logo_url, snos.banner_url,
            mp.delivery_fees, mp.delivery_fees_limit, mp.minimum_cart_for_delivery_order, mp.preparation_time_mode, mp.preparation_time, mp.delivery_distance_limit,
-           
+
            qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
-           
+
            o.order_id, l.location_id, l.location_name, snos.variable_fees, snos.fixed_fees, sa.account_id,
-           
-           snos.take_away_enabled, snos.take_away_available, 
+
+           snos.take_away_enabled, snos.take_away_available,
            snos.delivery_enabled, snos.delivery_available,
 		   snos.in_enabled, snos.in_available, mp.enable_advance_orders
-    
+
     FROM   qrcodes qr
-          INNER JOIN merchant m on m.id = qr.merchant_id
-          LEFT JOIN stripe_accounts sa on sa.merchant_id = m.id
-          INNER JOIN scannorder_settings snos on snos.merchant_id = m.id
-          INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
-          LEFT JOIN bookings_settings bs on bs.merchant_id = m.id
+          INNER JOIN merchant m on %[1]s = qr.merchant_id
+          LEFT JOIN stripe_accounts sa on sa.merchant_id = %[1]s
+          INNER JOIN scannorder_settings snos on snos.merchant_id = %[1]s
+          INNER JOIN merchant_parameters mp on mp.merchant_id = %[1]s
+          LEFT JOIN bookings_settings bs on bs.merchant_id = %[1]s
           LEFT JOIN locations l on l.location_id = qr.location_id
           LEFT JOIN (SELECT o.order_id, ol.location_id FROM orders o INNER JOIN order_location ol on ol.order_id = o.order_id WHERE o.state = 'OPEN') o on o.location_id = l.location_id
-    WHERE qr.code = ?`
+    WHERE qr.code = ?`, snoMerchantJoinCast())
 
 	row := models.MerchantRow{}
 	err := db.QueryRowContext(ctx, query, qr).Scan(
@@ -67,11 +77,18 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 }
 
 func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, prepMinutes int, localDate string, localTime string) (map[string][]TimeSlot, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// On convertit les minutes en format TIME (HH:MM:SS) pour MySQL
 	prepDelay := fmt.Sprintf("%02d:%02d:00", prepMinutes/60, prepMinutes%60)
 
+	// Requete par dialecte : MAKETIME/ADDTIME/DATE_FORMAT/TIME_FORMAT/DAYOFWEEK
+	// n'ont pas d'equivalent syntaxique PG. La branche PG utilise le meme CTE
+	// recursif avec time/interval natifs, EXTRACT(ISODOW) (deja en convention
+	// ISO, sans le CASE MySQL), et compare heure+delai en interval (les
+	// intervalles ne bouclent pas a minuit, comme ADDTIME MySQL qui peut
+	// depasser 24h — un delai franchissant minuit n'ouvre aucun creneau,
+	// comportement conserve).
 	query := `
         WITH RECURSIVE time_slots AS (
             SELECT MAKETIME(0, 30, 0) AS time_slot
@@ -98,16 +115,13 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
 		  AND (hoo.valid_to IS NULL OR hoo.valid_to >= DATE_ADD(?, INTERVAL days_to_add DAY))
           AND days_to_add < COALESCE(mp.advance_order_days, 3)
           AND (
-				DATE_ADD(?, INTERVAL days_to_add DAY) > ? OR 
-				(DATE_ADD(?, INTERVAL days_to_add DAY) = ? AND 
+				DATE_ADD(?, INTERVAL days_to_add DAY) > ? OR
+				(DATE_ADD(?, INTERVAL days_to_add DAY) = ? AND
 				 ADDTIME(?, ?) <= time_slots.time_slot)
           )
         ORDER BY open_date, slot_time;
     `
-
-	rows, err := db.QueryContext(
-		ctx,
-		query,
+	args := []interface{}{
 		localDate,
 		merchantID,
 		localDate,
@@ -120,7 +134,55 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
 		localDate,
 		localTime,
 		prepDelay,
-	)
+	}
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+        WITH RECURSIVE time_slots AS (
+            SELECT time '00:30:00' AS time_slot
+            UNION ALL
+            SELECT time_slot + interval '30 minutes'
+            FROM time_slots
+            WHERE time_slot < time '23:30:00'
+        )
+		SELECT DISTINCT
+			to_char(CAST(? AS date) + days_to_add, 'YYYY-MM-DD') AS open_date,
+            to_char(time_slots.time_slot, 'HH24:MI') as slot_time
+        FROM (
+            SELECT 0 AS days_to_add UNION ALL SELECT 1 UNION ALL SELECT 2
+        ) AS days
+        CROSS JOIN time_slots
+        JOIN hours_of_operation AS hoo
+            ON hoo.merchant_id = ?
+            AND hoo.enabled = TRUE
+			AND EXTRACT(ISODOW FROM CAST(? AS date) + days_to_add) BETWEEN hoo.day_of_week_from AND hoo.day_of_week_to
+            AND time_slots.time_slot > hoo.hour_from
+            AND time_slots.time_slot <= hoo.hour_to
+        LEFT JOIN merchant_parameters AS mp ON mp.merchant_id = hoo.merchant_id
+		WHERE (hoo.valid_from IS NULL OR hoo.valid_from <= CAST(? AS date) + days_to_add)
+		  AND (hoo.valid_to IS NULL OR hoo.valid_to >= CAST(? AS date) + days_to_add)
+          AND days_to_add < COALESCE(mp.advance_order_days, 3)
+          AND (
+				CAST(? AS date) + days_to_add > CAST(? AS date) OR
+				(CAST(? AS date) + days_to_add = CAST(? AS date) AND
+				 (CAST(? AS interval) + CAST(? AS interval)) <= CAST(time_slots.time_slot AS interval))
+          )
+        ORDER BY open_date, slot_time`
+		args = []interface{}{
+			localDate,
+			merchantID,
+			localDate,
+			localDate,
+			localDate,
+			localDate,
+			localDate,
+			localDate,
+			localDate,
+			localTime,
+			prepDelay,
+		}
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -148,13 +210,13 @@ func (r *Repository) GetAvailableSlots(ctx context.Context, merchantID string, p
 }
 
 func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (string, string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT qr.merchant_id, m.timezone
 	FROM qrcodes qr
-	INNER JOIN merchant m ON m.id = qr.merchant_id
-	WHERE qr.code = ?`
+	INNER JOIN merchant m ON %s = qr.merchant_id
+	WHERE qr.code = ?`, snoMerchantJoinCast())
 
 	var merchantID string
 	var tz string
@@ -166,7 +228,7 @@ func (r *Repository) GetMerchantIDAndTZFromQR(ctx context.Context, qr string) (s
 }
 
 func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merchantID string) (string, string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT m.id, m.timezone
@@ -182,7 +244,7 @@ func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merch
 }
 
 func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]LoyaltyProgram, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT id, name, description
@@ -207,7 +269,7 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 }
 
 func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderType string, dow int) ([]Discount, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT DISTINCT
@@ -223,23 +285,33 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 		d.max_discount_value,
 		d.max_discount_unit,
 		d.discounted_quantity,
-		d.is_cumulative,
-		d.available
+		CASE WHEN d.is_cumulative THEN 1 ELSE 0 END,
+		CASE WHEN d.available THEN 1 ELSE 0 END
 	FROM discounts d
 	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
 	WHERE d.merchant_id = ?
 	AND d.discount_order_type LIKE ?
-	AND (d.valid_from < UTC_TIMESTAMP()
-		AND (d.valid_to > UTC_TIMESTAMP() OR d.valid_to IS NULL))
+	AND (d.valid_from < %[1]s
+		AND (d.valid_to > %[1]s OR d.valid_to IS NULL))
 	AND (
-		(ds.available_from < UTC_TIMESTAMP()
-		 AND ds.available_to > UTC_TIMESTAMP()
+		(%[2]s
 		 AND ds.day_of_week = ?)
 		OR NOT d.is_time_limited
 	)
 	AND d.available = true
 	AND d.enabled = true
 	`
+	// available_from/to sont des colonnes time comparees a un timestamp en
+	// MySQL (coercition implicite) — traduites en comparaison d'heure du jour
+	// UTC cote PG, comme orders.GetDiscountProductOptions. Les scans
+	// is_cumulative/available passent par CASE 1/0 (booleens PG vs int Go).
+	timeWindow := `(ds.available_from < UTC_TIMESTAMP()
+		 AND ds.available_to > UTC_TIMESTAMP())`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		timeWindow = `(ds.available_from < CAST(now() AT TIME ZONE 'UTC' AS time)
+		 AND ds.available_to > CAST(now() AT TIME ZONE 'UTC' AS time))`
+	}
+	query = fmt.Sprintf(query, dbx.UTCNow(), timeWindow)
 
 	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
 	if err != nil {
@@ -284,22 +356,22 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 }
 
 func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantStatus, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	status := &MerchantStatus{}
 	day := normalizeDayOfWeek(dow)
 	holidayRepo := settingspkg.NewRepository(r.database)
 
 	// 1️⃣ Global open status
-	query1 := `
+	query1 := fmt.Sprintf(`
 	SELECT 1
 	FROM merchant_parameters mp
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = mp.merchant_id
 	WHERE mp.is_open = true
 	AND snos.activated = true
-	AND (snos.closed_until IS NULL OR snos.closed_until <= UTC_TIMESTAMP())
+	AND (snos.closed_until IS NULL OR snos.closed_until <= %s)
 	AND mp.merchant_id = ?
-	LIMIT 1`
+	LIMIT 1`, dbx.UTCNow())
 
 	var tmp int
 	var isMerchantEnabled bool
@@ -368,7 +440,7 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 }
 
 func (r *Repository) GetMerchantOpenHours(ctx context.Context, merchantID string) ([]OpenHoursDay, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	type openHourRow struct {
 		DayFrom  int
@@ -377,20 +449,20 @@ func (r *Repository) GetMerchantOpenHours(ctx context.Context, merchantID string
 		HourTo   string
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT
 		hoo.day_of_week_from,
 		hoo.day_of_week_to,
-		hoo.hour_from,
-		hoo.hour_to
+		CAST(hoo.hour_from AS CHAR(8)),
+		CAST(hoo.hour_to AS CHAR(8))
 	FROM hours_of_operation hoo
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
 	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 	WHERE hoo.merchant_id = ?
 	AND hoo.enabled = true
-	AND (hoo.valid_from IS NULL OR hoo.valid_from <= UTC_TIMESTAMP())
-	AND (hoo.valid_to IS NULL OR hoo.valid_to >= UTC_TIMESTAMP())
-	ORDER BY hoo.day_of_week_from, hoo.hour_from`
+	AND (hoo.valid_from IS NULL OR hoo.valid_from <= %[1]s)
+	AND (hoo.valid_to IS NULL OR hoo.valid_to >= %[1]s)
+	ORDER BY hoo.day_of_week_from, hoo.hour_from`, dbx.UTCNow())
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
 	if err != nil {
@@ -480,7 +552,7 @@ func formatHour(hour string) string {
 }
 
 func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID string, dow int, currentTime string) (map[int64]string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT DISTINCT p.product_id, p.name
@@ -520,7 +592,7 @@ func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID stri
 // excludes 'canceled' but keeps 'active' and 'done' (a just-finished session must stay
 // visible for the post-delivery SNO display).
 func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID string) (deliverySessionID *string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT dso.order_id, dso.delivery_session_id
@@ -547,7 +619,7 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 }
 
 func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `SELECT merchant_id FROM qrcodes WHERE code = ?`
 	var merchantID string
@@ -565,7 +637,7 @@ func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string,
 // GetStripePaymentForOrder returns the intent_id and account_id of the active Stripe
 // payment for a given order. Returns ("", "", nil) when no Stripe payment exists.
 func (r *Repository) GetStripePaymentForOrder(ctx context.Context, orderID string) (intentID string, accountID string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	q := `
 		SELECT sp.payment_intent_id, sa.account_id
@@ -574,7 +646,7 @@ func (r *Repository) GetStripePaymentForOrder(ctx context.Context, orderID strin
 		INNER JOIN stripe_accounts sa ON sa.merchant_id = p.merchant_id
 		WHERE p.order_id = ?
 		  AND p.mop = 'STRIPE'
-		  AND p.enabled = 1
+		  AND p.enabled = TRUE
 		LIMIT 1`
 
 	err = db.QueryRowContext(ctx, q, orderID).Scan(&intentID, &accountID)
@@ -585,14 +657,14 @@ func (r *Repository) GetStripePaymentForOrder(ctx context.Context, orderID strin
 }
 
 func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*models.CustomerRequest, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
         SELECT b.customer_id
         FROM qrcodes qr
         INNER JOIN booked_location bc ON bc.location_id = qr.location_id
         INNER JOIN bookings b ON b.booking_id = bc.booking_id
-        WHERE qr.code = $1
+        WHERE qr.code = ?
         AND NOW() BETWEEN b.booking_date_from AND b.booking_date_to
         LIMIT 1;
     `
@@ -612,7 +684,7 @@ func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 }
 
 func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if customer.Tel == nil || customer.MerchantID == nil || *customer.Tel == "" || *customer.MerchantID == "" {
 		return &customer, nil
@@ -651,7 +723,7 @@ func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
             SELECT cr.reward_id, cr.loyalty_program_id, cr.creation_date,
 				   cr.reward_type, cr.reward_value
             FROM customer_rewards cr
-            WHERE cr.customer_id = $1
+            WHERE cr.customer_id = ?
             AND cr.usage_date IS NULL;
         `
 
@@ -692,7 +764,7 @@ func (s *Repository) GetBooking(ctx context.Context, qrCode string) (*models.Boo
 // GetMerchantsByBrandSlug fetches the brand and its merchants.
 // If lat and lng are non-nil, only merchants within 50 km are returned (Haversine).
 func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, lat, lng *float64) (*BrandData, []BrandMerchantRow, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Fetch brand
 	brandQuery := `
@@ -717,7 +789,9 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 	var rows *sql.Rows
 
 	if lat != nil && lng != nil {
-		merchantQuery := `
+		// Le HAVING sans GROUP BY sur l'alias distance_km (tolerance MySQL)
+		// devient une sous-requete filtree en WHERE cote PG — meme resultat.
+		merchantQuery := fmt.Sprintf(`
 			SELECT
 				m.id,
 				m.fullName,
@@ -743,16 +817,52 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				)) AS distance_km
 			FROM brands b
 			INNER JOIN merchant m ON m.brand_id = b.brand_id
-          	INNER JOIN qrcodes qr ON qr.merchant_id = m.id and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
-			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
-			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+          	INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
+			INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
+			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 			WHERE b.brand_id = ?
 			HAVING distance_km < 50
-			ORDER BY distance_km ASC`
+			ORDER BY distance_km ASC`, snoMerchantJoinCast())
+		if dbx.ActiveDialect() == dbx.Postgres {
+			merchantQuery = fmt.Sprintf(`
+			SELECT * FROM (
+				SELECT
+					m.id,
+					m.fullName,
+					m.address,
+					m.lat,
+					m.lng,
+					m.timezone,
+					m.logo_url,
+					snos.take_away_enabled,
+					snos.take_away_available,
+					snos.delivery_enabled,
+					snos.delivery_available,
+					snos.in_enabled,
+					snos.in_available,
+					snos.header_background,
+					mp.preparation_time_mode,
+					mp.preparation_time,
+					qr.code as slug,
+					(6371 * ACOS(
+						COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
+						COS(RADIANS(m.lng) - RADIANS(?)) +
+						SIN(RADIANS(?)) * SIN(RADIANS(m.lat))
+					)) AS distance_km
+				FROM brands b
+				INNER JOIN merchant m ON m.brand_id = b.brand_id
+				INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
+				INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
+				INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+				WHERE b.brand_id = ?
+			) nearby
+			WHERE distance_km < 50
+			ORDER BY distance_km ASC`, snoMerchantJoinCast())
+		}
 
 		rows, err = db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
 	} else {
-		merchantQuery := `
+		merchantQuery := fmt.Sprintf(`
 			SELECT
 				m.id,
 				m.fullName,
@@ -774,11 +884,11 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				NULL AS distance_km
 			FROM brands b
 			INNER JOIN merchant m ON m.brand_id = b.brand_id
-          	INNER JOIN qrcodes qr ON qr.merchant_id = m.id and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
-			INNER JOIN scannorder_settings snos ON snos.merchant_id = m.id
-			INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+          	INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
+			INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
+			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 			WHERE b.brand_id = ?
-			ORDER BY m.fullName ASC`
+			ORDER BY m.fullName ASC`, snoMerchantJoinCast())
 
 		rows, err = db.QueryContext(ctx, merchantQuery, brand.BrandID)
 	}
@@ -835,16 +945,16 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 // upsell. Product groups are excluded since they are not orderable on their own — only their
 // sub-products are (same rule as the SNO menu, which flattens groups into their sub-products).
 func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) ([]string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT
 		p.product_id
 	FROM products p
 	WHERE p.merchant_id = ?
-	AND p.is_popular = 1
+	AND p.is_popular = TRUE
 	AND p.status in ('available','1')
-	AND (p.is_product_group IS NULL OR p.is_product_group != 1)
+	AND (p.is_product_group IS NULL OR p.is_product_group != TRUE)
 	ORDER BY p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
@@ -877,7 +987,7 @@ func (r *Repository) GetProductPricesForSNO(ctx context.Context, merchantID stri
 		return make(map[string]map[string]int64), nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Build placeholders for IN clause
 	placeholders := ""
@@ -891,7 +1001,7 @@ func (r *Repository) GetProductPricesForSNO(ctx context.Context, merchantID stri
 	}
 
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			p.product_id,
 			p.price,
 			COALESCE(p.price_delivery, p.price) as price_delivery,
@@ -938,7 +1048,7 @@ func (r *Repository) GetConfigurationOptionPricesForSNO(ctx context.Context, opt
 		return make(map[string]int), nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Build placeholders for IN clause
 	placeholders := ""

@@ -6,8 +6,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 type AttributeMappingRepository struct {
@@ -19,7 +20,7 @@ func NewAttributeMappingRepository(db *sql.DB) *AttributeMappingRepository {
 }
 
 func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Context, merchantID, title string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Équivalent PHP: preg_replace('/[^a-zA-Z0-9]/', '_', title)
@@ -29,43 +30,35 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 	// Équivalent PHP: 'ue_' . strtolower(...)
 	attrName := "ue_" + strings.ToLower(cleanTitle)
 
-	res, err := db.ExecContext(ctx, `
-		INSERT INTO configurable_attributes (merchant_id, brand, name, title, min_options, max_options, is_required)
-		VALUES (?, 'UBER_EATS', ?, ?, 0, 99, 0)
-	`, merchantID, attrName, title)
+	// configurable_attributes.id is a varchar PK with no default (same
+	// convention as menu.CreateAttribute) — must be generated client-side,
+	// there is no auto-increment to read back via LastInsertId.
+	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, merchant_id, brand, name, title, min_options, max_options, is_required)
+		VALUES (?, ?, 'UBER_EATS', ?, ?, 0, 99, false)
+	`, attributeID, merchantID, attrName, title)
 
 	if err != nil {
 		log.Error("Error creating attribute from Uber group: " + err.Error())
 		return "", err
 	}
 
-	// Récupération de l'ID généré (équivalent de lastInsertId())
-	id, err := res.LastInsertId()
-	if err != nil {
-		log.Error("Error getting last insert ID for attribute: " + err.Error())
-		return "", err
-	}
-
-	return strconv.FormatInt(id, 10), nil
+	return attributeID, nil
 }
 
 func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, attributeID, title string, price int) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	res, err := db.ExecContext(ctx, `
+	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price)
 		VALUES (?, ?, ?)
-	`, attributeID, title, price)
+	`, "id", attributeID, title, price)
 
 	if err != nil {
 		log.Error("Error creating option from Uber item: " + err.Error())
-		return "", err
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		log.Error("Error getting last insert ID for option: " + err.Error())
 		return "", err
 	}
 
@@ -74,7 +67,7 @@ func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, a
 
 // ---- Attributes ----
 func (r *AttributeMappingRepository) GetAttributeIDByModifierGroupID(ctx context.Context, merchantID, groupID string) (*string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var id string
@@ -95,7 +88,7 @@ func (r *AttributeMappingRepository) GetAttributeIDByModifierGroupID(ctx context
 }
 
 func (r *AttributeMappingRepository) CreateAttributeMapping(ctx context.Context, merchantID, attrID, groupID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,
@@ -110,7 +103,7 @@ func (r *AttributeMappingRepository) CreateAttributeMapping(ctx context.Context,
 
 // ---- Options ----
 func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context, attributeID, uberItemID string) (*string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var id string
@@ -132,7 +125,7 @@ func (r *AttributeMappingRepository) GetOptionIDByUberItemID(ctx context.Context
 }
 
 func (r *AttributeMappingRepository) CreateOptionMapping(ctx context.Context, merchantID, optionID, uberItemID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx,
