@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/distributiontime"
-	"welloresto-api/internal/utils/dbutils"
 	"welloresto-api/internal/utils/security"
 
 	"go.uber.org/zap"
@@ -39,7 +39,7 @@ func NewOrdersLifeCycleRepository(db *sql.DB, custoRepo *customers.CustomersRepo
 
 // LinkCustomerToOrder rattache un client à une commande (écrase le client déjà rattaché s'il y en a un)
 func (r *OrdersLifeCycleRepository) LinkCustomerToOrder(ctx context.Context, orderID, customerID, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
@@ -54,7 +54,7 @@ func (r *OrdersLifeCycleRepository) LinkCustomerToOrder(ctx context.Context, ord
 }
 
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// -------------------------
@@ -81,7 +81,7 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 }
 
 func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context, merchantID, deviceID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var cashRegisterID sql.NullString
@@ -131,7 +131,7 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 
 // Nouvelle version qui retourne l'ID du paiement créé
 func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1. Vérification du montant (Paiement total déjà effectué ?)
@@ -139,7 +139,7 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 	err := db.QueryRowContext(ctx, `
 		SELECT o.price, COALESCE(SUM(p.amount),0)
 		FROM orders o
-		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = 1
+		LEFT JOIN payments p ON p.order_id = o.order_id AND p.enabled = TRUE
 		WHERE o.order_id = ?
 		GROUP BY o.order_id
 	`, payment.OrderID).Scan(&totalPrice, &alreadyPaid)
@@ -185,18 +185,16 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 	// il est recalculé à amount - fee par le webhook charge.captured qui
 	// renseigne déjà payments.fee (voir internal/webhook/stripe, UpdateFees).
 	// 3. Insérer le paiement avec son hash
-	res, err := db.ExecContext(ctx, `
+	paymentID, err := db.InsertReturningID(ctx, `
 	INSERT INTO payments
 	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
+`, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())
 		return 0, err
 	}
-
-	paymentID, _ := res.LastInsertId()
 
 	// 4. Ticket restaurant (TR)
 	if payment.MOP == models.TicketRestoMOP {
@@ -214,23 +212,73 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 		// Stripe Terminal (borne Kiosk), enregistrés en MOP 'CB' : sans elle, le
 		// webhook charge.captured ne peut pas retrouver le paiement pour écrire
 		// fee/net_amount, ni le refund le désactiver.
-		query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, stripe_session_date)
-				VALUES(?, ?, ?, ?, ?, UTC_TIMESTAMP())`
-		_, err = db.ExecContext(ctx, query, payment.OrderID, paymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail)
+		//
+		// Un paiement Terminal a déjà pré-créé cette ligne (order_id,
+		// payment_intent_id, payment_id=NULL) à la création du PaymentIntent —
+		// voir stripeclient.TerminalPaymentStore.CreateMapping,
+		// docs/KIOSK_DECISIONS.md, "Retrait de Redis du mapping
+		// order_id/payment_intent_id". On complète cette même ligne par UPDATE
+		// plutôt que d'en insérer une seconde : le Checkout web ne pré-crée
+		// jamais de ligne pour son payment_intent_id, donc cet UPDATE affecte
+		// toujours 0 lignes pour ce flux et retombe sur l'INSERT existant
+		// (comportement strictement inchangé pour Checkout).
+		mappingCompleted := false
+		if payment.PaymentIntentID != nil && *payment.PaymentIntentID != "" {
+			res, updErr := db.ExecContext(ctx,
+				`UPDATE stripe_payments SET payment_id = ? WHERE payment_intent_id = ? AND payment_id IS NULL`,
+				paymentID, *payment.PaymentIntentID)
+			if updErr != nil {
+				log.Error("Error completing stripe_payments mapping: " + updErr.Error())
+				return 0, updErr
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				mappingCompleted = true
+			}
+		}
+
+		if !mappingCompleted {
+			// success_key est NOT NULL sans défaut (MySQL non-strict insérait '') :
+			// '' explicite pour la parité Postgres — sans quoi cette insertion
+			// échouerait silencieusement (l'erreur était auparavant écrasée par le
+			// refresh isPaid plus bas, corrigé ici : on retourne l'erreur
+			// immédiatement) et le webhook charge.captured ne retrouverait jamais
+			// le paiement.
+			query := `INSERT INTO stripe_payments(order_id, payment_id, payment_intent_id, checkout_session_id, customer_email, success_key, stripe_session_date)
+					VALUES(?, ?, ?, ?, ?, '', ` + dbx.UTCNow() + `)`
+			if _, insErr := db.ExecContext(ctx, query, payment.OrderID, paymentID, payment.PaymentIntentID, payment.CheckoutSessionID, payment.CustomerEmail); insErr != nil {
+				log.Error("Error inserting stripe_payments: " + insErr.Error())
+				return 0, insErr
+			}
+		}
 	}
 
 	// 5. Mettre à jour orders.isPaid
-	_, err = db.ExecContext(ctx, `
+	// UPDATE multi-table MySQL -> UPDATE ... FROM (cible SET non qualifiée)
+	refreshPaid := `
 		UPDATE orders o
 		INNER JOIN (
 			SELECT order_id, SUM(amount) AS paid
 			FROM payments
-			WHERE enabled = 1 AND order_id = ?
+			WHERE enabled = TRUE AND order_id = ?
 			GROUP BY order_id
 		) p ON p.order_id = o.order_id
 		SET o.isPaid = (o.price <= p.paid)
 		WHERE o.order_id = ?
-	`, payment.OrderID, payment.OrderID)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		refreshPaid = `
+		UPDATE orders
+		SET isPaid = (orders.price <= p.paid)
+		FROM (
+			SELECT order_id, SUM(amount) AS paid
+			FROM payments
+			WHERE enabled = TRUE AND order_id = ?
+			GROUP BY order_id
+		) p
+		WHERE p.order_id = orders.order_id AND orders.order_id = ?
+	`
+	}
+	_, err = db.ExecContext(ctx, refreshPaid, payment.OrderID, payment.OrderID)
 
 	return paymentID, err
 }
@@ -242,7 +290,7 @@ func (r *OrdersLifeCycleRepository) AddPayment(ctx context.Context, payment mode
 }
 
 func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	q := `
 		SELECT order_id, payment_id, mop, amount, payment_date, enabled
@@ -279,7 +327,7 @@ func (r *OrdersLifeCycleRepository) GetPaymentsForOrder(ctx context.Context, ord
 }
 
 func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID string, paymentID int64) (*models.Payment, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	q := `
@@ -313,7 +361,7 @@ func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID stri
 }
 
 func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// TODO
@@ -322,20 +370,29 @@ func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentI
 
 	// Disable payment
 	_, err := db.ExecContext(ctx, `
-		UPDATE payments SET enabled = 0 WHERE payment_id = ?
+		UPDATE payments SET enabled = FALSE WHERE payment_id = ?
 	`, paymentID)
 	if err != nil {
 		log.Error(err.Error())
 		return err
 	}
 
-	// Refresh order as unpaid
-	_, err = db.ExecContext(ctx, `
+	// Refresh order as unpaid (UPDATE multi-table MySQL -> UPDATE ... FROM)
+	unpaidQuery := `
 		UPDATE orders o 
 		JOIN payments p ON o.order_id = p.order_id
 		SET o.isPaid = false, o.last_update = UTC_TIMESTAMP()
 		WHERE p.payment_id = ?
-	`, paymentID)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		unpaidQuery = `
+		UPDATE orders
+		SET isPaid = false, last_update = now()
+		FROM payments p
+		WHERE orders.order_id = p.order_id AND p.payment_id = ?
+	`
+	}
+	_, err = db.ExecContext(ctx, unpaidQuery, paymentID)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -345,73 +402,59 @@ func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentI
 }
 
 func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// 1. Préparation des outils de compatibilité
 	now := time.Now().UTC()
 	orderID := req.OrderID
 
-	// On détermine le driver une seule fois (à adapter selon votre config r.db)
-	// Idéalement, stockez r.isPostgres lors de l'initialisation du repo
-	isPostgres := false
-
-	// 2. Mise à jour des items (Boucle)
+	// 2. Mise à jour des items — le rebind des placeholders est géré par dbx
+	// (l'ancien hack formatQuery/isPostgres est retiré). isDistributed est
+	// boolean en cible : littéraux TRUE/FALSE et paramètres bool Go.
 	for _, p := range req.Products {
-
-		// UPDATE ITEM : On injecte 'now' depuis Go
-		queryUpdateItem := r.formatQuery(`
+		_, _ = db.ExecContext(ctx, `
 			UPDATE orderitems
-			SET isDistributed = 1,
+			SET isDistributed = TRUE,
 			    distributed_quantity = quantity,
 			    ready_for_distribution_quantity = quantity,
 			    distributed_on = ?
-			WHERE order_id = ? AND order_item_id = ?`, isPostgres)
-
-		_, _ = db.ExecContext(ctx, queryUpdateItem, now, orderID, p.OrderItemID)
+			WHERE order_id = ? AND order_item_id = ?`, now, orderID, p.OrderItemID)
 	}
 
-	// 3. Calcul de l'état global (Optimisé : hors de la boucle précédente)
+	// 3. Calcul de l'état global
 	var countNotDistributed int
-	queryCheck := r.formatQuery(`SELECT COUNT(*) FROM orderitems WHERE order_id = ? AND isDistributed = 0`, isPostgres)
-	err := db.QueryRowContext(ctx, queryCheck, orderID).Scan(&countNotDistributed)
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM orderitems WHERE order_id = ? AND isDistributed = FALSE`, orderID).Scan(&countNotDistributed)
 	if err != nil {
 		log.Error(err.Error())
 		return err
 	}
 
-	// On utilise des int pour la compatibilité des types (Postgres est strict)
-	orderFullyDistributedInt := 1
-	if countNotDistributed > 0 {
-		orderFullyDistributedInt = 0
-	}
+	orderFullyDistributed := countNotDistributed == 0
 
 	// 4. UPDATE ORDER : Une seule fois après la boucle
-	// On passe toutes les valeurs de statuts en paramètres pour éviter les erreurs de collation
-	queryUpdateOrder := r.formatQuery(`
+	_, err = db.ExecContext(ctx, `
 		UPDATE orders
 		SET isDistributed = ?,
-		    delivered_on = CASE 
-		        WHEN ? = 0 OR order_type = 'DELIVERY' THEN delivered_on
+		    delivered_on = CASE
+		        WHEN ? = FALSE OR order_type = 'DELIVERY' THEN delivered_on
 		        ELSE ?
 		    END,
 		    brand_status = CASE
-		        WHEN order_type = 'DELIVERY' AND ? = 1 THEN 'READY_FOR_HANDOFF'
-		        WHEN order_type = 'TAKE_AWAY' AND ? = 1 THEN 'READY_FOR_TAKE_AWAY'
-		        WHEN ? = 0 THEN 'PENDING'
+		        WHEN order_type = 'DELIVERY' AND ? = TRUE THEN 'READY_FOR_HANDOFF'
+		        WHEN order_type = 'TAKE_AWAY' AND ? = TRUE THEN 'READY_FOR_TAKE_AWAY'
+		        WHEN ? = FALSE THEN 'PENDING'
 		        ELSE 'DONE'
 		    END,
 		    last_update = ?
-		WHERE order_id = ? AND merchant_id = ?`, isPostgres)
-
-	_, err = db.ExecContext(ctx, queryUpdateOrder,
-		orderFullyDistributedInt, // isDistributed
-		orderFullyDistributedInt, // CASE delivered_on (comparaison)
-		now,                      // delivered_on (valeur)
-		orderFullyDistributedInt, // CASE handoff
-		orderFullyDistributedInt, // CASE takeaway
-		orderFullyDistributedInt, // CASE pending
-		now,                      // last_update
+		WHERE order_id = ? AND merchant_id = ?`,
+		orderFullyDistributed,
+		orderFullyDistributed,
+		now,
+		orderFullyDistributed,
+		orderFullyDistributed,
+		orderFullyDistributed,
+		now,
 		orderID,
 		merchantID,
 	)
@@ -422,8 +465,7 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 
 	// 5. Récupération de la marque pour notification
 	var brand sql.NullString
-	queryBrand := r.formatQuery(`SELECT brand FROM orders WHERE order_id = ?`, isPostgres)
-	err = db.QueryRowContext(ctx, queryBrand, orderID).Scan(&brand)
+	err = db.QueryRowContext(ctx, `SELECT brand FROM orders WHERE order_id = ?`, orderID).Scan(&brand)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -432,23 +474,8 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 	return nil
 }
 
-// formatQuery remplace les ? par $1, $2, etc. si Postgres est utilisé
-func (r *OrdersLifeCycleRepository) formatQuery(q string, isPostgres bool) string {
-	if !isPostgres {
-		return q
-	}
-	parts := strings.Split(q, "?")
-	var result strings.Builder
-	for i := 0; i < len(parts)-1; i++ {
-		result.WriteString(parts[i])
-		result.WriteString(fmt.Sprintf("$%d", i+1))
-	}
-	result.WriteString(parts[len(parts)-1])
-	return result.String()
-}
-
 func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Context, userID, merchantID, orderID string, products []models.DistributedProduct) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	for _, p := range products {
@@ -456,21 +483,21 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 		_, err := db.ExecContext(ctx, `
             UPDATE orderitems
             SET
-                isDistributed = 0,
+                isDistributed = FALSE,
 
                 distributed_quantity = CASE
-                    WHEN isDistributed = 1 AND ready_for_distribution_quantity = 0 THEN quantity
-                    WHEN isDistributed = 1 AND ready_for_distribution_quantity > 0 THEN ready_for_distribution_quantity
+                    WHEN isDistributed = TRUE AND ready_for_distribution_quantity = 0 THEN quantity
+                    WHEN isDistributed = TRUE AND ready_for_distribution_quantity > 0 THEN ready_for_distribution_quantity
                     ELSE 0
                 END,
 
                 ready_for_distribution_quantity = CASE
-                    WHEN isDistributed = 0 THEN 0
+                    WHEN isDistributed = FALSE THEN 0
                     WHEN ready_for_distribution_quantity = 0 THEN quantity
                     ELSE ready_for_distribution_quantity
                 END,
 
-                distributed_on = UTC_TIMESTAMP
+                distributed_on = ` + dbx.UTCNow() + `
 
             WHERE order_id = ?
             AND order_item_id = ?
@@ -487,7 +514,7 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 	err := db.QueryRowContext(ctx, `
         SELECT COUNT(*)
         FROM orderitems
-        WHERE order_id = ? AND isDistributed = 0
+        WHERE order_id = ? AND isDistributed = FALSE
     `, orderID).Scan(&remaining)
 	if err != nil {
 		log.Error(err.Error())
@@ -503,18 +530,18 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
             isDistributed = ?,
 
             delivered_on = CASE
-                WHEN ? = 0 OR order_type = 'DELIVERY' THEN delivered_on
-                ELSE UTC_TIMESTAMP
+                WHEN ? = FALSE OR order_type = 'DELIVERY' THEN delivered_on
+                ELSE ` + dbx.UTCNow() + `
             END,
 
             brand_status = CASE
-                WHEN order_type = 'DELIVERY' AND ? = 1 THEN 'READY_FOR_HANDOFF'
-                WHEN order_type = 'TAKE_AWAY' AND ? = 1 THEN 'READY_FOR_TAKE_AWAY'
-                WHEN ? = 0 THEN 'PENDING'
+                WHEN order_type = 'DELIVERY' AND ? = TRUE THEN 'READY_FOR_HANDOFF'
+                WHEN order_type = 'TAKE_AWAY' AND ? = TRUE THEN 'READY_FOR_TAKE_AWAY'
+                WHEN ? = FALSE THEN 'PENDING'
                 ELSE 'CLOSED'
             END,
 
-            last_update = UTC_TIMESTAMP
+            last_update = ` + dbx.UTCNow() + `
 
         WHERE order_id = ? AND merchant_id = ?
     `,
@@ -533,7 +560,7 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 }
 
 func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context, orderID string) (*models.OrderMeta, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	const q = `
@@ -570,12 +597,12 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 
 // SetOrderAcceptedLocal : mirrors PHP update: state = 'OPEN', brand_status = 'PENDING', merchant_approval = 'ACCEPTED', last_update = UTC_TIMESTAMP
 func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	q := `
 		UPDATE orders
-		SET last_update = UTC_TIMESTAMP(),
+		SET last_update = ` + dbx.UTCNow() + `,
 		    state = 'OPEN',
 		    brand_status = 'PENDING',
 		    merchant_approval = 'ACCEPTED'
@@ -589,19 +616,32 @@ func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, o
 	return nil
 }
 
+// olcResponsible reproduit la coercition MySQL non-strict d'un user_id vers la
+// colonne integer orders.responsible : non numérique -> 0 (les user_id de prod
+// sont numériques ; Postgres rejetterait une chaîne arbitraire).
+func olcResponsible(userID *string) interface{} {
+	if userID == nil {
+		return nil
+	}
+	if _, err := strconv.Atoi(strings.TrimSpace(*userID)); err != nil {
+		return 0
+	}
+	return *userID
+}
+
 func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Context, orderID string, userID string) (*OrderIntegrationInfo, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Update order
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
-		SET last_update = UTC_TIMESTAMP,
+		SET last_update = ` + dbx.UTCNow() + `,
 			brand_status = 'EN_ROUTE_TO_DROPOFF',
-			delivery_start = UTC_TIMESTAMP,
+			delivery_start = ` + dbx.UTCNow() + `,
 			responsible = ?
 		WHERE order_id = ?
-	`, userID, orderID)
+	`, olcResponsible(&userID), orderID)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -625,12 +665,12 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 }
 
 func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE orders
-        SET last_update = UTC_TIMESTAMP,
+        SET last_update = ` + dbx.UTCNow() + `,
             brand_status = 'DENIED',
             merchant_approval = 'DENIED',
             state = 'CLOSED',
@@ -661,7 +701,7 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
 }
 
 func (r *OrdersLifeCycleRepository) GetOrderBrand(ctx context.Context, orderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var brand string
 	err := db.QueryRowContext(ctx, `
@@ -674,7 +714,7 @@ func (r *OrdersLifeCycleRepository) GetOrderBrand(ctx context.Context, orderID s
 }
 
 func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context, orderID, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Update orders
@@ -686,7 +726,7 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
                 WHEN order_type = 'TAKE_AWAY' THEN 'READY_FOR_TAKE_AWAY'
                 ELSE brand_status
             END,
-            last_update = UTC_TIMESTAMP
+            last_update = ` + dbx.UTCNow() + `
         WHERE order_id = ? AND merchant_id = ?`,
 		orderID, merchantID,
 	)
@@ -711,7 +751,7 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
 }
 
 func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var count int
@@ -730,7 +770,7 @@ func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID 
 }
 
 func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1) Get metadata
 	qOrder := `SELECT brand, brand_order_id, merchant_id, fulfillment_type, price FROM orders WHERE order_id = ?`
@@ -763,10 +803,10 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
         UPDATE orders
         SET deletion_reason_id = ?,
             deletion_comment = ?,
-            last_update = UTC_TIMESTAMP,
+            last_update = ` + dbx.UTCNow() + `,
             state = 'CLOSED',
             brand_status = 'CANCELED',
-            delivered_on = UTC_TIMESTAMP,
+            delivered_on = ` + dbx.UTCNow() + `,
 			previous_hash = ?,
 			hash = ?,
 			signature = ?
@@ -778,7 +818,7 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 }
 
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 0.1 Lock order row
 	const qLockOrder = `
@@ -797,7 +837,7 @@ func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, order
 SELECT COALESCE(SUM(amount), 0)
 FROM payments
 WHERE order_id = ?
-  AND enabled = 1
+  AND enabled = TRUE
 `
 
 	var paidAmount int
@@ -845,8 +885,8 @@ WHERE order_id = ?
     SET last_update = ?,
         brand_status = 'CLOSED',
         state = 'CLOSED',
-        isPaid = 1,
-        isDistributed = 1,
+        isPaid = TRUE,
+        isDistributed = TRUE,
         delivered_on = ?,
         previous_hash = ?,
         hash = ?,
@@ -857,7 +897,7 @@ WHERE order_id = ?
 		return nil, err
 	}
 
-	// 3) Delete qrcodes
+	// 3) Delete qrcodes (DELETE multi-table MySQL -> DELETE ... USING)
 	qDelQR := `
 	DELETE qr
 	FROM qrcodes qr
@@ -865,6 +905,15 @@ WHERE order_id = ?
 	INNER JOIN orders o ON o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
 	WHERE o.order_id = ?
 	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		qDelQR = `
+	DELETE FROM qrcodes qr
+	USING order_location ol, orders o
+	WHERE qr.location_id = ol.location_id
+	  AND o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
+	  AND o.order_id = ?
+	`
+	}
 	if _, err := db.ExecContext(ctx, qDelQR, orderID); err != nil {
 		return nil, err
 	}
@@ -878,7 +927,7 @@ WHERE order_id = ?
 	// booking_events, notification POS).
 
 	// 5) Close delivery_session if last order
-	const qCloseDS = `
+	qCloseDS := `
 		UPDATE delivery_session ds
 		JOIN delivery_session_order dso ON dso.delivery_session_id = ds.id
 		SET ds.status = 'done'
@@ -892,16 +941,36 @@ WHERE order_id = ?
 			    AND o_other.state = 'OPEN'
 		  )
 	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		qCloseDS = `
+		UPDATE delivery_session ds
+		SET status = 'done'
+		FROM delivery_session_order dso
+		WHERE dso.delivery_session_id = ds.id
+		  AND dso.order_id = ?
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM delivery_session_order dso_other
+			  JOIN orders o_other ON o_other.order_id = dso_other.order_id
+			  WHERE dso_other.delivery_session_id = ds.id
+			    AND dso_other.order_id <> ?
+			    AND o_other.state = 'OPEN'
+		  )
+	`
+	}
 	if _, err := db.ExecContext(ctx, qCloseDS, orderID, orderID); err != nil {
 		return nil, err
 	}
 
 	// 6) Update orderitems (distributed)
+	// UPDATE ... LEFT JOIN MySQL (le delay peut manquer) : côté PG le délai
+	// est résolu par sous-requête corrélée, même résultat ; isDistributed est
+	// boolean en cible (CASE TRUE/FALSE).
 	qUpdItems := `
 	UPDATE orderitems oi
 	LEFT JOIN delays d ON oi.delay_id = d.id
 	SET 
-		isDistributed = CASE WHEN ready_for_distribution_quantity >= quantity OR ready_for_distribution_quantity = 0 THEN 1 ELSE 0 END,
+		isDistributed = CASE WHEN ready_for_distribution_quantity >= quantity OR ready_for_distribution_quantity = 0 THEN TRUE ELSE FALSE END,
 		distributed_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
 		ready_for_distribution_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
 		distributed_on = UTC_TIMESTAMP()
@@ -909,6 +978,19 @@ WHERE order_id = ?
 	  AND oi.distributed_on IS NULL
 	  AND TIMESTAMPADD(SECOND, IFNULL(d.duration,0), oi.ordered_on) <= UTC_TIMESTAMP()
 	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		qUpdItems = `
+	UPDATE orderitems
+	SET
+		isDistributed = CASE WHEN ready_for_distribution_quantity >= quantity OR ready_for_distribution_quantity = 0 THEN TRUE ELSE FALSE END,
+		distributed_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
+		ready_for_distribution_quantity = CASE WHEN ready_for_distribution_quantity = 0 THEN quantity ELSE ready_for_distribution_quantity END,
+		distributed_on = now()
+	WHERE order_id = ?
+	  AND distributed_on IS NULL
+	  AND ordered_on + COALESCE((SELECT d.duration FROM delays d WHERE d.id = orderitems.delay_id), 0) * INTERVAL '1 second' <= now()
+	`
+	}
 	if _, err := db.ExecContext(ctx, qUpdItems, orderID); err != nil {
 		return nil, err
 	}
@@ -924,11 +1006,11 @@ WHERE order_id = ?
 
 // Disable payments
 func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE payments
-        SET enabled = 0
+        SET enabled = FALSE
         WHERE order_id = ?`,
 		orderID,
 	)
@@ -937,22 +1019,29 @@ func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID
 
 // Delete QR codes
 func (r *OrdersLifeCycleRepository) DeleteQRCode(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	delQuery := `
         DELETE qr
         FROM qrcodes qr
         INNER JOIN order_location ol ON qr.location_id = ol.location_id
         INNER JOIN orders o ON o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
-        WHERE o.order_id = ?`,
-		orderID,
-	)
+        WHERE o.order_id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		delQuery = `
+        DELETE FROM qrcodes qr
+        USING order_location ol, orders o
+        WHERE qr.location_id = ol.location_id
+          AND o.order_id = ol.order_id AND o.merchant_id = qr.merchant_id
+          AND o.order_id = ?`
+	}
+	_, err := db.ExecContext(ctx, delQuery, orderID)
 	return err
 }
 
 // Clear bookings
 func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE bookings
@@ -964,7 +1053,7 @@ func (r *OrdersLifeCycleRepository) ClearBookings(ctx context.Context, orderID s
 }
 
 func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, merchantID string, req *UpdateProductionStatusRequest) ([]string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Collect unique order IDs
@@ -983,8 +1072,8 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 			        ELSE ready_for_distribution_quantity
 			    END,
 				isDistributed = CASE
-			        WHEN ? = 'DONE' THEN 1
-			        ELSE 0
+			        WHEN ? = 'DONE' THEN TRUE
+			        ELSE FALSE
 			    END
 			WHERE order_item_id = ? AND order_id = ?
 		`)
@@ -1137,7 +1226,7 @@ func (r *OrdersLifeCycleRepository) InsertOrderLocations(ctx context.Context, or
 		return nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Préparation de la requête et des arguments
 	valueStrings := make([]string, 0, len(order.Locations))
@@ -1224,7 +1313,7 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 }
 
 func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Context, req *models.RequestObject) ([]string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(req.Order.Products) == 0 {
 		return nil, nil
@@ -1279,7 +1368,7 @@ func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Cont
 
 func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models.RequestObject) error {
 	log := logger.FromContext(ctx)
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(req.Order.Products) == 0 {
 		return models.ErrCartEmpty
@@ -1309,7 +1398,11 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	//   - S'il a un order_item_id  → produit EXISTANT : on met à jour la quantité/prix (UPSERT)
 	//     puis on supprime + réinsère ses sous-éléments (extras, withouts, configs).
 	//   - S'il n'a pas d'order_item_id → produit NOUVEAU : on l'insère et on récupère son ID généré.
-	stmtItem, err := db.PrepareContext(ctx, `
+	// order_item_id est un integer identity : Postgres refuse une valeur
+	// explicite sans OVERRIDING SYSTEM VALUE, et un id NULL n'est upsertable
+	// dans aucun dialecte — les deux chemins (item existant / nouveau) sont
+	// donc séparés côté PG, à comportement identique.
+	upsertItemQuery := `
 		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
@@ -1321,11 +1414,25 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			discount_id   = VALUES(discount_id),
 			delay_id      = VALUES(delay_id),
 			is_upsell     = VALUES(is_upsell),
-			ordered_on    = VALUES(ordered_on)`)
-	if err != nil {
-		return fmt.Errorf("prepare orderitem upsert failed: %w", err)
+			ordered_on    = VALUES(ordered_on)`
+	insertItemQuery := `
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		upsertItemQuery = `
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
+		OVERRIDING SYSTEM VALUE
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+		ON CONFLICT (order_item_id, order_id, product_id) DO UPDATE SET
+			isDistributed = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.isDistributed ELSE FALSE END,
+			quantity      = EXCLUDED.quantity,
+			base_price    = EXCLUDED.base_price,
+			price         = EXCLUDED.price,
+			discount_id   = EXCLUDED.discount_id,
+			delay_id      = EXCLUDED.delay_id,
+			is_upsell     = EXCLUDED.is_upsell,
+			ordered_on    = EXCLUDED.ordered_on`
 	}
-	defer stmtItem.Close()
 
 	for i := range req.Order.Products {
 		p := &req.Order.Products[i]
@@ -1337,27 +1444,25 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			finalPrice = *p.DiscountedPrice
 		}
 
-		res, err := stmtItem.ExecContext(ctx,
-			p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-			p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell)
-		if err != nil {
-			return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
-		}
-
-		// ── B. Récupération de l'ID généré pour les nouveaux produits ─────────────
-		// On ne fait ce bloc QU'UNE SEULE FOIS, immédiatement après l'exécution,
-		// et on retourne une erreur si on ne parvient pas à obtenir l'ID car toute
-		// la suite (extras, withouts, configs, commentaire) en dépend.
 		if p.OrderItemID == nil {
-			newID, err := res.LastInsertId()
+			// Nouveau produit : insertion simple, ID auto-généré récupéré
+			// (RETURNING côté PG, LastInsertId côté MySQL).
+			newID, err := db.InsertReturningID(ctx, insertItemQuery, "order_item_id",
+				req.Order.OrderID, p.ProductID, req.MerchantID,
+				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell)
 			if err != nil {
-				return fmt.Errorf("failed to retrieve new order_item_id for product_id=%s: %w", p.ProductID, err)
+				return fmt.Errorf("product insert failed (product_id=%s): %w", p.ProductID, err)
 			}
 			if newID == 0 {
-				// LastInsertId renvoie 0 si aucune ligne n'a été insérée (ne devrait pas arriver)
-				return fmt.Errorf("unexpected: LastInsertId returned 0 for product_id=%s", p.ProductID)
+				return fmt.Errorf("unexpected: generated id is 0 for product_id=%s", p.ProductID)
 			}
 			p.OrderItemID = helpers.Int64ToStringPtr(newID)
+		} else {
+			if _, err := db.ExecContext(ctx, upsertItemQuery,
+				p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
+				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell); err != nil {
+				return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
+			}
 		}
 
 		// ── C. Nettoyage des sous-éléments de cet item ───────────────────────────
@@ -1530,7 +1635,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 // Note : si le payload ne contient AUCUN item existant (mise à jour ne conservant aucun
 // ancien produit), on supprime tous les anciens items.
 func (r *OrdersLifeCycleRepository) deleteRemovedOrderItems(ctx context.Context, req *models.RequestObject) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Collecte des order_item_id existants fournis dans le payload
 	keptIDs := make([]interface{}, 0, len(req.Order.Products))
@@ -1621,7 +1726,7 @@ func (r *OrdersLifeCycleRepository) bulkInsertWithSuffix(ctx context.Context, qu
 	if len(args) == 0 {
 		return nil
 	}
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	numRows := len(args) / numFields
 	placeholders := make([]string, 0, numRows)
@@ -1644,7 +1749,7 @@ func (r *OrdersLifeCycleRepository) bulkInsertWithSuffix(ctx context.Context, qu
 
 // insertOrderBase inserts the orders row and returns orderID and orderNum
 func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *models.RequestObject) (orderID string, err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var customer_id *string
 	if req.Order.Customer != nil {
@@ -1653,20 +1758,17 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	PublicID := helpers.GeneratePrefixedID("order-")
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
-	res, err := db.ExecContext(ctx, `
+	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, UTC_TIMESTAMP, UTC_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, req.Order.IsScheduled,
-		req.Order.Responsible, req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,
+		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
 	)
-	if err != nil {
-		return "no_order_created", err
-	}
-	lastID, err := res.LastInsertId()
 	if err != nil {
 		return "no_order_created", err
 	}
@@ -1685,7 +1787,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 // - if last order_num is 99 or null -> return 1
 // - otherwise last + 1
 func (r *OrdersLifeCycleRepository) GetNextOrderNum(ctx context.Context, merchantID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var last sql.NullInt64
 
 	err := db.QueryRowContext(ctx, `
@@ -1808,7 +1910,7 @@ func normalizeEstimatedReady(value string) interface{} {
 
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
 func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, merchantID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	var required sql.NullString
 	err := db.QueryRowContext(ctx, `
 		SELECT mp.cash_register_required_for_ordering
@@ -1832,34 +1934,36 @@ func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx contex
 
 // insertOrderCommentinsertOrderItemComment inserts the order items comments
 func (r *OrdersLifeCycleRepository) insertOrderItemComment(ctx context.Context, item *models.OrderItemInsert) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if item.Comment == nil {
 		return nil
 	}
 
+	// order_comments n'a qu'une PK auto-incrémentée : l'ancien ON DUPLICATE ne
+	// se déclenchait jamais (les appelants suppriment avant de réinsérer) —
+	// INSERT simple, comportement identique.
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, order_item_id, user_id, content, creation_date)
-		VALUES (?,?, ?,?,UTC_TIMESTAMP())
-		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP()`,
-		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment, item.Comment,
+		VALUES (?,?, ?,?,`+dbx.UTCNow()+`)`,
+		item.OrderID, item.OrderItemID, item.CreatedBy, item.Comment,
 	)
 	return err
 }
 
 // insertOrderComment inserts the orders comments
 func (r *OrdersLifeCycleRepository) insertOrderComment(ctx context.Context, req *models.RequestObject) (err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if req.Order.Comment == nil {
 		return nil
 	}
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	// Même clause ON DUPLICATE morte que insertOrderItemComment — INSERT simple.
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, user_id, content, creation_date)
-		VALUES (?,?,?,UTC_TIMESTAMP)
-		ON DUPLICATE KEY UPDATE content = ?, creation_date = UTC_TIMESTAMP`,
-		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment, req.Order.Comment,
+		VALUES (?,?,?,`+dbx.UTCNow()+`)`,
+		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment,
 	)
 	if err != nil {
 		return err
@@ -1869,7 +1973,7 @@ func (r *OrdersLifeCycleRepository) insertOrderComment(ctx context.Context, req 
 
 // updateOrderBase inserts the orders row and returns orderID and orderNum
 func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *models.RequestObject) (err error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var customerID *string
 	if req.Order.Customer != nil {
@@ -1880,21 +1984,21 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = db.ExecContext(ctx, `
-		UPDATE orders o
+		UPDATE orders
 			SET
-			    o.price = ?,
-			    o.tva = ?,
-			    o.ht = ?,
-				o.isDistributed = 0, 
-				o.isPaid = 0,
-				o.last_update = UTC_TIMESTAMP,
-				o.delivery_fees = ?,
-				o.use_customer_temporary_address = ?,
-				o.order_type = ?,
-				o.scheduled = ?,
-				o.estimated_ready = ?,
-				o.places_settings = ?,
-				o.customer_id = ?
+			    price = ?,
+			    tva = ?,
+			    ht = ?,
+				isDistributed = FALSE, 
+				isPaid = FALSE,
+				last_update = ` + dbx.UTCNow() + `,
+				delivery_fees = ?,
+				use_customer_temporary_address = ?,
+				order_type = ?,
+				scheduled = ?,
+				estimated_ready = ?,
+				places_settings = ?,
+				customer_id = ?
 			WHERE order_id = ?`,
 		req.Order.TTC,
 		req.Order.TVA,
@@ -1971,26 +2075,20 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 
 // InsertOrderItem inserts a single orderitem and returns its id
 func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *models.OrderItemInsert) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	res, err := db.ExecContext(ctx, `
+	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell)
-		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP, ?, ?)
-		`, item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell)
+		VALUES (?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?)
+		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell)
 	if err != nil {
 		return 0, err
-	}
-
-	lastID, err := res.LastInsertId()
-	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
-		return 0, nil
 	}
 	item.OrderItemID = helpers.Int64ToStringPtr(lastID)
 
 	r.insertOrderItemComment(ctx, item)
 
-	return res.LastInsertId()
+	return lastID, nil
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
@@ -2067,7 +2165,7 @@ func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Cont
 
 // BulkInsertExtras performs multi-value insert for extras
 func (r *OrdersLifeCycleRepository) BulkInsertExtras(ctx context.Context, list []models.ExtraInsert) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	if len(list) == 0 {
 		return nil
 	}
@@ -2083,7 +2181,7 @@ func (r *OrdersLifeCycleRepository) BulkInsertExtras(ctx context.Context, list [
 }
 
 func (r *OrdersLifeCycleRepository) BulkInsertWithouts(ctx context.Context, list []models.WithoutInsert) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(list) == 0 {
 		return nil
@@ -2100,7 +2198,7 @@ func (r *OrdersLifeCycleRepository) BulkInsertWithouts(ctx context.Context, list
 }
 
 func (r *OrdersLifeCycleRepository) BulkInsertConfigs(ctx context.Context, list []models.ConfigInsert) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(list) == 0 {
 		return nil

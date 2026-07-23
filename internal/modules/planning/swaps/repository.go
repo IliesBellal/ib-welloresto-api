@@ -8,7 +8,7 @@ import (
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -20,11 +20,11 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchantID string, filters PlanningShiftSwapRequestListFilters) ([]PlanningShiftSwapRequest, int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	countQuery := `
 		SELECT COUNT(1)
 		FROM planning_shift_swap_requests
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
@@ -47,7 +47,7 @@ func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchant
 		SELECT id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_shift_swap_requests
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`
 	if strings.TrimSpace(filters.RequesterEmployeeID) != "" {
 		query += ` AND requester_employee_id = ?`
@@ -79,7 +79,7 @@ func (r *Repository) ListPlanningShiftSwapRequests(ctx context.Context, merchant
 }
 
 func (r *Repository) ListCurrentEmployeePlanningShiftSwapRequests(ctx context.Context, merchantID, employeeID, status string) ([]PlanningShiftSwapRequestSelfView, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT ss.id, ss.requester_employee_id,
 			NULLIF(TRIM(CONCAT(COALESCE(re.first_name, ''), ' ', COALESCE(re.last_name, ''))), '') AS requester_employee_name,
@@ -89,13 +89,13 @@ func (r *Repository) ListCurrentEmployeePlanningShiftSwapRequests(ctx context.Co
 			rs.id, rs.employee_id, rs.position_id, rs.title, rs.shift_date, rs.start_time, rs.end_time, rs.position, rp.color,
 			ts.id, ts.employee_id, ts.position_id, ts.title, ts.shift_date, ts.start_time, ts.end_time, ts.position, tp.color
 		FROM planning_shift_swap_requests ss
-		LEFT JOIN employees re ON re.id = ss.requester_employee_id AND re.merchant_id = ss.merchant_id AND re.enabled = 1
-		LEFT JOIN employees te ON te.id = ss.target_employee_id AND te.merchant_id = ss.merchant_id AND te.enabled = 1
-		LEFT JOIN planning_shifts rs ON rs.id = ss.requester_shift_id AND rs.merchant_id = ss.merchant_id AND rs.enabled = 1
-		LEFT JOIN planning_positions rp ON rp.id = rs.position_id AND rp.merchant_id = rs.merchant_id AND rp.enabled = 1
-		LEFT JOIN planning_shifts ts ON ts.id = ss.target_shift_id AND ts.merchant_id = ss.merchant_id AND ts.enabled = 1
-		LEFT JOIN planning_positions tp ON tp.id = ts.position_id AND tp.merchant_id = ts.merchant_id AND tp.enabled = 1
-		WHERE ss.merchant_id = ? AND ss.enabled = 1 AND (ss.requester_employee_id = ? OR ss.target_employee_id = ?)
+		LEFT JOIN employees re ON re.id = ss.requester_employee_id AND re.merchant_id = ss.merchant_id AND re.enabled = TRUE
+		LEFT JOIN employees te ON te.id = ss.target_employee_id AND te.merchant_id = ss.merchant_id AND te.enabled = TRUE
+		LEFT JOIN planning_shifts rs ON rs.id = ss.requester_shift_id AND rs.merchant_id = ss.merchant_id AND rs.enabled = TRUE
+		LEFT JOIN planning_positions rp ON rp.id = rs.position_id AND rp.merchant_id = rs.merchant_id AND rp.enabled = TRUE
+		LEFT JOIN planning_shifts ts ON ts.id = ss.target_shift_id AND ts.merchant_id = ss.merchant_id AND ts.enabled = TRUE
+		LEFT JOIN planning_positions tp ON tp.id = ts.position_id AND tp.merchant_id = ts.merchant_id AND tp.enabled = TRUE
+		WHERE ss.merchant_id = ? AND ss.enabled = TRUE AND (ss.requester_employee_id = ? OR ss.target_employee_id = ?)
 	`
 	args := []interface{}{merchantID, employeeID, employeeID}
 	if strings.TrimSpace(status) != "" {
@@ -122,19 +122,19 @@ func (r *Repository) ListCurrentEmployeePlanningShiftSwapRequests(ctx context.Co
 }
 
 func (r *Repository) GetPlanningShiftSwapRequestByID(ctx context.Context, merchantID, requestID string) (*PlanningShiftSwapRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_shift_swap_requests
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, requestID)
 	return scanPlanningShiftSwapRequestRow(row)
 }
 
 func (r *Repository) CreatePlanningShiftSwapRequest(ctx context.Context, merchantID string, request PlanningShiftSwapRequest) (*PlanningShiftSwapRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	request.ID = helpers.GeneratePrefixedID(helpers.PlanningShiftSwapRequestIDPrefix)
 	request.MerchantID = merchantID
@@ -144,7 +144,7 @@ func (r *Repository) CreatePlanningShiftSwapRequest(ctx context.Context, merchan
 		INSERT INTO planning_shift_swap_requests (
 			id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`, request.ID, request.MerchantID, request.RequesterEmployeeID, request.RequesterShiftID, request.TargetEmployeeID, request.TargetShiftID, request.Status, request.Reason, request.ManagerNote, request.RequestedByUserID, request.ProcessedByUserID, request.ProcessedAt, request.CreatedAt, request.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -153,12 +153,12 @@ func (r *Repository) CreatePlanningShiftSwapRequest(ctx context.Context, merchan
 }
 
 func (r *Repository) UpdatePlanningShiftSwapRequest(ctx context.Context, merchantID, requestID string, request PlanningShiftSwapRequest) (*PlanningShiftSwapRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	request.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shift_swap_requests
 		SET status = ?, reason = ?, manager_note = ?, processed_by_user_id = ?, processed_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, request.Status, request.Reason, request.ManagerNote, request.ProcessedByUserID, request.ProcessedAt, request.UpdatedAt, merchantID, requestID)
 	if err != nil {
 		return nil, err
@@ -179,28 +179,31 @@ func (r *Repository) ApprovePlanningShiftSwapRequest(ctx context.Context, mercha
 			_ = tx.Rollback()
 		}
 	}()
+	// la transaction brute ne passe pas par dbx.GetDB : on l'enveloppe pour
+	// que le rebind des placeholders s'applique aussi ici
+	txx := dbx.Wrap(tx)
 
 	now := time.Now().UTC()
-	if _, err = tx.ExecContext(ctx, `
+	if _, err = txx.ExecContext(ctx, `
 		UPDATE planning_shifts
 		SET employee_id = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, request.TargetEmployeeID, now, merchantID, request.RequesterShiftID); err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `
+	if _, err = txx.ExecContext(ctx, `
 		UPDATE planning_shifts
 		SET employee_id = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, request.RequesterEmployeeID, now, merchantID, request.TargetShiftID); err != nil {
 		return nil, err
 	}
 	request.Status = "approved"
 	request.UpdatedAt = now
-	if _, err = tx.ExecContext(ctx, `
+	if _, err = txx.ExecContext(ctx, `
 		UPDATE planning_shift_swap_requests
 		SET status = ?, reason = ?, manager_note = ?, processed_by_user_id = ?, processed_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, request.Status, request.Reason, request.ManagerNote, request.ProcessedByUserID, request.ProcessedAt, request.UpdatedAt, merchantID, requestID); err != nil {
 		return nil, err
 	}
@@ -211,12 +214,12 @@ func (r *Repository) ApprovePlanningShiftSwapRequest(ctx context.Context, mercha
 }
 
 func (r *Repository) SoftDeletePlanningShiftSwapRequest(ctx context.Context, merchantID, requestID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shift_swap_requests
-		SET enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, requestID)
 	if err != nil {
 		return err

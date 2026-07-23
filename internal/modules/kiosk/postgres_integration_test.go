@@ -81,7 +81,7 @@ func TestKioskRepository_Postgres(t *testing.T) {
 	}
 
 	// --- création borne + token ---
-	if _, err := repo.CreateKiosk(ctx, kioskID, merchantID, "Borne 1", "iPad", "17.5", []byte{0x01, 0x02}); err != nil {
+	if _, err := repo.CreateKiosk(ctx, kioskID, merchantID, "Borne 1", "iPad", "17.5", []byte{0x01, 0x02}, nil); err != nil {
 		t.Fatalf("CreateKiosk failed against postgres: %v", err)
 	}
 	if err := repo.MarkEnrollmentCodeUsed(ctx, codeID, kioskID); err != nil {

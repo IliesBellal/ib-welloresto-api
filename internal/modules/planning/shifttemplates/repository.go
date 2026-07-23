@@ -6,11 +6,20 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
 	db *sql.DB
+}
+
+// plnTimeHHMM formate une colonne time en HH:MM selon le dialecte
+// (TIME_FORMAT n'existe pas en Postgres).
+func plnTimeHHMM(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'HH24:MI')"
+	}
+	return "TIME_FORMAT(" + col + ", '%H:%i')"
 }
 
 func NewRepository(db *sql.DB) *Repository {
@@ -18,9 +27,9 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListShiftTemplates(ctx context.Context, merchantID string) ([]ShiftTemplate, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, label, TIME_FORMAT(start_time, '%H:%i') AS start_time, TIME_FORMAT(end_time, '%H:%i') AS end_time,
+		SELECT id, label, ` + plnTimeHHMM("start_time") + ` AS start_time, ` + plnTimeHHMM("end_time") + ` AS end_time,
 			break_minutes, position_id, color, sort_order, active, created_at, updated_at
 		FROM planning_shift_templates
 		WHERE merchant_id = ?
@@ -43,9 +52,9 @@ func (r *Repository) ListShiftTemplates(ctx context.Context, merchantID string) 
 }
 
 func (r *Repository) GetShiftTemplateByID(ctx context.Context, merchantID, templateID string) (*ShiftTemplate, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
-		SELECT id, label, TIME_FORMAT(start_time, '%H:%i') AS start_time, TIME_FORMAT(end_time, '%H:%i') AS end_time,
+		SELECT id, label, ` + plnTimeHHMM("start_time") + ` AS start_time, ` + plnTimeHHMM("end_time") + ` AS end_time,
 			break_minutes, position_id, color, sort_order, active, created_at, updated_at
 		FROM planning_shift_templates
 		WHERE merchant_id = ? AND id = ?
@@ -55,7 +64,7 @@ func (r *Repository) GetShiftTemplateByID(ctx context.Context, merchantID, templ
 }
 
 func (r *Repository) NextShiftTemplateSortOrder(ctx context.Context, merchantID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var next int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(sort_order), -1) + 1
@@ -68,7 +77,7 @@ func (r *Repository) NextShiftTemplateSortOrder(ctx context.Context, merchantID 
 }
 
 func (r *Repository) CreateShiftTemplate(ctx context.Context, merchantID string, template ShiftTemplate) (*ShiftTemplate, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	template.ID = helpers.GeneratePrefixedID(helpers.PlanningShiftTemplateIDPrefix)
 	template.CreatedAt = now
@@ -85,7 +94,7 @@ func (r *Repository) CreateShiftTemplate(ctx context.Context, merchantID string,
 }
 
 func (r *Repository) UpdateShiftTemplate(ctx context.Context, merchantID, templateID string, template ShiftTemplate) (*ShiftTemplate, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	template.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shift_templates

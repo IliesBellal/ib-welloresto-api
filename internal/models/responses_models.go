@@ -163,6 +163,14 @@ var (
 
 	ErrInvalidImageType = errors.New("invalid_image_type")
 
+	// ErrTraceabilityPhotosRequired indique qu'aucune photo n'a été fournie pour
+	// une soumission de traçabilité HACCP (400)
+	ErrTraceabilityPhotosRequired = errors.New("traceability_photos_required")
+
+	// ErrTraceabilityTooManyPhotos indique que plus de 10 photos ont été
+	// fournies pour une soumission de traçabilité HACCP (400)
+	ErrTraceabilityTooManyPhotos = errors.New("traceability_too_many_photos")
+
 	// ErrInvalidInput indique que les données fournies sont invalides (400)
 	ErrInvalidInputPasswordTooShort = errors.New("le mot de passe doit faire au minimum 8 charactères")
 
@@ -324,6 +332,12 @@ var (
 	ErrKioskDeviceTokenInvalid    = errors.New("kiosk_device_token_invalid")
 	ErrKioskRevoked               = errors.New("kiosk_revoked")
 	ErrKioskNotFound              = errors.New("kiosk_not_found")
+
+	// Erreur du module Kiosk — reclaim par device_id (voir
+	// docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md et docs/KIOSK_DECISIONS.md).
+	// 0 candidat ou collision (>1) réutilisent volontairement ErrKioskNotFound
+	// ci-dessus (même réponse HTTP dans les deux cas).
+	ErrKioskReclaimPinRequired = errors.New("kiosk_reclaim_pin_required")
 
 	// Erreurs du module Kiosk — incrément 2 (menu, commandes)
 	ErrKioskProductNotFound         = errors.New("kiosk_product_not_found")
@@ -970,6 +984,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "invalid_image_type"
 		errorMsg = "The uploaded image type is not supported."
 
+	case errors.Is(err, ErrTraceabilityPhotosRequired):
+		status = http.StatusBadRequest
+		errorStatus = "traceability_photos_required"
+		errorMsg = "At least one photo is required."
+
+	case errors.Is(err, ErrTraceabilityTooManyPhotos):
+		status = http.StatusBadRequest
+		errorStatus = "traceability_too_many_photos"
+		errorMsg = "A maximum of 10 photos is allowed per submission."
+
 	case errors.Is(err, ErrInvalidInputPasswordTooShort):
 		status = http.StatusBadRequest
 		errorStatus = "password_too_short"
@@ -1064,6 +1088,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "kiosk_not_found"
 		errorMsg = "Kiosk not found."
+
+	case errors.Is(err, ErrKioskReclaimPinRequired):
+		status = http.StatusUnauthorized
+		errorStatus = "kiosk_reclaim_pin_required"
+		errorMsg = "Admin PIN required to reclaim this kiosk."
 
 	case errors.Is(err, ErrKioskProductNotFound):
 		status = http.StatusNotFound

@@ -2908,3 +2908,1192 @@ sur une commande non payée.
    livrés, le risque résiduel décrit ci-dessus subsiste. Recommandation :
    traiter la session POS comme un prérequis au déploiement production du
    changement backend de cette session, pas comme un simple suivi optionnel.
+
+---
+
+## Diagnostic transition brand_status bloquée (paiement Terminal réel confirmé, `pi_3TvjE1ISGuDm6FEV2OM6JgTE`)
+
+Audit du 2026-07-21 : un paiement carte Stripe Terminal réel (mode test),
+confirmé côté Stripe (`payment_intent.succeeded` reçu), n'a pas fait
+transiter `orders.brand_status` de `PENDING_CARD_PAYMENT` vers `PENDING`.
+Investigation menée dans l'ordre webhook reçu → mapping Redis → requête SQL
+→ erreur silencieuse, sur la version **actuelle** (post-conversion Postgres)
+du code, pas la version documentée plus haut dans ce fichier.
+
+### Cause confirmée : non certaine — deux points de défaillance silencieuse identifiés, aucun accès aux logs Render / dashboard Stripe pour trancher lequel s'est produit pour ce `pi_id` précis
+
+Le code contient **deux angles morts d'observabilité distincts**, chacun
+suffisant à lui seul pour reproduire exactement le symptôme rapporté (webhook
+reçu, aucune erreur visible, `brand_status` jamais modifié) :
+
+1. **Écriture du mapping Redis jamais vérifiée** — `CreateTerminalPaymentIntent`
+   (`internal/infrastructure/stripe/terminal.go`) appelle `storeMapping` après
+   création du PaymentIntent sur l'API Stripe. `storeMapping` appelait
+   `t.mapping.Set(...)` (x2 : mapping direct + inverse) **sans jamais lire la
+   valeur de retour** (`bool` de succès) ni logger un échec. Si Redis était
+   indisponible/lent au moment précis de la création du PaymentIntent (avant le
+   paiement), l'appelant (`CreateOrder` Kiosk) recevait quand même un
+   `client_secret` valide et un succès complet — le paiement carte pouvait donc
+   parfaitement aboutir côté Stripe (ce qui correspond exactement à ce qui a été
+   observé) alors que le mapping `terminal_pi:{id}` n'existait jamais.
+2. **Lecture du mapping Redis (webhook) sans aucun log** — `lookupTerminalMapping`
+   (`internal/webhook/stripe/service.go`) retournait silencieusement
+   `found=false` que la clé soit absente, expirée (TTL 1h), ou le JSON illisible
+   — aucune trace, dans aucun des deux cas. Conséquence en cascade : dans
+   `HandlePaymentIntentSucceeded`, `handled=false` fait tomber l'event sur
+   `s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED")`
+   (`internal/webhook/stripe/repository.go:332-337`), qui met à jour
+   **`stripe_payments.payment_intent_status`**, une table/colonne **différente**
+   de `orders.brand_status` — cette requête ne matche aucune ligne pour un
+   paiement Terminal (aucune ligne `stripe_payments` n'existe pour ce `pi_id`,
+   `InsertStripePayment` n'étant appelé que par le flux Checkout web), n'échoue
+   pas, et le handler HTTP (`http_handler.go`) répond **200** à Stripe. Stripe
+   considère donc la livraison comme réussie et **ne retente jamais l'event** —
+   ce qui est cohérent avec le fait que le paiement soit resté bloqué durablement
+   plutôt que de se corriger tout seul après quelques minutes.
+
+Dans les deux cas, le comportement observable serait **identique** : webhook
+reçu, HTTP 200 renvoyé à Stripe, aucune erreur, `brand_status` jamais modifié.
+Le code seul ne permet pas de distinguer lequel des deux s'est produit pour
+`pi_3TvjE1ISGuDm6FEV2OM6JgTE` — voir "Ce qui manque pour confirmer" ci-dessous.
+
+**Écarté avec un niveau de confiance élevé** :
+- **Requête SQL Postgres cassée sur la transition elle-même** — `ConfirmKioskCardPayment`
+  (`internal/webhook/stripe/repository.go:181-192`) et sa fonction sœur
+  `ConfirmKioskCardToCounterBrandStatus` (`internal/modules/kiosk/repository.go:787-796`)
+  utilisent bien `dbx.GetDB(ctx, r.database)` (pas un accès direct à `*sql.DB`),
+  ce qui fait passer chaque requête par `dbx.Rebind()` : les placeholders `?`
+  sont réécrits en `$1, $2, ...` automatiquement quand `DB_DIALECT=postgres`
+  (`internal/database/dbx/dialect.go`), et laissés inchangés sinon. Le guard
+  idempotent (`WHERE brand_status = 'PENDING_CARD_PAYMENT'`) est une comparaison
+  de chaîne exacte, écrite avec la même casse des deux côtés (`kiosk/service.go:1550`
+  écrit littéralement `"PENDING_CARD_PAYMENT"`) — pas de piège de casse
+  MySQL/Postgres identifié.
+- **`rowsAffected` non vérifié** — il l'est (`res.RowsAffected()`, variable
+  `confirmed`), mais son résultat `false` n'était (avant ce correctif) jamais
+  logué : un no-op silencieux était possible mais indiscernable d'un succès.
+- **Erreur avalée avec 200 renvoyé quand même** — vérifié : `http_handler.go`
+  renvoie bien **500** dès que `ProcessEvent` retourne une erreur non nil
+  (`if err := h.service.ProcessEvent(...); err != nil { http.Error(w, ..., 500) }`).
+  Une erreur SQL réelle (contrainte, syntaxe) serait donc visible côté Stripe
+  (delivery en échec, "Recent deliveries" rouge, retries automatiques sur
+  plusieurs jours) — ce qui rend l'hypothèse "requête SQL en erreur" peu
+  probable si le dashboard Stripe montre cette delivery comme réussie (à
+  vérifier, voir ci-dessous).
+
+### Preuve
+
+- `internal/infrastructure/stripe/terminal.go` (avant correctif) : `storeMapping`
+  n'inspectait pas la valeur de retour de `t.mapping.Set(...)`.
+- `internal/webhook/stripe/service.go` (avant correctif) : `lookupTerminalMapping`
+  ne loguait aucune de ses quatre branches de sortie (`redis nil`, `not found`,
+  `unmarshal error`, `champs vides`) ; `handleTerminalPaymentSucceeded` ne loguait
+  pas le cas `confirmed == false`.
+- `internal/webhook/stripe/repository.go:332-337` (`UpdatePaymentIntentStatus`) :
+  confirmé comme le chemin de repli silencieux emprunté quand
+  `handleTerminalPaymentSucceeded` retourne `handled=false` — écrit dans
+  `stripe_payments`, jamais dans `orders`.
+- `internal/webhook/stripe/http_handler.go:31-34` : confirmé que les erreurs
+  remontent bien en HTTP 500 (pas de 200 masquant un échec interne).
+- `internal/modules/kiosk/repository.go:787-796` : confirmé que la requête
+  sœur de bascule carte→caisse utilise le même mécanisme `dbx.GetDB`/`Rebind`
+  correctement, cohérence avec `ConfirmKioskCardPayment`.
+
+### Bug adjacent trouvé et corrigé (non responsable du symptôme actuel, mais réel)
+
+`internal/infrastructure/stripe/terminal.go`, `terminalAccountStore.GetTerminalAccount`
+exécutait `SELECT account_id FROM stripe_accounts WHERE merchant_id = ? LIMIT 1`
+via `s.db.QueryRowContext` **directement**, sans passer par `dbx.GetDB`/`dbx.Rebind`
+— seul endroit du flux Terminal à contourner ce mécanisme. Sous
+`DB_DIALECT=postgres`, cette requête aurait échoué systématiquement (placeholder
+`?` non supporté par le driver Postgres), bloquant `CreateConnectionToken` et
+`CreateTerminalPaymentIntent` **avant même** la création du PaymentIntent —
+incompatible avec le fait que le paiement de cet incident ait réellement
+abouti côté Stripe. Cela signifie soit que l'environnement testé tournait
+encore avec `DB_DIALECT=mysql` (défaut documenté en prod, voir
+`docs/migration-postgres/25-tier2-conversion-log.md`/`27-tier3-conversion-log.md`),
+soit qu'un test antérieur a réussi avant qu'une bascule de dialecte ne casse ce
+point précis. Corrigé par cohérence (`dbx.Rebind(q)` avant exécution) — c'est
+un correctif SQL Postgres non ambigu au sens de la règle 2, mais **il ne doit
+pas être présenté comme la cause de cet incident**.
+
+### Correction appliquée dans cette session
+
+Ajout de logs explicites (aucun changement de comportement métier) aux deux
+points de silence identifiés, pour que la **prochaine** occurrence soit
+diagnosticable en quelques secondes de grep sur les logs Render :
+
+1. `internal/infrastructure/stripe/terminal.go` — `storeMapping` logue
+   désormais un warning si l'un des deux `Set` Redis échoue, avec `pi_id`/
+   `order_id`/`merchant_id`, et un info sur succès.
+2. `internal/webhook/stripe/service.go` — `lookupTerminalMapping` logue
+   chacune de ses quatre branches de sortie (redis nil, clé absente,
+   JSON illisible, champs vides) et le cas trouvé, toujours avec le `pi_id`.
+3. `internal/webhook/stripe/service.go` — `handleTerminalPaymentSucceeded`
+   logue désormais une erreur explicite sur échec de `ConfirmKioskCardPayment`,
+   et un warning si `confirmed == false` (guard no-op).
+4. `internal/infrastructure/stripe/terminal.go` — `GetTerminalAccount` route
+   maintenant sa requête par `dbx.Rebind`.
+
+`go build ./...` et `go vet ./internal/webhook/stripe/... ./internal/infrastructure/stripe/...`
+passent sans erreur. Les tests d'intégration Postgres de ces deux paquets
+(`postgres_integration_test.go`, tag `postgres_integration`) n'ont pas pu être
+exécutés dans cette session (pas de `POSTGRES_URL`/instance Postgres
+disponible dans ce sandbox, même contrainte que les incréments précédents).
+
+### Ce qui manque pour confirmer la cause exacte de cet incident précis
+
+Aucun des éléments ci-dessous n'est disponible dans cet environnement de
+travail — à vérifier directement par Ilies :
+
+1. **Dashboard Stripe → Developers → Webhooks → cet endpoint → Recent
+   deliveries**, filtré sur `pi_3TvjE1ISGuDm6FEV2OM6JgTE` : confirme si
+   l'event `payment_intent.succeeded` a bien été livré, avec quel code de
+   réponse HTTP. Un **200** pointe vers l'hypothèse 2 (mapping non trouvé,
+   repli silencieux vers `UpdatePaymentIntentStatus`). Un **500** ou une
+   absence totale de delivery pointerait vers autre chose (webhook jamais
+   appelé, ou erreur réellement remontée — à ré-examiner dans ce cas).
+2. **Logs applicatifs Render** au moment de l'event (avant ce correctif, donc
+   probablement rien d'exploitable pour *cet* incident précis — mais à
+   vérifier si un log générique existe déjà en amont, ex. logging HTTP de la
+   route `/webhooks/stripe`).
+3. **État actuel de la clé Redis** `terminal_pi:pi_3TvjE1ISGuDm6FEV2OM6JgTE`
+   (probablement expirée depuis, TTL 1h) et, si possible, si elle a existé à
+   un moment — non vérifiable après coup sans historique Redis.
+4. **Valeur de `DB_DIALECT` dans l'environnement où ce test a été effectué** —
+   détermine si le bug adjacent `GetTerminalAccount` (ci-dessus) était même
+   pertinent pour cet essai, et confirme que le mécanisme `dbx.Rebind` était
+   actif (ou non) pour `ConfirmKioskCardPayment` au moment du test.
+
+Ne pas deviner au-delà de ce qui précède : si un nouveau paiement Terminal
+reproduit le blocage après déploiement de ce correctif, les nouveaux logs
+`[stripe terminal]` permettront de trancher entre les deux hypothèses en un
+seul grep sur le `pi_id`.
+
+---
+
+## Diagnostic complémentaire — events Stripe Connect (comptes connectés) non reçus
+
+Suite à la piste apportée par Ilies : les paiements Terminal utilisent des
+**direct charges** (`Stripe-Account` header / `SetStripeAccount`), donc leurs
+`payment_intent.succeeded`/`charge.captured` sont émis **côté compte
+connecté**, pas côté plateforme. Seul `application_fee.created` (toujours
+émis côté plateforme, quel que soit le modèle de charge) est arrivé pour ce
+paiement. Vérification du code (`http_handler.go`, `service.go`, `models.go`)
++ recherche de la doc Stripe officielle (`docs.stripe.com/connect/webhooks`).
+
+### 1. Le handler lit-il `event.Account` ?
+
+**Le champ existe déjà et est déjà utilisé — mais partiellement.**
+`StripeEvent.Account` (`models.go:12`, commenté `// IMPORTANT : L'ID du compte
+connecté (acct_...)`) est déjà déclaré et déjà threadé pour deux event types :
+`charge.captured` → `HandleRetrieveFees(ctx, event.Data.Object, event.Account)`
+et `payout.paid` → `HandlePayoutPaid(ctx, event.Data.Object, event.Account)`
+(`service.go`, dispatch de `ProcessEvent`). Les deux en ont un besoin réel :
+`HandleRetrieveFees` appelle `balancetransaction.Get` avec
+`params.SetStripeAccount(connectedAccountID)` — sans le bon compte, l'appel
+API Stripe échouerait ou lirait le mauvais solde.
+
+**Ce qui ne le lisait pas (avant ce correctif)** : `payment_intent.succeeded`/
+`.canceled`/`.payment_failed` étaient dispatchés sans `event.Account`
+(`HandlePaymentIntentSucceeded(ctx, event.Data.Object)`, signature à 2
+arguments). Le code supposait implicitement un event plateforme pour ces
+trois types précis — pas par une logique métier qui casserait (voir point 3),
+mais par simple absence de plomberie, ce qui rendait impossible de confirmer
+par les logs si un event Terminal reçu était bien scopé Connect ou non.
+
+### 2. Secret de vérification de signature webhook : même secret, ou distinct ?
+
+**Distinct, et obligatoirement sur un endpoint séparé** — vérifié sur
+`docs.stripe.com/connect/webhooks` :
+
+> Each event from a connected account contains a top-level `account` property
+> [...] assign the scope by setting **Events from** to **Your account** or
+> **Connected accounts** [...] via the API, assign the scope by setting the
+> `connect` parameter to `false` (Your account) ou `true` (Connected accounts).
+
+Point important découvert (et qui corrige une hypothèse initiale) : **un seul
+endpoint Stripe ne peut pas être scopé sur les deux à la fois** — "Your
+account" et "Connected accounts" sont deux configurations d'endpoint
+mutuellement exclusives dans le modèle actuel de Stripe (Dashboard Workbench
+ou API `connect` param), chacune avec **son propre secret de signature**
+(`whsec_...`), et chacune avec **sa propre liste d'event types sélectionnés**
+(pas de parité obligatoire entre les deux).
+
+**Conséquence pour ce projet** : `VerifySignature` (`service.go`, fin du
+fichier) **n'est actuellement pas implémentée** (corps vide, commentaire "À
+implémenter") **et n'est appelée nulle part** (`http_handler.go` ne fait
+aucune vérification de signature — confirmé par grep, contrairement au
+webhook UberEats qui appelle bien la sienne). Donc la question "même secret ou
+distinct" est aujourd'hui sans objet en pratique (aucun secret n'est vérifié
+du tout, quelle que soit la scope) — mais **si cette vérification est
+implémentée plus tard**, il faudra :
+- soit connaître à l'avance, pour chaque requête entrante, quel secret utiliser
+  (ce qui suppose deux routes HTTP distinctes — une par endpoint Stripe créé
+  côté Dashboard — puisque le corps de la requête ne s'auto-identifie pas
+  avant vérification) ;
+- soit essayer les deux secrets connus (`STRIPE_WEBHOOK_SECRET` et un nouveau
+  `STRIPE_CONNECT_WEBHOOK_SECRET`) l'un après l'autre sur la même route
+  `/webhooks/stripe`, si les deux endpoints Stripe pointent vers la même URL
+  (ce que le code actuel laisse supposer, voir point 3 ci-dessous).
+
+Cette absence de vérification de signature est un vrai gap de sécurité
+(n'importe qui connaissant l'URL peut poster un faux event), mais **hors
+scope de cette session** — non implémentée ici pour ne pas mélanger un
+changement de sécurité non demandé avec ce diagnostic ; à traiter séparément
+si Ilies le souhaite.
+
+### 3. Le reste du traitement (lookupTerminalMapping, ConfirmKioskCardPayment) dépend-il d'hypothèses compte plateforme/connecté qui casseraient ?
+
+**Non — vérifié fonction par fonction, aucune dépendance cassante.**
+
+- `lookupTerminalMapping` : simple lecture Redis par `paymentIntentID`. Les
+  IDs Stripe (`pi_...`) sont **globalement uniques sur toute la plateforme
+  Stripe**, jamais réutilisés entre comptes connectés — aucun risque de
+  collision entre un `pi_xxx` connect et un `pi_xxx` plateforme.
+- `ConfirmKioskCardPayment`/`ConfirmKioskCardToCounterBrandStatus` : UPDATE SQL
+  scopé `merchant_id`/`order_id` (résolus depuis le mapping Redis, pas depuis
+  l'event Stripe) — aucune dépendance au compte Stripe.
+- `recordTerminalPayment` : INSERT SQL uniquement, aucun appel API Stripe.
+- Aucune de ces trois fonctions n'appelle l'API Stripe avec ou sans
+  `SetStripeAccount` — contrairement à `HandleRetrieveFees`/`HandlePayoutPaid`,
+  qui en ont réellement besoin (point 1). **Conclusion : le traitement métier
+  du paiement Terminal fonctionnera correctement dès que l'event arrivera**,
+  qu'il soit scopé plateforme ou connecté — le blocage n'est pas un problème
+  de logique de traitement, uniquement un problème de **réception** de
+  l'event (configuration Stripe Dashboard, hors du code).
+
+### Point de vigilance découvert en creusant : le flux Checkout web (ScanNOrder) utilise aussi les direct charges
+
+`internal/infrastructure/stripe/checkout.go:145` (`CreateCheckoutSession`) et
+`:276` (version legacy) appellent également
+`params.SetStripeAccount(*merchant.AccountID)` — le Checkout Session
+ScanNOrder est donc, exactement comme le Terminal Kiosk, un **direct charge**
+sur le compte connecté. Par le même raisonnement que ci-dessus, ses
+`checkout.session.completed`/`charge.captured` seraient eux aussi des events
+**Connect**, pas plateforme.
+
+Or `charge.captured` fonctionne déjà en production pour ScanNOrder (le code
+threadé `event.Account` pour `HandleRetrieveFees` existe précisément parce que
+quelqu'un a déjà rencontré et résolu ce besoin). **Cela implique qu'un endpoint
+Stripe scopé "Connected accounts" existe déjà** dans le Dashboard, pointant
+vraisemblablement vers cette même URL `/webhooks/stripe` (le code ne fait
+aucune distinction de route selon la scope). Deux lectures possibles, non
+tranchables sans accès au Dashboard Stripe :
+
+1. **Cet endpoint Connect existe et fonctionne pour `charge.captured`/
+   `payout.paid`, mais sa liste d'"events to send" n'inclut simplement pas
+   `payment_intent.succeeded`/`payment_intent.payment_failed`** — ces deux
+   types n'ont probablement jamais été nécessaires avant l'ajout du Kiosk
+   Terminal (ScanNOrder ne s'appuie que sur `checkout.session.completed`, pas
+   sur `payment_intent.succeeded`, pour son propre flux). C'est l'explication
+   la plus probable et la plus simple à corriger : **ajouter les deux types
+   d'event manquants à l'endpoint Connect existant**, sans rien recréer.
+2. **Il n'existe pas d'endpoint Connect du tout**, et `charge.captured`/
+   `payout.paid` pour ScanNOrder n'ont en réalité jamais été vérifiés en
+   production avec un vrai paiement (code écrit et jamais exercé en usage
+   réel) — moins probable si le business tourne déjà sur ce flux, mais pas
+   à exclure sans vérification.
+
+**Ce qui manque pour trancher entre 1 et 2** : ouvrir Stripe Dashboard →
+Developers → Webhooks, vérifier s'il existe deux endpoints (Your account /
+Connected accounts) pointant vers `/webhooks/stripe`, et si l'endpoint
+Connected accounts (s'il existe) a bien `payment_intent.succeeded` et
+`payment_intent.payment_failed` dans sa liste d'event types sélectionnés. À
+faire par Ilies — inaccessible depuis cet environnement de travail.
+
+### Correction appliquée dans cette session
+
+Le code n'avait besoin d'aucune adaptation fonctionnelle (point 3 confirme
+qu'aucune logique métier ne dépend de la scope). Amélioration apportée par
+cohérence et observabilité, dans la continuité des logs ajoutés dans le
+diagnostic précédent :
+
+- `internal/webhook/stripe/service.go` — `HandlePaymentIntentUpdated`,
+  `HandlePaymentIntentSucceeded`, `HandlePaymentIntentFailed` reçoivent
+  désormais `accountID` (= `event.Account`) en paramètre et le loguent
+  systématiquement (`connect_account=<vide ou acct_...>`) aux côtés du
+  `payment_intent_id`. Cela permettra, dès le prochain paiement Terminal
+  après correction de la configuration Stripe Dashboard, de confirmer en un
+  grep sur les logs Render que l'event arrive bien avec `connect_account`
+  rempli — sans dépendre de l'accès au Dashboard Stripe pour le vérifier.
+- Pas de changement sur `HandleRetrieveFees`/`HandlePayoutPaid` (déjà
+  corrects) ni sur `lookupTerminalMapping`/`ConfirmKioskCardPayment` (déjà
+  indépendants de la scope, voir point 3).
+
+`go build ./...` et `go vet ./internal/webhook/stripe/... ./internal/infrastructure/stripe/...`
+passent sans erreur après ce changement.
+
+### Résumé actionnable pour Ilies (hors code, côté Stripe Dashboard)
+
+1. Vérifier dans Stripe Dashboard → Developers → Webhooks s'il existe un
+   endpoint scopé **"Connected accounts"** pointant vers l'URL de production
+   de `/webhooks/stripe`.
+2. S'il existe : ajouter `payment_intent.succeeded` et
+   `payment_intent.payment_failed` à sa liste d'event types (probablement la
+   correction complète, la plus simple).
+3. S'il n'existe pas : le créer, scope "Connected accounts", en sélectionnant
+   au minimum `payment_intent.succeeded`, `payment_intent.payment_failed`,
+   `charge.captured`, `payout.paid` (les quatre déjà consommés par du code qui
+   a besoin de la scope connect) — et noter le nouveau secret de signature
+   généré pour une future implémentation de `VerifySignature` (point 2).
+4. Une fois corrigé, rejouer un paiement Terminal et grep les logs Render sur
+   `connect_account=` pour confirmer.
+
+---
+
+## Trace complète paiement Terminal — order 33348 (`pi_3Tvl6HISGuDm6FEV2xelLX1w`, merchant 2)
+
+> Audit du 2026-07-22. Contexte : `payment_intent.succeeded` reçu et confirmé
+> côté Stripe, HTTP 200 renvoyé par le webhook — donc, à la différence du
+> diagnostic du 2026-07-21 (`pi_3TvjE1ISGuDm6FEV2OM6JgTE`), l'hypothèse
+> "event Connect jamais reçu" ne s'applique **pas** ici : l'event est bien
+> arrivé et traité sans erreur. Reste à expliquer pourquoi la transition
+> `brand_status` attendue n'a, semble-t-il, pas produit l'effet escompté pour
+> ce paiement précis. Toujours MySQL (`DB_DIALECT` non Postgres pour cette
+> partie) — aucune hypothèse de cast Postgres reprise ici.
+
+### Étape 0 : commande de vérification proposée
+
+Aucun accès DB direct dans cette session. Il existe un endpoint back-office
+existant, **non Kiosk**, qui expose `brand_status` sans rien modifier :
+`GET /orders/{order_id}`, protégé par `authMiddleware` (token utilisateur
+back-office classique, pas un token Kiosk) — voir
+[cmd/api/routes.go:955-965](cmd/api/routes.go#L955-L965) et
+`OrdersHandler.GetOrder` ([internal/modules/orders/handler.go:47](internal/modules/orders/handler.go#L47)),
+qui délègue à `OrdersService.GetOrder` ([internal/modules/orders/service.go:265](internal/modules/orders/service.go#L265)) —
+celui-ci lit `merchant_id` **depuis le token** (`middleware.UserFromContext`),
+donc aucun risque de fuite cross-tenant : il suffit d'un utilisateur
+back-office du merchant 2.
+
+Commande à exécuter en premier, avant toute autre investigation :
+
+```bash
+BASE_URL="https://<host-staging-ou-prod>"
+USER_TOKEN="<token d'un utilisateur back-office du merchant 2>"
+
+curl -s "$BASE_URL/orders/33348" -H "Authorization: Bearer $USER_TOKEN" | jq .
+```
+
+Champs à lire dans la réponse (`models.Order`,
+[internal/models/orders_model.go:204](internal/models/orders_model.go#L204)) :
+`brand_status` (valeur attendue si le paiement a bien été confirmé :
+`"PENDING"` ; si toujours `"PENDING_CARD_PAYMENT"`, la transition n'a
+effectivement pas eu lieu), `merchant_approval` (doit être `"ACCEPTED"` dans
+tous les cas depuis l'homogénéisation), `isPaid`. Si un doute de double
+encaissement existe (voir cause identifiée ci-dessous), croiser avec
+`GET /orders/33348/payments` ([routes.go:967](cmd/api/routes.go#L967)) pour
+compter les lignes `payments` de cette commande (`mop='CB'`,
+`payment_intent_id`).
+
+### Étape 1 : conformité de la création — RAS, rien d'anormal trouvé
+
+1. **order_id** : `string` de bout en bout, jamais un entier Go — cohérent
+   avec le schéma (`orders.order_id` est un entier auto-incrémenté côté SQL,
+   mais tout le code applicatif le manipule comme une chaîne, ex.
+   `models.Order.OrderID string`,
+   [internal/models/orders_model.go:204](internal/models/orders_model.go#L204)).
+   `CreateOrder` reçoit `newOrder.OrderID` (string) et le passe tel quel à
+   `CreateTerminalPaymentIntent(ctx, kiosk, orderID string, amountCents)`
+   ([internal/modules/kiosk/service.go:1762](internal/modules/kiosk/service.go#L1762)).
+   Aucune conversion `strconv`/`fmt.Sprintf` intermédiaire susceptible
+   d'introduire un écart (ex. `"33348"` vs `"033348"` ou un float) : c'est la
+   même valeur `string` du début à la fin.
+2. **Metadata Stripe** : `CreateTerminalPaymentIntent`
+   ([internal/infrastructure/stripe/terminal.go:146-150](internal/infrastructure/stripe/terminal.go#L146-L150))
+   écrit `Metadata: map[string]string{"order_id": orderID, "merchant_id":
+   merchantID, "channel": "kiosk"}` — `orderID`/`merchantID` sont les mêmes
+   variables `string` reçues en paramètre, aucune transformation.
+3. **Clé Redis + valeur stockée** : `storeMapping`
+   ([internal/infrastructure/stripe/terminal.go:224-241](internal/infrastructure/stripe/terminal.go#L224-L241))
+   écrit `terminal_pi:{paymentIntentID}` →
+   `{"order_id":"33348","merchant_id":"2"}` (JSON de
+   `TerminalPaymentMapping{OrderID: orderID, MerchantID: merchantID}`), et le
+   mapping inverse `terminal_order_pi:2:33348` → `pi_...`. La fonction qui
+   construit la clé (`TerminalPaymentIntentKey`,
+   [terminal.go:52-54](internal/infrastructure/stripe/terminal.go#L52-L54))
+   est **exportée et réutilisée telle quelle par le webhook** (jamais
+   redéfinie/dupliquée côté `internal/webhook/stripe`) : aucun risque de
+   divergence de format de clé entre écriture et lecture, par construction.
+4. **Retour de `Set()` vérifié** : oui, déjà corrigé lors de la session du
+   2026-07-21 — `storeMapping` logue désormais un warning explicite
+   (`pi=...order=...merchant=...`) si l'un des deux `Set` Redis échoue, et un
+   info sur succès ([terminal.go:236-240](internal/infrastructure/stripe/terminal.go#L236-L240)).
+   Ce n'est donc plus un angle mort : si l'écriture a échoué pour ce
+   paiement, ce sera visible dans les logs Render au moment de la création du
+   PaymentIntent (avant même la présentation de la carte).
+
+**Conclusion étape 1** : aucune non-conformité de code trouvée. Si le mapping
+n'a pas été écrit correctement pour ce paiement, ce sera visible dans les
+logs (voir grep recommandé plus bas), pas dans le code.
+
+### Étape 2 : conformité du traitement webhook
+
+1. **Placement du log `connect_account`** : tout en haut de
+   `HandlePaymentIntentSucceeded`, juste après l'`unmarshal`, **avant** tout
+   appel/condition qui pourrait retourner plus tôt
+   ([internal/webhook/stripe/service.go:355-368](internal/webhook/stripe/service.go#L355-L368)) :
+   ```go
+   func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context, data json.RawMessage, accountID string) error {
+       var pi stripe.PaymentIntent
+       if err := json.Unmarshal(data, &pi); err != nil { return fmt.Errorf(...) }
+       logger.FromContext(ctx).Info("[stripe webhook] payment_intent.succeeded pi=" + pi.ID + " connect_account=" + accountID)
+       if handled, err := s.handleTerminalPaymentSucceeded(ctx, &pi); handled || err != nil { return err }
+       return s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED")
+   }
+   ```
+   Ce log s'exécute inconditionnellement pour **tout** `payment_intent.succeeded`
+   reçu (Kiosk ou Checkout web) — pas de `return` silencieux avant.
+2. **Source de l'order_id** : exclusivement le **mapping Redis**
+   (`lookupTerminalMapping`), jamais `event.Data.Object`/metadata directement
+   — choix documenté (plus fiable que reparser
+   `payment_method_details.type`, non expansé sur l'objet reçu). Un seul cas
+   où les deux sources pourraient diverger : **le mapping Redis absent ou
+   expiré alors que la metadata Stripe, elle, existe toujours** (metadata
+   Stripe n'a pas de TTL, le mapping Redis en a un — 1h). Dans ce cas précis,
+   le code **ne retombe pas** sur la metadata Stripe en secours — c'est un
+   choix de conception (pas un bug de faute de frappe), mais c'est le seul
+   point de la chaîne où une divergence order_id metadata vs mapping aurait
+   un effet (silencieux, voir plus bas).
+3. **Exactitude de la clé Redis interrogée** : `lookupTerminalMapping`
+   ([internal/webhook/stripe/service.go:492-515](internal/webhook/stripe/service.go#L492-L515))
+   appelle `stripeclient.TerminalPaymentIntentKey(paymentIntentID)` — **la
+   même fonction exportée** que celle utilisée à l'écriture (étape 1, point
+   3). Aucune reconstruction manuelle de la chaîne `"terminal_pi:" + id` des
+   deux côtés : structurellement impossible d'avoir un piège de préfixe/casse
+   entre écriture et lecture.
+4. **Fonction et clause WHERE de la transition** : `ConfirmKioskCardPayment`
+   ([internal/webhook/stripe/repository.go:181-192](internal/webhook/stripe/repository.go#L181-L192)) :
+   ```sql
+   UPDATE orders SET brand_status = 'PENDING', last_update = UTC_TIMESTAMP()
+   WHERE order_id = ? AND merchant_id = ? AND brand_status = 'PENDING_CARD_PAYMENT'
+   ```
+   avec `orderID="33348"` (string) lié à `order_id` (colonne entière) : MySQL
+   coerce implicitement une chaîne numérique dans une comparaison avec une
+   colonne `INT`, comportement standard, aucun risque de non-match pour cette
+   raison. `merchantID="2"` contre `merchant_id VARCHAR(64)` : direct.
+5. **Rows affected vérifié et logué** : oui —
+   ```go
+   confirmed, err := s.repo.ConfirmKioskCardPayment(ctx, mapping.MerchantID, mapping.OrderID)
+   if !confirmed {
+       log.Warn("[stripe terminal] ConfirmKioskCardPayment: no row matched (order not in PENDING_CARD_PAYMENT) for pi=" + pi.ID + " order=" + mapping.OrderID + " merchant=" + mapping.MerchantID)
+   }
+   ```
+   ([internal/webhook/stripe/service.go:411-422](internal/webhook/stripe/service.go#L411-L422)).
+   **Point important** : ce cas n'est qu'un `Warn`, jamais une erreur — le
+   webhook retourne `handled=true, err=nil`, donc HTTP 200 dans tous les cas
+   où le mapping est trouvé, que la transition ait réellement eu lieu ou non.
+   C'est exactement le comportement rapporté (200 renvoyé) et c'est
+   **volontaire** (rejouer un paiement déjà confirmé ne doit pas faire
+   échouer la delivery Stripe) — mais cela signifie que **"HTTP 200" ne
+   prouve pas que la transition a eu lieu**, seulement que le webhook n'a
+   rencontré aucune erreur technique.
+6. **defer/recover avalant une panique en 200** : vérifié, absent. Aucun
+   `middleware.Recoverer` (chi) n'est monté nulle part dans
+   [cmd/api/routes.go](cmd/api/routes.go) (grep exhaustif sur `r.Use(` :
+   uniquement CORS, logging, `authMiddleware`, rate-limit, `KioskAuth` —
+   jamais de recoverer), et `middleware.LoggingMiddleware` ne contient pas de
+   `recover()`. `HandleWebhook`
+   ([internal/webhook/stripe/http_handler.go:17-37](internal/webhook/stripe/http_handler.go#L17-L37))
+   renvoie 500 dès que `ProcessEvent` retourne une erreur non nil ; une
+   panique non recouverte planterait la goroutine de la requête (le
+   `net/http` standard log "http: panic serving" et ferme la connexion sans
+   réponse) — Stripe verrait un échec de delivery (timeout/connexion
+   réinitialisée), pas un 200. **Cette piste est donc écartée avec un niveau
+   de confiance élevé** : un 200 confirmé signifie qu'aucune panique n'a eu
+   lieu sur ce chemin.
+
+**Conclusion étape 2** : le code du webhook lui-même est correct et cohérent
+avec la description du symptôme (200 + aucune erreur ne prouve pas la
+transition). Le point 5 ouvre la seule porte réelle : un `handled=true` avec
+`confirmed=false` produit exactement "webhook reçu, 200 renvoyé, brand_status
+inchangé, aucune erreur visible" — voir cause identifiée ci-dessous pour le
+scénario concret qui déclenche ce cas.
+
+### Étape 3 : conformité côté Flutter (repo `wello-kiosk`)
+
+1. **Type/forme de `order_id` envoyé** : cohérent de bout en bout. `OrderController.currentOrder`
+   (assigné une seule fois après création,
+   [lib/presentation/controllers/order_controller.dart:121](../../wello-kiosk/lib/presentation/controllers/order_controller.dart#L121))
+   porte `order.orderId` (`String` Dart) : c'est cette même valeur qui est
+   envoyée par `ApiService.createTerminalPaymentIntent`
+   (`data: {'order_id': orderId, 'amount_cents': amountCents}`,
+   [lib/data/services/api_service.dart:474](../../wello-kiosk/lib/data/services/api_service.dart#L474))
+   — jamais recalculée, jamais un `int`. Pas de désynchronisation possible à
+   ce niveau : `TerminalScreen` ne connaît qu'un seul `_order.currentOrder`,
+   jamais une autre commande.
+2. **Double création de commande (double-tap)** : `OrderSummaryScreen._submit`
+   est protégé par un flag local `_isSubmitting`
+   (`if (_isSubmitting) return;`,
+   [lib/presentation/screens/order_summary_screen.dart:41-46](../../wello-kiosk/lib/presentation/screens/order_summary_screen.dart#L41-L46)),
+   et la soumission est déclenchée automatiquement par un countdown (pas par
+   un tap direct répétable) — pas de chemin de double-tap évident sur la
+   création de commande elle-même. **Point signalé néanmoins** :
+   `CartController.generateIdempotencyKey`
+   ([lib/presentation/controllers/cart_controller.dart:310-313](../../wello-kiosk/lib/presentation/controllers/cart_controller.dart#L310-L313))
+   génère `"{deviceId}:{timestamp_ms}"` **à chaque appel** — donc une
+   **nouvelle** clé à chaque invocation de `createOrder`. La clé
+   d'idempotence backend ne protège donc que contre un retry réseau bas
+   niveau (même clé déjà calculée rejouée), pas contre deux appels distincts
+   de la méthode Dart `createOrder` (qui recalculerait une clé différente à
+   chaque fois). Dans ce repo précis, `_isSubmitting` rend ce deuxième
+   scénario peu probable pour `OrderSummaryScreen`, mais ce n'est une
+   protection que côté widget, pas une garantie serveur.
+3. **`order_id` affiché cohérent avec celui utilisé pour le PaymentIntent** :
+   oui, confirmé (point 1) — un seul `currentOrder`, jamais recréé pendant le
+   flux `TerminalScreen`.
+
+**Constat additionnel, hors des 3 questions posées mais découvert en traçant
+le flux d'annulation/retry** : voir section suivante — c'est la piste la plus
+concrète trouvée dans cette session.
+
+### Cause identifiée — asymétrie annulation manuelle / timeout, PaymentIntent jamais annulé côté serveur en cas de timeout
+
+**Pas une certitude absolue pour *ce* pi_id précis (aucun accès aux logs
+Render/Stripe Dashboard dans cette session pour confirmer que ce scénario
+s'est produit), mais c'est un bug réel, prouvé par citation de code, qui
+produit exactement le symptôme rapporté (paiement confirmé côté Stripe, 200
+renvoyé, transition non visible pour ce pi_id).**
+
+`TerminalScreen` gère deux façons de sortir de l'attente de carte
+(`waitingForCard`), avec un traitement **différent et incohérent** du
+PaymentIntent actif :
+
+- **Annulation manuelle** (`_onCancel`,
+  [lib/presentation/screens/terminal_screen.dart:195-216](../../wello-kiosk/lib/presentation/screens/terminal_screen.dart#L195-L216)) :
+  ```dart
+  Future<void> _onCancel() async {
+    _cancelTimeout();
+    await _terminal.cancelCollectPaymentMethod();
+    final piId = _paymentIntentId;
+    if (piId != null) {
+      await _order.cancelTerminalPaymentIntent(piId);   // <-- annule côté SERVEUR
+      _paymentIntentId = null;
+    }
+    ...
+  }
+  ```
+  Annule bien le PaymentIntent côté serveur (`CancelTerminalPaymentIntent` →
+  Stripe `PaymentIntents.Cancel` + suppression des deux mappings Redis) et
+  vide `_paymentIntentId`.
+
+- **Timeout automatique** (`_armTimeout`,
+  [lib/presentation/screens/terminal_screen.dart:180-186](../../wello-kiosk/lib/presentation/screens/terminal_screen.dart#L180-L186)) :
+  ```dart
+  void _armTimeout() {
+    _timeoutTimer = Timer(Duration(seconds: _payment.timeoutSeconds), () async {
+      await _terminal.cancelCollectPaymentMethod();   // <-- SDK local uniquement
+      if (!mounted) return;
+      _payment.markTimeout();
+    });
+  }
+  ```
+  **N'appelle jamais `_order.cancelTerminalPaymentIntent(...)`** — le
+  PaymentIntent Stripe **reste actif côté serveur**, le mapping Redis
+  `terminal_pi:{id}` reste valide (TTL 1h), et `_paymentIntentId` n'est
+  **jamais remis à `null`** dans ce chemin (contrairement à `_onCancel`).
+  `_terminal.cancelCollectPaymentMethod()` n'agit que sur le SDK local
+  (le lecteur physique arrête d'attendre une carte côté app) — cela n'annule
+  rien côté API Stripe.
+
+Ensuite, `_onRetry`
+([lib/presentation/screens/terminal_screen.dart:248-253](../../wello-kiosk/lib/presentation/screens/terminal_screen.dart#L248-L253)) :
+```dart
+void _onRetry() {
+  _payment.retry();
+  if (_payment.state == PaymentState.waitingForCard) {
+    _collectAndConfirm();   // <-- crée un NOUVEAU PaymentIntent, sans avoir annulé l'ancien
+  }
+}
+```
+`_collectAndConfirm` ([terminal_screen.dart:99-118](../../wello-kiosk/lib/presentation/screens/terminal_screen.dart#L99-L118))
+appelle `_order.createTerminalPaymentIntent()` qui crée un **second**
+PaymentIntent pour la **même commande** (toujours `PENDING_CARD_PAYMENT` à ce
+stade, `isKioskCardPending` le permet,
+[internal/modules/kiosk/service.go:1771](internal/modules/kiosk/service.go#L1771)) —
+rien n'empêche le serveur de le faire, une commande carte peut recevoir
+plusieurs tentatives de PaymentIntent tant qu'elle est en attente. Le premier
+PaymentIntent (celui du timeout) n'a jamais été annulé : **deux PaymentIntents
+Stripe distincts, tous deux avec un mapping Redis actif pointant vers order
+33348, coexistent désormais.**
+
+**Scénario concret reproduisant exactement le symptôme** : le client présente
+sa carte une première fois juste au moment où le timeout se déclenche (délai
+serré, lecteur lent, hésitation) — le SDK local annule sa propre attente,
+l'écran passe en "Délai dépassé", mais **le PaymentIntent avait déjà commencé
+à être traité côté Stripe** (la présentation de carte a eu lieu avant/pendant
+l'annulation locale). Le client ou le staff clique "Réessayer" : un second
+PaymentIntent est créé et présenté, qui réussit également (ou échoue, peu
+importe). Si c'est le **premier** PaymentIntent (celui du timeout,
+potentiellement `pi_3Tvl6HISGuDm6FEV2xelLX1w`) qui finit par recevoir son
+`payment_intent.succeeded` **après** que le second ait déjà fait transiter
+`brand_status` de `PENDING_CARD_PAYMENT` à `PENDING` (guard de
+`ConfirmKioskCardPayment` déjà consommé) — ou l'inverse, selon l'ordre
+d'arrivée des deux webhooks — celui qui arrive **en second** ne trouvera plus
+`brand_status = 'PENDING_CARD_PAYMENT'` : `confirmed=false`, seul un `Warn`
+est logué, HTTP 200 renvoyé. **C'est exactement le symptôme rapporté**, sans
+qu'aucune requête SQL, aucun mapping Redis, ni aucune ligne de code du
+webhook ne soit en tort — le garde est un garde **par commande**
+(`brand_status`), pas un garde **par `payment_intent_id`** : il ne peut pas
+distinguer "ce paiement précis a-t-il déjà été traité" de "un autre paiement
+pour cette même commande a déjà résolu son statut".
+
+Le même mécanisme s'applique, avec la même conséquence silencieuse, si
+l'utilisateur a choisi **"Payer en caisse"** après le timeout au lieu de
+"Réessayer" : `SwitchToCounterPayment`
+([internal/modules/kiosk/service.go:1813-1840](internal/modules/kiosk/service.go#L1813-L1840))
+tente d'annuler le PaymentIntent actif via le mapping inverse
+(`CancelActivePaymentIntentForOrder`, best-effort, erreur seulement loguée en
+`Warn`), **puis fait transiter `brand_status` vers `PENDING` immédiatement,
+que cette annulation Stripe ait réussi ou non** :
+```go
+if s.terminal != nil {
+    if err := s.terminal.CancelActivePaymentIntentForOrder(ctx, kiosk.MerchantID, orderID); err != nil {
+        logger.FromContext(ctx).Warn("kiosk switch to counter: cancel active payment intent failed: " + err.Error())
+    }
+}
+if _, err := s.repo.ConfirmKioskCardToCounterBrandStatus(ctx, kiosk.MerchantID, orderID); err != nil {
+    return nil, err
+}
+```
+Si l'annulation Stripe échoue parce que la carte a déjà été traitée côté
+Stripe au moment de l'appel (le PaymentIntent n'est alors plus dans un état
+annulable), la commande est malgré tout basculée en paiement caisse — et le
+paiement carte, une fois confirmé plus tard par Stripe, ne trouvera plus le
+`brand_status` attendu. **Risque financier associé, à vérifier en priorité** :
+si ce chemin s'est produit pour la commande 33348, le client a pu être
+**débité deux fois** (une fois électroniquement via le Terminal, une fois en
+caisse) sans qu'aucune alerte ne soit levée côté serveur — seul un `Warn`
+générique indiscernable d'un simple replay Stripe.
+
+**Ce que confirme (et ne confirme pas) cette hypothèse** :
+- Explique intégralement webhook reçu + 200 + absence de transition visible,
+  sans supposer aucune anomalie de code ailleurs dans la chaîne (étapes 1-2
+  entièrement propres).
+- N'explique PAS, à elle seule, que `brand_status` soit **resté bloqué** sur
+  `PENDING_CARD_PAYMENT` indéfiniment si un premier PaymentIntent a bien
+  réussi entre-temps (dans ce cas la commande serait déjà `PENDING`, juste
+  avec un risque de double-paiement, pas un blocage). Si `GET /orders/33348`
+  (étape 0) montre `brand_status` toujours `PENDING_CARD_PAYMENT`, alors soit
+  aucun des deux PaymentIntents (timeout + retry) n'a de guard consommé
+  (aucun n'a encore réussi selon Stripe — à vérifier côté Dashboard si
+  `pi_3Tvl6HISGuDm6FEV2xelLX1w` est bien `succeeded` et pas seulement
+  `processing`), soit le mapping Redis pour CE `pi_id` spécifique n'a jamais
+  été écrit/trouvé (retour aux hypothèses du diagnostic du 2026-07-21, déjà
+  instrumentées).
+
+### Ce qui reste à vérifier manuellement (aucun accès DB/logs/Stripe Dashboard dans cette session)
+
+1. **Étape 0 en premier** : `GET /orders/33348` (commande ci-dessus) —
+   `brand_status` actuel. C'est le fait qui départage la plupart des
+   hypothèses ci-dessus.
+2. **Stripe Dashboard → Payments → rechercher `pi_3Tvl6HISGuDm6FEV2xelLX1w`** :
+   confirmer le statut exact (`succeeded` vs autre), la metadata
+   (`order_id`/`merchant_id`/`channel` doivent lire `33348`/`2`/`kiosk`), et
+   surtout **rechercher s'il existe un ou plusieurs AUTRES PaymentIntents
+   avec la même metadata `order_id=33348`** — c'est la vérification directe
+   de l'hypothèse "deux PaymentIntents pour la même commande" ci-dessus.
+3. **Logs Render, grep sur `order=33348` ET séparément sur
+   `pi=pi_3Tvl6HISGuDm6FEV2xelLX1w`** (tous les logs `[stripe terminal]` et
+   `[stripe webhook]` portent l'un ou l'autre, ou les deux) :
+   - `storeMapping: stored pi=... -> order=33348` — combien
+     d'occurrences ? Une seule = un seul PaymentIntent créé, l'hypothèse
+     retry est écartée. Plusieurs = confirme le double-PaymentIntent.
+   - `payment_intent.succeeded pi=pi_3Tvl6HISGuDm6FEV2xelLX1w connect_account=...` —
+     confirme la réception et la scope Connect.
+   - `lookupTerminalMapping: found pi=... -> order=33348` ou au contraire
+     `no redis key`/`unreadable JSON`/`empty order_id` — détermine si le
+     mapping était bien présent à ce moment précis.
+   - `ConfirmKioskCardPayment: no row matched` — présence de ce warning pour
+     ce `pi_id` confirme directement la cause identifiée ci-dessus (guard déjà
+     consommé par un autre événement).
+4. **`GET /orders/33348/payments`** : compter les lignes `payments`
+   (`mop='CB'`) — plus d'une ligne carte confirme un double encaissement réel
+   à rembourser.
+5. **Historique du client sur cette commande** : un retry / un
+   switch-to-counter a-t-il été déclenché avant que ce paiement n'aboutisse ?
+   (visible côté logs via plusieurs occurrences `storeMapping` avec le même
+   `order=33348`, ou une entrée `switch to counter` dans les logs applicatifs
+   autour de cet horodatage).
+
+### Instrumentation
+
+Aucune instrumentation backend supplémentaire n'a été nécessaire : les logs
+ajoutés lors de la session du 2026-07-21 (`storeMapping`,
+`lookupTerminalMapping`, `ConfirmKioskCardPayment`) couvrent déjà exactement
+les points de vérification listés ci-dessus (point 3) — un grep sur
+`order=33348` suffit à reconstituer toute la chronologie (créations de
+PaymentIntent + tentatives de confirmation webhook) sans changement de code.
+Un gap d'instrumentation existe côté **Flutter** (aucun log au déclenchement
+du timeout dans `_armTimeout`, ni sur `_onRetry`) — non corrigé dans cette
+session : ce repo (`wello-kiosk`) est hors du périmètre `go build`/`go vet` de
+ce dépôt, et la règle "ne pas corriger avant certitude" s'applique d'autant
+plus à une modification cross-repo ; à ajouter dans une session dédiée
+Flutter si la piste ci-dessus se confirme via les logs Render.
+
+Aucun fichier Go n'a été modifié dans cette session (audit de code seul) —
+`go build ./...` / `go vet ./...` non ré-exécutés pour cette raison (rien à
+valider qui n'ait pas déjà été validé aux sessions précédentes).
+
+---
+
+## Retrait de Redis du mapping order_id/payment_intent_id (Terminal Kiosk)
+
+> Session du 2026-07-22 (suite du diagnostic ci-dessus). Objectif : remplacer
+> le mapping Redis `terminal_pi:{id}` / `terminal_order_pi:{merchant}:{order}`
+> par la table `stripe_payments` déjà utilisée par ScanNOrder, pour éliminer
+> la classe de bug diagnostiquée dans toute la section précédente (écriture
+> Redis silencieusement perdue, mapping absent/expiré au moment du webhook).
+
+### Étape 0 — audit de l'insertion existante [CONSTAT — corrige une hypothèse fausse de la demande initiale]
+
+La demande partait de l'hypothèse que ScanNOrder insère une ligne
+`stripe_payments` **à la création de la Checkout Session**
+(`stripeclient.CreateCheckoutSession`, `checkout.go`), par analogie avec ce
+que devrait faire le Terminal. **Cette hypothèse est fausse, vérifiée par
+lecture directe** :
+
+- `stripeclient.CreateCheckoutSession` (`internal/infrastructure/stripe/checkout.go:18`)
+  ne fait qu'un appel API Stripe (`session.New`) et ne touche à aucune table.
+  Aucune écriture DB n'a lieu à la création de la session.
+- Son unique appelant, `scannorder.Service.CreateOrderSNO`
+  (`internal/modules/scannorder/service.go:941`), enchaîne directement sur
+  `return *newOrder, nil` après avoir reçu l'URL Stripe — pas d'insertion là
+  non plus.
+- **L'unique endroit de tout le repo qui insère réellement dans
+  `stripe_payments` (hors code de test et hors fonction décommissionnée) est
+  `OrdersLifeCycleRepository.AddPaymentAndReturnID`**
+  (`internal/modules/order_life_cycle/repository.go:133`), déjà documenté
+  dans "Incrément Terminal 2" ci-dessus (Audit 0.B). Cette fonction insère
+  **une ligne `payments`** (chaînage fiscal NF525 : `previous_hash`/`hash`/
+  `signature`) **et**, dans la foulée, une ligne `stripe_payments` liée par
+  `payment_id` — les deux insertions sont couplées dans la même fonction,
+  déclenchée uniquement quand un paiement est **réellement encaissé** :
+  - ScanNOrder (Checkout web) : au webhook `checkout.session.completed`,
+    via `HandleCheckoutSessionCompleted` → `CreatePaymentNoNotification`.
+  - Kiosk Terminal (déjà implémenté, incrément précédent) : au webhook
+    `payment_intent.succeeded`, via `recordTerminalPayment` →
+    `CreatePaymentNoNotification`.
+- Un second insert, `mysqlRepo.InsertStripePayment`
+  (`internal/webhook/stripe/repository.go:117`), existe mais n'est **jamais
+  appelé en production** — seulement exercé par
+  `postgres_integration_test.go`, qui documente lui-même
+  (`webhook/stripe/postgres_integration_test.go:131`) que cet insert est du
+  code mort et échoue de toute façon sur `success_key NOT NULL` sans le
+  correctif appliqué manuellement dans le test.
+
+**Conséquence directe** : il n'existe, nulle part dans ce projet avant cette
+session, de précédent "insérer une ligne `stripe_payments` avant que le
+paiement soit confirmé". Réutiliser *littéralement* `AddPaymentAndReturnID`
+pour écrire le mapping à la création du PaymentIntent Terminal (comme
+demandé) est exclu : cette fonction insère aussi une ligne `payments` avec
+chaînage de hash fiscal — l'appeler avant que Stripe ait confirmé quoi que ce
+soit fabriquerait un enregistrement de paiement fiscal pour de l'argent non
+reçu. Le design ci-dessous adapte l'intention de la demande (« un seul
+endroit qui gère ce mapping pour tous les canaux », `stripe_payments` plutôt
+qu'une colonne dédiée) sans dupliquer cette fonction précise.
+
+**Champs de `stripe_payments`** (`docs/migration-postgres/04-schema-postgres-target.sql:3393`,
+identique à la DDL MySQL source) : `order_id integer NOT NULL`, `payment_id
+integer` **nullable**, `payment_intent_id varchar(200)`,
+`payment_intent_status varchar(30) NOT NULL DEFAULT 'REQUIRES_CONFIRMATION'`,
+`success_key varchar(100) NOT NULL` (sans défaut — toujours `''` explicite
+dans ce projet, jamais le vrai "success key" applicatif), `checkout_session_id`/
+`customer_email` nullable. La nullabilité de `payment_id` est ce qui rend
+possible une ligne "mapping seul" avant tout encaissement.
+
+**`UpdatePaymentIntentStatus`** (déjà existant,
+`internal/webhook/stripe/repository.go:332`) fait un simple
+`UPDATE stripe_payments SET payment_intent_status = ? WHERE payment_intent_id = ?`
+— totalement indépendant de `payment_id` — réutilisable tel quel pour marquer
+`'CANCELED'`/`'CAPTURED'`/`'FAILED'` sur une ligne pré-créée, sans
+modification. Cette fonction vit dans `internal/webhook/stripe` (module
+webhook), qui importe déjà `internal/infrastructure/stripe` (`stripeclient`,
+pour `TerminalPaymentIntentKey`/etc.) — l'inverse (infra important webhook)
+créerait un cycle d'import. Le nouveau store SQL décrit ci-dessous vit donc
+directement dans `internal/infrastructure/stripe`, avec sa propre requête
+`UPDATE stripe_payments SET payment_intent_status = ...` (une ligne dupliquée
+avec `UpdatePaymentIntentStatus`, assumé plutôt que de risquer un cycle
+d'import pour économiser une requête d'une ligne).
+
+### Design retenu
+
+1. **Écriture à la création** (`CreateTerminalPaymentIntent`, `terminal.go`) :
+   nouvelle méthode `TerminalPaymentStore.CreateMapping(ctx, orderID,
+   paymentIntentID)` — `INSERT INTO stripe_payments(order_id,
+   payment_intent_id, success_key) VALUES (?, ?, '')`, `payment_id` omis
+   (NULL), `payment_intent_status` omis (défaut DB `'REQUIRES_CONFIRMATION'`,
+   cohérent avec toutes les autres insertions du projet qui ne renseignent
+   jamais ce champ explicitement à la création).
+   - **Changement de sévérité assumé** : contrairement à l'ancien
+     `storeMapping` Redis (best-effort, erreur seulement loguée — c'est
+     exactement la cause racine diagnostiquée plus haut dans ce document), un
+     échec de cet INSERT fait maintenant échouer `CreateTerminalPaymentIntent`
+     dans son ensemble (le PaymentIntent Stripe déjà créé est annulé en
+     best-effort avant de remonter l'erreur). Le mapping vit désormais dans la
+     même base transactionnelle que le reste de l'application (déjà une
+     dépendance dure) : un échec d'écriture ici signale un problème sérieux
+     (DB indisponible), pas une dégradation acceptable comme pouvait l'être un
+     Redis flaky — le laisser passer silencieusement reproduirait exactement
+     l'incident diagnostiqué.
+2. **Lecture pour l'annulation** (`CancelActivePaymentIntentForOrder`) :
+   `TerminalPaymentStore.GetActivePaymentIntentForOrder(ctx, merchantID,
+   orderID)` — `SELECT sp.payment_intent_id FROM stripe_payments sp INNER
+   JOIN orders o ON o.order_id = sp.order_id WHERE sp.order_id = ? AND
+   o.merchant_id = ? AND sp.payment_intent_status NOT IN ('CANCELED',
+   'FAILED', 'CAPTURED') ORDER BY sp.id DESC LIMIT 1`. La jointure `orders`
+   remplace la vérification d'appartenance merchant que portait le mapping
+   Redis (`stripe_payments` n'a pas de colonne `merchant_id` propre tant que
+   `payment_id` est NULL). `ORDER BY id DESC LIMIT 1` : le PaymentIntent le
+   plus récent, au cas où plusieurs lignes existeraient pour la même commande
+   (retry après timeout, cas documenté dans le diagnostic de la commande
+   33348 ci-dessus).
+3. **Vérification d'appartenance pour l'annulation directe**
+   (`CancelTerminalPaymentIntent`, appelée aussi par l'endpoint
+   `POST /kiosk/terminal/payment-intent/{id}/cancel`) :
+   `TerminalPaymentStore.GetMerchantIDForPaymentIntent(ctx, paymentIntentID)`
+   — même jointure, remplace le test `mapping.MerchantID != merchantID` fait
+   auparavant contre le mapping Redis direct.
+4. **Statut `'FAILED'` introduit** : `payment_intent.payment_failed`
+   n'appelait auparavant aucune mise à jour de `stripe_payments` (seulement
+   une notification best-effort). Ajout d'un appel à
+   `UpdatePaymentIntentStatus(ctx, pi.ID, "FAILED")` pour que la ligne
+   pré-créée sorte de l'ensemble "actif" (point 2) — cohérent avec les
+   valeurs déjà existantes `'CAPTURED'`/`'CANCELED'`.
+5. **Suppression de l'upsert de duplication côté `AddPaymentAndReturnID`** :
+   quand le webhook `payment_intent.succeeded` (Terminal) appelle
+   `recordTerminalPayment` → `AddPaymentAndReturnID`, cette dernière
+   trouverait, pour un paiement Terminal, une ligne `stripe_payments`
+   **déjà présente** (celle créée au point 1, `payment_id` encore NULL) — un
+   second `INSERT` créerait un doublon pour le même `payment_intent_id`.
+   `AddPaymentAndReturnID` complète maintenant cette ligne par `UPDATE
+   stripe_payments SET payment_id = ? WHERE payment_intent_id = ? AND
+   payment_id IS NULL`, et ne retombe sur l'`INSERT` existant (comportement
+   strictement inchangé) que si cet `UPDATE` n'affecte aucune ligne — ce qui
+   est toujours le cas pour le Checkout web (qui ne pré-crée jamais de ligne).
+   Couverture : `internal/modules/order_life_cycle/postgres_integration_test.go`
+   exerçait déjà ce chemin sans ligne pré-existante (paiement `MOP=CB` avec
+   `PaymentIntentID`, `nStripe==1` attendu) — cas non affecté, complété par un
+   nouveau cas avec ligne pré-existante.
+   - **Bug adjacent corrigé au passage** : l'erreur de cet `UPDATE`/`INSERT`
+     était auparavant silencieusement écrasée par le `UPDATE ... isPaid` qui
+     suit (même variable `err` réutilisée, jamais vérifiée entre les deux) —
+     exactement la classe de bug reprochée à Redis. Cette branche retourne
+     désormais l'erreur immédiatement en cas d'échec.
+6. **Sens PaymentIntent → order (webhook)** : inchangé dans son principe déjà
+   décidé (lire `pi.Metadata`), mais **jamais réellement implémenté** avant
+   cette session — le code lisait le mapping Redis (`lookupTerminalMapping`),
+   pas la metadata, malgré ce que suggérait la demande initiale. `pi.Metadata`
+   porte déjà `order_id`/`merchant_id`/`channel` depuis la création
+   (`CreateTerminalPaymentIntent`, inchangé) : `handleTerminalPaymentSucceeded`
+   et `HandlePaymentIntentFailed` lisent désormais directement
+   `pi.Metadata["channel"] == "kiosk"` pour se reconnaître comme un paiement
+   Terminal, `pi.Metadata["order_id"]`/`["merchant_id"]` pour résoudre la
+   commande — **aucune requête DB/Redis nécessaire dans ce sens**, la
+   metadata Stripe n'a pas de TTL contrairement au mapping Redis qu'elle
+   remplace.
+
+### Suppression du code Redis
+
+Supprimés de `internal/infrastructure/stripe/terminal.go` : `TerminalMappingStore`
+(interface), `TerminalPaymentMapping` (struct), `TerminalPaymentIntentKey`/
+`TerminalOrderKey` (constructeurs de clé, exportés et jusqu'ici réutilisés par
+le webhook), `terminalPIKeyPrefix`/`terminalOrderKeyPrefix`/`terminalMappingTTL`,
+`storeMapping`/`getMapping`/`deleteMapping`. Supprimés de
+`internal/webhook/stripe/service.go` : `lookupTerminalMapping`, les deux
+`s.redis.Delete(ctx, stripeclient.Terminal...Key(...))`, l'import `stripeclient`
+(devenu inutilisé après ce retrait — vérifié, aucune autre référence dans ce
+fichier). **Conservé** : `s.redis` (champ, toujours utilisé par
+`HandleCheckoutSessionCompleted` pour l'invalidation du cache de commande,
+sans rapport avec le mapping Terminal) et le paramètre `redis` du
+constructeur `NewStripeWebhookService` (inchangé).
+
+### Vérifications
+
+`go build ./...` et `go vet ./...` clean (seul warning restant :
+`cmd/api/routes.go:431` copie de lock dans `authModule.NewAuthHandler`,
+pré-existant, sans rapport). `go test ./internal/modules/kiosk/...
+./internal/webhook/stripe/... ./internal/modules/order_life_cycle/...
+./internal/infrastructure/stripe/...` passent.
+
+**Différence par rapport aux sessions précédentes : un Postgres de dev était
+disponible dans ce sandbox** (conteneur Docker `welloresto-postgres-dev`,
+port 5433, déjà démarré) — les tests `postgres_integration` ont donc pu être
+**réellement exécutés**, pas seulement compilés :
+
+```bash
+POSTGRES_URL="postgres://welloresto:dev_local_only@localhost:5433/welloresto_dev" \
+  go test -tags postgres_integration ./internal/modules/kiosk/... \
+  ./internal/modules/order_life_cycle/... ./internal/infrastructure/stripe/... \
+  ./internal/webhook/stripe/... ./internal/modules/scannorder/...
+```
+
+Tout passe, y compris les deux nouveaux/étendus :
+- `TestTerminalPaymentStore_Postgres` (nouveau,
+  `internal/infrastructure/stripe/postgres_integration_test.go`) : `CreateMapping`
+  (ligne créée avec `payment_id` NULL et statut par défaut
+  `REQUIRES_CONFIRMATION`), `GetActivePaymentIntentForOrder` (trouvé pour le bon
+  merchant, absent pour un autre merchant — vérifie la jointure `orders`),
+  `GetMerchantIDForPaymentIntent`, `MarkPaymentIntentStatus` (sort bien de
+  l'ensemble "actif" après passage à `CANCELED`).
+- `TestOrderLifeCycleRepository_Postgres` (étendu) : nouveau cas — une ligne
+  `stripe_payments` pré-créée (simulant `CreateMapping`) est complétée par
+  `AddPaymentAndReturnID` (même `payment_intent_id`) sans être dupliquée
+  (`COUNT(*) = 1`, `payment_id` de la ligne unique == celui retourné).
+
+**Note de méthode** : ne pas exporter `DB_DIALECT=postgres` manuellement dans
+le shell avant de lancer ces tests — `pgtest.Open` le fait déjà via
+`t.Setenv` (scope correct, restauré après chaque test). L'exporter
+globalement fait basculer aussi les tests unitaires `sqlmock` d'autres
+paquets (qui attendent des requêtes `?` MySQL) vers le rebind Postgres,
+produisant des échecs qui n'ont rien à voir avec le code testé — piège
+rencontré et vérifié dans cette session (`go test -tags postgres_integration
+./...` avec `DB_DIALECT` exporté à la main fait échouer des paquets sans
+rapport ; sans cet export, seuls les mêmes paquets déjà en échec avant cette
+session le restent : `bookingcomm`, `cash_registers`, `planning/employees`,
+`planning/leave`, `planning/swaps` — confirmé identique via `git stash`, rien
+à voir avec ce changement).
+
+### Fichiers modifiés
+
+- `internal/infrastructure/stripe/terminal.go` — retrait complet du mapping
+  Redis (`TerminalMappingStore`, `TerminalPaymentMapping`,
+  `TerminalPaymentIntentKey`/`TerminalOrderKey`, `storeMapping`/`getMapping`/
+  `deleteMapping`), nouveau `TerminalPaymentStore` (interface + implémentation
+  SQL `terminalPaymentStore`), `CreateTerminalPaymentIntent`/
+  `CancelTerminalPaymentIntent`/`CancelActivePaymentIntentForOrder` réécrites
+  pour l'utiliser.
+- `internal/modules/order_life_cycle/repository.go` —
+  `AddPaymentAndReturnID` : upsert (`UPDATE` puis `INSERT` de repli) sur
+  `stripe_payments` au lieu d'un `INSERT` systématique ; bug adjacent corrigé
+  (erreur de cette étape désormais retournée immédiatement, plus jamais
+  écrasée par le refresh `isPaid` qui suit).
+- `internal/webhook/stripe/service.go` — `HandlePaymentIntentSucceeded`/
+  `HandlePaymentIntentFailed`/`handleTerminalPaymentSucceeded`/
+  `recordTerminalPayment` : lecture de `pi.Metadata` au lieu du mapping Redis ;
+  nouveau helper `kioskTerminalMetadata` ; `lookupTerminalMapping` supprimée ;
+  import `stripeclient` retiré (devenu inutilisé) ; nouveau statut `'FAILED'`
+  écrit sur `payment_intent.payment_failed` ; `'CAPTURED'` désormais
+  effectivement écrit sur succès Terminal (ne l'était jamais avant, faute
+  d'atteindre ce code par le chemin `handled=true`).
+- `cmd/api/routes.go` — `NewTerminalService` reçoit
+  `stripeInternalClient.NewTerminalPaymentStore(mysqlDB)` au lieu de
+  `redisClient`.
+- `internal/modules/kiosk/service.go` — commentaire de
+  `CancelTerminalPaymentIntent` mis à jour (ne mentionne plus Redis).
+- `internal/infrastructure/stripe/postgres_integration_test.go` (nouveau) —
+  couverture de `terminalPaymentStore`.
+- `internal/modules/order_life_cycle/postgres_integration_test.go` (étendu) —
+  couverture du scénario upsert (ligne pré-créée, pas de doublon).
+
+### Ce qui n'a PAS été touché (hors périmètre de cette tâche)
+
+- Le format/la valeur de `pi.Metadata` à l'écriture (`CreateTerminalPaymentIntent`)
+  était déjà correct depuis l'incrément précédent — non modifié.
+- `ConfirmKioskCardPayment`/`ConfirmKioskCardToCounterBrandStatus` (transition
+  `brand_status`) — inchangées, déjà correctes (diagnostiquées en détail dans
+  la section précédente).
+- Le diagnostic ouvert sur les webhooks Connect (endpoint "Connected accounts"
+  à vérifier côté Dashboard Stripe) reste entièrement d'actualité — cette
+  session ne change rien à la réception des events, seulement au traitement
+  une fois reçus.
+
+---
+
+## Audit croisé Terminal Kiosk / ScanNOrder — filtre `pi.Metadata["channel"]`
+
+> Session du 2026-07-22. Objectif : depuis que Terminal Kiosk et ScanNOrder
+> (Checkout web) partagent le même mécanisme de lecture `pi.Metadata` sur
+> `payment_intent.succeeded`/`payment_intent.payment_failed` (section
+> "Retrait de Redis" ci-dessus), vérifier qu'aucun des deux flux ne produit
+> d'effet de bord sur l'autre. Audit de code seul, aucune exécution nécessaire
+> (le comportement en cause est déterministe et vérifiable par lecture).
+
+### 1. Un PaymentIntent ScanNOrder porte-t-il une metadata `channel` ?
+
+Non — vérifié par lecture directe de
+`stripeclient.CreateCheckoutSession` (`internal/infrastructure/stripe/checkout.go:128-143`) :
+`PaymentIntentData` ne renseigne que `ApplicationFeeAmount`/`CaptureMethod`,
+aucun champ `Metadata`. Stripe ne copie **jamais** automatiquement
+`checkout.session.metadata` (qui porte `order_id`/`merchant_id`/
+`checkout_session_type`, lignes 134-138) vers `payment_intent.metadata` — ce
+sont deux objets distincts côté API Stripe ; seul un `payment_intent_data.metadata`
+explicite (absent ici) le ferait. Un PaymentIntent créé pour une commande
+ScanNOrder a donc une metadata Stripe **sans la clé `channel` du tout**
+(clé absente, pas une valeur vide).
+
+Seul point du repo qui écrit `Metadata["channel"] = "kiosk"` :
+`internal/infrastructure/stripe/terminal.go:130`
+(`CreateTerminalPaymentIntent`) — confirmé par grep sur `"channel"` dans tout
+`internal/`, aucune autre écriture de cette clé.
+
+### 2. Comportement Go d'un accès à une clé absente d'une map
+
+`pi.Metadata` est un `map[string]string`. En Go, lire une clé absente d'une
+map (même nil) ne panique jamais et retourne la valeur zéro du type valeur —
+`""` pour `string`. Donc pour un PaymentIntent ScanNOrder :
+`pi.Metadata["channel"]` vaut `""`, et `kioskTerminalMetadata`
+(`internal/webhook/stripe/service.go:408`) :
+```go
+if pi.Metadata["channel"] != "kiosk" {
+    return "", "", false
+}
+```
+`"" != "kiosk"` → `true` → `return "", "", false`. Aucun faux positif possible,
+aucun risque de panique — comportement natif du langage, pas une garde
+applicative qui pourrait avoir un trou.
+
+### 3. Chemin inverse : un event Terminal peut-il être traité par la logique ScanNOrder ?
+
+Non. `ProcessEvent` (`internal/webhook/stripe/service.go:54-94`) est un
+`switch event.Type` classique : chaque `case` fait un `return` immédiat,
+aucun chemin n'appelle deux handlers pour le même event. `HandleCheckoutSessionCompleted`
+n'est déclenché que par l'event `checkout.session.completed` (ligne 57-58).
+Un PaymentIntent Terminal Kiosk est créé directement via
+`t.sm.client.PaymentIntents.New(params)` (`terminal.go:136`, `PaymentMethodTypes:
+["card_present"]`) — jamais via `checkout/session.New` — donc Stripe ne crée
+aucun objet Checkout Session associé et n'émet donc **jamais**
+`checkout.session.completed` pour un paiement Terminal. Aucun chemin où le
+même event serait traité par les deux logiques.
+
+### 4. Le flux ScanNOrder émet-il aussi `payment_intent.succeeded` aujourd'hui, et si oui, que devient-il ?
+
+Oui — fait Stripe standard : un Checkout Session qui aboutit à un paiement
+réussi émet **à la fois** `checkout.session.completed` **et**
+`payment_intent.succeeded` pour le PaymentIntent sous-jacent (indépendamment
+du produit Stripe utilisé pour créer ce PaymentIntent). `HandlePaymentIntentSucceeded`
+est donc bien invoquée aussi pour un paiement ScanNOrder. Trace du chemin
+emprunté (`service.go:356-369`) :
+
+1. `handleTerminalPaymentSucceeded(ctx, &pi)` → `kioskTerminalMetadata(pi)` →
+   `ok=false` (point 2 ci-dessus) → retourne immédiatement `(false, nil)`
+   (`service.go:419-425`), sans toucher à `ConfirmKioskCardPayment` ni à
+   `recordTerminalPayment`.
+2. `handled=false, err=nil` → le code continue et exécute
+   `s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED")` (ligne 368) — un
+   simple `UPDATE stripe_payments SET payment_intent_status = 'CAPTURED' WHERE
+   payment_intent_id = ?`. Ce comportement est **strictement antérieur** à
+   l'introduction du Kiosk (déjà documenté dans le commentaire de
+   `HandlePaymentIntentSucceeded`, "on retombe sur le comportement existant du
+   flux Checkout en ligne... strictement inchangé") : ni erreur, ni double
+   traitement, ni écriture incorrecte — que la ligne `stripe_payments`
+   existe déjà (insérée entre-temps par `HandleCheckoutSessionCompleted` via
+   `AddPaymentAndReturnID`) ou pas encore (event arrivé avant, `UPDATE` matche
+   0 ligne, no-op silencieux, pas d'erreur SQL) : dans les deux cas le
+   paiement est réellement capturé, donc `'CAPTURED'` est la valeur correcte
+   à écrire, jamais une valeur erronée.
+
+**Conclusion étape 0** : aucun risque réel de collision aujourd'hui entre les
+deux canaux. La garde `pi.Metadata["channel"] != "kiosk"` est déjà stricte de
+fait grâce à la sémantique Go des maps (point 2) — pas besoin de la
+réécrire en `if channel, ok := pi.Metadata["channel"]; !ok || channel !=
+"kiosk"`, ce qui serait équivalent en comportement mais plus verbeux sans
+gain de sécurité réel ici. **Aucun changement fonctionnel appliqué.** Seul
+ajout : un commentaire d'anticipation au-dessus de `kioskTerminalMetadata`
+(`internal/webhook/stripe/service.go`) documentant que `channel` est le point
+d'extension prévu pour de futurs canaux carte présente (`pos_till`,
+`reservation_deposit`), chacun devant utiliser sa propre valeur distincte.
+
+`go build ./...` et `go vet ./...` clean après l'ajout du commentaire (aucune
+modification de logique).
+
+---
+
+## Phase 2 — `POST /kiosk/auth/reclaim` (ré-identification par device_id)
+
+Contexte : suite de la Phase 1 (`kiosks.device_id`, migration
+`062_kiosks_device_id`, `EnrollRequest.DeviceID` optionnel — voir
+`docs/decisions.md`). Objectif : qu'une borne ayant perdu son refresh token
+(storage effacé, réinstallation, rotation sans fenêtre de grâce — voir
+`docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md` §4) retrouve son profil via
+`device_id`, sans réenrôlement manuel dans le cas courant.
+
+### Portée de la recherche par device_id
+
+`Repository.FindKioskCandidatesByDeviceID` filtre `status IN ('active',
+'inactive')` **dans la requête SQL elle-même** — une borne `revoked` n'est
+jamais candidate, quel que soit le `device_id`/PIN fourni. Choix délibéré :
+même une réponse "PIN required" révélerait l'existence d'une borne connue
+pour ce `device_id` ; en excluant les `revoked` de la requête, une borne
+volée puis révoquée depuis le back-office ne peut plus jamais se
+ré-identifier par ce canal, point final — cohérent avec le risque documenté
+dans l'audit (§4, "Fenêtre de révocation actuelle non instantanée").
+
+**0 ligne ou >1 ligne (collision de device_id) → même réponse HTTP**
+(`kiosk_not_found`, 404). Une collision n'est pas exposée comme un cas
+distinct : le client n'a de toute façon qu'un seul comportement de repli
+possible (l'enrôlement classique), donc aucune information supplémentaire
+n'a de valeur actionnable pour lui — et ne pas distinguer les deux cas évite
+de révéler qu'une collision existe (fuite d'information sur l'état interne
+d'autres bornes).
+
+### Silencieux vs PIN admin — seuil sur `last_heartbeat_at`
+
+`kioskReclaimSilentWindow = 30 * 24h` (constante Go, pas de variable d'env
+pour cette phase — pas de besoin exprimé de la rendre configurable
+merchant-par-merchant). `last_heartbeat_at` récent (<30j) → réémission de
+tokens strictement sans toucher au PIN, y compris si un `admin_pin` est
+fourni dans la requête (le champ est simplement ignoré) : un appareil qui
+donnait encore signe de vie récemment n'a pas de raison de justifier son
+identité par un facteur supplémentaire. `last_heartbeat_at` absent (`NULL`,
+borne jamais vue depuis l'enrôlement — ex. tablette échangée avant sa
+première utilisation réelle) ou ancien (≥30j) → PIN admin obligatoire,
+même logique de risque que "changement de tablette physique" discutée dans
+l'audit (§4).
+
+### PIN admin : réutilisation stricte de l'existant, pas de nouveau lockout serveur
+
+`Service.verifyAdminPinCore` a été extrait de `VerifyAdminPin` (déchiffrement
+`admin_pin_encrypted`, comparaison `subtle.ConstantTimeCompare`, lockout
+Redis 5 tentatives/30s **par `kioskID`**, clé `kiosk:admin_pin:lockout:` déjà
+existante) — `ReclaimDevice` appelle exactement la même fonction, avec le
+`kioskID`/`admin_pin_encrypted` du candidat trouvé (pas besoin d'une requête
+supplémentaire scoping merchant, la ligne est déjà en main). Résultat :
+tenter un reclaim avec PIN et tenter `POST .../verify-admin-pin` sur la même
+borne partagent le même compteur de lockout Redis — décision explicite du
+prompt, pas un oubli. Aucun lockout serveur additionnel spécifique à
+`/reclaim` ; le lockout propre à cet écran (5 tentatives → 30s, avec bascule
+automatique vers l'enrôlement classique après épuisement) est géré côté
+Flutter uniquement (voir `wello-kiosk/docs/KIOSK_DECISIONS.md`).
+
+### Réutilisation de la ligne `kiosks` existante — pas de nouvelle borne
+
+`ReclaimDevice` ne passe jamais par `CreateKiosk` : dans la même transaction,
+`RevokeAllDeviceTokens` (même fonction que `RevokeKiosk`/hygiène habituelle)
+puis `CreateDeviceToken` réémettent un nouveau refresh token sur le
+`kiosk_id` du candidat trouvé — aucun double comptage de quota
+(`GetActiveKioskCount` ne recompte rien puisqu'aucune ligne n'est insérée).
+`UpdateKioskLastSeenOnReclaim` est une méthode dédiée (pas
+`UpdateKioskHeartbeat` réutilisée telle quelle) : elle ne met à jour que
+`last_heartbeat_at`/`last_ip`, jamais `app_version` — le client de reclaim ne
+transmet pas cette information (contrairement à `POST .../auth/heartbeat`),
+et réutiliser `UpdateKioskHeartbeat` aurait écrasé la dernière valeur connue
+avec une chaîne vide. PIN admin inchangé : ni régénéré, ni ré-exposé dans
+`ReclaimDeviceResponse` (qui a la même forme qu'`EnrollResponse` moins
+`admin_pin`) — un reclaim silencieux ou par PIN n'a aucune raison de révéler
+à nouveau le PIN existant.
+
+### Endpoint et codes d'erreur
+
+`POST /kiosk/auth/reclaim`, public (même groupe de routes que `/auth/enroll`
+et `/auth/token/refresh`, avant le middleware `KioskAuth`) :
+- `{device_id}` → succès silencieux + tokens, ou `401
+  kiosk_reclaim_pin_required`, ou `404 kiosk_not_found`.
+- `{device_id, admin_pin}` → succès + tokens, ou `401
+  kiosk_admin_pin_invalid`, ou `429 kiosk_admin_pin_locked` (même format que
+  `verify-admin-pin` : `{"error": "kiosk_admin_pin_locked", "delay_seconds":
+  N}`).
+
+Aucun rate-limit par IP sur cet endpoint pour cette phase — décision
+explicite (comme documenté dans le prompt de cette session), à revisiter si
+besoin s'en fait sentir en usage réel.
+
+### Tests
+
+Couverture par `sqlmock` (`internal/modules/kiosk/reclaim_test.go`, pas
+d'accès DB réel nécessaire) : device_id vide, 0 candidat, collision (2
+candidats), heartbeat récent (silencieux, PIN ignoré même absent), heartbeat
+`NULL`/ancien sans PIN (`pin_required`), PIN invalide, PIN valide (réémission
+complète avec assertions sur la séquence transactionnelle
+Begin/Exec×3/Commit). `go build ./...` et `go test
+./internal/modules/kiosk/...` verts.

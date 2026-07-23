@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -19,11 +20,11 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListPlanningWeeks(ctx context.Context, merchantID string) ([]PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 		ORDER BY start_date DESC, created_at DESC
 	`, merchantID)
 	if err != nil {
@@ -43,22 +44,22 @@ func (r *Repository) ListPlanningWeeks(ctx context.Context, merchantID string) (
 }
 
 func (r *Repository) GetPlanningWeekByID(ctx context.Context, merchantID, weekID string) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, weekID)
 	return scanPlanningWeekRow(row)
 }
 
 func (r *Repository) GetPlanningWeekByStartDate(ctx context.Context, merchantID string, startDate time.Time, excludeWeekID string) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND start_date = ? AND enabled = TRUE
 	`
 	args := []interface{}{merchantID, startDate.Format("2006-01-02")}
 	if strings.TrimSpace(excludeWeekID) != "" {
@@ -71,7 +72,7 @@ func (r *Repository) GetPlanningWeekByStartDate(ctx context.Context, merchantID 
 }
 
 func (r *Repository) CreatePlanningWeek(ctx context.Context, merchantID string, week PlanningWeek) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	week.ID = helpers.GeneratePrefixedID(helpers.PlanningWeekIDPrefix)
 	week.MerchantID = merchantID
@@ -80,7 +81,7 @@ func (r *Repository) CreatePlanningWeek(ctx context.Context, merchantID string, 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_weeks (
 			id, merchant_id, label, start_date, end_date, status, published_at, notes, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`, week.ID, week.MerchantID, week.Label, week.StartDate, week.EndDate, week.Status, week.PublishedAt, week.Notes, week.CreatedAt, week.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -89,7 +90,7 @@ func (r *Repository) CreatePlanningWeek(ctx context.Context, merchantID string, 
 }
 
 func (r *Repository) UpdatePlanningWeek(ctx context.Context, merchantID, weekID string, week PlanningWeek) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	current, err := r.GetPlanningWeekByID(ctx, merchantID, weekID)
 	if err != nil {
 		return nil, err
@@ -124,7 +125,7 @@ func (r *Repository) UpdatePlanningWeek(ctx context.Context, merchantID, weekID 
 	_, err = db.ExecContext(ctx, `
 		UPDATE planning_weeks
 		SET label = ?, start_date = ?, end_date = ?, status = ?, published_at = ?, notes = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, current.Label, current.StartDate, current.EndDate, current.Status, current.PublishedAt, current.Notes, current.UpdatedAt, merchantID, weekID)
 	if err != nil {
 		return nil, err
@@ -133,11 +134,11 @@ func (r *Repository) UpdatePlanningWeek(ctx context.Context, merchantID, weekID 
 }
 
 func (r *Repository) PublishPlanningWeek(ctx context.Context, merchantID, weekID string, publishedAt time.Time) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_weeks
 		SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, publishedAt, publishedAt, merchantID, weekID)
 	if err != nil {
 		return nil, err
@@ -149,12 +150,12 @@ func (r *Repository) PublishPlanningWeek(ctx context.Context, merchantID, weekID
 }
 
 func (r *Repository) UnpublishPlanningWeek(ctx context.Context, merchantID, weekID string) (*PlanningWeek, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_weeks
 		SET status = 'draft', published_at = NULL, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, merchantID, weekID)
 	if err != nil {
 		return nil, err
@@ -167,13 +168,13 @@ func (r *Repository) UnpublishPlanningWeek(ctx context.Context, merchantID, week
 
 func (r *Repository) SoftDeletePlanningWeek(ctx context.Context, merchantID, weekID string) error {
 	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.db)
+		db := dbx.GetDB(txCtx, r.db)
 		now := time.Now().UTC()
 
 		res, err := db.ExecContext(txCtx, `
 			UPDATE planning_weeks
-			SET enabled = 0, deleted_at = ?, updated_at = ?
-			WHERE merchant_id = ? AND id = ? AND enabled = 1
+			SET enabled = FALSE, deleted_at = ?, updated_at = ?
+			WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		`, now, now, merchantID, weekID)
 		if err != nil {
 			return err
@@ -184,20 +185,20 @@ func (r *Repository) SoftDeletePlanningWeek(ctx context.Context, merchantID, wee
 
 		_, err = db.ExecContext(txCtx, `
 			UPDATE planning_shifts
-			SET enabled = 0, deleted_at = ?, updated_at = ?
-			WHERE merchant_id = ? AND week_id = ? AND enabled = 1
+			SET enabled = FALSE, deleted_at = ?, updated_at = ?
+			WHERE merchant_id = ? AND week_id = ? AND enabled = TRUE
 		`, now, now, merchantID, weekID)
 		return err
 	})
 }
 
 func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID string) ([]PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND week_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND week_id = ? AND enabled = TRUE
 		ORDER BY shift_date ASC, start_time ASC, created_at ASC
 	`, merchantID, weekID)
 	if err != nil {
@@ -217,12 +218,12 @@ func (r *Repository) ListPlanningShifts(ctx context.Context, merchantID, weekID 
 }
 
 func (r *Repository) ListPlanningShiftsByDateRange(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND enabled = 1 AND shift_date >= ? AND shift_date <= ?
+		WHERE merchant_id = ? AND enabled = TRUE AND shift_date >= ? AND shift_date <= ?
 		ORDER BY shift_date ASC, start_time ASC, created_at ASC
 	`, merchantID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 	if err != nil {
@@ -242,16 +243,16 @@ func (r *Repository) ListPlanningShiftsByDateRange(ctx context.Context, merchant
 }
 
 func (r *Repository) ListPlanningShiftsTeamWeekView(ctx context.Context, merchantID, weekID string) ([]PlanningShiftTeamWeekView, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.id, s.merchant_id, s.week_id, s.employee_id,
 			NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), '') AS employee_name,
 			s.position_id, s.title, s.shift_date, s.start_time, s.end_time, s.break_minutes,
 			s.position, p.color, s.location, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
 		FROM planning_shifts s
-		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = 1
-		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = 1
-		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = 1
+		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = TRUE
+		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = TRUE
 		ORDER BY s.shift_date ASC, s.start_time ASC, s.created_at ASC
 	`, merchantID, weekID)
 	if err != nil {
@@ -271,24 +272,24 @@ func (r *Repository) ListPlanningShiftsTeamWeekView(ctx context.Context, merchan
 }
 
 func (r *Repository) GetPlanningShiftByID(ctx context.Context, merchantID, shiftID string) (*PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, shiftID)
 	return scanPlanningShiftRow(row)
 }
 
 func (r *Repository) ListEmployeeShiftsByDate(ctx context.Context, merchantID, employeeID string, shiftDate time.Time, excludeShiftID string) ([]PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = TRUE
 	`
 	args := []interface{}{merchantID, employeeID, shiftDate.Format("2006-01-02")}
 	if strings.TrimSpace(excludeShiftID) != "" {
@@ -314,7 +315,7 @@ func (r *Repository) ListEmployeeShiftsByDate(ctx context.Context, merchantID, e
 }
 
 func (r *Repository) CreatePlanningShift(ctx context.Context, merchantID string, shift PlanningShift) (*PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	shift.ID = helpers.GeneratePrefixedID(helpers.PlanningShiftIDPrefix)
 	shift.MerchantID = merchantID
@@ -323,9 +324,9 @@ func (r *Repository) CreatePlanningShift(ctx context.Context, merchantID string,
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_shifts (
 			id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
-			position, location, notes, status, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.CreatedAt, shift.UpdatedAt)
+			position, location, notes, status, title, enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
+	`, shift.ID, shift.MerchantID, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.Title, shift.CreatedAt, shift.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -333,13 +334,13 @@ func (r *Repository) CreatePlanningShift(ctx context.Context, merchantID string,
 }
 
 func (r *Repository) UpdatePlanningShift(ctx context.Context, merchantID, shiftID string, shift PlanningShift) (*PlanningShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	shift.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shifts
 		SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
 			position = ?, location = ?, notes = ?, status = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, shift.WeekID, shift.EmployeeID, shift.PositionID, shift.Title, shift.ShiftDate, shift.StartTime, shift.EndTime, shift.BreakMinutes, shift.Position, shift.Location, shift.Notes, shift.Status, shift.UpdatedAt, merchantID, shiftID)
 	if err != nil {
 		return nil, err
@@ -351,12 +352,12 @@ func (r *Repository) UpdatePlanningShift(ctx context.Context, merchantID, shiftI
 }
 
 func (r *Repository) SoftDeletePlanningShift(ctx context.Context, merchantID, shiftID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_shifts
-		SET enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, shiftID)
 	if err != nil {
 		return err

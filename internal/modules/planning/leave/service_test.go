@@ -44,7 +44,7 @@ func TestServiceCreatePlanningLeaveRequestResolvesCurrentMemberEmployee(t *testi
 		INSERT INTO planning_leave_requests (
 			id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason, manager_note,
 			requested_by_user_id, processed_by_user_id, processed_at, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1", "paid", sqlmock.AnyArg(), sqlmock.AnyArg(), "pending", nil, nil, "user_1", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))

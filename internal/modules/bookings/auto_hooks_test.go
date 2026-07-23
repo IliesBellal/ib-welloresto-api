@@ -49,7 +49,7 @@ func TestFindConfirmedBookingForAutoSeat_MatchQueryShape(t *testing.T) {
 
 	for _, fragment := range []string{
 		"status = 'confirmed'",
-		"INTERVAL 30 MINUTE",
+		"INTERVAL '30' MINUTE",
 		"ORDER BY ABS(TIMESTAMPDIFF(SECOND",
 		"LIMIT 1",
 	} {

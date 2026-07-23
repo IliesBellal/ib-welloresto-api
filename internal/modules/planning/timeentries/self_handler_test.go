@@ -41,7 +41,7 @@ func TestHandlerStartCurrentUserTimeEntrySuccess(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT 1
 	`)).
@@ -52,7 +52,7 @@ func TestHandlerStartCurrentUserTimeEntrySuccess(t *testing.T) {
 		INSERT INTO planning_time_entries (
 			id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1", nil, "pointage", sqlmock.AnyArg(), nil, nil, nil, nil, nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -97,7 +97,7 @@ func TestHandlerStopCurrentUserTimeEntrySuccess(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT 1
 	`)).
@@ -110,7 +110,7 @@ func TestHandlerStopCurrentUserTimeEntrySuccess(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "entry_1").
@@ -121,7 +121,7 @@ func TestHandlerStopCurrentUserTimeEntrySuccess(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_time_entries
 		SET clock_out_at = ?, clock_out_note = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1 AND clock_out_at IS NULL
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE AND clock_out_at IS NULL
 	`)).
 		WithArgs(sqlmock.AnyArg(), nil, sqlmock.AnyArg(), "merchant_1", "entry_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -166,7 +166,7 @@ func TestHandlerGetCurrentUserTimeEntrySuccess(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT 1
 	`)).
@@ -217,7 +217,7 @@ func TestHandlerListCurrentUserTimeEntriesSuccess(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT COUNT(1)
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 	`)).
 		WithArgs("merchant_1", "emp_1", fromDate, toExclusive).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -226,7 +226,7 @@ func TestHandlerListCurrentUserTimeEntriesSuccess(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT ? OFFSET ?
 	`)).
@@ -300,7 +300,7 @@ func TestHandlerStartCurrentUserTimeEntryRejectsAlreadyOpen(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT 1
 	`)).
@@ -349,7 +349,7 @@ func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeNam
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND start_date = ? AND enabled = TRUE
 		 ORDER BY created_at DESC LIMIT 1
 	`)).
 		WithArgs("merchant_1", "2026-06-01").
@@ -363,9 +363,9 @@ func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeNam
 			s.position_id, s.title, s.shift_date, s.start_time, s.end_time, s.break_minutes,
 			s.position, p.color, s.location, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
 		FROM planning_shifts s
-		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = 1
-		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = 1
-		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = 1
+		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = TRUE
+		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = TRUE
 		ORDER BY s.shift_date ASC, s.start_time ASC, s.created_at ASC
 	`)).
 		WithArgs("merchant_1", "week_1").

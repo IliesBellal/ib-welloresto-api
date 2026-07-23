@@ -46,14 +46,14 @@ func (r *Repository) GetEnrollmentCodeByHash(ctx context.Context, codeHash strin
 // génère plus d'identifiant. adminPinEncrypted est déjà chiffré par
 // l'appelant (helpers.Encrypt, AES-256-GCM) — le PIN en clair n'existe jamais
 // côté repository.
-func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name, hardwareModel, osVersion string, adminPinEncrypted []byte) (*KioskRow, error) {
+func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name, hardwareModel, osVersion string, adminPinEncrypted []byte, deviceID *string) (*KioskRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-	INSERT INTO kiosks (id, merchant_id, name, hardware_model, os_version, admin_pin_encrypted, status)
-	VALUES (?, ?, ?, ?, ?, ?, 'active')`
+	INSERT INTO kiosks (id, merchant_id, name, hardware_model, os_version, admin_pin_encrypted, device_id, status)
+	VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`
 
-	if _, err := db.ExecContext(ctx, query, kioskID, merchantID, name, hardwareModel, osVersion, adminPinEncrypted); err != nil {
+	if _, err := db.ExecContext(ctx, query, kioskID, merchantID, name, hardwareModel, osVersion, adminPinEncrypted, deviceID); err != nil {
 		return nil, err
 	}
 
@@ -65,6 +65,7 @@ func (r *Repository) CreateKiosk(ctx context.Context, kioskID, merchantID, name,
 		HardwareModel:     &hardwareModel,
 		OSVersion:         &osVersion,
 		AdminPinEncrypted: adminPinEncrypted,
+		DeviceID:          deviceID,
 		Enabled:           true,
 	}, nil
 }
@@ -225,6 +226,58 @@ func (r *Repository) GetKioskByIDForMerchant(ctx context.Context, merchantID, ki
 		return nil, err
 	}
 	return &row, nil
+}
+
+// FindKioskCandidatesByDeviceID récupère les bornes candidates à un reclaim
+// pour un device_id donné. Seuls les statuts 'active'/'inactive' sont
+// éligibles — une borne 'revoked' n'est jamais retournée, quel que soit le
+// device_id fourni, pour ne même pas laisser fuiter son existence côté
+// client (voir docs/KIOSK_DECISIONS.md). L'appelant (Service.ReclaimDevice)
+// traite 0 ligne et >1 ligne (collision de device_id) de façon identique :
+// "not found".
+func (r *Repository) FindKioskCandidatesByDeviceID(ctx context.Context, deviceID string) ([]KioskRow, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := `
+	SELECT id, merchant_id, name, location_id, status, app_version, hardware_model, admin_pin_encrypted, os_version,
+	       last_heartbeat_at, last_ip, last_error, last_error_at, enabled, created_at, updated_at
+	FROM kiosks
+	WHERE device_id = ? AND status IN ('active', 'inactive')`
+
+	rows, err := db.QueryContext(ctx, query, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []KioskRow
+	for rows.Next() {
+		row := KioskRow{}
+		if err := rows.Scan(
+			&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status, &row.AppVersion, &row.HardwareModel, &row.AdminPinEncrypted, &row.OSVersion,
+			&row.LastHeartbeatAt, &row.LastIP, &row.LastError, &row.LastErrorAt, &row.Enabled, &row.CreatedAt, &row.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// UpdateKioskLastSeenOnReclaim met à jour last_heartbeat_at/last_ip après un
+// reclaim réussi — contrairement à UpdateKioskHeartbeat, ne touche pas
+// app_version : le client de reclaim ne transmet pas cette information (voir
+// Service.ReclaimDevice), et écraser la dernière valeur connue avec une
+// chaîne vide serait une régression.
+func (r *Repository) UpdateKioskLastSeenOnReclaim(ctx context.Context, kioskID, ip string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`UPDATE kiosks SET last_heartbeat_at = %s, last_ip = ? WHERE id = ?`, dbx.UTCNow())
+	_, err := db.ExecContext(ctx, query, ip, kioskID)
+	return err
 }
 
 // ListKiosksByMerchant liste les bornes d'un merchant.

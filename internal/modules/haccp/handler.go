@@ -543,6 +543,123 @@ func (h *Handler) CreateGoodsReceipt(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) CreateTraceabilityRecord(w http.ResponseWriter, r *http.Request) {
+	const maxPhotoSize = 5 << 20
+	const maxPhotos = 10
+	const maxTotalSize = maxPhotoSize * maxPhotos
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTotalSize)
+	if err := r.ParseMultipartForm(maxTotalSize); err != nil {
+		models.SendErrorJSON(w, "haccp", "create_traceability_record", models.ErrUploadFileTooLargeOrInvalid)
+		return
+	}
+
+	files := r.MultipartForm.File["photos"]
+	if len(files) == 0 {
+		models.SendErrorJSON(w, "haccp", "create_traceability_record", models.ErrTraceabilityPhotosRequired)
+		return
+	}
+	if len(files) > maxPhotos {
+		models.SendErrorJSON(w, "haccp", "create_traceability_record", models.ErrTraceabilityTooManyPhotos)
+		return
+	}
+
+	photos := make([]TraceabilityPhotoUpload, 0, len(files))
+	for _, fh := range files {
+		file, err := fh.Open()
+		if err != nil {
+			models.SendErrorJSON(w, "haccp", "create_traceability_record", models.ErrUploadFileTooLargeOrInvalid)
+			return
+		}
+		defer file.Close()
+
+		contentType := fh.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = r2.GetContentTypeFromExtension(fh.Filename)
+		}
+
+		photos = append(photos, TraceabilityPhotoUpload{
+			ContentType: contentType,
+			Size:        fh.Size,
+			Reader:      file,
+		})
+	}
+
+	var comment *string
+	if raw := strings.TrimSpace(r.FormValue("comment")); raw != "" {
+		comment = &raw
+	}
+
+	record, err := h.svc.CreateTraceabilityRecord(r.Context(), comment, photos)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "create_traceability_record", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "haccp", "create_traceability_record", map[string]interface{}{
+		"status": "success",
+		"record": record,
+	})
+}
+
+func (h *Handler) GetTraceabilityRecords(w http.ResponseWriter, r *http.Request) {
+	var params HaccpTraceabilityListParams
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			models.SendErrorJSON(w, "haccp", "get_traceability_records", models.ErrInvalidPage)
+			return
+		}
+		params.Page = parsed
+	}
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("page_size")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			models.SendErrorJSON(w, "haccp", "get_traceability_records", models.ErrInvalidPageSize)
+			return
+		}
+		params.PageSize = parsed
+	}
+
+	resp, err := h.svc.ListTraceabilityRecords(r.Context(), params)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_traceability_records", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_traceability_records", map[string]interface{}{
+		"status":  "success",
+		"records": resp.Records,
+		"pagination": map[string]interface{}{
+			"page":        resp.Page,
+			"page_size":   resp.PageSize,
+			"total_items": resp.TotalItems,
+			"total_pages": resp.TotalPages,
+		},
+	})
+}
+
+func (h *Handler) GetTraceabilityRecord(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		models.SendErrorJSON(w, "haccp", "get_traceability_record", models.ErrMissingResourceID)
+		return
+	}
+
+	record, err := h.svc.GetTraceabilityRecord(r.Context(), id)
+	if err != nil {
+		models.SendErrorJSON(w, "haccp", "get_traceability_record", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "haccp", "get_traceability_record", map[string]interface{}{
+		"status": "success",
+		"record": record,
+	})
+}
+
 func extractCleaningZoneName(raw map[string]interface{}) string {
 	keys := []string{"name", "zone_name", "zone", "label", "title"}
 	for _, key := range keys {

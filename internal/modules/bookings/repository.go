@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/bookingcore"
@@ -14,6 +16,76 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// bkgCastChar caste une expression en texte selon le dialecte (jointures
+// cross-type héritées, ex. merchant.id integer vs merchant_id varchar).
+func bkgCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
+
+// bkgTimeFmt / bkgDateTimeFmt : formatage texte des colonnes time/timestamp
+// selon le dialecte (TIME_FORMAT/DATE_FORMAT n'existent pas en Postgres).
+func bkgTimeFmt(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'HH24:MI:SS')"
+	}
+	return "TIME_FORMAT(" + col + ", '%H:%i:%s')"
+}
+
+func bkgDateTimeFmt(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'YYYY-MM-DD HH24:MI:SS')"
+	}
+	return "DATE_FORMAT(" + col + ", '%Y-%m-%d %H:%i:%s')"
+}
+
+// bkgPlusMinutes rend le fragment « + <qty> minutes » selon le dialecte —
+// la forme MySQL `+ INTERVAL <expr> MINUTE` n'accepte pas d'expression en
+// Postgres, qui multiplie un interval unitaire à la place.
+func bkgPlusMinutes(qty string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "+ " + qty + " * INTERVAL '1 minute'"
+	}
+	return "+ INTERVAL " + qty + " MINUTE"
+}
+
+// bkgPlusMinutesParam : « + ? minutes » avec quantité paramétrée.
+func bkgPlusMinutesParam() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "+ (? * INTERVAL '1 minute')"
+	}
+	return "+ INTERVAL ? MINUTE"
+}
+
+// bkgPlusHoursParam : « + ? heures » avec quantité paramétrée (pattern Tier 1
+// upsell — MySQL accepte INTERVAL ? HOUR, Postgres multiplie l'interval).
+func bkgPlusHoursParam() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "+ (? * INTERVAL '1 hour')"
+	}
+	return "+ INTERVAL ? HOUR"
+}
+
+// bkgMinusHours : même principe pour « - <qty> heures ».
+func bkgMinusHours(qty string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "- " + qty + " * INTERVAL '1 hour'"
+	}
+	return "- INTERVAL " + qty + " HOUR"
+}
+
+// bkgEndOfBooking : fin effective d'une résa (booking_date_to, sinon départ +
+// durée), partagé par tous les prédicats d'occupation/expiration.
+func bkgEndOfBooking(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	return "COALESCE(" + prefix + "booking_date_to, " + prefix + "booking_date_from " + bkgPlusMinutes("COALESCE("+prefix+"booking_duration, 90)") + ")"
+}
 
 type BookingsRepository struct {
 	database        *sql.DB
@@ -51,14 +123,14 @@ func (r *BookingsRepository) GetBookingByID(ctx context.Context, merchantID, boo
 }
 
 func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID string) (*BookingSettings, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	settings := &BookingSettings{}
 	err := db.QueryRowContext(ctx, `
 		SELECT
-			COALESCE(bs.enabled, 1),
+			COALESCE(bs.enabled, TRUE),
 			COALESCE(bs.code, ''),
-			COALESCE(bs.auto_accept_reserve_bookings, 0),
+			COALESCE(bs.auto_accept_reserve_bookings, FALSE),
 			COALESCE(bs.slot_interval_minutes, 15),
 			COALESCE(bs.default_booking_duration, 90),
 			COALESCE(bs.reserve_maximum_party_size, 8),
@@ -67,15 +139,15 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 			COALESCE(bs.min_booking_notice_minutes, 60),
 			COALESCE(bs.max_booking_horizon_days, 90),
 			COALESCE(bs.overbooking_percent, 0),
-			COALESCE(bs.cancelable_by_customer, 1),
+			COALESCE(bs.cancelable_by_customer, TRUE),
 			COALESCE(bs.cancel_booking_limit_offset_hours, 48),
 			COALESCE(bs.pending_expiration_hours, 24),
-			COALESCE(bs.sms_enabled, 0),
-			COALESCE(bs.waitlist_enabled, 0),
+			COALESCE(bs.sms_enabled, FALSE),
+			COALESCE(bs.waitlist_enabled, FALSE),
 			COALESCE(bs.waitlist_max_size, 0),
 			COALESCE(bs.waitlist_slot_expiry_minutes, 15)
 		FROM merchant m
-		LEFT JOIN bookings_settings bs ON bs.merchant_id = m.id
+		LEFT JOIN bookings_settings bs ON bs.merchant_id = ` + bkgCastChar("m.id") + `
 		WHERE m.id = ?
 		LIMIT 1
 	`, merchantID).Scan(
@@ -127,14 +199,14 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 }
 
 func (r *BookingsRepository) GetPhysicalCapacity(ctx context.Context, merchantID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var physicalCapacity int
 	err := db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(COALESCE(seats, 0)), 0)
 		FROM locations
 		WHERE merchant_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 	`, merchantID).Scan(&physicalCapacity)
 	if err != nil {
 		return 0, err
@@ -144,14 +216,14 @@ func (r *BookingsRepository) GetPhysicalCapacity(ctx context.Context, merchantID
 }
 
 func (r *BookingsRepository) GetMaxBookingCapacity(ctx context.Context, merchantID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var maxBookingCapacity int
 	err := db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(COALESCE(booking_capacity, 0)), 0)
 		FROM hours_of_operation
 		WHERE merchant_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 	`, merchantID).Scan(&maxBookingCapacity)
 	if err != nil {
 		return 0, err
@@ -161,12 +233,12 @@ func (r *BookingsRepository) GetMaxBookingCapacity(ctx context.Context, merchant
 }
 
 func (r *BookingsRepository) ListBookingDurationRules(ctx context.Context, merchantID string) ([]BookingDurationRule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT rule_id, min_party_size, max_party_size, duration_minutes, enabled
 		FROM booking_duration_rules
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 		ORDER BY min_party_size ASC, max_party_size ASC
 	`, merchantID)
 	if err != nil {
@@ -191,52 +263,95 @@ func (r *BookingsRepository) ListBookingDurationRules(ctx context.Context, merch
 }
 
 func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchantID string, req *PutBookingSettingsRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO bookings_settings (
-			merchant_id,
-			enabled,
-			code,
-			auto_accept_reserve_bookings,
-			slot_interval_minutes,
-			default_booking_duration,
-			reserve_maximum_party_size,
-			reserve_minimum_party_size,
-			last_booking_offset_minutes,
-			min_booking_notice_minutes,
-			max_booking_horizon_days,
-			overbooking_percent,
-			cancelable_by_customer,
-			cancel_booking_limit_offset_hours,
-			pending_expiration_hours,
-			sms_enabled,
-			waitlist_enabled,
-			waitlist_max_size,
-			waitlist_slot_expiry_minutes
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			enabled = VALUES(enabled),
-			code = VALUES(code),
-			auto_accept_reserve_bookings = VALUES(auto_accept_reserve_bookings),
-			slot_interval_minutes = VALUES(slot_interval_minutes),
-			default_booking_duration = VALUES(default_booking_duration),
-			reserve_maximum_party_size = VALUES(reserve_maximum_party_size),
-			reserve_minimum_party_size = VALUES(reserve_minimum_party_size),
-			last_booking_offset_minutes = VALUES(last_booking_offset_minutes),
-			min_booking_notice_minutes = VALUES(min_booking_notice_minutes),
-			max_booking_horizon_days = VALUES(max_booking_horizon_days),
-			overbooking_percent = VALUES(overbooking_percent),
-			cancelable_by_customer = VALUES(cancelable_by_customer),
-			cancel_booking_limit_offset_hours = VALUES(cancel_booking_limit_offset_hours),
-			pending_expiration_hours = VALUES(pending_expiration_hours),
-			sms_enabled = VALUES(sms_enabled),
-			waitlist_enabled = VALUES(waitlist_enabled),
-			waitlist_max_size = VALUES(waitlist_max_size),
-			waitlist_slot_expiry_minutes = VALUES(waitlist_slot_expiry_minutes)
-	`,
+	// bookings_settings n'a AUCUNE contrainte unique sur merchant_id (PK = id
+	// auto-incrémenté) : l'ancien ON DUPLICATE KEY UPDATE ne se déclenchait
+	// jamais — chaque sauvegarde insérait une ligne dupliquée, et les lecteurs
+	// (LIMIT 1 sans ORDER BY, donc la plus ancienne) ne voyaient jamais les
+	// modifications. Bug de production identique dans les deux dialectes,
+	// corrigé ici par un upsert réel : UPDATE de la ligne la plus ancienne
+	// (celle que lisent les SELECT), INSERT si absente. À déployer/vérifier
+	// séparément de la migration Postgres (cf. rapport 29).
+	var settingsID int64
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM bookings_settings WHERE merchant_id = ? ORDER BY id LIMIT 1`,
 		merchantID,
+	).Scan(&settingsID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	if err == sql.ErrNoRows {
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO bookings_settings (
+				merchant_id,
+				enabled,
+				code,
+				auto_accept_reserve_bookings,
+				slot_interval_minutes,
+				default_booking_duration,
+				reserve_maximum_party_size,
+				reserve_minimum_party_size,
+				last_booking_offset_minutes,
+				min_booking_notice_minutes,
+				max_booking_horizon_days,
+				overbooking_percent,
+				cancelable_by_customer,
+				cancel_booking_limit_offset_hours,
+				pending_expiration_hours,
+				sms_enabled,
+				waitlist_enabled,
+				waitlist_max_size,
+				waitlist_slot_expiry_minutes
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			merchantID,
+			req.Enabled,
+			req.Code,
+			req.AutoAcceptReserveBookings,
+			req.SlotIntervalMinutes,
+			req.DefaultBookingDuration,
+			req.ReserveMaximumPartySize,
+			req.ReserveMinimumPartySize,
+			req.LastBookingOffsetMinutes,
+			req.MinBookingNoticeMinutes,
+			req.MaxBookingHorizonDays,
+			req.OverbookingPercent,
+			req.CancelableByCustomer,
+			req.CancelBookingLimitOffsetHours,
+			req.PendingExpirationHours,
+			req.SMSEnabled,
+			req.WaitlistEnabled,
+			req.WaitlistMaxSize,
+			req.WaitlistSlotExpiryMinutes,
+		)
+		return err
+	}
+
+	_, err = db.ExecContext(ctx, `
+		UPDATE bookings_settings SET
+			enabled = ?,
+			code = ?,
+			auto_accept_reserve_bookings = ?,
+			slot_interval_minutes = ?,
+			default_booking_duration = ?,
+			reserve_maximum_party_size = ?,
+			reserve_minimum_party_size = ?,
+			last_booking_offset_minutes = ?,
+			min_booking_notice_minutes = ?,
+			max_booking_horizon_days = ?,
+			overbooking_percent = ?,
+			cancelable_by_customer = ?,
+			cancel_booking_limit_offset_hours = ?,
+			pending_expiration_hours = ?,
+			sms_enabled = ?,
+			waitlist_enabled = ?,
+			waitlist_max_size = ?,
+			waitlist_slot_expiry_minutes = ?
+		WHERE id = ?
+	`,
 		req.Enabled,
 		req.Code,
 		req.AutoAcceptReserveBookings,
@@ -255,18 +370,19 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 		req.WaitlistEnabled,
 		req.WaitlistMaxSize,
 		req.WaitlistSlotExpiryMinutes,
+		settingsID,
 	)
 
 	return err
 }
 
 func (r *BookingsRepository) CreateBookingDurationRule(ctx context.Context, merchantID string, req CreateDurationRuleRequest) (*BookingDurationRule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	ruleID := helpers.GeneratePrefixedID("bdr")
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO booking_duration_rules (rule_id, merchant_id, min_party_size, max_party_size, duration_minutes, enabled)
-		VALUES (?, ?, ?, ?, ?, 1)
+		VALUES (?, ?, ?, ?, ?, TRUE)
 	`, ruleID, merchantID, req.MinPartySize, req.MaxPartySize, req.DurationMinutes)
 	if err != nil {
 		return nil, err
@@ -276,7 +392,7 @@ func (r *BookingsRepository) CreateBookingDurationRule(ctx context.Context, merc
 }
 
 func (r *BookingsRepository) GetBookingDurationRuleByID(ctx context.Context, merchantID, ruleID string) (*BookingDurationRule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var rule BookingDurationRule
 	err := db.QueryRowContext(ctx, `
@@ -296,7 +412,7 @@ func (r *BookingsRepository) GetBookingDurationRuleByID(ctx context.Context, mer
 }
 
 func (r *BookingsRepository) UpdateBookingDurationRule(ctx context.Context, merchantID, ruleID string, req PatchDurationRuleRequest) (*BookingDurationRule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rule, err := r.GetBookingDurationRuleByID(ctx, merchantID, ruleID)
 	if err != nil {
@@ -326,7 +442,7 @@ func (r *BookingsRepository) UpdateBookingDurationRule(ctx context.Context, merc
 }
 
 func (r *BookingsRepository) DeleteBookingDurationRule(ctx context.Context, merchantID, ruleID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx, `
 		DELETE FROM booking_duration_rules
@@ -348,24 +464,24 @@ func (r *BookingsRepository) DeleteBookingDurationRule(ctx context.Context, merc
 }
 
 func (r *BookingsRepository) ListBookingHours(ctx context.Context, merchantID string) ([]models.POSHoursOfOperation, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			hoo.id,
 			hoo.day_of_week_from,
 			hoo.day_of_week_to,
-			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
-			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			` + bkgTimeFmt("hoo.hour_from") + ` AS hour_from,
+			` + bkgTimeFmt("hoo.hour_to") + ` AS hour_to,
 			hoo.booking_capacity,
-			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
-			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
-			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
-			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
-			hoo.enabled
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE ` + bkgTimeFmt("hoo.first_booking_time") + ` END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE ` + bkgTimeFmt("hoo.last_booking_time") + ` END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE ` + bkgDateTimeFmt("hoo.valid_from") + ` END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE ` + bkgDateTimeFmt("hoo.valid_to") + ` END AS valid_to,
+			CASE WHEN hoo.enabled THEN 1 ELSE 0 END
 		FROM hours_of_operation hoo
 		WHERE hoo.merchant_id = ?
-		  AND hoo.enabled = 1
+		  AND hoo.enabled = TRUE
 		ORDER BY hoo.day_of_week_from, hoo.day_of_week_to, hoo.hour_from, hoo.id
 	`, merchantID)
 	if err != nil {
@@ -434,11 +550,11 @@ func (r *BookingsRepository) ListBookingHours(ctx context.Context, merchantID st
 
 func (r *BookingsRepository) ReplaceBookingHours(ctx context.Context, merchantID string, hours []models.POSHoursOfOperationPatch) error {
 	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		if _, err := db.ExecContext(txCtx, `
 			UPDATE hours_of_operation
-			SET enabled = 0
+			SET enabled = FALSE
 			WHERE merchant_id = ?
 		`, merchantID); err != nil {
 			return err
@@ -475,7 +591,7 @@ func (r *BookingsRepository) ReplaceBookingHours(ctx context.Context, merchantID
 				validTo = strings.TrimSpace(*item.ValidTo)
 			}
 
-			if _, err := db.ExecContext(txCtx, `
+			upsertQuery := `
 				INSERT INTO hours_of_operation (
 					id,
 					merchant_id,
@@ -506,7 +622,44 @@ func (r *BookingsRepository) ReplaceBookingHours(ctx context.Context, merchantID
 					valid_from = VALUES(valid_from),
 					valid_to = VALUES(valid_to),
 					enabled = VALUES(enabled)
-			`,
+			`
+			if dbx.ActiveDialect() == dbx.Postgres {
+				// UUID() -> gen_random_uuid() (cast texte, colonne varchar) ;
+				// ON DUPLICATE -> ON CONFLICT (id), même pattern que pos.
+				upsertQuery = `
+				INSERT INTO hours_of_operation (
+					id,
+					merchant_id,
+					day_of_week_from,
+					day_of_week_to,
+					hour_from,
+					hour_to,
+					booking_capacity,
+					first_booking_time,
+					last_booking_time,
+					valid_from,
+					valid_to,
+					enabled
+				)
+				VALUES (
+					COALESCE(NULLIF(?, ''), CAST(gen_random_uuid() AS TEXT)),
+					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+				)
+				ON CONFLICT (id) DO UPDATE SET
+					merchant_id = EXCLUDED.merchant_id,
+					day_of_week_from = EXCLUDED.day_of_week_from,
+					day_of_week_to = EXCLUDED.day_of_week_to,
+					hour_from = EXCLUDED.hour_from,
+					hour_to = EXCLUDED.hour_to,
+					booking_capacity = EXCLUDED.booking_capacity,
+					first_booking_time = EXCLUDED.first_booking_time,
+					last_booking_time = EXCLUDED.last_booking_time,
+					valid_from = EXCLUDED.valid_from,
+					valid_to = EXCLUDED.valid_to,
+					enabled = EXCLUDED.enabled
+			`
+			}
+			if _, err := db.ExecContext(txCtx, upsertQuery,
 				id,
 				merchantID,
 				item.DayOfWeekFrom,
@@ -528,8 +681,17 @@ func (r *BookingsRepository) ReplaceBookingHours(ctx context.Context, merchantID
 	})
 }
 
+// bkgGroupConcatTables : agrégation des noms de tables selon le dialecte
+// (GROUP_CONCAT est MySQL-only, string_agg est l'équivalent Postgres).
+func bkgGroupConcatTables() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return `string_agg(DISTINCT l.location_name, '||' ORDER BY l.location_name)`
+	}
+	return `GROUP_CONCAT(DISTINCT l.location_name ORDER BY l.location_name SEPARATOR '||')`
+}
+
 func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchantID string, filters BookingListFilters) ([]BookingListItem, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	sortBy := "b.booking_date_from"
 	switch strings.ToLower(strings.TrimSpace(filters.SortBy)) {
@@ -608,11 +770,11 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 			b.booking_number,
 			b.status,
 			COALESCE(b.source, 'staff') AS source,
-			DATE_FORMAT(b.booking_date_from, '%Y-%m-%d %H:%i:%s') AS booking_date_from,
+			` + bkgDateTimeFmt("b.booking_date_from") + ` AS booking_date_from,
 			b.party_size,
 			COALESCE(c.customer_name, '') AS customer_name,
 			COALESCE(c.customer_tel, '') AS customer_tel,
-			GROUP_CONCAT(DISTINCT l.location_name ORDER BY l.location_name SEPARATOR '||') AS assigned_tables
+			` + bkgGroupConcatTables() + ` AS assigned_tables
 		FROM bookings b
 		INNER JOIN customer c ON c.customer_id = b.customer_id
 		LEFT JOIN booked_location bl ON bl.booking_id = b.booking_id
@@ -726,7 +888,7 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 	// Assignation des tables (particularité staff : le flux public n'assigne
 	// jamais de table à la création).
 	//---------------------------------------------------------
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	for _, l := range req.Booking.Locations {
 		_, err := db.ExecContext(ctx, `
             INSERT INTO booked_location(booking_id, location_id)
@@ -758,7 +920,7 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
 		return nil, nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(locationIDs)), ",")
 
@@ -780,7 +942,7 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
           AND b.merchant_id = ?
           AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
           AND b.booking_date_from < ?
-          AND COALESCE(b.booking_date_to, b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE) > ?
+          AND ` + bkgEndOfBooking("b") + ` > ?
           AND b.booking_id <> ?
         FOR UPDATE`, placeholders)
 
@@ -807,12 +969,21 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
 // avec une tolerance de 30 min de part et d'autre de sa fenetre
 // [booking_date_from, booking_date_to] (arrivee en avance/en retard). "" est
 // retourne (sans erreur) si aucune resa ne correspond.
+// bkgAbsSecondsFromNow : écart absolu en secondes entre une colonne timestamp
+// et maintenant (TIMESTAMPDIFF est MySQL-only).
+func bkgAbsSecondsFromNow(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "ABS(EXTRACT(EPOCH FROM (now() - " + col + ")))"
+	}
+	return "ABS(TIMESTAMPDIFF(SECOND, " + col + ", UTC_TIMESTAMP()))"
+}
+
 func (r *BookingsRepository) FindConfirmedBookingForAutoSeat(ctx context.Context, merchantID string, locationIDs []string) (string, error) {
 	if len(locationIDs) == 0 {
 		return "", nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	placeholders := make([]string, len(locationIDs))
 	args := make([]interface{}, 0, len(locationIDs)+1)
@@ -829,10 +1000,10 @@ func (r *BookingsRepository) FindConfirmedBookingForAutoSeat(ctx context.Context
         WHERE bl.location_id IN (%s)
           AND b.merchant_id = ?
           AND b.status = 'confirmed'
-          AND b.booking_date_from - INTERVAL 30 MINUTE <= UTC_TIMESTAMP()
-          AND COALESCE(b.booking_date_to, b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE) + INTERVAL 30 MINUTE >= UTC_TIMESTAMP()
+          AND b.booking_date_from - INTERVAL '30' MINUTE <= ` + dbx.UTCNow() + `
+          AND ` + bkgEndOfBooking("b") + ` + INTERVAL '30' MINUTE >= ` + dbx.UTCNow() + `
         GROUP BY b.booking_id, b.booking_date_from
-        ORDER BY ABS(TIMESTAMPDIFF(SECOND, b.booking_date_from, UTC_TIMESTAMP())) ASC
+        ORDER BY ` + bkgAbsSecondsFromNow("b.booking_date_from") + ` ASC
         LIMIT 1
     `, strings.Join(placeholders, ","))
 
@@ -854,7 +1025,7 @@ func (r *BookingsRepository) FindConfirmedBookingForAutoSeat(ctx context.Context
 // order_life_cycle.ClearBookings (detache a l'annulation de commande, sans
 // toucher au statut) et par le hook auto-complete (FindSeatedBookingByOrderID).
 func (r *BookingsRepository) SetBookingSeatedWithOrder(ctx context.Context, merchantID, bookingID, orderID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE bookings
@@ -868,7 +1039,7 @@ func (r *BookingsRepository) SetBookingSeatedWithOrder(ctx context.Context, merc
 // (posee par SetBookingSeatedWithOrder). "" est retourne (sans erreur) si
 // aucune resa n'est liee ou si elle n'est plus au statut seated.
 func (r *BookingsRepository) FindSeatedBookingByOrderID(ctx context.Context, merchantID, orderID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var bookingID string
 	err := db.QueryRowContext(ctx, `
@@ -888,7 +1059,7 @@ func (r *BookingsRepository) FindSeatedBookingByOrderID(ctx context.Context, mer
 }
 
 func (r *BookingsRepository) SetBookingState(ctx context.Context, merchantID, bookingID string, state string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
         UPDATE bookings
@@ -904,7 +1075,7 @@ func (r *BookingsRepository) SetBookingState(ctx context.Context, merchantID, bo
 }
 
 func (r *BookingsRepository) DenyBooking(ctx context.Context, merchantID, bookingID, userID string, req *DenyBookingRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var deletionReasonID interface{}
 	if req != nil && req.DeletionReasonID != nil {
@@ -913,21 +1084,28 @@ func (r *BookingsRepository) DenyBooking(ctx context.Context, merchantID, bookin
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE bookings
-		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = UTC_TIMESTAMP
+		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = ` + dbx.UTCNow() + `
 		WHERE booking_id = ? AND merchant_id = ?
 	`, bookingcore.StatusDenied, userID, deletionReasonID, bookingID, merchantID)
 	return err
 }
 
 func (r *BookingsRepository) IsValidDeletionReason(ctx context.Context, deletionReasonID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
+
+	// deletion_reason_id est un integer : un ID client non numérique valait 0
+	// en MySQL non-strict (aucune ligne) — même refus côté Go, sans erreur de
+	// type Postgres.
+	if _, convErr := strconv.Atoi(strings.TrimSpace(deletionReasonID)); convErr != nil {
+		return false, nil
+	}
 
 	var existing string
 	err := db.QueryRowContext(ctx, `
 		SELECT deletion_reason_id
 		FROM deletion_reasons
 		WHERE deletion_reason_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 		  AND LOWER(deletion_reason_object) IN ('booking', 'bookings')
 		LIMIT 1
 	`, deletionReasonID).Scan(&existing)
@@ -944,7 +1122,7 @@ func (r *BookingsRepository) IsValidDeletionReason(ctx context.Context, deletion
 // CancelBooking annule staff une résa confirmed|seated (miroir de DenyBooking,
 // qui couvre les pending — cf. addendum §7.9).
 func (r *BookingsRepository) CancelBooking(ctx context.Context, merchantID, bookingID, userID string, req *CancelBookingRequest) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var deletionReasonID interface{}
 	if req != nil && req.DeletionReasonID != nil {
@@ -953,7 +1131,7 @@ func (r *BookingsRepository) CancelBooking(ctx context.Context, merchantID, book
 
 	_, err := db.ExecContext(ctx, `
 		UPDATE bookings
-		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = UTC_TIMESTAMP
+		SET status = ?, cancelled_by = ?, deletion_reason_id = ?, deletion_date = ` + dbx.UTCNow() + `
 		WHERE booking_id = ? AND merchant_id = ?
 	`, bookingcore.StatusCancelled, userID, deletionReasonID, bookingID, merchantID)
 	return err
@@ -964,17 +1142,29 @@ func (r *BookingsRepository) CancelBooking(ctx context.Context, merchantID, book
 // staff, à la différence de la modification publique qui peut repasser en
 // pending — cf. reservation.UpdateReservation).
 func (r *BookingsRepository) RescheduleBooking(ctx context.Context, merchantID, bookingID, dateFrom, dateTo string, partySize *int) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	// TIMESTAMPDIFF est MySQL-only : la durée est calculée côté Go, avec la
+	// même troncature vers zéro que TIMESTAMPDIFF(MINUTE, ...).
+	from, err := time.Parse("2006-01-02 15:04:05", dateFrom)
+	if err != nil {
+		return fmt.Errorf("invalid dateFrom: %w", err)
+	}
+	to, err := time.Parse("2006-01-02 15:04:05", dateTo)
+	if err != nil {
+		return fmt.Errorf("invalid dateTo: %w", err)
+	}
+	durationMinutes := int(to.Sub(from).Minutes())
+
+	_, err = db.ExecContext(ctx, `
 		UPDATE bookings
 		SET booking_date_from = ?,
 		    booking_date_to = ?,
-		    booking_duration = TIMESTAMPDIFF(MINUTE, ?, ?),
+		    booking_duration = ?,
 		    party_size = COALESCE(?, party_size),
 		    sequence_number = sequence_number + 1
 		WHERE booking_id = ? AND merchant_id = ?
-	`, dateFrom, dateTo, dateFrom, dateTo, partySize, bookingID, merchantID)
+	`, dateFrom, dateTo, durationMinutes, partySize, bookingID, merchantID)
 	return err
 }
 
@@ -1082,14 +1272,24 @@ func (r *BookingsRepository) CheckCapacityForWindow(ctx context.Context, merchan
 }
 
 func (r *BookingsRepository) ReplaceBookingLocations(ctx context.Context, merchantID, bookingID string, locationIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx, `
+	// DELETE multi-table MySQL -> DELETE ... USING côté PG
+	deleteQuery := `
 		DELETE bl
 		FROM booked_location bl
 		INNER JOIN bookings b ON b.booking_id = bl.booking_id
 		WHERE bl.booking_id = ? AND b.merchant_id = ?
-	`, bookingID, merchantID)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		deleteQuery = `
+		DELETE FROM booked_location bl
+		USING bookings b
+		WHERE b.booking_id = bl.booking_id
+		  AND bl.booking_id = ? AND b.merchant_id = ?
+	`
+	}
+	_, err := db.ExecContext(ctx, deleteQuery, bookingID, merchantID)
 	if err != nil {
 		return err
 	}
@@ -1196,23 +1396,21 @@ func (r *BookingsRepository) GetBookingAvailability(ctx context.Context, merchan
 // données de contact nécessaires à l'envoi d'une notification d'annulation
 // avant la bascule de statut.
 func (r *BookingsRepository) ListPendingBookingsToExpire(ctx context.Context) ([]BookingContact, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			b.booking_id, b.merchant_id, b.booking_number, b.party_size,
-			DATE_FORMAT(b.booking_date_from, '%Y-%m-%d %H:%i:%s'),
-			m.fullName, COALESCE(bs.code, ''), m.timezone, COALESCE(bs.sms_enabled, 0),
+			` + bkgDateTimeFmt("b.booking_date_from") + `,
+			m.fullName, COALESCE(bs.code, ''), m.timezone,
+			CASE WHEN COALESCE(bs.sms_enabled, FALSE) THEN 1 ELSE 0 END,
 			COALESCE(c.customer_name, ''), COALESCE(c.customer_email, ''), COALESCE(c.customer_tel, '')
 		FROM bookings b
-		INNER JOIN merchant m ON m.id = b.merchant_id
+		INNER JOIN merchant m ON ` + bkgCastChar("m.id") + ` = b.merchant_id
 		LEFT JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
 		LEFT JOIN customer c ON c.customer_id = b.customer_id
 		WHERE b.status = ?
-		  AND COALESCE(
-				b.booking_date_to,
-				b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE
-		  ) < UTC_TIMESTAMP() - INTERVAL COALESCE(bs.pending_expiration_hours, 24) HOUR
+		  AND ` + bkgEndOfBooking("b") + ` < ` + dbx.UTCNow() + ` ` + bkgMinusHours("COALESCE(bs.pending_expiration_hours, 24)") + `
 	`, bookingcore.StatusPending)
 	if err != nil {
 		return nil, err
@@ -1237,21 +1435,39 @@ func (r *BookingsRepository) ListPendingBookingsToExpire(ctx context.Context) ([
 }
 
 func (r *BookingsRepository) ExpirePendingBookings(ctx context.Context) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	result, err := db.ExecContext(ctx, `
+	// UPDATE ... LEFT JOIN MySQL : la jointure externe n'a pas d'équivalent
+	// dans UPDATE ... FROM (semantique INNER) — côté PG le paramètre
+	// d'expiration est résolu par sous-requête corrélée, même résultat.
+	query := `
 		UPDATE bookings b
 		LEFT JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
 		SET b.status = ?,
 		    b.cancelled_by = ?,
 		    b.deletion_reason_id = ?,
-		    b.deletion_date = UTC_TIMESTAMP
+		    b.deletion_date = ` + dbx.UTCNow() + `
 		WHERE b.status = ?
-		  AND COALESCE(
-				b.booking_date_to,
-				b.booking_date_from + INTERVAL COALESCE(b.booking_duration, 90) MINUTE
-		  ) < UTC_TIMESTAMP() - INTERVAL COALESCE(bs.pending_expiration_hours, 24) HOUR
-	`, bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("system", ""), "booking_pending_expired", bookingcore.StatusPending)
+		  AND ` + bkgEndOfBooking("b") + ` < ` + dbx.UTCNow() + ` ` + bkgMinusHours("COALESCE(bs.pending_expiration_hours, 24)") + `
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+		UPDATE bookings
+		SET status = ?,
+		    cancelled_by = ?,
+		    deletion_reason_id = ?,
+		    deletion_date = now()
+		WHERE status = ?
+		  AND ` + bkgEndOfBooking("bookings") + ` < now() - COALESCE((
+				SELECT bs.pending_expiration_hours FROM bookings_settings bs
+				WHERE bs.merchant_id = bookings.merchant_id ORDER BY bs.id LIMIT 1
+		  ), 24) * INTERVAL '1 hour'
+	`
+	}
+	// deletion_reason_id est un integer : l'ancien littéral texte
+	// "booking_pending_expired" était coercé à 0 par MySQL non-strict —
+	// 0 explicite, même valeur stockée dans les deux dialectes.
+	result, err := db.ExecContext(ctx, query, bookingcore.StatusCancelled, bookingcore.ResolveCancellationActor("system", ""), 0, bookingcore.StatusPending)
 	if err != nil {
 		return 0, err
 	}
@@ -1268,22 +1484,23 @@ func (r *BookingsRepository) ExpirePendingBookings(ctx context.Context) (int64, 
 // créneau tombe dans les prochaines withinHours heures et qui n'ont pas
 // encore reçu de rappel (reminder_sent_at IS NULL).
 func (r *BookingsRepository) ListBookingsForReminder(ctx context.Context, withinHours int) ([]BookingContact, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			b.booking_id, b.merchant_id, b.booking_number, b.party_size,
-			DATE_FORMAT(b.booking_date_from, '%Y-%m-%d %H:%i:%s'),
-			m.fullName, COALESCE(bs.code, ''), m.timezone, COALESCE(bs.sms_enabled, 0),
+			` + bkgDateTimeFmt("b.booking_date_from") + `,
+			m.fullName, COALESCE(bs.code, ''), m.timezone,
+			CASE WHEN COALESCE(bs.sms_enabled, FALSE) THEN 1 ELSE 0 END,
 			COALESCE(c.customer_name, ''), COALESCE(c.customer_email, ''), COALESCE(c.customer_tel, '')
 		FROM bookings b
-		INNER JOIN merchant m ON m.id = b.merchant_id
+		INNER JOIN merchant m ON ` + bkgCastChar("m.id") + ` = b.merchant_id
 		LEFT JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
 		LEFT JOIN customer c ON c.customer_id = b.customer_id
 		WHERE b.status = ?
 		  AND b.reminder_sent_at IS NULL
-		  AND b.booking_date_from >= UTC_TIMESTAMP()
-		  AND b.booking_date_from < UTC_TIMESTAMP() + INTERVAL ? HOUR
+		  AND b.booking_date_from >= ` + dbx.UTCNow() + `
+		  AND b.booking_date_from < ` + dbx.UTCNow() + ` ` + bkgPlusHoursParam() + `
 	`, bookingcore.StatusConfirmed, withinHours)
 	if err != nil {
 		return nil, err
@@ -1309,34 +1526,34 @@ func (r *BookingsRepository) ListBookingsForReminder(ctx context.Context, within
 
 // MarkReminderSent pose reminder_sent_at pour éviter un double envoi.
 func (r *BookingsRepository) MarkReminderSent(ctx context.Context, bookingID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
-		UPDATE bookings SET reminder_sent_at = UTC_TIMESTAMP() WHERE booking_id = ?
+		UPDATE bookings SET reminder_sent_at = ` + dbx.UTCNow() + ` WHERE booking_id = ?
 	`, bookingID)
 	return err
 }
 
 func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merchantID string) (*MerchantBookingParams, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	row := db.QueryRowContext(ctx, `
 	 SELECT m.id, m.timezone,
 		 COALESCE(bs.default_booking_duration, 90),
 		 COALESCE(bs.slot_interval_minutes, 15),
-		 COALESCE(bs.auto_accept_reserve_bookings, 0),
+		 COALESCE(bs.auto_accept_reserve_bookings, FALSE),
 		 COALESCE(bs.reserve_maximum_party_size, 8),
 		 COALESCE(bs.reserve_minimum_party_size, 1),
 		 COALESCE(bs.first_booking_offset_minutes, 0),
 		 COALESCE(bs.last_booking_offset_minutes, 60),
-		 COALESCE(bs.cancelable_by_customer, 1),
+		 COALESCE(bs.cancelable_by_customer, TRUE),
 		 COALESCE(bs.cancel_booking_limit_offset_hours, 48),
-		 COALESCE(bs.enabled, 1),
+		 COALESCE(bs.enabled, TRUE),
 		 COALESCE(bs.overbooking_percent, 0),
 		 COALESCE(bs.max_booking_horizon_days, 90),
 		 COALESCE(bs.pending_expiration_hours, 24),
 		 m.logo_url, m.fullName
 	 FROM merchant m
-	 LEFT JOIN bookings_settings bs ON bs.merchant_id = m.id
+	 LEFT JOIN bookings_settings bs ON bs.merchant_id = ` + bkgCastChar("m.id") + `
         WHERE m.id = ?
     `, merchantID)
 
@@ -1369,7 +1586,7 @@ func (r *BookingsRepository) loadMerchantBookingParams(ctx context.Context, merc
 }
 
 func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantID, requestedDate string, loc *time.Location) ([]TimeRange, int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	dateObj, err := time.ParseInLocation("2006-01-02", requestedDate, loc)
 	if err != nil {
@@ -1382,10 +1599,13 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 
 	rows, err := db.QueryContext(ctx, `
-				SELECT id, hour_from, hour_to, booking_capacity, first_booking_time, last_booking_time
+				SELECT id,
+					CAST(hour_from AS CHAR(8)), CAST(hour_to AS CHAR(8)),
+					booking_capacity,
+					CAST(first_booking_time AS CHAR(8)), CAST(last_booking_time AS CHAR(8))
         FROM hours_of_operation
         WHERE merchant_id = ?
-          AND enabled = 1
+          AND enabled = TRUE
 					AND (
 								(day_of_week_from <= day_of_week_to AND ? BETWEEN day_of_week_from AND day_of_week_to)
 								OR
@@ -1417,16 +1637,23 @@ func (r *BookingsRepository) loadHoursOfOperation(ctx context.Context, merchantI
 // si non vide, retire cette résa du calcul d'occupation (revalidation d'un
 // créneau en excluant la résa que l'on est en train de modifier).
 func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantID, dayStartUTC, dayEndUTC, excludeBookingID string) ([]ExistingBooking, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
+	// booking_id est un integer : '' était coercé à 0 par MySQL — on lie "0"
+	// explicitement (aucun booking_id auto-incrémenté ne vaut 0), même résultat
+	// dans les deux dialectes.
+	exclude := excludeBookingID
+	if strings.TrimSpace(exclude) == "" {
+		exclude = "0"
+	}
 	rows, err := db.QueryContext(ctx, `
 				SELECT party_size, booking_date_from, booking_date_to, booking_duration, status
         FROM bookings
 				WHERE booking_date_from < ?
-					AND COALESCE(booking_date_to, booking_date_from + INTERVAL COALESCE(booking_duration, 90) MINUTE) > ?
+					AND ` + bkgEndOfBooking("") + ` > ?
           AND merchant_id = ?
-          AND (? = '' OR booking_id <> ?)
-		`, dayEndUTC, dayStartUTC, merchantID, excludeBookingID, excludeBookingID)
+          AND booking_id <> ?
+		`, dayEndUTC, dayStartUTC, merchantID, exclude)
 	if err != nil {
 		return nil, err
 	}
@@ -1436,8 +1663,21 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 
 	for rows.Next() {
 		var b ExistingBooking
-		if err := rows.Scan(&b.PartySize, &b.StartDate, &b.EndDate, &b.DurationMinutes, &b.Status); err != nil {
+		var start, end sql.NullTime
+		if err := rows.Scan(&b.PartySize, &start, &end, &b.DurationMinutes, &b.Status); err != nil {
 			return nil, err
+		}
+		// bookingcore parse ces dates au format RFC3339 UTC ("...Z") — c'est
+		// ce que produisait le scan string d'un time.Time MySQL (parseTime).
+		// pgx renvoie le timestamptz avec un offset numérique (+00:00), que ce
+		// même parse rejetait : le formatage est désormais fait côté Go,
+		// identique pour les deux drivers.
+		if start.Valid {
+			b.StartDate = start.Time.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		if end.Valid {
+			v := end.Time.UTC().Format("2006-01-02T15:04:05Z")
+			b.EndDate = &v
 		}
 		if !bookingcore.IsActiveForConflict(b.Status) {
 			continue
@@ -1449,7 +1689,7 @@ func (r *BookingsRepository) loadExistingBookings(ctx context.Context, merchantI
 }
 
 func (r *BookingsRepository) loadBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
         SELECT min_party_size, max_party_size, duration_minutes, enabled
@@ -1581,7 +1821,7 @@ func (r *BookingsRepository) buildAvailabilitySlots(params *MerchantBookingParam
 }
 
 func (r *BookingsRepository) loadMerchantLocation(ctx context.Context, merchantID string) (*time.Location, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var timezone sql.NullString
 	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&timezone)
@@ -1622,7 +1862,7 @@ func localClockToUTC(requestedDate string, clock string, loc *time.Location) (ti
 }
 
 func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchantID string) ([]Location, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
         SELECT location_id, location_name, location_desc

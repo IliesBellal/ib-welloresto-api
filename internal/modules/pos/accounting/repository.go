@@ -7,9 +7,54 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
+
+// acctCastChar caste une expression en texte selon le dialecte (jointures
+// cross-type merchant.id integer vs merchant_id varchar).
+func acctCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
+
+// acctRoundToInt arrondit une expression à l'entier de façon scannable en
+// int64 — le ROUND(double precision) de Postgres renvoie un double que
+// database/sql refuse de convertir en int64 ; même pattern que
+// stats.roundToIntExpr (tva_rate est une colonne real, qui force
+// l'arithmétique flottante).
+func acctRoundToInt(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "ROUND(CAST(" + expr + " AS numeric), 0)"
+	}
+	return "ROUND(" + expr + ")"
+}
+
+// acctDayStart / acctDayEnd bornent une journée à partir d'un paramètre date
+// 'YYYY-MM-DD' (équivalent de DATE_FORMAT(?, '%Y-%m-%d 00:00:00'/'23:59:59')).
+func acctDayStart() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(? AS date)"
+	}
+	return "DATE_FORMAT(?, '%Y-%m-%d 00:00:00')"
+}
+
+func acctDayEnd() string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(? AS date) + INTERVAL '23:59:59'"
+	}
+	return "DATE_FORMAT(?, '%Y-%m-%d 23:59:59')"
+}
+
+// acctMonthKey formate un timestamp en 'YYYY-MM' selon le dialecte.
+func acctMonthKey(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'YYYY-MM')"
+	}
+	return "DATE_FORMAT(" + col + ", '%Y-%m')"
+}
 
 // AccountingRepository handles data access for accounting module
 type AccountingRepository struct {
@@ -23,7 +68,7 @@ func NewAccountingRepository(db *sql.DB) *AccountingRepository {
 
 // GetMerchantHeader récupère les infos du merchant depuis la BD
 func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID string) (*MerchantHeader, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	sqlQuery := `
@@ -36,7 +81,7 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 			mp.currency,
 			m.timezone
 		FROM merchant m
-		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
+		INNER JOIN merchant_parameters mp ON mp.merchant_id = ` + acctCastChar("m.id") + `
 		WHERE m.id = ?
 		LIMIT 1
 	`
@@ -77,7 +122,7 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 
 // IsMonthClosed vérifie si le mois est clôturé
 func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID, year, month string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// Vérifier que la période est dans le passé
@@ -130,14 +175,15 @@ func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID, ye
 
 // GetTVAData récupère les données de TVA groupées par taux
 func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateFrom, dateTo string) ([]TVARow, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// IFNULL est MySQL-only -> COALESCE (valide dans les deux dialectes)
 	sqlQuery := `
-		SELECT 
+		SELECT
 			tva.tva_title AS title,
 			tva.tva_rate AS rate,
-			((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) AS TTC
+			((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) AS TTC
 		FROM orders o
 		INNER JOIN orderitems oi ON oi.order_id = o.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
@@ -240,7 +286,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 
 // GetPaymentsData récupère les données de paiements groupées par moyen
 func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, dateFrom, dateTo string) ([]PaymentRow, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	sqlQuery := `
@@ -254,7 +300,7 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 			AND l.label_value = p.mop 
 			AND l.lang = 'FR'
 		WHERE p.merchant_id = ?
-		  AND p.enabled = 1
+		  AND p.enabled = TRUE
 		  AND o.creation_date >= ?
 		  AND o.creation_date <= ?
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
@@ -333,7 +379,7 @@ func (r *AccountingRepository) GetVATAggregationRows(
 	channels []string,
 	orderTypes []string,
 ) ([]VATAggregationRow, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	start := fromUTC.Format("2006-01-02")
@@ -355,6 +401,12 @@ func (r *AccountingRepository) GetVATAggregationRows(
 
 	args := append(itemArgs, feesArgs...)
 
+	// Fragments par dialecte : DATE_FORMAT (clé de mois + bornes de journée)
+	// et ROUND scannable en int64 (cf. helpers en tête de fichier).
+	itemsTTC := "((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)"
+	itemsHT := acctRoundToInt(itemsTTC + " * 100.0 / (100.0 + tva.tva_rate)")
+	feesHT := acctRoundToInt("o_fees.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)")
+
 	query := fmt.Sprintf(`
 		SELECT month_key, channel, order_type, rate,
 		       SUM(ttc_cents) AS ttc_cents,
@@ -362,7 +414,7 @@ func (r *AccountingRepository) GetVATAggregationRows(
 		       SUM(vat_cents) AS vat_cents
 		FROM (
 			SELECT
-				DATE_FORMAT(o.creation_date, '%%Y-%%m') AS month_key,
+				%s AS month_key,
 				CASE
 					WHEN o.brand = 'UBER_EATS' THEN 'ubereats'
 					WHEN o.brand = 'DELIVEROO' THEN 'deliveroo'
@@ -371,9 +423,9 @@ func (r *AccountingRepository) GetVATAggregationRows(
 				END AS channel,
 				LOWER(o.order_type) AS order_type,
 				tva.tva_rate AS rate,
-				((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) AS ttc_cents,
-				ROUND(((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)) AS ht_cents,
-				((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) - ROUND(((oi.price + IFNULL(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)) AS vat_cents
+				%s AS ttc_cents,
+				%s AS ht_cents,
+				%s - %s AS vat_cents
 			FROM orders o
 			INNER JOIN orderitems oi ON oi.order_id = o.order_id
 			INNER JOIN products p ON p.product_id = oi.product_id
@@ -389,8 +441,8 @@ func (r *AccountingRepository) GetVATAggregationRows(
 				FROM extra
 				GROUP BY order_item_id
 			) e ON e.order_item_id = oi.order_item_id
-			WHERE o.creation_date >= DATE_FORMAT(?, '%%Y-%%m-%%d 00:00:00')
-			  AND o.creation_date <= DATE_FORMAT(?, '%%Y-%%m-%%d 23:59:59')
+			WHERE o.creation_date >= %s
+			  AND o.creation_date <= %s
 			  AND o.merchant_id = ?
 			  AND o.state = 'CLOSED'
 			  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
@@ -401,7 +453,7 @@ func (r *AccountingRepository) GetVATAggregationRows(
 			UNION ALL
 
 			SELECT
-				DATE_FORMAT(o_fees.creation_date, '%%Y-%%m') AS month_key,
+				%s AS month_key,
 				CASE
 					WHEN o_fees.brand = 'UBER_EATS' THEN 'ubereats'
 					WHEN o_fees.brand = 'DELIVEROO' THEN 'deliveroo'
@@ -411,12 +463,12 @@ func (r *AccountingRepository) GetVATAggregationRows(
 				LOWER(o_fees.order_type) AS order_type,
 				tva_fees.tva_rate AS rate,
 				o_fees.delivery_fees AS ttc_cents,
-				ROUND(o_fees.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)) AS ht_cents,
-				o_fees.delivery_fees - ROUND(o_fees.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)) AS vat_cents
+				%s AS ht_cents,
+				o_fees.delivery_fees - %s AS vat_cents
 			FROM orders o_fees
 			INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
-			WHERE o_fees.creation_date >= DATE_FORMAT(?, '%%Y-%%m-%%d 00:00:00')
-			  AND o_fees.creation_date <= DATE_FORMAT(?, '%%Y-%%m-%%d 23:59:59')
+			WHERE o_fees.creation_date >= %s
+			  AND o_fees.creation_date <= %s
 			  AND o_fees.merchant_id = ?
 			  AND o_fees.state = 'CLOSED'
 			  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED')
@@ -426,7 +478,15 @@ func (r *AccountingRepository) GetVATAggregationRows(
 		) agg
 		GROUP BY month_key, channel, order_type, rate
 		ORDER BY month_key, channel, order_type, rate
-	`, channelClauseItems, orderTypeClauseItems, channelClauseFees, orderTypeClauseFees)
+	`,
+		acctMonthKey("o.creation_date"),
+		itemsTTC, itemsHT, itemsTTC, itemsHT,
+		acctDayStart(), acctDayEnd(),
+		channelClauseItems, orderTypeClauseItems,
+		acctMonthKey("o_fees.creation_date"),
+		feesHT, feesHT,
+		acctDayStart(), acctDayEnd(),
+		channelClauseFees, orderTypeClauseFees)
 
 	// Log the fully interpolated query for debugging
 	finalQuery := interpolateQuery(query, args)

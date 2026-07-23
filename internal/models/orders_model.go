@@ -219,7 +219,6 @@ type Order struct {
 	IsSNO              bool             `json:"isSNO"`
 	CallHour           *string          `json:"callHour"`
 	EstimatedReady     *int             `json:"estimated_ready"`
-	IsDelivery         int              `json:"isDelivery"`
 	MerchantApproval   string           `json:"merchant_approval"`
 	DeliveryFees       *int64           `json:"delivery_fees"`
 	Customer           *Customer        `json:"customer"`

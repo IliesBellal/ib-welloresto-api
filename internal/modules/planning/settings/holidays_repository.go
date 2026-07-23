@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type planningHolidayOverrideRecord struct {
@@ -28,27 +28,27 @@ func (r *Repository) ListPlanningHolidays(ctx context.Context, merchantID string
 	if err != nil {
 		return nil, err
 	}
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT o.id, d.holiday_date, COALESCE(o.label, hc.label),
-			CASE WHEN hc.holiday_date IS NOT NULL THEN 1 ELSE 0 END AS is_legal_holiday,
+			CASE WHEN hc.holiday_date IS NOT NULL THEN TRUE ELSE FALSE END AS is_legal_holiday,
 			CASE
 				WHEN o.count_as_holiday IS NOT NULL THEN o.count_as_holiday
-				WHEN hc.holiday_date IS NOT NULL THEN 1
-				ELSE 0
+				WHEN hc.holiday_date IS NOT NULL THEN TRUE
+				ELSE FALSE
 			END AS count_as_holiday,
 			o.is_open
 		FROM (
 			SELECT holiday_date
 			FROM holiday_calendar
-			WHERE country_code = ? AND enabled = 1 AND holiday_date >= ? AND holiday_date <= ?
+			WHERE country_code = ? AND enabled = TRUE AND holiday_date >= ? AND holiday_date <= ?
 			UNION
 			SELECT holiday_date
 			FROM planning_holiday_overrides
-			WHERE merchant_id = ? AND enabled = 1 AND holiday_date >= ? AND holiday_date <= ?
+			WHERE merchant_id = ? AND enabled = TRUE AND holiday_date >= ? AND holiday_date <= ?
 		) d
-		LEFT JOIN holiday_calendar hc ON hc.country_code = ? AND hc.holiday_date = d.holiday_date AND hc.enabled = 1
-		LEFT JOIN planning_holiday_overrides o ON o.merchant_id = ? AND o.holiday_date = d.holiday_date AND o.enabled = 1
+		LEFT JOIN holiday_calendar hc ON hc.country_code = ? AND hc.holiday_date = d.holiday_date AND hc.enabled = TRUE
+		LEFT JOIN planning_holiday_overrides o ON o.merchant_id = ? AND o.holiday_date = d.holiday_date AND o.enabled = TRUE
 		ORDER BY d.holiday_date ASC
 	`, countryCode, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), merchantID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), countryCode, merchantID)
 	if err != nil {
@@ -72,37 +72,37 @@ func (r *Repository) ResolvePlanningHoliday(ctx context.Context, merchantID stri
 	if err != nil {
 		return nil, err
 	}
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT o.id, d.holiday_date, COALESCE(o.label, hc.label),
-			CASE WHEN hc.holiday_date IS NOT NULL THEN 1 ELSE 0 END AS is_legal_holiday,
+			CASE WHEN hc.holiday_date IS NOT NULL THEN TRUE ELSE FALSE END AS is_legal_holiday,
 			CASE
 				WHEN o.count_as_holiday IS NOT NULL THEN o.count_as_holiday
-				WHEN hc.holiday_date IS NOT NULL THEN 1
-				ELSE 0
+				WHEN hc.holiday_date IS NOT NULL THEN TRUE
+				ELSE FALSE
 			END AS count_as_holiday,
 			o.is_open
-		FROM (SELECT ? AS holiday_date) d
-		LEFT JOIN holiday_calendar hc ON hc.country_code = ? AND hc.holiday_date = d.holiday_date AND hc.enabled = 1
-		LEFT JOIN planning_holiday_overrides o ON o.merchant_id = ? AND o.holiday_date = d.holiday_date AND o.enabled = 1
+		FROM (SELECT CAST(? AS DATE) AS holiday_date) d
+		LEFT JOIN holiday_calendar hc ON hc.country_code = ? AND hc.holiday_date = d.holiday_date AND hc.enabled = TRUE
+		LEFT JOIN planning_holiday_overrides o ON o.merchant_id = ? AND o.holiday_date = d.holiday_date AND o.enabled = TRUE
 		LIMIT 1
 	`, holidayDate.Format("2006-01-02"), countryCode, merchantID)
 	return scanPlanningHolidayRow(row)
 }
 
 func (r *Repository) GetPlanningHolidayOverrideByDate(ctx context.Context, merchantID string, holidayDate time.Time) (*planningHolidayOverrideRecord, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, holiday_date, label, is_open, count_as_holiday, created_at, updated_at, deleted_at
 		FROM planning_holiday_overrides
-		WHERE merchant_id = ? AND holiday_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND holiday_date = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, holidayDate.Format("2006-01-02"))
 	return scanPlanningHolidayOverrideRow(row)
 }
 
 func (r *Repository) CreatePlanningHolidayOverride(ctx context.Context, merchantID string, override planningHolidayOverrideRecord) (*planningHolidayOverrideRecord, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	override.ID = helpers.GeneratePrefixedID(helpers.PlanningHolidayIDPrefix)
 	override.MerchantID = merchantID
@@ -111,7 +111,7 @@ func (r *Repository) CreatePlanningHolidayOverride(ctx context.Context, merchant
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO planning_holiday_overrides (
 			id, merchant_id, holiday_date, label, is_open, count_as_holiday, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`, override.ID, override.MerchantID, override.HolidayDate.Format("2006-01-02"), override.Label, override.IsOpen, override.CountAsHoliday, override.CreatedAt, override.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -120,12 +120,12 @@ func (r *Repository) CreatePlanningHolidayOverride(ctx context.Context, merchant
 }
 
 func (r *Repository) UpdatePlanningHolidayOverride(ctx context.Context, merchantID string, override planningHolidayOverrideRecord) (*planningHolidayOverrideRecord, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	override.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_holiday_overrides
 		SET label = ?, is_open = ?, count_as_holiday = ?, updated_at = ?
-		WHERE merchant_id = ? AND holiday_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND holiday_date = ? AND enabled = TRUE
 	`, override.Label, override.IsOpen, override.CountAsHoliday, override.UpdatedAt, merchantID, override.HolidayDate.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
@@ -137,12 +137,12 @@ func (r *Repository) UpdatePlanningHolidayOverride(ctx context.Context, merchant
 }
 
 func (r *Repository) SoftDeletePlanningHolidayOverride(ctx context.Context, merchantID string, holidayDate time.Time) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_holiday_overrides
-		SET enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND holiday_date = ? AND enabled = 1
+		SET enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND holiday_date = ? AND enabled = TRUE
 	`, now, now, merchantID, holidayDate.Format("2006-01-02"))
 	if err != nil {
 		return err

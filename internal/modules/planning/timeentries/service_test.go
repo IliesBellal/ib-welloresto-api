@@ -178,7 +178,7 @@ func TestServiceGetCurrentEmployeeTimeEntryResolvesCurrentMemberEmployee(t *test
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_out_at IS NULL AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT 1
 	`)).
@@ -242,7 +242,7 @@ func TestServiceListPlanningTimeEntriesResolvesCurrentMemberEmployee(t *testing.
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT COUNT(1)
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 	`)).
 		WithArgs("merchant_1", "emp_1", fromDate, toExclusive).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -251,7 +251,7 @@ func TestServiceListPlanningTimeEntriesResolvesCurrentMemberEmployee(t *testing.
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT ? OFFSET ?
 	`)).
@@ -294,7 +294,7 @@ func TestServiceListPlanningTimeEntriesWithoutEmployeeFilter(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT COUNT(1)
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 	`)).
 		WithArgs("merchant_1", fromDate, toExclusive).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -303,7 +303,7 @@ func TestServiceListPlanningTimeEntriesWithoutEmployeeFilter(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = 1
+		WHERE merchant_id = ? AND clock_in_at >= ? AND clock_in_at < ? AND enabled = TRUE
 		ORDER BY clock_in_at DESC, created_at DESC
 		LIMIT ? OFFSET ?
 	`)).
@@ -382,7 +382,7 @@ func TestServiceCreateEmployeeTimeEntryManualIgnoresOpenEntryRuleForClosedEntry(
 		INSERT INTO planning_time_entries (
 			id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1", nil, "pointage", time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC), time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC), nil, nil, "manager@example.com", sqlmock.AnyArg(), "Oubli de pointage", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -467,7 +467,7 @@ func TestServiceUpdateEmployeeTimeEntrySetsModifiedFields(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "entry_1").
@@ -479,7 +479,7 @@ func TestServiceUpdateEmployeeTimeEntrySetsModifiedFields(t *testing.T) {
 		UPDATE planning_time_entries
 		SET clock_in_at = ?, clock_out_at = ?, clock_in_note = ?, clock_out_note = ?,
 			modified_by = ?, modified_at = ?, modification_reason = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(now, time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC), nil, nil, "manager@example.com", sqlmock.AnyArg(), "Badge corrigé", sqlmock.AnyArg(), "merchant_1", "entry_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -522,7 +522,7 @@ func TestServiceUpdateEmployeeTimeEntryRejectsInvalidRange(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "entry_1").
@@ -559,7 +559,7 @@ func TestServiceDeleteEmployeeTimeEntrySoftDeletesWithReason(t *testing.T) {
 		SELECT id, merchant_id, employee_id, shift_id, attendance_source, clock_in_at, clock_out_at,
 			clock_in_note, clock_out_note, modified_by, modified_at, modification_reason, created_at, updated_at, deleted_at
 		FROM planning_time_entries
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "entry_1").
@@ -569,8 +569,8 @@ func TestServiceDeleteEmployeeTimeEntrySoftDeletesWithReason(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_time_entries
-		SET enabled = 0, deleted_at = ?, updated_at = ?, modified_by = ?, modified_at = ?, modification_reason = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET enabled = FALSE, deleted_at = ?, updated_at = ?, modified_by = ?, modified_at = ?, modification_reason = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "manager@example.com", sqlmock.AnyArg(), "Doublon", "merchant_1", "entry_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

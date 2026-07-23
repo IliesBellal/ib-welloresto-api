@@ -25,7 +25,7 @@ func TestHandlerListPlanningLeaveRequestConflictingShifts_ReturnsAssignedOverlap
 		SELECT id, week_id, shift_date, start_time, end_time, position_id, position
 		FROM planning_shifts
 	
-		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1 AND status <> 'cancelled'
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE AND status <> 'cancelled'
 			AND shift_date >= ? AND shift_date <= ?
 	
 		ORDER BY shift_date ASC, start_time ASC
@@ -74,7 +74,7 @@ func TestHandlerListPlanningLeaveRequestConflictingShifts_NoAssignedShiftReturns
 		SELECT id, week_id, shift_date, start_time, end_time, position_id, position
 		FROM planning_shifts
 	
-		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1 AND status <> 'cancelled'
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE AND status <> 'cancelled'
 			AND shift_date >= ? AND shift_date <= ?
 	
 		ORDER BY shift_date ASC, start_time ASC
@@ -103,7 +103,7 @@ func TestHandlerListPlanningLeaveRequestConflictingShifts_UsesAssignedEmployeeFi
 	defer cleanup()
 
 	expectLeaveByID(mock, "m-1", "lr-3", "emp-1", "2026-06-05", "2026-06-10")
-	mock.ExpectQuery(`WHERE merchant_id = \? AND employee_id = \? AND enabled = 1 AND status <> 'cancelled'`).
+	mock.ExpectQuery(`WHERE merchant_id = \? AND employee_id = \? AND enabled = TRUE AND status <> 'cancelled'`).
 		WithArgs("m-1", "emp-1", "2026-06-05", "2026-06-10").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "week_id", "shift_date", "start_time", "end_time", "position_id", "position"}))
 
@@ -155,7 +155,7 @@ func expectLeaveByID(mock sqlmock.Sqlmock, merchantID, requestID, employeeID, st
 		SELECT id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason,
 			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_leave_requests
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs(merchantID, requestID).

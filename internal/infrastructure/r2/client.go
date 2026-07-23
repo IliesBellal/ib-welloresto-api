@@ -235,6 +235,23 @@ func GenerateUserAvatarKey(userID, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/users/%s/avatar%s", userID, ext)
 }
 
+// GenerateHACCPTraceabilityKey génère la clé R2 pour une photo de traçabilité
+// HACCP (étiquettes/emballages). index est la position de la photo (0-based)
+// dans la soumission ; chaque photo d'un même enregistrement a sa propre clé.
+func GenerateHACCPTraceabilityKey(merchantID, recordID string, index int, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/haccp/tracabilite/%s/%d%s", merchantID, recordID, index, ext)
+}
+
+// PublicURL reconstruit l'URL publique d'un objet à partir de sa clé R2.
+// Utile quand seule la clé (pas l'URL) est persistée en base, ex.
+// haccp_traceability_photos.photo_key.
+func (c *Client) PublicURL(key string) string {
+	return strings.TrimRight(c.publicBaseURL, "/") + "/" + key
+}
+
 // GetContentTypeFromExtension retourne le content type depuis l'extension
 func GetContentTypeFromExtension(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))

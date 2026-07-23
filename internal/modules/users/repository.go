@@ -350,14 +350,6 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 		return "", err
 	}
 
-	// users.token is varchar(30): MySQL (non-strict) silently truncated the
-	// 128-char generated token, Postgres rejects it — truncate Go-side to keep
-	// the historical stored value identical in both dialects. The rotated value
-	// only serves to invalidate the previous user token.
-	if len(newUserToken) > 30 {
-		newUserToken = newUserToken[:30]
-	}
-
 	// 1. Update password
 	res, err := db.ExecContext(ctx, `
 		UPDATE users
@@ -661,8 +653,10 @@ func nullableFloat64(v sql.NullFloat64) float64 {
 	return 0
 }
 
+// generateToken returns a 64-char hex token (32 random bytes, 256 bits of
+// entropy), sized to fit users.token/users_rights.token (varchar(64)) exactly.
 func generateToken() (string, error) {
-	b := make([]byte, 64)
+	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}

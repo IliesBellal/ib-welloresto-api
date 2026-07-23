@@ -141,7 +141,7 @@ func TestServiceCreatePlanningShiftNormalizesUnassignedEmployeeID(t *testing.T) 
 			mock.ExpectQuery(regexp.QuoteMeta(`
 				SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 				FROM planning_weeks
-				WHERE merchant_id = ? AND id = ? AND enabled = 1
+				WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 				LIMIT 1
 			`)).
 				WithArgs("merchant_1", "week_1").
@@ -152,10 +152,10 @@ func TestServiceCreatePlanningShiftNormalizesUnassignedEmployeeID(t *testing.T) 
 			mock.ExpectExec(regexp.QuoteMeta(`
 				INSERT INTO planning_shifts (
 					id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
-					position, location, notes, status, enabled, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+					position, location, notes, status, title, enabled, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 			`)).
-				WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, nil, "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
+				WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, nil, "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 				WillReturnResult(sqlmock.NewResult(0, 1))
 
 			item, err := svc.CreatePlanningShift(ctx, "week_1", PlanningShiftCreateRequest{
@@ -195,10 +195,10 @@ func TestServiceCreatePlanningShiftResolvesPositionID(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO planning_shifts (
 			id, merchant_id, week_id, employee_id, position_id, shift_date, start_time, end_time, break_minutes,
-			position, location, notes, status, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+			position, location, notes, status, title, enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
-		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, "pos_1", "2026-06-01", "09:00:00", "17:00:00", 0, "Serveur", nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", nil, "pos_1", "2026-06-01", "09:00:00", "17:00:00", 0, "Serveur", nil, nil, "planned", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	item, err := svc.CreatePlanningShift(ctx, "week_1", PlanningShiftCreateRequest{
@@ -241,7 +241,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 					SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 						position, location, notes, status, created_at, updated_at, deleted_at
 					FROM planning_shifts
-					WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
+					WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = TRUE
 					 AND id <> ? ORDER BY start_time ASC, created_at ASC
 				`)).
 					WithArgs("merchant_1", "emp_1", "2026-06-01", "shift_1").
@@ -250,7 +250,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 					UPDATE planning_shifts
 					SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
 						position = ?, location = ?, notes = ?, status = ?, updated_at = ?
-					WHERE merchant_id = ? AND id = ? AND enabled = 1
+					WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 				`)).
 					WithArgs("week_1", "emp_1", nil, "Service soir", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
@@ -267,7 +267,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 					UPDATE planning_shifts
 					SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
 						position = ?, location = ?, notes = ?, status = ?, updated_at = ?
-					WHERE merchant_id = ? AND id = ? AND enabled = 1
+					WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 				`)).
 					WithArgs("week_1", nil, nil, "Ouverture", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
@@ -284,7 +284,7 @@ func TestServiceUpdatePlanningShiftEmployeeIDTriState(t *testing.T) {
 					SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 						position, location, notes, status, created_at, updated_at, deleted_at
 					FROM planning_shifts
-					WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
+					WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = TRUE
 					 AND id <> ? ORDER BY start_time ASC, created_at ASC
 				`)).
 					WithArgs("merchant_1", "emp_2", "2026-06-01", "shift_1").
@@ -375,7 +375,7 @@ func TestServiceListPlanningShiftsByDateRangeReturnsMultiWeekShifts(t *testing.T
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND enabled = 1 AND shift_date >= ? AND shift_date <= ?
+		WHERE merchant_id = ? AND enabled = TRUE AND shift_date >= ? AND shift_date <= ?
 		ORDER BY shift_date ASC, start_time ASC, created_at ASC
 	`)).
 		WithArgs("merchant_1", "2026-06-01", "2026-06-21").
@@ -439,7 +439,7 @@ func TestServiceListPlanningShiftsManagerStillReadsDraftWeek(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").
@@ -451,7 +451,7 @@ func TestServiceListPlanningShiftsManagerStillReadsDraftWeek(t *testing.T) {
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND week_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND week_id = ? AND enabled = TRUE
 		ORDER BY shift_date ASC, start_time ASC, created_at ASC
 	`)).
 		WithArgs("merchant_1", "week_1").
@@ -487,14 +487,14 @@ func TestServicePublishPlanningWeek(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_weeks
 		SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").
@@ -532,7 +532,7 @@ func TestServiceCreatePlanningWeekDefaultsToDraft(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND start_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND start_date = ? AND enabled = TRUE
 		ORDER BY created_at DESC LIMIT 1
 	`)).
 		WithArgs("merchant_1", "2026-06-01").
@@ -540,7 +540,7 @@ func TestServiceCreatePlanningWeekDefaultsToDraft(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO planning_weeks (
 			id, merchant_id, label, start_date, end_date, status, published_at, notes, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", nil, sqlmock.AnyArg(), sqlmock.AnyArg(), "draft", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -576,14 +576,14 @@ func TestServiceUnpublishPlanningWeek(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_weeks
 		SET status = 'draft', published_at = NULL, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").
@@ -624,14 +624,14 @@ func TestServicePublishPlanningWeekIdempotent(t *testing.T) {
 		mock.ExpectExec(regexp.QuoteMeta(`
 			UPDATE planning_weeks
 			SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
-			WHERE merchant_id = ? AND id = ? AND enabled = 1
+			WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		`)).
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(regexp.QuoteMeta(`
 			SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 			FROM planning_weeks
-			WHERE merchant_id = ? AND id = ? AND enabled = 1
+			WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 			LIMIT 1
 		`)).
 			WithArgs("merchant_1", "week_1").
@@ -669,7 +669,7 @@ func TestServiceUpdatePlanningShiftInPublishedWeekStillAllowed(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").
@@ -680,7 +680,7 @@ func TestServiceUpdatePlanningShiftInPublishedWeekStillAllowed(t *testing.T) {
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND shift_date = ? AND enabled = TRUE
 		 AND id <> ? ORDER BY start_time ASC, created_at ASC
 	`)).
 		WithArgs("merchant_1", "emp_1", "2026-06-01", "shift_1").
@@ -689,7 +689,7 @@ func TestServiceUpdatePlanningShiftInPublishedWeekStillAllowed(t *testing.T) {
 		UPDATE planning_shifts
 		SET week_id = ?, employee_id = ?, position_id = ?, title = ?, shift_date = ?, start_time = ?, end_time = ?, break_minutes = ?,
 			position = ?, location = ?, notes = ?, status = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs("week_1", "emp_1", nil, "Service soir", "2026-06-01", "09:00:00", "17:00:00", 0, nil, nil, nil, "planned", sqlmock.AnyArg(), "merchant_1", "shift_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -712,7 +712,7 @@ func expectShiftLookup(mock sqlmock.Sqlmock, now time.Time, employeeID any, posi
 		SELECT id, merchant_id, week_id, employee_id, position_id, title, shift_date, start_time, end_time, break_minutes,
 			position, location, notes, status, created_at, updated_at, deleted_at
 		FROM planning_shifts
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "shift_1").
@@ -725,7 +725,7 @@ func expectWeekLookup(mock sqlmock.Sqlmock, now time.Time) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "week_1").

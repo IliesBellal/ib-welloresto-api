@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -14,6 +16,45 @@ import (
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	"welloresto-api/internal/utils/dbutils"
 )
+
+// posTimeFmt formate une colonne time en texte HH:MM:SS selon le dialecte
+// (TIME_FORMAT n'existe pas en Postgres).
+func posTimeFmt(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'HH24:MI:SS')"
+	}
+	return "TIME_FORMAT(" + col + ", '%H:%i:%s')"
+}
+
+// posDateTimeFmt formate une colonne timestamp en texte YYYY-MM-DD HH:MM:SS
+// selon le dialecte (DATE_FORMAT n'existe pas en Postgres).
+func posDateTimeFmt(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'YYYY-MM-DD HH24:MI:SS')"
+	}
+	return "DATE_FORMAT(" + col + ", '%Y-%m-%d %H:%i:%s')"
+}
+
+// posCastChar caste une expression en texte selon le dialecte — même pattern
+// que orders.castChar (CAST AS CHAR sans longueur = char(1) en Postgres).
+func posCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
+
+// posStatusFlag reproduit côté Go la coercition MySQL non-strict d'une chaîne
+// client vers un tinyint(1) : '1'/'0' (et tout numérique) sont interprétés,
+// toute chaîne non numérique vaut 0 — les colonnes cibles sont boolean en
+// Postgres, qui rejetterait une chaîne arbitraire liée directement.
+func posStatusFlag(status string) bool {
+	f, err := strconv.ParseFloat(strings.TrimSpace(status), 64)
+	if err != nil {
+		return false
+	}
+	return f != 0
+}
 
 type POSRepository struct {
 	database *sql.DB
@@ -27,22 +68,30 @@ func NewPOSRepository(db *sql.DB) *POSRepository {
 // UPDATE is_open
 // --------------------
 func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, status bool) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	v := 0
-	if status {
-		v = 1
-	}
-
-	_, err := db.ExecContext(ctx, `
+	// is_open est boolean côté Postgres, tinyint(1) côté MySQL : lier le bool
+	// Go directement fonctionne dans les deux dialectes (le driver MySQL
+	// encode true/false en 1/0).
+	query := `
 		UPDATE merchant_parameters mp
 		INNER JOIN users u ON mp.merchant_id = u.merchant_id
 		INNER JOIN users_rights ur ON ur.id = u.access_id
 		SET is_open = ?
-		WHERE u.user_id = ?`,
-		v, userID,
-	)
+		WHERE u.user_id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		// UPDATE multi-table MySQL -> UPDATE ... FROM (cible SET non qualifiée)
+		query = `
+		UPDATE merchant_parameters
+		SET is_open = ?
+		FROM users u
+		INNER JOIN users_rights ur ON ur.id = u.access_id
+		WHERE merchant_parameters.merchant_id = u.merchant_id
+		  AND u.user_id = ?`
+	}
+
+	_, err := db.ExecContext(ctx, query, status, userID)
 
 	if err != nil {
 		log.Error(fmt.Sprintf("Error updating POS status for user %s: %v", userID, err))
@@ -53,9 +102,10 @@ func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, stat
 }
 
 func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) ([]models.DeletionReason, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// l.label_value (varchar) vs dr.deletion_reason_id (integer) : cast texte
 	query := `
 		SELECT dr.deletion_reason_id,
 		       dr.deletion_reason_type,
@@ -64,8 +114,8 @@ func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) (
 		       dr.requires_comment,
 		       l.label
 		FROM deletion_reasons dr
-		INNER JOIN labels l 
-		       ON l.label_value = dr.deletion_reason_id
+		INNER JOIN labels l
+		       ON l.label_value = ` + posCastChar("dr.deletion_reason_id") + `
 		      AND l.lang = 'FR'
 		      AND l.label_type = 'deletion_reason'
 		WHERE dr.enabled = TRUE
@@ -101,7 +151,7 @@ func (r *POSRepository) GetDeletionReasons(ctx context.Context, object string) (
 }
 
 func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*models.POSStatus, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var timezone string
@@ -152,7 +202,7 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 		CASE WHEN ? BETWEEN hour_from AND hour_to THEN 'OPEN' ELSE 'CLOSED' END AS s
 		FROM hours_of_operation
 		WHERE merchant_id = ?
-		  AND enabled = 1
+		  AND enabled = TRUE
 		  AND day_of_week_from <= ?
 		  AND day_of_week_to >= ?
 		LIMIT 1`,
@@ -169,28 +219,30 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 	// Full POS Status Query
 	var result models.POSStatus
 
+	// Le statut calculé n'est plus renvoyé via un placeholder en colonne de
+	// SELECT (Postgres ne peut pas typer un paramètre nu en sortie) — il est
+	// affecté côté Go après le Scan, résultat identique. is_open (boolean en
+	// cible) est scanné dans un int via CASE 1/0, valide dans les deux dialectes.
 	err = db.QueryRowContext(ctx, `
-		SELECT 
-			mp.is_open,
-			?,
+		SELECT
+			CASE WHEN mp.is_open THEN 1 ELSE 0 END,
 			iue.estimated_preparation_time,
 			iue.delay_until,
 			iue.delay_duration,
 			iue.closed_until
 		FROM merchant m
-		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id
-		LEFT JOIN integration_uber_eats iue ON iue.enabled = 1 AND iue.merchant_id = m.id
+		INNER JOIN merchant_parameters mp ON mp.merchant_id = `+posCastChar("m.id")+`
+		LEFT JOIN integration_uber_eats iue ON iue.enabled = TRUE AND iue.merchant_id = `+posCastChar("m.id")+`
 		WHERE m.id = ?`,
-		status,
 		merchantID,
 	).Scan(
 		&result.Wello.IsOpen,
-		&result.Wello.Status,
 		&result.Uber.EstimatedPrepTime,
 		&result.Uber.DelayUntil,
 		&result.Uber.DelayDuration,
 		&result.Uber.ClosedUntil,
 	)
+	result.Wello.Status = status
 
 	if err != nil {
 		log.Error(fmt.Sprintf("Error fetching POS status for ID %s: %v", merchantID, err))
@@ -217,14 +269,14 @@ func (r *POSRepository) GetPOSStatus(ctx context.Context, merchantID string) (*m
 }
 
 func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID string, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE merchant_parameters 
 		 SET kitchen_show_only_paid = ?
 		 WHERE merchant_id = ?`,
-		status, merchantID,
+		posStatusFlag(status), merchantID,
 	)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error toggling production paid only for ID %s: %v", merchantID, err))
@@ -235,23 +287,25 @@ func (r *POSRepository) ToggleProductionPaidOnly(ctx context.Context, merchantID
 }
 
 func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]ConsumptionType, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	// La requête JOIN récupère le nom traduit (label) et les taux activés
+	// La requête JOIN récupère le nom traduit (label) et les taux activés.
+	// CAST(x AS CHAR) sans longueur vaut char(1) en Postgres (troncature) ->
+	// cast texte par dialecte.
 	query := `
-		SELECT 
-			CAST(l.id AS CHAR) as type_id, 
+		SELECT
+			` + posCastChar("l.id") + ` as type_id,
 			t.delivery_type,
-			l.label_value, 
-			l.label as type_name, 
-			CAST(t.tva_id AS CHAR) as rate_id, 
-			t.tva_title, 
+			l.label_value,
+			l.label as type_name,
+			` + posCastChar("t.tva_id") + ` as rate_id,
+			t.tva_title,
 			t.tva_rate
 		FROM labels l
 		INNER JOIN tva_categories t ON l.label_value = t.delivery_type
-		WHERE l.label_type = 'order_type' 
-		  AND l.lang = 'FR' 
-		  AND t.enabled = 1
+		WHERE l.label_type = 'order_type'
+		  AND l.lang = 'FR'
+		  AND t.enabled = TRUE
 		ORDER BY l.id ASC, t.tva_rate ASC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -314,14 +368,14 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 }
 
 func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE merchant_parameters 
 		 SET disable_components_under_safety_stock = ?
 		 WHERE merchant_id = ?`,
-		status, merchantID,
+		posStatusFlag(status), merchantID,
 	)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error toggling safety stock for ID %s: %v", merchantID, err))
@@ -332,14 +386,14 @@ func (r *POSRepository) ToggleSafetyStock(ctx context.Context, merchantID string
 }
 
 func (r *POSRepository) ToggleScanNOrder(ctx context.Context, merchantID string, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE scannorder_settings 
 		 SET activated = ?
 		 WHERE merchant_id = ?`,
-		status, merchantID,
+		posStatusFlag(status), merchantID,
 	)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error toggling scan and order for ID %s: %v", merchantID, err))
@@ -350,7 +404,7 @@ func (r *POSRepository) ToggleScanNOrder(ctx context.Context, merchantID string,
 }
 
 func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) ([]models.DeliveryMan, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
@@ -363,7 +417,7 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
             usv.status
         FROM user_status_view usv
         INNER JOIN users_rights ur ON ur.user_id = usv.user_id
-        INNER JOIN merchant m ON m.id = ur.merchant_id
+        INNER JOIN merchant m ON `+posCastChar("m.id")+` = ur.merchant_id
         WHERE ur.merchant_id = ?
           AND ur.enabled = TRUE
     `, merchantID)
@@ -397,7 +451,7 @@ func (r *POSRepository) GetDeliveryMen(ctx context.Context, merchantID string) (
 }
 
 func (r *POSRepository) IsTicketUsed(ctx context.Context, code string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var exists bool
@@ -459,21 +513,21 @@ func (s *POSRepository) UpdateMerchantSettings(ctx context.Context, merchantID s
 }
 
 func (r *POSRepository) GetHoursOfOperations(ctx context.Context, merchantID string) ([]models.POSHoursOfOperation, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT
 			hoo.id,
 			hoo.day_of_week_from,
 			hoo.day_of_week_to,
-			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
-			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			` + posTimeFmt("hoo.hour_from") + ` AS hour_from,
+			` + posTimeFmt("hoo.hour_to") + ` AS hour_to,
 			hoo.booking_capacity,
-			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
-			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
-			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
-			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
-			hoo.enabled
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE ` + posTimeFmt("hoo.first_booking_time") + ` END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE ` + posTimeFmt("hoo.last_booking_time") + ` END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE ` + posDateTimeFmt("hoo.valid_from") + ` END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE ` + posDateTimeFmt("hoo.valid_to") + ` END AS valid_to,
+			CASE WHEN hoo.enabled THEN 1 ELSE 0 END
 		FROM hours_of_operation hoo
 		WHERE hoo.merchant_id = ?
 		AND hoo.enabled
@@ -547,11 +601,11 @@ func (r *POSRepository) GetHoursOfOperations(ctx context.Context, merchantID str
 
 func (r *POSRepository) UpsertHoursOfOperations(ctx context.Context, merchantID string, items []models.POSHoursOfOperationPatch) error {
 	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.database)
+		db := dbx.GetDB(txCtx, r.database)
 
 		if _, err := db.ExecContext(txCtx, `
 			UPDATE hours_of_operation
-			SET enabled = 0
+			SET enabled = FALSE
 			WHERE merchant_id = ?
 		`, merchantID); err != nil {
 			return err
@@ -595,7 +649,7 @@ func (r *POSRepository) UpsertHoursOfOperations(ctx context.Context, merchantID 
 				validTo = strings.TrimSpace(*item.ValidTo)
 			}
 
-			if _, err := db.ExecContext(txCtx, `
+			upsertQuery := `
 				INSERT INTO hours_of_operation (
 					id,
 					merchant_id,
@@ -626,7 +680,45 @@ func (r *POSRepository) UpsertHoursOfOperations(ctx context.Context, merchantID 
 					valid_from = VALUES(valid_from),
 					valid_to = VALUES(valid_to),
 					enabled = VALUES(enabled)
-			`,
+			`
+			if dbx.ActiveDialect() == dbx.Postgres {
+				// UUID() -> gen_random_uuid() (cast texte : la colonne id est
+				// varchar, le cast uuid->varchar n'est pas implicite en PG)
+				upsertQuery = `
+				INSERT INTO hours_of_operation (
+					id,
+					merchant_id,
+					day_of_week_from,
+					day_of_week_to,
+					hour_from,
+					hour_to,
+					booking_capacity,
+					first_booking_time,
+					last_booking_time,
+					valid_from,
+					valid_to,
+					enabled
+				)
+				VALUES (
+					COALESCE(NULLIF(?, ''), CAST(gen_random_uuid() AS TEXT)),
+					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+				)
+				ON CONFLICT (id) DO UPDATE SET
+					merchant_id = EXCLUDED.merchant_id,
+					day_of_week_from = EXCLUDED.day_of_week_from,
+					day_of_week_to = EXCLUDED.day_of_week_to,
+					hour_from = EXCLUDED.hour_from,
+					hour_to = EXCLUDED.hour_to,
+					booking_capacity = EXCLUDED.booking_capacity,
+					first_booking_time = EXCLUDED.first_booking_time,
+					last_booking_time = EXCLUDED.last_booking_time,
+					valid_from = EXCLUDED.valid_from,
+					valid_to = EXCLUDED.valid_to,
+					enabled = EXCLUDED.enabled
+			`
+			}
+
+			if _, err := db.ExecContext(txCtx, upsertQuery,
 				id,
 				merchantID,
 				item.DayOfWeekFrom,
@@ -656,7 +748,7 @@ func (r *POSRepository) CreateHourOfOperation(ctx context.Context, merchantID st
 		return nil, err
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	hourID := helpers.GeneratePrefixedID("hoo")
 	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
@@ -732,7 +824,7 @@ func (r *POSRepository) UpdateHourOfOperation(ctx context.Context, merchantID st
 		return nil, err
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	enabled := true
 	if req.Enabled != nil {
@@ -802,11 +894,11 @@ func (r *POSRepository) UpdateHourOfOperation(ctx context.Context, merchantID st
 }
 
 func (r *POSRepository) DeleteHourOfOperation(ctx context.Context, merchantID string, hourID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx, `
 		UPDATE hours_of_operation
-		SET enabled = 0
+		SET enabled = FALSE
 		WHERE id = ? AND merchant_id = ?
 	`, hourID, merchantID)
 	if err != nil {
@@ -825,21 +917,21 @@ func (r *POSRepository) DeleteHourOfOperation(ctx context.Context, merchantID st
 }
 
 func (r *POSRepository) GetHourOfOperationByID(ctx context.Context, merchantID string, hourID string) (*models.POSHoursOfOperation, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		SELECT
 			hoo.id,
 			hoo.day_of_week_from,
 			hoo.day_of_week_to,
-			TIME_FORMAT(hoo.hour_from, '%H:%i:%s') AS hour_from,
-			TIME_FORMAT(hoo.hour_to, '%H:%i:%s') AS hour_to,
+			` + posTimeFmt("hoo.hour_from") + ` AS hour_from,
+			` + posTimeFmt("hoo.hour_to") + ` AS hour_to,
 			hoo.booking_capacity,
-			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.first_booking_time, '%H:%i:%s') END AS first_booking_time,
-			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE TIME_FORMAT(hoo.last_booking_time, '%H:%i:%s') END AS last_booking_time,
-			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_from, '%Y-%m-%d %H:%i:%s') END AS valid_from,
-			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE DATE_FORMAT(hoo.valid_to, '%Y-%m-%d %H:%i:%s') END AS valid_to,
-			hoo.enabled
+			CASE WHEN hoo.first_booking_time IS NULL THEN NULL ELSE ` + posTimeFmt("hoo.first_booking_time") + ` END AS first_booking_time,
+			CASE WHEN hoo.last_booking_time IS NULL THEN NULL ELSE ` + posTimeFmt("hoo.last_booking_time") + ` END AS last_booking_time,
+			CASE WHEN hoo.valid_from IS NULL THEN NULL ELSE ` + posDateTimeFmt("hoo.valid_from") + ` END AS valid_from,
+			CASE WHEN hoo.valid_to IS NULL THEN NULL ELSE ` + posDateTimeFmt("hoo.valid_to") + ` END AS valid_to,
+			CASE WHEN hoo.enabled THEN 1 ELSE 0 END
 		FROM hours_of_operation hoo
 		WHERE hoo.id = ? AND hoo.merchant_id = ?
 	`
@@ -908,7 +1000,7 @@ func validateHourOfOperationPayload(req *models.POSHoursOfOperationPatch) error 
 }
 
 func (r *POSRepository) UpdateMerchant(ctx context.Context, merchantID string, req *models.MerchantSettings) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -995,7 +1087,7 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, merchantID string, r
 }
 
 func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, merchantID string, req *models.ScannorderSettings) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -1070,7 +1162,7 @@ func (r *POSRepository) UpdateScannorderSettings(ctx context.Context, merchantID
 }
 
 func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, merchantID string, req *models.MerchantMarketingSettings) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -1121,7 +1213,7 @@ func (r *POSRepository) UpdateMerchantMarketing(ctx context.Context, merchantID 
 }
 
 func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID string, req *models.MerchantParametersSettings) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	updates := []string{}
 	args := []interface{}{}
@@ -1286,7 +1378,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 	*models.ScannorderSettings,
 	error,
 ) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// ───────────────────────────────

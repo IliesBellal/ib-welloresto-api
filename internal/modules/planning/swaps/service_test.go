@@ -92,7 +92,7 @@ func TestServiceUpdatePlanningShiftSwapRequestAllowsTargetEmployeeApprovalByMemb
 		SELECT id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_shift_swap_requests
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "swap_1").
@@ -103,7 +103,7 @@ func TestServiceUpdatePlanningShiftSwapRequestAllowsTargetEmployeeApprovalByMemb
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_shift_swap_requests
 		SET status = ?, reason = ?, manager_note = ?, processed_by_user_id = ?, processed_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs("rejected", nil, nil, "user_1", sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "swap_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -148,7 +148,7 @@ func TestServiceUpdatePlanningShiftSwapRequestRejectsMismatchedMemberID(t *testi
 		SELECT id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_shift_swap_requests
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`)).
 		WithArgs("merchant_1", "swap_1").
@@ -200,7 +200,7 @@ func TestServiceCreatePlanningShiftSwapRequestResolvesCurrentMemberEmployee(t *t
 		INSERT INTO planning_shift_swap_requests (
 			id, merchant_id, requester_employee_id, requester_shift_id, target_employee_id, target_shift_id,
 			status, reason, manager_note, requested_by_user_id, processed_by_user_id, processed_at, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", requesterEmployeeID, "shift_requester", targetEmployeeID, "shift_target", "pending", nil, nil, "user_1", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))

@@ -817,6 +817,8 @@ COMMENT ON COLUMN consumables.purchase_price_quantity IS 'in uom of consumable';
 -- ---------------------------------------------------------------------
 -- customer
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+--   is_migrated: colonne retiree (voir 35-dead-columns-removal.md) - logique morte cote Go, aucune
+--   exposition JSON ; reste en base MySQL source telle quelle
 -- ---------------------------------------------------------------------
 CREATE TABLE customer (
     customer_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -828,7 +830,6 @@ CREATE TABLE customer (
     customer_last_name varchar(50),
     customer_code varchar(4),
     customer_tel varchar(20),
-    is_migrated boolean DEFAULT false,
     customer_temporary_phone varchar(20),
     customer_temporary_phone_code varchar(20),
     customer_email varchar(255),
@@ -936,7 +937,7 @@ CREATE TABLE customer_loyalty_program_target_products (
 --   FK candidate (non creee) : customer_id -> customer.customer_id
 -- ---------------------------------------------------------------------
 CREATE TABLE customer_loyalty_progress (
-    id varchar(50) NOT NULL,
+    id varchar(64) NOT NULL,
     customer_id varchar(30) NOT NULL,
     loyalty_program_id varchar(30) NOT NULL,
     current_value integer NOT NULL,
@@ -952,7 +953,7 @@ CREATE TABLE customer_loyalty_progress (
 CREATE TABLE customer_loyalty_progress_order (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     loyalty_program_id varchar(30) NOT NULL,
-    progress_id varchar(30) NOT NULL,
+    progress_id varchar(64) NOT NULL,
     order_id integer NOT NULL,
     increment_value integer NOT NULL,
     PRIMARY KEY (id)
@@ -2252,7 +2253,8 @@ CREATE INDEX idx_orderitems_idx_orderitems_product_id ON orderitems (product_id)
 --   dateCall: identifiant mixed-case 'dateCall' : PG replie en 'datecall' (sans impact pour les requetes Go non quotees)
 --   TVA: identifiant mixed-case 'TVA' : PG replie en 'tva' (sans impact pour les requetes Go non quotees)
 --   HT: identifiant mixed-case 'HT' : PG replie en 'ht' (sans impact pour les requetes Go non quotees)
---   isDelivery: identifiant mixed-case 'isDelivery' : PG replie en 'isdelivery' (sans impact pour les requetes Go non quotees)
+--   isDelivery: colonne retiree (voir 35-dead-columns-removal.md) - logique morte cote Go, non consommee
+--   par wello_resto_flutter/wello-kiosk/ScanNOrder/wello-back-office ; reste en base MySQL source telle quelle
 --   isPaid: identifiant mixed-case 'isPaid' : PG replie en 'ispaid' (sans impact pour les requetes Go non quotees)
 --   isDistributed: identifiant mixed-case 'isDistributed' : PG replie en 'isdistributed' (sans impact pour les requetes Go non quotees)
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
@@ -2271,7 +2273,7 @@ CREATE TABLE orders (
     order_num integer NOT NULL,
     brand varchar(20) NOT NULL DEFAULT 'WELLO_RESTO',
     brand_order_id varchar(50),
-    parent_order_id integer,
+    parent_order_id varchar(50),
     brand_order_num varchar(10),
     brand_status varchar(30) NOT NULL,
     scheduled boolean NOT NULL DEFAULT false,
@@ -2289,7 +2291,6 @@ CREATE TABLE orders (
     delivery_fees integer NOT NULL DEFAULT 0,
     comment text,
     cutlery_notes boolean DEFAULT false,
-    isDelivery boolean DEFAULT true,
     merchant_approval varchar(30) NOT NULL DEFAULT 'ACCEPTED',
     status integer DEFAULT 2,
     creation_date timestamptz NOT NULL DEFAULT now(),
@@ -3740,7 +3741,7 @@ CREATE TABLE users (
     waiter_device_token varchar(255),
     reception_device_token varchar(255),
     delivery_device_token varchar(255),
-    token varchar(30) NOT NULL,
+    token varchar(64) NOT NULL,
     terms_of_use_accepted boolean NOT NULL DEFAULT false,
     creationDate timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz DEFAULT now(),

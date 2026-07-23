@@ -85,7 +85,9 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 	// --- ÉTAPE 3 : Stocker dans Redis pour la prochaine fois ---
 	serialized, err := json.Marshal(merchant)
 	if err == nil {
-		// Utilise un TTL raisonnable (ex: 24h car un merchant change peu souvent)
+		// TTL volontairement court (models.ScannorderMerchantTTL) : ce cache inclut
+		// le statut ouvert/fermé et le prep time, qui ne sont invalidés activement
+		// nulle part encore — le TTL est la seule limite à la péremption pour l'instant.
 		if saved := s.redis.Set(ctx, cacheKey, string(serialized), models.ScannorderMerchantTTL); !saved {
 			log.Warn("Warning Redis Set (Merchant): " + err.Error())
 		} else {

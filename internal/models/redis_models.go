@@ -27,8 +27,10 @@ const (
 	// Durée de vie du cache pour les merchants
 	ScannorderKioskMerchantMenuTTL = 10 * time.Minute
 
-	// Durée de vie du cache pour les merchants
-	ScannorderMerchantTTL = 60 * time.Minute
+	// Durée de vie courte (pas d'invalidation active sur ce cache aujourd'hui :
+	// is_open, prep time, etc. peuvent changer sans le vider) — plafonne la
+	// fenêtre de statut périmé plutôt que de la laisser courir 60 min.
+	ScannorderMerchantTTL = 2 * time.Minute
 
 	// Préfixe des clés Redis pour les orders
 	OrdersCachePrefix = "order:"

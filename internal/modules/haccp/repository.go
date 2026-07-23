@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -1710,4 +1711,209 @@ func (r *Repository) GetHaccpComponents(ctx context.Context, merchantID string) 
 		})
 	}
 	return result, nil
+}
+
+// CreateTraceabilityRecord insère un enregistrement de traçabilité et ses photos
+// dans une seule transaction : si l'insertion des photos échoue (ex. photo_key
+// trop long), l'insertion du record est annulée elle aussi. recordID est fourni
+// par l'appelant (et non généré ici) car il doit déjà être connu au moment de
+// l'upload R2 : la clé de chaque photo embarque {record_id} dans son chemin.
+func (r *Repository) CreateTraceabilityRecord(ctx context.Context, recordID, merchantID, createdBy string, comment *string, photoKeys []string) (*HaccpTraceabilityRecord, error) {
+	var record *HaccpTraceabilityRecord
+
+	err := dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.db)
+		now := time.Now().UTC()
+
+		_, err := db.ExecContext(txCtx, `
+			INSERT INTO haccp_traceability_records (id, merchant_id, comment, created_by, created_at, updated_at, enabled)
+			VALUES (?, ?, ?, ?, ?, ?, TRUE)
+		`, recordID, merchantID, comment, createdBy, now, now)
+		if err != nil {
+			return err
+		}
+
+		photos := make([]HaccpTraceabilityPhoto, 0, len(photoKeys))
+		if len(photoKeys) > 0 {
+			prefix := `INSERT INTO haccp_traceability_photos (id, record_id, photo_key, position, created_at) VALUES `
+			values := make([]string, 0, len(photoKeys))
+			args := make([]interface{}, 0, len(photoKeys)*5)
+
+			for i, key := range photoKeys {
+				photoID := helpers.GeneratePrefixedID(helpers.HACCPTraceabilityPhotoIDPrefix)
+				values = append(values, "(?, ?, ?, ?, ?)")
+				args = append(args, photoID, recordID, key, i, now)
+				photos = append(photos, HaccpTraceabilityPhoto{ID: photoID, PhotoURL: key, Position: i})
+			}
+
+			if _, err := db.ExecContext(txCtx, prefix+strings.Join(values, ","), args...); err != nil {
+				return err
+			}
+		}
+
+		record = &HaccpTraceabilityRecord{
+			ID:         recordID,
+			MerchantID: merchantID,
+			Comment:    comment,
+			Photos:     photos,
+			CreatedBy:  createdBy,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return record, nil
+}
+
+// ListTraceabilityRecords retourne les enregistrements de traçabilité d'un
+// merchant, triés du plus récent au plus ancien, avec leurs photos chargées.
+// PhotoURL contient ici la clé R2 brute (photo_key) : la conversion en URL
+// publique se fait côté service (Service.resolveTraceabilityPhotoURLs).
+func (r *Repository) ListTraceabilityRecords(ctx context.Context, merchantID string, page, pageSize int) ([]HaccpTraceabilityRecord, int, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var totalItems int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM haccp_traceability_records
+		WHERE merchant_id = ? AND enabled = TRUE
+	`, merchantID).Scan(&totalItems); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, merchant_id, comment, created_by, created_at, updated_at
+		FROM haccp_traceability_records
+		WHERE merchant_id = ? AND enabled = TRUE
+		ORDER BY created_at DESC, id DESC
+		LIMIT ? OFFSET ?
+	`, merchantID, pageSize, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	records := make([]HaccpTraceabilityRecord, 0, pageSize)
+	for rows.Next() {
+		var record HaccpTraceabilityRecord
+		if err := rows.Scan(&record.ID, &record.MerchantID, &record.Comment, &record.CreatedBy, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	recordIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		recordIDs = append(recordIDs, record.ID)
+	}
+
+	photosByRecord, err := r.findTraceabilityPhotosByRecordIDs(ctx, recordIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range records {
+		records[i].Photos = photosByRecord[records[i].ID]
+		if records[i].Photos == nil {
+			records[i].Photos = make([]HaccpTraceabilityPhoto, 0)
+		}
+	}
+
+	return records, totalItems, nil
+}
+
+// GetTraceabilityRecord retourne un enregistrement de traçabilité avec ses
+// photos, ou sql.ErrNoRows si l'id n'existe pas (ou n'appartient pas au merchant).
+func (r *Repository) GetTraceabilityRecord(ctx context.Context, merchantID, recordID string) (*HaccpTraceabilityRecord, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var record HaccpTraceabilityRecord
+	err := db.QueryRowContext(ctx, `
+		SELECT id, merchant_id, comment, created_by, created_at, updated_at
+		FROM haccp_traceability_records
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
+		LIMIT 1
+	`, merchantID, recordID).Scan(&record.ID, &record.MerchantID, &record.Comment, &record.CreatedBy, &record.CreatedAt, &record.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	photosByRecord, err := r.findTraceabilityPhotosByRecordIDs(ctx, []string{record.ID})
+	if err != nil {
+		return nil, err
+	}
+	record.Photos = photosByRecord[record.ID]
+	if record.Photos == nil {
+		record.Photos = make([]HaccpTraceabilityPhoto, 0)
+	}
+
+	return &record, nil
+}
+
+func (r *Repository) findTraceabilityPhotosByRecordIDs(ctx context.Context, recordIDs []string) (map[string][]HaccpTraceabilityPhoto, error) {
+	result := make(map[string][]HaccpTraceabilityPhoto, len(recordIDs))
+	if len(recordIDs) == 0 {
+		return result, nil
+	}
+
+	db := dbx.GetDB(ctx, r.db)
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(recordIDs)), ",")
+	args := make([]interface{}, 0, len(recordIDs))
+	for _, id := range recordIDs {
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, record_id, photo_key, position
+		FROM haccp_traceability_photos
+		WHERE record_id IN (%s)
+		ORDER BY record_id ASC, position ASC
+	`, placeholders)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var recordID string
+		var photo HaccpTraceabilityPhoto
+		if err := rows.Scan(&photo.ID, &recordID, &photo.PhotoURL, &photo.Position); err != nil {
+			return nil, err
+		}
+		result[recordID] = append(result[recordID], photo)
+	}
+
+	return result, rows.Err()
+}
+
+// HasTraceabilityRecords indique si au moins un enregistrement de traçabilité
+// existe pour ce merchant (utilisé par GetHub pour activer le slot
+// ingredients_labeling).
+func (r *Repository) HasTraceabilityRecords(ctx context.Context, merchantID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var exists int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1
+		FROM haccp_traceability_records
+		WHERE merchant_id = ? AND enabled = TRUE
+		LIMIT 1
+	`, merchantID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

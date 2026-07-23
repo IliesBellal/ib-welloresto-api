@@ -204,6 +204,12 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT token
+		FROM users_rights`)).
+		WithArgs("merchant_1", "user_4").
+		WillReturnRows(sqlmock.NewRows([]string{"token"}).AddRow("tok-user-4"))
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT
 			id,
 			merchant_id,`)).
@@ -221,6 +227,66 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("UpdateMerchantUserRights() status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestUsersServiceUnlinkMerchantUserLooksUpTokenBeforeDisabling verifies that
+// UnlinkMerchantUser fetches the users_rights token (needed to invalidate the
+// cached session) before DisableMerchantUserLink flips enabled to FALSE —
+// GetUsersRightsToken filters on enabled=TRUE, so looking it up afterwards
+// would always miss. svc.redis is nil here (as in the other service-level
+// tests in this file): redis.Delete on a nil *redis.Client is a documented
+// no-op, so this test exercises the call ordering and nil-safety, not the
+// actual Redis DELETE payload.
+func TestUsersServiceUnlinkMerchantUserLooksUpTokenBeforeDisabling(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	svc := NewUsersService(repo, nil, nil, nil)
+	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT
+			id,
+			merchant_id,`)).
+		WithArgs("merchant_1", "user_4").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
+		}).AddRow(11, "merchant_1", "user_4", false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT token
+		FROM users_rights`)).
+		WithArgs("merchant_1", "user_4").
+		WillReturnRows(sqlmock.NewRows([]string{"token"}).AddRow("tok-user-4"))
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE employees
+		SET user_id = NULL`)).
+		WithArgs("merchant_1", "user_4").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE users_rights
+		SET enabled = FALSE`)).
+		WithArgs("merchant_1", "user_4").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := svc.UnlinkMerchantUser(ctx, "user_4")
+	if err != nil {
+		t.Fatalf("UnlinkMerchantUser() error = %v", err)
+	}
+	if !result.Unlinked {
+		t.Fatalf("UnlinkMerchantUser() result.Unlinked = false, want true")
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

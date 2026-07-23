@@ -12,7 +12,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type MenuRepository struct {
@@ -21,6 +21,24 @@ type MenuRepository struct {
 
 func NewMenuRepository(db *sql.DB) *MenuRepository {
 	return &MenuRepository{database: db}
+}
+
+// menuCastChar caste une expression en texte selon le dialecte — même pattern
+// que orders.castChar (CAST AS CHAR sans longueur = char(1) en Postgres).
+// Utilisé pour les jointures cross-type héritées (PK integer vs varchar).
+func menuCastChar(expr string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "CAST(" + expr + " AS TEXT)"
+	}
+	return "CAST(" + expr + " AS CHAR)"
+}
+
+// menuNumericID reproduit la coercition MySQL non-strict d'un identifiant
+// client lié à une colonne integer : toute chaîne non numérique valait 0
+// (donc "aucune correspondance") — Postgres lèverait une erreur de type dure.
+func menuNumericID(id string) bool {
+	_, err := strconv.Atoi(strings.TrimSpace(id))
+	return err == nil
 }
 
 // AvailableProduct is a lightweight product record used for upsell candidate selection.
@@ -44,7 +62,7 @@ type AvailableProduct struct {
 //
 // Ordered by category then name for deterministic slicing.
 func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, merchantID string) ([]AvailableProduct, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
@@ -55,16 +73,16 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 			COALESCE(p.category, '')   AS category_id,
 			COALESCE(pc.categ_name, '') AS category_name,
 			p.image_url,
-			COALESCE(p.is_popular, 0)  AS is_popular
+			COALESCE(p.is_popular, FALSE)  AS is_popular
 		FROM products p
 		LEFT JOIN productcateg pc
 			ON pc.merchant_categ_id = p.category
 			AND pc.merchant_id = p.merchant_id
 		WHERE p.merchant_id = ?
-		  AND p.available = 1
-		  AND p.enabled   = 1
+		  AND p.available = TRUE
+		  AND p.enabled   = TRUE
 		  AND p.status    IN ('available', '1')
-		  AND (p.by_product_of IS NULL OR p.by_product_of = '')
+		  AND (p.by_product_of IS NULL OR p.by_product_of = 0)
 		ORDER BY category_id, p.name ASC
 	`, merchantID)
 	if err != nil {
@@ -103,11 +121,11 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 }
 
 func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID string) ([]Unit, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Récupérer les unités et leurs descriptions (en français par défaut ici)
 	unitsQuery := `
-		SELECT CAST(u.id AS CHAR) as id, d.uom_desc, COALESCE(d.uom_short_desc, '') as uom_short_desc
+		SELECT ` + menuCastChar("u.id") + ` as id, d.uom_desc, COALESCE(d.uom_short_desc, '') as uom_short_desc
 		FROM unit_of_measure u
 		JOIN unit_of_measure_desc d ON u.id = d.id
 		WHERE d.lang = 'FR'
@@ -144,8 +162,8 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 	// 2. Récupérer les conversions dans un format directement exploitable par les applications.
 	conversionQuery := `
 		SELECT
-			CAST(conv.id_from AS CHAR),
-			CAST(conv.id_to AS CHAR),
+			` + menuCastChar("conv.id_from") + `,
+			` + menuCastChar("conv.id_to") + `,
 			COALESCE(target.uom_desc, ''),
 			COALESCE(target.uom_short_desc, ''),
 			conv.ratio
@@ -196,13 +214,13 @@ func (r *MenuRepository) GetUnitsOfMeasures(ctx context.Context, merchantID stri
 }
 
 func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) ([]Attribute, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Récupération des attributs
 	attrQuery := `
         SELECT id, attribute_type, name, title, min_options, max_options
         FROM configurable_attributes
-        WHERE merchant_id = ? AND enabled = 1`
+        WHERE merchant_id = ? AND enabled = TRUE`
 
 	attrRows, err := db.QueryContext(ctx, attrQuery, merchantID)
 	if err != nil {
@@ -233,11 +251,12 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	}
 
 	// 2. Récupération des options
+	// ca.enabled est boolean en cible, cao.enabled est resté integer (0/1)
 	optQuery := `
         SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url
         FROM configurable_attributes ca
         INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
-        WHERE ca.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1`
+        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1`
 
 	optRows, err := db.QueryContext(ctx, optQuery, merchantID)
 	if err != nil {
@@ -272,13 +291,13 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 }
 
 func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attributeID string) (*Attribute, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Récupération de l'attribut
 	attrQuery := `
         SELECT id, attribute_type, name, title, min_options, max_options
         FROM configurable_attributes
-        WHERE id = ? AND merchant_id = ? AND enabled = 1`
+        WHERE id = ? AND merchant_id = ? AND enabled = TRUE`
 
 	var attr Attribute
 	err := db.QueryRowContext(ctx, attrQuery, attributeID, merchantID).Scan(
@@ -293,7 +312,7 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 	// Initialisation à vide pour éviter le "null" en JSON si l'attribut n'a pas d'options
 	attr.Options = []AttributeOption{}
 
-	// 2. Récupération des options
+	// 2. Récupération des options (enabled est resté integer sur cette table)
 	optQuery := `
         SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled, image_url
         FROM configurable_attribute_options
@@ -324,23 +343,27 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 }
 
 func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string, payload *UpdateAttributePayload) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Generate new UUID for attribute
 	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
 
-	// Insert the new attribute
+	// Insert the new attribute.
+	// product_id est NOT NULL sans défaut et n'était jamais renseigné (MySQL
+	// non-strict insérait 0 — colonne héritée, le lien produit passe par
+	// product_configurable_attribute) : 0 explicite pour la parité Postgres.
 	insertAttrQuery := `
 		INSERT INTO configurable_attributes (
 			id,
 			merchant_id,
+			product_id,
 			attribute_type,
 			name,
 			title,
 			min_options,
 			max_options,
 			enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+		) VALUES (?, ?, 0, ?, ?, ?, ?, ?, TRUE)
 	`
 
 	_, err := db.ExecContext(ctx, insertAttrQuery,
@@ -372,26 +395,32 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 			enabled = *opt.Enabled
 		}
 
+		// id est une colonne auto-incrémentée (identity en cible) : l'ancien
+		// ID préfixé généré côté client était silencieusement coercé à 0 par
+		// MySQL, qui générait alors sa propre valeur — on laisse la base
+		// générer l'id dans les deux dialectes (même effet net).
+		// enabled est resté integer (0/1) sur cette table -> conversion Go.
 		insertOptQuery := `
 			INSERT INTO configurable_attribute_options (
-				id,
 				configurable_attribute_id,
 				title,
 				extra_price,
 				max_quantity,
 				enabled,
 				image_url
-			) VALUES (?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?)
 		`
 
-		optionID := helpers.GeneratePrefixedID(helpers.AttributeOptionIDPrefix)
+		enabledInt := 0
+		if enabled {
+			enabledInt = 1
+		}
 		_, err = db.ExecContext(ctx, insertOptQuery,
-			optionID,
 			attributeID,
 			opt.Title,
 			price,
 			maxQty,
-			enabled,
+			enabledInt,
 			opt.ImageURL)
 		if err != nil {
 			return "", fmt.Errorf("insert option error: %w", err)
@@ -402,7 +431,7 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 }
 
 func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attributeID string, payload *UpdateAttributePayload) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Verify attribute exists and belongs to merchant
 	var existsCheck int
@@ -480,13 +509,24 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				WHERE id = ? AND configurable_attribute_id = ?
 			`
 
+			// enabled est resté integer (0/1) sur cette table ; id est un
+			// integer identity — un *opt.ID non numérique valait 0 en MySQL
+			// (aucune ligne), on reproduit ce comportement côté Go.
+			enabledInt := 0
+			if enabled {
+				enabledInt = 1
+			}
+			optID := *opt.ID
+			if !menuNumericID(optID) {
+				optID = "0"
+			}
 			_, err = db.ExecContext(ctx, updateOptQuery,
 				opt.Title,
 				price,
 				maxQty,
-				enabled,
+				enabledInt,
 				opt.ImageURL,
-				*opt.ID,
+				optID,
 				attributeID)
 			if err != nil {
 				return fmt.Errorf("update option error: %w", err)
@@ -519,12 +559,16 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				) VALUES (?, ?, ?, ?, ?, ?)
 			`
 
+			enabledInt := 0
+			if enabled {
+				enabledInt = 1
+			}
 			_, err = db.ExecContext(ctx, insertOptQuery,
 				attributeID,
 				opt.Title,
 				price,
 				maxQty,
-				enabled,
+				enabledInt,
 				opt.ImageURL)
 			if err != nil {
 				return fmt.Errorf("insert option error: %w", err)
@@ -539,7 +583,13 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 // scopée au merchant via une jointure sur configurable_attributes (les
 // options n'ont pas de merchant_id direct).
 func (r *MenuRepository) GetAttributeOptionImageURL(ctx context.Context, merchantID, optionID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
+
+	// cao.id est un integer identity : un optionID non numérique valait 0 en
+	// MySQL (aucune ligne) — même résultat sans requête.
+	if !menuNumericID(optionID) {
+		return "", nil
+	}
 
 	var imageURL sql.NullString
 	err := db.QueryRowContext(ctx,
@@ -566,15 +616,28 @@ func (r *MenuRepository) GetAttributeOptionImageURL(ctx context.Context, merchan
 // UpdateAttributeOptionImageURL met à jour l'URL d'image d'une option,
 // scopée au merchant via une jointure sur configurable_attributes.
 func (r *MenuRepository) UpdateAttributeOptionImageURL(ctx context.Context, merchantID, optionID, imageURL string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
-	res, err := db.ExecContext(ctx,
-		`UPDATE configurable_attribute_options cao
+	// cao.id est un integer identity : un optionID non numérique valait 0 en
+	// MySQL (aucune ligne affectée) — même résultat sans requête.
+	if !menuNumericID(optionID) {
+		return fmt.Errorf("attribute_option_not_found")
+	}
+
+	// UPDATE multi-table MySQL -> UPDATE ... FROM (cible SET non qualifiée)
+	query := `UPDATE configurable_attribute_options cao
 		 INNER JOIN configurable_attributes ca ON ca.id = cao.configurable_attribute_id
 		 SET cao.image_url = ?
-		 WHERE cao.id = ? AND ca.merchant_id = ?`,
-		imageURL, optionID, merchantID,
-	)
+		 WHERE cao.id = ? AND ca.merchant_id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `UPDATE configurable_attribute_options
+		 SET image_url = ?
+		 FROM configurable_attributes ca
+		 WHERE ca.id = configurable_attribute_options.configurable_attribute_id
+		   AND configurable_attribute_options.id = ? AND ca.merchant_id = ?`
+	}
+
+	res, err := db.ExecContext(ctx, query, imageURL, optionID, merchantID)
 	if err != nil {
 		return fmt.Errorf("failed to update attribute option image: %w", err)
 	}
@@ -591,7 +654,7 @@ func (r *MenuRepository) UpdateAttributeOptionImageURL(ctx context.Context, merc
 }
 
 func (r *MenuRepository) DeleteAttribute(ctx context.Context, merchantID, attributeID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Verify attribute exists and belongs to merchant
 	var existsCheck int
@@ -602,9 +665,9 @@ func (r *MenuRepository) DeleteAttribute(ctx context.Context, merchantID, attrib
 		return fmt.Errorf("attribute_not_found")
 	}
 
-	// Disable the attribute by setting enabled = 0
+	// Disable the attribute by setting enabled = FALSE
 	_, err = db.ExecContext(ctx,
-		`UPDATE configurable_attributes SET enabled = 0 WHERE id = ? AND merchant_id = ?`,
+		`UPDATE configurable_attributes SET enabled = FALSE WHERE id = ? AND merchant_id = ?`,
 		attributeID, merchantID)
 	if err != nil {
 		return fmt.Errorf("delete attribute error: %w", err)
@@ -614,7 +677,7 @@ func (r *MenuRepository) DeleteAttribute(ctx context.Context, merchantID, attrib
 }
 
 func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMenu *time.Time) (*models.MenuResponse, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// --- HELPER FUNCTIONS CORRIGÉES ---
 	// On a supprimé les context.WithTimeout internes qui causaient le "context canceled" prématuré.
@@ -672,7 +735,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		q := `
             SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
             FROM productcateg pc
-            WHERE pc.available = 1 AND pc.enabled = 1 AND pc.merchant_id = ?
+            WHERE pc.available = TRUE AND pc.enabled = TRUE AND pc.merchant_id = ?
             ORDER BY pc.categ_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -716,7 +779,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             LEFT JOIN products subp on subp.product_id = p.by_product_of
             WHERE p.merchant_id = ?
-			AND (subp.product_id IS NULL OR subp.product_id = p.product_id) AND p.status not in ("removed_from_menu") AND p.enabled = 1
+			AND (subp.product_id IS NULL OR subp.product_id = p.product_id) AND p.status not in ('removed_from_menu') AND p.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -799,7 +862,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
-            WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL AND p.status not in ("removed_from_menu") AND p.enabled = 1
+            WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL AND p.status not in ('removed_from_menu') AND p.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -862,7 +925,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             INNER JOIN requires rq on c.component_id = rq.component_id and rq.enabled = true
             INNER JOIN recipes r on r.recipe_id = rq.recipe_id
             INNER JOIN unit_of_measure_desc uomd on uomd.lang = 'FR' and uomd.id = rq.unit_of_measure
-            WHERE c.merchant_id = ? AND c.available = 1 AND rq.enabled = true
+            WHERE c.merchant_id = ? AND c.available = TRUE AND rq.enabled = true
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -893,10 +956,10 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		q := `
             SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
             FROM products p
-            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
-            WHERE p.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
+            WHERE p.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -921,9 +984,9 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		q := `
             SELECT ca.id, pca.product_id, ca.title, ca.max_options, ca.attribute_type, ca.min_options
             FROM products p
-            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-            WHERE p.merchant_id = ? AND ca.enabled = 1 AND pca.enabled = 1
+            WHERE p.merchant_id = ? AND ca.enabled = TRUE AND pca.enabled = TRUE
             ORDER BY pca.num_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -951,7 +1014,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ? AND available = 1 AND enabled = 1
+				SELECT ` + menuCastChar("product_id") + ` FROM products WHERE merchant_id = ? AND available = TRUE AND enabled = TRUE
 			)
 		`
 		rows, err := runQuery("allergens_per_product", q, merchantID)
@@ -977,7 +1040,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ? AND available = 1 AND enabled = 1
+				SELECT ` + menuCastChar("product_id") + ` FROM products WHERE merchant_id = ? AND available = TRUE AND enabled = TRUE
 			)
 			ORDER BY t.display_order ASC
 		`
@@ -1026,7 +1089,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	var compCats []compCatTmp
 	{
 		step := "component_categories"
-		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? AND available = 1 ORDER BY categ_order ASC`
+		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? AND available = TRUE ORDER BY categ_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
@@ -1064,8 +1127,8 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		purchase_price, purchase_price_quantity, c.purchase_unit_id, COALESCE(puomd.uom_desc, '') as purchase_uom_desc
 		FROM components c
 		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
-		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
-		WHERE c.merchant_id = ? AND c.enabled = 1 AND c.available = 1
+		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND ` + menuCastChar("puomd.id") + ` = c.purchase_unit_id
+		WHERE c.merchant_id = ? AND c.enabled = TRUE AND c.available = TRUE
 		`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1206,7 +1269,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 }
 
 func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) ([]models.ProductCategory, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// --- HELPER FUNCTIONS (same as GetMenu) ---
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
@@ -1231,7 +1294,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.available
             FROM productcateg pc
             WHERE pc.merchant_id = ?
-			AND pc.enabled = 1
+			AND pc.enabled = TRUE
             ORDER BY pc.categ_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -1272,7 +1335,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             LEFT JOIN products subp on subp.product_id = p.by_product_of
             WHERE p.merchant_id = ? AND (subp.product_id IS NULL OR subp.product_id = p.product_id)
-			AND p.enabled = 1
+			AND p.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1355,7 +1418,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
             INNER JOIN tva_categories tva_take_away on tva_take_away.tva_id = p.tva_take_away_id
             WHERE p.merchant_id = ? AND p.by_product_of IS NOT NULL
-			AND p.enabled = 1
+			AND p.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1431,7 +1494,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
 		LEFT JOIN unit_of_measure_convert conv ON conv.id_from = rq.unit_of_measure AND conv.id_to = c.unit_of_measure
 		WHERE c.merchant_id = ?
-		AND c.enabled = 1
+		AND c.enabled = TRUE
 		AND rq.enabled = true
 	`
 		rows, err := runQuery(step, q, merchantID)
@@ -1539,11 +1602,11 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		q := `
             SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
             FROM products p
-            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
-            WHERE p.merchant_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
-			AND p.enabled = 1
+            WHERE p.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
+			AND p.enabled = TRUE
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1566,10 +1629,10 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		q := `
             SELECT ca.id, pca.product_id, ca.title, ca.max_options, ca.attribute_type, ca.min_options
             FROM products p
-            INNER JOIN product_configurable_attribute pca on pca.product_id = p.product_id
+            INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-            WHERE p.merchant_id = ? AND ca.enabled = 1 AND pca.enabled = 1
-			AND p.enabled = 1
+            WHERE p.merchant_id = ? AND ca.enabled = TRUE AND pca.enabled = TRUE
+			AND p.enabled = TRUE
             ORDER BY pca.num_order ASC
         `
 		rows, err := runQuery(step, q, merchantID)
@@ -1595,7 +1658,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ? AND enabled = 1
+				SELECT ` + menuCastChar("product_id") + ` FROM products WHERE merchant_id = ? AND enabled = TRUE
 			)
 		`
 		rows, err := runQuery("allergens_per_product_all", q, merchantID)
@@ -1621,7 +1684,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			FROM product_tags pt
 			INNER JOIN tags t ON t.tag_id = pt.tag_id
 			WHERE t.merchant_id = ? AND pt.product_id IN (
-				SELECT product_id FROM products WHERE merchant_id = ? AND enabled = 1
+				SELECT ` + menuCastChar("product_id") + ` FROM products WHERE merchant_id = ? AND enabled = TRUE
 			)
 			ORDER BY t.display_order ASC
 		`
@@ -1697,7 +1760,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 }
 
 func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string) ([]models.ComponentCategory, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
 		rows, err := db.QueryContext(ctx, query, args...)
@@ -1716,7 +1779,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 	var compCats []compCatTmp
 	{
 		step := "component_categories_all"
-		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? and enabled = 1 ORDER BY categ_order ASC`
+		q := `SELECT merchant_categ_id, name, categ_order FROM component_category WHERE merchant_id = ? and enabled = TRUE ORDER BY categ_order ASC`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
 			return nil, err
@@ -1773,8 +1836,8 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 				c.storage_temp_max
 			FROM components c
 			LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
-			LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
-			WHERE c.merchant_id = ? and c.enabled = 1
+			LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND ` + menuCastChar("puomd.id") + ` = c.purchase_unit_id
+			WHERE c.merchant_id = ? and c.enabled = TRUE
 		`
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1888,7 +1951,7 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 
 // GetComponent retrieves a single component by ID
 func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, componentID string) (*models.ComponentBasic, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	q := `
 		SELECT
@@ -1910,8 +1973,8 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 			c.storage_temp_max
 		FROM components c
 		LEFT JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = c.unit_of_measure
-		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND puomd.id = c.purchase_unit_id
-		WHERE c.component_id = ? AND c.merchant_id = ? AND c.enabled = 1
+		LEFT JOIN unit_of_measure_desc puomd ON puomd.lang = 'FR' AND ` + menuCastChar("puomd.id") + ` = c.purchase_unit_id
+		WHERE c.component_id = ? AND c.merchant_id = ? AND c.enabled = TRUE
 	`
 
 	var (
@@ -2015,7 +2078,7 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 }
 
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// --- VALIDATION 1: Vérifier les champs obligatoires de TVA ---
 	if p.TvaInID == "" {
@@ -2027,11 +2090,22 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	if p.TvaTakeAwayID == "" {
 		return "0", fmt.Errorf("tva_take_away_id is required")
 	}
+	// tva_id est un integer : un ID non numérique valait 0 en MySQL non-strict
+	// (aucune correspondance) — même refus côté Go, sans erreur de type Postgres.
+	if !menuNumericID(p.TvaInID) {
+		return "0", fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
+	}
+	if !menuNumericID(p.TvaDeliveryID) {
+		return "0", fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
+	}
+	if !menuNumericID(p.TvaTakeAwayID) {
+		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
+	}
 
 	// --- VALIDATION 2: Vérifier que la catégorie existe et est activée ---
 	var categoryExists int
 	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		p.CategoryID, p.MerchantID,
 	).Scan(&categoryExists)
 	if err != nil {
@@ -2045,7 +2119,7 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	var tvaCount int
 	err = db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tva_categories 
-		 WHERE enabled = 1 AND tva_id IN (?, ?, ?)`,
+		 WHERE enabled = TRUE AND tva_id IN (?, ?, ?)`,
 		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
 	).Scan(&tvaCount)
 	if err != nil {
@@ -2059,9 +2133,9 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	var tvaInExists, tvaDeliveryExists, tvaTakeAwayExists int
 	err = db.QueryRowContext(ctx,
 		`SELECT 
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_in_count,
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_delivery_count,
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = 1 AND tva_id = ?) as tva_take_away_count`,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_in_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_delivery_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_take_away_count`,
 		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
 	).Scan(&tvaInExists, &tvaDeliveryExists, &tvaTakeAwayExists)
 	if err != nil {
@@ -2077,13 +2151,19 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
 	}
 
-	// Calculer le prix le plus haut entre price, price_delivery, et price_takeaway
-	maxPrice := p.Price
-	if p.PriceDelivery > maxPrice {
-		maxPrice = p.PriceDelivery
+	// Calculer le prix le plus haut entre price, price_delivery, et price_takeaway.
+	// Les prix arrivent en float64 (JSON) sur des colonnes integer : MySQL
+	// non-strict arrondissait silencieusement, pgx refuse d'encoder un float
+	// sur un integer -> arrondi Go (même valeur stockée, cf. cash_fund Tier 3).
+	price := int(math.Round(p.Price))
+	priceTakeAway := int(math.Round(p.PriceTakeAway))
+	priceDelivery := int(math.Round(p.PriceDelivery))
+	maxPrice := price
+	if priceDelivery > maxPrice {
+		maxPrice = priceDelivery
 	}
-	if p.PriceTakeAway > maxPrice {
-		maxPrice = p.PriceTakeAway
+	if priceTakeAway > maxPrice {
+		maxPrice = priceTakeAway
 	}
 
 	query := `
@@ -2104,15 +2184,16 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	res, err := db.ExecContext(
+	id, err := db.InsertReturningID(
 		ctx,
 		query,
+		"product_id",
 		p.MerchantID,
 		p.Name,
 		p.ProductDesc,
-		p.Price,
-		p.PriceTakeAway,
-		p.PriceDelivery,
+		price,
+		priceTakeAway,
+		priceDelivery,
 		maxPrice, // price_uber_eats
 		maxPrice, // price_deliveroo
 		p.TvaInID,
@@ -2125,18 +2206,13 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		return "0", err
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return "0", err
-	}
-
 	_ = r.setMenuUpdated(ctx, p.MerchantID)
 
 	return strconv.FormatInt(id, 10), nil
 }
 
 func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID, name, description string, price int) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		INSERT INTO products (
@@ -2150,20 +2226,15 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 			tva_delivery_id,
 			tva_take_away_id
 		)
-		VALUES (?, ?, ?, 'UBER_EATS_TEMP', ?, 0, 5, 9, 3)
+		VALUES (?, ?, ?, 'UBER_EATS_TEMP', ?, FALSE, 5, 9, 3)
 	`
 
-	res, err := db.ExecContext(ctx, query,
+	newID, err := db.InsertReturningID(ctx, query, "product_id",
 		merchantID,
 		name,
 		description,
 		price,
 	)
-	if err != nil {
-		return 0, err
-	}
-
-	newID, err := res.LastInsertId()
 	if err != nil {
 		return 0, err
 	}
@@ -2174,7 +2245,7 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 }
 
 func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID string) (*models.ProductEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Helper function to run queries with logging
 	runQuery := func(step string, query string, args ...interface{}) (*sql.Rows, error) {
@@ -2306,7 +2377,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			INNER JOIN requires rq ON c.component_id = rq.component_id AND rq.enabled = true
 			INNER JOIN recipes r ON r.recipe_id = rq.recipe_id AND r.product_id = ?
 			INNER JOIN unit_of_measure_desc uomd ON uomd.lang = 'FR' AND uomd.id = rq.unit_of_measure
-			WHERE c.merchant_id = ? AND c.available = 1
+			WHERE c.merchant_id = ? AND c.available = TRUE
 		`
 		rows, err := runQuery(step, q, productID, merchantID)
 		if err != nil {
@@ -2336,7 +2407,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			FROM product_configurable_attribute pca
 			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
 			INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
-			WHERE pca.product_id = ? AND ca.enabled = 1 AND cao.enabled = 1 AND pca.enabled = 1
+			WHERE pca.product_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
 		`
 		rows, err := runQuery(step, q, productID)
 		if err != nil {
@@ -2361,7 +2432,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			SELECT ca.id, ca.title, ca.max_options, ca.attribute_type, ca.min_options
 			FROM product_configurable_attribute pca
 			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
-			WHERE pca.product_id = ? AND ca.enabled = 1 AND pca.enabled = 1
+			WHERE pca.product_id = ? AND ca.enabled = TRUE AND pca.enabled = TRUE
 			ORDER BY pca.num_order ASC
 		`
 		rows, err := runQuery(step, q, productID)
@@ -2434,7 +2505,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 }
 
 func (r *MenuRepository) SetComponentStatus(ctx context.Context, merchantID, cid, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE components 
@@ -2452,7 +2523,7 @@ func (r *MenuRepository) SetComponentStatus(ctx context.Context, merchantID, cid
 }
 
 func (r *MenuRepository) SetProductStatus(ctx context.Context, merchantID, pid, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	res, err := db.ExecContext(ctx,
 		`UPDATE products 
@@ -2470,7 +2541,7 @@ func (r *MenuRepository) SetProductStatus(ctx context.Context, merchantID, pid, 
 }
 
 func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	boolStatus := status == "1" || status == "true" || status == "TRUE" || status == "True" // Normalize to "1" or "0"
 
@@ -2490,7 +2561,7 @@ func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, mer
 }
 
 func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID, productID, status string) (int64, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	boolStatus := status == "1" || status == "true" || status == "TRUE" || status == "True" // Normalize to "1" or "0"
 
@@ -2510,7 +2581,7 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 }
 
 func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, categoryID, name string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE productcateg 
@@ -2533,12 +2604,12 @@ func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merch
 		return fmt.Errorf("product_ids list cannot be empty")
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 2. Vérifier que la catégorie existe et appartient au merchant
 	var categoryExists int
 	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		categoryID, merchantID,
 	).Scan(&categoryExists)
 	if err != nil {
@@ -2567,7 +2638,7 @@ func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merch
 	query1 := fmt.Sprintf(`
         UPDATE products 
         SET category = ? 
-        WHERE merchant_id = ? AND product_id IN (%s) AND enabled = 1`,
+        WHERE merchant_id = ? AND product_id IN (%s) AND enabled = TRUE`,
 		inClause)
 
 	_, err = db.ExecContext(ctx, query1, args...)
@@ -2580,7 +2651,7 @@ func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merch
 	query2 := fmt.Sprintf(`
         UPDATE products 
         SET category = ? 
-        WHERE merchant_id = ? AND by_product_of IN (%s) AND enabled = 1`,
+        WHERE merchant_id = ? AND by_product_of IN (%s) AND enabled = TRUE`,
 		inClause)
 
 	_, err = db.ExecContext(ctx, query2, args...)
@@ -2595,11 +2666,11 @@ func (r *MenuRepository) BulkAssignProductsToCategory(ctx context.Context, merch
 }
 
 func (r *MenuRepository) DeleteProductCategory(ctx context.Context, merchantID, categoryID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE productcateg 
-		 SET enabled = 0
+		 SET enabled = FALSE
 		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
 		categoryID, merchantID,
 	)
@@ -2613,11 +2684,11 @@ func (r *MenuRepository) DeleteProductCategory(ctx context.Context, merchantID, 
 }
 
 func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, componentID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE components 
-		 SET enabled = 0
+		 SET enabled = FALSE
 		 WHERE component_id = ? AND merchant_id = ?`,
 		componentID, merchantID,
 	)
@@ -2631,11 +2702,11 @@ func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, compon
 }
 
 func (r *MenuRepository) DeleteComponentCategory(ctx context.Context, merchantID, categoryID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE component_category 
-		 SET enabled = 0
+		 SET enabled = FALSE
 		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
 		categoryID, merchantID,
 	)
@@ -2650,12 +2721,12 @@ func (r *MenuRepository) DeleteComponentCategory(ctx context.Context, merchantID
 
 // UpdateComponent met à jour les informations d'un composant
 func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, componentID string, updates *UpdateComponentPayload) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Vérifier que le composant existe et appartient au merchant
 	var componentExists int
 	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM components WHERE component_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(*) FROM components WHERE component_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		componentID, merchantID,
 	).Scan(&componentExists)
 	if err != nil {
@@ -2665,8 +2736,13 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 		return fmt.Errorf("component does not exist or is disabled")
 	}
 
-	// Vérifier les unités de mesure si fournies
+	// Vérifier les unités de mesure si fournies. unit_of_measure.id est un
+	// integer : un ID non numérique valait 0 en MySQL (aucune ligne) — même
+	// refus côté Go.
 	if updates.PurchaseUnitID != nil && *updates.PurchaseUnitID != "" {
+		if !menuNumericID(*updates.PurchaseUnitID) {
+			return fmt.Errorf("purchase_unit_id does not exist")
+		}
 		var unitExists int
 		err = db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
@@ -2744,7 +2820,7 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 
 	// Exécuter la requête UPDATE
 	query := fmt.Sprintf(
-		`UPDATE components SET %s WHERE component_id = ? AND merchant_id = ? AND enabled = 1`,
+		`UPDATE components SET %s WHERE component_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		strings.Join(updateFields, ", "),
 	)
 
@@ -2759,7 +2835,7 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 }
 
 func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponentPayload) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Vérifier que la catégorie existe
 	var categoryExists int
@@ -2774,7 +2850,12 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		return "0", fmt.Errorf("category_not_found")
 	}
 
-	// Vérifier que l'unité de mesure de vente existe
+	// Vérifier que l'unité de mesure de vente existe. unit_of_measure.id est
+	// un integer : un ID non numérique valait 0 en MySQL (aucune ligne) —
+	// même refus côté Go.
+	if p.UnitID == nil || !menuNumericID(*p.UnitID) {
+		return "0", fmt.Errorf("unit_not_found")
+	}
 	var unitExists int
 	err = db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
@@ -2789,6 +2870,9 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 
 	// Vérifier que l'unité de mesure d'achat existe si fournie
 	if p.PurchaseUnitID != nil && *p.PurchaseUnitID != "" {
+		if !menuNumericID(*p.PurchaseUnitID) {
+			return "0", fmt.Errorf("purchase_unit_id_not_found")
+		}
 		var purchaseUnitExists int
 		err = db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM unit_of_measure WHERE id = ?`,
@@ -2857,12 +2941,13 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 			storage_temp_max,
 			enabled,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, '1')
 	`
 
-	res, err := db.ExecContext(
+	id, err := db.InsertReturningID(
 		ctx,
 		query,
+		"component_id",
 		p.MerchantID,
 		name,
 		p.CategoryID,
@@ -2879,18 +2964,13 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 		return "0", fmt.Errorf("insert component error: %w", err)
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return "0", fmt.Errorf("get last insert id error: %w", err)
-	}
-
 	_ = r.setMenuUpdated(ctx, p.MerchantID)
 
 	return strconv.FormatInt(id, 10), nil
 }
 
 func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertComponentCategoryPayload) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
@@ -2902,20 +2982,24 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 		name = strings.ToUpper(string(name[0])) + name[1:]
 	}
 
-	// Insérer la catégorie
+	// Insérer la catégorie. merchant_categ_id est NOT NULL sans défaut (MySQL
+	// non-strict insérait '' avant l'UPDATE qui suit) : '' explicite pour la
+	// parité Postgres.
 	query := `
 		INSERT INTO component_category (
 			merchant_id,
+			merchant_categ_id,
 			name,
 			categ_order,
 			enabled,
 			available
-		) VALUES (?, ?, 999, 1, 1)
+		) VALUES (?, '', ?, 999, TRUE, TRUE)
 	`
 
-	res, err := db.ExecContext(
+	id, err := db.InsertReturningID(
 		ctx,
 		query,
+		"id",
 		p.MerchantID,
 		name,
 	)
@@ -2923,14 +3007,10 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 		return "0", fmt.Errorf("insert component category error: %w", err)
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return "0", fmt.Errorf("get last insert id error: %w", err)
-	}
-
 	// Mettre à jour merchant_categ_id avec l'ID de la catégorie
+	// (colonne varchar : formatage Go de l'ID, pgx n'encode pas un int en varchar)
 	query = `
-		UPDATE component_category 
+		UPDATE component_category
 		SET merchant_categ_id = ?
 		WHERE merchant_id = ? AND id = ?
 	`
@@ -2938,7 +3018,7 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 	_, err = db.ExecContext(
 		ctx,
 		query,
-		id,
+		strconv.FormatInt(id, 10),
 		p.MerchantID,
 		id,
 	)
@@ -2952,7 +3032,7 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 }
 
 func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreateProductCategoryPayload) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
@@ -2974,20 +3054,24 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 		return "0", fmt.Errorf("get max order error: %w", err)
 	}
 
-	// Insérer la catégorie
+	// Insérer la catégorie. merchant_categ_id est NOT NULL sans défaut (MySQL
+	// non-strict insérait '' avant l'UPDATE qui suit) : '' explicite pour la
+	// parité Postgres.
 	query := `
 		INSERT INTO productcateg (
 			merchant_id,
+			merchant_categ_id,
 			categ_name,
 			categ_order,
 			enabled,
 			available
-		) VALUES (?, ?, ?, 1, 1)
+		) VALUES (?, '', ?, ?, TRUE, TRUE)
 	`
 
-	res, err := db.ExecContext(
+	id, err := db.InsertReturningID(
 		ctx,
 		query,
+		"categ_id",
 		p.MerchantID,
 		name,
 		maxOrder+1,
@@ -2996,22 +3080,18 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 		return "0", fmt.Errorf("insert product category error: %w", err)
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return "0", fmt.Errorf("get last insert id error: %w", err)
-	}
-
 	// Mise à jour temporaire avant migration
+	// (colonne varchar : formatage Go de l'ID, pgx n'encode pas un int en varchar)
 	query = `
-		UPDATE productcateg 
+		UPDATE productcateg
 		SET merchant_categ_id = ?
 		WHERE merchant_id = ? AND categ_id = ?
 	`
 
-	res, err = db.ExecContext(
+	_, err = db.ExecContext(
 		ctx,
 		query,
-		id,
+		strconv.FormatInt(id, 10),
 		p.MerchantID,
 		id,
 	)
@@ -3022,7 +3102,7 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 }
 
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Update basic product fields
 	query := `
@@ -3046,6 +3126,14 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		WHERE product_id = ? AND merchant_id = ?
 	`
 
+	// by_product_of est un integer nullable : MySQL coerçait '' en 0 ; côté
+	// Go, une chaîne vide ou non numérique devient NULL (même effet racine
+	// dans les deux dialectes, cf. rapport 29).
+	byProductOf := p.ByProductOf
+	if byProductOf != nil && !menuNumericID(*byProductOf) {
+		byProductOf = nil
+	}
+
 	_, err := db.ExecContext(ctx, query,
 		p.Name,
 		p.Description,
@@ -3055,7 +3143,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.Price,
 		p.PriceTakeAway,
 		p.PriceDelivery,
-		p.ByProductOf,
+		byProductOf,
 		p.IsAvailableOnSno,
 		p.Enabled,
 		p.Status,
@@ -3110,7 +3198,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 // SyncProductIntegrations updates the integration settings for a product (Uber Eats, Deliveroo).
 // It updates the sync status and price overrides for each integration.
 func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID, productID string, integrations models.ProductIntegrations) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant
 	var count int
@@ -3178,7 +3266,7 @@ func (r *MenuRepository) SyncProductIntegrations(ctx context.Context, merchantID
 // SyncProductAttributes replaces all configurable attributes for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) SyncProductAttributes(ctx context.Context, merchantID, productID string, attributeIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant
 	var count int
@@ -3205,9 +3293,9 @@ func (r *MenuRepository) SyncProductAttributes(ctx context.Context, merchantID, 
 	// Insert new attribute associations with ordering
 	for i, attributeID := range attributeIDs {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO product_configurable_attribute 
-			 (product_id, configurable_attribute_id, enabled, num_order) 
-			 VALUES (?, ?, 1, ?)`,
+			`INSERT INTO product_configurable_attribute
+			 (product_id, configurable_attribute_id, enabled, num_order)
+			 VALUES (?, ?, TRUE, ?)`,
 			productID, attributeID, i,
 		)
 		if err != nil {
@@ -3221,7 +3309,7 @@ func (r *MenuRepository) SyncProductAttributes(ctx context.Context, merchantID, 
 // SyncProductComponents replaces all component requirements for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, productID string, components []ProductComponentUpdate) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Ownership check: verify product belongs to merchant
 	var count int
@@ -3244,17 +3332,17 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 	).Scan(&recipeID)
 
 	if err == sql.ErrNoRows {
-		// Create new recipe for this product
-		result, err := db.ExecContext(ctx,
-			`INSERT INTO recipes (product_id) VALUES (?)`,
-			productID,
+		// Create new recipe for this product. merchant_id est NOT NULL sans
+		// défaut et n'était jamais renseigné (MySQL non-strict insérait la
+		// valeur vide) — on écrit le merchantID réel, disponible ici, dans
+		// les deux dialectes.
+		recipeID, err = db.InsertReturningID(ctx,
+			`INSERT INTO recipes (product_id, merchant_id) VALUES (?, ?)`,
+			"recipe_id",
+			productID, merchantID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create recipe: %w", err)
-		}
-		recipeID, err = result.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("failed to get recipe ID: %w", err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("failed to query recipe: %w", err)
@@ -3269,13 +3357,24 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 		return fmt.Errorf("failed to delete old requires: %w", err)
 	}
 
-	// Insert new component requirements
+	// Insert new component requirements. component_id/unit_of_measure sont des
+	// integers : un ID non numérique valait 0 en MySQL non-strict — même
+	// coercition côté Go (0 = aucune correspondance) pour éviter l'erreur de
+	// type Postgres.
 	for _, comp := range components {
+		componentID := comp.ComponentID
+		if !menuNumericID(componentID) {
+			componentID = "0"
+		}
+		unitID := comp.UnitID
+		if !menuNumericID(unitID) {
+			unitID = "0"
+		}
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO requires 
-			 (recipe_id, component_id, quantity, unit_of_measure, enabled) 
-			 VALUES (?, ?, ?, ?, 1)`,
-			recipeID, comp.ComponentID, comp.Quantity, comp.UnitID,
+			`INSERT INTO requires
+			 (recipe_id, component_id, quantity, unit_of_measure, enabled)
+			 VALUES (?, ?, ?, ?, TRUE)`,
+			recipeID, componentID, comp.Quantity, unitID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert component requirement: %w", err)
@@ -3286,7 +3385,7 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 }
 
 func (r *MenuRepository) GetProductImageURL(ctx context.Context, merchantID, productID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var imageURL sql.NullString
 	err := db.QueryRowContext(ctx,
@@ -3309,7 +3408,7 @@ func (r *MenuRepository) GetProductImageURL(ctx context.Context, merchantID, pro
 }
 
 func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, productID, imageURL string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE products 
@@ -3327,11 +3426,11 @@ func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, pro
 }
 
 func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 		UPDATE merchant_parameters
-		SET last_menu_update = UTC_TIMESTAMP
+		SET last_menu_update = ` + dbx.UTCNow() + `
 		WHERE merchant_id = ?
 	`
 
@@ -3343,7 +3442,7 @@ func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) 
 // SyncProductAllergens replaces all allergen associations for a product in a single transaction.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, productID string, allergenIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Ownership check
 	var count int
@@ -3388,7 +3487,7 @@ func (r *MenuRepository) SyncProductAllergens(ctx context.Context, merchantID, p
 // BulkAssignTag adds a tag to multiple products without removing their other tags.
 // Ownership of both the tag and every product is verified against merchantID.
 func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(productIDs) == 0 {
 		return nil
@@ -3459,7 +3558,7 @@ func (r *MenuRepository) BulkAssignTag(ctx context.Context, merchantID, tagID st
 // Removes all existing links from this tag to any product, then adds new links to the provided product IDs.
 // Ownership of both the tag and every product is verified against merchantID.
 func (r *MenuRepository) BulkAssignProductsToTag(ctx context.Context, merchantID, tagID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Verify that the tag belongs to the merchant
 	var tagCount int
@@ -3534,8 +3633,14 @@ func (r *MenuRepository) BulkAssignProductsToTag(ctx context.Context, merchantID
 }
 
 func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID string) ([]MarketingCategoryEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
+	// GROUP_CONCAT est MySQL-only -> string_agg côté Postgres (même tri, même
+	// séparateur ; DISTINCT impose que l'ORDER BY porte sur l'expression agrégée)
+	concatExpr := `COALESCE(GROUP_CONCAT(DISTINCT pmc.product_id ORDER BY pmc.product_id SEPARATOR ','), '')`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		concatExpr = `COALESCE(string_agg(DISTINCT pmc.product_id, ',' ORDER BY pmc.product_id), '')`
+	}
 	query := `
 		SELECT
 			mc.id,
@@ -3543,12 +3648,12 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 			mc.display_order,
 			mc.available,
 			COUNT(DISTINCT pmc.product_id) AS product_count,
-			COALESCE(GROUP_CONCAT(DISTINCT pmc.product_id ORDER BY pmc.product_id SEPARATOR ','), '') AS product_ids
+			` + concatExpr + ` AS product_ids
 		FROM marketing_categories mc
 		LEFT JOIN product_marketing_categories pmc
 			ON pmc.marketing_category_id = mc.id
 			AND pmc.merchant_id = mc.merchant_id
-		WHERE mc.merchant_id = ? AND mc.enabled = 1
+		WHERE mc.merchant_id = ? AND mc.enabled = TRUE
 		GROUP BY mc.id, mc.name, mc.display_order, mc.available
 		ORDER BY mc.display_order ASC, mc.id ASC
 	`
@@ -3582,7 +3687,7 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 }
 
 func (r *MenuRepository) CreateMarketingCategory(ctx context.Context, merchantID, name string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -3602,27 +3707,28 @@ func (r *MenuRepository) CreateMarketingCategory(ctx context.Context, merchantID
 		return "", fmt.Errorf("get max order error: %w", err)
 	}
 
-	res, err := db.ExecContext(ctx,
+	// id est une PK varchar générée côté client : l'ancien LastInsertId()
+	// renvoyait 0 en MySQL (pas d'auto-increment sur cette table) — la
+	// fonction retournait donc "0" au lieu de l'ID réellement créé, et le
+	// même appel échoue durement sous pgx. On retourne désormais l'ID généré
+	// (bug de prod corrigé, à déployer indépendamment de la migration).
+	categoryID := helpers.GeneratePrefixedID("mark-categ")
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO marketing_categories (id, merchant_id, name, display_order, enabled, available)
-		 VALUES (?, ?, ?, ?, 1, 1)`,
-		helpers.GeneratePrefixedID("mark-categ"), merchantID, name, maxOrder+1,
+		 VALUES (?, ?, ?, ?, TRUE, TRUE)`,
+		categoryID, merchantID, name, maxOrder+1,
 	)
 	if err != nil {
 		return "", err
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return "", fmt.Errorf("get last insert id error: %w", err)
-	}
-
 	_ = r.setMenuUpdated(ctx, merchantID)
 
-	return strconv.FormatInt(id, 10), nil
+	return categoryID, nil
 }
 
 func (r *MenuRepository) UpdateMarketingCategory(ctx context.Context, merchantID, categoryID string, payload UpdateMarketingCategoryPayload) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	fields := []string{}
 	args := []interface{}{}
@@ -3647,7 +3753,7 @@ func (r *MenuRepository) UpdateMarketingCategory(ctx context.Context, merchantID
 	}
 
 	args = append(args, categoryID, merchantID)
-	query := fmt.Sprintf(`UPDATE marketing_categories SET %s WHERE id = ? AND merchant_id = ? AND enabled = 1`, strings.Join(fields, ", "))
+	query := fmt.Sprintf(`UPDATE marketing_categories SET %s WHERE id = ? AND merchant_id = ? AND enabled = TRUE`, strings.Join(fields, ", "))
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return err
@@ -3659,10 +3765,10 @@ func (r *MenuRepository) UpdateMarketingCategory(ctx context.Context, merchantID
 }
 
 func (r *MenuRepository) DeleteMarketingCategory(ctx context.Context, merchantID, categoryID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx,
-		`UPDATE marketing_categories SET enabled = 0 WHERE id = ? AND merchant_id = ?`,
+		`UPDATE marketing_categories SET enabled = FALSE WHERE id = ? AND merchant_id = ?`,
 		categoryID, merchantID,
 	); err != nil {
 		return err
@@ -3678,11 +3784,11 @@ func (r *MenuRepository) UpdateMarketingCategoriesDisplayOrder(ctx context.Conte
 		return nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	for i, id := range categoryIDs {
 		if _, err := db.ExecContext(ctx,
-			`UPDATE marketing_categories SET display_order = ? WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+			`UPDATE marketing_categories SET display_order = ? WHERE id = ? AND merchant_id = ? AND enabled = TRUE`,
 			i+1, id, merchantID,
 		); err != nil {
 			return err
@@ -3695,11 +3801,11 @@ func (r *MenuRepository) UpdateMarketingCategoriesDisplayOrder(ctx context.Conte
 }
 
 func (r *MenuRepository) AssignProductMarketingCategory(ctx context.Context, merchantID, productID, categoryID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	var productCount int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ? AND enabled = TRUE`,
 		productID, merchantID,
 	).Scan(&productCount); err != nil {
 		return err
@@ -3710,7 +3816,7 @@ func (r *MenuRepository) AssignProductMarketingCategory(ctx context.Context, mer
 
 	var categoryCount int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = TRUE`,
 		categoryID, merchantID,
 	).Scan(&categoryCount); err != nil {
 		return err
@@ -3719,12 +3825,16 @@ func (r *MenuRepository) AssignProductMarketingCategory(ctx context.Context, mer
 		return models.ErrForbidden
 	}
 
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id)
+	// PK de product_marketing_categories = (product_id) -> ON CONFLICT côté PG
+	upsertQuery := `INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id)
 		 VALUES (?, ?, ?)
-		 ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`,
-		productID, categoryID, merchantID,
-	)
+		 ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		upsertQuery = `INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT (product_id) DO UPDATE SET marketing_category_id = EXCLUDED.marketing_category_id, merchant_id = EXCLUDED.merchant_id, updated_at = CURRENT_TIMESTAMP`
+	}
+	_, err := db.ExecContext(ctx, upsertQuery, productID, categoryID, merchantID)
 	if err != nil {
 		return err
 	}
@@ -3735,7 +3845,7 @@ func (r *MenuRepository) AssignProductMarketingCategory(ctx context.Context, mer
 }
 
 func (r *MenuRepository) UnassignProductMarketingCategory(ctx context.Context, merchantID, productID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if _, err := db.ExecContext(ctx,
 		`DELETE FROM product_marketing_categories WHERE merchant_id = ? AND product_id = ?`,
@@ -3750,7 +3860,7 @@ func (r *MenuRepository) UnassignProductMarketingCategory(ctx context.Context, m
 }
 
 func (r *MenuRepository) BulkAssignProductsToMarketingCategory(ctx context.Context, merchantID, categoryID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(productIDs) == 0 {
 		return nil
@@ -3760,7 +3870,7 @@ func (r *MenuRepository) BulkAssignProductsToMarketingCategory(ctx context.Conte
 
 	var categoryCount int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = 1`,
+		`SELECT COUNT(1) FROM marketing_categories WHERE id = ? AND merchant_id = ? AND enabled = TRUE`,
 		categoryID, merchantID,
 	).Scan(&categoryCount); err != nil {
 		return err
@@ -3778,7 +3888,7 @@ func (r *MenuRepository) BulkAssignProductsToMarketingCategory(ctx context.Conte
 	}
 
 	query := fmt.Sprintf(
-		"SELECT COUNT(1) FROM products WHERE merchant_id = ? AND enabled = 1 AND product_id IN (%s)",
+		"SELECT COUNT(1) FROM products WHERE merchant_id = ? AND enabled = TRUE AND product_id IN (%s)",
 		strings.Join(placeholders, ","),
 	)
 
@@ -3797,10 +3907,15 @@ func (r *MenuRepository) BulkAssignProductsToMarketingCategory(ctx context.Conte
 		insertArgs = append(insertArgs, pid, categoryID, merchantID)
 	}
 
+	onDup := `ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		onDup = `ON CONFLICT (product_id) DO UPDATE SET marketing_category_id = EXCLUDED.marketing_category_id, merchant_id = EXCLUDED.merchant_id, updated_at = CURRENT_TIMESTAMP`
+	}
 	insertQuery := fmt.Sprintf(
 		`INSERT INTO product_marketing_categories (product_id, marketing_category_id, merchant_id) VALUES %s
-		 ON DUPLICATE KEY UPDATE marketing_category_id = VALUES(marketing_category_id), merchant_id = VALUES(merchant_id), updated_at = CURRENT_TIMESTAMP`,
+		 %s`,
 		strings.Join(insertValues, ","),
+		onDup,
 	)
 
 	if _, err := db.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
@@ -3826,7 +3941,7 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 		return menu, nil
 	}
 
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	type assignment struct {
 		categoryID   string
@@ -3839,7 +3954,7 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 		SELECT pmc.product_id, mc.id, mc.name, mc.display_order
 		FROM product_marketing_categories pmc
 		INNER JOIN marketing_categories mc ON mc.id = pmc.marketing_category_id
-		WHERE pmc.merchant_id = ? AND mc.enabled = 1
+		WHERE pmc.merchant_id = ? AND mc.enabled = TRUE
 	`, merchantID)
 	if err != nil {
 		// On error fall back to standard categories rather than failing
@@ -3942,7 +4057,7 @@ func uniqueStrings(input []string) []string {
 // BulkAssignAllergen adds an allergen to multiple products without removing their other allergens.
 // Each product must belong to merchantID.
 func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, allergenID string, productIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	if len(productIDs) == 0 {
 		return nil
@@ -3982,10 +4097,13 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 		return models.ErrForbidden
 	}
 
-	// Upsert associations
-	stmt, err := db.PrepareContext(ctx,
-		`INSERT IGNORE INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`,
-	)
+	// Upsert associations — INSERT IGNORE est MySQL-only, la forme Postgres
+	// est ON CONFLICT DO NOTHING sur la PK (product_id, allergen_id).
+	upsertQuery := `INSERT IGNORE INTO product_allergens (product_id, allergen_id) VALUES (?, ?)`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		upsertQuery = `INSERT INTO product_allergens (product_id, allergen_id) VALUES (?, ?) ON CONFLICT (product_id, allergen_id) DO NOTHING`
+	}
+	stmt, err := db.PrepareContext(ctx, upsertQuery)
 	if err != nil {
 		return err
 	}
@@ -4004,7 +4122,7 @@ func (r *MenuRepository) BulkAssignAllergen(ctx context.Context, merchantID, all
 // It verifies that the product belongs to merchantID and that all supplied tag_ids also belong
 // to the same merchant before modifying anything.
 func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, productID string, tagIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Ownership check: product must belong to merchant
 	var count int
@@ -4071,13 +4189,13 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 }
 
 func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID, productID string, configIDs []string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// 2. Reset Config (Set enabled = 0)
 	// Correspond à: UPDATE product_configurable_attribute SET enabled = 0 WHERE product_id = ...
 	_, err := db.ExecContext(ctx, `
 		UPDATE product_configurable_attribute 
-		SET enabled = 0 
+		SET enabled = FALSE 
 		WHERE product_id = ?`, productID)
 	if err != nil {
 		return err
@@ -4085,11 +4203,20 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 
 	// 3. Loop et Upsert
 	// Correspond au foreach($product->configuration) en PHP
+	// PK = (configurable_attribute_id, product_id) -> ON CONFLICT côté PG ;
+	// enabled est boolean en cible.
 	stmtQuery := `
 		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
-		VALUES(?, ?, ?, 1)
+		VALUES(?, ?, ?, TRUE)
 		ON DUPLICATE KEY UPDATE enabled = 1, num_order = VALUES(num_order)
 	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		stmtQuery = `
+		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
+		VALUES(?, ?, ?, TRUE)
+		ON CONFLICT (configurable_attribute_id, product_id) DO UPDATE SET enabled = TRUE, num_order = EXCLUDED.num_order
+	`
+	}
 
 	// Préparer le statement est plus performant dans une boucle
 	stmt, err := db.PrepareContext(ctx, stmtQuery)
@@ -4113,7 +4240,7 @@ func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID
 
 // ListTags returns all tags belonging to a merchant.
 func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]models.TagEntry, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, merchant_id, name
@@ -4140,7 +4267,7 @@ func (r *MenuRepository) ListTags(ctx context.Context, merchantID string) ([]mod
 
 // BulkUpdateProductPrices updates prices for multiple products
 func (r *MenuRepository) BulkUpdateProductPrices(ctx context.Context, merchantID string, products []BulkUpdateProductPrice) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	for _, product := range products {
 		// Verify product belongs to merchant
@@ -4209,11 +4336,11 @@ func (r *MenuRepository) BulkUpdateProductPrices(ctx context.Context, merchantID
 // DeleteProduct disables a product by setting enabled = 0.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) DeleteProduct(ctx context.Context, merchantID, productID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
 		`UPDATE products 
-		 SET enabled = 0
+		 SET enabled = FALSE
 		 WHERE product_id = ? AND merchant_id = ?`,
 		productID, merchantID,
 	)
@@ -4228,14 +4355,14 @@ func (r *MenuRepository) DeleteProduct(ctx context.Context, merchantID, productI
 
 // UpdateDisplayOrder updates both category order and product display order
 func (r *MenuRepository) UpdateDisplayOrder(ctx context.Context, merchantID string, payload DisplayOrderPayload) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 
 	// Update category orders
 	for catOrder, item := range payload.DisplayOrder {
 		_, err := db.ExecContext(ctx,
 			`UPDATE productcateg 
 				 SET categ_order = ?
-				 WHERE categ_id = ? AND merchant_id = ? AND enabled = 1`,
+				 WHERE categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
 			catOrder, item.CategoryID, merchantID,
 		)
 		if err != nil {
@@ -4247,7 +4374,7 @@ func (r *MenuRepository) UpdateDisplayOrder(ctx context.Context, merchantID stri
 			_, err := db.ExecContext(ctx,
 				`UPDATE products 
 					 SET display_order = ?
-					 WHERE product_id = ? AND merchant_id = ? AND enabled = 1`,
+					 WHERE product_id = ? AND merchant_id = ? AND enabled = TRUE`,
 				prodOrder, productID, merchantID,
 			)
 			if err != nil {

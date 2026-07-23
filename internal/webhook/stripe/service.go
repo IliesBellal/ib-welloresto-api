@@ -15,7 +15,6 @@ import (
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/infrastructure/sms"
-	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
@@ -69,13 +68,13 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 		return s.HandleRetrieveFees(ctx, event.Data.Object, event.Account)
 
 	case "payment_intent.canceled":
-		return s.HandlePaymentIntentUpdated(ctx, event.Data.Object, "CANCELED")
+		return s.HandlePaymentIntentUpdated(ctx, event.Data.Object, "CANCELED", event.Account)
 
 	case "payment_intent.succeeded":
-		return s.HandlePaymentIntentSucceeded(ctx, event.Data.Object)
+		return s.HandlePaymentIntentSucceeded(ctx, event.Data.Object, event.Account)
 
 	case "payment_intent.payment_failed":
-		return s.HandlePaymentIntentFailed(ctx, event.Data.Object)
+		return s.HandlePaymentIntentFailed(ctx, event.Data.Object, event.Account)
 
 	case "payout.paid":
 		return s.HandlePayoutPaid(ctx, event.Data.Object, event.Account)
@@ -317,29 +316,50 @@ func (s *StripeWebhookService) HandleRetrieveFees(ctx context.Context, data json
 	return nil
 }
 
-// 4. HandlePaymentIntentUpdated
-func (s *StripeWebhookService) HandlePaymentIntentUpdated(ctx context.Context, data json.RawMessage, status string) error {
+// 4. HandlePaymentIntentUpdated. accountID vient de StripeEvent.Account : vide
+// pour un événement plateforme, rempli (acct_...) pour un événement émis côté
+// compte connecté (cas des PaymentIntents Terminal/Checkout créés en direct
+// charge via SetStripeAccount — voir docs/KIOSK_DECISIONS.md, section Connect
+// webhooks). Pas utilisé pour scoper un appel API ici (UpdatePaymentIntentStatus
+// est un simple UPDATE SQL par payment_intent_id, un identifiant Stripe global,
+// jamais ambigu entre comptes) — uniquement loggé pour pouvoir confirmer, côté
+// Render, sur quelle scope (plateforme/connect) cet event est réellement arrivé.
+func (s *StripeWebhookService) HandlePaymentIntentUpdated(ctx context.Context, data json.RawMessage, status, accountID string) error {
 	var pi stripe.PaymentIntent
 	if err := json.Unmarshal(data, &pi); err != nil {
 		return fmt.Errorf("unmarshal payment intent: %w", err)
 	}
 
+	logger.FromContext(ctx).Info("[stripe webhook] payment_intent." + strings.ToLower(status) + " pi=" + pi.ID + " connect_account=" + accountID)
 	return s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, status)
 }
 
 // HandlePaymentIntentSucceeded traite payment_intent.succeeded. Un paiement
-// Stripe Terminal (card_present) créé par une borne Kiosk est reconnu par la
-// présence du mapping Redis terminal_pi:{id} — plus fiable que de parser
-// payment_method_details.type sur l'objet PaymentIntent (non expansé dans
-// l'événement, il faudrait un appel API supplémentaire), et ce mapping donne
-// directement la commande à confirmer. À défaut de mapping, on retombe sur le
-// comportement existant du flux Checkout en ligne (statut CAPTURED en base),
-// strictement inchangé.
-func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context, data json.RawMessage) error {
+// Stripe Terminal (card_present) créé par une borne Kiosk est reconnu par
+// pi.Metadata["channel"] == "kiosk" — cette metadata est écrite dès la
+// création du PaymentIntent (stripeclient.CreateTerminalPaymentIntent) et n'a
+// pas de TTL (contrairement à l'ancien mapping Redis qu'elle remplace, voir
+// docs/KIOSK_DECISIONS.md, "Retrait de Redis du mapping
+// order_id/payment_intent_id"). order_id/merchant_id sont lus directement
+// depuis cette même metadata, sans aucune requête DB/Redis supplémentaire. À
+// défaut de channel=kiosk, on retombe sur le comportement existant du flux
+// Checkout en ligne (statut CAPTURED en base), strictement inchangé.
+//
+// accountID (StripeEvent.Account) est loggé mais pas utilisé pour la logique :
+// le PaymentIntent Terminal comme le Checkout web sont tous deux créés en
+// direct charge (SetStripeAccount), donc tous deux émis comme événements
+// Connect (account rempli) — aucun appel API Stripe n'est fait plus bas dans
+// cette chaîne (SQL uniquement), donc aucun scoping par compte n'est requis
+// pour la correction fonctionnelle. Le log sert uniquement à confirmer que
+// l'endpoint reçoit bien ces events avec le bon compte une fois la
+// configuration Stripe Dashboard corrigée (voir docs/KIOSK_DECISIONS.md).
+func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context, data json.RawMessage, accountID string) error {
 	var pi stripe.PaymentIntent
 	if err := json.Unmarshal(data, &pi); err != nil {
 		return fmt.Errorf("unmarshal payment intent: %w", err)
 	}
+
+	logger.FromContext(ctx).Info("[stripe webhook] payment_intent.succeeded pi=" + pi.ID + " connect_account=" + accountID)
 
 	if handled, err := s.handleTerminalPaymentSucceeded(ctx, &pi); handled || err != nil {
 		return err
@@ -349,34 +369,71 @@ func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context,
 }
 
 // HandlePaymentIntentFailed traite payment_intent.payment_failed. Seuls les
-// paiements Terminal Kiosk (mapping Redis présent) sont concernés : la commande
-// reste en pending_card_payment (le client peut réessayer ou basculer vers la
-// caisse) — on ne touche pas au statut serveur, on informe seulement un
-// éventuel écran de suivi via une notification order_updated. Tout autre
-// payment_intent.payment_failed (paiement en ligne) est ignoré, comme avant
-// (aucun case n'existait auparavant).
-func (s *StripeWebhookService) HandlePaymentIntentFailed(ctx context.Context, data json.RawMessage) error {
+// paiements Terminal Kiosk (metadata channel=kiosk) sont concernés : la
+// commande reste en pending_card_payment (le client peut réessayer ou
+// basculer vers la caisse) — on ne touche pas au statut serveur, on marque
+// juste la ligne stripe_payments comme 'FAILED' (pour qu'elle sorte de
+// l'ensemble "actif" lu par CancelActivePaymentIntentForOrder) et on informe
+// un éventuel écran de suivi via une notification order_updated. Tout autre
+// payment_intent.payment_failed (paiement en ligne) est ignoré, comme avant.
+// accountID : voir HandlePaymentIntentSucceeded.
+func (s *StripeWebhookService) HandlePaymentIntentFailed(ctx context.Context, data json.RawMessage, accountID string) error {
 	var pi stripe.PaymentIntent
 	if err := json.Unmarshal(data, &pi); err != nil {
 		return fmt.Errorf("unmarshal payment intent: %w", err)
 	}
 
-	mapping, found := s.lookupTerminalMapping(ctx, pi.ID)
-	if !found {
+	logger.FromContext(ctx).Info("[stripe webhook] payment_intent.payment_failed pi=" + pi.ID + " connect_account=" + accountID)
+
+	orderID, merchantID, ok := kioskTerminalMetadata(&pi)
+	if !ok {
 		return nil
 	}
 
-	go s.notification.SendNotificationAsync(mapping.MerchantID, mapping.OrderID, notification.NotificationTypeOrderUpdate)
+	if err := s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "FAILED"); err != nil {
+		logger.FromContext(ctx).Warn("[stripe terminal] UpdatePaymentIntentStatus(FAILED) failed for pi=" + pi.ID + ": " + err.Error())
+	}
+
+	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 	return nil
+}
+
+// pi.Metadata["channel"] est le point d'extension prévu pour tout futur canal
+// de paiement carte présente (ex: TPE caisse POS -> "pos_till", acompte de
+// réservation de table -> "reservation_deposit") : chaque nouveau canal doit
+// écrire sa propre valeur distincte à la création du PaymentIntent, jamais
+// "kiosk" ni une valeur déjà utilisée par un autre canal, pour rester
+// filtrable ici sans ambiguïté avec le Terminal Kiosk (voir
+// docs/KIOSK_DECISIONS.md, audit du filtre channel).
+//
+// kioskTerminalMetadata lit order_id/merchant_id depuis la metadata Stripe du
+// PaymentIntent, reconnue comme un paiement Terminal Kiosk via
+// channel=="kiosk" (écrite à la création, voir
+// stripeclient.CreateTerminalPaymentIntent). ok=false si channel n'est pas
+// "kiosk", ou si order_id/merchant_id sont absents malgré channel=kiosk (cas
+// anormal, logué).
+func kioskTerminalMetadata(pi *stripe.PaymentIntent) (orderID, merchantID string, ok bool) {
+	if pi.Metadata["channel"] != "kiosk" {
+		return "", "", false
+	}
+	orderID = pi.Metadata["order_id"]
+	merchantID = pi.Metadata["merchant_id"]
+	return orderID, merchantID, orderID != "" && merchantID != ""
 }
 
 // handleTerminalPaymentSucceeded confirme la commande liée à un PaymentIntent
 // Terminal. Retourne (true, err) quand le PaymentIntent est bien un paiement
-// Terminal Kiosk (mapping trouvé), (false, nil) sinon.
+// Terminal Kiosk (metadata channel=kiosk), (false, nil) sinon.
 func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) (bool, error) {
-	mapping, found := s.lookupTerminalMapping(ctx, pi.ID)
-	if !found {
+	log := logger.FromContext(ctx)
+
+	orderID, merchantID, ok := kioskTerminalMetadata(pi)
+	if !ok {
 		return false, nil
+	}
+	if orderID == "" || merchantID == "" {
+		log.Warn("[stripe terminal] payment_intent.succeeded pi=" + pi.ID + " has channel=kiosk metadata but missing order_id/merchant_id")
+		return true, fmt.Errorf("stripe terminal: missing order_id/merchant_id metadata for pi=%s", pi.ID)
 	}
 
 	// brand_status: PENDING_CARD_PAYMENT -> PENDING. merchant_approval reste
@@ -385,13 +442,21 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 	// paiement comptoir ScanNOrder/POS. Guard côté SQL (WHERE brand_status =
 	// 'PENDING_CARD_PAYMENT') : un replay du webhook Stripe est un no-op.
 	// Voir docs/KIOSK_DECISIONS.md.
-	confirmed, err := s.repo.ConfirmKioskCardPayment(ctx, mapping.MerchantID, mapping.OrderID)
+	confirmed, err := s.repo.ConfirmKioskCardPayment(ctx, merchantID, orderID)
 	if err != nil {
+		log.Error("[stripe terminal] ConfirmKioskCardPayment failed for pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID + ": " + err.Error())
 		return true, err
+	}
+	if !confirmed {
+		// Guard WHERE brand_status = 'PENDING_CARD_PAYMENT' n'a matché aucune
+		// ligne : soit un replay (déjà transitionné), soit la commande n'était
+		// plus dans cet état pour une autre raison (annulée, basculée caisse).
+		// Sans ce log, ce cas est indiscernable d'un succès silencieux.
+		log.Warn("[stripe terminal] ConfirmKioskCardPayment: no row matched (order not in PENDING_CARD_PAYMENT) for pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID)
 	}
 
 	if s.redis != nil {
-		s.redis.Delete(ctx, helpers.GetRedisOrderKey(mapping.MerchantID, mapping.OrderID))
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(merchantID, orderID))
 	}
 
 	// Enregistrement du paiement Terminal via l'UNIQUE point d'insertion du
@@ -402,16 +467,20 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 	// doit pas provoquer un retour d'erreur qui ferait rejouer le webhook Stripe
 	// (transition brand_status déjà passée + re-insertion = doublon rejeté par le
 	// garde fiscal de montant).
-	s.recordTerminalPayment(ctx, mapping, pi)
+	s.recordTerminalPayment(ctx, orderID, merchantID, pi)
 
 	if confirmed {
-		go s.notification.SendNotificationAsync(mapping.MerchantID, mapping.OrderID, notification.NotificationTypeOrderUpdate)
+		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 	}
 
-	if s.redis != nil {
-		s.redis.Delete(ctx, stripeclient.TerminalPaymentIntentKey(pi.ID))
-		s.redis.Delete(ctx, stripeclient.TerminalOrderKey(mapping.MerchantID, mapping.OrderID))
+	// Marque la ligne stripe_payments comme capturée : sans ça,
+	// CancelActivePaymentIntentForOrder pourrait encore la considérer comme
+	// "active" après coup (best-effort, un échec ici n'affecte pas la
+	// confirmation déjà faite ci-dessus).
+	if err := s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED"); err != nil {
+		log.Warn("[stripe terminal] UpdatePaymentIntentStatus(CAPTURED) failed for pi=" + pi.ID + ": " + err.Error())
 	}
+
 	return true, nil
 }
 
@@ -428,45 +497,23 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 //   - cash_register_id : laissé vide -> NULL (une borne n'a pas de caisse ; le
 //     paiement est rattaché à la prochaine clôture de caisse du merchant).
 //
-// L'insertion de la ligne stripe_payments (payment_intent_id) est faite en
-// interne par AddPaymentAndReturnID dès qu'un PaymentIntentID est fourni :
-// c'est ce qui permettra au webhook charge.captured de retrouver ce paiement
-// et d'y écrire fee/net_amount.
-func (s *StripeWebhookService) recordTerminalPayment(ctx context.Context, mapping stripeclient.TerminalPaymentMapping, pi *stripe.PaymentIntent) {
+// AddPaymentAndReturnID complète la ligne stripe_payments déjà pré-créée à la
+// création du PaymentIntent (stripeclient.TerminalPaymentStore.CreateMapping)
+// plutôt que d'en insérer une seconde — voir docs/KIOSK_DECISIONS.md.
+func (s *StripeWebhookService) recordTerminalPayment(ctx context.Context, orderID, merchantID string, pi *stripe.PaymentIntent) {
 	log := logger.FromContext(ctx)
 	piID := pi.ID
 	if err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
-		OrderID:         mapping.OrderID,
-		MerchantID:      mapping.MerchantID,
+		OrderID:         orderID,
+		MerchantID:      merchantID,
 		MOP:             models.CardMOP,
 		Amount:          int(pi.Amount),
 		UserID:          "KIOSK",
 		OperationType:   models.OperationTypeSale,
 		PaymentIntentID: &piID,
 	}); err != nil {
-		log.Info("[stripe webhook] terminal payment record failed for order " + mapping.OrderID + ":" + err.Error())
+		log.Info("[stripe webhook] terminal payment record failed for order " + orderID + ":" + err.Error())
 	}
-}
-
-// lookupTerminalMapping lit et décode le mapping terminal_pi:{id} (partagé avec
-// l'infra Stripe Terminal, jamais dupliqué). Retourne found=false si Redis est
-// absent, la clé introuvable, le JSON illisible ou les identifiants vides.
-func (s *StripeWebhookService) lookupTerminalMapping(ctx context.Context, paymentIntentID string) (stripeclient.TerminalPaymentMapping, bool) {
-	if s.redis == nil {
-		return stripeclient.TerminalPaymentMapping{}, false
-	}
-	val, found := s.redis.Get(ctx, stripeclient.TerminalPaymentIntentKey(paymentIntentID))
-	if !found {
-		return stripeclient.TerminalPaymentMapping{}, false
-	}
-	var m stripeclient.TerminalPaymentMapping
-	if err := json.Unmarshal([]byte(val), &m); err != nil {
-		return stripeclient.TerminalPaymentMapping{}, false
-	}
-	if m.OrderID == "" || m.MerchantID == "" {
-		return stripeclient.TerminalPaymentMapping{}, false
-	}
-	return m, true
 }
 
 // 5. HandleRefund

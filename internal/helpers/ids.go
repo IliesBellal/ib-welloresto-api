@@ -32,6 +32,8 @@ const (
 	HACCPCleaningTaskIDPrefix            = "haccp-ct"
 	HACCPCleaningExecutionIDPrefix       = "haccp-ce"
 	HACCPGoodsReceiptIDPrefix            = "haccp-gr"
+	HACCPTraceabilityRecordIDPrefix      = "haccp-trace"
+	HACCPTraceabilityPhotoIDPrefix       = "haccp-trace-photo"
 	PlanningSettingsIDPrefix             = "plan-set"
 	PlanningPositionIDPrefix             = "plan-pos"
 	PlanningEmployeeIDPrefix             = "plan-emp"

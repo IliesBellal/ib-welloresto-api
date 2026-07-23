@@ -392,3 +392,32 @@ type HaccpComponentCategory struct {
 	Order        int              `json:"order"`
 	Components   []HaccpComponent `json:"components"`
 }
+
+type HaccpTraceabilityPhoto struct {
+	ID       string `json:"id"`
+	PhotoURL string `json:"photo_url"`
+	Position int    `json:"position"`
+}
+
+type HaccpTraceabilityRecord struct {
+	ID         string                   `json:"id"`
+	MerchantID string                   `json:"merchant_id"`
+	Comment    *string                  `json:"comment,omitempty"`
+	Photos     []HaccpTraceabilityPhoto `json:"photos"`
+	CreatedBy  string                   `json:"created_by"`
+	CreatedAt  time.Time                `json:"created_at"`
+	UpdatedAt  time.Time                `json:"updated_at"`
+}
+
+type HaccpTraceabilityListParams struct {
+	Page     int
+	PageSize int
+}
+
+type HaccpTraceabilityListResponse struct {
+	Records    []HaccpTraceabilityRecord `json:"records"`
+	Page       int                       `json:"page"`
+	PageSize   int                       `json:"page_size"`
+	TotalItems int                       `json:"total_items"`
+	TotalPages int                       `json:"total_pages"`
+}

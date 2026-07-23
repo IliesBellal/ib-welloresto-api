@@ -233,10 +233,13 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// Service Stripe Terminal (paiement carte borne). Paramétré par merchantID,
 	// jamais couplé à KioskAuth — réutilisable par un futur /pos/terminal/*.
+	// Le mapping order_id<->payment_intent_id vit dans stripe_payments (SQL),
+	// plus dans Redis — voir docs/KIOSK_DECISIONS.md, "Retrait de Redis du
+	// mapping order_id/payment_intent_id".
 	terminalService := stripeInternalClient.NewTerminalService(
 		stripeManager,
 		stripeInternalClient.NewTerminalAccountStore(mysqlDB),
-		redisClient,
+		stripeInternalClient.NewTerminalPaymentStore(mysqlDB),
 	)
 
 	// ---- Uber ----
@@ -791,6 +794,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/goods-receipts", haccpH.CreateGoodsReceipt)
 
 		r.Get("/components", haccpH.GetHaccpComponents)
+
+		// --- Traçabilité HACCP (photos + commentaire) ---
+		// Contrairement au reste de /haccp ci-dessus (authMiddleware seul),
+		// ce sous-groupe applique en plus HasHACCPAccess : décision assumée
+		// pour ce nouveau module, voir la conversation d'architecture HACCP
+		// traçabilité (2026-07-23).
+		r.Route("/traceability", func(r chi.Router) {
+			r.Use(middleware.RequirePermission(middleware.HasHACCPAccess))
+
+			r.Post("/", haccpH.CreateTraceabilityRecord)
+			r.Get("/", haccpH.GetTraceabilityRecords)
+			r.Get("/{id}", haccpH.GetTraceabilityRecord)
+		})
 	})
 
 	// --- PLANNING ---
@@ -1183,6 +1199,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	r.Route("/kiosk", func(r chi.Router) {
 		r.Post("/auth/enroll", kioskHandler.EnrollDevice)
 		r.Post("/auth/token/refresh", kioskHandler.RefreshDeviceToken)
+		r.Post("/auth/reclaim", kioskHandler.ReclaimDevice)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.KioskAuth(kioskService))

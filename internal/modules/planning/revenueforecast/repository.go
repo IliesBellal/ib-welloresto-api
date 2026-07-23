@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -19,12 +19,20 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) Upsert(ctx context.Context, merchantID string, date time.Time, amountCents int64) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
+	// clé unique (merchant_id, forecast_date) — ON CONFLICT côté PG
 	query := `
 		INSERT INTO planning_revenue_forecasts (id, merchant_id, forecast_date, amount_ht_cents)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE amount_ht_cents = VALUES(amount_ht_cents)
 	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `
+		INSERT INTO planning_revenue_forecasts (id, merchant_id, forecast_date, amount_ht_cents)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (merchant_id, forecast_date) DO UPDATE SET amount_ht_cents = EXCLUDED.amount_ht_cents
+	`
+	}
 	_, err := db.ExecContext(
 		ctx,
 		query,
@@ -41,7 +49,7 @@ func (r *Repository) Upsert(ctx context.Context, merchantID string, date time.Ti
 }
 
 func (r *Repository) DeleteByDate(ctx context.Context, merchantID string, date time.Time) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		DELETE FROM planning_revenue_forecasts
 		WHERE merchant_id = ? AND forecast_date = ?

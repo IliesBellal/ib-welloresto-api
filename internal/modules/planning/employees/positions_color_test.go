@@ -56,8 +56,8 @@ func TestServiceCreateEmployeePositionPersistsColor(t *testing.T) {
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.label = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND LOWER(p.label) = LOWER(?) AND p.enabled = TRUE
 		 GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at
 	`)).
 		WithArgs("merchant_1", "Barman").
@@ -105,8 +105,8 @@ func TestHandlerListEmployeePositionsIncludesColor(t *testing.T) {
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND p.enabled = TRUE
 		 GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at ORDER BY p.sort_order ASC, p.label ASC
 	`)).
 		WithArgs("merchant_1").
@@ -148,8 +148,8 @@ func TestHandlerUpdateEmployeePositionAcceptsColorOnly(t *testing.T) {
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.id = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND p.id = ? AND p.enabled = TRUE
 		GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at
 	`)).
 		WithArgs("merchant_1", "pos_1").
@@ -160,7 +160,7 @@ func TestHandlerUpdateEmployeePositionAcceptsColorOnly(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_positions
 		SET label = ?, color = ?, sort_order = ?, active = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs("Serveur", "#f59e0b", 0, true, sqlmock.AnyArg(), "merchant_1", "pos_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

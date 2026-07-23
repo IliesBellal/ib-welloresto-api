@@ -95,7 +95,7 @@ func TestHandlerLinkEmployeeUserSuccess(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE employees
 		SET user_id = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs("user_9", sqlmock.AnyArg(), "merchant_1", "emp_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -154,7 +154,7 @@ func TestHandlerUnlinkEmployeeUserSuccess(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE employees
 		SET user_id = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(nil, sqlmock.AnyArg(), "merchant_1", "emp_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

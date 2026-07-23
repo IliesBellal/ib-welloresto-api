@@ -61,6 +61,40 @@ func (h *Handler) RefreshDeviceToken(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "kiosk", "refresh_device_token", resp)
 }
 
+// ReclaimDevice handles POST /kiosk/auth/reclaim — public (pas de Bearer),
+// même famille que EnrollDevice/RefreshDeviceToken. Voir
+// docs/KIOSK_DECISIONS.md pour le contrat : réémission silencieuse si
+// heartbeat récent (<30j), PIN admin requis sinon (401
+// kiosk_reclaim_pin_required), 404 kiosk_not_found si 0 ou >1 candidat pour
+// ce device_id (collision traitée comme "not found").
+func (h *Handler) ReclaimDevice(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req ReclaimDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "reclaim_device", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.ReclaimDevice(ctx, req, r.RemoteAddr)
+	if err != nil {
+		var lockoutErr *AdminPinLockoutError
+		if errors.As(err, &lockoutErr) {
+			models.SendJSON(w, http.StatusTooManyRequests, "kiosk", "reclaim_device", map[string]interface{}{
+				"error":         "kiosk_admin_pin_locked",
+				"delay_seconds": lockoutErr.DelaySeconds,
+			})
+			return
+		}
+		log.Warn("kiosk reclaim failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "reclaim_device", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "reclaim_device", resp)
+}
+
 func (h *Handler) DeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

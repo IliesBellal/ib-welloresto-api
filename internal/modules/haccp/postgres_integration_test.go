@@ -4,6 +4,8 @@ package haccp
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,8 @@ func TestHACCPRepository_Postgres(t *testing.T) {
 	)
 
 	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM haccp_traceability_photos WHERE record_id IN (SELECT id FROM haccp_traceability_records WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM haccp_traceability_records WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM temperature_reading_corrective_actions WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM temperature_readings WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM temperature_sessions WHERE merchant_id = $1`, merchantID)
@@ -276,5 +280,51 @@ func TestHACCPRepository_Postgres(t *testing.T) {
 	}
 	if len(cats) != 1 || len(cats[0].Components) != 1 || cats[0].Components[0].UnitOfMeasure != "kg" {
 		t.Fatalf("unexpected haccp components: %+v", cats)
+	}
+
+	// --- traçabilité HACCP (photos + commentaire) ---
+	traceComment := "Etiquette recue avec DLC illisible, photo prise pour verification"
+	traceRecord, err := repo.CreateTraceabilityRecord(ctx, "itest-haccp-trace-1", merchantID, userID, &traceComment, []string{
+		"wello_resto_images_storage/merchants/999927/haccp/tracabilite/itest-haccp-trace-1/0.jpg",
+		"wello_resto_images_storage/merchants/999927/haccp/tracabilite/itest-haccp-trace-1/1.jpg",
+	})
+	if err != nil {
+		t.Fatalf("CreateTraceabilityRecord failed against postgres: %v", err)
+	}
+	if len(traceRecord.Photos) != 2 {
+		t.Fatalf("expected 2 photos on created record, got %d", len(traceRecord.Photos))
+	}
+	if traceRecord.Photos[0].Position != 0 || traceRecord.Photos[1].Position != 1 {
+		t.Fatalf("unexpected photo positions: %+v", traceRecord.Photos)
+	}
+
+	fetchedRecord, err := repo.GetTraceabilityRecord(ctx, merchantID, traceRecord.ID)
+	if err != nil {
+		t.Fatalf("GetTraceabilityRecord failed against postgres: %v", err)
+	}
+	if len(fetchedRecord.Photos) != 2 || fetchedRecord.Comment == nil || *fetchedRecord.Comment != traceComment {
+		t.Fatalf("unexpected fetched traceability record: %+v", fetchedRecord)
+	}
+
+	traceRecords, traceTotal, err := repo.ListTraceabilityRecords(ctx, merchantID, 1, 10)
+	if err != nil || traceTotal != 1 || len(traceRecords) != 1 {
+		t.Fatalf("ListTraceabilityRecords = (%d records, total=%d, %v), want 1", len(traceRecords), traceTotal, err)
+	}
+
+	hasTraceRecords, err := repo.HasTraceabilityRecords(ctx, merchantID)
+	if err != nil || !hasTraceRecords {
+		t.Fatalf("HasTraceabilityRecords = (%v, %v), want true", hasTraceRecords, err)
+	}
+
+	// rollback : un photo_key trop long (> varchar(512)) doit faire echouer
+	// l'insertion des photos ET annuler l'insertion du record dans la meme transaction.
+	_, err = repo.CreateTraceabilityRecord(ctx, "itest-haccp-trace-2", merchantID, userID, nil, []string{
+		strings.Repeat("x", 600),
+	})
+	if err == nil {
+		t.Fatal("expected CreateTraceabilityRecord to fail on oversized photo_key")
+	}
+	if _, getErr := repo.GetTraceabilityRecord(ctx, merchantID, "itest-haccp-trace-2"); getErr != sql.ErrNoRows {
+		t.Fatalf("expected rollback: record itest-haccp-trace-2 must not exist, got err=%v", getErr)
 	}
 }

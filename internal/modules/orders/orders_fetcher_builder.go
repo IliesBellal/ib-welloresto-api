@@ -599,8 +599,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	var orders []models.Order
 	{
 		step := "header"
-		// o.isDelivery / o.use_customer_temporary_address sont boolean en
-		// Postgres mais scannés en NullInt64 côté Go — CASE 1/0 portable.
+		// o.use_customer_temporary_address est boolean en Postgres mais scanné
+		// en NullInt64 côté Go — CASE 1/0 portable.
 		q := `
 	SELECT
 		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
@@ -608,7 +608,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
 		o.isPaid, o.isDistributed, o.dateCall,
-		CASE WHEN o.isDelivery THEN 1 ELSE 0 END AS isDelivery,
 		o.merchant_approval, o.delivery_fees, o.last_update,
 		o.fulfillment_type,
 		CASE WHEN o.use_customer_temporary_address THEN 1 ELSE 0 END AS use_customer_temporary_address,
@@ -647,7 +646,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		for rows.Next() {
 			var ord models.Order
 
-			var customerNbOrders, isDelivery, useCustomerTemporaryAddress,
+			var customerNbOrders, useCustomerTemporaryAddress,
 				price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
 
 			var customerID, orderID, orderNum, orderType, state,
@@ -672,7 +671,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&brand, &merchantID, &brandStatus, &brandOrderID, &brandOrderNum,
 				&estimatedReady, &meansOfPayment, &price, &TVA, &HT,
 				&monnaie, &cutleryNotes,
-				&isPaid, &isDistributed, &dateCall, &isDelivery,
+				&isPaid, &isDistributed, &dateCall,
 				&merchantApproval, &deliveryFees, &lastUpdate,
 				&fulfillmentType, &useCustomerTemporaryAddress,
 				&creationDate, &placesSettings, &pagerNumber,
@@ -713,7 +712,6 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsSNO = userID.String == "SCANNORDER"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
 			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
-			ord.IsDelivery = int(isDelivery.Int64)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
 			ord.CreationDate = helpers.NullTimePtr(creationDate).UTC().Unix()

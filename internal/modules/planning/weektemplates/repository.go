@@ -8,11 +8,21 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
 	db *sql.DB
+}
+
+// plnTimeHHMM formate une colonne time en HH:MM selon le dialecte
+// (TIME_FORMAT n'existe pas en Postgres).
+func plnTimeHHMM(col string) string {
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "to_char(" + col + ", 'HH24:MI')"
+	}
+	return "TIME_FORMAT(" + col + ", '%H:%i')"
 }
 
 func NewRepository(db *sql.DB) *Repository {
@@ -29,7 +39,7 @@ func (r *Repository) ListWeekTemplates(ctx context.Context, merchantID string) (
 		ORDER BY wt.created_at DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID)
+	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, query, merchantID)
 	if err != nil {
 		return nil, fmt.Errorf("list week templates: %w", err)
 	}
@@ -61,7 +71,7 @@ func (r *Repository) GetWeekTemplateByID(ctx context.Context, merchantID, id str
 		LIMIT 1
 	`
 
-	row := r.db.QueryRowContext(ctx, query, merchantID, id)
+	row := dbx.GetDB(ctx, r.db).QueryRowContext(ctx, query, merchantID, id)
 	tpl, err := scanWeekTemplate(row)
 	if err != nil {
 		return nil, err
@@ -77,8 +87,8 @@ func (r *Repository) ListWeekTemplateShifts(ctx context.Context, merchantID, wee
 			s.employee_id,
 			s.position_id,
 			s.title,
-			TIME_FORMAT(s.start_time, '%H:%i') AS start_time,
-			TIME_FORMAT(s.end_time, '%H:%i') AS end_time,
+			` + plnTimeHHMM("s.start_time") + ` AS start_time,
+			` + plnTimeHHMM("s.end_time") + ` AS end_time,
 			s.break_minutes,
 			s.location,
 			s.notes,
@@ -90,7 +100,7 @@ func (r *Repository) ListWeekTemplateShifts(ctx context.Context, merchantID, wee
 		ORDER BY s.day_of_week ASC, s.start_time ASC, s.created_at ASC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, merchantID, weekTemplateID)
+	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, query, merchantID, weekTemplateID)
 	if err != nil {
 		return nil, fmt.Errorf("list week template shifts: %w", err)
 	}
@@ -113,7 +123,7 @@ func (r *Repository) ListWeekTemplateShifts(ctx context.Context, merchantID, wee
 
 func (r *Repository) CreateWeekTemplateWithShifts(ctx context.Context, template WeekTemplate, shifts []WeekTemplateShift) error {
 	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.db)
+		db := dbx.GetDB(txCtx, r.db)
 		if err := r.insertWeekTemplate(txCtx, db, template); err != nil {
 			return err
 		}
@@ -128,7 +138,7 @@ func (r *Repository) CreateWeekTemplateWithShifts(ctx context.Context, template 
 
 func (r *Repository) UpdateWeekTemplateWithOptionalShifts(ctx context.Context, merchantID, id string, template WeekTemplate, replaceShifts bool, shifts []WeekTemplateShift) error {
 	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
-		db := dbutils.GetDB(txCtx, r.db)
+		db := dbx.GetDB(txCtx, r.db)
 		query := `
 			UPDATE planning_week_templates
 			SET label = ?, notes = ?, active = ?, updated_at = NOW()
@@ -166,10 +176,10 @@ func (r *Repository) UpdateWeekTemplateWithOptionalShifts(ctx context.Context, m
 func (r *Repository) SoftDeleteWeekTemplate(ctx context.Context, merchantID, id string) error {
 	query := `
 		UPDATE planning_week_templates
-		SET active = 0, updated_at = NOW()
+		SET active = FALSE, updated_at = NOW()
 		WHERE merchant_id = ? AND id = ?
 	`
-	result, err := r.db.ExecContext(ctx, query, merchantID, id)
+	result, err := dbx.GetDB(ctx, r.db).ExecContext(ctx, query, merchantID, id)
 	if err != nil {
 		return fmt.Errorf("soft delete week template: %w", err)
 	}

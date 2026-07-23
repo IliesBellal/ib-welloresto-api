@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"go.uber.org/zap"
@@ -16,8 +17,10 @@ func TestRescheduleBooking_QueryShapeAndArgs(t *testing.T) {
 	repo := NewBookingsRepository(db, zap.NewNop())
 
 	partySize := 6
+	// la durée (90 min) est désormais calculée côté Go, TIMESTAMPDIFF étant
+	// MySQL-only (cf. conversion dbx, rapport 29)
 	mock.ExpectExec("anything").
-		WithArgs("2026-07-10 20:00:00", "2026-07-10 21:30:00", "2026-07-10 20:00:00", "2026-07-10 21:30:00", &partySize, "42", "m_1").
+		WithArgs("2026-07-10 20:00:00", "2026-07-10 21:30:00", 90, &partySize, "42", "m_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := repo.RescheduleBooking(context.Background(), "m_1", "42", "2026-07-10 20:00:00", "2026-07-10 21:30:00", &partySize)
@@ -98,7 +101,11 @@ func expectAvailabilityQueryChain(mock sqlmock.Sqlmock, existingPartySize int, h
 
 	existingRows := sqlmock.NewRows([]string{"party_size", "booking_date_from", "booking_date_to", "booking_duration", "status"})
 	if hasExisting {
-		existingRows = existingRows.AddRow(existingPartySize, "2026-07-10T19:00:00Z", "2026-07-10T20:30:00Z", 90, "confirmed")
+		// les dates sont désormais scannées en time.Time (formatage RFC3339
+		// fait côté Go, cf. conversion dbx)
+		from, _ := time.Parse(time.RFC3339, "2026-07-10T19:00:00Z")
+		to, _ := time.Parse(time.RFC3339, "2026-07-10T20:30:00Z")
+		existingRows = existingRows.AddRow(existingPartySize, from, to, 90, "confirmed")
 	}
 	mock.ExpectQuery("anything").WillReturnRows(existingRows)
 

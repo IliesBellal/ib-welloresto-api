@@ -1,0 +1,4 @@
+*
+!/.gitignore
+!/README.md
+!/transform_mysql_csv.py

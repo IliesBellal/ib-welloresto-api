@@ -7,17 +7,17 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 func (r *Repository) ListEmployeePositions(ctx context.Context, merchantID string, filters EmployeePositionListFilters) ([]EmployeePosition, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND p.enabled = TRUE
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.Search) != "" {
@@ -49,26 +49,26 @@ func (r *Repository) ListEmployeePositions(ctx context.Context, merchantID strin
 }
 
 func (r *Repository) GetEmployeePositionByID(ctx context.Context, merchantID, positionID string) (*EmployeePosition, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.id = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND p.id = ? AND p.enabled = TRUE
 		GROUP BY p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, p.created_at, p.updated_at, p.deleted_at
 	`, merchantID, positionID)
 	return scanEmployeePositionRow(row)
 }
 
 func (r *Repository) GetEmployeePositionByLabel(ctx context.Context, merchantID, label, excludeID string) (*EmployeePosition, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT p.id, p.merchant_id, p.label, p.color, p.sort_order, p.active, COUNT(e.id) AS employee_count,
 			p.created_at, p.updated_at, p.deleted_at
 		FROM planning_positions p
-		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = 1
-		WHERE p.merchant_id = ? AND p.label = ? AND p.enabled = 1
+		LEFT JOIN employees e ON e.position_id = p.id AND e.merchant_id = p.merchant_id AND e.enabled = TRUE
+		WHERE p.merchant_id = ? AND LOWER(p.label) = LOWER(?) AND p.enabled = TRUE
 	`
 	args := []interface{}{merchantID, strings.TrimSpace(label)}
 	if strings.TrimSpace(excludeID) != "" {
@@ -81,12 +81,12 @@ func (r *Repository) GetEmployeePositionByLabel(ctx context.Context, merchantID,
 }
 
 func (r *Repository) NextEmployeePositionSortOrder(ctx context.Context, merchantID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var next int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(sort_order), 0) + 10
 		FROM planning_positions
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`, merchantID).Scan(&next); err != nil {
 		return 0, err
 	}
@@ -94,7 +94,7 @@ func (r *Repository) NextEmployeePositionSortOrder(ctx context.Context, merchant
 }
 
 func (r *Repository) CreateEmployeePosition(ctx context.Context, merchantID string, req EmployeePositionCreateRequest) (*EmployeePosition, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	position := EmployeePosition{
 		ID:         helpers.GeneratePrefixedID(helpers.PlanningPositionIDPrefix),
@@ -124,12 +124,12 @@ func (r *Repository) CreateEmployeePosition(ctx context.Context, merchantID stri
 }
 
 func (r *Repository) UpdateEmployeePosition(ctx context.Context, merchantID, positionID string, position EmployeePosition) (*EmployeePosition, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	position.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_positions
 		SET label = ?, color = ?, sort_order = ?, active = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, position.Label, position.Color, position.SortOrder, position.Active, position.UpdatedAt, merchantID, positionID)
 	if err != nil {
 		return nil, err
@@ -144,12 +144,12 @@ func (r *Repository) UpdateEmployeePosition(ctx context.Context, merchantID, pos
 }
 
 func (r *Repository) CountEmployeesByPositionID(ctx context.Context, merchantID, positionID string) (int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var count int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM employees
-		WHERE merchant_id = ? AND position_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND position_id = ? AND enabled = TRUE
 	`, merchantID, positionID).Scan(&count); err != nil {
 		return 0, err
 	}
@@ -157,12 +157,12 @@ func (r *Repository) CountEmployeesByPositionID(ctx context.Context, merchantID,
 }
 
 func (r *Repository) SoftDeleteEmployeePosition(ctx context.Context, merchantID, positionID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_positions
-		SET active = 0, enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET active = FALSE, enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, positionID)
 	if err != nil {
 		return err

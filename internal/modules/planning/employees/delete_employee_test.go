@@ -27,15 +27,15 @@ func TestServiceDeleteEmployeeNullifiesAssignedShifts(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE employees
-		SET active = 0, enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET active = FALSE, enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "emp_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_shifts
 		SET employee_id = NULL, updated_at = ?
-		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
@@ -65,8 +65,8 @@ func TestServiceDeleteEmployeeReturnsNotFoundWhenEmployeeMissing(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE employees
-		SET active = 0, enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET active = FALSE, enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "emp_missing").
 		WillReturnResult(sqlmock.NewResult(0, 0))

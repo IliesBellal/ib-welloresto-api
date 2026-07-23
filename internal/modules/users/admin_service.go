@@ -85,6 +85,15 @@ func (s *UsersService) UpdateMerchantUserRights(ctx context.Context, userID stri
 	if err := s.userRepo.UpdateMerchantUserRights(ctx, currentUser.MerchantID, userID, req.Normalize(defaultMerchantUserRights(req.Admin))); err != nil {
 		return nil, mapMerchantUserNotFound(err)
 	}
+
+	// Le token ne change pas ici : on invalide le cache de session pour que la
+	// prochaine requête relise les droits/login_enabled fraîchement écrits,
+	// au lieu d'attendre l'expiration du TTL (models.UserCacheTTL, 60 min).
+	// Best-effort : une erreur de lookup ne doit jamais faire échouer la mise à jour.
+	if token, tokenErr := s.userRepo.GetUsersRightsToken(ctx, currentUser.MerchantID, userID); tokenErr == nil && token != "" {
+		s.redis.Delete(ctx, models.UserCachePrefix+token)
+	}
+
 	return s.userRepo.GetMerchantUserRights(ctx, currentUser.MerchantID, userID)
 }
 
@@ -185,6 +194,11 @@ func (s *UsersService) UnlinkMerchantUser(ctx context.Context, userID string) (*
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
+	// Récupéré avant la transaction : DisableMerchantUserLink met enabled=FALSE,
+	// et GetUsersRightsToken filtre sur enabled=TRUE — après coup il ne
+	// trouverait plus rien. Best-effort, ignoré si absent.
+	token, _ := s.userRepo.GetUsersRightsToken(ctx, currentUser.MerchantID, userID)
+
 	result := &MerchantUserUnlinkResult{}
 	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
 		cleared, clearErr := s.userRepo.ClearMerchantEmployeeLinks(txCtx, currentUser.MerchantID, userID)
@@ -202,6 +216,13 @@ func (s *UsersService) UnlinkMerchantUser(ctx context.Context, userID string) (*
 	if err != nil {
 		return nil, err
 	}
+
+	// Invalide la session mise en cache pour que l'accès révoqué (côté SQL,
+	// voir GetUserByToken) prenne effet immédiatement au lieu d'attendre le TTL.
+	if result.Unlinked && token != "" {
+		s.redis.Delete(ctx, models.UserCachePrefix+token)
+	}
+
 	if result.Unlinked && s.audit != nil && oldState != nil {
 		_ = s.audit.LogChange(ctx, currentUser.MerchantID, currentUser.UserID, "unlink_merchant_user", "merchant_user", userID, oldState, map[string]any{"enabled": false, "employee_links_cleared": result.EmployeeLinksCleared})
 	}

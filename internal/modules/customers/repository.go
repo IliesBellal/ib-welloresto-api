@@ -131,16 +131,6 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 	return helpers.Int64ToStringPtr(id), nil
 }
 
-// truncateVarchar reproduit la troncature silencieuse MySQL non-strict sur
-// les colonnes varchar trop courtes pour les IDs prefixes generes (Postgres
-// leve 22001 sinon) — la valeur stockee reste identique aux deux dialectes.
-func truncateVarchar(s string, max int) string {
-	if len(s) > max {
-		return s[:max]
-	}
-	return s
-}
-
 func extractFieldValue(c *models.Customer, field string) interface{} {
 
 	switch field {
@@ -953,7 +943,7 @@ func (r *CustomersRepository) UpdateLoyaltyProgress(ctx context.Context, req *Lo
 		_, err = db.ExecContext(ctx, `
             INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value)
             VALUES (?, ?, ?, ?)
-        `, truncateVarchar(helpers.GeneratePrefixedID("loyalty-progress"), 50), req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
+        `, helpers.GeneratePrefixedID("loyalty-progress"), req.CustomerID, req.LoyaltyProgramID, req.CurrentValue)
 		if err != nil {
 			return 0, err
 		}
@@ -1496,10 +1486,8 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 
 		// id est une colonne auto-generee (identity en PG ; en MySQL la
 		// coercition string->0 declenchait deja l'auto_increment) : on la
-		// laisse se generer. progress_id est varchar(30) : MySQL tronquait
-		// silencieusement l'ID prefixe de 49 caracteres — troncature Go
-		// identique.
-		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, truncateVarchar(progressID, 30), orderID, increment)
+		// laisse se generer.
+		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
 		if err != nil {
 			return err
 		}

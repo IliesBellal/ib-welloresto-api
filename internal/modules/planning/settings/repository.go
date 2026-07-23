@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -19,7 +19,7 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string) (*PlanningSettings, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 
 	settings, err := r.GetSettings(ctx, merchantID)
 	if err == nil {
@@ -69,13 +69,13 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 }
 
 func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*PlanningSettings, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
 			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
 			allow_override_warnings, attendance_source, shift_swap_approval_mode, created_at, updated_at
 		FROM planning_settings
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID)
 
@@ -103,7 +103,7 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 }
 
 func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req PlanningSettingsUpdateRequest) (*PlanningSettings, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	current, err := r.GetOrCreateSettings(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -146,7 +146,7 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 		SET labor_country_code = ?, min_daily_rest_hours = ?, min_break_minutes = ?,
 			night_shift_start = ?, night_shift_end = ?, night_shift_multiplier = ?,
 			holiday_multiplier = ?, allow_override_warnings = ?, attendance_source = ?, shift_swap_approval_mode = ?, updated_at = ?
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.ShiftSwapApprovalMode, current.UpdatedAt, merchantID)
 	if err != nil {
 		return nil, err
@@ -156,12 +156,12 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 }
 
 func (r *Repository) GetLaborRuleByCountry(ctx context.Context, countryCode string) (*LaborRule, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT country_code, label, min_daily_rest_hours, min_break_minutes, night_shift_start, night_shift_end,
 			night_shift_multiplier, holiday_multiplier, max_weekly_hours, created_at, updated_at
 		FROM labor_rules
-		WHERE country_code = ? AND enabled = 1
+		WHERE country_code = ? AND enabled = TRUE
 		LIMIT 1
 	`, strings.ToUpper(strings.TrimSpace(countryCode)))
 	var item LaborRule

@@ -5,17 +5,18 @@ import (
 	"os"
 
 	"welloresto-api/internal/ai"
+	"welloresto-api/internal/database/dbx"
 )
 
 type AppConfig struct {
-	App        App
-	Database   DatabaseConfig
-	Google     GoogleConfig
-	UberEats   UberEatsConfig
-	Deliveroo  DeliverooConfig
-	ScanNOrder ScanNOrderConfig
-	Stripe     StripeConfig
-	Brevo      BrevoConfig
+	App         App
+	Database    DatabaseConfig
+	Google      GoogleConfig
+	UberEats    UberEatsConfig
+	Deliveroo   DeliverooConfig
+	ScanNOrder  ScanNOrderConfig
+	Stripe      StripeConfig
+	Brevo       BrevoConfig
 	R2          R2Config
 	AI          ai.AIConfig
 	Kiosk       KioskConfig
@@ -30,16 +31,16 @@ type App struct {
 func Load() *AppConfig {
 	cfg := &AppConfig{
 		App: App{
-			Port:      getEnv("PORT", "8080"),
+			Port:      getEnv("PORT", "8081"),
 			PINPepper: os.Getenv("PIN_PEPPER"),
 		},
-		Database:   loadDatabase(),
-		Google:     loadGoogle(),
-		UberEats:   loadUberEats(),
-		Deliveroo:  loadDeliveroo(),
-		ScanNOrder: loadScanNOrderConfig(),
-		Stripe:     loadStripeConfig(),
-		Brevo:      loadBrevoConfig(),
+		Database:    loadDatabase(),
+		Google:      loadGoogle(),
+		UberEats:    loadUberEats(),
+		Deliveroo:   loadDeliveroo(),
+		ScanNOrder:  loadScanNOrderConfig(),
+		Stripe:      loadStripeConfig(),
+		Brevo:       loadBrevoConfig(),
 		R2:          loadR2Config(),
 		AI:          loadAIConfig(),
 		Kiosk:       loadKioskConfig(),
@@ -51,8 +52,15 @@ func Load() *AppConfig {
 }
 
 func (c *AppConfig) validate() {
-	if c.Database.MySQLURL == "" {
-		log.Fatal("MYSQL_URL is not set")
+	switch dbx.ActiveDialect() {
+	case dbx.Postgres:
+		if c.Database.PostgresURL == "" {
+			log.Fatal("POSTGRES_URL is not set (DB_DIALECT=postgres)")
+		}
+	default:
+		if c.Database.MySQLURL == "" {
+			log.Fatal("MYSQL_URL is not set")
+		}
 	}
 	if c.Google.APIKey == "" {
 		log.Fatal("GOOGLE_API_KEY is not set")

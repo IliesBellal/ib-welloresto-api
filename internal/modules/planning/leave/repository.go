@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -19,11 +19,11 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID string, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequest, int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	countQuery := `
 		SELECT COUNT(1)
 		FROM planning_leave_requests
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.EmployeeID) != "" {
@@ -50,7 +50,7 @@ func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID s
 		SELECT id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason,
 			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_leave_requests
-		WHERE merchant_id = ? AND enabled = 1
+		WHERE merchant_id = ? AND enabled = TRUE
 	`
 	if strings.TrimSpace(filters.EmployeeID) != "" {
 		query += ` AND employee_id = ?`
@@ -85,19 +85,19 @@ func (r *Repository) ListPlanningLeaveRequests(ctx context.Context, merchantID s
 }
 
 func (r *Repository) GetPlanningLeaveRequestByID(ctx context.Context, merchantID, requestID string) (*PlanningLeaveRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason,
 			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_leave_requests
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		LIMIT 1
 	`, merchantID, requestID)
 	return scanPlanningLeaveRequestRow(row)
 }
 
 func (r *Repository) CreatePlanningLeaveRequest(ctx context.Context, merchantID string, request PlanningLeaveRequest) (*PlanningLeaveRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	request.ID = helpers.GeneratePrefixedID(helpers.PlanningLeaveRequestIDPrefix)
 	request.MerchantID = merchantID
@@ -107,7 +107,7 @@ func (r *Repository) CreatePlanningLeaveRequest(ctx context.Context, merchantID 
 		INSERT INTO planning_leave_requests (
 			id, merchant_id, employee_id, leave_type, start_date, end_date, status, reason, manager_note,
 			requested_by_user_id, processed_by_user_id, processed_at, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)
 	`, request.ID, request.MerchantID, request.EmployeeID, request.LeaveType, request.StartDate, request.EndDate, request.Status, request.Reason, request.ManagerNote, request.RequestedByUserID, request.ProcessedByUserID, request.ProcessedAt, request.CreatedAt, request.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -116,13 +116,13 @@ func (r *Repository) CreatePlanningLeaveRequest(ctx context.Context, merchantID 
 }
 
 func (r *Repository) UpdatePlanningLeaveRequest(ctx context.Context, merchantID, requestID string, request PlanningLeaveRequest) (*PlanningLeaveRequest, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	request.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_leave_requests
 		SET leave_type = ?, start_date = ?, end_date = ?, status = ?, reason = ?, manager_note = ?,
 			processed_by_user_id = ?, processed_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, request.LeaveType, request.StartDate, request.EndDate, request.Status, request.Reason, request.ManagerNote, request.ProcessedByUserID, request.ProcessedAt, request.UpdatedAt, merchantID, requestID)
 	if err != nil {
 		return nil, err
@@ -134,12 +134,12 @@ func (r *Repository) UpdatePlanningLeaveRequest(ctx context.Context, merchantID,
 }
 
 func (r *Repository) SoftDeletePlanningLeaveRequest(ctx context.Context, merchantID, requestID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE planning_leave_requests
-		SET enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, requestID)
 	if err != nil {
 		return err
@@ -157,7 +157,7 @@ func (r *Repository) CountEmployeeAssignedShiftsInRange(ctx context.Context, mer
 	` + assignedShiftsInRangeWhereClause()
 	args := assignedShiftsInRangeArgs(merchantID, employeeID, startDate, endDate)
 
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var count int
 	if err := db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, err
@@ -166,7 +166,7 @@ func (r *Repository) CountEmployeeAssignedShiftsInRange(ctx context.Context, mer
 }
 
 func (r *Repository) ListEmployeeAssignedShiftsInRange(ctx context.Context, merchantID, employeeID string, startDate, endDate time.Time) ([]PlanningLeaveConflictingShift, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	query := `
 		SELECT id, week_id, shift_date, start_time, end_time, position_id, position
 		FROM planning_shifts
@@ -207,7 +207,7 @@ func (r *Repository) ListEmployeeAssignedShiftsInRange(ctx context.Context, merc
 
 func assignedShiftsInRangeWhereClause() string {
 	return `
-		WHERE merchant_id = ? AND employee_id = ? AND enabled = 1 AND status <> 'cancelled'
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE AND status <> 'cancelled'
 			AND shift_date >= ? AND shift_date <= ?
 	`
 }
@@ -244,7 +244,7 @@ func (r *Repository) ListApprovedLeavesOverlappingRange(ctx context.Context, mer
 			manager_note, requested_by_user_id, processed_by_user_id, processed_at, created_at, updated_at, deleted_at
 		FROM planning_leave_requests
 		WHERE merchant_id = ?
-			AND enabled = 1
+			AND enabled = TRUE
 			AND status = 'approved'
 			AND start_date <= ?
 			AND end_date >= ?
@@ -258,7 +258,7 @@ func (r *Repository) ListApprovedLeavesOverlappingRange(ctx context.Context, mer
 		args = append(args, id)
 	}
 
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

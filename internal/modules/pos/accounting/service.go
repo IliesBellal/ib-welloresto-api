@@ -145,6 +145,10 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 
 	pdf.SetFont("Arial", "", 11)
 	pdf.Ln(5)
+	vatNumber := ""
+	if header.VATNumber != nil {
+		vatNumber = *header.VATNumber
+	}
 	headerText := fmt.Sprintf(
 		"Période : %s -> %s (%s)\nAdresse : %s\nSIRET : %s\nTVA : %s\nTéléphone : %s",
 		fromLocal.Format("02/01/2006 15:04:05"),
@@ -152,7 +156,7 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 		tzName,
 		header.Address,
 		header.SIRET,
-		header.VATNumber,
+		vatNumber,
 		header.Phone,
 	)
 	pdf.MultiCell(190, 6, translate(headerText), "", "L", false)

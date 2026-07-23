@@ -135,9 +135,18 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		return nil, fmt.Errorf("kiosk enroll: encrypt admin pin: %w", err)
 	}
 
+	// DeviceID est optionnel (compat ascendante) : chaîne vide -> NULL en
+	// base plutôt qu'une valeur vide stockée, pour ne jamais faire
+	// coïncider deux bornes sur un device_id "vide" au lieu d'un NULL (qui
+	// ne matche jamais rien) — voir docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md.
+	var deviceID *string
+	if trimmed := strings.TrimSpace(req.DeviceID); trimmed != "" {
+		deviceID = &trimmed
+	}
+
 	var kiosk *KioskRow
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		kiosk, err = s.repo.CreateKiosk(txCtx, kioskID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion, adminPinEncrypted)
+		kiosk, err = s.repo.CreateKiosk(txCtx, kioskID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion, adminPinEncrypted, deviceID)
 		if err != nil {
 			return err
 		}
@@ -363,10 +372,6 @@ func (s *Service) resetAdminPinLockout(ctx context.Context, kioskID string) {
 // invalide, c'est une erreur de configuration serveur, jamais comptée dans
 // le lockout.
 func (s *Service) VerifyAdminPin(ctx context.Context, kiosk *AuthenticatedKiosk, pin string) (*VerifyAdminPinResponse, error) {
-	if delay := s.checkAdminPinLockout(ctx, kiosk.KioskID); delay > 0 {
-		return nil, &AdminPinLockoutError{DelaySeconds: int(delay.Seconds())}
-	}
-
 	row, err := s.repo.GetKioskByIDForMerchant(ctx, kiosk.MerchantID, kiosk.KioskID)
 	if err != nil {
 		return nil, err
@@ -374,23 +379,116 @@ func (s *Service) VerifyAdminPin(ctx context.Context, kiosk *AuthenticatedKiosk,
 	if row == nil {
 		return nil, models.ErrKioskNotFound
 	}
-	if len(row.AdminPinEncrypted) == 0 {
-		s.incrementAdminPinLockout(ctx, kiosk.KioskID)
-		return nil, models.ErrKioskAdminPinInvalid
+
+	if err := s.verifyAdminPinCore(ctx, kiosk.KioskID, row.AdminPinEncrypted, pin); err != nil {
+		return nil, err
 	}
 
-	decrypted, err := helpers.Decrypt(row.AdminPinEncrypted)
+	return &VerifyAdminPinResponse{Valid: true}, nil
+}
+
+// verifyAdminPinCore centralise la vérification PIN admin (lockout Redis,
+// déchiffrement, comparaison en temps constant) — partagée par VerifyAdminPin
+// (borne déjà authentifiée, KioskAuth) et Service.ReclaimDevice (PIN exigé
+// avant réémission de tokens sur un reclaim "ancien", voir
+// docs/KIOSK_DECISIONS.md). Même lockout par kioskID dans les deux cas :
+// aucun lockout serveur dédié n'existe pour /reclaim.
+func (s *Service) verifyAdminPinCore(ctx context.Context, kioskID string, adminPinEncrypted []byte, pin string) error {
+	if delay := s.checkAdminPinLockout(ctx, kioskID); delay > 0 {
+		return &AdminPinLockoutError{DelaySeconds: int(delay.Seconds())}
+	}
+
+	if len(adminPinEncrypted) == 0 {
+		s.incrementAdminPinLockout(ctx, kioskID)
+		return models.ErrKioskAdminPinInvalid
+	}
+
+	decrypted, err := helpers.Decrypt(adminPinEncrypted)
 	if err != nil {
-		return nil, fmt.Errorf("kiosk verify admin pin: decrypt: %w", err)
+		return fmt.Errorf("kiosk verify admin pin: decrypt: %w", err)
 	}
 
 	if subtle.ConstantTimeCompare([]byte(decrypted), []byte(pin)) != 1 {
-		s.incrementAdminPinLockout(ctx, kiosk.KioskID)
-		return nil, models.ErrKioskAdminPinInvalid
+		s.incrementAdminPinLockout(ctx, kioskID)
+		return models.ErrKioskAdminPinInvalid
 	}
 
-	s.resetAdminPinLockout(ctx, kiosk.KioskID)
-	return &VerifyAdminPinResponse{Valid: true}, nil
+	s.resetAdminPinLockout(ctx, kioskID)
+	return nil
+}
+
+// kioskReclaimSilentWindow — au-delà de ce délai depuis le dernier heartbeat
+// connu (ou si aucun heartbeat n'a jamais été reçu), un reclaim par
+// device_id exige le PIN admin avant réémission de tokens ; en-deçà, la
+// réémission est silencieuse — voir docs/KIOSK_DECISIONS.md.
+const kioskReclaimSilentWindow = 30 * 24 * time.Hour
+
+// ReclaimDevice ré-identifie une borne par device_id quand son refresh token
+// est perdu (stockage effacé, réinstallation, rotation sans fenêtre de grâce)
+// — voir docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md et docs/KIOSK_DECISIONS.md.
+// La ligne kiosks existante est réutilisée telle quelle (même kiosk_id) :
+// aucune nouvelle borne créée, aucun double comptage de quota, PIN admin
+// inchangé (jamais régénéré ni ré-exposé ici).
+func (s *Service) ReclaimDevice(ctx context.Context, req ReclaimDeviceRequest, ip string) (*ReclaimDeviceResponse, error) {
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" {
+		return nil, models.ErrInvalidInput
+	}
+
+	candidates, err := s.repo.FindKioskCandidatesByDeviceID(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	// 0 candidat ou collision (>1) : même réponse "not found" dans les deux
+	// cas, pour ne jamais révéler l'existence d'une collision de device_id
+	// côté client — voir docs/KIOSK_DECISIONS.md.
+	if len(candidates) != 1 {
+		return nil, models.ErrKioskNotFound
+	}
+	kiosk := candidates[0]
+
+	silentEligible := kiosk.LastHeartbeatAt != nil && time.Since(*kiosk.LastHeartbeatAt) < kioskReclaimSilentWindow
+	if !silentEligible {
+		if strings.TrimSpace(req.AdminPin) == "" {
+			return nil, models.ErrKioskReclaimPinRequired
+		}
+		if err := s.verifyAdminPinCore(ctx, kiosk.ID, kiosk.AdminPinEncrypted, req.AdminPin); err != nil {
+			return nil, err
+		}
+	}
+
+	newRefreshToken, err := helpers.GenerateToken(32)
+	if err != nil {
+		return nil, fmt.Errorf("kiosk reclaim: generate refresh token: %w", err)
+	}
+	newRefreshTokenHash := security.HashPIN(newRefreshToken, s.cfg.Pepper)
+	newRefreshExpiresAt := time.Now().UTC().AddDate(0, 0, s.cfg.DeviceRefreshTokenTTLDays)
+	newTokenID := helpers.GeneratePrefixedID(helpers.KioskDeviceTokenIDPrefix)
+
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		if err := s.repo.RevokeAllDeviceTokens(txCtx, kiosk.ID); err != nil {
+			return err
+		}
+		if err := s.repo.CreateDeviceToken(txCtx, newTokenID, kiosk.ID, newRefreshTokenHash, newRefreshExpiresAt); err != nil {
+			return err
+		}
+		return s.repo.UpdateKioskLastSeenOnReclaim(txCtx, kiosk.ID, ip)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	accessToken, expiresAt, err := s.generateAccessToken(kiosk.ID, kiosk.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ReclaimDeviceResponse{
+		KioskID:      kiosk.ID,
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+		ExpiresAt:    expiresAt.Format(time.RFC3339),
+	}, nil
 }
 
 // GetAdminPin (back-office) déchiffre et retourne le PIN admin courant d'une
@@ -1790,8 +1888,9 @@ func (s *Service) CreateTerminalPaymentIntent(ctx context.Context, kiosk Authent
 // CancelTerminalPaymentIntent annule un PaymentIntent en cours (abandon/timeout
 // côté borne). La commande reste en PENDING_CARD_PAYMENT : le client peut
 // relancer un paiement carte ou basculer vers la caisse
-// (SwitchToCounterPayment). Le scoping merchant est appliqué côté infra
-// (le mapping Redis porte le merchant_id).
+// (SwitchToCounterPayment). Le scoping merchant est appliqué côté infra (le
+// mapping stripe_payments est résolu via une jointure orders, voir
+// docs/KIOSK_DECISIONS.md).
 func (s *Service) CancelTerminalPaymentIntent(ctx context.Context, kiosk AuthenticatedKiosk, paymentIntentID string) error {
 	if s.terminal == nil {
 		return models.ErrKioskTerminalNotConfigured

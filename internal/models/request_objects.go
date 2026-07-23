@@ -105,7 +105,6 @@ type CROrder struct {
 	OrderedBy    UserBaseInfo `json:"ordered_by"`
 	CreationDate string       `json:"creation_date"`
 	Currency     string       `json:"currency"`
-	IsDelivery   *int         `json:"isDelivery"`
 	Status       string       `json:"status"`
 	Price        float64      `json:"price"`
 }

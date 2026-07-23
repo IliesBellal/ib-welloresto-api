@@ -117,13 +117,13 @@ func TestServiceListCurrentUserShiftSwapRequestsReturnsRequesterAndTargetRows(t 
 			rs.id, rs.employee_id, rs.position_id, rs.title, rs.shift_date, rs.start_time, rs.end_time, rs.position, rp.color,
 			ts.id, ts.employee_id, ts.position_id, ts.title, ts.shift_date, ts.start_time, ts.end_time, ts.position, tp.color
 		FROM planning_shift_swap_requests ss
-		LEFT JOIN employees re ON re.id = ss.requester_employee_id AND re.merchant_id = ss.merchant_id AND re.enabled = 1
-		LEFT JOIN employees te ON te.id = ss.target_employee_id AND te.merchant_id = ss.merchant_id AND te.enabled = 1
-		LEFT JOIN planning_shifts rs ON rs.id = ss.requester_shift_id AND rs.merchant_id = ss.merchant_id AND rs.enabled = 1
-		LEFT JOIN planning_positions rp ON rp.id = rs.position_id AND rp.merchant_id = rs.merchant_id AND rp.enabled = 1
-		LEFT JOIN planning_shifts ts ON ts.id = ss.target_shift_id AND ts.merchant_id = ss.merchant_id AND ts.enabled = 1
-		LEFT JOIN planning_positions tp ON tp.id = ts.position_id AND tp.merchant_id = ts.merchant_id AND tp.enabled = 1
-		WHERE ss.merchant_id = ? AND ss.enabled = 1 AND (ss.requester_employee_id = ? OR ss.target_employee_id = ?)
+		LEFT JOIN employees re ON re.id = ss.requester_employee_id AND re.merchant_id = ss.merchant_id AND re.enabled = TRUE
+		LEFT JOIN employees te ON te.id = ss.target_employee_id AND te.merchant_id = ss.merchant_id AND te.enabled = TRUE
+		LEFT JOIN planning_shifts rs ON rs.id = ss.requester_shift_id AND rs.merchant_id = ss.merchant_id AND rs.enabled = TRUE
+		LEFT JOIN planning_positions rp ON rp.id = rs.position_id AND rp.merchant_id = rs.merchant_id AND rp.enabled = TRUE
+		LEFT JOIN planning_shifts ts ON ts.id = ss.target_shift_id AND ts.merchant_id = ss.merchant_id AND ts.enabled = TRUE
+		LEFT JOIN planning_positions tp ON tp.id = ts.position_id AND tp.merchant_id = ts.merchant_id AND tp.enabled = TRUE
+		WHERE ss.merchant_id = ? AND ss.enabled = TRUE AND (ss.requester_employee_id = ? OR ss.target_employee_id = ?)
 		 ORDER BY ss.created_at DESC`)).
 		WithArgs("m-1", "emp-1", "emp-1").
 		WillReturnRows(rows)

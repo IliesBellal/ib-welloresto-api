@@ -3,11 +3,12 @@ package stripeclient
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"time"
+
+	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/logger"
 
 	"github.com/stripe/stripe-go/v84"
 )
@@ -17,45 +18,10 @@ import (
 // (kiosk.Service) le mappe vers models.ErrKioskTerminalNotConfigured.
 var ErrNoStripeAccount = errors.New("stripe terminal: no connected account for merchant")
 
-// ErrTerminalMappingNotFound est retourné quand aucun mapping Redis
-// paymentIntentID -> commande n'existe (PaymentIntent inconnu, ou déjà annulé/
-// confirmé, ou TTL expiré).
+// ErrTerminalMappingNotFound est retourné quand le PaymentIntent identifié
+// appartient à un autre merchant que celui qui demande l'annulation (ligne
+// stripe_payments trouvée mais merchant différent).
 var ErrTerminalMappingNotFound = errors.New("stripe terminal: payment intent mapping not found")
-
-// ---- Clés Redis + mapping partagé avec le webhook Stripe ----
-//
-// Le webhook (internal/webhook/stripe) consomme ces mêmes clés et cette même
-// struct : elles sont exportées ici pour ne jamais dupliquer le format entre le
-// producteur (ce service, à la création du PaymentIntent) et le consommateur (le
-// webhook, à la réception de payment_intent.succeeded/payment_failed).
-
-const (
-	terminalPIKeyPrefix    = "terminal_pi:"       // terminal_pi:{paymentIntentID}       -> TerminalPaymentMapping (JSON)
-	terminalOrderKeyPrefix = "terminal_order_pi:" // terminal_order_pi:{merchant}:{order} -> paymentIntentID (reverse lookup)
-	terminalMappingTTL     = time.Hour
-)
-
-// TerminalPaymentMapping est la valeur stockée sous terminal_pi:{paymentIntentID}.
-// Le brief ne demandait que order_id, mais le webhook a besoin de merchant_id
-// pour appeler SetOrderAccepted et diffuser la notification — les deux sont donc
-// stockés ensemble.
-type TerminalPaymentMapping struct {
-	OrderID    string `json:"order_id"`
-	MerchantID string `json:"merchant_id"`
-}
-
-// TerminalPaymentIntentKey construit la clé du mapping direct
-// paymentIntentID -> commande (lu par le webhook).
-func TerminalPaymentIntentKey(paymentIntentID string) string {
-	return terminalPIKeyPrefix + paymentIntentID
-}
-
-// TerminalOrderKey construit la clé du mapping inverse commande -> paymentIntentID
-// (utilisé par le basculement carte -> caisse pour retrouver le PaymentIntent
-// actif d'une commande sans que le client ait à le fournir).
-func TerminalOrderKey(merchantID, orderID string) string {
-	return terminalOrderKeyPrefix + merchantID + ":" + orderID
-}
 
 // TerminalAccountStore résout le compte Stripe connecté d'un merchant.
 // Interface (plutôt qu'un import direct d'un module) pour que ce package
@@ -70,12 +36,29 @@ type TerminalAccountStore interface {
 	GetTerminalAccount(ctx context.Context, merchantID string) (accountID string, err error)
 }
 
-// TerminalMappingStore est le sous-ensemble de l'API Redis dont ce service a
-// besoin — satisfait tel quel par *redisclient.Client.
-type TerminalMappingStore interface {
-	Get(ctx context.Context, key string) (string, bool)
-	Set(ctx context.Context, key, value string, ttl time.Duration) bool
-	Delete(ctx context.Context, key string) bool
+// TerminalPaymentStore porte le mapping order_id <-> payment_intent_id dans
+// stripe_payments — remplace l'ancien mapping Redis (terminal_pi:{id} /
+// terminal_order_pi:{merchant}:{order}), diagnostiqué comme cause racine de
+// paiements Terminal bloqués (mapping silencieusement perdu/expiré, voir
+// docs/KIOSK_DECISIONS.md, "Retrait de Redis du mapping order_id/payment_intent_id").
+type TerminalPaymentStore interface {
+	// CreateMapping pré-crée la ligne stripe_payments (order_id,
+	// payment_intent_id, payment_id=NULL) à la création du PaymentIntent,
+	// avant toute confirmation Stripe. Complétée plus tard (payment_id rempli)
+	// par order_life_cycle.AddPaymentAndReturnID quand le paiement est
+	// réellement encaissé (voir docs/KIOSK_DECISIONS.md).
+	CreateMapping(ctx context.Context, orderID, paymentIntentID string) error
+	// GetActivePaymentIntentForOrder retourne le PaymentIntent Terminal le
+	// plus récent d'une commande, encore actif (ni annulé, ni échoué, ni
+	// capturé). found=false si aucune ligne n'existe.
+	GetActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) (paymentIntentID string, found bool, err error)
+	// GetMerchantIDForPaymentIntent résout le merchant propriétaire d'un
+	// PaymentIntent Terminal (vérification d'appartenance). found=false si
+	// aucune ligne stripe_payments ne porte ce payment_intent_id.
+	GetMerchantIDForPaymentIntent(ctx context.Context, paymentIntentID string) (merchantID string, found bool, err error)
+	// MarkPaymentIntentStatus met à jour payment_intent_status (no-op si
+	// aucune ligne ne correspond).
+	MarkPaymentIntentStatus(ctx context.Context, paymentIntentID, status string) error
 }
 
 // TerminalService porte toute la logique Stripe Terminal, paramétrée par
@@ -84,16 +67,16 @@ type TerminalMappingStore interface {
 // merchantID du contexte KioskAuth puis appellent ce service (voir
 // docs/KIOSK_DECISIONS.md, règle de découplage).
 type TerminalService struct {
-	sm      *StripeManager
-	store   TerminalAccountStore
-	mapping TerminalMappingStore
+	sm       *StripeManager
+	store    TerminalAccountStore
+	payments TerminalPaymentStore
 }
 
 // NewTerminalService construit le service Terminal. sm réutilise le client
 // Stripe déjà initialisé (même clé API, même compte plateforme que le reste du
 // projet).
-func NewTerminalService(sm *StripeManager, store TerminalAccountStore, mapping TerminalMappingStore) *TerminalService {
-	return &TerminalService{sm: sm, store: store, mapping: mapping}
+func NewTerminalService(sm *StripeManager, store TerminalAccountStore, payments TerminalPaymentStore) *TerminalService {
+	return &TerminalService{sm: sm, store: store, payments: payments}
 }
 
 // CreateConnectionToken retourne un secret de connexion à usage court, scopé au
@@ -122,8 +105,9 @@ func (t *TerminalService) CreateConnectionToken(ctx context.Context, merchantID 
 // destination charge (OnBehalfOf/TransferData), pour rester cohérent avec
 // l'existant. variableFees/fixedFees sont résolus par l'appelant (kiosk_settings,
 // pas scannorder_settings — voir docs/KIOSK_DECISIONS.md, "Incrément Terminal 3")
-// et appliqués ici avec la même formule que CreateCheckoutSession. Stocke ensuite
-// les deux mappings Redis (direct + inverse), TTL 1h.
+// et appliqués ici avec la même formule que CreateCheckoutSession. Pré-crée
+// ensuite le mapping order_id <-> payment_intent_id dans stripe_payments (voir
+// TerminalPaymentStore) — remplace l'ancien mapping Redis.
 func (t *TerminalService) CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64, variableFees float64, fixedFees int64) (clientSecret, paymentIntentID string, err error) {
 	accountID, err := t.store.GetTerminalAccount(ctx, merchantID)
 	if err != nil {
@@ -154,25 +138,36 @@ func (t *TerminalService) CreateTerminalPaymentIntent(ctx context.Context, merch
 		return "", "", fmt.Errorf("stripe terminal: create payment intent: %w", err)
 	}
 
-	t.storeMapping(ctx, merchantID, orderID, pi.ID)
+	// Contrairement à l'ancien mapping Redis (best-effort, erreur seulement
+	// loguée — cause racine diagnostiquée dans docs/KIOSK_DECISIONS.md), un
+	// échec ici fait échouer l'appel : la base est déjà une dépendance dure du
+	// reste de l'application, donc un échec d'écriture signale un vrai
+	// problème, pas une dégradation acceptable. Le PaymentIntent orphelin est
+	// annulé en best-effort pour ne pas laisser un PI vivant que plus rien ne
+	// pourra jamais rattacher à une commande.
+	if err := t.payments.CreateMapping(ctx, orderID, pi.ID); err != nil {
+		logger.FromContext(ctx).Error("[stripe terminal] CreateMapping failed for pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID + ": " + err.Error())
+		if cancelErr := t.cancelOnStripe(ctx, merchantID, pi.ID); cancelErr != nil {
+			logger.FromContext(ctx).Warn("[stripe terminal] cleanup cancel failed for orphaned pi=" + pi.ID + ": " + cancelErr.Error())
+		}
+		return "", "", fmt.Errorf("stripe terminal: persist payment mapping: %w", err)
+	}
 
 	return pi.ClientSecret, pi.ID, nil
 }
 
 // CancelTerminalPaymentIntent annule un PaymentIntent en cours (cas abandon/
-// timeout côté borne) et supprime les mappings Redis associés. merchantID est
-// requis (écart assumé vs la signature du brief) pour deux raisons : résoudre le
-// compte connecté sur lequel le PaymentIntent vit (l'annulation exige
-// SetStripeAccount), et refuser qu'une borne annule le PaymentIntent d'un autre
-// merchant.
+// timeout côté borne) et marque la ligne stripe_payments associée comme
+// annulée. merchantID est requis (écart assumé vs la signature du brief) pour
+// deux raisons : résoudre le compte connecté sur lequel le PaymentIntent vit
+// (l'annulation exige SetStripeAccount), et refuser qu'une borne annule le
+// PaymentIntent d'un autre merchant.
 func (t *TerminalService) CancelTerminalPaymentIntent(ctx context.Context, merchantID, paymentIntentID string) error {
-	mapping, found := t.getMapping(ctx, paymentIntentID)
-	if !found {
-		// Pas de mapping : soit déjà annulé/confirmé, soit inconnu. On tente
-		// tout de même l'annulation Stripe sur le compte du merchant, idempotente.
-		return t.cancelOnStripe(ctx, merchantID, paymentIntentID)
+	ownerMerchantID, found, err := t.payments.GetMerchantIDForPaymentIntent(ctx, paymentIntentID)
+	if err != nil {
+		return fmt.Errorf("stripe terminal: resolve payment mapping: %w", err)
 	}
-	if mapping.MerchantID != merchantID {
+	if found && ownerMerchantID != merchantID {
 		return ErrTerminalMappingNotFound
 	}
 
@@ -180,16 +175,23 @@ func (t *TerminalService) CancelTerminalPaymentIntent(ctx context.Context, merch
 		return err
 	}
 
-	t.deleteMapping(ctx, paymentIntentID, mapping.MerchantID, mapping.OrderID)
+	if found {
+		if err := t.payments.MarkPaymentIntentStatus(ctx, paymentIntentID, "CANCELED"); err != nil {
+			logger.FromContext(ctx).Warn("[stripe terminal] mark canceled failed for pi=" + paymentIntentID + ": " + err.Error())
+		}
+	}
 	return nil
 }
 
 // CancelActivePaymentIntentForOrder retrouve le PaymentIntent actif d'une
-// commande via le mapping inverse et l'annule. No-op (nil) si aucun mapping
+// commande via stripe_payments et l'annule. No-op (nil) si aucune ligne active
 // n'existe (le client n'avait pas encore lancé de paiement carte, ou il a déjà
-// expiré) — utilisé par le basculement carte -> caisse.
+// été résolu) — utilisé par le basculement carte -> caisse.
 func (t *TerminalService) CancelActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) error {
-	piID, found := t.mapping.Get(ctx, TerminalOrderKey(merchantID, orderID))
+	piID, found, err := t.payments.GetActivePaymentIntentForOrder(ctx, merchantID, orderID)
+	if err != nil {
+		return fmt.Errorf("stripe terminal: resolve active payment intent: %w", err)
+	}
 	if !found || piID == "" {
 		return nil
 	}
@@ -211,39 +213,87 @@ func (t *TerminalService) cancelOnStripe(ctx context.Context, merchantID, paymen
 	return nil
 }
 
-func (t *TerminalService) storeMapping(ctx context.Context, merchantID, orderID, paymentIntentID string) {
-	if t.mapping == nil {
-		return
+// ---- Implémentation SQL de TerminalPaymentStore ----
+
+type terminalPaymentStore struct {
+	db *sql.DB
+}
+
+// NewTerminalPaymentStore construit le store SQL du mapping order_id <->
+// payment_intent_id, adossé à stripe_payments (remplace l'ancien mapping
+// Redis).
+func NewTerminalPaymentStore(db *sql.DB) TerminalPaymentStore {
+	return &terminalPaymentStore{db: db}
+}
+
+// CreateMapping — success_key est NOT NULL sans défaut en base (même
+// contrainte que le flux Checkout web, voir order_life_cycle/repository.go) :
+// '' explicite. payment_id et payment_intent_status sont omis (NULL / défaut
+// DB 'REQUIRES_CONFIRMATION'), complétés plus tard par
+// order_life_cycle.AddPaymentAndReturnID quand le paiement est réellement
+// encaissé (upsert par payment_intent_id, voir docs/KIOSK_DECISIONS.md).
+func (s *terminalPaymentStore) CreateMapping(ctx context.Context, orderID, paymentIntentID string) error {
+	db := dbx.GetDB(ctx, s.db)
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO stripe_payments(order_id, payment_intent_id, success_key) VALUES (?, ?, '')`,
+		orderID, paymentIntentID)
+	return err
+}
+
+// GetActivePaymentIntentForOrder — la jointure orders vérifie l'appartenance
+// merchant (stripe_payments n'a pas de colonne merchant_id propre tant que
+// payment_id est NULL). ORDER BY id DESC : le PaymentIntent le plus récent,
+// au cas où plusieurs lignes existeraient pour la même commande (retry après
+// timeout, voir docs/KIOSK_DECISIONS.md).
+func (s *terminalPaymentStore) GetActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) (string, bool, error) {
+	db := dbx.GetDB(ctx, s.db)
+	const q = `
+		SELECT sp.payment_intent_id
+		FROM stripe_payments sp
+		INNER JOIN orders o ON o.order_id = sp.order_id
+		WHERE sp.order_id = ? AND o.merchant_id = ?
+		  AND sp.payment_intent_id IS NOT NULL AND sp.payment_intent_id != ''
+		  AND sp.payment_intent_status NOT IN ('CANCELED', 'FAILED', 'CAPTURED')
+		ORDER BY sp.id DESC
+		LIMIT 1`
+	var piID string
+	err := db.QueryRowContext(ctx, q, orderID, merchantID).Scan(&piID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	payload, err := json.Marshal(TerminalPaymentMapping{OrderID: orderID, MerchantID: merchantID})
 	if err != nil {
-		return
+		return "", false, err
 	}
-	t.mapping.Set(ctx, TerminalPaymentIntentKey(paymentIntentID), string(payload), terminalMappingTTL)
-	t.mapping.Set(ctx, TerminalOrderKey(merchantID, orderID), paymentIntentID, terminalMappingTTL)
+	return piID, true, nil
 }
 
-func (t *TerminalService) getMapping(ctx context.Context, paymentIntentID string) (TerminalPaymentMapping, bool) {
-	if t.mapping == nil {
-		return TerminalPaymentMapping{}, false
+// GetMerchantIDForPaymentIntent résout le merchant propriétaire d'un
+// PaymentIntent Terminal — remplace le test d'appartenance que portait le
+// mapping direct Redis (terminal_pi:{id}).
+func (s *terminalPaymentStore) GetMerchantIDForPaymentIntent(ctx context.Context, paymentIntentID string) (string, bool, error) {
+	db := dbx.GetDB(ctx, s.db)
+	const q = `
+		SELECT o.merchant_id
+		FROM stripe_payments sp
+		INNER JOIN orders o ON o.order_id = sp.order_id
+		WHERE sp.payment_intent_id = ?
+		ORDER BY sp.id DESC
+		LIMIT 1`
+	var merchantID string
+	err := db.QueryRowContext(ctx, q, paymentIntentID).Scan(&merchantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	val, found := t.mapping.Get(ctx, TerminalPaymentIntentKey(paymentIntentID))
-	if !found {
-		return TerminalPaymentMapping{}, false
+	if err != nil {
+		return "", false, err
 	}
-	var m TerminalPaymentMapping
-	if err := json.Unmarshal([]byte(val), &m); err != nil {
-		return TerminalPaymentMapping{}, false
-	}
-	return m, true
+	return merchantID, true, nil
 }
 
-func (t *TerminalService) deleteMapping(ctx context.Context, paymentIntentID, merchantID, orderID string) {
-	if t.mapping == nil {
-		return
-	}
-	t.mapping.Delete(ctx, TerminalPaymentIntentKey(paymentIntentID))
-	t.mapping.Delete(ctx, TerminalOrderKey(merchantID, orderID))
+func (s *terminalPaymentStore) MarkPaymentIntentStatus(ctx context.Context, paymentIntentID, status string) error {
+	db := dbx.GetDB(ctx, s.db)
+	_, err := db.ExecContext(ctx, `UPDATE stripe_payments SET payment_intent_status = ? WHERE payment_intent_id = ?`, status, paymentIntentID)
+	return err
 }
 
 // ---- Implémentation SQL de TerminalAccountStore ----
@@ -261,8 +311,14 @@ func NewTerminalAccountStore(db *sql.DB) TerminalAccountStore {
 func (s *terminalAccountStore) GetTerminalAccount(ctx context.Context, merchantID string) (string, error) {
 	const q = `SELECT account_id FROM stripe_accounts WHERE merchant_id = ? LIMIT 1`
 
+	// Rebind requis : ce store n'utilisait jusqu'ici que le placeholder `?`
+	// directement contre s.db, sans passer par dbx.GetDB — sous
+	// DB_DIALECT=postgres, la requête aurait échoué systématiquement (le
+	// driver Postgres n'accepte pas `?`), empêchant toute création de
+	// PaymentIntent Terminal. Sans transaction à propager ici (pas d'appelant
+	// qui englobe cette lecture dans dbutils.InjectTx), dbx.Rebind suffit.
 	var accountID sql.NullString
-	err := s.db.QueryRowContext(ctx, q, merchantID).Scan(&accountID)
+	err := s.db.QueryRowContext(ctx, dbx.Rebind(q), merchantID).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNoStripeAccount
 	}

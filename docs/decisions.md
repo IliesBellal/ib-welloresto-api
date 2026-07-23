@@ -1,5 +1,98 @@
 # Decisions
 
+### Traçabilité HACCP (photos + commentaire) — trou schéma Postgres cible (2026-07-23)
+
+- Migration `067_haccp_traceability` (`haccp_traceability_records`/`haccp_traceability_photos`) ajoutée après la préparation Postgres, comme `planning_day_comments` en son temps (voir `docs/migration-postgres/26-planning-day-comments-integration.md`) : il manque encore sa traduction dans `04-schema-postgres-target.sql` (+ mise à jour `03-table-usage-audit.md`/`07-module-inventory.md`) — à rattraper avant le cutover Postgres (Phase 8), sinon la section traçabilité de `internal/modules/haccp/postgres_integration_test.go` échouera contre le Postgres de dev.
+
+### Phase 1 — Fondation device_id enrôlement Kiosk (2026-07-22)
+
+- **Contexte** : suite à l'audit `docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md`
+  (aucun identifiant device stable n'existe côté API ni côté Flutter Kiosk —
+  seul le `kiosk_id` serveur, perdu si le stockage local est effacé). Cette
+  phase pose uniquement la fondation de capture, **sans** endpoint de
+  ré-identification (`/kiosk/auth/reclaim` reste à faire).
+- **`kiosks.device_id VARCHAR(191) NULL`** (migration `062_kiosks_device_id`) :
+  pas de contrainte UNIQUE — l'unicité applicative (bloquer un reclaim sur
+  device_id dupliqué plutôt que faire échouer une insertion) sera gérée par
+  le futur endpoint. Colonne nullable, aucun backfill : les bornes déjà
+  enrôlées restent à `NULL` et continuent sur le flow d'enrôlement classique.
+  Ce n'est pas un secret — aucune valeur d'authentification n'est attachée à
+  ce champ.
+- **`EnrollRequest.DeviceID` optionnel** (compat ascendante) : chaîne vide ou
+  absente → `NULL` stocké (pas une chaîne vide), pour ne jamais faire
+  coïncider deux bornes sur un device_id "vide" au lieu d'un `NULL` (qui ne
+  matche jamais rien dans une future recherche exacte) — voir
+  `Service.EnrollDevice`, conversion en `*string` avant `Repository.CreateKiosk`.
+  Aucun changement à `ValidateAccessToken`, `RefreshDeviceToken`, ni à aucun
+  comportement d'auth existant ; aucune nouvelle route.
+- **Côté Flutter (wello-kiosk) : reporté.** Le plan initial (réutiliser
+  `platform_device_id_plus` comme `wello_resto_flutter`, cache dans une
+  nouvelle clé secure-storage `kiosk_os_device_id` distincte de
+  `AuthService.keyDeviceId`) est bloqué par un conflit de dépendances réel :
+  `wakelock_plus ^1.6.1` (déjà utilisé par wello-kiosk, requis pour empêcher
+  la mise en veille de la borne) exige `win32 ^6.0.1`, incompatible avec
+  `device_info_plus ^11.3.0` (dépendance transitive de
+  `platform_device_id_plus ^1.0.7`), qui exige `win32 ^5.5.3`.
+  `wello_resto_flutter` n'a pas `wakelock_plus`, d'où l'absence de conflit
+  là-bas. Un downgrade `wakelock_plus` → `^1.5.2` résout la contrainte
+  (confirmé par `flutter pub get`, testé puis annulé) mais downgrade aussi
+  `win32`, `package_info_plus` et `flutter_secure_storage_windows` en
+  cascade — décision reportée à Ilies plutôt que tranchée unilatéralement.
+  **Aucun fichier Flutter modifié** (tous les edits ont été passés puis
+  annulés pour ne pas laisser le projet dans un état qui ne compile pas).
+- **Prochaine étape (hors scope ici)** : trancher le conflit de dépendance
+  côté wello-kiosk, puis reprendre la capture `device_id` client (même
+  design que ci-dessus), avant d'attaquer `/kiosk/auth/reclaim`.
+
+### Phase 2 — Endpoint `/kiosk/auth/reclaim` par device_id (2026-07-22)
+
+- **Contexte** : suite de la Phase 1 (fondation `device_id`). Objectif :
+  permettre à une borne dont le refresh token est perdu (stockage effacé,
+  réinstallation) de retrouver son profil via `device_id`, sans réenrôlement
+  manuel dans le cas courant — voir
+  `docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md`.
+- **Écart constaté avec le texte de la Phase 1 ci-dessus** (audit-first,
+  signalé ici plutôt que corrigé silencieusement) : l'entrée Phase 1 déclare
+  la capture `device_id` côté Flutter "reportée" à cause d'un conflit
+  `wakelock_plus`/`platform_device_id_plus`. En pratique, `wello-kiosk` a
+  depuis résolu ce conflit avec le package `android_id` (Android uniquement,
+  aucune dépendance `win32`) — `AuthService.getOrGenerateOsDeviceId()` existe
+  et fonctionne, documenté dans `wello-kiosk/docs/KIOSK_DECISIONS.md`
+  ("Identifiant device OS (android_id)"). Cette phase s'appuie donc sur cette
+  fondation déjà en place ; l'entrée Phase 1 de ce fichier n'a simplement
+  jamais été mise à jour après cette résolution côté `wello-kiosk`.
+- **Recherche des candidats par `device_id`** : `status IN ('active',
+  'inactive')` uniquement — une borne `revoked` n'est jamais éligible et
+  n'apparaît même pas dans la requête SQL (`Repository.
+  FindKioskCandidatesByDeviceID`), pour ne pas laisser fuiter son existence.
+  0 ligne ou >1 ligne (collision) → réponse HTTP identique
+  (`kiosk_not_found`, 404) : le client ne distingue jamais les deux cas et
+  retombe sur l'enrôlement classique dans les deux cas.
+- **Réactivation silencieuse conditionnée au dernier heartbeat connu** :
+  `last_heartbeat_at` < 30 jours → réémission de tokens sans aucune
+  vérification de PIN (même si un PIN est configuré) ; `last_heartbeat_at`
+  ≥ 30 jours ou `NULL` (borne jamais vue depuis son enrôlement) → PIN admin
+  obligatoire. Constante `kioskReclaimSilentWindow` (30 jours), non
+  configurable par env var pour cette phase.
+- **PIN admin réutilisé tel quel** : `Service.verifyAdminPinCore` extrait la
+  logique déjà existante de `VerifyAdminPin` (déchiffrement,
+  comparaison à temps constant, lockout Redis 5 tentatives/30s par
+  `kioskID`) — aucun lockout serveur dédié à `/reclaim`, le lockout propre à
+  cet écran est géré côté app Flutter (voir plus bas).
+- **Réutilisation de la ligne `kiosks` existante** : `ReclaimDevice` ne crée
+  jamais de nouvelle borne — révoque tous les refresh tokens existants
+  (`RevokeAllDeviceTokens`, même mécanisme d'hygiène qu'un `refresh` normal)
+  puis en émet un nouveau, met à jour `last_heartbeat_at`/`last_ip`
+  (`UpdateKioskLastSeenOnReclaim`, dédiée pour ne jamais écraser
+  `app_version` avec une valeur vide — le client de reclaim ne la transmet
+  pas), PIN admin inchangé (ni régénéré ni ré-exposé dans la réponse).
+- **Endpoint public** (`POST /kiosk/auth/reclaim`, pas de Bearer, même
+  famille que `/auth/enroll` et `/auth/token/refresh`), sans rate-limit par
+  IP pour cette phase (décision explicite, à revisiter plus tard si besoin).
+- **Nouveau code d'erreur** `kiosk_reclaim_pin_required` (401) ; 0/>1
+  candidat réutilise `kiosk_not_found` (404) existant plutôt que d'en créer
+  un distinct pour la collision.
+
 ### Statuts produits — fiabilisation backend + affichage/blocage SNO (2026-07-05)
 
 - **Contexte** (audit du 2026-07-04) : `products.status` est une colonne texte

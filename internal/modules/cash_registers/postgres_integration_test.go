@@ -4,6 +4,8 @@ package cash_registers
 
 import (
 	"context"
+	"database/sql"
+	"math"
 	"strconv"
 	"testing"
 
@@ -15,12 +17,32 @@ import (
 // Vérifie la traduction SQL des ex-procédures GET_CASH_REGISTER_REPORT et
 // GET_CASH_REGISTER_REPORT_MOP contre le Postgres Docker de dev.
 //
+// tva_categories et labels(delivery_type) sont des tables de référence
+// globales, non scopées par marchand ni par caisse — cashRegisterReportSQL
+// part de `FROM tva_categories ... WHERE show_in_report IS TRUE` sans filtre
+// merchant/caisse, donc une base déjà peuplée (chargement réel complet) y
+// ajoute des catégories qui n'appartiennent pas à ce test. tva_id = -1 en
+// particulier est un identifiant sentinelle réel (utilisé tel quel par la
+// branche "frais de livraison" de la requête), pas un id que ce test peut
+// s'approprier sans vérification. Ce test :
+//   - insère ses propres catégories (id 9101/9102, hors de toute plage
+//     d'auto-incrément réaliste) et ne les tient pour siennes que via elles ;
+//   - pour tva_id = -1 et les labels IN/TAKE_AWAY/DELIVERY, vérifie d'abord
+//     s'ils existent déjà (données réelles ou résidu d'un run précédent
+//     identifié par tva_desc = 'itest') ; ne les insère/nettoie que s'ils
+//     sont absents, et sinon les utilise tels quels pour calculer ses valeurs
+//     attendues ;
+//   - scope ses assertions de ventilation TVA à ses propres lignes (par
+//     clé delivery_type/tva_title) plutôt que de compter le nombre total de
+//     lignes du rapport, qui dépend du contenu global de tva_categories.
+//
 // Données seedées :
-//   - TVA 10% (IN, id 9101), TVA 5.5% (TAKE_AWAY, id 9102), TVA Livraison
-//     (id -1, 20%, show_in_report=false — ne sort que par la branche fees) ;
+//   - TVA 10% (IN, id 9101), TVA 5.5% (TAKE_AWAY, id 9102) ;
 //   - commande 1 (sur place, CLOSED) : 2 × 1000 → TTC 2000, HT 1818, TVA 182 ;
 //   - commande 2 (à emporter, CLOSED, delivery_fees 300) : 3 × 500 →
-//     TTC 1500, HT 1422, TVA 78 ; fees → HT 240, TTC 300, TVA 60 ;
+//     TTC 1500, HT 1422, TVA 78 ; fees → TTC 300, HT/TVA dérivés du taux
+//     effectif de la catégorie tva_id=-1 (insérée à 20% si absente, sinon
+//     celui déjà en base) ;
 //   - commande 3 (OPEN) et commande 4 (CANCELED) : exclues ;
 //   - paiements : ES 2000 + CB (1000+500) rattachés au registre ; un paiement
 //     désactivé, un paiement NULL et un paiement d'une commande CANCELED : exclus.
@@ -29,9 +51,40 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	ctx := context.Background()
 
 	const (
-		merchantID = "999922"
-		userID     = "itest-cashreg-user"
+		merchantID  = "999922"
+		userID      = "itest-cashreg-user"
+		ownTVAMark  = "itest"
+		deliveryTVA = -1 // identifiant sentinelle réel, cf. commentaire de fonction
 	)
+
+	// tva_id = -1 est-il déjà présent, et n'appartient-il pas à ce test
+	// (pas de résidu marqué tva_desc = 'itest' d'un run précédent) ?
+	isForeignDeliveryTVA := func() bool {
+		var desc sql.NullString
+		err := db.QueryRowContext(ctx, `SELECT tva_desc FROM tva_categories WHERE tva_id = $1`, deliveryTVA).Scan(&desc)
+		if err == sql.ErrNoRows {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("check tva_categories %d preexistence: %v", deliveryTVA, err)
+		}
+		return desc.String != ownTVAMark
+	}
+	labelExists := func(value string) bool {
+		var exists bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM labels WHERE label_type = 'delivery_type' AND lang = 'FR' AND label_value = $1)
+		`, value).Scan(&exists); err != nil {
+			t.Fatalf("check labels %s preexistence: %v", value, err)
+		}
+		return exists
+	}
+
+	foreignDeliveryTVA := isForeignDeliveryTVA()
+	foreignLabel := map[string]bool{}
+	for _, v := range []string{"IN", "TAKE_AWAY", "DELIVERY"} {
+		foreignLabel[v] = labelExists(v)
+	}
 
 	cleanup := func() {
 		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, merchantID)
@@ -39,8 +92,15 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE merchant_Id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers WHERE merchant_id = $1`, merchantID)
-		_, _ = db.ExecContext(ctx, `DELETE FROM tva_categories WHERE tva_id IN (9101, 9102, -1)`)
-		_, _ = db.ExecContext(ctx, `DELETE FROM labels WHERE label_type = 'delivery_type' AND lang = 'FR' AND label_value IN ('IN','TAKE_AWAY','DELIVERY')`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM tva_categories WHERE tva_id IN (9101, 9102)`)
+		if !foreignDeliveryTVA {
+			_, _ = db.ExecContext(ctx, `DELETE FROM tva_categories WHERE tva_id = $1 AND tva_desc = $2`, deliveryTVA, ownTVAMark)
+		}
+		for value, wasForeign := range foreignLabel {
+			if !wasForeign {
+				_, _ = db.ExecContext(ctx, `DELETE FROM labels WHERE label_type = 'delivery_type' AND lang = 'FR' AND label_value = $1`, value)
+			}
+		}
 	}
 	cleanup()
 	t.Cleanup(cleanup)
@@ -52,18 +112,37 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 		}
 	}
 
-	mustExec("tva_categories",
+	mustExec("tva_categories (IN/TAKE_AWAY)",
 		`INSERT INTO tva_categories (tva_id, delivery_type, tva_title, tva_desc, tva_rate, show_in_report)
 		 OVERRIDING SYSTEM VALUE VALUES
-		 (9101, 'IN', 'TVA 10%', 'itest', 10, TRUE),
-		 (9102, 'TAKE_AWAY', 'TVA 5.5%', 'itest', 5.5, TRUE),
-		 (-1, 'DELIVERY', 'TVA Livraison', 'itest', 20, FALSE)`)
+		 (9101, 'IN', 'itest TVA 10%', 'itest', 10, TRUE),
+		 (9102, 'TAKE_AWAY', 'itest TVA 5.5%', 'itest', 5.5, TRUE)`)
 
-	mustExec("labels",
-		`INSERT INTO labels (label_value, label_type, lang, label) VALUES
-		 ('IN', 'delivery_type', 'FR', 'Sur place'),
-		 ('TAKE_AWAY', 'delivery_type', 'FR', 'A emporter'),
-		 ('DELIVERY', 'delivery_type', 'FR', 'Livraison')`)
+	if !foreignDeliveryTVA {
+		mustExec("tva_categories (delivery sentinel)",
+			`INSERT INTO tva_categories (tva_id, delivery_type, tva_title, tva_desc, tva_rate, show_in_report)
+			 OVERRIDING SYSTEM VALUE VALUES ($1, 'DELIVERY', 'itest TVA Livraison', $2, 20, FALSE)`,
+			deliveryTVA, ownTVAMark)
+	}
+
+	// Taux effectif de la catégorie "frais de livraison" — celui qu'on vient
+	// d'insérer (20%), ou celui déjà en base si la ligne préexistait.
+	var deliveryType, deliveryTVATitle string
+	var deliveryRate float64
+	if err := db.QueryRowContext(ctx, `SELECT delivery_type, tva_title, tva_rate FROM tva_categories WHERE tva_id = $1`, deliveryTVA).
+		Scan(&deliveryType, &deliveryTVATitle, &deliveryRate); err != nil {
+		t.Fatalf("read tva_categories %d: %v", deliveryTVA, err)
+	}
+
+	labelText := map[string]string{"IN": "itest Sur place", "TAKE_AWAY": "itest A emporter", "DELIVERY": "itest Livraison"}
+	for _, value := range []string{"IN", "TAKE_AWAY", "DELIVERY"} {
+		if foreignLabel[value] {
+			continue
+		}
+		mustExec("labels "+value,
+			`INSERT INTO labels (label_value, label_type, lang, label) VALUES ($1, 'delivery_type', 'FR', $2)`,
+			value, labelText[value])
+	}
 
 	var regID int64
 	if err := db.QueryRowContext(ctx, `
@@ -135,42 +214,65 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 		t.Fatalf("GetCashRegisterReport failed against postgres: %v", err)
 	}
 
+	// Frais de livraison (commande 2, 300) : HT et TVA arrondis
+	// indépendamment côté SQL (pas de HT = TTC - TVA), on reproduit donc le
+	// même arrondi ici plutôt que de le dériver, pour matcher exactement
+	// cashRegisterReportSQL quel que soit le taux effectif de tva_id=-1.
+	const deliveryFeesTTC = 300
+	deliveryHT := int(math.Round(deliveryFeesTTC * (100 - deliveryRate) / 100))
+	deliveryTVAAmount := int(math.Round(deliveryFeesTTC * deliveryRate / 100))
+
 	// -------- Totaux --------
-	if report.HT != 3480 || report.TTC != 3800 || report.TVA != 320 {
-		t.Errorf("totaux: got HT=%d TTC=%d TVA=%d, want HT=3480 TTC=3800 TVA=320", report.HT, report.TTC, report.TVA)
+	// TTC est indépendant du taux de TVA appliqué (somme des montants bruts) ;
+	// HT/TVA en revanche dépendent du taux effectif de tva_id=-1 (le nôtre,
+	// ou celui déjà en base s'il préexistait).
+	wantTTC := 2000 + 1500 + deliveryFeesTTC
+	wantTVA := 182 + 78 + deliveryTVAAmount
+	wantHT := 1818 + 1422 + deliveryHT
+	if report.HT != wantHT || report.TTC != wantTTC || report.TVA != wantTVA {
+		t.Errorf("totaux: got HT=%d TTC=%d TVA=%d, want HT=%d TTC=%d TVA=%d", report.HT, report.TTC, report.TVA, wantHT, wantTTC, wantTVA)
 	}
 	if report.CashFund != 10000 {
 		t.Errorf("cash_fund: got %v, want 10000", report.CashFund)
 	}
 
 	// -------- Ventilation TVA --------
+	// tva_categories est une table de référence globale : le rapport peut
+	// légitimement contenir des lignes à 0 pour des catégories qui n'ont
+	// aucun lien avec ce test (autres marchands/commandes). On scope donc
+	// les assertions à ses propres clés (delivery_type, tva_title) plutôt
+	// que de comparer le nombre total de lignes du rapport.
 	type key struct{ deliveryType, tvaTitle string }
-	type vals struct {
-		label        string
-		ht, ttc, tva int
-	}
+	type vals struct{ ht, ttc, tva int }
 	got := map[key]vals{}
 	for _, group := range report.CashReport {
 		for _, cat := range group.TVACategories {
-			got[key{group.DeliveryTypeID, cat.TVATitle}] = vals{group.DeliveryTypeLabel, cat.HT, cat.TTC, cat.TVA}
+			got[key{group.DeliveryTypeID, cat.TVATitle}] = vals{cat.HT, cat.TTC, cat.TVA}
 		}
 	}
 	want := map[key]vals{
-		{"IN", "TVA 10%"}:             {"Sur place", 1818, 2000, 182},
-		{"TAKE_AWAY", "TVA 5.5%"}:     {"A emporter", 1422, 1500, 78},
-		{"DELIVERY", "TVA Livraison"}: {"Livraison", 240, 300, 60},
-	}
-	if len(got) != len(want) {
-		t.Errorf("ventilation TVA: got %d lignes (%v), want %d", len(got), got, len(want))
+		{"IN", "itest TVA 10%"}:          {1818, 2000, 182},
+		{"TAKE_AWAY", "itest TVA 5.5%"}:  {1422, 1500, 78},
+		{deliveryType, deliveryTVATitle}: {deliveryHT, deliveryFeesTTC, deliveryTVAAmount},
 	}
 	for k, w := range want {
 		g, ok := got[k]
 		if !ok {
-			t.Errorf("ventilation TVA: ligne manquante %v", k)
+			t.Errorf("ventilation TVA: ligne manquante %v (lignes obtenues : %v)", k, got)
 			continue
 		}
 		if g != w {
 			t.Errorf("ventilation TVA %v: got %+v, want %+v", k, g, w)
+		}
+	}
+	// Toute autre ligne du rapport (catégories globales étrangères à ce
+	// test) ne doit porter aucun montant lié à ce registre.
+	for k, g := range got {
+		if _, isOwn := want[k]; isOwn {
+			continue
+		}
+		if g.ht != 0 || g.ttc != 0 || g.tva != 0 {
+			t.Errorf("ventilation TVA: ligne étrangère %v porte des montants non nuls: %+v", k, g)
 		}
 	}
 
@@ -197,8 +299,8 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	if details == nil {
 		t.Fatal("GetCashRegisterTVADetails: nil pour un registre existant")
 	}
-	if details.HT != 3480 || details.TTC != 3800 || details.TVA != 320 {
-		t.Errorf("details totaux: got HT=%d TTC=%d TVA=%d, want HT=3480 TTC=3800 TVA=320", details.HT, details.TTC, details.TVA)
+	if details.HT != wantHT || details.TTC != wantTTC || details.TVA != wantTVA {
+		t.Errorf("details totaux: got HT=%d TTC=%d TVA=%d, want HT=%d TTC=%d TVA=%d", details.HT, details.TTC, details.TVA, wantHT, wantTTC, wantTVA)
 	}
 
 	// Registre inexistant pour ce merchant → nil, nil

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -20,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 const selectPlanningDayCommentColumns = `id, merchant_id, comment_date, comment, created_by, updated_by, created_at, updated_at`
 
 func (r *Repository) ListByDateRange(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]PlanningDayComment, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
 		SELECT `+selectPlanningDayCommentColumns+`
 		FROM planning_day_comments
@@ -44,7 +44,7 @@ func (r *Repository) ListByDateRange(ctx context.Context, merchantID string, sta
 }
 
 func (r *Repository) GetByDate(ctx context.Context, merchantID string, commentDate time.Time) (*PlanningDayComment, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT `+selectPlanningDayCommentColumns+`
 		FROM planning_day_comments
@@ -59,7 +59,7 @@ func (r *Repository) GetByDate(ctx context.Context, merchantID string, commentDa
 // write is needed here, and `created_by`/`id` are left untouched by the
 // UPDATE branch so the original author/id survive edits.
 func (r *Repository) Upsert(ctx context.Context, merchantID string, commentDate time.Time, comment, userID string) (*PlanningDayComment, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 
 	var actor *string
@@ -67,7 +67,8 @@ func (r *Repository) Upsert(ctx context.Context, merchantID string, commentDate 
 		actor = &userID
 	}
 
-	_, err := db.ExecContext(ctx, `
+	// clé unique (merchant_id, comment_date) — ON CONFLICT côté PG
+	upsertQuery := `
 		INSERT INTO planning_day_comments (
 			id, merchant_id, comment_date, comment, created_by, updated_by, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -75,7 +76,19 @@ func (r *Repository) Upsert(ctx context.Context, merchantID string, commentDate 
 			comment = VALUES(comment),
 			updated_by = VALUES(updated_by),
 			updated_at = VALUES(updated_at)
-	`, helpers.GeneratePrefixedID(helpers.PlanningDayCommentIDPrefix), merchantID, commentDate.Format("2006-01-02"), comment, actor, actor, now, now)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		upsertQuery = `
+		INSERT INTO planning_day_comments (
+			id, merchant_id, comment_date, comment, created_by, updated_by, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (merchant_id, comment_date) DO UPDATE SET
+			comment = EXCLUDED.comment,
+			updated_by = EXCLUDED.updated_by,
+			updated_at = EXCLUDED.updated_at
+	`
+	}
+	_, err := db.ExecContext(ctx, upsertQuery, helpers.GeneratePrefixedID(helpers.PlanningDayCommentIDPrefix), merchantID, commentDate.Format("2006-01-02"), comment, actor, actor, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +96,7 @@ func (r *Repository) Upsert(ctx context.Context, merchantID string, commentDate 
 }
 
 func (r *Repository) Delete(ctx context.Context, merchantID string, commentDate time.Time) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	res, err := db.ExecContext(ctx, `
 		DELETE FROM planning_day_comments
 		WHERE merchant_id = ? AND comment_date = ?

@@ -12,10 +12,9 @@ import (
 	"welloresto-api/internal/models"
 )
 
-// NOTE : GetMerchantStatus n'est pas exercée ici — elle dépend transitivement
-// de planning/settings (ResolvePlanningHoliday, module Tier 4 non converti,
-// placeholders `?` non rebindés sous Postgres). Même précédent que la
-// dépendance reservation→customers du Tier 2. GetCustomerByPhone dépend de
+// NOTE : GetMerchantStatus est couverte par TestScannorderMerchantStatus_Postgres
+// (ajouté au Tier 4, une fois planning/settings converti — levée de la réserve
+// du rapport 27). GetCustomerByPhone dépend de
 // customers.FindCustomerByPhone (converti dans le module customers, testé une
 // fois customers converti — voir TestScannorderCustomerByPhone_Postgres).
 func TestScannorderRepository_Postgres(t *testing.T) {
@@ -379,5 +378,70 @@ func TestScannorderCustomerByPhone_Postgres(t *testing.T) {
 	}
 	if len(out.AvailableRewards) != 1 || out.AvailableRewards[0].RewardValue == nil || *out.AvailableRewards[0].RewardValue != 300 {
 		t.Fatalf("expected 1 available reward of 300, got %+v", out.AvailableRewards)
+	}
+}
+
+// TestScannorderMerchantStatus_Postgres couvre GetMerchantStatus, différé au
+// Tier 4 (dépendance transitive planning/settings.ResolvePlanningHoliday).
+func TestScannorderMerchantStatus_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	var merchantID string
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE siret = 'siret-sno-ms'`)
+		if merchantID == "" {
+			return
+		}
+		_, _ = db.ExecContext(ctx, `DELETE FROM planning_holiday_overrides WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM hours_of_operation WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
+	}
+	var oldID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM merchant WHERE siret = 'siret-sno-ms' LIMIT 1`).Scan(&oldID); err == nil {
+		merchantID = strconv.FormatInt(oldID, 10)
+		cleanup()
+		merchantID = ""
+	}
+	t.Cleanup(cleanup)
+
+	var mid int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest SNO MS', 'a', '1', 's', '75001', 'Paris', 'siret-sno-ms', 'https://x', '06', 'mtok-sno-ms', 'UTC')
+		RETURNING id`).Scan(&mid); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID = strconv.FormatInt(mid, 10)
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, is_open) VALUES ($1, now(), true)`, merchantID); err != nil {
+		t.Fatalf("seed params: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO scannorder_settings (merchant_id, activated, seo_title, seo_description, seo_keywords, seo_cuisine_type) VALUES ($1, true, '', '', '', '')`, merchantID); err != nil {
+		t.Fatalf("seed sno settings: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO hours_of_operation (id, merchant_id, day_of_week_from, day_of_week_to, hour_from, hour_to) VALUES ('itest-sno-ms-hoo', $1, 1, 7, '00:00:00', '23:59:59')`, merchantID); err != nil {
+		t.Fatalf("seed hours: %v", err)
+	}
+
+	repo := NewRepository(db)
+	status, err := repo.GetMerchantStatus(ctx, merchantID, 2, "12:00:00")
+	if err != nil {
+		t.Fatalf("GetMerchantStatus: %v", err)
+	}
+	if !status.IsOpen || len(status.OpenHours) == 0 {
+		t.Fatalf("GetMerchantStatus ouvert = %+v", status)
+	}
+
+	// jour férié forcé fermé
+	if _, err := db.ExecContext(ctx, `INSERT INTO planning_holiday_overrides (id, merchant_id, holiday_date, is_open, enabled, created_at, updated_at) VALUES ('itest-sno-ms-hol', $1, CURRENT_DATE, false, true, now(), now())`, merchantID); err != nil {
+		t.Fatalf("seed holiday: %v", err)
+	}
+	status, err = repo.GetMerchantStatus(ctx, merchantID, 2, "12:00:00")
+	if err != nil {
+		t.Fatalf("GetMerchantStatus(férié): %v", err)
+	}
+	if status.IsOpen {
+		t.Fatalf("GetMerchantStatus férié devrait être fermé: %+v", status)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/database/dbx"
 )
 
 type Repository struct {
@@ -19,11 +19,11 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filters EmployeeListFilters) ([]Employee, int, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	baseQuery := `
 		FROM employees e
-		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
-		WHERE e.merchant_id = ? AND e.enabled = 1
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = TRUE
+		WHERE e.merchant_id = ? AND e.enabled = TRUE
 	`
 	args := []interface{}{merchantID}
 	if strings.TrimSpace(filters.Search) != "" {
@@ -91,7 +91,7 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 }
 
 func (r *Repository) GetEmployeeByUserID(ctx context.Context, merchantID, userID string) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
 			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
@@ -99,15 +99,15 @@ func (r *Repository) GetEmployeeByUserID(ctx context.Context, merchantID, userID
 			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
 			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 		FROM employees e
-		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
-		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = 1
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = TRUE
+		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 	return scanEmployeeRow(row)
 }
 
 func (r *Repository) GetActiveEmployeeByUserID(ctx context.Context, merchantID, userID string) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
 			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
@@ -115,21 +115,21 @@ func (r *Repository) GetActiveEmployeeByUserID(ctx context.Context, merchantID, 
 			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
 			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 		FROM employees e
-		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
-		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = 1 AND e.active = 1
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = TRUE
+		WHERE e.merchant_id = ? AND e.user_id = ? AND e.enabled = TRUE AND e.active = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 	return scanEmployeeRow(row)
 }
 
 func (r *Repository) IsMerchantUserLinked(ctx context.Context, merchantID, userID string) (bool, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var count int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(1)
 		FROM users_rights ur
 		INNER JOIN users u ON u.user_id = ur.user_id
-		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = 1 AND u.enabled = 1
+		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = TRUE AND u.enabled = 1
 	`, merchantID, strings.TrimSpace(userID)).Scan(&count); err != nil {
 		return false, err
 	}
@@ -137,13 +137,13 @@ func (r *Repository) IsMerchantUserLinked(ctx context.Context, merchantID, userI
 }
 
 func (r *Repository) GetEmployeeIDByMemberID(ctx context.Context, merchantID, userID string) (string, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	var employeeID string
 	err := db.QueryRowContext(ctx, `
 		SELECT emp.id
 		FROM employees emp
-		INNER JOIN users_rights ur ON ur.user_id = emp.user_id AND ur.merchant_id = emp.merchant_id AND ur.enabled = 1
-		WHERE emp.merchant_id = ? AND emp.user_id = ? AND emp.enabled = 1 AND ur.enabled = 1
+		INNER JOIN users_rights ur ON ur.user_id = emp.user_id AND ur.merchant_id = emp.merchant_id AND ur.enabled = TRUE
+		WHERE emp.merchant_id = ? AND emp.user_id = ? AND emp.enabled = TRUE AND ur.enabled = TRUE
 		LIMIT 1
 	`, merchantID, userID).Scan(&employeeID)
 	if err != nil {
@@ -153,7 +153,7 @@ func (r *Repository) GetEmployeeIDByMemberID(ctx context.Context, merchantID, us
 }
 
 func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID string) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,
 			e.contract_type_code, e.contract_start_date, e.contract_end_date, e.probation_end_date, e.last_medical_checkup_date,
@@ -161,8 +161,8 @@ func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID
 			e.hourly_rate, e.gross_monthly_salary, e.employer_charges_pct, e.transport_cost, e.birth_date, e.gender, e.nationality,
 			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 		FROM employees e
-		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = 1
-		WHERE e.merchant_id = ? AND e.id = ? AND e.enabled = 1
+		LEFT JOIN planning_positions p ON p.id = e.position_id AND p.merchant_id = e.merchant_id AND p.enabled = TRUE
+		WHERE e.merchant_id = ? AND e.id = ? AND e.enabled = TRUE
 	`, merchantID, employeeID)
 	item, err := scanEmployeeRow(row)
 	if err != nil {
@@ -172,7 +172,7 @@ func (r *Repository) GetEmployeeByID(ctx context.Context, merchantID, employeeID
 }
 
 func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req EmployeeCreateRequest) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	id := helpers.GeneratePrefixedID(helpers.PlanningEmployeeIDPrefix)
 	active := true
@@ -266,7 +266,7 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 }
 
 func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID string, employee Employee) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	employee.UpdatedAt = time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
@@ -275,7 +275,7 @@ func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID 
 			contract_hours = ?, max_weekly_hours = ?, required_rest_days = ?, sunday_premium = ?, night_premium = ?,
 			hourly_rate = ?, gross_monthly_salary = ?, employer_charges_pct = ?, transport_cost = ?, birth_date = ?, gender = ?, nationality = ?,
 			address = ?, hr_comment = ?, active = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, employee.UserID, employee.FirstName, employee.LastName, employee.PositionID, employee.PositionNote, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.UpdatedAt, merchantID, employeeID)
 	if err != nil {
 		return nil, err
@@ -289,12 +289,12 @@ func (r *Repository) UpdateEmployee(ctx context.Context, merchantID, employeeID 
 }
 
 func (r *Repository) UpdateEmployeeUserLink(ctx context.Context, merchantID, employeeID string, userID *string) (*Employee, error) {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
 		SET user_id = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, userID, now, merchantID, employeeID)
 	if err != nil {
 		return nil, err
@@ -306,12 +306,12 @@ func (r *Repository) UpdateEmployeeUserLink(ctx context.Context, merchantID, emp
 }
 
 func (r *Repository) SoftDeleteEmployee(ctx context.Context, merchantID, employeeID string) error {
-	db := dbutils.GetDB(ctx, r.db)
+	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx, `
 		UPDATE employees
-		SET active = 0, enabled = 0, deleted_at = ?, updated_at = ?
-		WHERE merchant_id = ? AND id = ? AND enabled = 1
+		SET active = FALSE, enabled = FALSE, deleted_at = ?, updated_at = ?
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, employeeID)
 	if err != nil {
 		return err

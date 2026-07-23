@@ -3,8 +3,8 @@ package bookings
 import (
 	"context"
 	"database/sql"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
@@ -19,7 +19,7 @@ func NewBookingFetcher(db *sql.DB, log *zap.Logger) *BookingFetcher {
 }
 
 func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *BookingObjectRequest) ([]Booking, error) {
-	db := dbutils.GetDB(ctx, f.database)
+	db := dbx.GetDB(ctx, f.database)
 
 	//-----------------------------------------------------
 	// MAIN BOOKING QUERY
@@ -38,15 +38,15 @@ func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *Booking
                 ELSE b.created_by
             END AS created_by
         FROM bookings b
-        INNER JOIN merchant m ON b.merchant_id = m.id
+        INNER JOIN merchant m ON b.merchant_id = ` + bkgCastChar("m.id") + `
         INNER JOIN bookings_settings bs ON bs.merchant_id = b.merchant_id
         INNER JOIN customer c ON c.customer_id = b.customer_id
         LEFT JOIN users u ON u.user_id = b.created_by
         WHERE b.merchant_id = ?
-          AND (? IS NULL OR b.booking_id = ?)
-          AND (? IS NULL OR b.booking_number = ?)
+          AND (` + bkgCastChar("?") + ` IS NULL OR b.booking_id = ?)
+          AND (` + bkgCastChar("?") + ` IS NULL OR b.booking_number = ?)
           AND (
-                (? IS NULL OR ? IS NULL)
+                (` + bkgCastChar("?") + ` IS NULL OR ` + bkgCastChar("?") + ` IS NULL)
                 OR b.booking_date_from BETWEEN ? AND ?
               )
         ORDER BY b.booking_date_from
@@ -127,10 +127,10 @@ func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *Booking
         INNER JOIN booked_location bl ON bl.booking_id = b.booking_id
         INNER JOIN locations l ON l.location_id = bl.location_id
         WHERE b.merchant_id = ?
-          AND (? IS NULL OR b.booking_id = ?)
-          AND (? IS NULL OR b.booking_number = ?)
+          AND (` + bkgCastChar("?") + ` IS NULL OR b.booking_id = ?)
+          AND (` + bkgCastChar("?") + ` IS NULL OR b.booking_number = ?)
           AND (
-                (? IS NULL OR ? IS NULL)
+                (` + bkgCastChar("?") + ` IS NULL OR ` + bkgCastChar("?") + ` IS NULL)
                 OR b.booking_date_from BETWEEN ? AND ?
               )
     `,

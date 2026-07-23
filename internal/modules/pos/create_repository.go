@@ -3,13 +3,13 @@ package pos
 import (
 	"context"
 	"strconv"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
-	"welloresto-api/internal/utils/dbutils"
 )
 
 // InsertMerchant inserts a row into the merchant table and returns the auto-incremented ID.
 func (r *POSRepository) InsertMerchant(ctx context.Context, req CreateMerchantRequest, token string) (string, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	country := req.Country
@@ -17,11 +17,11 @@ func (r *POSRepository) InsertMerchant(ctx context.Context, req CreateMerchantRe
 		country = "France"
 	}
 
-	res, err := db.ExecContext(ctx, `
+	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO merchant
 			(fullName, address, street_number, street, zip_code, city, country,
 			 SIRET, merchantTel, web_site, email, token)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
 		req.FullName, req.Address, req.StreetNumber, req.Street, req.ZipCode,
 		req.City, country, req.SIRET, req.Tel, req.WebSite, req.Email, token,
 	)
@@ -30,17 +30,19 @@ func (r *POSRepository) InsertMerchant(ctx context.Context, req CreateMerchantRe
 		return "", err
 	}
 
-	id, err := res.LastInsertId()
-	return strconv.FormatInt(id, 10), err
+	return strconv.FormatInt(id, 10), nil
 }
 
 // InsertSubscription creates the effective merchant subscription for the selected package.
 func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, packageID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// stripe_subscription_id est NOT NULL sans défaut : MySQL non-strict
+	// insérait '' silencieusement, Postgres rejette — '' explicite pour un
+	// résultat identique dans les deux dialectes.
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO subscriptions (merchant_id, package_id) VALUES (?, ?)`,
+		`INSERT INTO subscriptions (merchant_id, package_id, stripe_subscription_id) VALUES (?, ?, '')`,
 		merchantID, packageID,
 	); err != nil {
 		log.Error("InsertSubscription: failed to insert subscription: " + err.Error())
@@ -52,13 +54,18 @@ func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, pack
 
 // InitMerchantSatellites creates the companion rows expected for every new merchant.
 func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID string) error {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	uuidExpr := "UUID()"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		uuidExpr = "CAST(gen_random_uuid() AS TEXT)"
+	}
+
 	// 2 QR codes — one for standard menu, one for menu-only (mywelloresto flag)
-	for _, row := range []struct{ menuOnly, mywelloresto int }{{0, 0}, {1, 1}} {
+	for _, row := range []struct{ menuOnly, mywelloresto bool }{{false, false}, {true, true}} {
 		if _, err := db.ExecContext(ctx,
-			`INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag) VALUES (?, UUID(), ?, ?)`,
+			`INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag) VALUES (?, `+uuidExpr+`, ?, ?)`,
 			merchantID, row.menuOnly, row.mywelloresto,
 		); err != nil {
 			log.Error("InitMerchantSatellites: failed to insert QR code: " + err.Error())
@@ -66,17 +73,22 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 		}
 	}
 
-	// scannorder_settings (PK = merchant_id)
+	// scannorder_settings (PK = merchant_id) — seo_* sont NOT NULL sans défaut
+	// (MySQL non-strict insérait '') : '' explicite, même précédent que
+	// subscriptions ci-dessus.
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO scannorder_settings (merchant_id) VALUES (?)`, merchantID,
+		`INSERT INTO scannorder_settings (merchant_id, seo_title, seo_description, seo_keywords, seo_cuisine_type)
+		 VALUES (?, '', '', '', '')`, merchantID,
 	); err != nil {
 		log.Error("InitMerchantSatellites: failed to insert scan order settings: " + err.Error())
 		return err
 	}
 
-	// merchant_parameters (PK = merchant_id)
+	// merchant_parameters (PK = merchant_id) — last_menu_update est NOT NULL
+	// sans défaut (MySQL non-strict insérait le zéro-date) : horodatage
+	// explicite pour la validité cross-dialecte.
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO merchant_parameters (merchant_id) VALUES (?)`, merchantID,
+		`INSERT INTO merchant_parameters (merchant_id, last_menu_update) VALUES (?, `+dbx.UTCNow()+`)`, merchantID,
 	); err != nil {
 		log.Error("InitMerchantSatellites: failed to insert merchant parameters: " + err.Error())
 		return err
@@ -92,15 +104,17 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 
 	// haccp_settings (bootstrapped with defaults by merchant_id)
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO haccp_settings (merchant_id, created_at, updated_at) VALUES (?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, merchantID,
+		`INSERT INTO haccp_settings (merchant_id, created_at, updated_at) VALUES (?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`)`, merchantID,
 	); err != nil {
 		log.Error("InitMerchantSatellites: failed to insert haccp settings: " + err.Error())
 		return err
 	}
 
-	// bookings_settings (relies on DB defaults for the rest of the configuration)
+	// bookings_settings (relies on DB defaults for the rest of the
+	// configuration) — code est NOT NULL sans défaut : '' explicite, même
+	// précédent que subscriptions ci-dessus.
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO bookings_settings (merchant_id) VALUES (?)`, merchantID,
+		`INSERT INTO bookings_settings (merchant_id, code) VALUES (?, '')`, merchantID,
 	); err != nil {
 		log.Error("InitMerchantSatellites: failed to insert bookings settings: " + err.Error())
 		return err
@@ -119,25 +133,19 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 
 // InsertUserRights inserts a row into users_rights and returns the auto-incremented ID.
 func (r *POSRepository) InsertUserRights(ctx context.Context, userID, merchantID string, admin bool, token string) (int, error) {
-	db := dbutils.GetDB(ctx, r.database)
+	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	adminVal := 0
-	if admin {
-		adminVal = 1
-	}
-
-	res, err := db.ExecContext(ctx, `
+	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO users_rights
 			(user_id, merchant_id, token, admin, enabled)
-		VALUES (?, ?, ?, ?, 1)`,
-		userID, merchantID, token, adminVal,
+		VALUES (?, ?, ?, ?, TRUE)`, "id",
+		userID, merchantID, token, admin,
 	)
 	if err != nil {
 		log.Error("InsertUserRights: failed to insert user rights: " + err.Error())
 		return 0, err
 	}
 
-	id, err := res.LastInsertId()
-	return int(id), err
+	return int(id), nil
 }

@@ -199,6 +199,11 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 	cleaningCompletedCount := len(completedSurfaceIDs)
 	cleaningTotalCount := cleaningDueCount + cleaningCompletedCount
 
+	hasTraceabilityRecords, err := s.repo.HasTraceabilityRecords(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	globalStatus := "ok"
 	if temperatureOverdue || cleaningOverdueCount > 0 {
 		globalStatus = "warning"
@@ -223,7 +228,7 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 				OverdueCount:   cleaningOverdueCount,
 			},
 			Reception:           HubPlaceholder{Enabled: false},
-			IngredientsLabeling: HubPlaceholder{Enabled: false},
+			IngredientsLabeling: HubPlaceholder{Enabled: hasTraceabilityRecords},
 		},
 	}, nil
 }
@@ -1064,4 +1069,141 @@ func (s *Service) GetHaccpComponents(ctx context.Context) ([]HaccpComponentCateg
 		return nil, models.ErrUnauthorized
 	}
 	return s.repo.GetHaccpComponents(ctx, user.MerchantID)
+}
+
+const (
+	haccpTraceabilityMaxPhotoSize  = 5 << 20
+	haccpTraceabilityMaxPhotoCount = 10
+)
+
+// TraceabilityPhotoUpload représente une photo reçue par le handler, prête à
+// être validée puis uploadée. Size est fourni par le multipart.FileHeader
+// (nécessaire pour valider la taille sans consommer le Reader).
+type TraceabilityPhotoUpload struct {
+	ContentType string
+	Size        int64
+	Reader      io.Reader
+}
+
+// CreateTraceabilityRecord valide les photos, les uploade séquentiellement
+// vers R2 (bucket public, clé r2.GenerateHACCPTraceabilityKey), puis persiste
+// l'enregistrement + les photos en une transaction. Si la transaction échoue
+// après un ou plusieurs uploads réussis, les objets R2 déjà uploadés sont
+// supprimés avant de remonter l'erreur (pas d'orphelins R2 sans ligne DB).
+func (s *Service) CreateTraceabilityRecord(ctx context.Context, comment *string, photos []TraceabilityPhotoUpload) (*HaccpTraceabilityRecord, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	if len(photos) == 0 {
+		return nil, models.ErrTraceabilityPhotosRequired
+	}
+	if len(photos) > haccpTraceabilityMaxPhotoCount {
+		return nil, models.ErrTraceabilityTooManyPhotos
+	}
+	for _, photo := range photos {
+		if !r2.ValidateImageType(photo.ContentType) {
+			return nil, models.ErrInvalidImageType
+		}
+		if photo.Size > haccpTraceabilityMaxPhotoSize {
+			return nil, models.ErrUploadFileTooLargeOrInvalid
+		}
+	}
+
+	recordID := helpers.GeneratePrefixedID(helpers.HACCPTraceabilityRecordIDPrefix)
+
+	uploadedKeys := make([]string, 0, len(photos))
+	for i, photo := range photos {
+		ext := r2.GetExtensionFromContentType(photo.ContentType)
+		key := r2.GenerateHACCPTraceabilityKey(user.MerchantID, recordID, i, ext)
+
+		if _, err := s.r2Client.UploadFile(ctx, key, photo.Reader, photo.ContentType); err != nil {
+			s.rollbackTraceabilityUploads(uploadedKeys)
+			return nil, err
+		}
+		uploadedKeys = append(uploadedKeys, key)
+	}
+
+	record, err := s.repo.CreateTraceabilityRecord(ctx, recordID, user.MerchantID, user.UserID, comment, uploadedKeys)
+	if err != nil {
+		s.rollbackTraceabilityUploads(uploadedKeys)
+		return nil, err
+	}
+
+	s.resolveTraceabilityPhotoURLs(record.Photos)
+	return record, nil
+}
+
+func (s *Service) rollbackTraceabilityUploads(keys []string) {
+	for _, key := range keys {
+		_ = s.r2Client.DeleteFile(context.Background(), key)
+	}
+}
+
+func (s *Service) ListTraceabilityRecords(ctx context.Context, params HaccpTraceabilityListParams) (*HaccpTraceabilityListResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	page := params.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := params.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	records, totalItems, err := s.repo.ListTraceabilityRecords(ctx, user.MerchantID, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		s.resolveTraceabilityPhotoURLs(records[i].Photos)
+	}
+
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = (totalItems + pageSize - 1) / pageSize
+	}
+
+	return &HaccpTraceabilityListResponse{
+		Records:    records,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: totalItems,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (s *Service) GetTraceabilityRecord(ctx context.Context, recordID string) (*HaccpTraceabilityRecord, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if strings.TrimSpace(recordID) == "" {
+		return nil, models.ErrMissingResourceID
+	}
+
+	record, err := s.repo.GetTraceabilityRecord(ctx, user.MerchantID, recordID)
+	if err == sql.ErrNoRows {
+		return nil, models.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	s.resolveTraceabilityPhotoURLs(record.Photos)
+	return record, nil
+}
+
+func (s *Service) resolveTraceabilityPhotoURLs(photos []HaccpTraceabilityPhoto) {
+	for i := range photos {
+		photos[i].PhotoURL = s.r2Client.PublicURL(photos[i].PhotoURL)
+	}
 }

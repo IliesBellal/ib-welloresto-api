@@ -28,13 +28,18 @@ type KioskRow struct {
 	HardwareModel     *string
 	AdminPinEncrypted []byte
 	OSVersion         *string
-	LastHeartbeatAt   *time.Time
-	LastIP            *string
-	LastError         *string
-	LastErrorAt       *time.Time
-	Enabled           bool
-	CreatedAt         time.Time
-	UpdatedAt         *time.Time
+	// DeviceID est un identifiant dérivé de l'OS (Android ID /
+	// identifierForVendor), pas un secret — voir
+	// docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md. NULL pour toute borne
+	// enrôlée avant l'introduction de ce champ.
+	DeviceID        *string
+	LastHeartbeatAt *time.Time
+	LastIP          *string
+	LastError       *string
+	LastErrorAt     *time.Time
+	Enabled         bool
+	CreatedAt       time.Time
+	UpdatedAt       *time.Time
 }
 
 // KioskDeviceTokenRow mappe la table kiosk_device_tokens.
@@ -94,6 +99,13 @@ type EnrollRequest struct {
 	HardwareModel  string `json:"hardware_model"`
 	OSVersion      string `json:"os_version"`
 	AppVersion     string `json:"app_version"`
+	// DeviceID est un identifiant dérivé de l'OS (Android ID /
+	// identifierForVendor), pas un secret — capturé pour permettre une
+	// future ré-identification si le refresh token est perdu (voir
+	// docs/KIOSK_ENROLLMENT_RESILIENCE_AUDIT.md). Optionnel pour compat
+	// ascendante : un client qui ne l'envoie pas encore laisse
+	// kiosks.device_id à NULL, sans autre effet.
+	DeviceID string `json:"device_id"`
 }
 
 // EnrollResponse — admin_pin n'est retourné en clair qu'à l'enrôlement et à
@@ -113,6 +125,27 @@ type RefreshTokenRequest struct {
 }
 
 type RefreshTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// ReclaimDeviceRequest — body de POST /kiosk/auth/reclaim (public, pas de
+// Bearer). AdminPin est optionnel : absent lors du premier appel (tentative
+// silencieuse), renseigné lors du second appel si le premier a répondu
+// kiosk_reclaim_pin_required — voir docs/KIOSK_DECISIONS.md.
+type ReclaimDeviceRequest struct {
+	DeviceID string `json:"device_id"`
+	AdminPin string `json:"admin_pin"`
+}
+
+// ReclaimDeviceResponse — même forme qu'EnrollResponse sans admin_pin (le PIN
+// existant n'est jamais régénéré ni ré-exposé par un reclaim, voir
+// docs/KIOSK_DECISIONS.md). KioskID est renvoyé (contrairement à
+// RefreshTokenResponse) car le stockage local qui le portait a justement été
+// perdu — c'est toute la raison d'être de ce endpoint.
+type ReclaimDeviceResponse struct {
+	KioskID      string `json:"kiosk_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresAt    string `json:"expires_at"`

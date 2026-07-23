@@ -144,6 +144,8 @@ LEFT JOIN integration_uber_direct iud ON iud.merchant_id = %[1]s AND iud.bearer_
 LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 
 WHERE ur.token = ?
+  AND ur.enabled = TRUE
+  AND ur.login_enabled = TRUE
 LIMIT 1;
 `, joinCast)
 
