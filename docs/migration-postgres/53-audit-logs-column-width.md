@@ -116,8 +116,11 @@ colonne modifiée).
 Oui — la contrainte existe aussi côté MySQL (§3), donc une migration réelle est nécessaire en plus
 du schéma cible Postgres, sur le même modèle que le rapport 28 :
 
-[`migrations/067_widen_audit_logs_id.up.sql`](../../migrations/067_widen_audit_logs_id.up.sql) /
-[`.down.sql`](../../migrations/067_widen_audit_logs_id.down.sql) — prochain numéro libre après 066.
+[`migrations/069_widen_audit_logs_id.up.sql`](../../migrations/069_widen_audit_logs_id.up.sql) /
+[`.down.sql`](../../migrations/069_widen_audit_logs_id.down.sql) — prochain numéro libre après 066
+*au moment de ce chantier* ; en réalité en collision avec `migrations/done/067_haccp_traceability`
+(déjà exécutée), détecté au [rapport 55](55-generated-id-column-widths-full-audit.md#5-migration-mysql-réelle-nécessaire)
+et renuméroté **069** par le [rapport 56](56-haccp-traceability-integration.md).
 
 ```sql
 ALTER TABLE audit_logs

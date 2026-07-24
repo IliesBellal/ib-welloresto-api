@@ -77,12 +77,12 @@ Quatre modules appellent des procédures stockées MySQL dont le corps n'est pas
 | 29 | `users` | 42 | 1 | 3 (UTC_TIMESTAMP) | 0 | non | oui (1) | **53** |
 | 30 | `cash_registers` | 32 | 3 | 5 (UTC_TIMESTAMP) | 1 | **oui** | non | **59** |
 | 31 | `orders` | 19 | 14 | 4 (UTC_TIMESTAMP) | 0 | **oui** | oui (2) | **64** |
-| 32 | `haccp` | 51 | 6 | 2 (UTC_TIMESTAMP) | 0 | non | oui (3) | **69** |
-| 33 | `delivery_sessions` | 42 | 5 | 6 (UTC_TIMESTAMP) | 0 | non | non | **70** |
-| 34 | `ubereats` | 24 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 2 | **oui** | non | **73** |
-| 35 | `scannorder` | 31 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 0 | **oui** | non | **78** |
-| 36 | `kiosk` | 39 | 2 | 12 (UTC_TIMESTAMP) | 1 | non | oui (1) | **80** |
-| 37 | `customers` | 50 | 4 | 8 (UTC_TIMESTAMP) | 0 | non | oui (1) | **82** |
+| 32 | `delivery_sessions` | 42 | 5 | 6 (UTC_TIMESTAMP) | 0 | non | non | **70** |
+| 33 | `ubereats` | 24 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 2 | **oui** | non | **73** |
+| 34 | `scannorder` | 31 | 0 | 14 (DATE_ADD, UTC_TIMESTAMP, NOW) | 0 | **oui** | non | **78** |
+| 35 | `kiosk` | 39 | 2 | 12 (UTC_TIMESTAMP) | 1 | non | oui (1) | **80** |
+| 36 | `customers` | 50 | 4 | 8 (UTC_TIMESTAMP) | 0 | non | oui (1) | **82** |
+| 37 | `haccp` ⁽²⁾ | 60 | 9 | 2 (UTC_TIMESTAMP) | 0 | non | oui (4) | **84** |
 | 38 | `pos` (+ accounting, reports) | 47 | 8 | 20 (DATE_FORMAT, UTC_TIMESTAMP) | 1 | **oui** | non | **129** |
 | 39 | `menu` | 109 | 11 | 1 (UTC_TIMESTAMP) | 3 | non | oui (1) | **137** |
 | 40 | `bookings` | 58 | 3 | 27 (UTC_TIMESTAMP, DATE_FORMAT, TIMESTAMPDIFF) | 2 | non | oui (7) | **147** |
@@ -92,6 +92,25 @@ Quatre modules appellent des procédures stockées MySQL dont le corps n'est pas
 `planning` regroupe `documents`, `employees`, `leave`, `performance`, `refs`, `revenueforecast`, `schedule`, `settings`, `shifttemplates`, `swaps`, `timeentries`, `weektemplates` — un seul module fonctionnel avec un seul owner de schéma, décomposer la conversion en sous-packages est possible en pratique (voir recommandations) mais le score global reflète la charge totale de la migration planning.
 
 `planning/daycomments` (table `planning_day_comments`, migration 065) est un **13ᵉ sous-package**, ajouté **après** cet audit initial — il n'est donc pas compté dans les "12 sous-packages"/le score 182 de la ligne `planning` ci-dessus, et suit son propre cycle de conversion indépendant (score **5**, ligne dédiée dans le tableau) plutôt que d'être noyé dans l'agrégat Tier 4. Détail dans [26-planning-day-comments-integration.md](26-planning-day-comments-integration.md).
+
+⁽²⁾ `haccp` : ligne **recomptée en entier** (pas seulement ajustée du delta) par le
+[rapport 56](56-haccp-traceability-integration.md), suite à l'ajout de
+`CreateTraceabilityRecord`/`ListTraceabilityRecords`/`GetTraceabilityRecord`/`HasTraceabilityRecords`/
+`findTraceabilityPhotosByRecordIDs` (tables `haccp_traceability_records`/`haccp_traceability_photos`,
+migration 067, postérieure à la conversion Tier 3 de ce module — commit `0b4509f`, après le commit
+`94e6bf0` "Tier 3"). Ancienne ligne : 51 sites / 6 placeholders / 2 fonctions date / 0 ON DUPLICATE /
+non / oui (3) / score **69**. Nouvelle ligne (même méthode grep que [§ Méthode](#méthode) ci-dessus,
+ré-exécutée sur tout le sous-arbre `internal/modules/haccp/` hors fichiers `_test.go`) : 60 sites (+9,
+dont 7 directement attribuables aux 5 nouvelles fonctions ci-dessus, écart résiduel de 2 non
+réconcilié précisément — voir rapport 56 §6), 9 placeholders dynamiques (+3, dont le nouveau site
+`strings.Repeat`/`fmt.Sprintf` de `findTraceabilityPhotosByRecordIDs` pour la clause `IN (...)` sur
+les `record_id`), fonctions de date et `ON DUPLICATE` inchangés (les nouvelles requêtes ne posent
+`created_at`/`updated_at` que côté Go, `time.Now().UTC()`, comme `planning_day_comments`), aucune
+procédure stockée, 4 fichiers de test (`postgres_integration_test.go` exerce désormais aussi les 4
+fonctions de lecture/écriture ci-dessus, contre 3 déjà présents avant ce chantier). Score recalculé
+**84** (inchangé de Tier — toujours dans la fourchette 51–100) : la ligne est déplacée de son
+ancienne position (rang 32, entre `orders` et `delivery_sessions`) à sa nouvelle position par score
+croissant (rang 37, entre `customers` et `pos`), les rangs intermédiaires décalés en conséquence.
 
 ## Ordre de conversion recommandé
 

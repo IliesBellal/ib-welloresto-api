@@ -36,6 +36,7 @@ BEGIN;
 
 CREATE TYPE booking_waitlist_status_enum AS ENUM ('waiting', 'notified', 'seated', 'expired', 'cancelled');
 CREATE TYPE cleaning_surfaces_frequency_unit_enum AS ENUM ('day', 'week', 'month');
+CREATE TYPE discounts_discount_scope_enum AS ENUM ('PRODUCT', 'ORDER_TOTAL');
 CREATE TYPE employees_role_enum AS ENUM ('employee', 'manager', 'admin');
 CREATE TYPE floor_obstacles_type_enum AS ENUM ('wall', 'bar', 'stairs', 'door');
 CREATE TYPE hours_amendments_type_enum AS ENUM ('permanent', 'temporary');
@@ -939,7 +940,7 @@ CREATE TABLE customer_loyalty_program_target_products (
 CREATE TABLE customer_loyalty_progress (
     id varchar(64) NOT NULL,
     customer_id varchar(30) NOT NULL,
-    loyalty_program_id varchar(30) NOT NULL,
+    loyalty_program_id varchar(64) NOT NULL,
     current_value integer NOT NULL,
     last_update timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (id)
@@ -952,7 +953,7 @@ CREATE TABLE customer_loyalty_progress (
 -- ---------------------------------------------------------------------
 CREATE TABLE customer_loyalty_progress_order (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    loyalty_program_id varchar(30) NOT NULL,
+    loyalty_program_id varchar(64) NOT NULL,
     progress_id varchar(64) NOT NULL,
     order_id integer NOT NULL,
     increment_value integer NOT NULL,
@@ -967,7 +968,7 @@ CREATE TABLE customer_loyalty_progress_order (
 CREATE TABLE customer_rewards (
     reward_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
     customer_id varchar(30) NOT NULL,
-    loyalty_program_id varchar(30) NOT NULL,
+    loyalty_program_id varchar(64) NOT NULL,
     reward_type varchar(30) NOT NULL,
     reward_order_type varchar(100) NOT NULL DEFAULT 'IN TAKE_AWAY DELIVERY',
     reward_value integer NOT NULL DEFAULT 0,
@@ -1091,10 +1092,35 @@ CREATE TABLE device_link (
 );
 
 -- ---------------------------------------------------------------------
+-- discount_redemptions
+--   nouvelle table (migrations/done/041_cart_discounts.up.sql, deja executee en MySQL ; non presente dans le dump wello-resto-mysql-ddl.md audite, meme situation que planning_day_comments/haccp_traceability, rapports 26/56) ; aucun module Go ne la lit/l'ecrit a ce jour (voir rapport 57 - schema pret, non cable)
+--   id: BIGINT UNSIGNED AUTO_INCREMENT -> bigint identity + CHECK (perte du UNSIGNED)
+--   order_id: BIGINT UNSIGNED alors que orders.order_id est integer (int(11) signe cote MySQL source) -> incoherence de type preexistante, deja signalee par le commentaire de la migration elle-meme ("types exacts de colonnes ne sont pas garantis") ; aucune jointure Go vivante actuellement (voir rapport 57)
+--   customer_id: varchar(64) alors que customer.customer_id est integer (int(11) cote MySQL source) -> incoherence de type plus marquee (varchar vs int), meme motif, sans impact tant qu'aucun code ne l'exploite
+--   collation non explicite (CHARSET=utf8mb4 sans COLLATE dans la migration, contrairement au reste du fichier) -> sans impact sur la traduction (les deux collations utf8mb4 usuelles se replient sur la collation PG par defaut de toute facon)
+--   pas de FK reelle (aucune cote MySQL, choix delibere du migrateur original vu l'incertitude de type ci-dessus) : discount_id -> discounts.discount_id (candidate), order_id -> orders.order_id (candidate, type incoherent), customer_id -> customer.customer_id (candidate, type incoherent), merchant_id -> liste standard ci-dessous
+--   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+-- ---------------------------------------------------------------------
+CREATE TABLE discount_redemptions (
+    id bigint GENERATED ALWAYS AS IDENTITY NOT NULL CHECK (id >= 0),
+    discount_id varchar(64) NOT NULL,
+    order_id bigint NOT NULL CHECK (order_id >= 0),
+    merchant_id varchar(64) NOT NULL,
+    customer_id varchar(64),
+    amount_applied_cents integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_discount_redemptions_uq_discount_order ON discount_redemptions (discount_id, order_id);
+CREATE INDEX idx_discount_redemptions_idx_discount_redemptions_discount ON discount_redemptions (discount_id);
+CREATE INDEX idx_discount_redemptions_idx_discount_redemptions_customer ON discount_redemptions (discount_id, customer_id);
+
+-- ---------------------------------------------------------------------
 -- discounts
 --   valid_from: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes)
 --   collation table utf8mb3_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+--   discount_scope/max_redemptions/max_redemptions_per_customer : colonnes ajoutees par migrations/done/041_cart_discounts.up.sql, posterieures au dump du 2026-07-13 audite (meme situation que planning_day_comments/haccp_traceability, rapports 26/56) ; absentes de wello-resto-mysql-ddl.md, ajoutees ici par le rapport 57 ; discount_scope ENUM -> discounts_discount_scope_enum
 -- ---------------------------------------------------------------------
 CREATE TABLE discounts (
     discount_id varchar(50) NOT NULL,
@@ -1103,6 +1129,7 @@ CREATE TABLE discounts (
     discount_desc varchar(100) NOT NULL,
     prefered_order integer NOT NULL DEFAULT 0,
     discount_code varchar(20),
+    discount_scope discounts_discount_scope_enum NOT NULL DEFAULT 'PRODUCT',
     discount_order_type varchar(40),
     discount_value integer NOT NULL DEFAULT 0,
     discount_unit varchar(20) NOT NULL,
@@ -1118,6 +1145,8 @@ CREATE TABLE discounts (
     available boolean NOT NULL DEFAULT false,
     enabled boolean NOT NULL DEFAULT true,
     creation_date timestamptz NOT NULL DEFAULT now(),
+    max_redemptions integer,
+    max_redemptions_per_customer integer,
     PRIMARY KEY (discount_id)
 );
 COMMENT ON COLUMN discounts.discount_order_type IS '0 = IN, 1 = DELIVERY, NULL = all';
@@ -1490,6 +1519,48 @@ CREATE TABLE haccp_settings (
     PRIMARY KEY (merchant_id)
 );
 CREATE UNIQUE INDEX uq_haccp_settings_uq_haccpsettings_merchant ON haccp_settings (merchant_id);
+
+-- ---------------------------------------------------------------------
+-- haccp_traceability_records
+--   nouvelle table (migrations/done/067_haccp_traceability.up.sql, deja executee en MySQL ; non presente dans le dump wello-resto-mysql-ddl.md audite, meme situation que planning_day_comments/rapport 26) ; module internal/modules/haccp (CreateTraceabilityRecord/ListTraceabilityRecords/GetTraceabilityRecord/HasTraceabilityRecords)
+--   id: helpers.GeneratePrefixedID(helpers.HACCPTraceabilityRecordIDPrefix) = "haccp-trace-<uuid>" = 48 caracteres -> varchar(64) deja suffisant cote MySQL source, pas d'elargissement necessaire (verifie rapport 55, confirme rapport 56)
+--   updated_at: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes)
+--   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
+--   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+-- ---------------------------------------------------------------------
+CREATE TABLE haccp_traceability_records (
+    id varchar(64) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    comment text,
+    created_by varchar(64) NOT NULL,
+    enabled boolean NOT NULL DEFAULT true,
+    deleted_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_haccp_traceability_records_idx_haccp_traceability_records_m ON haccp_traceability_records (merchant_id);
+CREATE INDEX idx_haccp_traceability_records_idx_haccp_traceability_records_2 ON haccp_traceability_records (merchant_id, created_at);
+
+-- ---------------------------------------------------------------------
+-- haccp_traceability_photos
+--   nouvelle table (migrations/done/067_haccp_traceability.up.sql, deja executee en MySQL ; meme origine que haccp_traceability_records ci-dessus) ; module internal/modules/haccp
+--   id: helpers.GeneratePrefixedID(helpers.HACCPTraceabilityPhotoIDPrefix) = "haccp-trace-photo-<uuid>" = 54 caracteres -> varchar(64) deja suffisant, pas d'elargissement necessaire (verifie rapport 55, confirme rapport 56)
+--   position: tinyint MySQL (signe, non UNSIGNED) -> smallint, jamais converti en boolean (04-schema-mapping-notes.md)
+--   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
+--   FK reelle conservee (deja presente cote MySQL, pas une candidate) : record_id -> haccp_traceability_records.id ON DELETE CASCADE ; index explicite ajoute sur record_id (MySQL/InnoDB indexe automatiquement les colonnes de FK referencantes, PG non - meme motif que product_ratings.order_rating_id)
+--   placee apres haccp_traceability_records : deviation deliberee de l'ordre alphabetique strict du fichier (photos < records) car la FK ci-dessus exige que la table referencee existe deja au moment de la creation de la contrainte (fichier execute comme une seule transaction BEGIN;...COMMIT;)
+-- ---------------------------------------------------------------------
+CREATE TABLE haccp_traceability_photos (
+    id varchar(64) NOT NULL,
+    record_id varchar(64) NOT NULL,
+    photo_key varchar(512) NOT NULL,
+    position smallint NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id),
+    CONSTRAINT fk_haccp_traceability_photos_record FOREIGN KEY (record_id) REFERENCES haccp_traceability_records (id) ON DELETE CASCADE
+);
+CREATE INDEX idx_haccp_traceability_photos_record_id ON haccp_traceability_photos (record_id);
 
 -- ---------------------------------------------------------------------
 -- holiday_calendar
@@ -2261,6 +2332,8 @@ CREATE INDEX idx_orderitems_idx_orderitems_product_id ON orderitems (product_id)
 --   FK candidate (non creee) : customer_id -> customer.customer_id
 --   FK candidate (non creee) : cash_register_id -> cash_registers.cash_register_id
 --   FK candidate (non creee) : deletion_reason_id -> deletion_reasons.deletion_reason_id
+--   cart_discount_id/cart_discount_code/cart_discount_amount : colonnes ajoutees par migrations/done/041_cart_discounts.up.sql, posterieures au dump du 2026-07-13 audite (meme situation que discount_scope sur discounts ci-dessus, rapport 57) ; aucun module Go ne les lit/ecrit a ce jour
+--   FK candidate (non creee) : cart_discount_id -> discounts.discount_id
 -- ---------------------------------------------------------------------
 CREATE TABLE orders (
     order_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -2288,6 +2361,9 @@ CREATE TABLE orders (
     delivered_on timestamptz,
     TVA integer NOT NULL,
     HT integer NOT NULL,
+    cart_discount_id varchar(64),
+    cart_discount_code varchar(64),
+    cart_discount_amount integer NOT NULL DEFAULT 0,
     delivery_fees integer NOT NULL DEFAULT 0,
     comment text,
     cutlery_notes boolean DEFAULT false,

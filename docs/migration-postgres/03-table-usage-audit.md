@@ -71,6 +71,7 @@ Regroupées par domaine fonctionnel. "Fichiers" liste jusqu'à 4 emplacements re
 | `discounts_products` | `internal/modules/discounts/repository.go`, `internal/modules/orders/repository.go` |
 | `discounts_products_options` | `internal/modules/orders/repository.go` |
 | `discounts_schedules` | `internal/modules/discounts/repository.go`, `internal/modules/kiosk/repository.go`, `internal/modules/orders/repository.go`, `internal/modules/scannorder/repository.go` |
+| `discount_redemptions` ⁽³⁾ | *(aucun — schéma prêt, non câblé côté Go)* |
 
 ### Commandes / paiements / caisse
 
@@ -167,6 +168,7 @@ Regroupées par domaine fonctionnel. "Fichiers" liste jusqu'à 4 emplacements re
 | `haccp_settings` | `internal/modules/haccp/repository.go`, `internal/modules/pos/create_repository.go` |
 | `haccp_corrective_actions` | `internal/modules/haccp/repository.go`, `migrations/done/020_haccp_temperature_corrective_actions.sql`, `migrations/done/021_haccp_corrective_actions_french_catalog.sql` |
 | `goods_receipts` | `internal/modules/haccp/repository.go` |
+| `haccp_traceability_records`, `haccp_traceability_photos` ⁽²⁾ | `internal/modules/haccp/repository.go` |
 
 ### Planning
 
@@ -194,6 +196,23 @@ Regroupées par domaine fonctionnel. "Fichiers" liste jusqu'à 4 emplacements re
 | `sys_planning_event_types` | `migrations/done/014_planning_socle.sql` (idem) |
 
 ⁽¹⁾ `planning_day_comments` est une table **vivante et nouvelle**, créée par `migrations/065_planning_day_comments.up.sql` **après** l'audit initial des 180 tables de production (elle n'entre donc pas dans le décompte "143/180" ci-dessus, ni dans la liste des 37 orphelines — c'est une addition postérieure). Portée par le nouveau module `internal/modules/planning/daycomments/`, déjà fonctionnel sur MySQL ; traduction DDL Postgres documentée dans [26-planning-day-comments-integration.md](26-planning-day-comments-integration.md).
+
+⁽²⁾ `haccp_traceability_records`/`haccp_traceability_photos` sont deux tables **vivantes et nouvelles**, créées par `migrations/done/067_haccp_traceability.up.sql` **après** l'audit initial des 180 tables de production (même situation que `planning_day_comments` ⁽¹⁾ — hors décompte "143/180" et hors liste des 37 orphelines). Déjà fonctionnelles sur MySQL (module `internal/modules/haccp/`, fonctions `CreateTraceabilityRecord`/`ListTraceabilityRecords`/`GetTraceabilityRecord`/`HasTraceabilityRecords`) ; traduction DDL Postgres documentée dans [56-haccp-traceability-integration.md](56-haccp-traceability-integration.md).
+
+⁽³⁾ `discount_redemptions` (+ colonnes `discount_scope`/`max_redemptions`/`max_redemptions_per_customer`
+sur `discounts`, `cart_discount_id`/`cart_discount_code`/`cart_discount_amount` sur `orders`) : créée
+par `migrations/done/041_cart_discounts.up.sql`, **après** l'audit initial des 180 tables de
+production (hors décompte "143/180" et hors liste des 37 orphelines — même famille que ⁽¹⁾/⁽²⁾).
+**Contrairement** à `planning_day_comments`/`haccp_traceability`, ce n'est **pas une table vivante** :
+recherche exhaustive dans `internal/` sans résultat pour une quelconque requête SQL sur
+`discount_redemptions` ou les colonnes ci-dessus — seuls des champs de DTO Go existent
+(`CartDiscountID`/`CartDiscountCode`/`CartDiscountAmount` dans `internal/models/create_order_models.go`,
+`internal/models/orders_model.go`, `internal/models/request_objects.go` ; `DiscountScope`/
+`MaxRedemptions`/`MaxRedemptionsPerCustomer` dans `internal/modules/discounts/models.go`), jamais lus
+ni écrits par `internal/modules/discounts/repository.go` (qui gère pourtant déjà `discounts` pour ses
+autres colonnes) ni par aucun autre repository. Statut retenu : **schéma prêt, non câblé côté Go** (à
+ne pas compter comme « vivante » tant qu'aucun module ne l'exploite). Traduction DDL Postgres
+documentée dans [57-discount-redemptions-schema.md](57-discount-redemptions-schema.md).
 
 ---
 

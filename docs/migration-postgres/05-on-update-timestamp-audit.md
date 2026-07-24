@@ -31,39 +31,44 @@ Légende :
 | 8 | goods_receipts.updated_at | AUCUN UPDATE (INSERT seul) |
 | 9 | haccp_corrective_actions.updated_at | AUCUN UPDATE (table en lecture seule) |
 | 10 | haccp_settings.updated_at | CONFIRMÉ |
-| 11 | holiday_calendar.updated_at | AUCUN UPDATE (table en lecture seule) |
-| 12 | hours_amendments.updated_at | AUCUN UPDATE (table jamais référencée en Go) |
-| 13 | hours_of_operation.valid_from | CONFIRMÉ |
-| 14 | kiosks.updated_at | ABSENT |
-| 15 | kiosk_settings.updated_at | ABSENT |
-| 16 | labor_rules.updated_at | AUCUN UPDATE (table en lecture seule) |
-| 17 | marketing_categories.updated_at | ABSENT |
-| 18 | migration_users.updatedAt | AUCUN UPDATE (table jamais référencée en Go) |
-| 19 | order_comments.creation_date | CONFIRMÉ |
-| 20 | payments.payment_date | ABSENT |
-| 21 | planning_day_comments.updated_at | CONFIRMÉ |
-| 22 | planning_holiday_overrides.updated_at | CONFIRMÉ |
-| 23 | planning_leave_requests.updated_at | CONFIRMÉ |
-| 24 | planning_positions.updated_at | CONFIRMÉ |
-| 25 | planning_revenue_forecasts.updated_at | ABSENT |
-| 26 | planning_settings.updated_at | CONFIRMÉ |
-| 27 | planning_shifts.updated_at | CONFIRMÉ |
-| 28 | planning_shift_swap_requests.updated_at | CONFIRMÉ |
-| 29 | planning_shift_templates.updated_at | CONFIRMÉ |
-| 30 | planning_time_entries.updated_at | CONFIRMÉ |
-| 31 | planning_weeks.updated_at | CONFIRMÉ |
-| 32 | planning_week_templates.updated_at | CONFIRMÉ |
-| 33 | planning_week_template_shifts.updated_at | AUCUN UPDATE (delete+reinsert, pas d'UPDATE) |
-| 34 | printers.updated_at | ABSENT |
-| 35 | product_marketing_categories.updated_at | CONFIRMÉ |
-| 36 | purchased_components.registration_date | AUCUN UPDATE (INSERT seul) |
-| 37 | subscription_invoices.invoice_date | ABSENT |
-| 38 | temperature_readings.updated_at | AUCUN UPDATE (INSERT seul) |
-| 39 | temperature_reading_corrective_actions.updated_at | AUCUN UPDATE (INSERT seul) |
-| 40 | temperature_sessions.updated_at | AUCUN UPDATE (INSERT seul) |
-| 41 | temperature_zones.updated_at | CONFIRMÉ |
+| 11 | haccp_traceability_records.updated_at | AUCUN UPDATE (INSERT seul) |
+| 12 | holiday_calendar.updated_at | AUCUN UPDATE (table en lecture seule) |
+| 13 | hours_amendments.updated_at | AUCUN UPDATE (table jamais référencée en Go) |
+| 14 | hours_of_operation.valid_from | CONFIRMÉ |
+| 15 | kiosks.updated_at | ABSENT |
+| 16 | kiosk_settings.updated_at | ABSENT |
+| 17 | labor_rules.updated_at | AUCUN UPDATE (table en lecture seule) |
+| 18 | marketing_categories.updated_at | ABSENT |
+| 19 | migration_users.updatedAt | AUCUN UPDATE (table jamais référencée en Go) |
+| 20 | order_comments.creation_date | CONFIRMÉ |
+| 21 | payments.payment_date | ABSENT |
+| 22 | planning_day_comments.updated_at | CONFIRMÉ |
+| 23 | planning_holiday_overrides.updated_at | CONFIRMÉ |
+| 24 | planning_leave_requests.updated_at | CONFIRMÉ |
+| 25 | planning_positions.updated_at | CONFIRMÉ |
+| 26 | planning_revenue_forecasts.updated_at | ABSENT |
+| 27 | planning_settings.updated_at | CONFIRMÉ |
+| 28 | planning_shifts.updated_at | CONFIRMÉ |
+| 29 | planning_shift_swap_requests.updated_at | CONFIRMÉ |
+| 30 | planning_shift_templates.updated_at | CONFIRMÉ |
+| 31 | planning_time_entries.updated_at | CONFIRMÉ |
+| 32 | planning_weeks.updated_at | CONFIRMÉ |
+| 33 | planning_week_templates.updated_at | CONFIRMÉ |
+| 34 | planning_week_template_shifts.updated_at | AUCUN UPDATE (delete+reinsert, pas d'UPDATE) |
+| 35 | printers.updated_at | ABSENT |
+| 36 | product_marketing_categories.updated_at | CONFIRMÉ |
+| 37 | purchased_components.registration_date | AUCUN UPDATE (INSERT seul) |
+| 38 | subscription_invoices.invoice_date | ABSENT |
+| 39 | temperature_readings.updated_at | AUCUN UPDATE (INSERT seul) |
+| 40 | temperature_reading_corrective_actions.updated_at | AUCUN UPDATE (INSERT seul) |
+| 41 | temperature_sessions.updated_at | AUCUN UPDATE (INSERT seul) |
+| 42 | temperature_zones.updated_at | CONFIRMÉ |
 
-Décompte : **CONFIRMÉ = 17**, **PARTIEL = 1**, **ABSENT = 8**, **AUCUN UPDATE = 15**.
+Décompte : **CONFIRMÉ = 18**, **PARTIEL = 1**, **ABSENT = 9**, **AUCUN UPDATE = 14**.
+Décompte recalculé lors de l'ajout de la ligne 11 ci-dessus ([rapport 56](56-haccp-traceability-integration.md)) :
+la version précédente de cette ligne (« CONFIRMÉ = 17, PARTIEL = 1, ABSENT = 8, AUCUN UPDATE = 15 »,
+total 41) ne correspondait déjà plus au tableau (41 lignes = 18/1/9/13 avant cet ajout, pas 17/1/8/15) ;
+corrigé au passage, sans lien avec l'ajout de `haccp_traceability_records` lui-même.
 
 ---
 
@@ -98,7 +103,7 @@ Aucune des ~9 requêtes UPDATE trouvées sur `bookings` (`internal/modules/booki
 
 Aucune ne touche `creation_date` (idem bookings — colonne de création, comportement correct par construction).
 
-### 14. kiosks.updated_at — ABSENT
+### 15. kiosks.updated_at — ABSENT
 
 Six UPDATE trouvées dans `internal/modules/kiosk/repository.go`, **aucune** ne set `updated_at` :
 - `:151` `UpdateKioskHeartbeat` — `SET last_heartbeat_at = UTC_TIMESTAMP(), app_version = ?, last_ip = ?`
@@ -112,7 +117,7 @@ Toutes ces mutations changent des champs métier réels (nom, statut, PIN) — `
 
 **Action recommandée** : soit ajouter `updated_at = NOW()` à ces 6 requêtes, soit poser un trigger Postgres `BEFORE UPDATE` sur `kiosks`.
 
-### 15. kiosk_settings.updated_at — ABSENT
+### 16. kiosk_settings.updated_at — ABSENT
 
 Un seul point de mutation, un upsert :
 - `internal/modules/kiosk/repository.go:347-369` `UpsertSettings` :
@@ -125,7 +130,7 @@ Un seul point de mutation, un upsert :
 
 **Action recommandée** : ajouter `updated_at = NOW()` à la clause `ON CONFLICT ... DO UPDATE` équivalente en Postgres.
 
-### 17. marketing_categories.updated_at — ABSENT
+### 18. marketing_categories.updated_at — ABSENT
 
 Trois UPDATE dans `internal/modules/menu/repository.go`, aucune ne set `updated_at` :
 - `:3631-3657` `UpdateMarketingCategory` (construction dynamique de `SET`, champs `name`/`available` uniquement)
@@ -134,7 +139,7 @@ Trois UPDATE dans `internal/modules/menu/repository.go`, aucune ne set `updated_
 
 **Action recommandée** : ajouter `updated_at = NOW()` dans les trois requêtes (au minimum dans `UpdateMarketingCategory`, qui est la mutation "normale" côté produit).
 
-### 20. payments.payment_date — ABSENT
+### 21. payments.payment_date — ABSENT
 
 De nombreuses UPDATE touchent `payments` mais aucune ne set `payment_date` :
 - `internal/modules/cash_registers/repository.go:292,306` — `SET p.cash_register_id = ?`
@@ -147,7 +152,7 @@ De nombreuses UPDATE touchent `payments` mais aucune ne set `payment_date` :
 
 `payment_date` semble être la date d'encaissement initiale (posée à l'INSERT) — comme pour `creation_date`, il n'y a a priori pas d'intention de la faire changer après coup, mais c'est un changement de comportement MySQL → Postgres à documenter (elle ne sera plus jamais "rafraîchie silencieusement" par un UPDATE annexe).
 
-### 25. planning_revenue_forecasts.updated_at — ABSENT
+### 26. planning_revenue_forecasts.updated_at — ABSENT
 
 Un seul point de mutation, un upsert :
 - `internal/modules/planning/revenueforecast/repository.go:21-27` `Upsert` :
@@ -160,7 +165,7 @@ Un seul point de mutation, un upsert :
 
 **Action recommandée** : ajouter `updated_at = NOW()` à la clause `ON CONFLICT ... DO UPDATE`.
 
-### 34. printers.updated_at — ABSENT
+### 35. printers.updated_at — ABSENT
 
 Deux UPDATE dans `internal/modules/printers/repository.go`, aucune ne set `updated_at` :
 - `:159-208` (`UpdatePrinter`, construction dynamique de `SET`, champs `name`/`connection_type`/`ip_address`/`port`/`bluetooth_address`/`role`/`language`/`production_product_ids`/`paper_width_mm`)
@@ -168,7 +173,7 @@ Deux UPDATE dans `internal/modules/printers/repository.go`, aucune ne set `updat
 
 **Action recommandée** : ajouter `updated_at = NOW()` dans `UpdatePrinter` au minimum.
 
-### 37. subscription_invoices.invoice_date — ABSENT
+### 38. subscription_invoices.invoice_date — ABSENT
 
 Un seul UPDATE :
 - `internal/webhook/stripe/repository.go:318-323` `PayInvoice` :
@@ -184,6 +189,7 @@ Un seul UPDATE :
 Ces colonnes n'ont aucune requête UPDATE ni upsert dans le code Go pour leur table. Probablement inoffensif (tables de référence, historiques en écriture seule, ou tables non gérées par cette API), mais à vérifier côté métier avant de décider de ne pas poser de trigger.
 
 - **goods_receipts.updated_at** — table alimentée uniquement par `INSERT` (`internal/modules/haccp/repository.go:1537`), aucun UPDATE.
+- **haccp_traceability_records.updated_at** — table alimentée uniquement par `INSERT` (`CreateTraceabilityRecord`, `internal/modules/haccp/repository.go:1728-1731`), aucun UPDATE/upsert trouvé (`ListTraceabilityRecords`/`GetTraceabilityRecord`/`HasTraceabilityRecords` sont des `SELECT`). Voir [rapport 56](56-haccp-traceability-integration.md).
 - **haccp_corrective_actions.updated_at** — table de référence, lue uniquement (`internal/modules/haccp/repository.go:203,249,1251`), aucun INSERT/UPDATE trouvé dans ce repo (seedée par migration).
 - **holiday_calendar.updated_at** — table de référence, lue uniquement en `JOIN`/`FROM` (`internal/modules/planning/settings/holidays_repository.go:43,50,86`), aucun INSERT/UPDATE trouvé (seedée par migration/job externe).
 - **labor_rules.updated_at** — table de référence, lue uniquement (`internal/modules/planning/settings/repository.go:163`), aucun INSERT/UPDATE trouvé (seedée par migration).
@@ -210,4 +216,4 @@ Pour les colonnes ABSENT restantes (`bookings.creation_date`, `floors.creation_d
 devrait légitimement toucher ces colonnes (dates de création/paiement immuables) — le comportement
 Postgres sans trigger sera en fait plus correct que le comportement MySQL actuel. Pas de trigger à créer.
 
-Pour les 15 colonnes en catégorie **AUCUN UPDATE**, aucun trigger n'est nécessaire tant que ces tables restent en écriture-seule (INSERT) ou non gérées par l'API — à confirmer côté métier pour les 4 tables jamais référencées.
+Pour les 14 colonnes en catégorie **AUCUN UPDATE**, aucun trigger n'est nécessaire tant que ces tables restent en écriture-seule (INSERT) ou non gérées par l'API — à confirmer côté métier pour les 4 tables jamais référencées.
