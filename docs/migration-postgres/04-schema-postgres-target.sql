@@ -130,7 +130,7 @@ CREATE TABLE app_version_merchant (
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 -- ---------------------------------------------------------------------
 CREATE TABLE audit_logs (
-    id varchar(36) NOT NULL,
+    id varchar(64) NOT NULL,
     user_id varchar(36),
     merchant_id varchar(64),
     action varchar(50),

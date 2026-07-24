@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+	"welloresto-api/internal/database/dbx"
 
 	upsellModule "welloresto-api/internal/modules/upsell"
 
@@ -36,7 +37,7 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 
 	// ── 1. Fetch active merchants (lecture complète : 1 connexion max) ───────
 	merchants, err := tm.collectIDs(ctx,
-		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = m.id")
+		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = "+tskMerchantJoinCast())
 	if err != nil {
 		tm.logError("[CRON] RecomputeUpsellPatterns: liste marchands échouée", zap.Error(err))
 		return
@@ -68,27 +69,29 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 // processUpsellPatternsForMerchant computes market basket patterns for a single merchant
 // and writes them to Redis. Returns the number of (directed) pattern pairs written.
 func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, merchantID string) (int, error) {
+	db := dbx.GetDB(ctx, tm.DB)
+
 	// ── Step 1: Total closed orders in window ────────────────────────────────
 	var totalOrders int
-	err := tm.DB.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT order_id)
 		FROM orders
 		WHERE merchant_id = ?
 		  AND state       = 'CLOSED'
-		  AND creation_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+		  AND creation_date >= `+tskNowMinusDays()+`
 	`, merchantID, upsellPatternWindow).Scan(&totalOrders)
 	if err != nil || totalOrders == 0 {
 		return 0, err
 	}
 
 	// ── Step 2: Per-product support count ────────────────────────────────────
-	suppRows, err := tm.DB.QueryContext(ctx, `
+	suppRows, err := db.QueryContext(ctx, `
 		SELECT oi.product_id, COUNT(DISTINCT oi.order_id) AS cnt
 		FROM orderitems oi
 		INNER JOIN orders o ON o.order_id = oi.order_id
 		WHERE o.merchant_id   = ?
 		  AND o.state         = 'CLOSED'
-		  AND o.creation_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+		  AND o.creation_date >= `+tskNowMinusDays()+`
 		GROUP BY oi.product_id
 	`, merchantID, upsellPatternWindow)
 	if err != nil {
@@ -106,7 +109,7 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 	}
 
 	// ── Step 3: Co-occurrence matrix ─────────────────────────────────────────
-	pairRows, err := tm.DB.QueryContext(ctx, `
+	pairRows, err := db.QueryContext(ctx, `
 		SELECT
 			a.product_id AS product_a,
 			b.product_id AS product_b,
@@ -117,7 +120,7 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 			INNER JOIN orders o ON o.order_id = oi.order_id
 			WHERE o.merchant_id   = ?
 			  AND o.state         = 'CLOSED'
-			  AND o.creation_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+			  AND o.creation_date >= `+tskNowMinusDays()+`
 		) a
 		INNER JOIN (
 			SELECT DISTINCT oi.order_id, oi.product_id
@@ -125,7 +128,7 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 			INNER JOIN orders o ON o.order_id = oi.order_id
 			WHERE o.merchant_id   = ?
 			  AND o.state         = 'CLOSED'
-			  AND o.creation_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+			  AND o.creation_date >= `+tskNowMinusDays()+`
 		) b ON a.order_id = b.order_id AND a.product_id < b.product_id
 		GROUP BY a.product_id, b.product_id
 		HAVING COUNT(DISTINCT a.order_id) >= ?

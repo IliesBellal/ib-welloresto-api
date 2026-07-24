@@ -67,7 +67,7 @@ Token-based auth validated against Redis. Tokens injected into request context b
 
 ### Real-time & background jobs
 
-WebSocket hub in `internal/infrastructure/websocket/` for live order events. Background task logic lives in `internal/tasks/` as a `TasksManager`; cron scheduling is wired in [cmd/api/tasks.go](cmd/api/tasks.go) — currently disabled (early `return` at the top of `SetupTasks`). The `TasksManager` is also exposed to the `admin/upsell` HTTP endpoint for manual triggers.
+WebSocket hub in `internal/infrastructure/websocket/` for live order events. Background task logic lives in `internal/tasks/` as a `TasksManager`; cron scheduling is wired in [cmd/api/tasks.go](cmd/api/tasks.go) and runs unconditionally on every environment — `SetupTasks` has no early `return` and no `ENV`-based gate, and `SetupRoutes` always calls it (`cmd/api/routes.go`). All jobs (`@hourly`, `@every 1m`, `@every 15m`, etc.) are registered and started on both `staging` and production; there is no per-environment disablement (confirmed on `staging` — see [docs/migration-postgres/54-tasks-full-execution-validation.md](docs/migration-postgres/54-tasks-full-execution-validation.md)). The `TasksManager` is also exposed to the `admin/upsell` HTTP endpoint for manual triggers.
 
 ### Webhooks
 

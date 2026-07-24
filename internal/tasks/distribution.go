@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"welloresto-api/internal/database/dbx"
 
 	"go.uber.org/zap"
 )
@@ -34,16 +35,19 @@ type distributionItem struct {
 func (tm *TasksManager) UpdateAverageDistributionTime() {
 	ctx := context.Background()
 	tm.logInfo("[CRON] UpdateAverageDistributionTime: démarrage")
+	db := dbx.GetDB(ctx, tm.DB)
 
 	type merchantCapacity struct {
 		id       string
 		capacity int64
 	}
 
-	rows, err := tm.DB.QueryContext(ctx, `
+	merchantsQuery := `
 		SELECT mp.merchant_id, mp.concurrent_preparation_capacity
 		FROM merchant m
-		INNER JOIN merchant_parameters mp ON mp.merchant_id = m.id`)
+		INNER JOIN merchant_parameters mp ON mp.merchant_id = ` + tskMerchantJoinCast()
+
+	rows, err := db.QueryContext(ctx, merchantsQuery)
 	if err != nil {
 		tm.logError("[CRON] UpdateAverageDistributionTime: liste marchands échouée", zap.Error(err))
 		return
@@ -82,11 +86,22 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 			continue // pas assez de données, la valeur précédente reste en place
 		}
 
-		if _, err := tm.DB.ExecContext(ctx, `
+		upsertQuery := `
 			INSERT INTO average_distribution_time (merchant_id, distribution_time)
 			VALUES (?, ?)
-			ON DUPLICATE KEY UPDATE distribution_time = ?`,
-			m.id, avgTime, avgTime); err != nil {
+			ON DUPLICATE KEY UPDATE distribution_time = ?`
+		upsertArgs := []interface{}{m.id, avgTime, avgTime}
+		if dbx.ActiveDialect() == dbx.Postgres {
+			// Pas de syntaxe commune pour l'upsert (ON DUPLICATE KEY UPDATE vs
+			// ON CONFLICT) : average_distribution_time.merchant_id est la PK,
+			// donc ON CONFLICT (merchant_id) cible bien la même contrainte.
+			upsertQuery = `
+			INSERT INTO average_distribution_time (merchant_id, distribution_time)
+			VALUES (?, ?)
+			ON CONFLICT (merchant_id) DO UPDATE SET distribution_time = EXCLUDED.distribution_time`
+			upsertArgs = []interface{}{m.id, avgTime}
+		}
+		if _, err := db.ExecContext(ctx, upsertQuery, upsertArgs...); err != nil {
 			tm.logError("[CRON] UpdateAverageDistributionTime: upsert échoué",
 				zap.String("merchant_id", m.id), zap.Error(err))
 			continue
@@ -110,20 +125,23 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 // temps moyen borné [avgDistFloorSec, avgDistCeilSec] ainsi que le nombre
 // d'items traités. Retourne (0, 0, nil) si pas assez de données.
 func (tm *TasksManager) computeAverageDistributionTime(ctx context.Context, merchantID string, capacity int) (int64, int, error) {
-	rows, err := tm.DB.QueryContext(ctx, `
+	db := dbx.GetDB(ctx, tm.DB)
+	query := `
 		SELECT
 			oi.quantity,
-			UNIX_TIMESTAMP(oi.ordered_on),
-			TIMESTAMPDIFF(SECOND, oi.ordered_on, oi.distributed_on)
+			` + tskUnixTimestamp("oi.ordered_on") + `,
+			` + tskSecondsBetween("oi.ordered_on", "oi.distributed_on") + `
 		FROM orders o
 		INNER JOIN orderitems oi ON o.order_id = oi.order_id
 		INNER JOIN products p ON oi.product_id = p.product_id
 		WHERE
 			p.merchant_id = ?
 			AND oi.distributed_quantity > 0 AND oi.distributed_on IS NOT NULL
-			AND oi.ordered_on >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
-			AND TIMESTAMPDIFF(SECOND, oi.ordered_on, oi.distributed_on) BETWEEN ? AND ?
-		ORDER BY oi.ordered_on ASC`,
+			AND oi.ordered_on >= ` + tskNowMinusMinutes() + `
+			AND ` + tskSecondsBetween("oi.ordered_on", "oi.distributed_on") + ` BETWEEN ? AND ?
+		ORDER BY oi.ordered_on ASC`
+
+	rows, err := db.QueryContext(ctx, query,
 		merchantID, avgDistCalcIntervalMinutes, avgDistTurnaroundMinSec, avgDistTurnaroundMaxSec)
 	if err != nil {
 		return 0, 0, err

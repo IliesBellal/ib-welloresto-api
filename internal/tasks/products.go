@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"welloresto-api/internal/database/dbx"
 
 	"go.uber.org/zap"
 )
@@ -25,7 +26,7 @@ func (tm *TasksManager) UpdatePopularProducts() {
 	tm.logInfo("[CRON] UpdatePopularProducts: démarrage")
 
 	merchants, err := tm.collectIDs(ctx,
-		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = m.id")
+		"SELECT m.id FROM merchant m INNER JOIN subscriptions s ON s.merchant_id = "+tskMerchantJoinCast())
 	if err != nil {
 		tm.logError("[CRON] UpdatePopularProducts: liste marchands échouée", zap.Error(err))
 		return
@@ -54,14 +55,14 @@ func (tm *TasksManager) updateMerchantPopularProducts(ctx context.Context, merch
 		SELECT p.product_id FROM orderitems oi
 		INNER JOIN orders o ON o.order_id = oi.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
-		WHERE o.merchant_id = ? AND o.creation_date >= NOW() - INTERVAL 30 DAY
+		WHERE o.merchant_id = ? AND o.creation_date >= ` + tskNowMinus30Days() + `
 		GROUP BY p.category, p.product_id
 		HAVING COUNT(*) >= ?
 		AND p.product_id = (
 			SELECT oi2.product_id FROM orderitems oi2
 			INNER JOIN orders o2 ON o2.order_id = oi2.order_id
 			INNER JOIN products p2 ON p2.product_id = oi2.product_id
-			WHERE o2.merchant_id = ? AND o2.creation_date >= NOW() - INTERVAL 30 DAY
+			WHERE o2.merchant_id = ? AND o2.creation_date >= ` + tskNowMinus30Days() + `
 			AND p2.category = p.category
 			GROUP BY oi2.product_id ORDER BY COUNT(*) DESC LIMIT 1
 		)`
@@ -74,7 +75,7 @@ func (tm *TasksManager) updateMerchantPopularProducts(ctx context.Context, merch
 	topGlobalQuery := `
 		SELECT oi.product_id FROM orderitems oi
 		INNER JOIN orders o ON o.order_id = oi.order_id
-		WHERE o.merchant_id = ? AND o.creation_date >= NOW() - INTERVAL 30 DAY
+		WHERE o.merchant_id = ? AND o.creation_date >= ` + tskNowMinus30Days() + `
 		GROUP BY oi.product_id ORDER BY COUNT(*) DESC LIMIT ?`
 	topGlobal, err := tm.collectIDs(ctx, topGlobalQuery, merchantID, numPopularProductsPerMerchant)
 	if err != nil {
@@ -96,9 +97,15 @@ func (tm *TasksManager) updateMerchantPopularProducts(ctx context.Context, merch
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	// dbx.Wrap applique le rebind ?->$N sur la transaction (même pattern que
+	// planning/swaps.Approve, rapport 29) — dbx.GetDB seul ne suffit pas ici
+	// car la connexion est déjà résolue en *sql.Tx par BeginTx.
+	txDB := dbx.Wrap(tx)
 
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE products SET is_popular = 0 WHERE merchant_id = ? AND is_popular = 1",
+	// is_popular est boolean en cible Postgres : littéraux 0/1 rejetés (TRUE/
+	// FALSE acceptés dans les deux dialectes, cf. 14-tier1-conversion-log.md §3).
+	if _, err := txDB.ExecContext(ctx,
+		"UPDATE products SET is_popular = FALSE WHERE merchant_id = ? AND is_popular = TRUE",
 		merchantID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("reset is_popular: %w", err)
@@ -111,8 +118,8 @@ func (tm *TasksManager) updateMerchantPopularProducts(ctx context.Context, merch
 		for _, id := range popularIDs {
 			args = append(args, id)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-			"UPDATE products SET is_popular = 1 WHERE merchant_id = ? AND product_id IN (%s)",
+		if _, err := txDB.ExecContext(ctx, fmt.Sprintf(
+			"UPDATE products SET is_popular = TRUE WHERE merchant_id = ? AND product_id IN (%s)",
 			placeholders), args...); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("set is_popular: %w", err)
@@ -126,7 +133,8 @@ func (tm *TasksManager) updateMerchantPopularProducts(ctx context.Context, merch
 // intégralement en mémoire avant de rendre la main, pour libérer l'unique
 // connexion du pool au plus tôt.
 func (tm *TasksManager) collectIDs(ctx context.Context, query string, args ...interface{}) ([]string, error) {
-	rows, err := tm.DB.QueryContext(ctx, query, args...)
+	db := dbx.GetDB(ctx, tm.DB)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

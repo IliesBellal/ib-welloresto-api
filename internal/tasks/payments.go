@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"welloresto-api/internal/database/dbx"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 
 	"go.uber.org/zap"
@@ -21,7 +22,7 @@ func (tm *TasksManager) CapturePayments() {
 		AND o.state = 'CLOSED'
 		AND o.brand_status NOT IN ('DENIED', 'CANCELED')
 		AND sp.payment_intent_id IS NOT NULL
-		AND TIMESTAMPDIFF(MINUTE, p.payment_date, UTC_TIMESTAMP) >= ?;`
+		AND ` + tskMinutesSince("p.payment_date") + ` >= ?`
 
 	tm.processStripePayments(query, "CAPTURE")
 }
@@ -38,7 +39,7 @@ func (tm *TasksManager) CancelPayments() {
 		AND o.state = 'CLOSED'
 		AND o.brand_status IN ('DENIED', 'CANCELED')
 		AND sp.payment_intent_id IS NOT NULL
-		AND TIMESTAMPDIFF(MINUTE, p.payment_date, UTC_TIMESTAMP) >= ?;`
+		AND ` + tskMinutesSince("p.payment_date") + ` >= ?`
 
 	tm.processStripePayments(query, "CANCEL")
 }
@@ -49,8 +50,9 @@ func (tm *TasksManager) CancelPayments() {
 // connexion du pool au plus tôt.
 func (tm *TasksManager) processStripePayments(query string, action string) {
 	ctx := context.Background()
+	db := dbx.GetDB(ctx, tm.DB)
 
-	rows, err := tm.DB.QueryContext(ctx, query, autoCaptureDelay)
+	rows, err := db.QueryContext(ctx, query, autoCaptureDelay)
 	if err != nil {
 		tm.logError("[CRON] Stripe "+action+": requête échouée", zap.Error(err))
 		return

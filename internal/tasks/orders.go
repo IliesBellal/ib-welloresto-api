@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
@@ -20,24 +21,25 @@ const (
 // l'itération en cours (deadlock qui gèle toute l'API).
 func (tm *TasksManager) CloseOrders() {
 	ctx := context.Background()
+	db := dbx.GetDB(ctx, tm.DB)
 
 	query := `
 		SELECT o.order_id, p.stock_management, o.merchant_id
 		FROM orders o
-		INNER JOIN merchant m on m.id = o.merchant_id
-		INNER JOIN merchant_parameters mp on mp.merchant_id = m.id
-		INNER JOIN subscriptions s on m.id = s.merchant_id
+		INNER JOIN merchant m on ` + tskMerchantJoinCast() + ` = o.merchant_id
+		INNER JOIN merchant_parameters mp on mp.merchant_id = ` + tskMerchantJoinCast() + `
+		INNER JOIN subscriptions s on ` + tskMerchantJoinCast() + ` = s.merchant_id
 		INNER JOIN packages p on p.id = s.package_id
 		WHERE mp.auto_complete_orders
 		AND o.isPaid
 		AND o.isDistributed
 		AND (
-			(o.state <> 'CLOSED' AND o.order_type NOT IN ('DELIVERY') AND o.brand = 'WELLO_RESTO' AND o.created_by <> '-1' AND TIMESTAMPDIFF(MINUTE, o.delivered_on, UTC_TIMESTAMP) >= mp.auto_complete_orders_delay)
+			(o.state <> 'CLOSED' AND o.order_type NOT IN ('DELIVERY') AND o.brand = 'WELLO_RESTO' AND o.created_by <> '-1' AND ` + tskMinutesSince("o.delivered_on") + ` >= mp.auto_complete_orders_delay)
 			OR
-			(o.state <> 'CLOSED' AND o.order_type IN ('TAKE_AWAY') AND o.brand_status IN ('READY_FOR_HANDOFF','READY_FOR_TAKE_AWAY') AND TIMESTAMPDIFF(MINUTE, o.creation_date, UTC_TIMESTAMP) >= ?)
-		);`
+			(o.state <> 'CLOSED' AND o.order_type IN ('TAKE_AWAY') AND o.brand_status IN ('READY_FOR_HANDOFF','READY_FOR_TAKE_AWAY') AND ` + tskMinutesSince("o.creation_date") + ` >= ?)
+		)`
 
-	rows, err := tm.DB.QueryContext(ctx, query, autoCloseOtherOrdersDelay)
+	rows, err := db.QueryContext(ctx, query, autoCloseOtherOrdersDelay)
 	if err != nil {
 		tm.logError("[CRON] CloseOrders: requête échouée", zap.Error(err))
 		return
@@ -82,6 +84,7 @@ func (tm *TasksManager) CloseOrders() {
 // Même schéma que CloseOrders : collecte complète avant action (1 connexion max).
 func (tm *TasksManager) DenyOrders() {
 	ctx := context.Background()
+	db := dbx.GetDB(ctx, tm.DB)
 
 	query := `
 		SELECT o.order_id, o.merchant_id
@@ -91,9 +94,9 @@ func (tm *TasksManager) DenyOrders() {
 		AND o.brand_status = 'PENDING_APPROVAL'
 		AND o.merchant_approval = 'PENDING_APPROVAL'
 		AND o.scheduled = false
-		AND TIMESTAMPDIFF(MINUTE, o.creation_date, UTC_TIMESTAMP) >= ?;`
+		AND ` + tskMinutesSince("o.creation_date") + ` >= ?`
 
-	rows, err := tm.DB.QueryContext(ctx, query, autoDenyDelay)
+	rows, err := db.QueryContext(ctx, query, autoDenyDelay)
 	if err != nil {
 		tm.logError("[CRON] DenyOrders: requête échouée", zap.Error(err))
 		return
