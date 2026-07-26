@@ -12,6 +12,29 @@ const (
 	StatusDenied    = "denied"
 )
 
+// validStatuses énumère les seules valeurs acceptées en insertion. Utilisé
+// par bookingcore.CreateBooking pour rejeter au plus tôt un statut vide ou
+// non normalisé, avant qu'il n'atteigne le SQL (cf. status="" historique :
+// un appelant qui oublie de fournir/normaliser le statut ne doit plus
+// pouvoir écrire une valeur silencieusement invalide).
+var validStatuses = map[string]bool{
+	StatusPending:   true,
+	StatusConfirmed: true,
+	StatusSeated:    true,
+	StatusCompleted: true,
+	StatusCancelled: true,
+	StatusNoShow:    true,
+	StatusDenied:    true,
+}
+
+// IsValidStatus indique si status correspond à l'une des valeurs cible de
+// l'enum ci-dessus (post-normalisation : les alias legacy ne sont pas
+// valides tels quels, l'appelant doit passer par NormalizeLegacyStatus
+// d'abord).
+func IsValidStatus(status string) bool {
+	return validStatuses[status]
+}
+
 // NormalizeLegacyStatus aligne les valeurs historiques vers le vocabulaire
 // cible. Les statuts deja normalises sont conserves tels quels.
 func NormalizeLegacyStatus(status string) string {

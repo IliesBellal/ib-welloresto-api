@@ -50,6 +50,14 @@ type CreateBookingParams struct {
 // dbutils.RunInTx, celle-ci est réutilisée ; sinon une nouvelle est ouverte
 // pour la durée de l'appel.
 func CreateBooking(ctx context.Context, db *sql.DB, customerRepo *customers.CustomersRepository, p CreateBookingParams) (bookingID string, bookingNumber string, err error) {
+	// Défense en profondeur : un appelant qui oublie de résoudre/normaliser
+	// le statut (cf. status="" historique du flux staff) ne doit jamais
+	// atteindre le SQL — mieux vaut une erreur explicite ici qu'une valeur
+	// arbitraire silencieusement insérée.
+	if !IsValidStatus(p.Status) {
+		return "", "", fmt.Errorf("invalid booking status: %q", p.Status)
+	}
+
 	err = dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
 		if p.EndLocal.Before(p.StartLocal) {
 			return fmt.Errorf("start date is after end date")

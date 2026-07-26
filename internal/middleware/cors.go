@@ -17,6 +17,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 
 		"https://my-wello-resto-prod.onrender.com":    true,
 		"https://my-wello-resto-staging.onrender.com": true,
+		"https://my.welloresto.fr":                    true,
 
 		"https://wello-resto-scannorder-staging.onrender.com": true,
 		"https://wello-resto-scannorder-prod.onrender.com":    true,
@@ -66,6 +67,7 @@ func CORSMiddleware() *cors.Cors {
 			"https://scannorder.welloresto.fr",
 			"https://wello-resto-scannorder-staging.onrender.com",
 			"https://wello-resto-scannorder-prod.onrender.com",
+			"https://my.welloresto.fr",
 		},
 
 		AllowedMethods: []string{

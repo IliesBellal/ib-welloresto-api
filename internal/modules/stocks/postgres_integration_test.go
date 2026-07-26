@@ -103,7 +103,7 @@ func TestStocksRepository_Postgres(t *testing.T) {
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO users (user_id, name, first_name, last_name, password, email, token, enabled, merchant_id)
-		VALUES ($1, 'ITest Stock User', 'ITest', 'User', 'hash', 'itest-stk@example.com', 'stk-tok', 1, $2)`, userID, merchantID); err != nil {
+		VALUES ($1, 'ITest Stock User', 'ITest', 'User', 'hash', 'itest-stk@example.com', 'stk-tok', true, $2)`, userID, merchantID); err != nil {
 		t.Fatalf("seed users: %v", err)
 	}
 

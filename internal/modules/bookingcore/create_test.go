@@ -82,3 +82,45 @@ func TestCreateBooking_ReusesExistingCustomerFoundByPhone(t *testing.T) {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
+
+// TestCreateBooking_RejectsInvalidStatus vérifie la défense en profondeur :
+// un appelant qui atteint bookingcore.CreateBooking avec un statut vide ou
+// non normalisé (legacy, faute de frappe, valeur oubliée) doit être rejeté
+// avant toute écriture SQL, plutôt que d'insérer silencieusement une valeur
+// arbitraire (cf. status="" historique du flux staff).
+func TestCreateBooking_RejectsInvalidStatus(t *testing.T) {
+	cases := []string{"", "PENDING_APPROVAL", "not_a_status", "Confirmed"}
+
+	for _, status := range cases {
+		t.Run("status_"+status, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New() error = %v", err)
+			}
+			defer db.Close()
+
+			customerRepo := customers.NewCustomerRepository(db)
+			start := time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)
+			end := start.Add(90 * time.Minute)
+
+			_, _, err = CreateBooking(context.Background(), db, customerRepo, CreateBookingParams{
+				MerchantID: "merchant_1",
+				Source:     "staff",
+				CreatedBy:  "itest",
+				Status:     status,
+				PartySize:  2,
+				StartLocal: start,
+				EndLocal:   end,
+			})
+			if err == nil {
+				t.Fatalf("CreateBooking() with status %q: expected error, got nil", status)
+			}
+
+			// Aucune requête SQL ne doit avoir été tentée : le rejet intervient
+			// avant l'ouverture de la transaction.
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("expected no SQL calls for invalid status %q: %v", status, err)
+			}
+		})
+	}
+}

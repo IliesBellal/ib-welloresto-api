@@ -3823,7 +3823,7 @@ CREATE TABLE users (
     created_at timestamptz DEFAULT now(),
     lastAccess timestamptz,
     last_activity timestamptz NOT NULL DEFAULT now(),
-    enabled integer NOT NULL DEFAULT 1,
+    enabled boolean NOT NULL DEFAULT true,
     last_login_at timestamptz,
     last_position_at timestamptz,
     PRIMARY KEY (user_id)
@@ -3995,7 +3995,7 @@ SELECT
     u.lng,
     u.heading,
     CASE
-        WHEN u.enabled = 0 THEN 'DISABLED'
+        WHEN u.enabled = false THEN 'DISABLED'
         WHEN ds.id IS NOT NULL AND ds.status IN ('1', 'PENDING', 'active') THEN 'IN_DELIVERY_SESSION'
         WHEN EXISTS (
             SELECT 1 FROM user_vacations v

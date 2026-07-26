@@ -129,7 +129,7 @@ func (r *Repository) IsMerchantUserLinked(ctx context.Context, merchantID, userI
 		SELECT COUNT(1)
 		FROM users_rights ur
 		INNER JOIN users u ON u.user_id = ur.user_id
-		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = TRUE AND u.enabled = 1
+		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = TRUE AND u.enabled = TRUE
 	`, merchantID, strings.TrimSpace(userID)).Scan(&count); err != nil {
 		return false, err
 	}

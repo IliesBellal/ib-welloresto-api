@@ -79,7 +79,7 @@ func TestAuthRepository_Postgres(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO users (user_id, name, first_name, last_name, password, email, tel, token, enabled)
-		VALUES ($1, 'ITest User', 'ITest', 'User', $2, 'itest-auth@example.com', '+33600000000', 'user-tok', 1)`, userID, passwordHash); err != nil {
+		VALUES ($1, 'ITest User', 'ITest', 'User', $2, 'itest-auth@example.com', '+33600000000', 'user-tok', true)`, userID, passwordHash); err != nil {
 		t.Fatalf("seed users: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `

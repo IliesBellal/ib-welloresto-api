@@ -31,14 +31,8 @@ func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID stri
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	if filters.Active != nil {
-		// users.enabled is an integer column (not boolean): bind 0/1 — pgx
-		// refuses a Go bool on int4, MySQL accepts both.
-		active := 0
-		if *filters.Active {
-			active = 1
-		}
 		baseQuery += ` AND u.enabled = ?`
-		args = append(args, active)
+		args = append(args, *filters.Active)
 	}
 	if filters.LinkedEmployee != nil {
 		if *filters.LinkedEmployee {

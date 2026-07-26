@@ -149,6 +149,10 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusConfirmed); err != nil {
 		return nil, models.ErrInvalidInput
 	}
+	// Capturé avant la bascule : CanTransition autorise le no-op
+	// confirmed -> confirmed (f == t), qui ne doit pas redéclencher la
+	// confirmation déjà envoyée lors du vrai passage pending -> confirmed.
+	previousStatus := bookingcore.NormalizeLegacyStatus(booking.Status)
 
 	// 1️⃣ Update booking state
 	err = s.repo.SetBookingState(ctx, user.MerchantID, bookingID, bookingcore.StatusConfirmed)
@@ -162,8 +166,11 @@ func (s *BookingsService) AcceptBooking(ctx context.Context, token, bookingID st
 		return nil, err
 	}
 
-	// 3️⃣ Confirmation au client (staff a accepté une demande pending)
-	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendConfirmation)
+	// 3️⃣ Confirmation au client (staff a accepté une demande pending) —
+	// uniquement sur une vraie transition, pas sur le no-op déjà-confirmed.
+	if previousStatus == bookingcore.StatusPending {
+		s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendConfirmation)
+	}
 
 	return map[string]interface{}{
 		"status":  "1",
@@ -185,6 +192,9 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusDenied); err != nil {
 		return nil, models.ErrInvalidInput
 	}
+	// Capturé avant la bascule : le no-op denied -> denied (f == t) ne doit
+	// pas redéclencher l'annulation déjà envoyée lors du premier refus.
+	previousStatus := bookingcore.NormalizeLegacyStatus(booking.Status)
 
 	if req != nil && req.DeletionReasonID != nil {
 		ok, err := s.repo.IsValidDeletionReason(ctx, *req.DeletionReasonID)
@@ -206,8 +216,11 @@ func (s *BookingsService) DenyBooking(ctx context.Context, token, bookingID stri
 		return nil, err
 	}
 
-	// Le refus d'une demande pending vaut annulation côté client.
-	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+	// Le refus d'une demande pending vaut annulation côté client — uniquement
+	// sur une vraie transition, pas sur le no-op déjà-denied.
+	if previousStatus == bookingcore.StatusPending {
+		s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+	}
 
 	return map[string]interface{}{
 		"status":  "1",
@@ -231,6 +244,12 @@ func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID st
 	if err := bookingcore.CanTransition(booking.Status, bookingcore.StatusCancelled); err != nil {
 		return nil, models.ErrInvalidInput
 	}
+	// Capturé avant la bascule : CanTransition autorise le no-op
+	// cancelled -> cancelled (f == t) — confirmed et seated sont tous deux
+	// des origines valides pour une vraie annulation, donc on garde le
+	// déclenchement sur "n'était pas déjà cancelled" plutôt que sur une
+	// valeur d'origine unique.
+	previousStatus := bookingcore.NormalizeLegacyStatus(booking.Status)
 
 	if req != nil && req.DeletionReasonID != nil {
 		ok, err := s.repo.IsValidDeletionReason(ctx, *req.DeletionReasonID)
@@ -270,7 +289,11 @@ func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID st
 		return nil, err
 	}
 
-	s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+	// Annulation notifiée uniquement sur une vraie transition, pas sur le
+	// no-op déjà-cancelled.
+	if previousStatus != bookingcore.StatusCancelled {
+		s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+	}
 
 	return map[string]interface{}{
 		"status":  "1",

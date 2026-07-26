@@ -832,6 +832,15 @@ func (r *BookingsRepository) CreateBooking(ctx context.Context, req *BookingObje
 		return "", fmt.Errorf("start_date or end_date is empty")
 	}
 
+	// Création staff : contrairement au flux public (qui suit
+	// requireApproval/auto-accept et part de pending), une résa créée par le
+	// staff au POS est directement confirmed quand le client ne fournit pas
+	// de statut — le POS n'envoie aujourd'hui aucun champ status à la
+	// création. Un statut explicite fourni par le client reste prioritaire.
+	if req.Booking.Status == "" {
+		req.Booking.Status = bookingcore.StatusConfirmed
+	}
+
 	var normalizedCustomerID *string
 	if req.Customer.CustomerID != nil {
 		trimmedCustomerID := strings.TrimSpace(*req.Customer.CustomerID)
