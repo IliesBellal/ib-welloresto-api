@@ -240,7 +240,7 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 	}
 
 	activityType := strings.ToLower(strings.TrimSpace(params.Type))
-	if activityType != "" && activityType != ActivityTypeTemperatures && activityType != ActivityTypeCleanings {
+	if activityType != "" && activityType != ActivityTypeTemperatures && activityType != ActivityTypeCleanings && activityType != ActivityTypeTraceability {
 		return nil, models.ErrInvalidActivityType
 	}
 

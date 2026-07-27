@@ -316,6 +316,57 @@ func TestHACCPRepository_Postgres(t *testing.T) {
 		t.Fatalf("HasTraceabilityRecords = (%v, %v), want true", hasTraceRecords, err)
 	}
 
+	// --- activités avec traçabilité incluse (3 types mélangés) ---
+	items, total, err = repo.ListActivities(ctx, merchantID, dayStart, dayStart.Add(24*time.Hour), "", "", 1, 10)
+	if err != nil {
+		t.Fatalf("ListActivities with traceability failed against postgres: %v", err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("expected 3 activities (température + nettoyage + traçabilité), got total=%d items=%d", total, len(items))
+	}
+
+	for i := 1; i < len(items); i++ {
+		prev := items[i-1]
+		curr := items[i]
+		if prev.PerformedAt.Before(curr.PerformedAt) {
+			t.Fatalf("activities not sorted by performed_at DESC: prev=%s curr=%s", prev.PerformedAt, curr.PerformedAt)
+		}
+		if prev.PerformedAt.Equal(curr.PerformedAt) && prev.ID < curr.ID {
+			t.Fatalf("activities not sorted by id DESC on equal performed_at: prev=%s curr=%s", prev.ID, curr.ID)
+		}
+	}
+
+	var traceActivity *ActivityItem
+	for i := range items {
+		if items[i].Type == ActivityTypeTraceability {
+			traceActivity = &items[i]
+			break
+		}
+	}
+	if traceActivity == nil {
+		t.Fatalf("expected one traceability activity in aggregate, got items=%+v", items)
+	}
+	if traceActivity.Status == nil || *traceActivity.Status != "done" {
+		t.Fatalf("expected traceability status=done, got status=%v", traceActivity.Status)
+	}
+	if traceActivity.Metadata["record_id"] != traceRecord.ID {
+		t.Fatalf("expected metadata.record_id=%s, got %v", traceRecord.ID, traceActivity.Metadata["record_id"])
+	}
+	if photosCount, ok := traceActivity.Metadata["photos_count"].(int64); !ok || photosCount != 2 {
+		t.Fatalf("expected metadata.photos_count=2(int64), got %T(%v)", traceActivity.Metadata["photos_count"], traceActivity.Metadata["photos_count"])
+	}
+	if hasComment, ok := traceActivity.Metadata["has_comment"].(bool); !ok || !hasComment {
+		t.Fatalf("expected metadata.has_comment=true(bool), got %T(%v)", traceActivity.Metadata["has_comment"], traceActivity.Metadata["has_comment"])
+	}
+
+	traceOnlyItems, traceOnlyTotal, err := repo.ListActivities(ctx, merchantID, dayStart, dayStart.Add(24*time.Hour), ActivityTypeTraceability, "", 1, 10)
+	if err != nil {
+		t.Fatalf("ListActivities traceability-only failed against postgres: %v", err)
+	}
+	if traceOnlyTotal != 1 || len(traceOnlyItems) != 1 || traceOnlyItems[0].Type != ActivityTypeTraceability {
+		t.Fatalf("expected one traceability activity on type filter, got total=%d items=%+v", traceOnlyTotal, traceOnlyItems)
+	}
+
 	// rollback : un photo_key trop long (> varchar(512)) doit faire echouer
 	// l'insertion des photos ET annuler l'insertion du record dans la meme transaction.
 	_, err = repo.CreateTraceabilityRecord(ctx, "itest-haccp-trace-2", merchantID, userID, nil, []string{

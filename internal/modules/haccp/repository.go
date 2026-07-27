@@ -1429,8 +1429,38 @@ func (r *Repository) ListActivities(ctx context.Context, merchantID string, star
 	`
 	cleaningArgs := []interface{}{merchantID, startAt.UTC(), endAt.UTC()}
 
+	traceabilityQuery := `
+		SELECT
+			trc.id AS id,
+			'traceability' AS activity_type,
+			'done' AS status,
+			trc.created_by AS performed_by_id,
+			COALESCE(u.name, trc.created_by) AS performed_by_name,
+			trc.created_at AS performed_at,
+			'Tracabilite produit' AS title,
+			CASE
+				WHEN trc.comment IS NOT NULL AND TRIM(trc.comment) <> '' THEN trc.comment
+				ELSE CONCAT(COUNT(tp.id), ' photo(s)')
+			END AS subtitle,
+			CASE
+				WHEN trc.comment IS NOT NULL AND TRIM(trc.comment) <> '' THEN 1
+				ELSE 0
+			END AS readings_count,
+			COUNT(tp.id) AS executions_count
+		FROM haccp_traceability_records trc
+		LEFT JOIN haccp_traceability_photos tp
+			ON tp.record_id = trc.id
+		LEFT JOIN users u ON u.user_id = trc.created_by
+		WHERE trc.merchant_id = ?
+		  AND trc.enabled = TRUE
+		  AND trc.created_at >= ?
+		  AND trc.created_at < ?
+		GROUP BY trc.id, trc.created_by, u.name, trc.created_at, trc.comment
+	`
+	traceabilityArgs := []interface{}{merchantID, startAt.UTC(), endAt.UTC()}
+
 	var unionParts []string
-	args := make([]interface{}, 0, 6)
+	args := make([]interface{}, 0, 9)
 
 	switch activityType {
 	case ActivityTypeTemperatures:
@@ -1439,10 +1469,14 @@ func (r *Repository) ListActivities(ctx context.Context, merchantID string, star
 	case ActivityTypeCleanings:
 		unionParts = append(unionParts, cleaningQuery)
 		args = append(args, cleaningArgs...)
+	case ActivityTypeTraceability:
+		unionParts = append(unionParts, traceabilityQuery)
+		args = append(args, traceabilityArgs...)
 	default:
-		unionParts = append(unionParts, temperatureQuery, cleaningQuery)
+		unionParts = append(unionParts, temperatureQuery, cleaningQuery, traceabilityQuery)
 		args = append(args, temperatureArgs...)
 		args = append(args, cleaningArgs...)
+		args = append(args, traceabilityArgs...)
 	}
 
 	baseQuery := strings.Join(unionParts, " UNION ALL ")
@@ -1509,6 +1543,12 @@ func (r *Repository) ListActivities(ctx context.Context, merchantID string, star
 			if executionsCount.Valid {
 				metadata["executions_count"] = executionsCount.Int64
 			}
+		case ActivityTypeTraceability:
+			metadata["record_id"] = item.ID
+			if executionsCount.Valid {
+				metadata["photos_count"] = executionsCount.Int64
+			}
+			metadata["has_comment"] = readingsCount.Valid && readingsCount.Int64 > 0
 		}
 		if len(metadata) > 0 {
 			item.Metadata = metadata

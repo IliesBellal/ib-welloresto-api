@@ -5,6 +5,7 @@ import "time"
 const (
 	ActivityTypeTemperatures = "temperatures"
 	ActivityTypeCleanings    = "cleanings"
+	ActivityTypeTraceability = "traceability"
 )
 
 type Zone struct {
