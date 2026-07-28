@@ -484,6 +484,35 @@ func TestServicePublishPlanningWeek(t *testing.T) {
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
 	now := time.Now().UTC()
 
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+		FROM planning_weeks
+		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
+		LIMIT 1
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+			"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
+		))
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, s.title,
+			COALESCE(NULLIF(TRIM(s.position), ''), COALESCE(p.label, '')) AS position_label
+		FROM planning_shifts s
+		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.employee_id IS NOT NULL AND s.enabled = TRUE
+		ORDER BY s.employee_id ASC, s.shift_date ASC, s.start_time ASC, s.created_at ASC
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT employee_id, shift_date, start_time, end_time, title, position_label
+		FROM planning_published_shift_snapshots
+		WHERE merchant_id = ? AND week_id = ?
+		ORDER BY employee_id ASC, shift_date ASC, start_time ASC
+	`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE planning_weeks
 		SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
@@ -491,6 +520,13 @@ func TestServicePublishPlanningWeek(t *testing.T) {
 	`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
+			DELETE FROM planning_published_shift_snapshots
+			WHERE merchant_id = ? AND week_id = ?
+		`)).
+		WithArgs("merchant_1", "week_1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 		FROM planning_weeks
@@ -621,6 +657,35 @@ func TestServicePublishPlanningWeekIdempotent(t *testing.T) {
 	now := time.Now().UTC()
 
 	for i := 0; i < 2; i++ {
+		mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
+			FROM planning_weeks
+			WHERE merchant_id = ? AND id = ? AND enabled = TRUE
+			LIMIT 1
+		`)).
+			WithArgs("merchant_1", "week_1").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
+				"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", publishedAt, nil, now, now, nil,
+			))
+		mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, s.title,
+				COALESCE(NULLIF(TRIM(s.position), ''), COALESCE(p.label, '')) AS position_label
+			FROM planning_shifts s
+			LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
+			WHERE s.merchant_id = ? AND s.week_id = ? AND s.employee_id IS NOT NULL AND s.enabled = TRUE
+			ORDER BY s.employee_id ASC, s.shift_date ASC, s.start_time ASC, s.created_at ASC
+		`)).
+			WithArgs("merchant_1", "week_1").
+			WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+		mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT employee_id, shift_date, start_time, end_time, title, position_label
+			FROM planning_published_shift_snapshots
+			WHERE merchant_id = ? AND week_id = ?
+			ORDER BY employee_id ASC, shift_date ASC, start_time ASC
+		`)).
+			WithArgs("merchant_1", "week_1").
+			WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+		mock.ExpectBegin()
 		mock.ExpectExec(regexp.QuoteMeta(`
 			UPDATE planning_weeks
 			SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
@@ -628,6 +693,13 @@ func TestServicePublishPlanningWeekIdempotent(t *testing.T) {
 		`)).
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(regexp.QuoteMeta(`
+			DELETE FROM planning_published_shift_snapshots
+			WHERE merchant_id = ? AND week_id = ?
+		`)).
+			WithArgs("merchant_1", "week_1").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectCommit()
 		mock.ExpectQuery(regexp.QuoteMeta(`
 			SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
 			FROM planning_weeks

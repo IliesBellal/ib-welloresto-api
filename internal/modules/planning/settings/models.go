@@ -39,34 +39,42 @@ func IsValidShiftSwapApprovalMode(mode string) bool {
 }
 
 type PlanningSettings struct {
-	ID                    string    `json:"id"`
-	MerchantID            string    `json:"merchant_id"`
-	LaborCountryCode      string    `json:"labor_country_code"`
-	MinDailyRestHours     float64   `json:"min_daily_rest_hours"`
-	MinBreakMinutes       int       `json:"min_break_minutes"`
-	NightShiftStart       string    `json:"night_shift_start"`
-	NightShiftEnd         string    `json:"night_shift_end"`
-	NightShiftMultiplier  float64   `json:"night_shift_multiplier"`
-	HolidayMultiplier     float64   `json:"holiday_multiplier"`
-	AllowOverrideWarnings bool      `json:"allow_override_warnings"`
-	AttendanceSource      string    `json:"attendance_source"`
-	ShiftSwapApprovalMode string    `json:"shift_swap_approval_mode"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	ID                    string  `json:"id"`
+	MerchantID            string  `json:"merchant_id"`
+	LaborCountryCode      string  `json:"labor_country_code"`
+	MinDailyRestHours     float64 `json:"min_daily_rest_hours"`
+	MinBreakMinutes       int     `json:"min_break_minutes"`
+	NightShiftStart       string  `json:"night_shift_start"`
+	NightShiftEnd         string  `json:"night_shift_end"`
+	NightShiftMultiplier  float64 `json:"night_shift_multiplier"`
+	HolidayMultiplier     float64 `json:"holiday_multiplier"`
+	AllowOverrideWarnings bool    `json:"allow_override_warnings"`
+	AttendanceSource      string  `json:"attendance_source"`
+	ShiftSwapApprovalMode string  `json:"shift_swap_approval_mode"`
+	// PlanningSMSNotificationsEnabled gates every planning SMS path.
+	// When false, publication notifications remain email-only and no fallback
+	// inline SMS is sent to inactive employees.
+	PlanningSMSNotificationsEnabled     bool      `json:"planning_sms_notifications_enabled"`
+	PlanningSMSNotificationsDescription string    `json:"planning_sms_notifications_description"`
+	CreatedAt                           time.Time `json:"created_at"`
+	UpdatedAt                           time.Time `json:"updated_at"`
 }
 
 type PlanningSettingsUpdateRequest struct {
-	LaborCountryCode      *string  `json:"labor_country_code,omitempty"`
-	MinDailyRestHours     *float64 `json:"min_daily_rest_hours,omitempty"`
-	MinBreakMinutes       *int     `json:"min_break_minutes,omitempty"`
-	NightShiftStart       *string  `json:"night_shift_start,omitempty"`
-	NightShiftEnd         *string  `json:"night_shift_end,omitempty"`
-	NightShiftMultiplier  *float64 `json:"night_shift_multiplier,omitempty"`
-	HolidayMultiplier     *float64 `json:"holiday_multiplier,omitempty"`
-	AllowOverrideWarnings *bool    `json:"allow_override_warnings,omitempty"`
-	AttendanceSource      *string  `json:"attendance_source,omitempty"`
-	ShiftSwapApprovalMode *string  `json:"shift_swap_approval_mode,omitempty"`
+	LaborCountryCode                *string  `json:"labor_country_code,omitempty"`
+	MinDailyRestHours               *float64 `json:"min_daily_rest_hours,omitempty"`
+	MinBreakMinutes                 *int     `json:"min_break_minutes,omitempty"`
+	NightShiftStart                 *string  `json:"night_shift_start,omitempty"`
+	NightShiftEnd                   *string  `json:"night_shift_end,omitempty"`
+	NightShiftMultiplier            *float64 `json:"night_shift_multiplier,omitempty"`
+	HolidayMultiplier               *float64 `json:"holiday_multiplier,omitempty"`
+	AllowOverrideWarnings           *bool    `json:"allow_override_warnings,omitempty"`
+	AttendanceSource                *string  `json:"attendance_source,omitempty"`
+	ShiftSwapApprovalMode           *string  `json:"shift_swap_approval_mode,omitempty"`
+	PlanningSMSNotificationsEnabled *bool    `json:"planning_sms_notifications_enabled,omitempty"`
 }
+
+const PlanningSMSNotificationsDescription = "If disabled, planning publication notifications stay email-only and no SMS fallback is sent to inactive employees."
 
 type PlanningHoliday struct {
 	OverrideID     *string   `json:"override_id,omitempty"`

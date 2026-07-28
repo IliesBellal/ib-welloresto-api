@@ -310,8 +310,8 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if len(o1.Payments) != 1 || o1.Payments[0].MOP != "ES" {
 		t.Fatalf("order1: expected 1 ES payment, got %+v", o1.Payments)
 	}
-	if len(o1.Comments) != 1 {
-		t.Fatalf("order1: expected 1 order-level comment, got %+v", o1.Comments)
+	if o1.Comment == nil || *o1.Comment == "" {
+		t.Fatalf("order1: expected a normalized order-level comment, got %+v", o1.Comment)
 	}
 	if len(o1.Location) != 1 || o1.Location[0].LocationName != "T1" {
 		t.Fatalf("order1: expected table T1, got %+v", o1.Location)

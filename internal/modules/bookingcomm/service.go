@@ -19,6 +19,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/sms"
+	"welloresto-api/internal/modules/outbound"
 
 	"go.uber.org/zap"
 )
@@ -26,23 +27,37 @@ import (
 const smsSender = "Wello Resto"
 
 type Service struct {
-	mailer  mailer.Service
-	sms     sms.Service
-	baseURL string
-	log     *zap.Logger
+	mailer   mailer.Service
+	sms      sms.Service
+	baseURL  string
+	outbound outboundRecorder
+	log      *zap.Logger
+}
+
+type outboundRecorder interface {
+	RecordOutboundMessageWithContext(ctx context.Context, channel, provider, providerMessageID, domain, domainRefID, recipient string) error
+}
+
+type asyncMailerWithMessageID interface {
+	SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string))
+}
+
+type asyncSMSWithMessageID interface {
+	SendSMSAsyncWithMessageID(senderID, phoneNumber, message string, onSent func(messageID string))
 }
 
 // New instancie le service. baseURL est la racine publique utilisée pour
 // construire le lien de gestion (PUBLIC_RESERVATION_BASE_URL) ; mailer/sms
 // peuvent être nil dans les tests unitaires qui n'exercent pas l'envoi.
-func New(mail mailer.Service, smsSvc sms.Service, baseURL string, log *zap.Logger) *Service {
-	return &Service{mailer: mail, sms: smsSvc, baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), log: log}
+func New(mail mailer.Service, smsSvc sms.Service, baseURL string, outboundSvc outboundRecorder, log *zap.Logger) *Service {
+	return &Service{mailer: mail, sms: smsSvc, baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), outbound: outboundSvc, log: log}
 }
 
 // BookingMessage porte les données primitives nécessaires à l'envoi d'un
 // message lié à une réservation. Construit par l'appelant (bookings,
 // reservation, tasks) à partir de son propre modèle.
 type BookingMessage struct {
+	BookingID     string // identifiant interne réservation (domain_ref_id outbound)
 	MerchantSlug  string // slug /rsv/{slug} ; vide => pas de lien de gestion
 	MerchantName  string
 	CustomerName  string
@@ -84,25 +99,47 @@ func (s *Service) emailBase() mailer.EmailBaseData {
 	}
 }
 
-func (s *Service) sendEmail(m BookingMessage, subject, template string) {
+func (s *Service) sendEmail(ctx context.Context, m BookingMessage, subject, template string) {
 	if s.mailer == nil || strings.TrimSpace(m.CustomerEmail) == "" {
+		return
+	}
+	if trackedMailer, ok := s.mailer.(asyncMailerWithMessageID); ok {
+		trackedMailer.SendAsyncWithMessageID(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, s.emailData(m), func(messageID string) {
+			s.recordOutbound(ctx, outbound.ChannelEmail, messageID, m.BookingID, m.CustomerEmail)
+		})
 		return
 	}
 	s.mailer.SendAsync(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, s.emailData(m))
 }
 
-func (s *Service) sendSMS(m BookingMessage, text string) {
+func (s *Service) sendSMS(ctx context.Context, m BookingMessage, text string) {
 	if !m.SMSEnabled || s.sms == nil || strings.TrimSpace(m.CustomerPhone) == "" {
 		return
 	}
-	s.sms.SendSMSAsync(smsSender, helpers.NormalizePhoneNumber(m.CustomerPhone, "FR"), text)
+	normalizedPhone := helpers.NormalizePhoneNumber(m.CustomerPhone, "FR")
+	if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
+		trackedSMS.SendSMSAsyncWithMessageID(smsSender, normalizedPhone, text, func(messageID string) {
+			s.recordOutbound(ctx, outbound.ChannelSMS, messageID, m.BookingID, normalizedPhone)
+		})
+		return
+	}
+	s.sms.SendSMSAsync(smsSender, normalizedPhone, text)
+}
+
+func (s *Service) recordOutbound(ctx context.Context, channel, providerMessageID, domainRefID, recipient string) {
+	if s.outbound == nil || strings.TrimSpace(providerMessageID) == "" || strings.TrimSpace(domainRefID) == "" {
+		return
+	}
+	if err := s.outbound.RecordOutboundMessageWithContext(ctx, channel, "brevo", providerMessageID, "booking", domainRefID, recipient); err != nil && s.log != nil {
+		s.log.Warn("bookingcomm outbound tracking failed", zap.String("channel", channel), zap.String("domain_ref_id", domainRefID), zap.Error(err))
+	}
 }
 
 // SendConfirmation envoie la confirmation immédiate à la création d'une
 // réservation confirmed.
 func (s *Service) SendConfirmation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(m, "Votre réservation est confirmée", "booking_confirmation.html")
-	s.sendSMS(m, fmt.Sprintf(
+	s.sendEmail(ctx, m, "Votre réservation est confirmée", "booking_confirmation.html")
+	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Votre reservation chez %s le %s a %s (%d pers.) est confirmee. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
 	))
@@ -110,8 +147,8 @@ func (s *Service) SendConfirmation(ctx context.Context, m BookingMessage) {
 
 // SendReminder envoie le rappel avant service (J-1 par défaut, cf. cron).
 func (s *Service) SendReminder(ctx context.Context, m BookingMessage) {
-	s.sendEmail(m, "Rappel de votre réservation", "booking_reminder.html")
-	s.sendSMS(m, fmt.Sprintf(
+	s.sendEmail(ctx, m, "Rappel de votre réservation", "booking_reminder.html")
+	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Rappel : reservation chez %s le %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
 	))
@@ -119,8 +156,8 @@ func (s *Service) SendReminder(ctx context.Context, m BookingMessage) {
 
 // SendModification notifie une modification de réservation (client ou staff).
 func (s *Service) SendModification(ctx context.Context, m BookingMessage) {
-	s.sendEmail(m, "Votre réservation a été modifiée", "booking_modification.html")
-	s.sendSMS(m, fmt.Sprintf(
+	s.sendEmail(ctx, m, "Votre réservation a été modifiée", "booking_modification.html")
+	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Votre reservation chez %s a ete modifiee : %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
 	))
@@ -128,8 +165,8 @@ func (s *Service) SendModification(ctx context.Context, m BookingMessage) {
 
 // SendCancellation notifie une annulation (client, staff ou système).
 func (s *Service) SendCancellation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(m, "Votre réservation a été annulée", "booking_cancellation.html")
-	s.sendSMS(m, fmt.Sprintf(
+	s.sendEmail(ctx, m, "Votre réservation a été annulée", "booking_cancellation.html")
+	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Votre reservation chez %s le %s a %s a ete annulee. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.BookingNumber,
 	))
@@ -138,8 +175,8 @@ func (s *Service) SendCancellation(ctx context.Context, m BookingMessage) {
 // SendReconfirmation demande au client de confirmer sa venue (réponse SMS
 // OUI/NON traitée par le webhook internal/webhook/brevo_sms_reply).
 func (s *Service) SendReconfirmation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(m, "Merci de confirmer votre réservation", "booking_reconfirmation.html")
-	s.sendSMS(m, fmt.Sprintf(
+	s.sendEmail(ctx, m, "Merci de confirmer votre réservation", "booking_reconfirmation.html")
+	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Confirmez-vous votre reservation chez %s le %s a %s (%d pers.) ? Repondez OUI ou NON. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
 	))
@@ -184,7 +221,13 @@ func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) 
 			PartySize:     m.PartySize,
 			ExpiryMinutes: m.ExpiryMinutes,
 		}
-		s.mailer.SendAsync(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, "Une table s'est libérée", "waitlist_available.html", data)
+		if trackedMailer, ok := s.mailer.(asyncMailerWithMessageID); ok {
+			trackedMailer.SendAsyncWithMessageID(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, "Une table s'est libérée", "waitlist_available.html", data, func(messageID string) {
+				s.recordOutbound(ctx, outbound.ChannelEmail, messageID, "", m.CustomerEmail)
+			})
+		} else {
+			s.mailer.SendAsync(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, "Une table s'est libérée", "waitlist_available.html", data)
+		}
 	}
 
 	if m.SMSEnabled && s.sms != nil && strings.TrimSpace(m.CustomerPhone) != "" {
@@ -192,6 +235,13 @@ func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) 
 			"Bonne nouvelle ! Une table pour %d personne(s) s'est liberee chez %s. Elle vous est reservee %d min.",
 			m.PartySize, m.MerchantName, m.ExpiryMinutes,
 		)
-		s.sms.SendSMSAsync(smsSender, helpers.NormalizePhoneNumber(m.CustomerPhone, "FR"), text)
+		normalizedPhone := helpers.NormalizePhoneNumber(m.CustomerPhone, "FR")
+		if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
+			trackedSMS.SendSMSAsyncWithMessageID(smsSender, normalizedPhone, text, func(messageID string) {
+				s.recordOutbound(ctx, outbound.ChannelSMS, messageID, "", normalizedPhone)
+			})
+		} else {
+			s.sms.SendSMSAsync(smsSender, normalizedPhone, text)
+		}
 	}
 }

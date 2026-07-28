@@ -48,7 +48,9 @@ import (
 	notificationModule "welloresto-api/internal/modules/notification"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
+	outboundModule "welloresto-api/internal/modules/outbound"
 	planningModule "welloresto-api/internal/modules/planning"
+	planningcommModule "welloresto-api/internal/modules/planningcomm"
 	posModule "welloresto-api/internal/modules/pos"
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
@@ -71,6 +73,7 @@ import (
 	"welloresto-api/internal/ai/providers"
 
 	// ---- WEBHOOKS ----
+	brevoEventsModule "welloresto-api/internal/webhook/brevo_events"
 	brevoSMSReplyModule "welloresto-api/internal/webhook/brevo_sms_reply"
 	webhookstripe "welloresto-api/internal/webhook/stripe"
 	webhookuberheandler "welloresto-api/internal/webhook/ubereats/handler"
@@ -269,7 +272,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ---- Bookings (initialized here because ordersLifeCycleService depends on it
 	// for the auto-seat/auto-complete hooks, cf. CreateOrder/DeliverOrder) ----
 	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
-	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, log)
+	outboundRepo := outboundModule.NewRepository(mysqlDB)
+	outboundService := outboundModule.NewService(outboundRepo, log)
+	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, outboundService, log)
 	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
 	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
@@ -375,6 +380,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		log,
 	)
 	brevoSMSReplyHandler := brevoSMSReplyModule.NewHandler(brevoSMSReplyService)
+	brevoEventsService := brevoEventsModule.NewService(outboundService, log)
+	brevoEventsHandler := brevoEventsModule.NewHandler(brevoEventsService, cfg.Brevo.WebhookToken)
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(mysqlDB)
@@ -410,7 +417,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Planning ----
 	planningRepo := planningModule.NewRepository(mysqlDB)
-	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService)
+	planningCommService := planningcommModule.New(mailService, smsService, cfg.Planning.PublicBaseURL, outboundService, log)
+	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService, planningCommService)
 
 	// ---- Kiosk ----
 	kioskRepo := kioskModule.NewRepository(mysqlDB)
@@ -495,6 +503,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/deliveroo/menu", deliverooMenuWebhookHandler.HandleMenuWebhook)
 		r.Post("/stripe", stripeWebhookHandler.HandleWebhook)
 		r.Post("/brevo/sms-reply", brevoSMSReplyHandler.HandleWebhook)
+		r.Post("/brevo/events", brevoEventsHandler.HandleWebhook)
 	})
 
 	// API externes

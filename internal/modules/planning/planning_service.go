@@ -16,6 +16,7 @@ import (
 	swapspkg "welloresto-api/internal/modules/planning/swaps"
 	timeentriespkg "welloresto-api/internal/modules/planning/timeentries"
 	weektemplatespkg "welloresto-api/internal/modules/planning/weektemplates"
+	planningcommpkg "welloresto-api/internal/modules/planningcomm"
 )
 
 type DayCommentsService = daycommentspkg.Service
@@ -50,8 +51,15 @@ type PlanningService struct {
 	*RevenueForecastService
 }
 
-func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService auditpkg.AuditService) *PlanningService {
-	scheduleService := schedulepkg.NewService(repo.ScheduleRepository, repo.EmployeesRepository, repo.EmployeesRepository, auditService)
+func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService auditpkg.AuditService, planningPublisher *planningcommpkg.Service) *PlanningService {
+	scheduleService := schedulepkg.NewService(
+		repo.ScheduleRepository,
+		repo.EmployeesRepository,
+		repo.EmployeesRepository,
+		auditService,
+		schedulepkg.WithSettingsReader(repo.SettingsRepository),
+		schedulepkg.WithPlanningPublisher(planningPublisher),
+	)
 	return &PlanningService{
 		repo:                   repo,
 		privateR2:              privateR2,

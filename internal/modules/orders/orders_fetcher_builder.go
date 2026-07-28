@@ -332,7 +332,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		left join users u on u.user_id = oc.user_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-		WHERE o.merchant_id = ? and oc.order_item_id is null ` + whereFilters.SQL
+		WHERE o.merchant_id = ? and oc.order_item_id is null ` + whereFilters.SQL + `
+		ORDER BY oc.creation_date ASC, oc.id ASC`
 
 		rows, err := runQuery(step, q, filteredArgs()...)
 		if err != nil {
@@ -782,9 +783,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ord.Payments = []models.Payment{}
 			}
 			if comm, ok := commentsByOrderID[orderID.String]; ok {
-				ord.Comments = comm
+				ord.Comment = selectLastOrderCommentContent(comm)
 			} else {
-				ord.Comments = []models.OrderComment{}
+				ord.Comment = nil
 			}
 			if loc, ok := locationsByOrderID[orderID.String]; ok {
 				ord.Location = loc
@@ -797,4 +798,22 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	}
 
 	return orders, nil
+}
+
+func selectLastOrderCommentContent(comments []models.OrderComment) *string {
+	for idx := len(comments) - 1; idx >= 0; idx-- {
+		comment := comments[idx]
+		if comment.Content == nil {
+			continue
+		}
+
+		content := *comment.Content
+		if content == "" {
+			continue
+		}
+
+		return &content
+	}
+
+	return nil
 }

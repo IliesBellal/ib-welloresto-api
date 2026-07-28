@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -77,7 +78,14 @@ func (h *Handler) DeletePlanningWeek(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) PublishPlanningWeek(w http.ResponseWriter, r *http.Request) {
 	weekID := strings.TrimSpace(chi.URLParam(r, "id"))
-	week, err := h.svc.PublishPlanningWeek(r.Context(), weekID)
+	var req PublishPlanningWeekRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			models.SendErrorJSON(w, "planning", "publish_planning_week", models.ErrInvalidRequestBody)
+			return
+		}
+	}
+	week, err := h.svc.PublishPlanningWeekWithOptions(r.Context(), weekID, req)
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "publish_planning_week", err)
 		return

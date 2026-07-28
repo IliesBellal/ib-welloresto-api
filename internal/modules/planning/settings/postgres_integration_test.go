@@ -34,6 +34,9 @@ func TestPlanningSettingsRepository_Postgres(t *testing.T) {
 	if err != nil || settings.MerchantID != merchantID || !settings.AllowOverrideWarnings {
 		t.Fatalf("GetOrCreateSettings = (%+v, %v)", settings, err)
 	}
+	if settings.PlanningSMSNotificationsEnabled {
+		t.Fatal("expected planning_sms_notifications_enabled to default to false")
+	}
 	// idempotent
 	if again, err := repo.GetOrCreateSettings(ctx, merchantID); err != nil || again.ID != settings.ID {
 		t.Fatalf("GetOrCreateSettings(2e) = (%+v, %v)", again, err)

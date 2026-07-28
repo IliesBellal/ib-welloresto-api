@@ -88,7 +88,7 @@ func TestSendBookingReminders_SendsMarksAndSkipsAlreadySent(t *testing.T) {
 
 	repo := NewBookingsRepository(db, zap.NewNop())
 	mail := &mockReminderMailer{}
-	comm := bookingcomm.New(mail, nil, "https://rsv.welloresto.fr", nil)
+	comm := bookingcomm.New(mail, nil, "https://rsv.welloresto.fr", nil, nil)
 	svc := NewBookingsService(repo, db, nil, nil, nil, nil, comm, zap.NewNop())
 
 	// 1er appel : une réservation à rappeler -> email envoyé + reminder_sent_at posé.

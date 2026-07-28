@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"welloresto-api/internal/infrastructure/sms"
 )
@@ -22,6 +24,10 @@ type BrevoSMS struct {
 	httpClient *http.Client
 }
 
+type sendSMSResponse struct {
+	MessageID interface{} `json:"messageId"`
+}
+
 // NewBrevoSMS creates a new instance of the BrevoSMS service
 func NewBrevoSMS(cfg Config) sms.Service {
 	return &BrevoSMS{
@@ -35,12 +41,28 @@ func NewBrevoSMS(cfg Config) sms.Service {
 // phoneNumber should be in international format (e.g., "+33612345678")
 func (b *BrevoSMS) SendSMSAsync(senderID, phoneNumber, message string) {
 	go func() {
-		err := b.sendSMSViaBrevo(senderID, phoneNumber, message)
+		_, err := b.sendSMSViaBrevo(senderID, phoneNumber, message)
 		if err != nil {
 			log.Printf("ERROR sending SMS via Brevo to %s: %v", phoneNumber, err)
 		} else {
 			log.Printf("SMS sent successfully via Brevo to %s (sender: %s)", phoneNumber, senderID)
 		}
+	}()
+}
+
+// SendSMSAsyncWithMessageID sends an SMS asynchronously and returns the Brevo
+// messageId through the callback when available.
+func (b *BrevoSMS) SendSMSAsyncWithMessageID(senderID, phoneNumber, message string, onSent func(messageID string)) {
+	go func() {
+		messageID, err := b.sendSMSViaBrevo(senderID, phoneNumber, message)
+		if err != nil {
+			log.Printf("ERROR sending SMS via Brevo to %s: %v", phoneNumber, err)
+			return
+		}
+		if onSent != nil {
+			onSent(messageID)
+		}
+		log.Printf("SMS sent successfully via Brevo to %s (sender: %s)", phoneNumber, senderID)
 	}()
 }
 
@@ -71,7 +93,7 @@ func (b *BrevoSMS) TriggerTestSMS(writer http.ResponseWriter, request *http.Requ
 }
 
 // sendSMSViaBrevo sends the actual SMS via Brevo API
-func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) error {
+func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) (string, error) {
 	// Prepare the request payload according to Brevo SMS API
 	// Reference: https://developers.brevo.com/reference/sendtransactional-sms
 	payload := map[string]interface{}{
@@ -83,13 +105,13 @@ func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) error 
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	// Create the HTTP request
 	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/transactionalSMS/send", bytes.NewBuffer(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -99,17 +121,29 @@ func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) error 
 	// Send the request
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 
 	// Check response status
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("brevo SMS API error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("brevo SMS API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	return nil
+	var parsed sendSMSResponse
+	if err := json.Unmarshal(respBody, &parsed); err == nil {
+		switch v := parsed.MessageID.(type) {
+		case string:
+			return strings.TrimSpace(v), nil
+		case float64:
+			return strconv.FormatInt(int64(v), 10), nil
+		case int64:
+			return strconv.FormatInt(v, 10), nil
+		}
+	}
+
+	return "", nil
 }
 
 func (b *BrevoSMS) SendOTP(tel, otp string) {

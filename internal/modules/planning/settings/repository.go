@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 )
 
 type Repository struct {
@@ -43,28 +43,30 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 		INSERT INTO planning_settings (
 			id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
 			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
-			allow_override_warnings, attendance_source, shift_swap_approval_mode, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, true, AttendanceSourcePointage, ShiftSwapApprovalModeManagerRequired, now, now)
+			allow_override_warnings, attendance_source, shift_swap_approval_mode, planning_sms_notifications_enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, true, AttendanceSourcePointage, ShiftSwapApprovalModeManagerRequired, false, now, now)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PlanningSettings{
-		ID:                    id,
-		MerchantID:            merchantID,
-		LaborCountryCode:      rule.CountryCode,
-		MinDailyRestHours:     rule.MinDailyRestHours,
-		MinBreakMinutes:       rule.MinBreakMinutes,
-		NightShiftStart:       rule.NightShiftStart,
-		NightShiftEnd:         rule.NightShiftEnd,
-		NightShiftMultiplier:  rule.NightShiftMultiplier,
-		HolidayMultiplier:     rule.HolidayMultiplier,
-		AllowOverrideWarnings: true,
-		AttendanceSource:      AttendanceSourcePointage,
-		ShiftSwapApprovalMode: ShiftSwapApprovalModeManagerRequired,
-		CreatedAt:             now,
-		UpdatedAt:             now,
+		ID:                                  id,
+		MerchantID:                          merchantID,
+		LaborCountryCode:                    rule.CountryCode,
+		MinDailyRestHours:                   rule.MinDailyRestHours,
+		MinBreakMinutes:                     rule.MinBreakMinutes,
+		NightShiftStart:                     rule.NightShiftStart,
+		NightShiftEnd:                       rule.NightShiftEnd,
+		NightShiftMultiplier:                rule.NightShiftMultiplier,
+		HolidayMultiplier:                   rule.HolidayMultiplier,
+		AllowOverrideWarnings:               true,
+		AttendanceSource:                    AttendanceSourcePointage,
+		ShiftSwapApprovalMode:               ShiftSwapApprovalModeManagerRequired,
+		PlanningSMSNotificationsEnabled:     false,
+		PlanningSMSNotificationsDescription: PlanningSMSNotificationsDescription,
+		CreatedAt:                           now,
+		UpdatedAt:                           now,
 	}, nil
 }
 
@@ -73,7 +75,7 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
 			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
-			allow_override_warnings, attendance_source, shift_swap_approval_mode, created_at, updated_at
+			allow_override_warnings, attendance_source, shift_swap_approval_mode, planning_sms_notifications_enabled, created_at, updated_at
 		FROM planning_settings
 		WHERE merchant_id = ? AND enabled = TRUE
 		LIMIT 1
@@ -93,11 +95,13 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 		&item.AllowOverrideWarnings,
 		&item.AttendanceSource,
 		&item.ShiftSwapApprovalMode,
+		&item.PlanningSMSNotificationsEnabled,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	item.PlanningSMSNotificationsDescription = PlanningSMSNotificationsDescription
 
 	return &item, nil
 }
@@ -139,18 +143,22 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 	if req.ShiftSwapApprovalMode != nil {
 		current.ShiftSwapApprovalMode = NormalizeShiftSwapApprovalMode(*req.ShiftSwapApprovalMode)
 	}
+	if req.PlanningSMSNotificationsEnabled != nil {
+		current.PlanningSMSNotificationsEnabled = *req.PlanningSMSNotificationsEnabled
+	}
 
 	current.UpdatedAt = time.Now().UTC()
 	_, err = db.ExecContext(ctx, `
 		UPDATE planning_settings
 		SET labor_country_code = ?, min_daily_rest_hours = ?, min_break_minutes = ?,
 			night_shift_start = ?, night_shift_end = ?, night_shift_multiplier = ?,
-			holiday_multiplier = ?, allow_override_warnings = ?, attendance_source = ?, shift_swap_approval_mode = ?, updated_at = ?
+			holiday_multiplier = ?, allow_override_warnings = ?, attendance_source = ?, shift_swap_approval_mode = ?, planning_sms_notifications_enabled = ?, updated_at = ?
 		WHERE merchant_id = ? AND enabled = TRUE
-	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.ShiftSwapApprovalMode, current.UpdatedAt, merchantID)
+	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.ShiftSwapApprovalMode, current.PlanningSMSNotificationsEnabled, current.UpdatedAt, merchantID)
 	if err != nil {
 		return nil, err
 	}
+	current.PlanningSMSNotificationsDescription = PlanningSMSNotificationsDescription
 
 	return current, nil
 }

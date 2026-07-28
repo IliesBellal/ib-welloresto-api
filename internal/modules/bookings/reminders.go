@@ -40,6 +40,7 @@ func (s *BookingsService) SendBookingReminders(ctx context.Context) (int64, erro
 
 		if s.comm != nil && (strings.TrimSpace(b.CustomerEmail) != "" || strings.TrimSpace(b.CustomerPhone) != "") {
 			s.comm.SendReminder(ctx, bookingcomm.BookingMessage{
+				BookingID:     b.BookingID,
 				MerchantSlug:  b.MerchantSlug,
 				MerchantName:  b.MerchantName,
 				CustomerName:  b.CustomerName,

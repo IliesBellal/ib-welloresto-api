@@ -51,7 +51,6 @@ type OrderRequest struct {
 	CartDiscountCode   string  `json:"cart_discount_code,omitempty"`
 	CartDiscountAmount int     `json:"cart_discount_amount"` // en centimes, toujours >= 0
 }
-
 type CustomerRequest struct {
 	CustomerID       *string    `json:"customer_id"`
 	BrandCustomerID  *string    `json:"brand_customer_id"`

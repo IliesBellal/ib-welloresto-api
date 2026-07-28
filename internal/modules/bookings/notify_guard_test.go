@@ -42,7 +42,7 @@ func setupBookingFetch(mock sqlmock.Sqlmock, status string) {
 func newNotifyTestService(db *sql.DB) (*BookingsService, *mockReminderMailer) {
 	repo := NewBookingsRepository(db, zap.NewNop())
 	mail := &mockReminderMailer{}
-	comm := bookingcomm.New(mail, nil, "https://rsv.welloresto.fr", nil)
+	comm := bookingcomm.New(mail, nil, "https://rsv.welloresto.fr", nil, nil)
 	return NewBookingsService(repo, db, nil, nil, nil, nil, comm, zap.NewNop()), mail
 }
 

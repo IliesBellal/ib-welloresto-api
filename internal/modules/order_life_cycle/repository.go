@@ -497,7 +497,7 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
                     ELSE ready_for_distribution_quantity
                 END,
 
-                distributed_on = ` + dbx.UTCNow() + `
+                distributed_on = `+dbx.UTCNow()+`
 
             WHERE order_id = ?
             AND order_item_id = ?
@@ -531,7 +531,7 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
 
             delivered_on = CASE
                 WHEN ? = FALSE OR order_type = 'DELIVERY' THEN delivered_on
-                ELSE ` + dbx.UTCNow() + `
+                ELSE `+dbx.UTCNow()+`
             END,
 
             brand_status = CASE
@@ -541,7 +541,7 @@ func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Con
                 ELSE 'CLOSED'
             END,
 
-            last_update = ` + dbx.UTCNow() + `
+            last_update = `+dbx.UTCNow()+`
 
         WHERE order_id = ? AND merchant_id = ?
     `,
@@ -636,9 +636,9 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 	// Update order
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
-		SET last_update = ` + dbx.UTCNow() + `,
+		SET last_update = `+dbx.UTCNow()+`,
 			brand_status = 'EN_ROUTE_TO_DROPOFF',
-			delivery_start = ` + dbx.UTCNow() + `,
+			delivery_start = `+dbx.UTCNow()+`,
 			responsible = ?
 		WHERE order_id = ?
 	`, olcResponsible(&userID), orderID)
@@ -670,7 +670,7 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
 
 	_, err := db.ExecContext(ctx, `
         UPDATE orders
-        SET last_update = ` + dbx.UTCNow() + `,
+        SET last_update = `+dbx.UTCNow()+`,
             brand_status = 'DENIED',
             merchant_approval = 'DENIED',
             state = 'CLOSED',
@@ -726,7 +726,7 @@ func (r *OrdersLifeCycleRepository) SetReadyForDistribution(ctx context.Context,
                 WHEN order_type = 'TAKE_AWAY' THEN 'READY_FOR_TAKE_AWAY'
                 ELSE brand_status
             END,
-            last_update = ` + dbx.UTCNow() + `
+            last_update = `+dbx.UTCNow()+`
         WHERE order_id = ? AND merchant_id = ?`,
 		orderID, merchantID,
 	)
@@ -803,10 +803,10 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
         UPDATE orders
         SET deletion_reason_id = ?,
             deletion_comment = ?,
-            last_update = ` + dbx.UTCNow() + `,
+            last_update = `+dbx.UTCNow()+`,
             state = 'CLOSED',
             brand_status = 'CANCELED',
-            delivered_on = ` + dbx.UTCNow() + `,
+            delivered_on = `+dbx.UTCNow()+`,
 			previous_hash = ?,
 			hash = ?,
 			signature = ?
@@ -1955,7 +1955,8 @@ func (r *OrdersLifeCycleRepository) insertOrderItemComment(ctx context.Context, 
 func (r *OrdersLifeCycleRepository) insertOrderComment(ctx context.Context, req *models.RequestObject) (err error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	if req.Order.Comment == nil {
+	resolvedComment := resolveOrderComment(&req.Order)
+	if resolvedComment == nil {
 		return nil
 	}
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
@@ -1963,12 +1964,25 @@ func (r *OrdersLifeCycleRepository) insertOrderComment(ctx context.Context, req 
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO order_comments(order_id, user_id, content, creation_date)
 		VALUES (?,?,?,`+dbx.UTCNow()+`)`,
-		req.Order.OrderID, req.Order.CreatedBy, req.Order.Comment,
+		req.Order.OrderID, req.Order.CreatedBy, resolvedComment,
 	)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func resolveOrderComment(order *models.OrderRequest) *string {
+	if order.Comment == nil {
+		return nil
+	}
+
+	content := strings.TrimSpace(*order.Comment)
+	if content == "" {
+		return nil
+	}
+
+	return &content
 }
 
 // updateOrderBase inserts the orders row and returns orderID and orderNum
@@ -1991,7 +2005,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 			    ht = ?,
 				isDistributed = FALSE, 
 				isPaid = FALSE,
-				last_update = ` + dbx.UTCNow() + `,
+				last_update = `+dbx.UTCNow()+`,
 				delivery_fees = ?,
 				use_customer_temporary_address = ?,
 				order_type = ?,
@@ -2024,7 +2038,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		req.Order.OrderID); err != nil {
 		return fmt.Errorf("delete order comment failed: %w", err)
 	}
-	if req.Order.Comment != nil && *req.Order.Comment != "" {
+	if resolveOrderComment(&req.Order) != nil {
 		if err := r.insertOrderComment(ctx, req); err != nil {
 			return fmt.Errorf("insert order comment failed: %w", err)
 		}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/infrastructure/mailer"
@@ -23,6 +24,10 @@ type Config struct {
 type BrevoMailer struct {
 	apiKey     string
 	httpClient *http.Client
+}
+
+type sendEmailResponse struct {
+	MessageID string `json:"messageId"`
 }
 
 // NewBrevoMailer creates a new instance of the BrevoMailer service
@@ -44,12 +49,34 @@ func (b *BrevoMailer) SendAsync(fromName, fromEmail, to, subject, templateName s
 			return
 		}
 
-		err = b.sendEmailViaBrevo(fromName, fromEmail, to, subject, html)
+		_, err = b.sendEmailViaBrevo(fromName, fromEmail, to, subject, html)
 		if err != nil {
 			log.Printf("ERROR sending email via Brevo to %s: %v", to, err)
 		} else {
 			log.Printf("Email sent successfully via Brevo to %s", to)
 		}
+	}()
+}
+
+// SendAsyncWithMessageID sends a transactional email asynchronously and returns
+// the Brevo messageId through the callback when available.
+func (b *BrevoMailer) SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string)) {
+	go func() {
+		html, err := b.renderTemplate(templateName, data)
+		if err != nil {
+			log.Printf("ERROR rendering template %s: %v", templateName, err)
+			return
+		}
+
+		messageID, err := b.sendEmailViaBrevo(fromName, fromEmail, to, subject, html)
+		if err != nil {
+			log.Printf("ERROR sending email via Brevo to %s: %v", to, err)
+			return
+		}
+		if onSent != nil {
+			onSent(messageID)
+		}
+		log.Printf("Email sent successfully via Brevo to %s", to)
 	}()
 }
 
@@ -87,7 +114,7 @@ func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payo
 			return
 		}
 
-		err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours", html)
+		_, err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours", html)
 		if err != nil {
 			log.Printf("ERROR sending payout email via Brevo to %s: %v", email, err)
 		} else {
@@ -129,7 +156,7 @@ func (b *BrevoMailer) TriggerTestEmail(writer http.ResponseWriter, request *http
 }
 
 // sendEmailViaBrevo sends the actual email via Brevo API
-func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, htmlContent string) error {
+func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, htmlContent string) (string, error) {
 	// Prepare the request payload
 	payload := map[string]interface{}{
 		"sender": map[string]string{
@@ -147,13 +174,13 @@ func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, html
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	// Create the HTTP request
 	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -163,17 +190,22 @@ func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, html
 	// Send the request
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 
 	// Check response status
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	return nil
+	var parsed sendEmailResponse
+	if err := json.Unmarshal(respBody, &parsed); err == nil {
+		return strings.TrimSpace(parsed.MessageID), nil
+	}
+
+	return "", nil
 }
 
 // sendEmailViaBrevoWithAttachment sends an email with a single attachment via the Brevo API

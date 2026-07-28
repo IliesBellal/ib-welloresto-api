@@ -23,16 +23,24 @@ type PositionReader interface {
 }
 
 type Service struct {
-	repo         *Repository
-	employeeRepo EmployeeReader
-	positionRepo PositionReader
-	auditService auditpkg.AuditService
+	repo           *Repository
+	employeeRepo   EmployeeReader
+	positionRepo   PositionReader
+	settingsReader PlanningSettingsReader
+	publisher      PlanningWeekPublisher
+	auditService   auditpkg.AuditService
 }
 
 const maxShiftRangeDays = 62
 
-func NewService(repo *Repository, employeeRepo EmployeeReader, positionRepo PositionReader, auditService auditpkg.AuditService) *Service {
-	return &Service{repo: repo, employeeRepo: employeeRepo, positionRepo: positionRepo, auditService: auditService}
+func NewService(repo *Repository, employeeRepo EmployeeReader, positionRepo PositionReader, auditService auditpkg.AuditService, options ...ServiceOption) *Service {
+	svc := &Service{repo: repo, employeeRepo: employeeRepo, positionRepo: positionRepo, auditService: auditService}
+	for _, option := range options {
+		if option != nil {
+			option(svc)
+		}
+	}
+	return svc
 }
 
 func (s *Service) ListPlanningWeeks(ctx context.Context) ([]PlanningWeek, error) {
@@ -162,6 +170,10 @@ func (s *Service) UpdatePlanningWeek(ctx context.Context, weekID string, req Pla
 }
 
 func (s *Service) PublishPlanningWeek(ctx context.Context, weekID string) (*PlanningWeek, error) {
+	return s.PublishPlanningWeekWithOptions(ctx, weekID, PublishPlanningWeekRequest{})
+}
+
+func (s *Service) PublishPlanningWeekWithOptions(ctx context.Context, weekID string, req PublishPlanningWeekRequest) (*PlanningWeek, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -169,12 +181,24 @@ func (s *Service) PublishPlanningWeek(ctx context.Context, weekID string) (*Plan
 	if strings.TrimSpace(weekID) == "" {
 		return nil, models.ErrMissingResourceID
 	}
-	publishedAt := time.Now().UTC()
-	week, err := s.repo.PublishPlanningWeek(ctx, user.MerchantID, weekID, publishedAt)
+	week, err := s.repo.GetPlanningWeekByID(ctx, user.MerchantID, weekID)
 	if err == sql.ErrNoRows || week == nil {
 		return nil, models.ErrPlanningWeekNotFound
 	}
-	return week, err
+	if err != nil {
+		return nil, err
+	}
+	publishedWeek, err := s.publishWeekAndNotify(ctx, user.MerchantID, week, req)
+	if err != nil {
+		if err.Error() == "invalid notification_mode" {
+			return nil, models.ErrValidationError
+		}
+		if err == sql.ErrNoRows {
+			return nil, models.ErrPlanningWeekNotFound
+		}
+		return nil, err
+	}
+	return publishedWeek, nil
 }
 
 func (s *Service) UnpublishPlanningWeek(ctx context.Context, weekID string) (*PlanningWeek, error) {

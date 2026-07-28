@@ -37,6 +37,7 @@ func (s *BookingsService) buildBookingMessage(booking *Booking, settings *Bookin
 	}
 
 	return bookingcomm.BookingMessage{
+		BookingID:     booking.BookingID,
 		MerchantSlug:  slug,
 		MerchantName:  booking.Merchant.BusinessName,
 		CustomerName:  name,

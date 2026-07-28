@@ -222,7 +222,7 @@ type Order struct {
 	MerchantApproval   string           `json:"merchant_approval"`
 	DeliveryFees       *int64           `json:"delivery_fees"`
 	Customer           *Customer        `json:"customer"`
-	Comments           []OrderComment   `json:"comments"`
+	Comment            *string          `json:"comment,omitempty"`
 	Payments           []Payment        `json:"payments"`
 	Responsible        *OrderUser       `json:"responsible"`
 	Location           []Location       `json:"location"`

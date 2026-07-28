@@ -253,6 +253,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 	// Confirmation immédiate au client si la réservation est auto-acceptée.
 	if s.comm != nil && merchant.AutoAcceptReserveBookings {
 		s.comm.SendConfirmation(ctx, bookingcomm.BookingMessage{
+			BookingID:     stored.BookingID,
 			MerchantSlug:  qr,
 			MerchantName:  merchant.BusinessName,
 			CustomerName:  req.Customer.CustomerName,
@@ -370,6 +371,7 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, req.Booking.BookingNumber, merchant.MerchantID)
 		if cerr == nil {
 			s.comm.SendModification(ctx, bookingcomm.BookingMessage{
+				BookingID:     stored.BookingID,
 				MerchantSlug:  qr,
 				MerchantName:  merchant.BusinessName,
 				CustomerName:  name,
@@ -399,6 +401,10 @@ func (s *reservationService) CancelReservation(ctx context.Context, qr string, b
 	if current.Booking == nil || !current.Booking.Cancelable {
 		return GenericResponse{Status: "too_late_to_edit"}
 	}
+	stored, err := s.repo.GetBookingByNumber(ctx, bookingNumber, merchant.MerchantID)
+	if err != nil || stored == nil {
+		return GenericResponse{Status: "0", Error: "Booking not found"}
+	}
 
 	err = s.repo.CancelBookingPublic(ctx, merchant.MerchantID, bookingNumber)
 	if err != nil {
@@ -420,6 +426,7 @@ func (s *reservationService) CancelReservation(ctx context.Context, qr string, b
 				timeLabel = startTime.Format("15:04")
 			}
 			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				BookingID:     stored.BookingID,
 				MerchantSlug:  qr,
 				MerchantName:  merchant.BusinessName,
 				CustomerName:  name,
