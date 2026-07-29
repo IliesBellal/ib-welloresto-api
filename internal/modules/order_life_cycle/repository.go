@@ -2100,7 +2100,11 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	}
 	item.OrderItemID = helpers.Int64ToStringPtr(lastID)
 
-	r.insertOrderItemComment(ctx, item)
+	if err := r.insertOrderItemComment(ctx, item); err != nil {
+		// Non bloquant : on logue mais on ne fait pas échouer la création de commande.
+		log := logger.FromContext(ctx)
+		log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *item.OrderItemID), zap.Error(err))
+	}
 
 	return lastID, nil
 }
