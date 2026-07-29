@@ -2,9 +2,9 @@ package users
 
 // CreateUserRequest is the JSON payload for POST /users/create.
 type CreateUserRequest struct {
-	FirstName  string                           `json:"first_name"`
-	LastName   string                           `json:"last_name"`
-	UserName   string                           `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	//UserName   string                           `json:"username"` // removed from DB
 	Email      string                           `json:"email"`
 	Password   string                           `json:"password"`
 	Tel        string                           `json:"tel"`

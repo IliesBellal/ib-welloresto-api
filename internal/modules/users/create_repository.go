@@ -8,15 +8,15 @@ import (
 
 // CreateUser inserts a new user row inside the provided transaction.
 // The caller is responsible for committing or rolling back the transaction.
-func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, userName, email, tel, hashedPassword, token string) error {
+func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, hashedPassword, token string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO users
-			(user_id, name, first_name, last_name, userName, email, tel, password, token)
+			(user_id, name, first_name, last_name, email, tel, password, token)
 		VALUES
 			(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		userID, fullName, firstName, lastName, userName, email, tel, hashedPassword, token,
+		userID, fullName, firstName, lastName, email, tel, hashedPassword, token,
 	)
 	return err
 }

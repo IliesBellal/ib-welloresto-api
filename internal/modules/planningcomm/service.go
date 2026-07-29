@@ -116,7 +116,7 @@ func (s *Service) sendSMS(ctx context.Context, msg PublishedWeekMessage) {
 func (s *Service) linkSMS(msg PublishedWeekMessage) string {
 	url := s.planningURL(msg)
 	if url == "" {
-		return fmt.Sprintf("Planning publie chez %s pour %s. Consultez-le dans l'app Wello Resto.", msg.MerchantName, msg.WeekLabel)
+		return fmt.Sprintf("Planning publie chez %s pour %s. Consultez vos mails où accédez à votre planning dans l'app Wello Resto.", msg.MerchantName, msg.WeekLabel)
 	}
 	return fmt.Sprintf("Planning publie chez %s pour %s: %s", msg.MerchantName, msg.WeekLabel, url)
 }

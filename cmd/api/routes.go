@@ -741,11 +741,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
 		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
 
-		r.Post("/products/categories", menuH.CreateProductCategory)                                             // used by: back-office
-		r.Get("/marketing-categories", menuH.GetMarketingCategories)                                            // used by: back-office
-		r.Post("/marketing-categories", menuH.CreateMarketingCategory)                                          // used by: back-office
-		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder)             // used by: back-office
-		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)                           // used by: back-office
+		r.Post("/products/categories", menuH.CreateProductCategory)                                 // used by: back-office
+		r.Get("/marketing-categories", menuH.GetMarketingCategories)                                // used by: back-office
+		r.Post("/marketing-categories", menuH.CreateMarketingCategory)                              // used by: back-office
+		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder) // used by: back-office
+		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)               // used by: back-office
 		r.Put("/marketing-categories/{category_id}/image", menuH.UploadMarketingCategoryImage)
 		r.Delete("/marketing-categories/{category_id}/image", menuH.DeleteMarketingCategoryImage)
 		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office

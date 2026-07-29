@@ -54,7 +54,7 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	}
 
 	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
-		if createErr := s.userRepo.CreateUser(txCtx, userID, fullName, req.FirstName, req.LastName, req.UserName, req.Email, req.Tel, hashed, userToken); createErr != nil {
+		if createErr := s.userRepo.CreateUser(txCtx, userID, fullName, req.FirstName, req.LastName, req.Email, req.Tel, hashed, userToken); createErr != nil {
 			return createErr
 		}
 
