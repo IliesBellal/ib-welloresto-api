@@ -729,11 +729,12 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		Name  string
 		Order int
 		Bg    sql.NullString
+		Image sql.NullString
 	}
 	{
 		step := "categories"
 		q := `
-            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url
             FROM productcateg pc
             WHERE pc.available = TRUE AND pc.enabled = TRUE AND pc.merchant_id = ?
             ORDER BY pc.categ_order ASC
@@ -750,8 +751,9 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 				Name  string
 				Order int
 				Bg    sql.NullString
+				Image sql.NullString
 			}
-			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg); err != nil {
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image); err != nil {
 				return nil, err
 			}
 			cats = append(cats, c)
@@ -1189,12 +1191,17 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		if c.Bg.Valid {
 			bg = &c.Bg.String
 		}
+		var categoryImageURL *string
+		if c.Image.Valid {
+			categoryImageURL = &c.Image.String
+		}
 		productTypes = append(productTypes, models.ProductCategory{
 			Category:     c.Name,
 			CategoryName: c.Name,
 			CategoryID:   c.ID,
 			Order:        c.Order,
 			BgColor:      bg,
+			ImageURL:     categoryImageURL,
 			Products:     actual,
 		})
 	}
@@ -1286,12 +1293,13 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		Name      string
 		Order     int
 		Bg        sql.NullString
+		Image     sql.NullString
 		Available bool
 	}
 	{
 		step := "categories_all_products"
 		q := `
-            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.available
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url, pc.available
             FROM productcateg pc
             WHERE pc.merchant_id = ?
 			AND pc.enabled = TRUE
@@ -1308,9 +1316,10 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 				Name      string
 				Order     int
 				Bg        sql.NullString
+				Image     sql.NullString
 				Available bool
 			}
-			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Available); err != nil {
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image, &c.Available); err != nil {
 				return nil, err
 			}
 			cats = append(cats, c)
@@ -1746,11 +1755,16 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		if c.Bg.Valid {
 			bg = &c.Bg.String
 		}
+		var categoryImageURL *string
+		if c.Image.Valid {
+			categoryImageURL = &c.Image.String
+		}
 		productTypes = append(productTypes, models.ProductCategory{
 			CategoryName: c.Name,
 			CategoryID:   c.ID,
 			Order:        c.Order,
 			BgColor:      bg,
+			ImageURL:     categoryImageURL,
 			Available:    c.Available,
 			Products:     actual,
 		})
@@ -3796,6 +3810,7 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 			mc.id,
 			mc.name,
 			mc.display_order,
+			mc.image_url,
 			mc.available,
 			COUNT(DISTINCT pmc.product_id) AS product_count,
 			` + concatExpr + ` AS product_ids
@@ -3804,7 +3819,7 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 			ON pmc.marketing_category_id = mc.id
 			AND pmc.merchant_id = mc.merchant_id
 		WHERE mc.merchant_id = ? AND mc.enabled = TRUE
-		GROUP BY mc.id, mc.name, mc.display_order, mc.available
+		GROUP BY mc.id, mc.name, mc.display_order, mc.image_url, mc.available
 		ORDER BY mc.display_order ASC, mc.id ASC
 	`
 
@@ -3817,9 +3832,14 @@ func (r *MenuRepository) GetMarketingCategories(ctx context.Context, merchantID 
 	result := []MarketingCategoryEntry{}
 	for rows.Next() {
 		var row MarketingCategoryEntry
+		var imageURL sql.NullString
 		var productIDsRaw string
-		if err := rows.Scan(&row.CategoryID, &row.Name, &row.DisplayOrder, &row.Available, &row.ProductCount, &productIDsRaw); err != nil {
+		if err := rows.Scan(&row.CategoryID, &row.Name, &row.DisplayOrder, &imageURL, &row.Available, &row.ProductCount, &productIDsRaw); err != nil {
 			return nil, err
+		}
+
+		if imageURL.Valid {
+			row.ImageURL = &imageURL.String
 		}
 
 		row.ProductIDs = []string{}
@@ -4097,11 +4117,12 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 		categoryID   string
 		categoryName string
 		displayOrder int
+		imageURL     *string
 	}
 	assignments := make(map[string]assignment) // productID → marketing assignment
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT pmc.product_id, mc.id, mc.name, mc.display_order
+		SELECT pmc.product_id, mc.id, mc.name, mc.display_order, mc.image_url
 		FROM product_marketing_categories pmc
 		INNER JOIN marketing_categories mc ON mc.id = pmc.marketing_category_id
 		WHERE pmc.merchant_id = ? AND mc.enabled = TRUE
@@ -4115,10 +4136,15 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 	for rows.Next() {
 		var productID, catID, catName string
 		var displayOrder int
-		if err := rows.Scan(&productID, &catID, &catName, &displayOrder); err != nil {
+		var imageURL sql.NullString
+		if err := rows.Scan(&productID, &catID, &catName, &displayOrder, &imageURL); err != nil {
 			continue
 		}
-		assignments[productID] = assignment{catID, catName, displayOrder}
+		var catImageURL *string
+		if imageURL.Valid {
+			catImageURL = &imageURL.String
+		}
+		assignments[productID] = assignment{catID, catName, displayOrder, catImageURL}
 	}
 
 	if len(assignments) == 0 {
@@ -4144,6 +4170,7 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 						CategoryName: asgn.categoryName,
 						CategoryID:   &catIDCopy,
 						Order:        asgn.displayOrder,
+						ImageURL:     asgn.imageURL,
 						Available:    true,
 						Products:     []models.ProductEntry{},
 					}
@@ -4157,6 +4184,7 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 						CategoryID:   pt.CategoryID,
 						Order:        pt.Order,
 						BgColor:      pt.BgColor,
+						ImageURL:     pt.ImageURL,
 						Available:    pt.Available,
 						Products:     []models.ProductEntry{},
 					}

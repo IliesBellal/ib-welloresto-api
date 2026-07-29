@@ -16,6 +16,7 @@ type ProductCategory struct {
 	CategoryID   *string        `json:"category_id"`
 	Order        int            `json:"order"`
 	BgColor      *string        `json:"bg_color,omitempty"`
+	ImageURL     *string        `json:"image_url,omitempty"`
 	Available    bool           `json:"available"`
 	Products     []ProductEntry `json:"products"`
 }

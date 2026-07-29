@@ -1156,11 +1156,16 @@ func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType stri
 		if pt.CategoryID != nil {
 			categoryID = *pt.CategoryID
 		}
+		categoryImageURL := ""
+		if pt.ImageURL != nil {
+			categoryImageURL = *pt.ImageURL
+		}
 
 		categories = append(categories, KioskCategory{
 			ID:        categoryID,
 			Name:      pt.CategoryName,
 			SortOrder: pt.Order,
+			ImageURL:  categoryImageURL,
 			Available: pt.Available,
 			Products:  products,
 		})

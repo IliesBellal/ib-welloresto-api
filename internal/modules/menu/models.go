@@ -20,6 +20,7 @@ type ProductCategory struct {
 	CategoryID *string        `json:"category_id"`
 	Order      int            `json:"order"`
 	BgColor    *string        `json:"bg_color,omitempty"`
+	ImageURL   *string        `json:"image_url,omitempty"`
 	Products   []ProductEntry `json:"products"`
 }
 
@@ -339,6 +340,7 @@ type MarketingCategoryEntry struct {
 	CategoryID   string   `json:"category_id"`
 	Name         string   `json:"name"`
 	DisplayOrder int      `json:"display_order"`
+	ImageURL     *string  `json:"image_url,omitempty"`
 	Available    bool     `json:"available"`
 	ProductCount int      `json:"product_count"`
 	ProductIDs   []string `json:"product_ids"`
