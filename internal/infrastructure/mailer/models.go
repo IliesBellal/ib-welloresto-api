@@ -2,7 +2,7 @@ package mailer
 
 const (
 	BrandLogoURL  = "https://scannorder.welloresto.fr/src/tracking-preview.png"
-	SupportEmail  = "iliesbellal@gmail.com"
+	SupportEmail  = "support@welloresto.fr"
 	InvoiceEmail  = "invoice@welloresto.fr"
 	SecurityEmail = "security@welloresto.fr"
 )

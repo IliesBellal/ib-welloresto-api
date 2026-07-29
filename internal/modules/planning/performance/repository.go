@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	statspkg "welloresto-api/internal/modules/stats"
 	"welloresto-api/internal/database/dbx"
+	statspkg "welloresto-api/internal/modules/stats"
 )
 
 type StatsReader interface {
@@ -97,6 +97,7 @@ func (r *Repository) ListPlannedByDayEmployee(ctx context.Context, merchantID st
 			AND s.enabled = TRUE
 			AND s.shift_date >= ?
 			AND s.shift_date <= ?
+			AND s.employee_id IS NOT NULL
 		GROUP BY local_day, s.employee_id
 		ORDER BY local_day ASC, s.employee_id ASC
 	`
