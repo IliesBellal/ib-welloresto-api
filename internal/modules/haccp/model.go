@@ -319,6 +319,8 @@ type CleaningSessionsListParams struct {
 
 type ActivitiesListParams struct {
 	Date     string `json:"date"`
+	From     string `json:"from"`
+	To       string `json:"to"`
 	Type     string `json:"type"`
 	Status   string `json:"status"`
 	Page     int    `json:"page"`
@@ -343,6 +345,8 @@ type ActivitiesListResponse struct {
 	TotalItems int            `json:"total_items"`
 	TotalPages int            `json:"total_pages"`
 	Date       string         `json:"date"`
+	From       string         `json:"from,omitempty"`
+	To         string         `json:"to,omitempty"`
 	Type       string         `json:"type,omitempty"`
 }
 

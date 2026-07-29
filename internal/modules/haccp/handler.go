@@ -125,6 +125,8 @@ func (h *Handler) GetTemperatureReadings(w http.ResponseWriter, r *http.Request)
 func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 	params := ActivitiesListParams{
 		Date:   strings.TrimSpace(r.URL.Query().Get("date")),
+		From:   strings.TrimSpace(r.URL.Query().Get("from")),
+		To:     strings.TrimSpace(r.URL.Query().Get("to")),
 		Type:   strings.TrimSpace(r.URL.Query().Get("type")),
 		Status: strings.TrimSpace(r.URL.Query().Get("status")),
 	}
@@ -153,8 +155,15 @@ func (h *Handler) GetActivities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filters := map[string]interface{}{
-		"date": resp.Date,
+	filters := map[string]interface{}{}
+	if resp.Date != "" {
+		filters["date"] = resp.Date
+	}
+	if resp.From != "" {
+		filters["from"] = resp.From
+	}
+	if resp.To != "" {
+		filters["to"] = resp.To
 	}
 	if resp.Type != "" {
 		filters["type"] = resp.Type

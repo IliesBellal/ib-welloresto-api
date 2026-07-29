@@ -253,27 +253,14 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		}
 	}
 
-	responseDate := strings.TrimSpace(params.Date)
-	if responseDate == "" {
-		loc := time.UTC
-		if user.TimeZone != "" {
-			if l, err := time.LoadLocation(user.TimeZone); err == nil {
-				loc = l
-			}
+	nowUTC := time.Now().UTC()
+	startAt, endAt, responseDate, responseFrom, responseTo, err := normalizeActivitiesDateRange(params, nowUTC, user.TimeZone)
+	if err != nil {
+		if err == models.ErrInvalidHACCPDate {
+			return nil, models.ErrValidationError
 		}
-		responseDate = time.Now().In(loc).Format("2006-01-02")
-	}
-
-	normalizedDate, err := normalizeTemperatureReadingsDate(params.Date, time.Now().UTC(), user.TimeZone)
-	if err != nil {
-		return nil, models.ErrValidationError
-	}
-
-	startAt, err := time.Parse("2006-01-02 15:04:05", normalizedDate)
-	if err != nil {
 		return nil, err
 	}
-	endAt := startAt.Add(24 * time.Hour)
 
 	page := params.Page
 	if page <= 0 {
@@ -288,7 +275,7 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		pageSize = 100
 	}
 
-	items, totalItems, err := s.repo.ListActivities(ctx, user.MerchantID, startAt.UTC(), endAt.UTC(), activityType, activityStatus, page, pageSize)
+	items, totalItems, err := s.repo.ListActivities(ctx, user.MerchantID, startAt, endAt, activityType, activityStatus, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -305,8 +292,85 @@ func (s *Service) ListActivities(ctx context.Context, params ActivitiesListParam
 		TotalItems: totalItems,
 		TotalPages: totalPages,
 		Date:       responseDate,
+		From:       responseFrom,
+		To:         responseTo,
 		Type:       activityType,
 	}, nil
+}
+
+func normalizeActivitiesDateRange(params ActivitiesListParams, now time.Time, tz string) (time.Time, time.Time, string, string, string, error) {
+	loc := time.UTC
+	if tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+
+	fromRaw := strings.TrimSpace(params.From)
+	toRaw := strings.TrimSpace(params.To)
+
+	if fromRaw != "" || toRaw != "" {
+		if fromRaw == "" {
+			fromRaw = toRaw
+		}
+		if toRaw == "" {
+			toRaw = fromRaw
+		}
+
+		fromDay, err := parseHACCPDayInput(fromRaw, loc)
+		if err != nil {
+			return time.Time{}, time.Time{}, "", "", "", models.ErrInvalidHACCPDate
+		}
+		toDay, err := parseHACCPDayInput(toRaw, loc)
+		if err != nil {
+			return time.Time{}, time.Time{}, "", "", "", models.ErrInvalidHACCPDate
+		}
+		if fromDay.After(toDay) {
+			return time.Time{}, time.Time{}, "", "", "", models.ErrInvalidHACCPDate
+		}
+
+		startAt := fromDay.UTC()
+		endAt := toDay.Add(24 * time.Hour).UTC()
+		return startAt, endAt, "", fromDay.Format("2006-01-02"), toDay.Format("2006-01-02"), nil
+	}
+
+	responseDate := strings.TrimSpace(params.Date)
+	if responseDate == "" {
+		responseDate = now.In(loc).Format("2006-01-02")
+	}
+
+	normalizedDate, err := normalizeTemperatureReadingsDate(params.Date, now, tz)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", "", "", models.ErrInvalidHACCPDate
+	}
+
+	startAt, err := time.Parse("2006-01-02 15:04:05", normalizedDate)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", "", "", err
+	}
+	endAt := startAt.Add(24 * time.Hour)
+
+	return startAt.UTC(), endAt.UTC(), responseDate, "", "", nil
+}
+
+func parseHACCPDayInput(raw string, loc *time.Location) (time.Time, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return time.Time{}, models.ErrInvalidHACCPDate
+	}
+
+	if t, err := time.Parse("2006-01-02", v); err == nil {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc), nil
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc), nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		t = t.In(loc)
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc), nil
+	}
+
+	return time.Time{}, models.ErrInvalidHACCPDate
 }
 
 // normalizeTemperatureReadingsDate returns the UTC timestamp of midnight for the
