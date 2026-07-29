@@ -746,6 +746,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Post("/marketing-categories", menuH.CreateMarketingCategory)                                          // used by: back-office
 		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder)             // used by: back-office
 		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)                           // used by: back-office
+		r.Put("/marketing-categories/{category_id}/image", menuH.UploadMarketingCategoryImage)
+		r.Delete("/marketing-categories/{category_id}/image", menuH.DeleteMarketingCategoryImage)
 		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office
 		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
 		r.Post("/components", menuH.CreateComponent)                                                            // used by: back-office
