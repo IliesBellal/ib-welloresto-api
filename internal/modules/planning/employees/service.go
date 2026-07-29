@@ -87,6 +87,17 @@ func (s *Service) CreateEmployee(ctx context.Context, req EmployeeCreateRequest)
 	return s.repo.CreateEmployee(ctx, user.MerchantID, req)
 }
 
+func (s *Service) UpdateEmployeesDisplayOrder(ctx context.Context, req EmployeeDisplayOrderUpdateRequest) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.ErrUnauthorized
+	}
+	if len(req.EmployeeIDs) == 0 {
+		return models.ErrInvalidInput
+	}
+	return s.repo.UpdateEmployeesDisplayOrder(ctx, user.MerchantID, req.EmployeeIDs)
+}
+
 func (s *Service) UpdateEmployee(ctx context.Context, employeeID string, req EmployeeUpdateRequest) (*Employee, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

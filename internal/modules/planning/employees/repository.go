@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -88,6 +90,77 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 		items = append(items, *item)
 	}
 	return items, totalItems, rows.Err()
+}
+
+func (r *Repository) NextEmployeeDisplayOrder(ctx context.Context, merchantID string) (int, error) {
+	db := dbx.GetDB(ctx, r.db)
+	var next int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(display_order), 0) + 1
+		FROM employees
+		WHERE merchant_id = ? AND enabled = TRUE
+	`, merchantID).Scan(&next); err != nil {
+		return 0, err
+	}
+	return next, nil
+}
+
+func (r *Repository) UpdateEmployeesDisplayOrder(ctx context.Context, merchantID string, employeeIDs []string) error {
+	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.db)
+
+		normalizedIDs := make([]string, 0, len(employeeIDs))
+		seen := make(map[string]struct{}, len(employeeIDs))
+		for _, rawID := range employeeIDs {
+			employeeID := strings.TrimSpace(rawID)
+			if employeeID == "" {
+				return models.ErrInvalidInput
+			}
+			if _, exists := seen[employeeID]; exists {
+				return models.ErrInvalidInput
+			}
+			seen[employeeID] = struct{}{}
+			normalizedIDs = append(normalizedIDs, employeeID)
+		}
+
+		inClause := sqlInPlaceholders(len(normalizedIDs))
+		countArgs := make([]interface{}, 0, len(normalizedIDs)+1)
+		countArgs = append(countArgs, merchantID)
+		for _, employeeID := range normalizedIDs {
+			countArgs = append(countArgs, employeeID)
+		}
+
+		var count int
+		countQuery := `SELECT COUNT(1) FROM employees WHERE merchant_id = ? AND enabled = TRUE AND id IN (` + inClause + `)`
+		if err := db.QueryRowContext(txCtx, countQuery, countArgs...).Scan(&count); err != nil {
+			return err
+		}
+		if count != len(normalizedIDs) {
+			return models.ErrPlanningEmployeeNotFound
+		}
+
+		caseParts := make([]string, 0, len(normalizedIDs))
+		updateArgs := make([]interface{}, 0, len(normalizedIDs)*2+2+len(normalizedIDs))
+		for index, employeeID := range normalizedIDs {
+			caseParts = append(caseParts, "WHEN ? THEN ?")
+			updateArgs = append(updateArgs, employeeID, index+1)
+		}
+
+		now := time.Now().UTC()
+		updateArgs = append(updateArgs, now, merchantID)
+		for _, employeeID := range normalizedIDs {
+			updateArgs = append(updateArgs, employeeID)
+		}
+
+		updateQuery := `
+			UPDATE employees
+			SET display_order = CASE id ` + strings.Join(caseParts, " ") + ` ELSE display_order END,
+				updated_at = ?
+			WHERE merchant_id = ? AND enabled = TRUE AND id IN (` + inClause + `)
+		`
+		_, err := db.ExecContext(txCtx, updateQuery, updateArgs...)
+		return err
+	})
 }
 
 func (r *Repository) GetEmployeeByUserID(ctx context.Context, merchantID, userID string) (*Employee, error) {
@@ -175,6 +248,10 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 	db := dbx.GetDB(ctx, r.db)
 	now := time.Now().UTC()
 	id := helpers.GeneratePrefixedID(helpers.PlanningEmployeeIDPrefix)
+	displayOrder, err := r.NextEmployeeDisplayOrder(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
 	active := true
 	if req.Active != nil {
 		active = *req.Active
@@ -249,15 +326,15 @@ func (r *Repository) CreateEmployee(ctx context.Context, merchantID string, req 
 		employee.Position = position.Label
 	}
 
-	_, err := db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO employees (
-			id, merchant_id, user_id, first_name, last_name, position_id, position_note, job_title, email, phone, role,
+			id, merchant_id, user_id, first_name, last_name, position_id, display_order, position_note, job_title, email, phone, role,
 			contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date,
 			contract_hours, max_weekly_hours, required_rest_days, sunday_premium, night_premium,
 			hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, birth_date, gender, nationality,
 			address, hr_comment, active, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.PositionID, employee.PositionNote, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, employee.ID, employee.MerchantID, employee.UserID, employee.FirstName, employee.LastName, employee.PositionID, displayOrder, employee.PositionNote, employee.JobTitle, employee.Email, employee.Phone, employee.Role, employee.ContractTypeCode, employee.ContractStartDate, employee.ContractEndDate, employee.ProbationEndDate, employee.LastMedicalCheckupDate, employee.ContractHours, employee.MaxWeeklyHours, employee.RequiredRestDays, employee.SundayPremium, employee.NightPremium, employee.HourlyRate, employee.GrossMonthlySalary, employee.EmployerChargesPct, employee.TransportCost, employee.BirthDate, employee.Gender, employee.Nationality, employee.Address, employee.HrComment, employee.Active, employee.CreatedAt, employee.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +401,17 @@ func (r *Repository) SoftDeleteEmployee(ctx context.Context, merchantID, employe
 
 type scannable interface {
 	Scan(dest ...any) error
+}
+
+func sqlInPlaceholders(size int) string {
+	if size <= 0 {
+		return ""
+	}
+	parts := make([]string, size)
+	for i := range parts {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ",")
 }
 
 type scannableRows interface {

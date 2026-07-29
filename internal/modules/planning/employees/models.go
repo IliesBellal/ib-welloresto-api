@@ -69,6 +69,10 @@ type EmployeeUserLinkRequest struct {
 	UserID string `json:"user_id"`
 }
 
+type EmployeeDisplayOrderUpdateRequest struct {
+	EmployeeIDs []string `json:"employee_ids"`
+}
+
 type EmployeeCreateRequest struct {
 	UserID                 *string    `json:"user_id,omitempty"`
 	MemberID               *string    `json:"-"`

@@ -78,6 +78,19 @@ func (h *Handler) CreateEmployee(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusCreated, "planning", "create_employee", map[string]interface{}{"status": "success", "employee": item})
 }
 
+func (h *Handler) UpdateEmployeesDisplayOrder(w http.ResponseWriter, r *http.Request) {
+	var req EmployeeDisplayOrderUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "planning", "update_employees_display_order", models.ErrInvalidRequestBody)
+		return
+	}
+	if err := h.svc.UpdateEmployeesDisplayOrder(r.Context(), req); err != nil {
+		models.SendErrorJSON(w, "planning", "update_employees_display_order", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "planning", "update_employees_display_order", map[string]interface{}{"status": "success"})
+}
+
 func (h *Handler) UpdateEmployee(w http.ResponseWriter, r *http.Request) {
 	employeeID := strings.TrimSpace(chi.URLParam(r, "id"))
 	var req EmployeeUpdateRequest

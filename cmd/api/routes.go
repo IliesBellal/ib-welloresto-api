@@ -865,6 +865,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/employees", planningH.ListEmployees)
 		r.Post("/employees", planningH.CreateEmployee)
+		r.Patch("/employees/display-order", planningH.UpdateEmployeesDisplayOrder)
 		r.Get("/employees/{id}", planningH.GetEmployee)
 		r.Patch("/employees/{id}", planningH.UpdateEmployee)
 		r.Delete("/employees/{id}", planningH.DeleteEmployee)

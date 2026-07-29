@@ -40,17 +40,30 @@ func TestEmployeesRepository_Postgres(t *testing.T) {
 
 	// employés
 	emp, err := repo.CreateEmployee(ctx, merchantID, EmployeeCreateRequest{
-		FirstName: "Jean", LastName: "ITest", PositionID: pos.ID, ContractTypeCode: "CDI",
+		FirstName: "Jean", LastName: "Zulu", PositionID: pos.ID, ContractTypeCode: "CDI",
 	})
 	if err != nil || emp.Role != "employee" || !emp.Active {
 		t.Fatalf("CreateEmployee = (%+v, %v)", emp, err)
 	}
-	if n, err := repo.CountEmployeesByPositionID(ctx, merchantID, pos.ID); err != nil || n != 1 {
+	emp2, err := repo.CreateEmployee(ctx, merchantID, EmployeeCreateRequest{
+		FirstName: "Alice", LastName: "Alpha", PositionID: pos.ID, ContractTypeCode: "CDI",
+	})
+	if err != nil || emp2.Role != "employee" || !emp2.Active {
+		t.Fatalf("CreateEmployee(2) = (%+v, %v)", emp2, err)
+	}
+	if n, err := repo.CountEmployeesByPositionID(ctx, merchantID, pos.ID); err != nil || n != 2 {
 		t.Fatalf("CountEmployeesByPositionID = (%d, %v)", n, err)
 	}
-	list, total, err := repo.ListEmployees(ctx, merchantID, EmployeeListFilters{Search: "ITest", Page: 1, PageSize: 10})
-	if err != nil || total != 1 || len(list) != 1 || list[0].Position != "Serveur itest" {
+	list, total, err := repo.ListEmployees(ctx, merchantID, EmployeeListFilters{Page: 1, PageSize: 10})
+	if err != nil || total != 2 || len(list) != 2 || list[0].ID != emp.ID || list[1].ID != emp2.ID {
 		t.Fatalf("ListEmployees = (%d/%d, %v) %+v", len(list), total, err, list)
+	}
+	if err := repo.UpdateEmployeesDisplayOrder(ctx, merchantID, []string{emp2.ID, emp.ID}); err != nil {
+		t.Fatalf("UpdateEmployeesDisplayOrder = %v", err)
+	}
+	list, total, err = repo.ListEmployees(ctx, merchantID, EmployeeListFilters{Page: 1, PageSize: 10})
+	if err != nil || total != 2 || len(list) != 2 || list[0].ID != emp2.ID || list[1].ID != emp.ID {
+		t.Fatalf("ListEmployees(after reorder) = (%d/%d, %v) %+v", len(list), total, err, list)
 	}
 
 	// lien user
