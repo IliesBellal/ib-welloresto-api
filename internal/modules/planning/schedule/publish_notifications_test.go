@@ -122,7 +122,10 @@ func TestPublishPlanningWeek_FirstPublishDefaultsToAll(t *testing.T) {
 		LIMIT 1
 	`)).WithArgs("merchant_1").WillReturnRows(sqlmock.NewRows([]string{"fullName"}).AddRow("Le Bistrot"))
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.first_name, e.last_name, e.email, e.phone, u.last_login_at, du.last_used_at
+		SELECT e.id, e.first_name, e.last_name,
+			COALESCE(NULLIF(TRIM(u.email), ''), NULLIF(TRIM(e.email), '')) AS email,
+			COALESCE(NULLIF(TRIM(u.tel), ''), NULLIF(TRIM(e.phone), '')) AS phone,
+			u.last_login_at, du.last_used_at
 		FROM employees e
 		LEFT JOIN users u ON u.user_id = e.user_id AND u.enabled = TRUE
 		LEFT JOIN (
