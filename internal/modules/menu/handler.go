@@ -1192,6 +1192,133 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "success", "message": "attributes updated"})
 }
 
+func (h *MenuHandler) UploadProductCategoryImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_category_image", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		log.Error("[ERROR] UploadProductCategoryImage UserFromContext: " + err.Error())
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_category_image", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		log.Error("[ERROR] UploadProductCategoryImage ParseMultipartForm: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "file_too_large_or_invalid"})
+		return
+	}
+
+	file, header, err := r.FormFile("photo")
+	if err != nil {
+		log.Error("[ERROR] UploadProductCategoryImage FormFile: " + err.Error())
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "missing_photo_field"})
+		return
+	}
+	defer file.Close()
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r2.GetContentTypeFromExtension(header.Filename)
+	}
+	if !r2.ValidateImageType(contentType) {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{
+			"error":   "invalid_image_type",
+			"message": "Only JPEG, PNG, and WebP images are allowed",
+		})
+		return
+	}
+
+	oldImageURL, err := h.service.GetProductCategoryImageURL(ctx, token, categoryID)
+	if err != nil {
+		log.Warn("[WARN] UploadProductCategoryImage GetProductCategoryImageURL: " + err.Error())
+	}
+
+	ext := r2.GetExtensionFromContentType(contentType)
+	key := r2.GenerateProductCategoryKey(user.MerchantID, categoryID, ext)
+
+	if oldImageURL != "" {
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if oldKey != "" {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				log.Warn("[WARN] UploadProductCategoryImage DeleteFile (old image): " + err.Error())
+			}
+		}
+	}
+
+	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
+	if err != nil {
+		log.Error("[ERROR] UploadProductCategoryImage UploadFile: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_product_category_image", fmt.Errorf("failed to upload image"))
+		return
+	}
+
+	if err := h.service.UpdateProductCategoryImageURL(ctx, token, categoryID, publicURL); err != nil {
+		log.Error("[ERROR] UploadProductCategoryImage UpdateProductCategoryImageURL: " + err.Error())
+		models.SendErrorJSON(w, "menu", "upload_product_category_image", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "upload_product_category_image", map[string]interface{}{
+		"status":    "success",
+		"image_url": publicURL,
+	})
+}
+
+func (h *MenuHandler) DeleteProductCategoryImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "delete_product_category_image", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "delete_product_category_image", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	oldImageURL, err := h.service.GetProductCategoryImageURL(ctx, token, categoryID)
+	if err != nil {
+		log.Warn("[WARN] DeleteProductCategoryImage GetProductCategoryImageURL: " + err.Error())
+	}
+
+	if oldImageURL != "" {
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if oldKey != "" {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				log.Warn("[WARN] DeleteProductCategoryImage DeleteFile: " + err.Error())
+			}
+		}
+	}
+
+	if err := h.service.ClearProductCategoryImageURL(ctx, token, categoryID); err != nil {
+		log.Error("[ERROR] DeleteProductCategoryImage ClearProductCategoryImageURL: " + err.Error())
+		models.SendErrorJSON(w, "menu", "delete_product_category_image", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category_image", map[string]interface{}{
+		"status":  "success",
+		"message": "product_category_image_deleted",
+	})
+}
+
 func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

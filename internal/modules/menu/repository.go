@@ -3425,6 +3425,81 @@ func (r *MenuRepository) UpdateProductImage(ctx context.Context, merchantID, pro
 	return nil
 }
 
+func (r *MenuRepository) GetProductCategoryImageURL(ctx context.Context, merchantID, categoryID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var imageURL sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT image_url FROM productcateg
+		 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		categoryID, merchantID,
+	).Scan(&imageURL)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get product category image: %w", err)
+	}
+
+	if imageURL.Valid {
+		return imageURL.String, nil
+	}
+	return "", nil
+}
+
+func (r *MenuRepository) UpdateProductCategoryImageURL(ctx context.Context, merchantID, categoryID, imageURL string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE productcateg
+		 SET image_url = ?
+		 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		imageURL, categoryID, merchantID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update product category image: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check update result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product_category_not_found")
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+func (r *MenuRepository) ClearProductCategoryImageURL(ctx context.Context, merchantID, categoryID string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	res, err := db.ExecContext(ctx,
+		`UPDATE productcateg
+		 SET image_url = NULL
+		 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		categoryID, merchantID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to clear product category image: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check update result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product_category_not_found")
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 func (r *MenuRepository) setMenuUpdated(ctx context.Context, merchantID string) error {
 	db := dbx.GetDB(ctx, r.database)
 

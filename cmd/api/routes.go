@@ -693,6 +693,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/products/categories/{category_id}", menuH.UpdateProductCategory)
 		r.Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
+		r.Put("/products/categories/{category_id}/image", menuH.UploadProductCategoryImage)
+		r.Delete("/products/categories/{category_id}/image", menuH.DeleteProductCategoryImage)
 		r.Patch("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory) // used by: back-office
 		r.Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
 		r.Patch("/products/{product_id}/marketing-category", menuH.AssignProductMarketingCategory)

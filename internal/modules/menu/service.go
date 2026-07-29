@@ -85,6 +85,41 @@ func (s *MenuService) UpdateProductImage(ctx context.Context, token, productID, 
 	return nil
 }
 
+func (s *MenuService) GetProductCategoryImageURL(ctx context.Context, token, categoryID string) (string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return s.legacy.GetProductCategoryImageURL(ctx, user.MerchantID, categoryID)
+}
+
+func (s *MenuService) UpdateProductCategoryImageURL(ctx context.Context, token, categoryID, imageURL string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.UpdateProductCategoryImageURL(ctx, user.MerchantID, categoryID, imageURL); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
+}
+
+func (s *MenuService) ClearProductCategoryImageURL(ctx context.Context, token, categoryID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.ClearProductCategoryImageURL(ctx, user.MerchantID, categoryID); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
+}
+
 func (s *MenuService) GetAttributeOptionImageURL(ctx context.Context, token, optionID string) (string, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

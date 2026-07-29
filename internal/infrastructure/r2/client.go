@@ -180,6 +180,15 @@ func GenerateConfigOptionKey(merchantID, optionID, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/config_options/%s%s", merchantID, optionID, ext)
 }
 
+// GenerateProductCategoryKey génère la clé R2 pour l'image d'une catégorie
+// de caisse (table productcateg).
+func GenerateProductCategoryKey(merchantID, categoryID, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/product_categories/%s%s", merchantID, categoryID, ext)
+}
+
 // GetExtensionFromContentType retourne l'extension depuis le content type
 func GetExtensionFromContentType(contentType string) string {
 	switch contentType {
