@@ -69,7 +69,7 @@ func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filte
 			e.address, e.hr_comment, e.active, e.created_at, e.updated_at, e.deleted_at
 	`
 	query := selectQuery + baseQuery
-	query += ` ORDER BY e.last_name ASC, e.first_name ASC LIMIT ? OFFSET ?`
+	query += ` ORDER BY e.display_order ASC, e.last_name ASC, e.first_name ASC LIMIT ? OFFSET ?`
 	dataArgs := append([]interface{}{}, args...)
 	dataArgs = append(dataArgs, filters.PageSize, (filters.Page-1)*filters.PageSize)
 
