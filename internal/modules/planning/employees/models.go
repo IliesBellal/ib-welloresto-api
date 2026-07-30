@@ -1,6 +1,11 @@
 package employees
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"welloresto-api/internal/models"
+)
 
 type EmployeePosition struct {
 	ID            string     `json:"id"`
@@ -136,6 +141,62 @@ type EmployeeUpdateRequest struct {
 	Address                *string    `json:"address,omitempty"`
 	HrComment              *string    `json:"hr_comment,omitempty"`
 	Active                 *bool      `json:"active,omitempty"`
+}
+
+// UnmarshalJSON accepts date-only ("2006-01-02") strings for the contract/HR
+// date fields, matching what HTML date inputs (and the rest of this API,
+// see models.DateOnly) send — the default time.Time decoding requires a full
+// RFC3339 timestamp and rejects plain dates.
+func (r *EmployeeCreateRequest) UnmarshalJSON(data []byte) error {
+	type alias EmployeeCreateRequest
+	aux := &struct {
+		ContractStartDate      *models.DateOnly `json:"contract_start_date,omitempty"`
+		ContractEndDate        *models.DateOnly `json:"contract_end_date,omitempty"`
+		ProbationEndDate       *models.DateOnly `json:"probation_end_date,omitempty"`
+		LastMedicalCheckupDate *models.DateOnly `json:"last_medical_checkup_date,omitempty"`
+		BirthDate              *models.DateOnly `json:"birth_date,omitempty"`
+		*alias
+	}{alias: (*alias)(r)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	r.ContractStartDate = dateOnlyToTimePtr(aux.ContractStartDate)
+	r.ContractEndDate = dateOnlyToTimePtr(aux.ContractEndDate)
+	r.ProbationEndDate = dateOnlyToTimePtr(aux.ProbationEndDate)
+	r.LastMedicalCheckupDate = dateOnlyToTimePtr(aux.LastMedicalCheckupDate)
+	r.BirthDate = dateOnlyToTimePtr(aux.BirthDate)
+	return nil
+}
+
+// UnmarshalJSON accepts date-only ("2006-01-02") strings — see
+// EmployeeCreateRequest.UnmarshalJSON for why this is needed.
+func (r *EmployeeUpdateRequest) UnmarshalJSON(data []byte) error {
+	type alias EmployeeUpdateRequest
+	aux := &struct {
+		ContractStartDate      *models.DateOnly `json:"contract_start_date,omitempty"`
+		ContractEndDate        *models.DateOnly `json:"contract_end_date,omitempty"`
+		ProbationEndDate       *models.DateOnly `json:"probation_end_date,omitempty"`
+		LastMedicalCheckupDate *models.DateOnly `json:"last_medical_checkup_date,omitempty"`
+		BirthDate              *models.DateOnly `json:"birth_date,omitempty"`
+		*alias
+	}{alias: (*alias)(r)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	r.ContractStartDate = dateOnlyToTimePtr(aux.ContractStartDate)
+	r.ContractEndDate = dateOnlyToTimePtr(aux.ContractEndDate)
+	r.ProbationEndDate = dateOnlyToTimePtr(aux.ProbationEndDate)
+	r.LastMedicalCheckupDate = dateOnlyToTimePtr(aux.LastMedicalCheckupDate)
+	r.BirthDate = dateOnlyToTimePtr(aux.BirthDate)
+	return nil
+}
+
+func dateOnlyToTimePtr(d *models.DateOnly) *time.Time {
+	if d == nil {
+		return nil
+	}
+	t := d.Time()
+	return &t
 }
 
 type EmployeePositionListFilters struct {
