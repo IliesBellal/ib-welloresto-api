@@ -42,10 +42,10 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO planning_settings (
 			id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
-			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
-			allow_override_warnings, attendance_source, shift_swap_approval_mode, planning_sms_notifications_enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, true, AttendanceSourcePointage, ShiftSwapApprovalModeManagerRequired, false, now, now)
+			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier, sunday_multiplier,
+			premium_cumulation_mode, allow_override_warnings, attendance_source, shift_swap_approval_mode, planning_sms_notifications_enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, merchantID, rule.CountryCode, rule.MinDailyRestHours, rule.MinBreakMinutes, rule.NightShiftStart, rule.NightShiftEnd, rule.NightShiftMultiplier, rule.HolidayMultiplier, DefaultSundayMultiplier, DefaultPremiumCumulationMode, true, AttendanceSourcePointage, ShiftSwapApprovalModeManagerRequired, false, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +60,8 @@ func (r *Repository) GetOrCreateSettings(ctx context.Context, merchantID string)
 		NightShiftEnd:                       rule.NightShiftEnd,
 		NightShiftMultiplier:                rule.NightShiftMultiplier,
 		HolidayMultiplier:                   rule.HolidayMultiplier,
+		SundayMultiplier:                    DefaultSundayMultiplier,
+		PremiumCumulationMode:               DefaultPremiumCumulationMode,
 		AllowOverrideWarnings:               true,
 		AttendanceSource:                    AttendanceSourcePointage,
 		ShiftSwapApprovalMode:               ShiftSwapApprovalModeManagerRequired,
@@ -74,7 +76,8 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 	db := dbx.GetDB(ctx, r.db)
 	row := db.QueryRowContext(ctx, `
 		SELECT id, merchant_id, labor_country_code, min_daily_rest_hours, min_break_minutes,
-			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier,
+			night_shift_start, night_shift_end, night_shift_multiplier, holiday_multiplier, sunday_multiplier,
+			premium_cumulation_mode, night_sunday_combined_multiplier,
 			allow_override_warnings, attendance_source, shift_swap_approval_mode, planning_sms_notifications_enabled, created_at, updated_at
 		FROM planning_settings
 		WHERE merchant_id = ? AND enabled = TRUE
@@ -82,6 +85,7 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 	`, merchantID)
 
 	var item PlanningSettings
+	var nightSundayCombinedMultiplier sql.NullFloat64
 	if err := row.Scan(
 		&item.ID,
 		&item.MerchantID,
@@ -92,6 +96,9 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 		&item.NightShiftEnd,
 		&item.NightShiftMultiplier,
 		&item.HolidayMultiplier,
+		&item.SundayMultiplier,
+		&item.PremiumCumulationMode,
+		&nightSundayCombinedMultiplier,
 		&item.AllowOverrideWarnings,
 		&item.AttendanceSource,
 		&item.ShiftSwapApprovalMode,
@@ -100,6 +107,9 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*Plann
 		&item.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if nightSundayCombinedMultiplier.Valid {
+		item.NightSundayCombinedMultiplier = &nightSundayCombinedMultiplier.Float64
 	}
 	item.PlanningSMSNotificationsDescription = PlanningSMSNotificationsDescription
 
@@ -134,6 +144,15 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 	if req.HolidayMultiplier != nil {
 		current.HolidayMultiplier = *req.HolidayMultiplier
 	}
+	if req.SundayMultiplier != nil {
+		current.SundayMultiplier = *req.SundayMultiplier
+	}
+	if req.PremiumCumulationMode != nil {
+		current.PremiumCumulationMode = NormalizePremiumCumulationMode(*req.PremiumCumulationMode)
+	}
+	if req.NightSundayCombinedMultiplier != nil {
+		current.NightSundayCombinedMultiplier = req.NightSundayCombinedMultiplier
+	}
 	if req.AllowOverrideWarnings != nil {
 		current.AllowOverrideWarnings = *req.AllowOverrideWarnings
 	}
@@ -152,9 +171,10 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, req 
 		UPDATE planning_settings
 		SET labor_country_code = ?, min_daily_rest_hours = ?, min_break_minutes = ?,
 			night_shift_start = ?, night_shift_end = ?, night_shift_multiplier = ?,
-			holiday_multiplier = ?, allow_override_warnings = ?, attendance_source = ?, shift_swap_approval_mode = ?, planning_sms_notifications_enabled = ?, updated_at = ?
+			holiday_multiplier = ?, sunday_multiplier = ?, premium_cumulation_mode = ?, night_sunday_combined_multiplier = ?,
+			allow_override_warnings = ?, attendance_source = ?, shift_swap_approval_mode = ?, planning_sms_notifications_enabled = ?, updated_at = ?
 		WHERE merchant_id = ? AND enabled = TRUE
-	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.ShiftSwapApprovalMode, current.PlanningSMSNotificationsEnabled, current.UpdatedAt, merchantID)
+	`, current.LaborCountryCode, current.MinDailyRestHours, current.MinBreakMinutes, current.NightShiftStart, current.NightShiftEnd, current.NightShiftMultiplier, current.HolidayMultiplier, current.SundayMultiplier, current.PremiumCumulationMode, current.NightSundayCombinedMultiplier, current.AllowOverrideWarnings, current.AttendanceSource, current.ShiftSwapApprovalMode, current.PlanningSMSNotificationsEnabled, current.UpdatedAt, merchantID)
 	if err != nil {
 		return nil, err
 	}

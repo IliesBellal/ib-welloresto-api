@@ -52,11 +52,12 @@ type PlanningRepository struct {
 
 func NewRepository(db *sql.DB) *PlanningRepository {
 	statsRepository := statspkg.NewStatsRepository(db)
+	settingsRepository := settingspkg.NewRepository(db)
 	return &PlanningRepository{
 		db:                        db,
 		DayCommentsRepository:     daycommentspkg.NewRepository(db),
 		DocumentsRepository:       documentspkg.NewRepository(db),
-		SettingsRepository:        settingspkg.NewRepository(db),
+		SettingsRepository:        settingsRepository,
 		RefsRepository:            refspkg.NewRepository(db),
 		EmployeesRepository:       employeespkg.NewRepository(db),
 		ScheduleRepository:        schedulepkg.NewRepository(db),
@@ -65,7 +66,7 @@ func NewRepository(db *sql.DB) *PlanningRepository {
 		TimeEntriesRepository:     timeentriespkg.NewRepository(db),
 		LeaveRepository:           leavepkg.NewRepository(db),
 		ShiftSwapsRepository:      swapspkg.NewRepository(db),
-		PerformanceRepository:     performancepkg.NewRepository(db, statsRepository),
+		PerformanceRepository:     performancepkg.NewRepository(db, statsRepository, settingsRepository),
 		RevenueForecastRepository: revenueforecastpkg.NewRepository(db),
 	}
 }

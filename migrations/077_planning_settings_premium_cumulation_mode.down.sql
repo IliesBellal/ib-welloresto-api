@@ -1,0 +1,3 @@
+ALTER TABLE planning_settings
+DROP COLUMN premium_cumulation_mode,
+DROP COLUMN night_sunday_combined_multiplier;

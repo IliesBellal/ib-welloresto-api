@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/models"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
+	sharedpkg "welloresto-api/internal/modules/planning/shared"
 	statspkg "welloresto-api/internal/modules/stats"
 )
 
@@ -16,9 +19,17 @@ type StatsReader interface {
 	ListRevenueHTByLocalDay(ctx context.Context, merchantID, tzOffset string, startTimeUTC, endTimeUTC time.Time) ([]statspkg.RevenueHTByLocalDay, error)
 }
 
+// SettingsReader gives the performance module read access to the merchant's
+// night-shift window and holiday calendar, needed for premium segmentation.
+type SettingsReader interface {
+	GetOrCreateSettings(ctx context.Context, merchantID string) (*settingspkg.PlanningSettings, error)
+	ListPlanningHolidays(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]settingspkg.PlanningHoliday, error)
+}
+
 type Repository struct {
-	db    *sql.DB
-	stats StatsReader
+	db       *sql.DB
+	stats    StatsReader
+	settings SettingsReader
 }
 
 // plnDayFmt formate une date/timestamp en 'YYYY-MM-DD' selon le dialecte.
@@ -29,8 +40,8 @@ func plnDayFmt(expr string) string {
 	return "DATE_FORMAT(" + expr + ", '%Y-%m-%d')"
 }
 
-func NewRepository(db *sql.DB, stats StatsReader) *Repository {
-	return &Repository{db: db, stats: stats}
+func NewRepository(db *sql.DB, stats StatsReader, settings SettingsReader) *Repository {
+	return &Repository{db: db, stats: stats, settings: settings}
 }
 
 func (r *Repository) ListPlannedByDayEmployee(ctx context.Context, merchantID string, fromLocalDay, toLocalDay time.Time) ([]PlannedByDayEmployeeRow, error) {
@@ -177,6 +188,135 @@ func (r *Repository) ListWorkedRawByDayEmployee(ctx context.Context, merchantID 
 	return items, nil
 }
 
+// ListPlannedShiftIntervals returns one row per planned shift, ungrouped,
+// so premium classification (night/Sunday/holiday) can be computed in Go
+// against the merchant's settings — unlike ListPlannedByDayEmployee, no
+// per-dialect date-math is needed here, the SQL only fetches raw columns.
+func (r *Repository) ListPlannedShiftIntervals(ctx context.Context, merchantID string, fromLocalDay, toLocalDay time.Time) ([]PlannedShiftInterval, error) {
+	fromDay := normalizeDateOnlyUTC(fromLocalDay)
+	toDay := normalizeDateOnlyUTC(toLocalDay)
+	if toDay.Before(fromDay) {
+		return []PlannedShiftInterval{}, nil
+	}
+
+	db := dbx.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, COALESCE(s.break_minutes, 0)
+		FROM planning_shifts s
+		WHERE s.merchant_id = ?
+			AND s.enabled = TRUE
+			AND s.status <> 'cancelled'
+			AND s.employee_id IS NOT NULL
+			AND s.shift_date >= ?
+			AND s.shift_date <= ?
+		ORDER BY s.employee_id ASC, s.shift_date ASC
+	`, merchantID, fromDay.Format("2006-01-02"), toDay.Format("2006-01-02"))
+	if err != nil {
+		return nil, fmt.Errorf("list planned shift intervals: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PlannedShiftInterval, 0)
+	for rows.Next() {
+		var employeeID, startRaw, endRaw string
+		var shiftDate models.DateOnly
+		var breakMinutes int
+		if err := rows.Scan(&employeeID, &shiftDate, &startRaw, &endRaw, &breakMinutes); err != nil {
+			return nil, fmt.Errorf("scan planned shift interval: %w", err)
+		}
+		startAt, endAt, err := buildShiftInterval(shiftDate.Time(), startRaw, endRaw)
+		if err != nil {
+			return nil, fmt.Errorf("build shift interval: %w", err)
+		}
+		items = append(items, PlannedShiftInterval{
+			EmployeeID:   employeeID,
+			StartAt:      startAt,
+			EndAt:        endAt,
+			BreakMinutes: breakMinutes,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate planned shift intervals: %w", err)
+	}
+
+	return items, nil
+}
+
+// buildShiftInterval combines a shift's date with its start/end clock
+// strings into naive local wall-clock instants, adjusting EndAt +24h for
+// overnight shifts (end_time <= start_time) — same rule as
+// ListPlannedByDayEmployee's SQL CASE.
+func buildShiftInterval(shiftDate time.Time, startRaw, endRaw string) (time.Time, time.Time, error) {
+	startAt, err := combineDateAndClock(shiftDate, startRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	endAt, err := combineDateAndClock(shiftDate, endRaw)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !endAt.After(startAt) {
+		endAt = endAt.Add(24 * time.Hour)
+	}
+	return startAt, endAt, nil
+}
+
+func combineDateAndClock(date time.Time, clockRaw string) (time.Time, error) {
+	clock, err := sharedpkg.ParsePlanningTime(clockRaw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), 0, time.UTC), nil
+}
+
+// ListWorkedEntryIntervals returns one row per closed time entry, ungrouped,
+// StartAt/EndAt already converted to the merchant's real IANA location so
+// premium classification can compare them against the night window.
+func (r *Repository) ListWorkedEntryIntervals(ctx context.Context, merchantID string, fromLocalDay, toLocalDay time.Time) ([]WorkedEntryInterval, error) {
+	location, _, startUTC, endUTC, err := r.resolveMerchantRangeBounds(ctx, merchantID, fromLocalDay, toLocalDay)
+	if err != nil {
+		return nil, err
+	}
+	if !endUTC.After(startUTC) {
+		return []WorkedEntryInterval{}, nil
+	}
+
+	db := dbx.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `
+		SELECT te.employee_id, te.clock_in_at, te.clock_out_at
+		FROM planning_time_entries te
+		WHERE te.merchant_id = ?
+			AND te.enabled = TRUE
+			AND te.clock_out_at IS NOT NULL
+			AND te.clock_in_at >= ?
+			AND te.clock_in_at < ?
+		ORDER BY te.employee_id ASC, te.clock_in_at ASC
+	`, merchantID, startUTC, endUTC)
+	if err != nil {
+		return nil, fmt.Errorf("list worked entry intervals: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]WorkedEntryInterval, 0)
+	for rows.Next() {
+		var employeeID string
+		var clockInAt, clockOutAt time.Time
+		if err := rows.Scan(&employeeID, &clockInAt, &clockOutAt); err != nil {
+			return nil, fmt.Errorf("scan worked entry interval: %w", err)
+		}
+		items = append(items, WorkedEntryInterval{
+			EmployeeID: employeeID,
+			StartAt:    clockInAt.In(location),
+			EndAt:      clockOutAt.In(location),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate worked entry intervals: %w", err)
+	}
+
+	return items, nil
+}
+
 func (r *Repository) ListRevenueByDay(ctx context.Context, merchantID string, fromLocalDay, toLocalDay time.Time) ([]RevenueByDayRow, error) {
 	_, tzOffset, startUTC, endUTC, err := r.resolveMerchantRangeBounds(ctx, merchantID, fromLocalDay, toLocalDay)
 	if err != nil {
@@ -242,7 +382,7 @@ func (r *Repository) ListRevenueForecastByDay(ctx context.Context, merchantID st
 func (r *Repository) ListRatesByEmployee(ctx context.Context, merchantID string) ([]EmployeeRateRow, error) {
 	db := dbx.GetDB(ctx, r.db)
 	query := `
-		SELECT e.id, e.hourly_rate, e.employer_charges_pct
+		SELECT e.id, e.hourly_rate, e.employer_charges_pct, e.sunday_premium, e.night_premium
 		FROM employees e
 		WHERE e.merchant_id = ?
 			AND e.enabled = TRUE
@@ -258,7 +398,7 @@ func (r *Repository) ListRatesByEmployee(ctx context.Context, merchantID string)
 	items := make([]EmployeeRateRow, 0)
 	for rows.Next() {
 		var row EmployeeRateRow
-		if err := rows.Scan(&row.EmployeeID, &row.HourlyRateCents, &row.EmployerChargesPct); err != nil {
+		if err := rows.Scan(&row.EmployeeID, &row.HourlyRateCents, &row.EmployerChargesPct, &row.SundayPremiumEligible, &row.NightPremiumEligible); err != nil {
 			return nil, fmt.Errorf("scan rates by employee: %w", err)
 		}
 		items = append(items, row)

@@ -262,6 +262,7 @@ var (
 	ErrPlanningSettingsNotFound                 = errors.New("planning_settings_not_found")
 	ErrPlanningAttendanceSourceInvalid          = errors.New("planning_attendance_source_invalid")
 	ErrPlanningShiftSwapApprovalModeInvalid     = errors.New("planning_shift_swap_approval_mode_invalid")
+	ErrPlanningPremiumCumulationModeInvalid     = errors.New("planning_premium_cumulation_mode_invalid")
 	ErrPlanningHolidayOverrideNotFound          = errors.New("planning_holiday_override_not_found")
 	ErrPlanningPositionNotFound                 = errors.New("planning_position_not_found")
 	ErrPlanningPositionLabelRequired            = errors.New("planning_position_label_required")
@@ -608,6 +609,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "planning_shift_swap_approval_mode_invalid"
 		errorMsg = "The planning shift swap approval mode is invalid."
+
+	case errors.Is(err, ErrPlanningPremiumCumulationModeInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "planning_premium_cumulation_mode_invalid"
+		errorMsg = "The planning premium cumulation mode is invalid."
 
 	case errors.Is(err, ErrPlanningHolidayOverrideNotFound):
 		status = http.StatusNotFound

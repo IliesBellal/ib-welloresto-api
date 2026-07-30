@@ -44,5 +44,8 @@ func (s *Service) UpdateSettings(ctx context.Context, req PlanningSettingsUpdate
 	if req.ShiftSwapApprovalMode != nil && !IsValidShiftSwapApprovalMode(*req.ShiftSwapApprovalMode) {
 		return nil, models.ErrPlanningShiftSwapApprovalModeInvalid
 	}
+	if req.PremiumCumulationMode != nil && !IsValidPremiumCumulationMode(*req.PremiumCumulationMode) {
+		return nil, models.ErrPlanningPremiumCumulationModeInvalid
+	}
 	return s.repo.UpdateSettings(ctx, user.MerchantID, req)
 }

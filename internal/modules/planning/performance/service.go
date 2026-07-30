@@ -2,6 +2,7 @@ package performance
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -55,7 +56,7 @@ func (s *Service) buildPerformanceForRange(ctx context.Context, fromLocalDay, to
 	computedDays := make([]computedDay, 0, len(raw.Days))
 	membersWithoutRate := map[string]struct{}{}
 	for _, day := range raw.Days {
-		computed := computeDayMetrics(day, membersWithoutRate)
+		computed := computeDayMetrics(day, raw.Premium, membersWithoutRate)
 		computedDays = append(computedDays, computed)
 	}
 
@@ -75,7 +76,7 @@ func (s *Service) buildPerformanceForRange(ctx context.Context, fromLocalDay, to
 	}, nil
 }
 
-func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}) computedDay {
+func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutRate map[string]struct{}) computedDay {
 	plannedHours := 0.0
 	workedHours := 0.0
 	payrollRaw := 0.0
@@ -88,8 +89,10 @@ func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}
 		employeeWorkedRawHours := float64(employee.WorkedSeconds) / 3600.0
 
 		workedDisplayHours := employeeWorkedRawHours
+		displaySegments := employee.WorkedPremium
 		if employee.WorkedSeconds <= 0 {
 			workedDisplayHours = employeePlannedHours
+			displaySegments = employee.PlannedPremium
 		}
 		if workedDisplayHours > 0 {
 			dayHasMSActivity = true
@@ -104,7 +107,8 @@ func computeDayMetrics(day RawDayMetrics, membersWithoutRate map[string]struct{}
 				dayMSIncomplete = true
 			}
 		} else {
-			payrollRaw += workedDisplayHours * float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
+			weightedHours := weightedPremiumHours(displaySegments, employee.SundayPremiumEligible, employee.NightPremiumEligible, premium)
+			payrollRaw += weightedHours * float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
 		}
 
 		if employee.PlannedMinutes > 0 {
@@ -481,6 +485,34 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 		return nil, err
 	}
 
+	merchantSettings, err := s.repo.settings.GetOrCreateSettings(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	night, err := parseNightWindow(merchantSettings.NightShiftStart, merchantSettings.NightShiftEnd)
+	if err != nil {
+		return nil, fmt.Errorf("parse night window: %w", err)
+	}
+	holidayRows, err := s.repo.settings.ListPlanningHolidays(ctx, user.MerchantID, fromLocalDay, toLocalDay)
+	if err != nil {
+		return nil, err
+	}
+	holidayByDate := make(map[string]bool, len(holidayRows))
+	for _, h := range holidayRows {
+		if h.CountAsHoliday {
+			holidayByDate[h.Date.Format("2006-01-02")] = true
+		}
+	}
+
+	plannedIntervals, err := s.repo.ListPlannedShiftIntervals(ctx, user.MerchantID, fromLocalDay, toLocalDay)
+	if err != nil {
+		return nil, err
+	}
+	workedIntervals, err := s.repo.ListWorkedEntryIntervals(ctx, user.MerchantID, fromLocalDay, toLocalDay)
+	if err != nil {
+		return nil, err
+	}
+
 	days := buildRawDaySkeleton(fromLocalDay, toLocalDay)
 	rateByEmployee := buildRateIndex(rateRows)
 	headcountSets := map[string]map[string]struct{}{}
@@ -505,6 +537,26 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 		employee.WorkedHours = float64(employee.WorkedSeconds) / 3600.0
 	}
 
+	for _, interval := range plannedIntervals {
+		// Attributed to the day the shift STARTS on, even if it runs past
+		// midnight — same convention as ListPlannedByDayEmployee's
+		// GROUP BY local_day (= s.shift_date).
+		day := ensureDay(days, interval.StartAt.Format("2006-01-02"))
+		employee := ensureEmployee(day, interval.EmployeeID)
+		segments := segmentInterval(interval.StartAt, interval.EndAt, night, holidayByDate)
+		segments = segments.applyBreakProration(int64(interval.BreakMinutes) * 60)
+		employee.PlannedPremium.add(segments)
+	}
+
+	for _, interval := range workedIntervals {
+		// Attributed to the day of clock-in — same convention as
+		// ListWorkedRawByDayEmployee's local_day derivation.
+		day := ensureDay(days, interval.StartAt.Format("2006-01-02"))
+		employee := ensureEmployee(day, interval.EmployeeID)
+		segments := segmentInterval(interval.StartAt, interval.EndAt, night, holidayByDate)
+		employee.WorkedPremium.add(segments)
+	}
+
 	for _, row := range revenueRows {
 		day := ensureDay(days, normalizeLocalDayKey(row.LocalDay))
 		day.RevenueHTCents = row.RevenueHTCents
@@ -527,6 +579,8 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 			if rate, ok := rateByEmployee[employeeID]; ok {
 				employee.HourlyRateCents = rate.HourlyRateCents
 				employee.EmployerChargesPct = rate.EmployerChargesPct
+				employee.SundayPremiumEligible = rate.SundayPremiumEligible
+				employee.NightPremiumEligible = rate.NightPremiumEligible
 			}
 		}
 		if set, ok := headcountSets[localDay]; ok {
@@ -548,6 +602,12 @@ func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLo
 		ToLocalDay:   normalizeDateOnlyUTC(toLocalDay).Format("2006-01-02"),
 		GeneratedAt:  time.Now().UTC(),
 		Days:         orderedDays,
+		Premium: PremiumConfig{
+			NightShiftMultiplier:          merchantSettings.NightShiftMultiplier,
+			SundayMultiplier:              merchantSettings.SundayMultiplier,
+			CumulationMode:                merchantSettings.PremiumCumulationMode,
+			NightSundayCombinedMultiplier: merchantSettings.NightSundayCombinedMultiplier,
+		},
 	}
 	return response, nil
 }

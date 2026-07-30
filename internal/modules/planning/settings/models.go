@@ -10,7 +10,20 @@ const (
 	AttendanceSourcePlanning                    = "planning"
 	ShiftSwapApprovalModeManagerRequired        = "manager_required"
 	ShiftSwapApprovalModeTargetEmployeeRequired = "target_employee_required"
+	PremiumCumulationModeAdditive               = "additive"
+	PremiumCumulationModeHighest                = "highest"
+	PremiumCumulationModeFixed                  = "fixed"
 )
+
+// DefaultSundayMultiplier is used when a merchant's settings row is first created.
+// Unlike NightShiftMultiplier/HolidayMultiplier, it has no country labor-rule default:
+// French law does not mandate a standard Sunday pay premium, so it starts neutral.
+const DefaultSundayMultiplier = 1.0
+
+// DefaultPremiumCumulationMode mirrors the legal default absent an explicit
+// collective-agreement clause: the single highest applicable rate wins,
+// rather than stacking night + Sunday additively.
+const DefaultPremiumCumulationMode = PremiumCumulationModeHighest
 
 func NormalizeAttendanceSource(source string) string {
 	return strings.ToLower(strings.TrimSpace(source))
@@ -38,19 +51,40 @@ func IsValidShiftSwapApprovalMode(mode string) bool {
 	}
 }
 
+func NormalizePremiumCumulationMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func IsValidPremiumCumulationMode(mode string) bool {
+	switch NormalizePremiumCumulationMode(mode) {
+	case PremiumCumulationModeAdditive, PremiumCumulationModeHighest, PremiumCumulationModeFixed:
+		return true
+	default:
+		return false
+	}
+}
+
 type PlanningSettings struct {
-	ID                    string  `json:"id"`
-	MerchantID            string  `json:"merchant_id"`
-	LaborCountryCode      string  `json:"labor_country_code"`
-	MinDailyRestHours     float64 `json:"min_daily_rest_hours"`
-	MinBreakMinutes       int     `json:"min_break_minutes"`
-	NightShiftStart       string  `json:"night_shift_start"`
-	NightShiftEnd         string  `json:"night_shift_end"`
-	NightShiftMultiplier  float64 `json:"night_shift_multiplier"`
-	HolidayMultiplier     float64 `json:"holiday_multiplier"`
-	AllowOverrideWarnings bool    `json:"allow_override_warnings"`
-	AttendanceSource      string  `json:"attendance_source"`
-	ShiftSwapApprovalMode string  `json:"shift_swap_approval_mode"`
+	ID                   string  `json:"id"`
+	MerchantID           string  `json:"merchant_id"`
+	LaborCountryCode     string  `json:"labor_country_code"`
+	MinDailyRestHours    float64 `json:"min_daily_rest_hours"`
+	MinBreakMinutes      int     `json:"min_break_minutes"`
+	NightShiftStart      string  `json:"night_shift_start"`
+	NightShiftEnd        string  `json:"night_shift_end"`
+	NightShiftMultiplier float64 `json:"night_shift_multiplier"`
+	HolidayMultiplier    float64 `json:"holiday_multiplier"`
+	SundayMultiplier     float64 `json:"sunday_multiplier"`
+	// PremiumCumulationMode governs how night/Sunday/holiday premiums combine
+	// when they overlap on the same worked hour: additive (rates stack),
+	// highest (single max rate wins, the legal default absent a convention
+	// clause), or fixed (NightSundayCombinedMultiplier applies instead of
+	// either individual rate).
+	PremiumCumulationMode         string   `json:"premium_cumulation_mode"`
+	NightSundayCombinedMultiplier *float64 `json:"night_sunday_combined_multiplier,omitempty"`
+	AllowOverrideWarnings         bool     `json:"allow_override_warnings"`
+	AttendanceSource              string   `json:"attendance_source"`
+	ShiftSwapApprovalMode         string   `json:"shift_swap_approval_mode"`
 	// PlanningSMSNotificationsEnabled gates every planning SMS path.
 	// When false, publication notifications remain email-only and no fallback
 	// inline SMS is sent to inactive employees.
@@ -68,6 +102,9 @@ type PlanningSettingsUpdateRequest struct {
 	NightShiftEnd                   *string  `json:"night_shift_end,omitempty"`
 	NightShiftMultiplier            *float64 `json:"night_shift_multiplier,omitempty"`
 	HolidayMultiplier               *float64 `json:"holiday_multiplier,omitempty"`
+	SundayMultiplier                *float64 `json:"sunday_multiplier,omitempty"`
+	PremiumCumulationMode           *string  `json:"premium_cumulation_mode,omitempty"`
+	NightSundayCombinedMultiplier   *float64 `json:"night_sunday_combined_multiplier,omitempty"`
 	AllowOverrideWarnings           *bool    `json:"allow_override_warnings,omitempty"`
 	AttendanceSource                *string  `json:"attendance_source,omitempty"`
 	ShiftSwapApprovalMode           *string  `json:"shift_swap_approval_mode,omitempty"`
