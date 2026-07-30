@@ -279,15 +279,72 @@ calcul de masse salariale". Complète `docs/PLANNING_AND_USERS_INTEGRATION_GUIDE
   ce paquet à aucun moment de ce chantier. Non traité (hors scope de cette
   session), à signaler à Ilies séparément.
 
+### Exposition du détail par tranche dans l'API + back-office (2026-07-31)
+
+- **Forme retenue** : deux champs ajoutés sur `PerformancePeriod`
+  (day/week/month/totals, tous niveaux) :
+  - `premium_breakdown` (`PremiumHoursBreakdown`) : `normal_hours`,
+    `night_hours`, `sunday_hours`, `night_sunday_hours`, `holiday_hours` —
+    calqué 1:1 sur `PremiumSegments` mais en heures décimales (convention du
+    reste de l'API) plutôt qu'en secondes. **Informatif, indépendant de
+    l'éligibilité employé** (un employé non éligible à la prime nuit voit
+    quand même ses heures de nuit comptées ici — la case reflète l'activité
+    réelle, pas la paie).
+  - `premium_cost_extra_cents` : coût chargé réel moins coût au taux plein
+    sur les mêmes heures (`payrollRaw − payrollBaselineRaw`, ce dernier
+    calculé en parallèle avec l'ancienne formule `workedDisplayHours × rate
+    × (1+charges)`). `0` si aucune prime ne s'applique.
+  - Décision annexe : **ne pas** exposer un coût par tranche individuelle
+    (coût nuit / coût dimanche séparés) — jugé disproportionné par rapport
+    au besoin exprimé ; un seul total "combien ça coûte en plus" + le détail
+    en heures suffisent. Réversible si le besoin se précise.
+- **Backend fait** :
+  - `models.go` : `PremiumHoursBreakdown` + `premiumHoursBreakdownFromSegments`,
+    champs ajoutés à `PerformancePeriod`.
+  - `service.go` : `computeDayMetrics` accumule `breakdownSeconds` (via
+    `PremiumSegments.add`, déjà existant) et `payrollBaselineRaw` en
+    parallèle de `payrollRaw` ; `computedDay` porte les deux nouveaux champs
+    pour que `rollupPeriods` (semaine/mois) et `aggregateTotals` les
+    resomment correctement — pas seulement le cas `granularity=day` qui
+    recopie `day.Period` tel quel.
+  - 3 nouveaux tests (`TestComputeDayMetrics_PremiumBreakdownExposed`,
+    `TestRollupPeriods_...`, `TestAggregateTotals_...`), tous verts.
+  - `docs/backoffice_requirements/PERFORMANCE_API_CONTRACT.md` mis à jour
+    (nouvelle section `PremiumBreakdown`, exemple JSON).
+- **Back-office fait** (`wello-back-office`) :
+  - Découverte utile : `PERFORMANCE_FORCE_MOCK = false` dans
+    `performanceService.ts` — **le vrai endpoint est déjà appelé en prod**,
+    le mock (`buildBlock`) n'est qu'un filet local/offline. Mis à jour quand
+    même pour rester compilable (buckets à zéro, documenté comme non modélisé
+    côté mock plutôt que de dupliquer la logique de segmentation en TS).
+  - `types/performance.ts` : type `PremiumBreakdown`, champs ajoutés à
+    `PerformancePeriod`.
+  - `PerformanceSheet.tsx` : 5ᵉ carte "Majorations" dans le résumé de
+    période (`data.totals.premium_cost_extra_cents` + hint listant les
+    buckets non nuls, ex. "8h nuit · 3h dimanche"), + une ligne "Majorations"
+    dans la grille journalière (même pattern que "Coût shifts / ventes").
+  - `npx tsc --noEmit` : aucune nouvelle erreur. `npm run build` (build de
+    prod complet, plus fort qu'un simple typecheck) : réussi.
+- **Non fait / limite connue** : pas de vérification visuelle en navigateur
+  authentifié (même limite que l'étape `/equipe/parametres` — pas de session
+  marchand disponible ici). À valider par Ilies avant de considérer l'étape
+  définitivement close.
+
 ## Prochaines étapes (non décidées / non commencées)
 
-- Tests de scénarios sur `computeDayMetrics`/`payrollRaw`/
-  `weightedPremiumHours` (voir entrée juste au-dessus) — Ilies valide avant
-  écriture.
-- Exposition du détail par tranche dans la réponse `/planning/performance`
-  (décision prise : oui, exposer le détail pour affichage front) + mise à
-  jour de `docs/backoffice_requirements/PERFORMANCE_API_CONTRACT.md`.
-- Tests : `computeDayMetrics`/`payrollRaw` eux-mêmes n'ont toujours aucun
-  test unitaire (la segmentation en a désormais, `payrollRaw` pas encore)
-  — à créer en même temps que le branchement ci-dessus, avec des cas
-  nuit/dimanche/férié/cumul de bout en bout.
+Le chantier nuit/dimanche/férié (référentiel → cumul → segmentation →
+calcul → exposition API/back-office) est maintenant complet de bout en
+bout. Reste ouvert :
+
+- **Vérification visuelle en navigateur** des deux écrans back-office
+  touchés (`/equipe/parametres`, la fiche performance) — non faite faute de
+  session marchand authentifiée dans cet environnement. À faire par Ilies.
+- **Test d'intégration réel manquant** : rien ne vérifie contre une vraie
+  base Postgres/MySQL que `Σ(PlannedPremium)` égale `PlannedMinutes` (et
+  pareil côté `Worked`) — équivalence raisonnée à la main, jamais vérifiée
+  en conditions réelles.
+- **Bug pré-existant, hors chantier, signalé mais non traité** : le paquet
+  `employees` a 2 tests en échec (`TestServiceDeleteEmployee*`, souci
+  d'ordre d'appels sqlmock) + `leave`/`swaps` (3 paquets au total). Aucun
+  rapport avec ce chantier, `git status` confirme qu'aucun fichier de ces
+  paquets n'a été touché.

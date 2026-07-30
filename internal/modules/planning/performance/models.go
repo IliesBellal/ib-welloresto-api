@@ -96,6 +96,46 @@ type PerformancePeriod struct {
 	PayrollRatio           *float64 `json:"payroll_ratio"`
 	RevenuePerHourCents    *float64 `json:"revenue_per_hour_cents"`
 	HoursDelta             float64  `json:"hours_delta"`
+
+	// PremiumBreakdown splits WorkedHours (or PlannedHours as fallback, same
+	// convention as the rest of this period) by time-of-day/day-of-week
+	// classification — informational, independent of employee eligibility
+	// (e.g. NightHours counts hours worked at night whether or not that
+	// employee actually gets the night premium).
+	PremiumBreakdown PremiumHoursBreakdown `json:"premium_breakdown"`
+	// PremiumCostExtraCents is how much PayrollCostLoadedCents increased
+	// because of night/Sunday premiums, i.e. loaded cost minus what the same
+	// hours would have cost at straight time. Can be 0 (no eligible premium
+	// hours) but never reflects holiday (not modeled in payroll yet).
+	PremiumCostExtraCents int64 `json:"premium_cost_extra_cents"`
+}
+
+// PremiumHoursBreakdown mirrors PremiumSegments but in decimal hours (this
+// package's usual display unit) rather than seconds.
+type PremiumHoursBreakdown struct {
+	NormalHours      float64 `json:"normal_hours"`
+	NightHours       float64 `json:"night_hours"`
+	SundayHours      float64 `json:"sunday_hours"`
+	NightSundayHours float64 `json:"night_sunday_hours"`
+	HolidayHours     float64 `json:"holiday_hours"`
+}
+
+func premiumHoursBreakdownFromSegments(s PremiumSegments) PremiumHoursBreakdown {
+	return PremiumHoursBreakdown{
+		NormalHours:      float64(s.NormalSeconds) / 3600.0,
+		NightHours:       float64(s.NightSeconds) / 3600.0,
+		SundayHours:      float64(s.SundaySeconds) / 3600.0,
+		NightSundayHours: float64(s.NightSundaySeconds) / 3600.0,
+		HolidayHours:     float64(s.HolidaySeconds) / 3600.0,
+	}
+}
+
+func (b *PremiumHoursBreakdown) add(other PremiumHoursBreakdown) {
+	b.NormalHours += other.NormalHours
+	b.NightHours += other.NightHours
+	b.SundayHours += other.SundayHours
+	b.NightSundayHours += other.NightSundayHours
+	b.HolidayHours += other.HolidayHours
 }
 
 type PerformanceWarnings struct {

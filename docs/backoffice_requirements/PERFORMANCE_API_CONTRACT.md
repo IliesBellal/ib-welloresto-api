@@ -54,10 +54,24 @@ GET /planning/performance
 | `planned_hours`             | `number` (h, décimal) | non | Heures planifiées (`shifts` – pauses).                                     |
 | `worked_hours`              | `number` (h, décimal) | non | Heures pointées (fallback = `planned_hours` quand pas de pointages).       |
 | `headcount`                 | `integer` (≥ 0)  | non     | Effectifs distincts planifiés sur la période.                              |
-| `payroll_cost_loaded_cents` | `integer` (cts)  | non     | Masse salariale chargée = `Σ heures × hourly_rate × (1 + charges)`.        |
+| `payroll_cost_loaded_cents` | `integer` (cts)  | non     | Masse salariale chargée = `Σ heures pondérées × hourly_rate × (1 + charges)` (pondération : majorations nuit/dimanche, voir `premium_breakdown` ci-dessous). |
 | `payroll_ratio`             | `float` `[0..1]` | **oui** | `payroll_cost_loaded_cents / revenue_actual_cents` ; `null` si CA `null`/`0`. |
 | `revenue_per_hour_cents`    | `integer` (cts)  | **oui** | `revenue_actual_cents / worked_hours` ; `null` si CA `null` ou heures `0`. |
 | `hours_delta`               | `number` (h, décimal) | non | `worked_hours − planned_hours` (peut être négatif).                        |
+| `premium_breakdown`         | `PremiumBreakdown` | non   | Répartition de `worked_hours` (ou `planned_hours` en fallback) par tranche nuit/dimanche/férié. Voir ci-dessous.           |
+| `premium_cost_extra_cents`  | `integer` (cts)  | non     | Part de `payroll_cost_loaded_cents` due aux majorations = coût chargé − coût à taux plein sur les mêmes heures. `0` si aucune majoration ne s'applique. |
+
+## `PremiumBreakdown`
+
+Informatif : classification par tranche horaire, **indépendante de l'éligibilité** de l'employé (un employé non éligible à la majoration nuit voit quand même ses heures de nuit comptées ici — la case sert à visualiser l'activité, pas la paie). `night_sunday_hours` est le sous-ensemble d'heures à la fois nuit ET dimanche (ne pas additionner avec `night_hours`/`sunday_hours` pour un total : `normal + night + sunday + night_sunday = worked_hours`). `holiday_hours` est un compteur à part, qui peut chevaucher les 4 autres (report : pas encore intégré au calcul de paie, cf. `docs/PLANNING_DECISIONS.md`).
+
+| Champ                | Type              | Convention                                                        |
+| -------------------- | ----------------- | ------------------------------------------------------------------ |
+| `normal_hours`        | `number` (h, décimal) | Heures sans aucune majoration applicable.                       |
+| `night_hours`         | `number` (h, décimal) | Heures de nuit (hors dimanche), fenêtre définie par `planning_settings`. |
+| `sunday_hours`        | `number` (h, décimal) | Heures de dimanche (hors nuit).                                  |
+| `night_sunday_hours`  | `number` (h, décimal) | Heures à la fois nuit ET dimanche.                                |
+| `holiday_hours`       | `number` (h, décimal) | Heures un jour férié (marginal, peut chevaucher les 4 champs ci-dessus). |
 
 ---
 
@@ -103,7 +117,15 @@ GET /planning/performance?from=2026-05-25&to=2026-05-31&granularity=day&compare=
           "payroll_cost_loaded_cents": 69225,
           "payroll_ratio": null,
           "revenue_per_hour_cents": null,
-          "hours_delta": 0
+          "hours_delta": 0,
+          "premium_breakdown": {
+            "normal_hours": 28.5,
+            "night_hours": 4,
+            "sunday_hours": 0,
+            "night_sunday_hours": 0,
+            "holiday_hours": 0
+          },
+          "premium_cost_extra_cents": 1200
         }
       ],
       "totals": {
@@ -118,7 +140,15 @@ GET /planning/performance?from=2026-05-25&to=2026-05-31&granularity=day&compare=
         "payroll_cost_loaded_cents": 464575,
         "payroll_ratio": null,
         "revenue_per_hour_cents": null,
-        "hours_delta": 0
+        "hours_delta": 0,
+        "premium_breakdown": {
+          "normal_hours": 190,
+          "night_hours": 20,
+          "sunday_hours": 6,
+          "night_sunday_hours": 2,
+          "holiday_hours": 0
+        },
+        "premium_cost_extra_cents": 8400
       },
       "previous_period": {
         "from": "2026-05-18",

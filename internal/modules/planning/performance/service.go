@@ -80,6 +80,8 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 	plannedHours := 0.0
 	workedHours := 0.0
 	payrollRaw := 0.0
+	payrollBaselineRaw := 0.0
+	var breakdownSeconds PremiumSegments
 	dayMSIncomplete := false
 	dayHasMSActivity := false
 	shiftEmployeeIDs := map[string]struct{}{}
@@ -100,6 +102,7 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 
 		plannedHours += employeePlannedHours
 		workedHours += workedDisplayHours
+		breakdownSeconds.add(displaySegments)
 
 		if employee.HourlyRateCents <= 0 {
 			if workedDisplayHours > 0 {
@@ -107,8 +110,10 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 				dayMSIncomplete = true
 			}
 		} else {
+			rateFactor := float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
 			weightedHours := weightedPremiumHours(displaySegments, employee.SundayPremiumEligible, employee.NightPremiumEligible, premium)
-			payrollRaw += weightedHours * float64(employee.HourlyRateCents) * (1.0 + employee.EmployerChargesPct/100.0)
+			payrollRaw += weightedHours * rateFactor
+			payrollBaselineRaw += workedDisplayHours * rateFactor
 		}
 
 		if employee.PlannedMinutes > 0 {
@@ -117,6 +122,8 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 	}
 
 	payrollCents := int64(math.Round(payrollRaw))
+	premiumCostExtraCents := payrollCents - int64(math.Round(payrollBaselineRaw))
+	premiumBreakdown := premiumHoursBreakdownFromSegments(breakdownSeconds)
 	hoursDelta := workedHours - plannedHours
 
 	// Determine effective revenue: real if >0, else forecast if present, else 0
@@ -151,6 +158,8 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 		PayrollRatio:           payrollRatio,
 		RevenuePerHourCents:    revenuePerHourCents,
 		HoursDelta:             hoursDelta,
+		PremiumBreakdown:       premiumBreakdown,
+		PremiumCostExtraCents:  premiumCostExtraCents,
 	}
 
 	return computedDay{
@@ -166,6 +175,8 @@ func computeDayMetrics(day RawDayMetrics, premium PremiumConfig, membersWithoutR
 		PayrollCostLoadedCents: payrollCents,
 		PlannedHours:           plannedHours,
 		WorkedHours:            workedHours,
+		PremiumBreakdown:       premiumBreakdown,
+		PremiumCostExtraCents:  premiumCostExtraCents,
 	}
 }
 
@@ -203,6 +214,8 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 		AnyMSDayWithoutCA     bool
 		AnyWorkedNoCA         bool
 		ShiftEmployees        map[string]struct{}
+		PremiumBreakdown      PremiumHoursBreakdown
+		PremiumCostExtraCents int64
 	}
 
 	buckets := map[string]*bucketAggregate{}
@@ -243,6 +256,8 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 		bucket.WorkedHours += day.WorkedHours
 		bucket.PayrollCents += day.PayrollCostLoadedCents
 		bucket.HoursDelta += day.Period.HoursDelta
+		bucket.PremiumBreakdown.add(day.PremiumBreakdown)
+		bucket.PremiumCostExtraCents += day.PremiumCostExtraCents
 
 		if day.MSIncomplete {
 			bucket.MSIncomplete = true
@@ -285,6 +300,8 @@ func rollupPeriods(days []computedDay, granularity, fromDayRaw, toDayRaw string)
 			PayrollRatio:           payrollRatio,
 			RevenuePerHourCents:    revenuePerHour,
 			HoursDelta:             bucket.HoursDelta,
+			PremiumBreakdown:       bucket.PremiumBreakdown,
+			PremiumCostExtraCents:  bucket.PremiumCostExtraCents,
 		})
 	}
 
@@ -302,6 +319,8 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 	totalMSIncomplete := false
 	anyMSDayWithoutCA := false
 	anyWorkedHoursDayWithoutCA := false
+	var totalPremiumBreakdown PremiumHoursBreakdown
+	totalPremiumCostExtraCents := int64(0)
 
 	for _, day := range days {
 		totalRevenueCents += day.RevenueActualCents
@@ -318,6 +337,8 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 		totalWorkedHours += day.WorkedHours
 		totalHeadcount += day.Period.Headcount
 		totalPayrollCents += day.PayrollCostLoadedCents
+		totalPremiumBreakdown.add(day.PremiumBreakdown)
+		totalPremiumCostExtraCents += day.PremiumCostExtraCents
 
 		if day.MSIncomplete {
 			totalMSIncomplete = true
@@ -352,6 +373,8 @@ func aggregateTotals(days []computedDay, fromDay, toDay string) PerformancePerio
 		PayrollRatio:           totalPayrollRatio,
 		RevenuePerHourCents:    totalRevenuePerHour,
 		HoursDelta:             totalWorkedHours - totalPlannedHours,
+		PremiumBreakdown:       totalPremiumBreakdown,
+		PremiumCostExtraCents:  totalPremiumCostExtraCents,
 	}
 }
 
@@ -456,6 +479,8 @@ type computedDay struct {
 	PayrollCostLoadedCents int64
 	PlannedHours           float64
 	WorkedHours            float64
+	PremiumBreakdown       PremiumHoursBreakdown
+	PremiumCostExtraCents  int64
 }
 
 func (s *Service) GetRawPerformanceByDay(ctx context.Context, fromLocalDay, toLocalDay time.Time) (*RawPerformanceResponse, error) {
