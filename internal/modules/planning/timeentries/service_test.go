@@ -15,6 +15,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -69,6 +70,15 @@ func (s stubShiftReader) ListPlanningShiftsTeamWeekView(ctx context.Context, mer
 	return s.teamShifts, s.shiftsErr
 }
 
+type stubDayCommentReader struct {
+	comments []daycommentspkg.PlanningDayComment
+	err      error
+}
+
+func (s stubDayCommentReader) ListByDateRange(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]daycommentspkg.PlanningDayComment, error) {
+	return s.comments, s.err
+}
+
 func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *testing.T) {
 	repo := NewRepository(nil)
 	svc := NewService(repo, stubEmployeeReader{
@@ -80,10 +90,14 @@ func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *t
 			{ID: "shift_1", WeekID: "week_1", EmployeeID: stringPtr("emp_me"), Title: "Ouverture", StartTime: "09:00:00", EndTime: "12:00:00", Status: "planned"},
 			{ID: "shift_2", WeekID: "week_1", EmployeeID: stringPtr("emp_2"), Title: "Service", StartTime: "12:00:00", EndTime: "16:00:00", Status: "planned"},
 		},
-	}, nil, nil)
+	}, nil, nil, stubDayCommentReader{
+		comments: []daycommentspkg.PlanningDayComment{
+			{ID: "plan-day-comment-1", MerchantID: "merchant_1", Comment: "Livraison fournisseur a 10h"},
+		},
+	})
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
-	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	currentEmployeeID, weekID, items, comments, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
 	if err != nil {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
 	}
@@ -95,6 +109,9 @@ func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *t
 	}
 	if len(items) != 2 {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() len = %d, want 2", len(items))
+	}
+	if len(comments) != 1 || comments[0].Comment != "Livraison fournisseur a 10h" {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() comments = %#v, want 1 seeded comment", comments)
 	}
 }
 
@@ -108,10 +125,10 @@ func TestServiceListCurrentUserTeamWeekShiftsDraftWeekReturnsEmpty(t *testing.T)
 		teamShifts: []schedulepkg.PlanningShiftTeamWeekView{
 			{ID: "shift_1", WeekID: "week_1", Title: "Ouverture"},
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
-	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	currentEmployeeID, weekID, items, _, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
 	if err != nil {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
 	}
@@ -131,10 +148,10 @@ func TestServiceListCurrentUserTeamWeekShiftsMissingWeekReturnsEmpty(t *testing.
 	svc := NewService(repo, stubEmployeeReader{
 		employee:         &employeespkg.Employee{ID: "emp_me"},
 		memberEmployeeID: "emp_me",
-	}, stubShiftReader{weekByStartErr: sql.ErrNoRows}, nil, nil)
+	}, stubShiftReader{weekByStartErr: sql.ErrNoRows}, nil, nil, nil)
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
-	currentEmployeeID, weekID, items, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	currentEmployeeID, weekID, items, _, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
 	if err != nil {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v", err)
 	}
@@ -151,10 +168,10 @@ func TestServiceListCurrentUserTeamWeekShiftsMissingWeekReturnsEmpty(t *testing.
 
 func TestServiceListCurrentUserTeamWeekShiftsRequiresLinkedEmployee(t *testing.T) {
 	repo := NewRepository(nil)
-	svc := NewService(repo, stubEmployeeReader{memberErr: sql.ErrNoRows}, stubShiftReader{}, nil, nil)
+	svc := NewService(repo, stubEmployeeReader{memberErr: sql.ErrNoRows}, stubShiftReader{}, nil, nil, nil)
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1", MerchantRightsID: "42"})
-	_, _, _, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
+	_, _, _, _, err := svc.ListCurrentUserTeamWeekShifts(ctx, "2026-06-01", "")
 	if !errors.Is(err, models.ErrPlanningEmployeeNotFound) {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() error = %v, want %v", err, models.ErrPlanningEmployeeNotFound)
 	}
@@ -171,7 +188,7 @@ func TestServiceGetCurrentEmployeeTimeEntryResolvesCurrentMemberEmployee(t *test
 	svc := NewService(repo, stubEmployeeReader{
 		employee:         &employeespkg.Employee{ID: "emp_1"},
 		memberEmployeeID: "emp_1",
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	now := time.Now().UTC()
 	mock.ExpectQuery(regexp.QuoteMeta(`
@@ -209,7 +226,7 @@ func TestServiceListPlanningTimeEntriesRequiresValidRange(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil)
+	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil, nil)
 
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "user_1", MerchantID: "merchant_1"})
 	_, _, err = svc.ListPlanningTimeEntries(ctx, PlanningTimeEntryListFilters{From: "", To: "2026-05-07"})
@@ -233,7 +250,7 @@ func TestServiceListPlanningTimeEntriesResolvesCurrentMemberEmployee(t *testing.
 	svc := NewService(repo, stubEmployeeReader{
 		employee:         &employeespkg.Employee{ID: "emp_1"},
 		memberEmployeeID: "emp_1",
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	fromDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	toExclusive := time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
@@ -285,7 +302,7 @@ func TestServiceListPlanningTimeEntriesWithoutEmployeeFilter(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil)
+	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil, nil)
 
 	fromDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	toExclusive := time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
@@ -375,7 +392,7 @@ func TestServiceCreateEmployeeTimeEntryManualIgnoresOpenEntryRuleForClosedEntry(
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 
 	mock.ExpectExec(regexp.QuoteMeta(`
@@ -412,7 +429,7 @@ func TestServiceCreateEmployeeTimeEntryManualIgnoresOpenEntryRuleForClosedEntry(
 
 func TestServiceCreateEmployeeTimeEntryRejectsInvalidRange(t *testing.T) {
 	repo := NewRepository(nil)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 
 	_, err := svc.CreateEmployeeTimeEntry(ctx, "emp_1", PlanningTimeEntryManualCreateRequest{
@@ -427,7 +444,7 @@ func TestServiceCreateEmployeeTimeEntryRejectsInvalidRange(t *testing.T) {
 
 func TestServiceCreateEmployeeTimeEntryRejectsPlanningSource(t *testing.T) {
 	repo := NewRepository(nil)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePlanning}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePlanning}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 
 	_, err := svc.CreateEmployeeTimeEntry(ctx, "emp_1", PlanningTimeEntryManualCreateRequest{
@@ -442,7 +459,7 @@ func TestServiceCreateEmployeeTimeEntryRejectsPlanningSource(t *testing.T) {
 
 func TestServiceUpdateEmployeeTimeEntryRequiresModificationReason(t *testing.T) {
 	repo := NewRepository(nil)
-	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil)
+	svc := NewService(repo, stubEmployeeReader{}, nil, nil, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 
 	_, err := svc.UpdateEmployeeTimeEntry(ctx, "emp_1", "entry_1", PlanningTimeEntryCorrectionRequest{ClockInAt: stringPtr("2026-06-01T08:00:00")})
@@ -459,7 +476,7 @@ func TestServiceUpdateEmployeeTimeEntrySetsModifiedFields(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
 
@@ -514,7 +531,7 @@ func TestServiceUpdateEmployeeTimeEntryRejectsInvalidRange(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
 
@@ -551,7 +568,7 @@ func TestServiceDeleteEmployeeTimeEntrySoftDeletesWithReason(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepository(db)
-	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil)
+	svc := NewService(repo, stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}}, nil, stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}}, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "manager_1", MerchantID: "merchant_1", Email: "manager@example.com"})
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
 

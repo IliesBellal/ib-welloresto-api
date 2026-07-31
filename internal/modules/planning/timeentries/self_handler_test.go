@@ -15,6 +15,7 @@ import (
 
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/modules/auth"
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -33,6 +34,7 @@ func TestHandlerStartCurrentUserTimeEntrySuccess(t *testing.T) {
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}, memberEmployeeID: "emp_1"},
 		nil,
 		stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}},
+		nil,
 		nil,
 	)
 	handler := NewHandler(svc)
@@ -86,6 +88,7 @@ func TestHandlerStopCurrentUserTimeEntrySuccess(t *testing.T) {
 	svc := NewService(
 		repo,
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}, memberEmployeeID: "emp_1"},
+		nil,
 		nil,
 		nil,
 		nil,
@@ -158,6 +161,7 @@ func TestHandlerGetCurrentUserTimeEntrySuccess(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	handler := NewHandler(svc)
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
@@ -204,6 +208,7 @@ func TestHandlerListCurrentUserTimeEntriesSuccess(t *testing.T) {
 	svc := NewService(
 		repo,
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}, memberEmployeeID: "emp_1"},
+		nil,
 		nil,
 		nil,
 		nil,
@@ -261,6 +266,7 @@ func TestHandlerCurrentUserTimeEntryRequiresLinkedEmployee(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	handler := NewHandler(svc)
 
@@ -291,6 +297,7 @@ func TestHandlerStartCurrentUserTimeEntryRejectsAlreadyOpen(t *testing.T) {
 		stubEmployeeReader{employee: &employeespkg.Employee{ID: "emp_1"}, memberEmployeeID: "emp_1"},
 		nil,
 		stubSettingsReader{settings: &settingspkg.PlanningSettings{AttendanceSource: settingspkg.AttendanceSourcePointage}},
+		nil,
 		nil,
 	)
 	handler := NewHandler(svc)
@@ -342,6 +349,11 @@ func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeNam
 		shiftRepo,
 		nil,
 		nil,
+		stubDayCommentReader{
+			comments: []daycommentspkg.PlanningDayComment{
+				{ID: "plan-day-comment-1", MerchantID: "merchant_1", Comment: "Jour ferie, horaires speciaux"},
+			},
+		},
 	)
 	handler := NewHandler(svc)
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
@@ -392,6 +404,9 @@ func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeNam
 	}
 	if !strings.Contains(body, `"employee_name":"Alice Martin"`) {
 		t.Fatalf("ListCurrentUserTeamWeekShifts() body = %s, want employee_name", body)
+	}
+	if !strings.Contains(body, `"day_comments":[{"id":"plan-day-comment-1"`) || !strings.Contains(body, `Jour ferie, horaires speciaux`) {
+		t.Fatalf("ListCurrentUserTeamWeekShifts() body = %s, want day_comments with the seeded comment", body)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

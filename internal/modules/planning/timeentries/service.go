@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	auditpkg "welloresto-api/internal/modules/audit"
+	daycommentspkg "welloresto-api/internal/modules/planning/daycomments"
 	employeespkg "welloresto-api/internal/modules/planning/employees"
 	schedulepkg "welloresto-api/internal/modules/planning/schedule"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
@@ -31,16 +32,24 @@ type SettingsReader interface {
 	GetOrCreateSettings(ctx context.Context, merchantID string) (*settingspkg.PlanningSettings, error)
 }
 
-type Service struct {
-	repo         *Repository
-	employeeRepo EmployeeReader
-	shiftRepo    ShiftReader
-	settingsRepo SettingsReader
-	auditService auditpkg.AuditService
+// DayCommentReader reads day comments for the self-service team-week payload.
+// Gated the same way as shifts: only fetched once the covering week is
+// confirmed published (see ListCurrentUserTeamWeekShifts).
+type DayCommentReader interface {
+	ListByDateRange(ctx context.Context, merchantID string, startDate, endDate time.Time) ([]daycommentspkg.PlanningDayComment, error)
 }
 
-func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, settingsRepo SettingsReader, auditService auditpkg.AuditService) *Service {
-	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, settingsRepo: settingsRepo, auditService: auditService}
+type Service struct {
+	repo           *Repository
+	employeeRepo   EmployeeReader
+	shiftRepo      ShiftReader
+	settingsRepo   SettingsReader
+	auditService   auditpkg.AuditService
+	dayCommentRepo DayCommentReader
+}
+
+func NewService(repo *Repository, employeeRepo EmployeeReader, shiftRepo ShiftReader, settingsRepo SettingsReader, auditService auditpkg.AuditService, dayCommentRepo DayCommentReader) *Service {
+	return &Service{repo: repo, employeeRepo: employeeRepo, shiftRepo: shiftRepo, settingsRepo: settingsRepo, auditService: auditService, dayCommentRepo: dayCommentRepo}
 }
 
 func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) {
@@ -58,19 +67,19 @@ func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) 
 	return employeeID, nil
 }
 
-func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRaw, weekIDRaw string) (string, string, []schedulepkg.PlanningShiftTeamWeekView, error) {
+func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRaw, weekIDRaw string) (string, string, []schedulepkg.PlanningShiftTeamWeekView, []daycommentspkg.PlanningDayComment, error) {
 	currentEmployeeID, err := s.ResolveCurrentEmployeeID(ctx)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, nil, err
 	}
 
 	if s.shiftRepo == nil {
-		return "", "", nil, models.ErrInternalServerError
+		return "", "", nil, nil, models.ErrInternalServerError
 	}
 
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return "", "", nil, models.ErrUnauthorized
+		return "", "", nil, nil, models.ErrUnauthorized
 	}
 
 	weekID := strings.TrimSpace(weekIDRaw)
@@ -80,41 +89,49 @@ func (s *Service) ListCurrentUserTeamWeekShifts(ctx context.Context, weekStartRa
 	if weekID != "" {
 		week, err = s.shiftRepo.GetPlanningWeekByID(ctx, user.MerchantID, weekID)
 		if err == sql.ErrNoRows {
-			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
+			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, []daycommentspkg.PlanningDayComment{}, nil
 		}
 		if err != nil {
-			return "", "", nil, err
+			return "", "", nil, nil, err
 		}
 	} else {
 		if weekStart == "" {
-			return "", "", nil, models.ErrPlanningInvalidDate
+			return "", "", nil, nil, models.ErrPlanningInvalidDate
 		}
 		startDate, parseErr := sharedpkg.ParsePlanningDate(weekStart)
 		if parseErr != nil {
-			return "", "", nil, parseErr
+			return "", "", nil, nil, parseErr
 		}
 		week, err = s.shiftRepo.GetPlanningWeekByStartDate(ctx, user.MerchantID, startDate, "")
 		if err == sql.ErrNoRows {
-			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
+			return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, []daycommentspkg.PlanningDayComment{}, nil
 		}
 		if err != nil {
-			return "", "", nil, err
+			return "", "", nil, nil, err
 		}
 	}
 
 	if week == nil || strings.TrimSpace(week.ID) == "" {
-		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
+		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, []daycommentspkg.PlanningDayComment{}, nil
 	}
 	if !strings.EqualFold(strings.TrimSpace(week.Status), "published") {
-		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, nil
+		return currentEmployeeID, "", []schedulepkg.PlanningShiftTeamWeekView{}, []daycommentspkg.PlanningDayComment{}, nil
 	}
 
 	items, err := s.shiftRepo.ListPlanningShiftsTeamWeekView(ctx, user.MerchantID, week.ID)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, nil, err
 	}
 
-	return currentEmployeeID, week.ID, items, nil
+	comments := []daycommentspkg.PlanningDayComment{}
+	if s.dayCommentRepo != nil {
+		comments, err = s.dayCommentRepo.ListByDateRange(ctx, user.MerchantID, week.StartDate, week.EndDate)
+		if err != nil {
+			return "", "", nil, nil, err
+		}
+	}
+
+	return currentEmployeeID, week.ID, items, comments, nil
 }
 
 func (s *Service) ListPlanningTimeEntries(ctx context.Context, filters PlanningTimeEntryListFilters) ([]PlanningTimeEntry, models.PaginationMetadata, error) {

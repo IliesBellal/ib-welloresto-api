@@ -230,7 +230,7 @@ func (h *Handler) ListCurrentUserTeamWeekShifts(w http.ResponseWriter, r *http.R
 	weekStart := strings.TrimSpace(r.URL.Query().Get("week_start"))
 	weekID := strings.TrimSpace(r.URL.Query().Get("week_id"))
 
-	currentEmployeeID, resolvedWeekID, items, err := h.svc.ListCurrentUserTeamWeekShifts(r.Context(), weekStart, weekID)
+	currentEmployeeID, resolvedWeekID, items, comments, err := h.svc.ListCurrentUserTeamWeekShifts(r.Context(), weekStart, weekID)
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_current_user_team_week_shifts", err)
 		return
@@ -241,5 +241,6 @@ func (h *Handler) ListCurrentUserTeamWeekShifts(w http.ResponseWriter, r *http.R
 		"current_employee_id": currentEmployeeID,
 		"week_id":             resolvedWeekID,
 		"shifts":              items,
+		"day_comments":        comments,
 	})
 }

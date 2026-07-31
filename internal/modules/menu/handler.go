@@ -202,6 +202,30 @@ func (h *MenuHandler) GetAllProducts(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get_all_products", products)
 }
 
+// GetAllergensPosterPDF — GET /menu/products/allergens/poster.pdf
+func (h *MenuHandler) GetAllergensPosterPDF(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "allergens_poster_pdf", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	pdfBytes, err := h.service.GetAllergensPosterPDF(ctx, token)
+	if err != nil {
+		log.Error("[ERROR] GetAllergensPosterPDF error " + err.Error())
+		models.SendErrorJSON(w, "menu", "allergens_poster_pdf", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="affiche-allergenes.pdf"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
 func (h *MenuHandler) GetAllComponents(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

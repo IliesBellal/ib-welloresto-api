@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/modules/pos/accounting"
 	"welloresto-api/internal/modules/ubereats"
 )
 
@@ -20,22 +21,39 @@ const (
 	defaultExternalStatusSyncParallel = 64
 )
 
+// merchantHeaderProvider est le sous-ensemble de accounting.AccountingRepository utilisé par ce
+// service (en-tête établissement pour l'affiche PDF des allergènes). Même pattern que
+// order_life_cycle.merchantHeaderProvider.
+type merchantHeaderProvider interface {
+	GetMerchantHeader(ctx context.Context, merchantID string) (*accounting.MerchantHeader, error)
+}
+
+// allergenCatalogProvider est le sous-ensemble de allergens.Repository utilisé par ce service (le
+// référentiel complet des allergènes, pour les colonnes de l'affiche PDF).
+type allergenCatalogProvider interface {
+	ListAllergens(ctx context.Context) ([]models.AllergenEntry, error)
+}
+
 type MenuService struct {
-	legacy    *MenuRepository
-	deliveroo *deliveroo.DeliverooService
-	uber      *ubereats.UberEatsService
-	redis     *redisclient.Client
+	legacy           *MenuRepository
+	deliveroo        *deliveroo.DeliverooService
+	uber             *ubereats.UberEatsService
+	redis            *redisclient.Client
+	merchantHeader   merchantHeaderProvider
+	allergensCatalog allergenCatalogProvider
 
 	statusSyncTimeout time.Duration
 	statusSyncSem     chan struct{}
 }
 
-func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, redis *redisclient.Client) *MenuService {
+func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, redis *redisclient.Client, merchantHeader merchantHeaderProvider, allergensCatalog allergenCatalogProvider) *MenuService {
 	return &MenuService{
 		legacy:            legacy,
 		deliveroo:         deliverooSvc,
 		uber:              uberSvc,
 		redis:             redis,
+		merchantHeader:    merchantHeader,
+		allergensCatalog:  allergensCatalog,
 		statusSyncTimeout: defaultExternalStatusSyncTimeout,
 		statusSyncSem:     make(chan struct{}, defaultExternalStatusSyncParallel),
 	}
@@ -206,6 +224,33 @@ func (s *MenuService) GetAllProducts(ctx context.Context, token string) ([]model
 	}
 
 	return s.legacy.GetAllProducts(ctx, user.MerchantID)
+}
+
+// GetAllergensPosterPDF génère l'affiche PDF listant chaque produit et ses allergènes. Réutilise
+// GetAllProducts (même requête que GET /menu/products, allergènes inclus) et le référentiel
+// allergens — aucune nouvelle requête SQL.
+func (s *MenuService) GetAllergensPosterPDF(ctx context.Context, token string) ([]byte, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	header, err := s.merchantHeader.GetMerchantHeader(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	catalog, err := s.allergensCatalog.ListAllergens(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	categories, err := s.legacy.GetAllProducts(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildAllergensPosterPDF(header, catalog, categories)
 }
 
 func (s *MenuService) GetAllComponents(ctx context.Context, token string) ([]models.ComponentCategory, error) {

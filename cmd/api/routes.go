@@ -198,6 +198,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	statsRepo := statsModule.NewStatsRepository(mysqlDB)
 	statsService := statsModule.NewStatsService(statsRepo)
 
+	// ---- Allergens (repo construit tôt : requis par Menu pour l'affiche PDF des allergènes) ----
+	allergensRepo := allergensModule.NewRepository(mysqlDB)
+
 	// ---- Menu ----
 	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
 	// NOTE: deliverooService and uberService are initialized below; we forward-declare menuService
@@ -250,7 +253,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	uberHandler := uberModule.NewUberHandler(uberService)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
-	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, redisClient)
+	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, redisClient, posAccountingRepo, allergensRepo)
 
 	// ---- Translation ----
 	translationRepo := translationModule.NewRepository(mysqlDB)
@@ -391,8 +394,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
 
-	// ---- Allergens ----
-	allergensRepo := allergensModule.NewRepository(mysqlDB)
+	// ---- Allergens ---- (allergensRepo construit plus haut, avant Menu)
 	allergensService := allergensModule.NewService(allergensRepo)
 
 	// ---- Tags ----
@@ -682,6 +684,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Patch("/translation-langs", menuH.PatchTranslationLanguages)
 
 		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
+		r.Get("/products/allergens/poster.pdf", menuH.GetAllergensPosterPDF)
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office

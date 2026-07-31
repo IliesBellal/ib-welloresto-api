@@ -71,7 +71,7 @@ func NewService(repo *PlanningRepository, privateR2 *r2.Client, auditService aud
 		ScheduleService:        scheduleService,
 		ShiftTemplatesService:  shifttemplatespkg.NewService(repo.ShiftTemplatesRepository, repo.EmployeesRepository),
 		WeekTemplatesService:   weektemplatespkg.NewService(repo.WeekTemplatesRepository, repo.EmployeesRepository, repo.ScheduleRepository, repo.LeaveRepository, auditService),
-		TimeEntriesService:     timeentriespkg.NewService(repo.TimeEntriesRepository, repo.EmployeesRepository, repo.ScheduleRepository, repo.SettingsRepository, auditService),
+		TimeEntriesService:     timeentriespkg.NewService(repo.TimeEntriesRepository, repo.EmployeesRepository, repo.ScheduleRepository, repo.SettingsRepository, auditService, repo.DayCommentsRepository),
 		LeaveRequestsService:   leavepkg.NewService(repo.LeaveRepository, repo.EmployeesRepository),
 		ShiftSwapsService:      swapspkg.NewService(repo.ShiftSwapsRepository, repo.EmployeesRepository, repo.ScheduleRepository, scheduleService, repo.SettingsRepository),
 		PerformanceService:     performancepkg.NewService(repo.PerformanceRepository),
