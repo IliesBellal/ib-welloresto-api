@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
@@ -535,6 +536,7 @@ func (s *OrdersService) buildSelectedProducts(req *models.PricingRequest, dbProd
 				DiscountID:      nil,
 				DiscountedPrice: nil,
 				OrderedDate:     req.Time,
+				IsUpsell:        p.IsUpsell,
 			}
 			out = append(out, selected)
 			count++
@@ -834,7 +836,8 @@ func (s *OrdersService) generateProductKey(p models.OrderProductPayload) string 
 		discountID +
 		string(extraJSON) +
 		string(withoutJSON) +
-		string(configJSON)
+		string(configJSON) +
+		strconv.FormatBool(p.IsUpsell)
 
 	//hash := md5.Sum([]byte(raw))
 
