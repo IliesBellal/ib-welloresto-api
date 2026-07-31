@@ -2072,6 +2072,7 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 			DiscountedPrice: p.DiscountedPrice, // Discounted price (optional)
 			DelayID:         p.DelayID,
 			CreatedBy:       *req.Order.CreatedBy,
+			IsUpsell:        p.IsUpsell,
 		}
 		if p.Comment != nil && p.Comment.Content != "" {
 			item.Comment = &p.Comment.Content
