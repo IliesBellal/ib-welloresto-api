@@ -61,16 +61,15 @@ func (r *ServicesRepository) GetCurrentService(ctx context.Context, userID, merc
 		FROM cash_registers cr
 		LEFT JOIN sub_cash_registers scr ON scr.cash_register_id = cr.cash_register_id
 		INNER JOIN cash_desks cd ON cr.cash_desk_id = cd.cash_desk_id
-		INNER JOIN users u ON u.merchant_id = cr.merchant_id
 		WHERE (cr.device_id = ? OR scr.device_id = ?)
-		AND u.user_id = ?
+		AND cr.merchant_id = ?
 		AND cr.end_date IS NULL
 		LIMIT 1;
 	`
 
 	var cr *models.CashRegisterInfo
 
-	rowCR := db.QueryRowContext(ctx, qCR, deviceID, deviceID, userID)
+	rowCR := db.QueryRowContext(ctx, qCR, deviceID, deviceID, merchantID)
 
 	var (
 		crDeviceID, crName, crRegisterID, crDeskID string

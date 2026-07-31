@@ -4369,11 +4369,24 @@ func (r *MenuRepository) SyncProductTags(ctx context.Context, merchantID, produc
 func (r *MenuRepository) UpdateProductAttributes(ctx context.Context, merchantID, productID string, configIDs []string) error {
 	db := dbx.GetDB(ctx, r.database)
 
+	// Ownership check : merchantID était accepté mais jamais vérifié, ce qui
+	// permettait de modifier les attributs d'un produit d'un autre marchand.
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM products WHERE product_id = ? AND merchant_id = ?`,
+		productID, merchantID,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return models.ErrForbidden
+	}
+
 	// 2. Reset Config (Set enabled = 0)
 	// Correspond à: UPDATE product_configurable_attribute SET enabled = 0 WHERE product_id = ...
 	_, err := db.ExecContext(ctx, `
-		UPDATE product_configurable_attribute 
-		SET enabled = FALSE 
+		UPDATE product_configurable_attribute
+		SET enabled = FALSE
 		WHERE product_id = ?`, productID)
 	if err != nil {
 		return err
