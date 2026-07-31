@@ -326,7 +326,7 @@ func (s *UsersService) PatchMerchantUserMember(ctx context.Context, userID strin
 }
 
 func requireAtLeastOneMemberField(req MerchantUserMemberPatchRequest) error {
-	if req.PositionID == nil && req.JobTitle == nil && req.Role == nil && req.ContractTypeCode == nil && !req.ContractStartDate.Present && !req.ContractEndDate.Present && !req.ProbationEndDate.Present && !req.LastMedicalCheckupDate.Present && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.EmployerChargesPct == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.TransportCost == nil && req.HrComment == nil {
+	if req.PositionID == nil && req.Role == nil && req.ContractTypeCode == nil && !req.ContractStartDate.Present && !req.ContractEndDate.Present && !req.ProbationEndDate.Present && !req.LastMedicalCheckupDate.Present && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.EmployerChargesPct == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.TransportCost == nil && req.HrComment == nil {
 		return fmt.Errorf("at least one field must be provided")
 	}
 	return nil
@@ -335,7 +335,6 @@ func requireAtLeastOneMemberField(req MerchantUserMemberPatchRequest) error {
 func memberPatchToEmployeeUpdate(req MerchantUserMemberPatchRequest) planningemployees.EmployeeUpdateRequest {
 	return planningemployees.EmployeeUpdateRequest{
 		PositionID:             req.PositionID,
-		JobTitle:               req.JobTitle,
 		Role:                   req.Role,
 		ContractTypeCode:       req.ContractTypeCode,
 		ContractStartDate:      dateOnlyPatchFieldToTimePtr(req.ContractStartDate),
@@ -361,7 +360,6 @@ func mapMemberFromEmployee(employee *planningemployees.Employee) *MerchantUserMe
 	}
 	return &MerchantUserMember{
 		PositionID:             employee.PositionID,
-		JobTitle:               employee.JobTitle,
 		Role:                   employee.Role,
 		ContractTypeCode:       employee.ContractTypeCode,
 		ContractStartDate:      timePtrToDateOnlyPtr(employee.ContractStartDate),

@@ -30,7 +30,6 @@ type Employee struct {
 	PositionID             string     `json:"position_id"`
 	Position               string     `json:"position"`
 	PositionNote           *string    `json:"position_note,omitempty"`
-	JobTitle               *string    `json:"job_title,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
 	Role                   string     `json:"role"`
@@ -85,7 +84,6 @@ type EmployeeCreateRequest struct {
 	LastName               string     `json:"last_name"`
 	PositionID             string     `json:"position_id"`
 	PositionNote           *string    `json:"position_note,omitempty"`
-	JobTitle               *string    `json:"job_title,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
 	Role                   *string    `json:"role,omitempty"`
@@ -117,7 +115,6 @@ type EmployeeUpdateRequest struct {
 	LastName               *string    `json:"last_name,omitempty"`
 	PositionID             *string    `json:"position_id,omitempty"`
 	PositionNote           *string    `json:"position_note,omitempty"`
-	JobTitle               *string    `json:"job_title,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
 	Role                   *string    `json:"role,omitempty"`

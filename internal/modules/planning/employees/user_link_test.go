@@ -32,10 +32,10 @@ func TestServiceLinkEmployeeUserRejectsUserNotLinkedToMerchant(t *testing.T) {
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "emp_1").
 		WillReturnRows(employeeRows().AddRow(
-			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, nil, "employee",
+			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, "employee",
 			"cdi", nil, nil, nil, nil,
 			35.0, 35.0, 2, false, false,
 			0, 0, 45.0, 0, nil, nil, nil,
@@ -71,10 +71,10 @@ func TestHandlerLinkEmployeeUserSuccess(t *testing.T) {
 	now := time.Now().UTC()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "emp_1").
 		WillReturnRows(employeeRows().AddRow(
-			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, nil, "employee",
+			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, "employee",
 			"cdi", nil, nil, nil, nil,
 			35.0, 35.0, 2, false, false,
 			0, 0, 45.0, 0, nil, nil, nil,
@@ -88,7 +88,7 @@ func TestHandlerLinkEmployeeUserSuccess(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "user_9").
 		WillReturnError(sql.ErrNoRows)
 
@@ -101,10 +101,10 @@ func TestHandlerLinkEmployeeUserSuccess(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "emp_1").
 		WillReturnRows(employeeRows().AddRow(
-			"emp_1", "merchant_1", "user_9", "John", "Doe", "pos_1", "Serveur", nil, nil, nil, nil, "employee",
+			"emp_1", "merchant_1", "user_9", "John", "Doe", "pos_1", "Serveur", nil, nil, nil, "employee",
 			"cdi", nil, nil, nil, nil,
 			35.0, 35.0, 2, false, false,
 			0, 0, 45.0, 0, nil, nil, nil,
@@ -141,10 +141,10 @@ func TestHandlerUnlinkEmployeeUserSuccess(t *testing.T) {
 	now := time.Now().UTC()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "emp_1").
 		WillReturnRows(employeeRows().AddRow(
-			"emp_1", "merchant_1", "user_9", "John", "Doe", "pos_1", "Serveur", nil, nil, nil, nil, "employee",
+			"emp_1", "merchant_1", "user_9", "John", "Doe", "pos_1", "Serveur", nil, nil, nil, "employee",
 			"cdi", nil, nil, nil, nil,
 			35.0, 35.0, 2, false, false,
 			0, 0, 45.0, 0, nil, nil, nil,
@@ -160,10 +160,10 @@ func TestHandlerUnlinkEmployeeUserSuccess(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.job_title, e.email, e.phone, e.role,`)).
+		SELECT e.id, e.merchant_id, e.user_id, e.first_name, e.last_name, e.position_id, COALESCE(p.label, ''), e.position_note, e.email, e.phone, e.role,`)).
 		WithArgs("merchant_1", "emp_1").
 		WillReturnRows(employeeRows().AddRow(
-			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, nil, "employee",
+			"emp_1", "merchant_1", nil, "John", "Doe", "pos_1", "Serveur", nil, nil, nil, "employee",
 			"cdi", nil, nil, nil, nil,
 			35.0, 35.0, 2, false, false,
 			0, 0, 45.0, 0, nil, nil, nil,
@@ -194,7 +194,7 @@ func withEmployeeRouteParam(req *http.Request, key, value string) *http.Request 
 
 func employeeRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
-		"id", "merchant_id", "user_id", "first_name", "last_name", "position_id", "position", "position_note", "job_title", "email", "phone", "role",
+		"id", "merchant_id", "user_id", "first_name", "last_name", "position_id", "position", "position_note", "email", "phone", "role",
 		"contract_type_code", "contract_start_date", "contract_end_date", "probation_end_date", "last_medical_checkup_date",
 		"contract_hours", "max_weekly_hours", "required_rest_days", "sunday_premium", "night_premium",
 		"hourly_rate", "gross_monthly_salary", "employer_charges_pct", "transport_cost", "birth_date", "gender", "nationality",
