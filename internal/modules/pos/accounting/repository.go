@@ -48,6 +48,15 @@ func acctDayEnd() string {
 	return "DATE_FORMAT(?, '%Y-%m-%d 23:59:59')"
 }
 
+// acctUTCParam formate un instant en littéral SQL UTC ('YYYY-MM-DD HH:MM:SS'),
+// directement comparable à orders.creation_date qui est écrit en UTC
+// (dbx.UTCNow()). Passer une chaîne plutôt qu'un time.Time évite toute
+// réinterprétation de fuseau par le driver, et reste valide dans les deux
+// dialectes.
+func acctUTCParam(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
 // acctMonthKey formate un timestamp en 'YYYY-MM' selon le dialecte.
 func acctMonthKey(col string) string {
 	if dbx.ActiveDialect() == dbx.Postgres {
@@ -120,43 +129,37 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 	return &header, nil
 }
 
-// IsMonthClosed vérifie si le mois est clôturé
-func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID, year, month string) (bool, error) {
+// IsMonthClosed vérifie si le mois est clôturé. Les bornes sont calculées dans
+// le fuseau de l'établissement : un mois n'est terminé qu'une fois minuit passé
+// en heure locale, pas en UTC.
+func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID string, year, month int, loc *time.Location) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// Premier jour du mois 00:00:00 local -> premier jour du mois suivant
+	// 00:00:00 local (borne exclusive, gère les mois de 28 à 31 jours et les
+	// changements d'heure sans arithmétique manuelle).
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
 	// Vérifier que la période est dans le passé
-	monthPad := fmt.Sprintf("%02s", month)
-
-	// Calculate last day of month
-	var y, m int
-	fmt.Sscanf(year, "%d", &y)
-	fmt.Sscanf(month, "%d", &m)
-
-	lastDay := time.Date(y, time.Month(m+1), 0, 23, 59, 59, 0, time.UTC).Day()
-	endDate := fmt.Sprintf("%s-%s-%02d 23:59:59", year, monthPad, lastDay)
-
-	now := time.Now().UTC()
-	endTime, _ := time.Parse("2006-01-02 15:04:05", endDate)
-
-	if now.Before(endTime) {
-		log.Error(fmt.Sprintf("Month not finished yet: %s", endDate))
+	if time.Now().Before(monthEnd) {
+		log.Error(fmt.Sprintf("Month not finished yet: %s", monthEnd.Format(time.RFC3339)))
 		return false, nil
 	}
 
 	// Vérifier que toutes les commandes sont CLOSED
-	startDate := fmt.Sprintf("%s-%s-01 00:00:00", year, monthPad)
 	sqlQuery := `
 		SELECT COUNT(*) as not_closed_count
 		FROM orders
 		WHERE merchant_id = ?
 		  AND creation_date >= ?
-		  AND creation_date <= ?
+		  AND creation_date < ?
 		  AND state IS NOT NULL
 		  AND state <> 'CLOSED'
 	`
 
-	row := db.QueryRowContext(ctx, sqlQuery, merchantID, startDate, endDate)
+	row := db.QueryRowContext(ctx, sqlQuery, merchantID, acctUTCParam(monthStart), acctUTCParam(monthEnd))
 	var notClosedCount int
 	err := row.Scan(&notClosedCount)
 
@@ -173,10 +176,16 @@ func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID, ye
 	return true, nil
 }
 
-// GetTVAData récupère les données de TVA groupées par taux
-func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateFrom, dateTo string) ([]TVARow, error) {
+// GetTVAData récupère les données de TVA groupées par taux sur [from, toExclusive[.
+// Les deux bornes sont des instants absolus (déjà résolus dans le fuseau de
+// l'établissement par l'appelant) ; la borne haute est exclusive afin d'inclure
+// la dernière seconde du dernier jour et ses fractions.
+func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]TVARow, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
+
+	fromParam := acctUTCParam(from)
+	toParam := acctUTCParam(toExclusive)
 
 	// IFNULL est MySQL-only -> COALESCE (valide dans les deux dialectes)
 	sqlQuery := `
@@ -200,7 +209,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 			GROUP BY order_item_id
 		) e ON e.order_item_id = oi.order_item_id
 		WHERE o.creation_date >= ?
-		  AND o.creation_date <= ?
+		  AND o.creation_date < ?
 		  AND o.merchant_id = ?
 		  AND o.state = 'CLOSED'
 		  AND o.brand = 'WELLO_RESTO'
@@ -215,7 +224,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 		FROM orders o_fees
 		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = '-1'
 		WHERE o_fees.creation_date >= ?
-		  AND o_fees.creation_date <= ?
+		  AND o_fees.creation_date < ?
 		  AND o_fees.merchant_id = ?
 		  AND o_fees.brand = 'WELLO_RESTO'
 		  AND o_fees.created_by NOT IN ('-1', 'SCANNORDER')
@@ -223,7 +232,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 		  AND o_fees.state = 'CLOSED'
 	`
 
-	rows, err := db.QueryContext(ctx, sqlQuery, dateFrom, dateTo, merchantID, dateFrom, dateTo, merchantID)
+	rows, err := db.QueryContext(ctx, sqlQuery, fromParam, toParam, merchantID, fromParam, toParam, merchantID)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error fetching TVA data: %v", err))
 		return nil, err
@@ -284,8 +293,11 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID, dateF
 	return result, nil
 }
 
-// GetPaymentsData récupère les données de paiements groupées par moyen
-func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, dateFrom, dateTo string) ([]PaymentRow, error) {
+// GetPaymentsData récupère les données de paiements groupées par moyen sur
+// [from, toExclusive[. L'ancrage est la date de création de la commande, pas
+// celle du paiement : une commande créée le 31/08 à 23h30 et encaissée le 01/09
+// reste rattachée au rapport d'août.
+func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]PaymentRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -302,7 +314,7 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 		WHERE p.merchant_id = ?
 		  AND p.enabled = TRUE
 		  AND o.creation_date >= ?
-		  AND o.creation_date <= ?
+		  AND o.creation_date < ?
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND o.state = 'CLOSED'
 		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
@@ -311,7 +323,7 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID, 
 		ORDER BY l.label
 	`
 
-	rows, err := db.QueryContext(ctx, sqlQuery, merchantID, dateFrom, dateTo)
+	rows, err := db.QueryContext(ctx, sqlQuery, merchantID, acctUTCParam(from), acctUTCParam(toExclusive))
 	if err != nil {
 		log.Error(fmt.Sprintf("Error fetching payments data: %v", err))
 		return nil, err

@@ -1,9 +1,13 @@
 package accounting
 
-// ExportAccountingRequest structure pour la requête d'export
+// ExportAccountingRequest structure pour la requête d'export.
+// Les dates sont des dates de calendrier nues, interprétées dans le fuseau de
+// l'établissement (merchant.timezone) : premier jour inclus à 00:00:00 local,
+// dernier jour inclus jusqu'à 23:59:59 local. Ne pas envoyer de dates converties
+// en UTC, cela décalerait la période d'un jour.
 type ExportAccountingRequest struct {
-	DateFrom string `json:"date_from"` // Format: YYYY-MM-DD
-	DateTo   string `json:"date_to"`   // Format: YYYY-MM-DD
+	DateFrom string `json:"date_from"` // Format: YYYY-MM-DD (heure locale établissement)
+	DateTo   string `json:"date_to"`   // Format: YYYY-MM-DD (heure locale établissement)
 }
 
 // ExportAccountingResponse structure de réponse

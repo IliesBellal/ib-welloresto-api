@@ -52,30 +52,45 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		tzName = "UTC"
 	}
 
-	// Parse les dates UTC reçues par les applications puis conversion en TZ merchant.
-	fromUTC, err := parseUTCDateTime(dateFrom)
+	// Les dates reçues sont des dates de calendrier nues (YYYY-MM-DD) interprétées
+	// dans le fuseau de l'établissement : la période comptable court du premier
+	// jour 00:00:00 local au dernier jour 23:59:59 local. Une commande créée le
+	// 31/08 à 23h30 heure locale appartient donc au rapport d'août, quelle que
+	// soit la date de son encaissement.
+	fromLocal, err := parseLocalDate(dateFrom, merchantLoc)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Format date_from invalide. Attendu: YYYY-MM-DD HH:MM:SS",
+			Error:  "Format date_from invalide. Attendu: YYYY-MM-DD",
 		}, nil
 	}
-	toUTC, err := parseUTCDateTime(dateTo)
+	lastDayLocal, err := parseLocalDate(dateTo, merchantLoc)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Format date_to invalide. Attendu: YYYY-MM-DD HH:MM:SS",
+			Error:  "Format date_to invalide. Attendu: YYYY-MM-DD",
 		}, nil
 	}
 
-	fromLocal := fromUTC.In(merchantLoc)
-	toLocal := toUTC.In(merchantLoc)
+	if lastDayLocal.Before(fromLocal) {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "La date de fin doit être postérieure ou égale à la date de début.",
+		}, nil
+	}
+
+	// Borne haute exclusive (lendemain 00:00:00 local) : couvre 23:59:59 et ses
+	// fractions de seconde, et reste juste lors d'un changement d'heure — un
+	// jour peut durer 23h ou 25h, AddDate raisonne en heure murale.
+	toExclusive := lastDayLocal.AddDate(0, 0, 1)
+	// Borne affichée sur le PDF : dernière seconde incluse dans la période.
+	toLocal := toExclusive.Add(-time.Second)
 
 	year := fromLocal.Year()
 	month := int(fromLocal.Month())
 
 	// Vérifier que le mois est clôturé
-	monthClosed, err := s.repo.IsMonthClosed(ctx, user.MerchantID, strconv.Itoa(year), fmt.Sprintf("%02d", month))
+	monthClosed, err := s.repo.IsMonthClosed(ctx, user.MerchantID, year, month, merchantLoc)
 	if err != nil || !monthClosed {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -83,7 +98,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		}, nil
 	}
 
-	tvaRows, err := s.repo.GetTVAData(ctx, user.MerchantID, dateFrom, dateTo)
+	tvaRows, err := s.repo.GetTVAData(ctx, user.MerchantID, fromLocal, toExclusive)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -91,7 +106,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		}, nil
 	}
 
-	payments, err := s.repo.GetPaymentsData(ctx, user.MerchantID, dateFrom, dateTo)
+	payments, err := s.repo.GetPaymentsData(ctx, user.MerchantID, fromLocal, toExclusive)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -216,6 +231,28 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	}
 
 	return buf.Bytes(), nil
+}
+
+// parseLocalDate interprète une date de calendrier nue ('YYYY-MM-DD') comme le
+// début de journée dans le fuseau de l'établissement. Les valeurs horodatées
+// héritées ('YYYY-MM-DD HH:MM:SS', RFC3339) sont tolérées : seule la partie
+// date est retenue, l'heure reçue n'ayant aucun sens comme borne comptable.
+func parseLocalDate(raw string, loc *time.Location) (time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty date")
+	}
+
+	if len(value) > 10 {
+		value = value[:10]
+	}
+
+	t, err := time.ParseInLocation("2006-01-02", value, loc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid date format: %s", raw)
+	}
+
+	return t, nil
 }
 
 func parseUTCDateTime(raw string) (time.Time, error) {

@@ -102,9 +102,17 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 		t.Fatalf("seed labels mop: %v", err)
 	}
 
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
 	today := time.Now().UTC().Format("2006-01-02")
-	dayStart := today + " 00:00:00"
-	dayEnd := today + " 23:59:59"
+	nowParis := time.Now().In(paris)
+	// Journée comptable de l'établissement : 00:00:00 local -> lendemain
+	// 00:00:00 local (borne haute exclusive, comme en production).
+	dayStart := time.Date(nowParis.Year(), nowParis.Month(), nowParis.Day(), 0, 0, 0, 0, paris)
+	dayEnd := dayStart.AddDate(0, 0, 1)
 
 	// --- accounting ---
 	acctRepo := NewAccountingRepository(db)
@@ -115,12 +123,11 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 	}
 
 	// mois passé sans commandes -> clôturé ; mois courant -> pas fini
-	closed, err := acctRepo.IsMonthClosed(ctx, merchantID, "2025", "1")
+	closed, err := acctRepo.IsMonthClosed(ctx, merchantID, 2025, 1, paris)
 	if err != nil || !closed {
 		t.Fatalf("IsMonthClosed(2025-01) = (%v, %v), want true", closed, err)
 	}
-	nowMonth := time.Now().UTC()
-	closed, err = acctRepo.IsMonthClosed(ctx, merchantID, strconv.Itoa(nowMonth.Year()), strconv.Itoa(int(nowMonth.Month())))
+	closed, err = acctRepo.IsMonthClosed(ctx, merchantID, nowParis.Year(), int(nowParis.Month()), paris)
 	if err != nil || closed {
 		t.Fatalf("IsMonthClosed(mois courant) = (%v, %v), want false", closed, err)
 	}
@@ -151,6 +158,88 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 	vatRows, err = acctRepo.GetVATAggregationRows(ctx, merchantID, nowUTC, nowUTC, []string{"ubereats"}, nil)
 	if err != nil || len(vatRows) != 0 {
 		t.Fatalf("GetVATAggregationRows(filtre ubereats) = (%+v, %v), want 0", vatRows, err)
+	}
+
+	// --- bornes de journée en fuseau établissement ---
+	// Le rapport comptable est ancré sur orders.creation_date exprimé dans le
+	// fuseau de l'établissement. Vérifie la bascule de mois autour de minuit
+	// heure locale, là où l'ancienne implémentation (bornes UTC + borne haute
+	// non étendue à la fin de journée) perdait ou déplaçait des commandes.
+	if got := time.Date(2025, 8, 1, 0, 0, 0, 0, paris).UTC().Format("2006-01-02 15:04:05"); got != "2025-07-31 22:00:00" {
+		t.Fatalf("début août 2025 en UTC = %s, want 2025-07-31 22:00:00 (heure d'été)", got)
+	}
+	if got := time.Date(2025, 1, 1, 0, 0, 0, 0, paris).UTC().Format("2006-01-02 15:04:05"); got != "2024-12-31 23:00:00" {
+		t.Fatalf("début janvier 2025 en UTC = %s, want 2024-12-31 23:00:00 (heure d'hiver)", got)
+	}
+
+	seedOrderAt := func(label string, orderNum int, creationUTC time.Time, price int) int64 {
+		var id int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand, brand_status, order_type, state, price, TVA, HT, created_by, delivery_fees, creation_date)
+			VALUES ($1, $2, 'WELLO_RESTO', 'CLOSED', 'IN', 'CLOSED', $3, 0, 0, 'itest-acct-cashier', 0, $4)
+			RETURNING order_id`, merchantID, orderNum, price, creationUTC).Scan(&id); err != nil {
+			t.Fatalf("seed order %s: %v", label, err)
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
+			VALUES ($1, $2, $3, 1, $4)`, id, productID, merchantID, price); err != nil {
+			t.Fatalf("seed orderitem %s: %v", label, err)
+		}
+		return id
+	}
+
+	// A : créée le 31/08 à 23h30 heure de Paris -> appartient à août.
+	// B : créée le 01/09 à 00h30 heure de Paris -> appartient à septembre.
+	// Les deux tombent le 31/08 en UTC : c'est exactement le cas que des bornes
+	// UTC confondaient.
+	orderA := seedOrderAt("A (31/08 23h30 Paris)", 2, time.Date(2025, 8, 31, 21, 30, 0, 0, time.UTC), 1000)
+	seedOrderAt("B (01/09 00h30 Paris)", 3, time.Date(2025, 8, 31, 22, 30, 0, 0, time.UTC), 1500)
+
+	// A est encaissée le 01/09 à 00h30 heure de Paris : l'ancrage reste la date
+	// de création de la commande, donc le paiement compte pour août.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled, payment_date)
+		VALUES ($1, 'itest-acct-cashier', $2, 1000, 'ITESTMOP', true, $3)`,
+		merchantID, orderA, time.Date(2025, 8, 31, 22, 30, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("seed payment A: %v", err)
+	}
+
+	augStart := time.Date(2025, 8, 1, 0, 0, 0, 0, paris)
+	augEnd := augStart.AddDate(0, 1, 0) // 01/09 00:00:00 Paris, borne exclusive
+	sepEnd := augEnd.AddDate(0, 1, 0)
+
+	sumTTC := func(rows []TVARow) float64 {
+		var total float64
+		for _, row := range rows {
+			total += row.TTC
+		}
+		return total
+	}
+
+	augRows, err := acctRepo.GetTVAData(ctx, merchantID, augStart, augEnd)
+	if err != nil {
+		t.Fatalf("GetTVAData(août 2025) = %v", err)
+	}
+	if got := sumTTC(augRows); got != 1000 {
+		t.Fatalf("TTC août 2025 = %v, want 1000 (commande A seule)", got)
+	}
+
+	sepRows, err := acctRepo.GetTVAData(ctx, merchantID, augEnd, sepEnd)
+	if err != nil {
+		t.Fatalf("GetTVAData(septembre 2025) = %v", err)
+	}
+	if got := sumTTC(sepRows); got != 1500 {
+		t.Fatalf("TTC septembre 2025 = %v, want 1500 (commande B seule)", got)
+	}
+
+	augPay, err := acctRepo.GetPaymentsData(ctx, merchantID, augStart, augEnd)
+	if err != nil || len(augPay) != 1 || augPay[0].Amount != 1000 {
+		t.Fatalf("GetPaymentsData(août 2025) = (%+v, %v), want 1 ligne à 1000 — commande créée en août, encaissée en septembre", augPay, err)
+	}
+
+	sepPay, err := acctRepo.GetPaymentsData(ctx, merchantID, augEnd, sepEnd)
+	if err != nil || len(sepPay) != 0 {
+		t.Fatalf("GetPaymentsData(septembre 2025) = (%+v, %v), want 0 ligne", sepPay, err)
 	}
 
 	// --- reports ---
