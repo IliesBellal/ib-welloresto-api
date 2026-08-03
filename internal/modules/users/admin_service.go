@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	planningemployees "welloresto-api/internal/modules/planning/employees"
@@ -175,6 +176,21 @@ func (s *UsersService) ForceResetPassword(ctx context.Context, userID string, re
 		return err
 	}
 	s.redis.Delete(ctx, models.UserCachePrefix+oldToken)
+
+	// UpdatePassword only rotates this merchant's link. A user working for
+	// several merchants would otherwise keep valid sessions elsewhere, with a
+	// password that no longer exists — users.password is global, so every
+	// session must go. See docs/PASSWORD_RESET.md (decision D10).
+	otherTokens, err := s.userRepo.RotateRightsTokensExcept(ctx, userID, currentUser.MerchantID)
+	if err != nil {
+		// The password is already changed; failing here would report an error
+		// for an operation that partly succeeded. Surface it in the logs instead.
+		logger.FromContext(ctx).Error("force_reset_password: password changed for user " + userID + " but rotating other merchant sessions FAILED — they remain valid: " + err.Error())
+	}
+	for _, token := range otherTokens {
+		s.redis.Delete(ctx, models.UserCachePrefix+token)
+	}
+
 	if s.audit != nil {
 		_ = s.audit.LogChange(ctx, currentUser.MerchantID, currentUser.UserID, "force_reset_password", "merchant_user", userID, map[string]any{"reset": true}, map[string]any{"reset": true})
 	}

@@ -61,6 +61,7 @@ const (
 	FloorIDPrefix                        = "flr"
 	FloorAreaIDPrefix                    = "fra"
 	ObstacleIDPrefix                     = "obs"
+	PasswordResetIDPrefix                = "pwd-reset"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

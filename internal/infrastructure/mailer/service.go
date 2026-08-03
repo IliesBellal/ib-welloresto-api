@@ -31,6 +31,7 @@ type Service interface {
 	SendRefundNotification(s string, data RefundData)
 	SendPayoutPaidNotification(email string, name string, payout PayoutData)
 	SendOTP(data MfaOTPData)
+	SendPasswordReset(data PasswordResetData)
 
 	// SendInvoiceEmailToCustomer envoie une facture PDF en pièce jointe de façon SYNCHRONE
 	// (contrairement à SendAsync) afin que l'appelant puisse réagir à un échec d'envoi.

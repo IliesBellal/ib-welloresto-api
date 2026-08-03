@@ -298,3 +298,55 @@ func (h *AuthHandler) FallbackSMS(w http.ResponseWriter, r *http.Request) {
 		"message": "A new SMS code has been sent. Previous code has been invalidated.",
 	})
 }
+
+// ForgotPassword handles POST /auth/forgot-password (public).
+//
+// Always answers 200 with the same body, whatever happened: unknown account,
+// throttled, disabled, or a link actually sent. Any observable difference would
+// turn this endpoint into an account-enumeration oracle.
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req ForgotPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "forgot_password", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	if err := h.svc.SendPasswordResetLink(r.Context(), req.Login, helpers.ClientIP(r)); err != nil {
+		models.SendErrorJSON(w, "auth", "forgot_password", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "forgot_password", map[string]string{
+		"status":  "success",
+		"message": "Si un compte correspond, un email de réinitialisation a été envoyé.",
+	})
+}
+
+// ResetPassword handles POST /auth/reset-password (public).
+//
+// Consumes the single-use token and applies the new password. A rejected
+// password does not consume the token, so the user can retry with the same link.
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "reset_password", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	if err := h.svc.ConfirmPasswordReset(r.Context(), req.Token, req.NewPassword); err != nil {
+		if errors.Is(err, ErrInvalidResetToken) {
+			models.SendJSON(w, http.StatusBadRequest, "auth", "reset_password", map[string]string{
+				"error":   "invalid_or_expired_token",
+				"message": "Ce lien est invalide, expiré ou déjà utilisé.",
+			})
+			return
+		}
+		models.SendErrorJSON(w, "auth", "reset_password", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "reset_password", map[string]string{
+		"status":  "success",
+		"message": "Mot de passe réinitialisé. Toutes vos sessions ont été fermées.",
+	})
+}

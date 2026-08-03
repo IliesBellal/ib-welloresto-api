@@ -79,6 +79,24 @@ type MFAMailData struct {
 	ExpiresIn int // en minutes
 }
 
+// PasswordResetData est ce que l'appelant fournit pour un email
+// « mot de passe oublié ». ResetURL contient le token en clair : ne jamais
+// la journaliser (cf. docs/PASSWORD_RESET.md).
+type PasswordResetData struct {
+	UserEmail string
+	FirstName string
+	ResetURL  string
+	ExpiresIn int // en minutes
+}
+
+// PasswordResetMailData est le modèle passé au template password_reset.html.
+type PasswordResetMailData struct {
+	EmailBaseData
+	FirstName string
+	ResetURL  string
+	ExpiresIn int // en minutes
+}
+
 // InvoiceEmailData pour l'envoi de facture PDF en pièce jointe
 type InvoiceEmailData struct {
 	MerchantName  string

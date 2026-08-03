@@ -61,4 +61,11 @@ const (
 	VerificationCachePrefix = "verify:"
 
 	VerificationCacheTTL = 15 * time.Minute
+
+	// PasswordResetIPThrottlePrefix keys the per-IP counter on
+	// POST /auth/forgot-password. Best-effort only: Redis is not a source of
+	// truth here, the per-account limit enforced in SQL is (docs/PASSWORD_RESET.md).
+	PasswordResetIPThrottlePrefix = "pwd_reset:ip:"
+	PasswordResetIPThrottleTTL    = 1 * time.Hour
+	PasswordResetIPThrottleMax    = 20
 )

@@ -22,6 +22,7 @@ type AppConfig struct {
 	Kiosk       KioskConfig
 	Planning    PlanningConfig
 	Reservation ReservationConfig
+	Auth        AuthConfig
 }
 
 type App struct {
@@ -47,6 +48,7 @@ func Load() *AppConfig {
 		Kiosk:       loadKioskConfig(),
 		Planning:    loadPlanningConfig(),
 		Reservation: loadReservationConfig(),
+		Auth:        loadAuthConfig(),
 	}
 
 	cfg.validate()

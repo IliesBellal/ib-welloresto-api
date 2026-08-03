@@ -381,7 +381,7 @@ func TestSetPINSelf_InvalidLength(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper")
+	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper", "")
 
 	if err := svc.SetPINSelf(context.Background(), "merch-1", "user-1", "12345"); !errors.Is(err, ErrPINInvalidLength) {
 		t.Fatalf("want ErrPINInvalidLength, got %v", err)
@@ -394,7 +394,7 @@ func TestSetPINSelf_Conflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper")
+	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper", "")
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM users_rights WHERE merchant_id = ?`)).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -628,7 +628,7 @@ func TestResetPIN_SetsNullHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper")
+	svc := NewAuthService(NewAuthRepository(db), nil, nil, nil, "pepper", "")
 
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users_rights SET pin_hash = ? WHERE merchant_id = ? AND user_id = ?`)).
 		WithArgs((*string)(nil), "merch-1", "user-1").

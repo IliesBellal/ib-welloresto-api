@@ -15,7 +15,7 @@ func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firs
 		INSERT INTO users
 			(user_id, name, first_name, last_name, email, tel, password, token)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, fullName, firstName, lastName, email, tel, hashedPassword, token,
 	)
 	return err

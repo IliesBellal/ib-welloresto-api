@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -40,4 +41,24 @@ func handleJSON(w http.ResponseWriter, payload interface{}, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// ClientIP returns the caller's IP address, preferring the leftmost entry of
+// X-Forwarded-For (the API runs behind a reverse proxy, where RemoteAddr is
+// the proxy's address) and falling back to RemoteAddr.
+//
+// X-Forwarded-For is client-spoofable, so the result must only be used for
+// best-effort throttling and traceability — never as a security boundary.
+func ClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if first, _, found := strings.Cut(xff, ","); found {
+			return strings.TrimSpace(first)
+		}
+		return strings.TrimSpace(xff)
+	}
+
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }

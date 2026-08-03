@@ -8,13 +8,12 @@ import (
 	"strings"
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	auditpkg "welloresto-api/internal/modules/audit"
 	"welloresto-api/internal/modules/notification"
 	planningemployees "welloresto-api/internal/modules/planning/employees"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // GeofenceRadiusMeters is the maximum distance from the delivery address at which
@@ -130,24 +129,17 @@ func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
 	return earthRadiusMeters * c
 }
 
+// HashPassword and validateNewPassword delegate to internal/helpers so the
+// password policy and bcrypt cost stay identical across every entry point —
+// this module, and the forgot-password flow in internal/modules/auth (which
+// cannot import this package: users' own tests import auth, so the reverse
+// dependency would create an import cycle at test build time).
 func HashPassword(password string) (string, error) {
-	if password == "" {
-		return "", models.ErrInvalidInput
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
-	if err != nil {
-		return "", err
-	}
-
-	return string(hash), nil
+	return helpers.HashUserPassword(password)
 }
 
 func validateNewPassword(password string) error {
-	if len(password) < 8 {
-		return models.ErrInvalidInputPasswordTooShort
-	}
-	return nil
+	return helpers.ValidatePassword(password)
 }
 
 func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass string, newPass string) (string, error) {
@@ -188,6 +180,19 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 	}
 
 	s.redis.Delete(ctx, models.UserCachePrefix+token)
+
+	// UpdatePassword only rotates the caller's current merchant link. Their
+	// sessions on other merchants must go too — the password is global. The
+	// current link is excluded so the caller keeps the session they are using
+	// (newToken). See docs/PASSWORD_RESET.md (decision D10).
+	otherTokens, err := s.userRepo.RotateRightsTokensExcept(ctx, user.UserID, user.MerchantID)
+	if err != nil {
+		// The password is already changed — log rather than fail the request.
+		logger.FromContext(ctx).Error("update_password: password changed for user " + user.UserID + " but rotating other merchant sessions FAILED — they remain valid: " + err.Error())
+	}
+	for _, other := range otherTokens {
+		s.redis.Delete(ctx, models.UserCachePrefix+other)
+	}
 
 	return newToken, nil
 }

@@ -389,6 +389,69 @@ func (r *UsersRepository) UpdatePassword(ctx context.Context, userID string, mer
 	return newMerchantToken, nil
 }
 
+// RotateRightsTokensExcept issues a fresh session token for every merchant link
+// of a user except the given merchant, and returns the tokens it replaced.
+//
+// UpdatePassword above only rotates the caller's own merchant link. A user
+// linked to several merchants would therefore keep valid sessions elsewhere
+// after a password change — which is wrong, since users.password is global.
+// Callers should purge the returned tokens from Redis afterwards.
+//
+// Pass an empty exceptMerchantID to rotate every link.
+// See docs/PASSWORD_RESET.md (decision D10).
+func (r *UsersRepository) RotateRightsTokensExcept(ctx context.Context, userID, exceptMerchantID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := `SELECT id, token FROM users_rights WHERE user_id = ?`
+	args := []interface{}{userID}
+	if strings.TrimSpace(exceptMerchantID) != "" {
+		query += ` AND merchant_id <> ?`
+		args = append(args, exceptMerchantID)
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	type rightsRow struct {
+		id    string
+		token sql.NullString
+	}
+
+	var links []rightsRow
+	for rows.Next() {
+		var link rightsRow
+		if err := rows.Scan(&link.id, &link.token); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	oldTokens := make([]string, 0, len(links))
+	for _, link := range links {
+		newToken, err := generateToken()
+		if err != nil {
+			return oldTokens, err
+		}
+		if _, err := db.ExecContext(ctx,
+			`UPDATE users_rights SET token = ? WHERE id = ?`, newToken, link.id); err != nil {
+			return oldTokens, err
+		}
+		if link.token.Valid && strings.TrimSpace(link.token.String) != "" {
+			oldTokens = append(oldTokens, link.token.String)
+		}
+	}
+
+	return oldTokens, nil
+}
+
 func (r *UsersRepository) GetUserProfile(ctx context.Context, userID string) (*models.UserProfileResponse, error) {
 	db := dbx.GetDB(ctx, r.database)
 

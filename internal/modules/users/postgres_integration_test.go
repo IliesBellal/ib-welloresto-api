@@ -89,7 +89,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	repo := NewUserRepository(db)
 
 	// --- create_repository: CreateUser + InsertUserRights (InsertReturningID) ---
-	if err := repo.CreateUser(ctx, userID, "ITest User", "ITest", "User", "itestuser", "itest-users@example.com", "+33611111111", "hash-1", "user-tok-users"); err != nil {
+	if err := repo.CreateUser(ctx, userID, "ITest User", "ITest", "User", "itest-users@example.com", "+33611111111", "hash-1", "user-tok-users"); err != nil {
 		t.Fatalf("CreateUser failed against postgres: %v", err)
 	}
 	rightsID, err := repo.InsertUserRights(ctx, userID, merchantID, true, "rights-tok-users")
@@ -355,7 +355,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	}
 
 	// Second linkable user exercises the insert branch of the upsert.
-	if err := repo.CreateUser(ctx, linkableUserID, "ITest Linkable", "Linkme", "User", "itestlink", "itest-linkable@example.com", "+33622222222", "hash-3", "user-tok-linkable"); err != nil {
+	if err := repo.CreateUser(ctx, linkableUserID, "ITest Linkable", "Linkme", "User", "itest-linkable@example.com", "+33622222222", "hash-3", "user-tok-linkable"); err != nil {
 		t.Fatalf("CreateUser (linkable) failed: %v", err)
 	}
 	linkables, totalLinkable, err := repo.SearchLinkableUsers(ctx, merchantID, LinkableUserSearchFilters{Search: "Linkme", Page: 1, PageSize: 10})
@@ -401,5 +401,122 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	linked, err = repo.MerchantUserLinkExists(ctx, merchantID, userID)
 	if err != nil || linked {
 		t.Fatalf("expected link disabled, got linked=%v err=%v", linked, err)
+	}
+}
+
+// TestRotateRightsTokensExcept_Postgres proves the multi-merchant session fix:
+// a password change must not leave the user logged in on another merchant.
+// See docs/PASSWORD_RESET.md (decision D10).
+func TestRotateRightsTokensExcept_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const userID = "itest-rotate-user-1"
+	const tokenA = "itest-rotate-token-merchant-a"
+	const tokenB = "itest-rotate-token-merchant-b"
+	const tokenC = "itest-rotate-token-merchant-c"
+	var merchantA, merchantB, merchantC int64
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users_rights WHERE user_id = $1`, userID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
+		for _, id := range []int64{merchantA, merchantB, merchantC} {
+			if id != 0 {
+				_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, id)
+			}
+		}
+	})
+
+	seedMerchant := func(name, siret string) int64 {
+		var id int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, lat, lng)
+			VALUES ($1, 'addr', '1', 'street', '75001', 'Paris', $2, 'https://example.com', '0600000000', $2, 'Europe/Paris', 1.0, 2.0)
+			RETURNING id`, name, siret).Scan(&id); err != nil {
+			t.Fatalf("seed merchant %s: %v", name, err)
+		}
+		return id
+	}
+
+	merchantA = seedMerchant("ITest Rotate A", "siret-rotate-a")
+	merchantB = seedMerchant("ITest Rotate B", "siret-rotate-b")
+	merchantC = seedMerchant("ITest Rotate C", "siret-rotate-c")
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (user_id, name, first_name, last_name, password, email, tel, token, enabled)
+		VALUES ($1, 'ITest Rotate', 'ITest', 'Rotate', 'hash', 'itest-rotate@example.com', '+33600000000', 'user-tok-rotate', true)`,
+		userID); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+
+	for _, link := range []struct {
+		merchant int64
+		token    string
+	}{{merchantA, tokenA}, {merchantB, tokenB}, {merchantC, tokenC}} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO users_rights (user_id, merchant_id, token, enabled, login_enabled)
+			VALUES ($1, $2, $3, true, true)`,
+			userID, strconv.FormatInt(link.merchant, 10), link.token); err != nil {
+			t.Fatalf("seed users_rights: %v", err)
+		}
+	}
+
+	repo := NewUserRepository(db)
+	merchantAID := strconv.FormatInt(merchantA, 10)
+
+	oldTokens, err := repo.RotateRightsTokensExcept(ctx, userID, merchantAID)
+	if err != nil {
+		t.Fatalf("RotateRightsTokensExcept() error = %v", err)
+	}
+
+	// B and C are returned so the caller can evict them from Redis; A is not.
+	if len(oldTokens) != 2 {
+		t.Fatalf("got %d old tokens %v, want 2 (merchants B and C)", len(oldTokens), oldTokens)
+	}
+	returned := map[string]bool{}
+	for _, tok := range oldTokens {
+		returned[tok] = true
+	}
+	if !returned[tokenB] || !returned[tokenC] {
+		t.Fatalf("old tokens = %v, want %q and %q", oldTokens, tokenB, tokenC)
+	}
+	if returned[tokenA] {
+		t.Fatalf("the excluded merchant's token was returned — the caller's own session would be dropped")
+	}
+
+	// In the database: A untouched, B and C rotated to something new.
+	readToken := func(merchant int64) string {
+		var tok string
+		if err := db.QueryRowContext(ctx,
+			`SELECT token FROM users_rights WHERE user_id = $1 AND merchant_id = $2`,
+			userID, strconv.FormatInt(merchant, 10)).Scan(&tok); err != nil {
+			t.Fatalf("read token for merchant %d: %v", merchant, err)
+		}
+		return tok
+	}
+
+	if got := readToken(merchantA); got != tokenA {
+		t.Fatalf("excluded merchant token = %q, want it unchanged (%q)", got, tokenA)
+	}
+	if got := readToken(merchantB); got == tokenB {
+		t.Fatal("merchant B token was not rotated — that session survives the password change")
+	}
+	if got := readToken(merchantC); got == tokenC {
+		t.Fatal("merchant C token was not rotated — that session survives the password change")
+	}
+	if readToken(merchantB) == readToken(merchantC) {
+		t.Fatal("merchants B and C got the same token — each link must get its own")
+	}
+
+	// Empty exceptMerchantID rotates every link, including A.
+	allOld, err := repo.RotateRightsTokensExcept(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("RotateRightsTokensExcept(all) error = %v", err)
+	}
+	if len(allOld) != 3 {
+		t.Fatalf("got %d old tokens, want 3 when no merchant is excluded", len(allOld))
+	}
+	if readToken(merchantA) == tokenA {
+		t.Fatal("merchant A token was not rotated when no merchant was excluded")
 	}
 }

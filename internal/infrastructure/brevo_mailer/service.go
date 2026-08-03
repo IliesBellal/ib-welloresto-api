@@ -100,6 +100,23 @@ func (b *BrevoMailer) SendOTP(data mailer.MfaOTPData) {
 	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Votre code de vérification MFA", "otp.html", email_data)
 }
 
+// SendPasswordReset sends the "mot de passe oublié" link.
+// data.ResetURL embeds the clear reset token — never log it.
+func (b *BrevoMailer) SendPasswordReset(data mailer.PasswordResetData) {
+	email_data := mailer.PasswordResetMailData{
+		EmailBaseData: mailer.EmailBaseData{
+			BrandName:    "Wello Resto",
+			Year:         time.Now().Year(),
+			SupportEmail: mailer.SupportEmail,
+			BrandLogoURL: mailer.BrandLogoURL,
+		},
+		FirstName: data.FirstName,
+		ResetURL:  data.ResetURL,
+		ExpiresIn: data.ExpiresIn,
+	}
+	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Réinitialisation de votre mot de passe", "password_reset.html", email_data)
+}
+
 // SendRefundNotification sends a refund notification email
 func (b *BrevoMailer) SendRefundNotification(email string, data mailer.RefundData) {
 	b.SendAsync("Wello Resto", mailer.InvoiceEmail, email, "Remboursement", "customer_refund.html", data)

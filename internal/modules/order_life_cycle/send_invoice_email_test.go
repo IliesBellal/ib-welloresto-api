@@ -78,6 +78,7 @@ func (f *fakeMailerService) SendRefundNotification(s string, data mailer.RefundD
 func (f *fakeMailerService) SendPayoutPaidNotification(email, name string, payout mailer.PayoutData) {
 }
 func (f *fakeMailerService) SendOTP(data mailer.MfaOTPData)                          {}
+func (f *fakeMailerService) SendPasswordReset(data mailer.PasswordResetData)         {}
 func (f *fakeMailerService) TriggerTestEmail(w http.ResponseWriter, r *http.Request) {}
 func (f *fakeMailerService) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
 	f.sentTo = to

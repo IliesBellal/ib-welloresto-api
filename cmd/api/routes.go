@@ -177,7 +177,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(mysqlDB)
-	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper)
+	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper, cfg.Auth.PasswordResetBaseURL)
 	authMiddleware := middleware.Auth(&authService)
 
 	// ---- POS ----
@@ -522,6 +522,10 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/mfa/fallback-sms", authH.FallbackSMS)
 		r.Post("/send-verification", authH.SendVerification)
 		r.Post("/verify", authH.VerifyCode)
+
+		// Public: the caller has lost their password, so no token can be required.
+		r.Post("/forgot-password", authH.ForgotPassword)
+		r.Post("/reset-password", authH.ResetPassword)
 
 		r.With(authMiddleware).Post("/pin", authH.AuthPIN)
 		r.With(authMiddleware).Post("/pin/set", authH.SetPIN)

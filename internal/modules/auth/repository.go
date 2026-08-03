@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -415,6 +416,165 @@ func (r *AuthRepository) UpdatePassword(ctx context.Context, userID, newHash str
 	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `UPDATE users SET password = ? WHERE user_id = ?`, newHash, userID)
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// Password reset ("mot de passe oublié") — see docs/PASSWORD_RESET.md
+// ---------------------------------------------------------------------------
+
+// GetUserForPasswordReset resolves a login (username OR email) to the account
+// that should receive a reset link. Returns (nil, nil) when nothing matches —
+// the caller must not turn that into a distinguishable HTTP response.
+//
+// The name/email predicate is a deliberate copy of the one in Login so that
+// "whatever works to sign in also works here". Two extra conditions apply:
+// the account must be enabled, and it must have a deliverable email.
+func (r *AuthRepository) GetUserForPasswordReset(ctx context.Context, login string) (*PasswordResetUser, error) {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return nil, nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	row := db.QueryRowContext(ctx, `
+SELECT u.user_id, u.email, u.first_name, u.last_name
+FROM users u
+INNER JOIN users_rights ur ON ur.user_id = u.user_id
+WHERE
+    (
+        (UPPER(u.name) = UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
+        OR (UPPER(u.email) = UPPER(?) AND u.email <> '' AND u.email IS NOT NULL)
+    )
+    AND u.enabled = TRUE
+    AND u.email IS NOT NULL
+    AND u.email <> ''
+LIMIT 1`, login, login)
+
+	user := &PasswordResetUser{}
+	err := row.Scan(&user.UserID, &user.Email, &user.FirstName, &user.LastName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// CountPasswordResetsSince counts a user's reset requests since a cutoff.
+// Backs the per-account rate limit, which lives in SQL rather than Redis so it
+// keeps working when the cache is down.
+func (r *AuthRepository) CountPasswordResetsSince(ctx context.Context, userID string, since time.Time) (int, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var count int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM password_resets WHERE user_id = ? AND created_at >= ?`,
+		userID, since,
+	).Scan(&count)
+
+	return count, err
+}
+
+// InsertPasswordReset stores a new reset request. tokenHash is the sha256 hex
+// of the token mailed to the user — the clear token is never persisted.
+func (r *AuthRepository) InsertPasswordReset(ctx context.Context, id, userID, tokenHash string, expiresAt time.Time, requestedIP string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	var ip interface{}
+	if strings.TrimSpace(requestedIP) != "" {
+		ip = requestedIP
+	}
+
+	_, err := db.ExecContext(ctx, `
+INSERT INTO password_resets (id, user_id, token_hash, expires_at, requested_ip)
+VALUES (?, ?, ?, ?, ?)`, id, userID, tokenHash, expiresAt, ip)
+
+	return err
+}
+
+// ConsumePasswordResetToken atomically marks a token as used and returns the
+// user it belongs to. Returns ErrInvalidResetToken when the token is unknown,
+// expired, or already consumed — the three are not distinguished on purpose.
+//
+// The single UPDATE ... RETURNING is what makes the single-use guarantee hold:
+// a SELECT followed by an UPDATE would leave a window in which two concurrent
+// clicks on the same link both pass. Postgres-only by design — password_resets
+// never existed in MySQL (see docs/PASSWORD_RESET.md, decision D8).
+func (r *AuthRepository) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var userID string
+	err := db.QueryRowContext(ctx, `
+UPDATE password_resets
+SET used_at = `+dbx.UTCNow()+`
+WHERE token_hash = ?
+  AND used_at IS NULL
+  AND expires_at > `+dbx.UTCNow()+`
+RETURNING user_id`, tokenHash).Scan(&userID)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalidResetToken
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
+}
+
+// RotateRightsTokensForUser issues a fresh session token for every merchant
+// link of a user and returns the tokens it replaced.
+//
+// This is what actually signs the user out everywhere. Deleting the Redis
+// entries is not enough: GetUserByToken falls back to `WHERE ur.token = ?` in
+// the database, so a cache eviction is silently repaired by the next request.
+// Callers should purge the returned tokens from Redis afterwards.
+func (r *AuthRepository) RotateRightsTokensForUser(ctx context.Context, userID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `SELECT id, token FROM users_rights WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	type rightsRow struct {
+		id    string
+		token string
+	}
+
+	var links []rightsRow
+	for rows.Next() {
+		var link rightsRow
+		if err := rows.Scan(&link.id, &link.token); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	oldTokens := make([]string, 0, len(links))
+	for _, link := range links {
+		newToken, err := helpers.GenerateToken(32)
+		if err != nil {
+			return oldTokens, err
+		}
+		if _, err := db.ExecContext(ctx,
+			`UPDATE users_rights SET token = ? WHERE id = ?`, newToken, link.id); err != nil {
+			return oldTokens, err
+		}
+		if strings.TrimSpace(link.token) != "" {
+			oldTokens = append(oldTokens, link.token)
+		}
+	}
+
+	return oldTokens, nil
 }
 
 // GetUserByPIN looks up the employee whose PIN matches within a merchant.

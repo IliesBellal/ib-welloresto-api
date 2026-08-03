@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,14 +37,18 @@ type AuthService struct {
 	sms     sms.Service
 	pepper  string
 	sfGroup singleflight.Group
+
+	// resetBaseURL is the back-office URL a password-reset link points to.
+	// Empty means no reset email is sent (see docs/PASSWORD_RESET.md).
+	resetBaseURL string
 }
 
-func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sms sms.Service, pepper string) AuthService {
+func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sms sms.Service, pepper string, resetBaseURL string) AuthService {
 	var cache authCache
 	if rc != nil {
 		cache = rc
 	}
-	return AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper}
+	return AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper, resetBaseURL: resetBaseURL}
 }
 
 // lockoutState is serialised as JSON in Redis under PINLockoutPrefix+anchorToken.
@@ -864,4 +871,193 @@ func customerFormRequirementsRawMessage(raw []byte) *json.RawMessage {
 	}
 	msg := json.RawMessage(raw)
 	return &msg
+}
+
+// ---------------------------------------------------------------------------
+// Password reset ("mot de passe oublié") — see docs/PASSWORD_RESET.md
+// ---------------------------------------------------------------------------
+
+// PasswordResetIssue carries what the caller needs to deliver a reset link.
+// ClearToken exists only here and in the email that is about to be sent: it is
+// never persisted (only its sha256 is) and must never be logged or returned in
+// an HTTP response.
+type PasswordResetIssue struct {
+	User       PasswordResetUser
+	ClearToken string
+	ExpiresAt  time.Time
+}
+
+// hashResetToken maps a clear reset token to what is stored in the database.
+func hashResetToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// RequestPasswordReset issues a reset token for a login (username or email).
+//
+// Returns (nil, nil) whenever no link should be sent: unknown account, disabled
+// account, no email on file, or per-account rate limit reached. The caller MUST
+// respond identically in all of those cases — any observable difference turns
+// this endpoint into an account-enumeration oracle.
+func (s *AuthService) RequestPasswordReset(ctx context.Context, login, clientIP string) (*PasswordResetIssue, error) {
+	log := logger.FromContext(ctx)
+
+	user, err := s.repo.GetUserForPasswordReset(ctx, login)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		log.Info("🔑 Password reset requested for an unknown or ineligible login — no email sent")
+		return nil, nil
+	}
+
+	// Rate limit per account, enforced in SQL so it survives a Redis outage.
+	since := time.Now().UTC().Add(-time.Hour)
+	count, err := s.repo.CountPasswordResetsSince(ctx, user.UserID, since)
+	if err != nil {
+		return nil, err
+	}
+	if count >= PasswordResetMaxPerHour {
+		log.Warn("🔑 Password reset rate limit reached for user " + user.UserID + " — no email sent")
+		return nil, nil
+	}
+
+	clearToken, err := helpers.GenerateToken(PasswordResetTokenBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	expiresAt := time.Now().UTC().Add(PasswordResetTTL)
+	id := helpers.GeneratePrefixedID(helpers.PasswordResetIDPrefix)
+
+	if err := s.repo.InsertPasswordReset(ctx, id, user.UserID, hashResetToken(clearToken), expiresAt, clientIP); err != nil {
+		return nil, err
+	}
+
+	return &PasswordResetIssue{User: *user, ClearToken: clearToken, ExpiresAt: expiresAt}, nil
+}
+
+// ConfirmPasswordReset consumes a reset token and applies the new password.
+//
+// The new password is validated BEFORE the token is consumed: a rejected
+// password must not burn a single-use link.
+func (s *AuthService) ConfirmPasswordReset(ctx context.Context, token, newPassword string) error {
+	log := logger.FromContext(ctx)
+
+	if strings.TrimSpace(token) == "" {
+		return ErrInvalidResetToken
+	}
+	if err := helpers.ValidatePassword(newPassword); err != nil {
+		return err
+	}
+
+	userID, err := s.repo.ConsumePasswordResetToken(ctx, hashResetToken(token))
+	if err != nil {
+		return err
+	}
+
+	hash, err := helpers.HashUserPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
+
+	// Sign the user out everywhere. Rotating users_rights.token in the database
+	// is the part that actually works: purging Redis alone would be undone by
+	// the next request, since GetUserByToken falls back to `WHERE ur.token = ?`.
+	oldTokens, err := s.repo.RotateRightsTokensForUser(ctx, userID)
+	if err != nil {
+		// The password IS already changed at this point. Returning an error here
+		// would tell the user it failed and push them to retry with a token that
+		// is now spent. Surface it loudly in the logs instead.
+		log.Error("🔑 Password reset succeeded for user " + userID + " but session rotation FAILED — existing sessions remain valid: " + err.Error())
+		return nil
+	}
+
+	if s.redis != nil {
+		for _, old := range oldTokens {
+			s.redis.Delete(ctx, models.UserCachePrefix+old)
+		}
+	}
+
+	log.Info("🔑 Password reset completed for user " + userID + " — " + strconv.Itoa(len(oldTokens)) + " session(s) invalidated")
+	return nil
+}
+
+// SendPasswordResetLink is the full POST /auth/forgot-password use case:
+// per-IP throttle, token issuance, then the email.
+//
+// It returns an error only for genuine server failures. Every "no link sent"
+// outcome — unknown account, throttled IP, rate-limited account, missing
+// PASSWORD_RESET_BASE_URL — returns nil, because the handler must answer the
+// same thing in all cases (account-enumeration).
+func (s *AuthService) SendPasswordResetLink(ctx context.Context, login, clientIP string) error {
+	log := logger.FromContext(ctx)
+
+	if s.tooManyResetRequestsFromIP(ctx, clientIP) {
+		log.Warn("🔑 Password reset throttled for IP " + clientIP)
+		return nil
+	}
+
+	issue, err := s.RequestPasswordReset(ctx, login, clientIP)
+	if err != nil {
+		return err
+	}
+	if issue == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(s.resetBaseURL) == "" {
+		log.Error("🔑 PASSWORD_RESET_BASE_URL is not configured — reset token issued but NO email sent")
+		return nil
+	}
+	if s.email == nil {
+		log.Error("🔑 No mailer configured — reset token issued but NO email sent")
+		return nil
+	}
+
+	resetURL := s.resetBaseURL
+	separator := "?"
+	if strings.Contains(resetURL, "?") {
+		separator = "&"
+	}
+	resetURL += separator + "token=" + url.QueryEscape(issue.ClearToken)
+
+	s.email.SendPasswordReset(mailer.PasswordResetData{
+		UserEmail: issue.User.Email,
+		FirstName: issue.User.FirstName,
+		ResetURL:  resetURL,
+		ExpiresIn: int(PasswordResetTTL.Minutes()),
+	})
+
+	// Deliberately logs the user id, never the token or the URL.
+	log.Info("🔑 Password reset link sent to user " + issue.User.UserID)
+	return nil
+}
+
+// tooManyResetRequestsFromIP is a best-effort per-IP counter in Redis.
+//
+// Read-modify-write rather than an atomic INCR (the cache wrapper exposes only
+// Get/Set/Delete), so it can undercount under concurrency — acceptable because
+// this is a throttle, not the security boundary: the per-account limit lives in
+// SQL. A Redis outage disables it entirely and the flow keeps working.
+func (s *AuthService) tooManyResetRequestsFromIP(ctx context.Context, clientIP string) bool {
+	if s.redis == nil || strings.TrimSpace(clientIP) == "" {
+		return false
+	}
+
+	key := models.PasswordResetIPThrottlePrefix + clientIP
+
+	count := 0
+	if raw, found := s.redis.Get(ctx, key); found {
+		count, _ = strconv.Atoi(raw)
+	}
+	if count >= models.PasswordResetIPThrottleMax {
+		return true
+	}
+
+	s.redis.Set(ctx, key, strconv.Itoa(count+1), models.PasswordResetIPThrottleTTL)
+	return false
 }

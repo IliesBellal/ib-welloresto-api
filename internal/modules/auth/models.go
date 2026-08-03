@@ -14,12 +14,49 @@ const (
 	PINLength      = 4
 	PINMaxAttempts = 5
 	PINLockoutBase = 30 * time.Second
+
+	// PasswordResetTTL is how long a reset link stays valid.
+	PasswordResetTTL = 30 * time.Minute
+
+	// PasswordResetTokenBytes is the entropy of the token sent by email
+	// (32 bytes → 64 hex chars).
+	PasswordResetTokenBytes = 32
+
+	// PasswordResetMaxPerHour caps reset requests per account per hour. Enforced
+	// in SQL (COUNT over password_resets), so it survives a Redis outage.
+	PasswordResetMaxPerHour = 5
 )
 
 var (
 	ErrPINInvalidLength = errors.New("pin_invalid_length")
 	ErrPINConflict      = errors.New("pin_already_used")
+
+	// ErrInvalidResetToken covers every rejection of a reset token — unknown,
+	// expired, or already consumed. Deliberately indistinguishable to the
+	// caller: telling them which one leaks whether a token ever existed.
+	ErrInvalidResetToken = errors.New("invalid_or_expired_token")
 )
+
+// ForgotPasswordRequest is the body of POST /auth/forgot-password.
+// Login accepts a username or an email, exactly like POST /auth/login.
+type ForgotPasswordRequest struct {
+	Login string `json:"login"`
+}
+
+// ResetPasswordRequest is the body of POST /auth/reset-password.
+type ResetPasswordRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+// PasswordResetUser is the minimal user projection the reset flow needs:
+// who to email, and under what name.
+type PasswordResetUser struct {
+	UserID    string
+	Email     string
+	FirstName string
+	LastName  string
+}
 
 type PINAuthRequest struct {
 	PIN string `json:"pin"`

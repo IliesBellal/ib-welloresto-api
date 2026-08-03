@@ -396,3 +396,76 @@ func TestProcessUpsellPatternsForMerchant_Postgres(t *testing.T) {
 		t.Fatalf("expected at least one co-occurrence pattern (A<->B), got 0")
 	}
 }
+
+// TestCleanupExpiredPasswordResets_Postgres exercises the exported cron entry
+// point directly — unlike the other tasks in this file.
+//
+// It is safe here precisely because password_resets is a table introduced by
+// migration 078: it holds no real data, only what tests put in it. The task
+// also deletes strictly on age, so seeded recent rows are provably untouched.
+//
+// See docs/PASSWORD_RESET.md.
+func TestCleanupExpiredPasswordResets_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const userID = "itest-purge-user-1"
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM password_resets WHERE user_id = $1`, userID)
+	})
+	if _, err := db.ExecContext(ctx, `DELETE FROM password_resets WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("pre-clean: %v", err)
+	}
+
+	now := time.Now().UTC()
+	seed := func(id string, createdAt time.Time) {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO password_resets (id, user_id, token_hash, expires_at, created_at)
+			VALUES ($1, $2, $3, $4, $5)`,
+			id, userID, id+"-hash", createdAt.Add(30*time.Minute), createdAt); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	// Straddle the 7-day retention boundary on both sides.
+	seed("itest-purge-old-8d", now.AddDate(0, 0, -8))
+	seed("itest-purge-old-30d", now.AddDate(0, 0, -30))
+	seed("itest-purge-edge-6d", now.AddDate(0, 0, -6))
+	seed("itest-purge-fresh", now.Add(-time.Minute))
+
+	tm := &TasksManager{DB: db}
+	tm.CleanupExpiredPasswordResets()
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM password_resets WHERE user_id = $1 ORDER BY id`, userID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	defer rows.Close()
+
+	survivors := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		survivors[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+
+	if len(survivors) != 2 {
+		t.Fatalf("got %d surviving rows %v, want 2 (the ones under 7 days old)", len(survivors), survivors)
+	}
+	if !survivors["itest-purge-edge-6d"] {
+		t.Error("a 6-day-old row was purged — the retention window is too aggressive")
+	}
+	if !survivors["itest-purge-fresh"] {
+		t.Error("a row created a minute ago was purged")
+	}
+	if survivors["itest-purge-old-8d"] || survivors["itest-purge-old-30d"] {
+		t.Error("rows older than the retention window were not purged")
+	}
+}

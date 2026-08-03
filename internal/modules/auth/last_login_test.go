@@ -18,7 +18,7 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	defer db.Close()
 
 	repo := NewAuthRepository(db)
-	svc := NewAuthService(repo, nil, nil, nil, "")
+	svc := NewAuthService(repo, nil, nil, nil, "", "")
 	token := "rights-token"
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT

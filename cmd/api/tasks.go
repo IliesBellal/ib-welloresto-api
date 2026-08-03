@@ -60,6 +60,12 @@ func SetupTasks(
 	// 1er du mois à 4h : purge des anciennes suggestions
 	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 
+	// ── Sécurité ─────────────────────────────────────────────────────────────
+	// Chaque nuit à 5h : purge des demandes de réinitialisation de mot de passe.
+	// 5h et non 4h pour ne pas tomber en même temps que la purge upsell le 1er
+	// du mois — deux DELETE simultanés se disputeraient l'unique connexion DB.
+	add("0 5 * * *", taskManager.CleanupExpiredPasswordResets)
+
 	// Démarrage du Cron en arrière-plan
 	c.Start()
 	log.Info("✅ Système CRON démarré (toutes tâches actives, protégées par SkipIfStillRunning + Recover)")

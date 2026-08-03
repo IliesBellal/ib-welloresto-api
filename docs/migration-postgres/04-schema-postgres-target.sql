@@ -2507,6 +2507,32 @@ COMMENT ON COLUMN packages.scannorder_ready IS 'Allow access SNO options in Quic
 COMMENT ON COLUMN packages.kiosks_enabled IS 'Added to MySQL source after the 07/13 DDL dump this migration was audited against — not present in wello-resto-mysql-ddl.md, confirmed by the user as a recent production addition (see 25-tier2-conversion-log.md).';
 
 -- ---------------------------------------------------------------------
+-- password_resets
+--   nouvelle table (migration 078, non presente dans le dump wello-resto-mysql-ddl.md audite) ; flux "Mot de passe oublie", module internal/modules/auth
+--   table nativement Postgres : jamais creee cote MySQL, aucune conversion de type a documenter
+--   token_hash: sha256 hex de longueur fixe, declare varchar(64) et non char(64) — bpchar complete par des espaces et tronque les espaces significatifs a la comparaison
+--   aucune colonne ON UPDATE current_timestamp() : used_at est pose explicitement par l'UPDATE de consommation
+--   FK candidate (non creee) : user_id -> users.user_id
+-- ---------------------------------------------------------------------
+CREATE TABLE password_resets (
+    id varchar(64) NOT NULL,
+    user_id varchar(64) NOT NULL,
+    token_hash varchar(64) NOT NULL,
+    expires_at timestamptz NOT NULL,
+    used_at timestamptz,
+    requested_ip varchar(45),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_password_resets_token_hash ON password_resets (token_hash);
+CREATE INDEX idx_password_resets_user_created ON password_resets (user_id, created_at);
+CREATE INDEX idx_password_resets_created_at ON password_resets (created_at);
+COMMENT ON TABLE password_resets IS 'Demandes de reinitialisation de mot de passe. Le token n''est jamais stocke en clair : token_hash = sha256 hex (64 caracteres) du token envoye par email.';
+COMMENT ON COLUMN password_resets.token_hash IS 'sha256 hex du token en clair. Unique : sert de cle de lookup lors de la consommation.';
+COMMENT ON COLUMN password_resets.used_at IS 'NULL tant que le token n''a pas ete consomme. Passe a now() par l''UPDATE atomique de consommation — garantit l''usage unique.';
+COMMENT ON COLUMN password_resets.requested_ip IS 'IP de la demande (45 caracteres = IPv6 max). Tracabilite et rate limit par IP en secours si Redis est indisponible.';
+
+-- ---------------------------------------------------------------------
 -- payments
 --   payment_date: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes)
 --   collation table utf8mb3_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes

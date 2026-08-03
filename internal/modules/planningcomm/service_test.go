@@ -30,7 +30,8 @@ func (m *mockMailer) SendOrderConfirmationToCustomer(to string, data mailer.Scan
 func (m *mockMailer) SendRefundNotification(s string, data mailer.RefundData) {}
 func (m *mockMailer) SendPayoutPaidNotification(email string, name string, payout mailer.PayoutData) {
 }
-func (m *mockMailer) SendOTP(data mailer.MfaOTPData) {}
+func (m *mockMailer) SendOTP(data mailer.MfaOTPData)                  {}
+func (m *mockMailer) SendPasswordReset(data mailer.PasswordResetData) {}
 func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
 	return nil
 }

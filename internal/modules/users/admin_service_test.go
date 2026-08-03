@@ -169,6 +169,16 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), "user_9", "merchant_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
+	// The user's links on OTHER merchants must be rotated too: the password is
+	// global, so no session may survive it (docs/PASSWORD_RESET.md, D10).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, token FROM users_rights WHERE user_id = ? AND merchant_id <> ?`)).
+		WithArgs("user_9", "merchant_1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "token"}).AddRow("88", "other_merchant_token"))
+
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users_rights SET token = ? WHERE id = ?`)).
+		WithArgs(sqlmock.AnyArg(), "88").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
 	if err := svc.ForceResetPassword(ctx, "user_9", ForceResetPasswordRequest{NewPassword: "NouveauPass123"}); err != nil {
 		t.Fatalf("ForceResetPassword() error = %v", err)
 	}
