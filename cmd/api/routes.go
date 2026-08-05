@@ -758,8 +758,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office
 		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
 		r.Post("/components", menuH.CreateComponent)                                                            // used by: back-office
-		r.Post("/components/categories", menuH.CreateComponentCategory)                                         // used by: back-office
-		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory)                         // used by: back-office
+		r.Post("/components/categories", menuH.CreateComponentCategory) // used by: back-office
+		// display-order avant {category_id} : chi priorise le segment statique,
+		// même disposition que /marketing-categories ci-dessus
+		r.Patch("/components/categories/display-order", menuH.UpdateComponentCategoriesDisplayOrder) // used by: back-office
+		r.Patch("/components/categories/{category_id}", menuH.UpdateComponentCategory)               // used by: back-office
+		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory)              // used by: back-office
 
 		// --- Discounts/Promotions ---
 		r.Get("/discounts", discountsH.ListActiveDiscounts)

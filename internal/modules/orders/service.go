@@ -290,7 +290,7 @@ func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryR
 		return nil, err
 	}
 
-	orders, totalItems, page, limit, err := s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
+	orders, totalItems, totalRevenue, page, limit, err := s.ordersRepo.GetHistory(ctx, user.MerchantID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +300,21 @@ func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryR
 		totalPages = int(math.Ceil(float64(totalItems) / float64(limit)))
 	}
 
+	var avgBasket float64
+	if totalItems > 0 {
+		avgBasket = float64(totalRevenue) / float64(totalItems)
+	}
+
 	return &models.OrderHistoryData{
-		Metadata: models.PaginationMetadata{
-			TotalItems:  totalItems,
-			TotalPages:  totalPages,
-			CurrentPage: page,
-			Limit:       limit,
+		Metadata: models.OrderHistoryMetadata{
+			PaginationMetadata: models.PaginationMetadata{
+				TotalItems:  totalItems,
+				TotalPages:  totalPages,
+				CurrentPage: page,
+				Limit:       limit,
+			},
+			TotalRevenue: totalRevenue,
+			AvgBasket:    avgBasket,
 		},
 		Orders: orders,
 	}, nil

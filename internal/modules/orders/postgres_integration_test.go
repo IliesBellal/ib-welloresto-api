@@ -345,7 +345,7 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 
 	// ============ GetHistory (search + 3 IN dynamiques simultanés) ============
 	search := "dupont"
-	hist, total, page, limit, err := repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{
+	hist, total, _, page, limit, err := repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{
 		Search:    &search,
 		Channel:   []string{"wello_resto"},
 		OrderType: []string{"take_away"},
@@ -358,7 +358,7 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("unexpected history: total=%d page=%d limit=%d orders=%+v", total, page, limit, hist)
 	}
 	// recherche par order_id numérique (cast COALESCE integer → texte)
-	hist, total, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{Search: &order3Str})
+	hist, total, _, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{Search: &order3Str})
 	if err != nil || total != 1 {
 		t.Fatalf("GetHistory (search by id) = total=%d err=%v, want 1", total, err)
 	}

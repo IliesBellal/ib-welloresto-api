@@ -2,6 +2,7 @@ package menu
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -956,6 +957,9 @@ func (h *MenuHandler) DeleteProductCategory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// DeleteComponentCategory — DELETE /menu/components/categories/{category_id}
+// Query : mode=reassign&reassign_to=<id> | mode=purge
+// Une catégorie non vide sans mode est refusée (400 component_category_not_empty).
 func (h *MenuHandler) DeleteComponentCategory(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -972,8 +976,18 @@ func (h *MenuHandler) DeleteComponentCategory(w http.ResponseWriter, r *http.Req
 
 	log := logger.FromContext(ctx)
 
-	err := h.service.DeleteComponentCategory(ctx, token, categoryID)
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	reassignTo := strings.TrimSpace(r.URL.Query().Get("reassign_to"))
+
+	err := h.service.DeleteComponentCategory(ctx, token, categoryID, mode, reassignTo)
 	if err != nil {
+		if errors.Is(err, ErrComponentCategoryNotEmpty) {
+			models.SendJSON(w, http.StatusBadRequest, "menu", "delete_component_category", map[string]string{
+				"error":   "component_category_not_empty",
+				"message": "category still has components: pass mode=reassign&reassign_to=<id> or mode=purge",
+			})
+			return
+		}
 		log.Error("[ERROR] DeleteComponentCategory error: " + err.Error())
 		models.SendErrorJSON(w, "menu", "delete_component_category", err)
 		return
@@ -982,6 +996,70 @@ func (h *MenuHandler) DeleteComponentCategory(w http.ResponseWriter, r *http.Req
 	models.SendJSON(w, http.StatusOK, "menu", "delete_component_category", map[string]string{
 		"status":  "success",
 		"message": "component_category_disabled",
+	})
+}
+
+// UpdateComponentCategory — PATCH /menu/components/categories/{category_id}
+func (h *MenuHandler) UpdateComponentCategory(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_component_category", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	categoryID := chi.URLParam(r, "category_id")
+	if strings.TrimSpace(categoryID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_component_category", map[string]string{"error": "missing_category_id"})
+		return
+	}
+
+	var req UpdateComponentCategoryPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_component_category", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.UpdateComponentCategory(ctx, token, categoryID, req); err != nil {
+		log.Error("[ERROR] UpdateComponentCategory error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_component_category", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_component_category", map[string]interface{}{
+		"status":  "success",
+		"message": "component_category_updated",
+	})
+}
+
+// UpdateComponentCategoriesDisplayOrder — PATCH /menu/components/categories/display-order
+func (h *MenuHandler) UpdateComponentCategoriesDisplayOrder(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "update_component_categories_display_order", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req UpdateComponentCategoriesDisplayOrderPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "update_component_categories_display_order", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.UpdateComponentCategoriesDisplayOrder(ctx, token, req.CategoryIDs); err != nil {
+		log.Error("[ERROR] UpdateComponentCategoriesDisplayOrder error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "update_component_categories_display_order", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "update_component_categories_display_order", map[string]interface{}{
+		"status":  "success",
+		"message": "component_categories_display_order_updated",
 	})
 }
 

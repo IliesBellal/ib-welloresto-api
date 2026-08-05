@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -39,6 +41,22 @@ func menuCastChar(expr string) string {
 func menuNumericID(id string) bool {
 	_, err := strconv.Atoi(strings.TrimSpace(id))
 	return err == nil
+}
+
+// capitalizeFirst met la première lettre en majuscule en raisonnant sur la
+// première *rune*, pas sur le premier octet. L'ancienne forme
+// `strings.ToUpper(string(name[0])) + name[1:]` corrompait tout nom commençant
+// par un caractère multi-octets : "épicerie" (0xC3 0xA9 ...) devenait
+// "Ã©picerie", l'octet de tête étant réinterprété comme une rune isolée.
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // AvailableProduct is a lightweight product record used for upsell candidate selection.
@@ -2715,17 +2733,150 @@ func (r *MenuRepository) DeleteComponent(ctx context.Context, merchantID, compon
 	return nil
 }
 
-func (r *MenuRepository) DeleteComponentCategory(ctx context.Context, merchantID, categoryID string) error {
+// ComponentCategoryExists indique si la catégorie existe et est active pour ce
+// marchand. Sert à distinguer un 404 d'une suppression silencieuse : l'UPDATE
+// de suppression ne remonte pas l'absence de ligne.
+func (r *MenuRepository) ComponentCategoryExists(ctx context.Context, merchantID, categoryID string) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx,
-		`UPDATE component_category 
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM component_category
+		 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		categoryID, merchantID,
+	).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// CountComponentsInCategory compte les ingrédients actifs rattachés à la catégorie.
+func (r *MenuRepository) CountComponentsInCategory(ctx context.Context, merchantID, categoryID string) (int, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM components
+		 WHERE category_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		categoryID, merchantID,
+	).Scan(&count); err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+// DeleteComponentCategory désactive une catégorie d'ingrédients et traite ses
+// ingrédients selon reassignTo :
+//   - reassignTo non vide : les ingrédients y sont déplacés puis la catégorie
+//     est désactivée ;
+//   - reassignTo vide : les ingrédients sont désactivés avec la catégorie (purge).
+//
+// Les deux écritures sont dans une transaction : sans cela un échec entre les
+// deux laissait des ingrédients rattachés à une catégorie désactivée, donc
+// absents de GetAllComponents (qui n'émet que les catégories enabled) — ils
+// disparaissaient de l'application tout en restant en base.
+func (r *MenuRepository) DeleteComponentCategory(ctx context.Context, merchantID, categoryID, reassignTo string) error {
+	tx, err := r.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	// la transaction brute ne passe pas par dbx.GetDB : on l'enveloppe pour
+	// que le rebind des placeholders s'applique aussi ici
+	txx := dbx.Wrap(tx)
+
+	if reassignTo != "" {
+		if _, err = txx.ExecContext(ctx,
+			`UPDATE components
+			 SET category_id = ?
+			 WHERE category_id = ? AND merchant_id = ? AND enabled = TRUE`,
+			reassignTo, categoryID, merchantID,
+		); err != nil {
+			return err
+		}
+	} else {
+		if _, err = txx.ExecContext(ctx,
+			`UPDATE components
+			 SET enabled = FALSE
+			 WHERE category_id = ? AND merchant_id = ? AND enabled = TRUE`,
+			categoryID, merchantID,
+		); err != nil {
+			return err
+		}
+	}
+
+	if _, err = txx.ExecContext(ctx,
+		`UPDATE component_category
 		 SET enabled = FALSE
 		 WHERE merchant_categ_id = ? AND merchant_id = ?`,
 		categoryID, merchantID,
-	)
-	if err != nil {
+	); err != nil {
 		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+// UpdateComponentCategory renomme une catégorie d'ingrédients.
+// Adressage par merchant_categ_id (varchar) comme le reste du domaine
+// composants — les catégories marketing, elles, s'adressent par id.
+func (r *MenuRepository) UpdateComponentCategory(ctx context.Context, merchantID, categoryID string, payload UpdateComponentCategoryPayload) error {
+	if payload.Name == nil {
+		return nil
+	}
+
+	name := capitalizeFirst(strings.TrimSpace(*payload.Name))
+	if name == "" {
+		return fmt.Errorf("category_name_required")
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE component_category
+		 SET name = ?
+		 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		name, categoryID, merchantID,
+	); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
+// UpdateComponentCategoriesDisplayOrder réécrit categ_order selon l'ordre du
+// tableau reçu. Les catégories créées avant cette fonctionnalité valent toutes
+// 999 (constante à la création) : le premier enregistrement les normalise en 1..N.
+func (r *MenuRepository) UpdateComponentCategoriesDisplayOrder(ctx context.Context, merchantID string, categoryIDs []string) error {
+	if len(categoryIDs) == 0 {
+		return nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	for i, id := range categoryIDs {
+		if _, err := db.ExecContext(ctx,
+			`UPDATE component_category
+			 SET categ_order = ?
+			 WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+			i+1, id, merchantID,
+		); err != nil {
+			return err
+		}
 	}
 
 	_ = r.setMenuUpdated(ctx, merchantID)
@@ -2776,10 +2927,7 @@ func (r *MenuRepository) UpdateComponent(ctx context.Context, merchantID, compon
 
 	if updates.Name != nil && *updates.Name != "" {
 		// Mettre la première lettre en majuscule
-		name := strings.TrimSpace(*updates.Name)
-		if len(name) > 0 {
-			name = strings.ToUpper(string(name[0])) + name[1:]
-		}
+		name := capitalizeFirst(strings.TrimSpace(*updates.Name))
 		updateFields = append(updateFields, "name = ?")
 		updateArgs = append(updateArgs, name)
 	}
@@ -2901,10 +3049,7 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 	}
 
 	// Mettre la première lettre en majuscule
-	name := strings.TrimSpace(*p.Name)
-	if len(name) > 0 {
-		name = strings.ToUpper(string(name[0])) + name[1:]
-	}
+	name := capitalizeFirst(strings.TrimSpace(*p.Name))
 
 	// Déterminer les valeurs optionnelles d'achat
 	var purchaseCost interface{} = 0
@@ -2992,9 +3137,7 @@ func (r *MenuRepository) CreateComponentCategory(ctx context.Context, p *UpsertC
 	}
 
 	// Mettre la première lettre en majuscule
-	if len(name) > 0 {
-		name = strings.ToUpper(string(name[0])) + name[1:]
-	}
+	name = capitalizeFirst(name)
 
 	// Insérer la catégorie. merchant_categ_id est NOT NULL sans défaut (MySQL
 	// non-strict insérait '' avant l'UPDATE qui suit) : '' explicite pour la
@@ -3054,9 +3197,7 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 	}
 
 	// Mettre la première lettre en majuscule
-	if len(name) > 0 {
-		name = strings.ToUpper(string(name[0])) + name[1:]
-	}
+	name = capitalizeFirst(name)
 
 	// Récupérer le prochain categ_order
 	var maxOrder int
@@ -3864,9 +4005,7 @@ func (r *MenuRepository) CreateMarketingCategory(ctx context.Context, merchantID
 		return "", fmt.Errorf("category_name_required")
 	}
 
-	if len(name) > 0 {
-		name = strings.ToUpper(string(name[0])) + name[1:]
-	}
+	name = capitalizeFirst(name)
 
 	var maxOrder int
 	err := db.QueryRowContext(ctx,
@@ -3908,7 +4047,7 @@ func (r *MenuRepository) UpdateMarketingCategory(ctx context.Context, merchantID
 		if name == "" {
 			return fmt.Errorf("category_name_required")
 		}
-		name = strings.ToUpper(string(name[0])) + name[1:]
+		name = capitalizeFirst(name)
 		fields = append(fields, "name = ?")
 		args = append(args, name)
 	}

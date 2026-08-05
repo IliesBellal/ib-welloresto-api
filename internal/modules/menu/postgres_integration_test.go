@@ -547,8 +547,23 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	if err := repo.DeleteComponent(ctx, merchantID, compID); err != nil {
 		t.Fatalf("DeleteComponent: %v", err)
 	}
-	if err := repo.DeleteComponentCategory(ctx, merchantID, compCatID); err != nil {
+	// renommage avant suppression : couvre le PATCH et la capitalisation rune-safe
+	renamed := "épicerie fine itest"
+	if err := repo.UpdateComponentCategory(ctx, merchantID, compCatID, UpdateComponentCategoryPayload{Name: &renamed}); err != nil {
+		t.Fatalf("UpdateComponentCategory: %v", err)
+	}
+	if err := repo.UpdateComponentCategoriesDisplayOrder(ctx, merchantID, []string{compCatID}); err != nil {
+		t.Fatalf("UpdateComponentCategoriesDisplayOrder: %v", err)
+	}
+	if _, err := repo.CountComponentsInCategory(ctx, merchantID, compCatID); err != nil {
+		t.Fatalf("CountComponentsInCategory: %v", err)
+	}
+	// reassignTo vide = purge : les ingrédients restants sont désactivés avec la catégorie
+	if err := repo.DeleteComponentCategory(ctx, merchantID, compCatID, ""); err != nil {
 		t.Fatalf("DeleteComponentCategory: %v", err)
+	}
+	if exists, err := repo.ComponentCategoryExists(ctx, merchantID, compCatID); err != nil || exists {
+		t.Fatalf("ComponentCategoryExists après delete = (%v, %v), attendu (false, nil)", exists, err)
 	}
 	if err := repo.DeleteProductCategory(ctx, merchantID, catID2); err != nil {
 		t.Fatalf("DeleteProductCategory: %v", err)

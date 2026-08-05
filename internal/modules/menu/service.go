@@ -2,6 +2,7 @@ package menu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -315,7 +316,14 @@ func (s *MenuService) CreateComponentCategory(ctx context.Context, token string,
 	}
 
 	req.MerchantID = user.MerchantID
-	return s.legacy.CreateComponentCategory(ctx, req)
+	categoryID, err := s.legacy.CreateComponentCategory(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	// Les catégories d'ingrédients font partie du menu mis en cache : sans
+	// invalidation la nouvelle catégorie n'apparaît qu'à l'expiration du cache.
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return categoryID, nil
 }
 
 func (s *MenuService) CreateProductCategory(ctx context.Context, token string, req *CreateProductCategoryPayload) (string, error) {
@@ -603,13 +611,106 @@ func (s *MenuService) DeleteComponent(ctx context.Context, token, componentID st
 	return s.legacy.DeleteComponent(ctx, user.MerchantID, componentID)
 }
 
-func (s *MenuService) DeleteComponentCategory(ctx context.Context, token, categoryID string) error {
+// Modes de suppression d'une catégorie d'ingrédients non vide.
+const (
+	DeleteComponentCategoryModeReassign = "reassign"
+	DeleteComponentCategoryModePurge    = "purge"
+)
+
+// ErrComponentCategoryNotEmpty est renvoyé quand la catégorie contient encore
+// des ingrédients et qu'aucun mode n'a été choisi. Le refus est délibéré :
+// l'ancien comportement désactivait la catégorie en laissant les ingrédients
+// pointer dessus, ce qui les rendait invisibles dans toute l'application.
+var ErrComponentCategoryNotEmpty = errors.New("component_category_not_empty")
+
+// DeleteComponentCategory supprime une catégorie d'ingrédients.
+// mode == "reassign" : les ingrédients sont déplacés vers reassignTo.
+// mode == "purge"    : les ingrédients sont désactivés avec la catégorie.
+// Une catégorie vide se supprime sans mode.
+func (s *MenuService) DeleteComponentCategory(ctx context.Context, token, categoryID, mode, reassignTo string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	return s.legacy.DeleteComponentCategory(ctx, user.MerchantID, categoryID)
+	exists, err := s.legacy.ComponentCategoryExists(ctx, user.MerchantID, categoryID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return models.ErrNotFound
+	}
+
+	count, err := s.legacy.CountComponentsInCategory(ctx, user.MerchantID, categoryID)
+	if err != nil {
+		return err
+	}
+
+	// Une catégorie vide n'a rien à réaffecter : le mode est ignoré.
+	target := ""
+	if count > 0 {
+		switch mode {
+		case DeleteComponentCategoryModeReassign:
+			reassignTo = strings.TrimSpace(reassignTo)
+			if reassignTo == "" || reassignTo == categoryID {
+				return fmt.Errorf("%w: reassign_to", models.ErrInvalidInput)
+			}
+			targetExists, err := s.legacy.ComponentCategoryExists(ctx, user.MerchantID, reassignTo)
+			if err != nil {
+				return err
+			}
+			if !targetExists {
+				return fmt.Errorf("%w: reassign_to", models.ErrInvalidInput)
+			}
+			target = reassignTo
+		case DeleteComponentCategoryModePurge:
+			// target reste vide : les ingrédients sont désactivés
+		default:
+			return ErrComponentCategoryNotEmpty
+		}
+	}
+
+	if err := s.legacy.DeleteComponentCategory(ctx, user.MerchantID, categoryID, target); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
+}
+
+// UpdateComponentCategory renomme une catégorie d'ingrédients.
+func (s *MenuService) UpdateComponentCategory(ctx context.Context, token, categoryID string, req UpdateComponentCategoryPayload) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	exists, err := s.legacy.ComponentCategoryExists(ctx, user.MerchantID, categoryID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return models.ErrNotFound
+	}
+
+	if err := s.legacy.UpdateComponentCategory(ctx, user.MerchantID, categoryID, req); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
+}
+
+// UpdateComponentCategoriesDisplayOrder réordonne les catégories d'ingrédients.
+func (s *MenuService) UpdateComponentCategoriesDisplayOrder(ctx context.Context, token string, categoryIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.UpdateComponentCategoriesDisplayOrder(ctx, user.MerchantID, categoryIDs); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
 }
 
 func (s *MenuService) DeleteProduct(ctx context.Context, token, productID string) error {

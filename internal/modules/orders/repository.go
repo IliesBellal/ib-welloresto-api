@@ -176,7 +176,7 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
 	return out, nil
 }
 
-func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, int, int, int, error) {
+func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, int, int64, int, int, error) {
 
 	// =========================
 	// 1️⃣ BUILD WHERE + ARGS
@@ -261,12 +261,13 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	}
 
 	countQuery := `
-		SELECT COUNT(*)
+		SELECT COUNT(*), COALESCE(SUM(o.price), 0)
 	` + fromClause + where
 
 	var totalItems int
-	if err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
-		return nil, 0, page, limit, err
+	var totalRevenue int64
+	if err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, countQuery, args...).Scan(&totalItems, &totalRevenue); err != nil {
+		return nil, 0, 0, page, limit, err
 	}
 
 	offset := (page - 1) * limit
@@ -285,7 +286,7 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, 0, page, limit, err
+		return nil, 0, 0, page, limit, err
 	}
 	defer rows.Close()
 
@@ -293,17 +294,17 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, 0, page, limit, err
+			return nil, 0, 0, page, limit, err
 		}
 		orderIDs = append(orderIDs, id)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, page, limit, err
+		return nil, 0, 0, page, limit, err
 	}
 
 	if len(orderIDs) == 0 {
-		return []models.Order{}, totalItems, page, limit, nil
+		return []models.Order{}, totalItems, totalRevenue, page, limit, nil
 	}
 
 	// =========================
@@ -324,10 +325,10 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		"",
 	)
 	if err != nil {
-		return nil, 0, page, limit, err
+		return nil, 0, 0, page, limit, err
 	}
 
-	return orders, totalItems, page, limit, nil
+	return orders, totalItems, totalRevenue, page, limit, nil
 }
 
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {

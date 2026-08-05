@@ -20,9 +20,15 @@ type PaginationMetadata struct {
 	Limit       int `json:"limit"`
 }
 
+type OrderHistoryMetadata struct {
+	PaginationMetadata
+	TotalRevenue int64   `json:"total_revenue"`
+	AvgBasket    float64 `json:"avg_basket"`
+}
+
 type OrderHistoryData struct {
-	Metadata PaginationMetadata `json:"metadata"`
-	Orders   []Order            `json:"orders"`
+	Metadata OrderHistoryMetadata `json:"metadata"`
+	Orders   []Order              `json:"orders"`
 }
 
 type CustomerListData struct {

@@ -278,6 +278,16 @@ type UpsertComponentCategoryPayload struct {
 	MerchantID string `json:"-"`    // Sera défini par le service
 }
 
+// UpdateComponentCategoryPayload pour le renommage d'une catégorie de composants
+type UpdateComponentCategoryPayload struct {
+	Name *string `json:"name"` // Pointeur : distingue l'omission d'une valeur vide
+}
+
+// UpdateComponentCategoriesDisplayOrderPayload pour le réordonnancement
+type UpdateComponentCategoriesDisplayOrderPayload struct {
+	CategoryIDs []string `json:"category_ids"`
+}
+
 // CreateProductCategoryPayload pour la création de catégories de produits
 type CreateProductCategoryPayload struct {
 	Name       string `json:"name"` // Nom de la catégorie
