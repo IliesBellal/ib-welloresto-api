@@ -187,13 +187,14 @@ type UnitConversion struct {
 
 // Temporaire, à remplacer par les vraies struct
 type Attribute struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`  // attribute_type
-	Name    string            `json:"name"`  // name
-	Title   string            `json:"title"` // title
-	Min     int               `json:"min"`   // min_options
-	Max     int               `json:"max"`   // max_options
-	Options []AttributeOption `json:"options"`
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`  // attribute_type
+	Name         string            `json:"name"`  // name
+	Title        string            `json:"title"` // title
+	Min          int               `json:"min"`   // min_options
+	Max          int               `json:"max"`   // max_options
+	Options      []AttributeOption `json:"options"`
+	ProductCount int               `json:"product_count"` // Nombre de produits utilisant cet attribut
 }
 
 type AttributeOption struct {

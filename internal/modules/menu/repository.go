@@ -302,6 +302,38 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 		return nil, fmt.Errorf("rows iteration error (options): %w", err)
 	}
 
+	// 3. Comptage du nombre de produits liés à chaque attribut
+	// GROUP BY sur configurable_attribute_id, colonne de tête de la PK (configurable_attribute_id, product_id)
+	// -> scan d'index, pas de coût supplémentaire notable même sur un gros catalogue.
+	countQuery := `
+        SELECT pca.configurable_attribute_id, COUNT(*)
+        FROM product_configurable_attribute pca
+        INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
+        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND ca.brand = ? AND pca.enabled = TRUE
+        GROUP BY pca.configurable_attribute_id`
+
+	countRows, err := db.QueryContext(ctx, countQuery, merchantID, models.BrandWelloResto)
+	if err != nil {
+		return nil, fmt.Errorf("query attribute product counts failed: %w", err)
+	}
+	defer countRows.Close()
+
+	for countRows.Next() {
+		var attrID string
+		var count int
+		if err := countRows.Scan(&attrID, &count); err != nil {
+			return nil, fmt.Errorf("scan attribute product count failed: %w", err)
+		}
+
+		if index, exists := attrIndexMap[attrID]; exists {
+			attributes[index].ProductCount = count
+		}
+	}
+
+	if err := countRows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error (attribute product counts): %w", err)
+	}
+
 	// Si aucun attribut n'est trouvé, on renvoie une slice vide et pas nil
 	if attributes == nil {
 		attributes = []Attribute{}
