@@ -323,6 +323,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		deliverooService,
 		cfg.Stripe.OnboardingReturnURL,
 		cfg.Stripe.OnboardingRefreshURL,
+		cfg.ScanNOrder.SNORedirectBaseURL,
 	)
 	integrationsHandler := integrationsModule.NewHandler(integrationsService, r2Client)
 

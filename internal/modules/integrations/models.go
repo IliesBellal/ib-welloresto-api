@@ -52,6 +52,16 @@ type ScanNOrderIntegration struct {
 	LogoURL   *string `json:"logo_url"`
 	BannerURL *string `json:"banner_url"`
 
+	// AccessURL is the public storefront URL of the merchant
+	// (SCANNORDER_BASE_URL/restaurant/{slug}). nil when the merchant has no
+	// main QR code or when SCANNORDER_BASE_URL is not configured.
+	AccessURL *string `json:"access_url"`
+
+	// slug is the merchant main QR code (qrcodes.code), read by the repository
+	// and consumed by the service to build AccessURL. Unexported: never
+	// serialized, package-internal plumbing only.
+	slug string
+
 	// Storefront copy
 	PrimaryColor     string  `json:"primary_color"`
 	HeaderTitle      *string `json:"header_title"`

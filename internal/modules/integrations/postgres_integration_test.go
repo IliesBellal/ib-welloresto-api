@@ -23,6 +23,7 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM integration_uber_eats WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM integration_deliveroo WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM qrcodes WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM stripe_accounts WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
 	}
@@ -121,6 +122,45 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 	}
 	if sno == nil || !sno.Active || sno.PrimaryColor != "#000000" || sno.DeliveryDistanceLimit != 5000 {
 		t.Fatalf("unexpected scannorder integration: %+v", sno)
+	}
+	// pas encore de QR code -> slug vide, donc pas d'access_url
+	if sno.slug != "" {
+		t.Fatalf("expected empty slug without qrcodes row, got %q", sno.slug)
+	}
+
+	// --- slug / access_url ---
+	// QR serveur et QR supprimé : ignorés, seul le QR principal fait le slug
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO qrcodes (merchant_id, code, user_id, deleted) VALUES ($1, 'itest-integ-waiter', 'u-1', false)`,
+		merchantID); err != nil {
+		t.Fatalf("seed qrcode serveur: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO qrcodes (merchant_id, code, deleted) VALUES ($1, 'itest-integ-deleted', true)`,
+		merchantID); err != nil {
+		t.Fatalf("seed qrcode supprimé: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO qrcodes (merchant_id, code, deleted) VALUES ($1, 'itest-integ-slug', false)`,
+		merchantID); err != nil {
+		t.Fatalf("seed qrcode principal: %v", err)
+	}
+	sno, err = repo.GetScanNOrderIntegration(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("GetScanNOrderIntegration (slug) failed: %v", err)
+	}
+	if sno.slug != "itest-integ-slug" {
+		t.Fatalf("expected slug itest-integ-slug, got %q", sno.slug)
+	}
+
+	// bout en bout : le service assemble access_url à partir de la base URL
+	svc := NewService(db, nil, nil, nil, "", "", "https://sno.itest/")
+	snoSvc, err := svc.GetScanNOrder(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("GetScanNOrder (service) failed: %v", err)
+	}
+	if snoSvc.AccessURL == nil || *snoSvc.AccessURL != "https://sno.itest/restaurant/itest-integ-slug" {
+		t.Fatalf("unexpected access_url: %v", snoSvc.AccessURL)
 	}
 
 	if err := repo.UpdateScanNOrderImageURL(ctx, merchantID, "logo_url", "https://cdn.example.com/logo.png"); err != nil {

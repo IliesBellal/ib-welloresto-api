@@ -249,7 +249,18 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 				  AND  created_by  = 'SCANNORDER'
 				  AND  isPaid      = true
 				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
-			) AS orders_count
+			) AS orders_count,
+			(
+				-- QR principal du merchant (ni table ni serveur) = {slug} des
+				-- routes ScanNOrder, cf. kiosk.getMerchantSlug
+				SELECT code
+				FROM   qrcodes
+				WHERE  merchant_id = ?
+				  AND  location_id IS NULL
+				  AND  user_id     IS NULL
+				  AND  deleted     = false
+				LIMIT  1
+			) AS slug
 		FROM   scannorder_settings snos
 		INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 		WHERE  snos.merchant_id = ?
@@ -276,11 +287,13 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		deliveryDistanceLimit int
 		revenue               int
 		ordersCount           int
+		slug                  sql.NullString
 	)
 
 	err := db.QueryRowContext(ctx, q,
 		merchantID, // revenue subquery
 		merchantID, // orders_count subquery
+		merchantID, // slug subquery
 		merchantID, // WHERE clause
 	).Scan(
 		&activated, &commissionRate, &closedUntil, &lastSync, &syncedItems,
@@ -290,7 +303,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		&takeawayEnabled, &takeawayAutoAccept,
 		&deliveryEnabled, &deliveryAutoAccept,
 		&deliveryDistanceLimit,
-		&revenue, &ordersCount,
+		&revenue, &ordersCount, &slug,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -306,6 +319,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 
 	result := &ScanNOrderIntegration{
 		Platform:              "scannorder",
+		slug:                  slug.String, // "" si le merchant n'a pas de QR principal
 		Active:                activated,
 		CommissionRate:        commissionRate,
 		AutoAcceptOrders:      takeawayAutoAccept || deliveryAutoAccept,

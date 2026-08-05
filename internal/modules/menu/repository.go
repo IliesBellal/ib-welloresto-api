@@ -235,12 +235,14 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	db := dbx.GetDB(ctx, r.database)
 
 	// 1. Récupération des attributs
+	// brand filtre les attributs créés par les plateformes tierces (UBER_EATS,
+	// DELIVEROO) : seuls les attributs WELLO_RESTO sont exposés par cette route.
 	attrQuery := `
         SELECT id, attribute_type, name, title, min_options, max_options
         FROM configurable_attributes
-        WHERE merchant_id = ? AND enabled = TRUE`
+        WHERE merchant_id = ? AND enabled = TRUE AND brand = ?`
 
-	attrRows, err := db.QueryContext(ctx, attrQuery, merchantID)
+	attrRows, err := db.QueryContext(ctx, attrQuery, merchantID, models.BrandWelloResto)
 	if err != nil {
 		return nil, fmt.Errorf("query attributes failed: %w", err)
 	}
@@ -274,9 +276,9 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
         SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url
         FROM configurable_attributes ca
         INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
-        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1`
+        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND ca.brand = ? AND cao.enabled = 1`
 
-	optRows, err := db.QueryContext(ctx, optQuery, merchantID)
+	optRows, err := db.QueryContext(ctx, optQuery, merchantID, models.BrandWelloResto)
 	if err != nil {
 		return nil, fmt.Errorf("query options failed: %w", err)
 	}

@@ -257,6 +257,23 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetAttributes = (%d, %v)", len(attrs), err)
 	}
 
+	// un attribut créé par une plateforme tierce ne doit pas remonter :
+	// GetAttributes filtre sur brand = 'WELLO_RESTO'
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, product_id, merchant_id, brand, attribute_type, name, title, min_options, max_options, enabled)
+		VALUES ('ca-itest-ue', 0, $1, 'UBER_EATS', 'CHECK', 'sauce-ue-itest', 'Sauce UE ?', 0, 1, TRUE)`, merchantID); err != nil {
+		t.Fatalf("seed attribut UBER_EATS: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, max_quantity, extra_price, enabled)
+		VALUES ('ca-itest-ue', 'Ketchup UE', 1, 0, 1)`); err != nil {
+		t.Fatalf("seed option attribut UBER_EATS: %v", err)
+	}
+	attrs, err = repo.GetAttributes(ctx, merchantID)
+	if err != nil || len(attrs) != 1 || attrs[0].ID != attrID {
+		t.Fatalf("GetAttributes (brand) = (%+v, %v), want le seul attribut WELLO_RESTO", attrs, err)
+	}
+
 	// UpdateAttribute : maj d'une option existante + création d'une nouvelle
 	opt0 := attr.Options[0]
 	if err := repo.UpdateAttribute(ctx, merchantID, attrID, &UpdateAttributePayload{

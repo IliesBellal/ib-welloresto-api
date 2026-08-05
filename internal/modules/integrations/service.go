@@ -31,6 +31,8 @@ type Service struct {
 	// Stripe Connect redirect URLs (loaded from config).
 	stripeReturnURL  string
 	stripeRefreshURL string
+	// Public ScanNOrder storefront base URL (SCANNORDER_BASE_URL).
+	scannorderBaseURL string
 }
 
 func NewService(
@@ -39,15 +41,17 @@ func NewService(
 	uberService *uberModule.UberEatsService,
 	deliverooService *deliverooModule.DeliverooService,
 	stripeReturnURL,
-	stripeRefreshURL string,
+	stripeRefreshURL,
+	scannorderBaseURL string,
 ) *Service {
 	return &Service{
-		repo:             NewRepository(db),
-		stripeManager:    stripeManager,
-		uberService:      uberService,
-		deliverooService: deliverooService,
-		stripeReturnURL:  stripeReturnURL,
-		stripeRefreshURL: stripeRefreshURL,
+		repo:              NewRepository(db),
+		stripeManager:     stripeManager,
+		uberService:       uberService,
+		deliverooService:  deliverooService,
+		stripeReturnURL:   stripeReturnURL,
+		stripeRefreshURL:  stripeRefreshURL,
+		scannorderBaseURL: scannorderBaseURL,
 	}
 }
 
@@ -60,7 +64,27 @@ func (s *Service) GetDeliveroo(ctx context.Context, merchantID string) (*Deliver
 }
 
 func (s *Service) GetScanNOrder(ctx context.Context, merchantID string) (*ScanNOrderIntegration, error) {
-	return s.repo.GetScanNOrderIntegration(ctx, merchantID)
+	integration, err := s.repo.GetScanNOrderIntegration(ctx, merchantID)
+	if err != nil || integration == nil {
+		return integration, err
+	}
+	integration.AccessURL = buildScanNOrderAccessURL(s.scannorderBaseURL, integration.slug)
+	return integration, nil
+}
+
+// buildScanNOrderAccessURL assemble l'URL publique de la boutique ScanNOrder du
+// marchand : {SCANNORDER_BASE_URL}/restaurant/{slug} — même forme que le
+// redirect de marque (scannorder.Service.GetBrand). Renvoie nil si la base URL
+// n'est pas configurée ou si le marchand n'a pas de QR principal : mieux vaut
+// pas d'URL qu'une URL tronquée.
+func buildScanNOrderAccessURL(baseURL, slug string) *string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	slug = strings.TrimSpace(slug)
+	if baseURL == "" || slug == "" {
+		return nil
+	}
+	url := baseURL + "/restaurant/" + slug
+	return &url
 }
 
 func (s *Service) GetScanNOrderCurrentImageURL(ctx context.Context, merchantID, column string) (string, error) {
