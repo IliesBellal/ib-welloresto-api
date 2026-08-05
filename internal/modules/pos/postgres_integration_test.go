@@ -133,7 +133,7 @@ func TestPOSRepository_Postgres(t *testing.T) {
 	var tvaID int64
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO tva_categories (delivery_type, tva_title, tva_desc, tva_rate)
-		VALUES ('itest-pos-dt', 'itest-pos-tva10', 'd', 10) RETURNING tva_id`).Scan(&tvaID); err != nil {
+		VALUES ('itest-pos-dt', 'itest-pos-tva10', 'itest-pos-tva-desc', 10) RETURNING tva_id`).Scan(&tvaID); err != nil {
 		t.Fatalf("seed tva_categories: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
@@ -152,6 +152,10 @@ func TestPOSRepository_Postgres(t *testing.T) {
 			if ct.Name != "itest-pos-surplace" || len(ct.Rates) != 1 || ct.Rates[0].Value != 10 ||
 				ct.Rates[0].ID != strconv.FormatInt(tvaID, 10) {
 				t.Fatalf("GetTVARates group = %+v", ct)
+			}
+			// tva_desc distribué dans rate.description (distinct de label = tva_title)
+			if ct.Rates[0].Description != "itest-pos-tva-desc" || ct.Rates[0].Label != "itest-pos-tva10" {
+				t.Fatalf("GetTVARates rate label/description = %+v", ct.Rates[0])
 			}
 		}
 	}

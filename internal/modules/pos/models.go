@@ -53,6 +53,8 @@ type Rate struct {
 	ID    string  `json:"id"`
 	Value float64 `json:"value"`
 	Label string  `json:"label"`
+	// Description reprend tva_categories.tva_desc (colonne NOT NULL).
+	Description string `json:"description"`
 }
 
 type ConsumptionType struct {

@@ -216,6 +216,16 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// min_order_value is NOT NULL DEFAULT 0, but since the column is always
+	// listed explicitly below, an explicit NULL parameter overrides that
+	// default instead of falling back to it. Default nil here so any caller
+	// that omits/nulls this optional field still gets the column's own
+	// "no minimum" semantics instead of a constraint violation.
+	minOrderValue := 0.0
+	if req.MinOrderValue != nil {
+		minOrderValue = *req.MinOrderValue
+	}
+
 	// Insert discount
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO discounts (
@@ -228,7 +238,7 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	`,
 		req.DiscountID, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
-		req.ValidFrom, req.ValidTo, req.MinOrderValue, req.MinOrderUnit,
+		req.ValidFrom, req.ValidTo, minOrderValue, req.MinOrderUnit,
 		req.MaxDiscountValue, req.MaxDiscountUnit, req.DiscountedQuantity,
 		req.IsCumulative, req.IsTimeLimited, req.Available, true, time.Now().UTC(),
 	)

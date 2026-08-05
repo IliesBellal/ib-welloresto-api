@@ -124,6 +124,43 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 	}
 }
 
+// Regression test: creating a discount with MinOrderValue left nil (as any
+// client omitting/nulling this optional field would send) must not violate
+// the discounts.min_order_value NOT NULL DEFAULT 0 constraint.
+func TestDiscountsRepository_Postgres_NilMinOrderValue(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const merchantID = "itest-disc-m2"
+	discountID := "itest-discount-nil-min-order"
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM discounts WHERE merchant_id = $1`, merchantID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	repo := NewRepository(db)
+
+	created, err := repo.CreateDiscount(ctx, merchantID, &CreateDiscountRequest{
+		DiscountID:         discountID,
+		DiscountName:       "ITest Nil MinOrderValue",
+		DiscountDesc:       "regression test for nil MinOrderValue",
+		DiscountValue:      10,
+		DiscountUnit:       DiscountUnitPercentage,
+		ValidFrom:          time.Now().UTC(),
+		MinOrderValue:      nil,
+		DiscountedQuantity: 1,
+		Available:          true,
+	})
+	if err != nil {
+		t.Fatalf("CreateDiscount with nil MinOrderValue failed against postgres: %v", err)
+	}
+	if created.MinOrderValue == nil || *created.MinOrderValue != 0 {
+		t.Fatalf("expected MinOrderValue to default to 0, got %+v", created.MinOrderValue)
+	}
+}
+
 func mustParseHM(t *testing.T, s string) time.Time {
 	t.Helper()
 	tm, err := time.Parse("15:04", s)

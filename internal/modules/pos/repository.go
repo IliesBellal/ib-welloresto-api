@@ -300,6 +300,7 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 			l.label as type_name,
 			` + posCastChar("t.tva_id") + ` as rate_id,
 			t.tva_title,
+			t.tva_desc,
 			t.tva_rate
 		FROM labels l
 		INNER JOIN tva_categories t ON l.label_value = t.delivery_type
@@ -322,10 +323,10 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 	var order []string
 
 	for rows.Next() {
-		var typeID, labelValue, typeName, rateID, rateLabel, deliveryType string
+		var typeID, labelValue, typeName, rateID, rateLabel, rateDesc, deliveryType string
 		var rateValue float64
 
-		err := rows.Scan(&typeID, &deliveryType, &labelValue, &typeName, &rateID, &rateLabel, &rateValue)
+		err := rows.Scan(&typeID, &deliveryType, &labelValue, &typeName, &rateID, &rateLabel, &rateDesc, &rateValue)
 		if err != nil {
 			return nil, err
 		}
@@ -344,9 +345,10 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
 
 		// Ajout du taux de TVA au groupe
 		groups[labelValue].Rates = append(groups[labelValue].Rates, Rate{
-			ID:    rateID,
-			Value: rateValue,
-			Label: rateLabel,
+			ID:          rateID,
+			Value:       rateValue,
+			Label:       rateLabel,
+			Description: rateDesc,
 		})
 	}
 
