@@ -198,12 +198,15 @@ type Attribute struct {
 }
 
 type AttributeOption struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	Price       int     `json:"price"`        // extra_price (idéalement stocké en centimes)
-	MaxQuantity int     `json:"max_quantity"` // max_quantity
-	Enabled     bool    `json:"enabled"`      // enabled
-	ImageURL    *string `json:"image_url,omitempty"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Price           int      `json:"price"`        // extra_price (idéalement stocké en centimes)
+	MaxQuantity     int      `json:"max_quantity"` // max_quantity
+	Enabled         bool     `json:"enabled"`      // enabled
+	ImageURL        *string  `json:"image_url,omitempty"`
+	ComponentID     *string  `json:"component_id,omitempty"`       // ingrédient (components.component_id) lié, nil = aucun
+	Quantity        *float64 `json:"quantity,omitempty"`           // quantité consommée par sélection ; nil si ComponentID est nil
+	UnitOfMeasureID *string  `json:"unit_of_measure_id,omitempty"` // unit_of_measure.id de la quantité ; nil si ComponentID est nil
 }
 
 type CreateProductPayload struct {
@@ -219,6 +222,25 @@ type CreateProductPayload struct {
 	CategoryID          string  `json:"category_id"`
 	IsProductGroup      bool    `json:"is_product_group"`
 	MarketingCategoryID *string `json:"marketing_category_id,omitempty"`
+
+	// Champs facultatifs permettant de créer un produit complet en un seul
+	// appel (fiche produit du back-office : le sheet de création expose les
+	// mêmes onglets que l'édition). Omis = valeur par défaut de la colonne
+	// pour les scalaires, association vide pour les listes. L'ensemble est
+	// persisté dans la même transaction que l'INSERT products : un échec sur
+	// une association ne laisse aucun produit partiel en base.
+	BgColor           *string                    `json:"bg_color,omitempty"`
+	ProductionColor   *string                    `json:"production_color,omitempty"`
+	Status            *string                    `json:"status,omitempty"`
+	IsAvailableOnSno  *bool                      `json:"is_available_on_sno,omitempty"`
+	AvailableIn       *bool                      `json:"available_in,omitempty"`
+	AvailableTakeAway *bool                      `json:"available_take_away,omitempty"`
+	AvailableDelivery *bool                      `json:"available_delivery,omitempty"`
+	Configuration     []string                   `json:"configuration,omitempty"` // IDs d'attributs configurables
+	Components        []ProductComponentUpdate   `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
+	Tags              []string                   `json:"tags,omitempty"`          // IDs de tags
+	Allergens         []string                   `json:"allergens,omitempty"`     // IDs d'allergènes
+	Integrations      models.ProductIntegrations `json:"integrations,omitempty"`  // Uber Eats / Deliveroo
 }
 
 // ProductComponentUpdate pour mettre à jour les composants d'un produit
@@ -250,6 +272,13 @@ type ProductUpdatePayload struct {
 	Tags              []string                   `json:"tags"`          // Liste des IDs de tags
 	Allergens         []string                   `json:"allergens"`     // Liste des IDs d'allergènes
 	Integrations      models.ProductIntegrations `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
+
+	// TVA modifiable après création : sans ces champs une erreur de saisie à la
+	// création restait définitive, la fiche produit n'ayant aucun autre moyen
+	// de corriger le taux. Mêmes IDs que CreateProductPayload (tva_categories).
+	TvaInID       *string `json:"tva_in_id"`
+	TvaTakeAwayID *string `json:"tva_take_away_id"`
+	TvaDeliveryID *string `json:"tva_delivery_id"`
 }
 
 // ProductAttributesPayload pour la configuration des attributs
@@ -315,6 +344,15 @@ type UpdateAttributeOptionPayload struct {
 	Enabled     *bool   `json:"enabled"`      // Whether the option is enabled
 	ExtraPrice  *int    `json:"extra_price"`  // Extra price (deprecated, use Price)
 	ImageURL    *string `json:"image_url"`    // Image URL (managed primarily via the dedicated upload endpoint)
+
+	// Lien ingrédient. Non-pointeurs volontairement : le back-office envoie
+	// toujours la valeur complète actuelle de l'option à chaque sauvegarde
+	// (UpdateAttribute désactive toutes les options existantes puis réinsère
+	// chaque option du payload — ce n'est pas un patch partiel), comme
+	// Title/Price/MaxQuantity sur ce même struct. "" = aucun ingrédient lié.
+	ComponentID     string  `json:"component_id"`       // Ingrédient (components.component_id) lié. "" = aucun ingrédient.
+	Quantity        float64 `json:"quantity"`           // Quantité consommée. Ignorée (stockée NULL) si ComponentID est "".
+	UnitOfMeasureID string  `json:"unit_of_measure_id"` // unit_of_measure.id de Quantity. Ignorée (stockée NULL) si ComponentID est "".
 }
 
 // UpdateAttributePayload for updating configurable attributes

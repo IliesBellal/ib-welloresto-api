@@ -202,7 +202,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	allergensRepo := allergensModule.NewRepository(mysqlDB)
 
 	// ---- Menu ----
-	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB)
+	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB, redisClient)
 	// NOTE: deliverooService and uberService are initialized below; we forward-declare menuService
 	// and re-assign after their initialization using a late-binding approach via a pointer.
 	// To keep initialization order clean, menuService is assigned after deliveroo/uber init.

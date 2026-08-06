@@ -68,4 +68,14 @@ const (
 	PasswordResetIPThrottlePrefix = "pwd_reset:ip:"
 	PasswordResetIPThrottleTTL    = 1 * time.Hour
 	PasswordResetIPThrottleMax    = 20
+
+	// Préfixes des clés Redis pour la confirmation de création d'un nom en
+	// doublon (produit/ingrédient/attribut) : le 1er appel avec un nom déjà
+	// utilisé pose la clé et bloque (erreur "_with_retry"), un 2e appel
+	// identique (même merchant + même nom) la trouve déjà posée et la
+	// création est acceptée malgré le doublon.
+	MenuProductNameConfirmPrefix   = "menu:product:name_confirm:"
+	MenuComponentNameConfirmPrefix = "menu:component:name_confirm:"
+	MenuAttributeNameConfirmPrefix = "menu:attribute:name_confirm:"
+	MenuNameConfirmTTL             = 5 * time.Minute
 )

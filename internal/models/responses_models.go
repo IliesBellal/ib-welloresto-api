@@ -391,6 +391,18 @@ var (
 	// Erreurs de la liste d'attente (module bookings, migration 059)
 	ErrWaitlistDisabled = errors.New("waitlist_disabled")
 	ErrWaitlistFull     = errors.New("waitlist_full")
+
+	// Erreurs de doublon de nom (module menu)
+	ErrProductNameAlreadyExists   = errors.New("product_name_already_exists")
+	ErrComponentNameAlreadyExists = errors.New("component_name_already_exists")
+	ErrAttributeNameAlreadyExists = errors.New("attribute_name_already_exists")
+
+	// Variantes "avec confirmation par nouvel essai" (Redis actif) : le 1er
+	// appel avec un nom en doublon renvoie cette erreur, un 2e appel identique
+	// est accepté malgré le doublon.
+	ErrProductNameAlreadyExistsWithRetry   = errors.New("product_name_already_exists_with_retry")
+	ErrComponentNameAlreadyExistsWithRetry = errors.New("component_name_already_exists_with_retry")
+	ErrAttributeNameAlreadyExistsWithRetry = errors.New("attribute_name_already_exists_with_retry")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1255,6 +1267,36 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "waitlist_full"
 		errorMsg = "The waitlist has reached its maximum size."
+
+	case errors.Is(err, ErrProductNameAlreadyExists):
+		status = http.StatusConflict
+		errorStatus = "product_name_already_exists"
+		errorMsg = "A product with this name already exists."
+
+	case errors.Is(err, ErrComponentNameAlreadyExists):
+		status = http.StatusConflict
+		errorStatus = "component_name_already_exists"
+		errorMsg = "An ingredient with this name already exists."
+
+	case errors.Is(err, ErrAttributeNameAlreadyExists):
+		status = http.StatusConflict
+		errorStatus = "attribute_name_already_exists"
+		errorMsg = "A configuration attribute with this name already exists."
+
+	case errors.Is(err, ErrProductNameAlreadyExistsWithRetry):
+		status = http.StatusConflict
+		errorStatus = "product_name_already_exists_with_retry"
+		errorMsg = "A product with this name already exists. Submit the same request again to confirm and create it anyway."
+
+	case errors.Is(err, ErrComponentNameAlreadyExistsWithRetry):
+		status = http.StatusConflict
+		errorStatus = "component_name_already_exists_with_retry"
+		errorMsg = "An ingredient with this name already exists. Submit the same request again to confirm and create it anyway."
+
+	case errors.Is(err, ErrAttributeNameAlreadyExistsWithRetry):
+		status = http.StatusConflict
+		errorStatus = "attribute_name_already_exists_with_retry"
+		errorMsg = "A configuration attribute with this name already exists. Submit the same request again to confirm and create it anyway."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"fmt"
+	"strings"
 	"welloresto-api/internal/models"
 )
 
@@ -27,4 +28,22 @@ func GetMFACacheKey(token string) string {
 
 func GetVerificationCacheKey(mode string, token string) string {
 	return fmt.Sprintf(models.VerificationCachePrefix+"%s:%s", mode, token)
+}
+
+// normalizeMenuName met le nom à plat (trim + minuscule) pour que la clé de
+// confirmation soit stable quelle que soit la casse/les espaces saisis.
+func normalizeMenuName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func GetMenuProductNameConfirmKey(merchantID, name string) string {
+	return fmt.Sprintf(models.MenuProductNameConfirmPrefix+"%s:%s", merchantID, normalizeMenuName(name))
+}
+
+func GetMenuComponentNameConfirmKey(merchantID, name string) string {
+	return fmt.Sprintf(models.MenuComponentNameConfirmPrefix+"%s:%s", merchantID, normalizeMenuName(name))
+}
+
+func GetMenuAttributeNameConfirmKey(merchantID, name string) string {
+	return fmt.Sprintf(models.MenuAttributeNameConfirmPrefix+"%s:%s", merchantID, normalizeMenuName(name))
 }

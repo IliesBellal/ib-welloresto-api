@@ -295,6 +295,18 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 		}
 	}
 
+	// Déduction des stocks des ingrédients liés aux options sélectionnées
+	// (ex. "Extra fromage"). Indépendante de la déduction ci-dessus : l'échec
+	// de l'une n'empêche jamais l'autre, ni la fermeture de la commande.
+	if s.stocksRepo != nil {
+		if optionsStockErr := s.stocksRepo.ConsumeOrderOptionsStock(ctx, MerchantID, UserID, orderID); optionsStockErr != nil {
+			logger.FromContext(ctx).Warn("stock consumption for selected options failed on order close",
+				zap.String("order_id", orderID),
+				zap.Error(optionsStockErr),
+			)
+		}
+	}
+
 	// Pont automatique seated -> completed : fire-and-forget, ne doit jamais
 	// affecter la fermeture de la commande (cf. bookingAutoTransitioner).
 	if s.bookingsSvc != nil {

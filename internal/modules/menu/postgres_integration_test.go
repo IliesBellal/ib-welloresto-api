@@ -5,6 +5,7 @@ package menu
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,7 +119,9 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed tags: %v", err)
 	}
 
-	repo := NewMenuRepository(db)
+	// redis nil : la confirmation de nom en doublon retombe sur le refus direct
+	// (ErrProductNameAlreadyExists), sans dépendre d'un Redis dans les tests.
+	repo := NewMenuRepository(db, nil)
 
 	// --- GetUnitsOfMeasures (casts texte + conversions) ---
 	units, err := repo.GetUnitsOfMeasures(ctx, merchantID)
@@ -238,11 +241,13 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	// --- attributs configurables ---
 	enabledTrue := true
 	maxQ := 2
+	optQty := 2.5
 	attrID, err := repo.CreateAttribute(ctx, merchantID, &UpdateAttributePayload{
 		Type: "CHECK", Name: "sauce-itest", Title: "Sauce ?", Min: 0, Max: 2,
 		Options: []UpdateAttributeOptionPayload{
-			{Title: "Ketchup", Price: 50, MaxQuantity: &maxQ, Enabled: &enabledTrue},
-			{Title: "Mayo", Price: 0, Enabled: &enabledTrue},
+			{Title: "Ketchup", Price: 50, MaxQuantity: &maxQ, Enabled: &enabledTrue,
+				ComponentID: compID, Quantity: optQty, UnitOfMeasureID: unitGStr},
+			{Title: "Mayo", Price: 0, Enabled: &enabledTrue}, // aucun ingrédient lié
 		},
 	})
 	if err != nil || attrID == "" {
@@ -255,6 +260,34 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	attrs, err := repo.GetAttributes(ctx, merchantID)
 	if err != nil || len(attrs) != 1 || attrs[0].ID != attrID {
 		t.Fatalf("GetAttributes = (%d, %v)", len(attrs), err)
+	}
+
+	// Lien ingrédient : Ketchup doit remonter le lien posé à la création, Mayo aucun.
+	findOpt := func(opts []AttributeOption, title string) *AttributeOption {
+		for i := range opts {
+			if opts[i].Title == title {
+				return &opts[i]
+			}
+		}
+		return nil
+	}
+	ketchup, mayo := findOpt(attr.Options, "Ketchup"), findOpt(attr.Options, "Mayo")
+	if ketchup == nil || ketchup.ComponentID == nil || *ketchup.ComponentID != compID {
+		t.Fatalf("Ketchup.ComponentID = %+v, want %q", ketchup, compID)
+	}
+	if ketchup.Quantity == nil || *ketchup.Quantity != optQty {
+		t.Fatalf("Ketchup.Quantity = %+v, want %v", ketchup.Quantity, optQty)
+	}
+	if ketchup.UnitOfMeasureID == nil || *ketchup.UnitOfMeasureID != unitGStr {
+		t.Fatalf("Ketchup.UnitOfMeasureID = %+v, want %q", ketchup.UnitOfMeasureID, unitGStr)
+	}
+	if mayo == nil || mayo.ComponentID != nil || mayo.Quantity != nil || mayo.UnitOfMeasureID != nil {
+		t.Fatalf("Mayo ne devrait avoir aucun ingrédient lié: %+v", mayo)
+	}
+	// GetAttributes doit exposer le même lien.
+	ketchupViaList := findOpt(attrs[0].Options, "Ketchup")
+	if ketchupViaList == nil || ketchupViaList.ComponentID == nil || *ketchupViaList.ComponentID != compID {
+		t.Fatalf("GetAttributes: Ketchup.ComponentID = %+v, want %q", ketchupViaList, compID)
 	}
 
 	// un attribut créé par une plateforme tierce ne doit pas remonter :
@@ -274,13 +307,17 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetAttributes (brand) = (%+v, %v), want le seul attribut WELLO_RESTO", attrs, err)
 	}
 
-	// UpdateAttribute : maj d'une option existante + création d'une nouvelle
-	opt0 := attr.Options[0]
+	// UpdateAttribute : maj d'une option existante (Ketchup, qui avait un lien
+	// ingrédient) + création d'une nouvelle (Harissa, avec lien). ComponentID
+	// omis sur la branche UPDATE : doit effacer le lien précédemment posé
+	// (component_id/quantity/unit_of_measure en `=`, pas COALESCE).
+	opt0 := *ketchup
 	if err := repo.UpdateAttribute(ctx, merchantID, attrID, &UpdateAttributePayload{
 		Type: "CHECK", Name: "sauce-itest", Title: "Sauces ?", Min: 0, Max: 3,
 		Options: []UpdateAttributeOptionPayload{
 			{ID: &opt0.ID, Title: "Ketchup bio", Price: 60, Enabled: &enabledTrue},
-			{Title: "Harissa", Price: 30, Enabled: &enabledTrue},
+			{Title: "Harissa", Price: 30, Enabled: &enabledTrue,
+				ComponentID: compID, Quantity: 5, UnitOfMeasureID: unitKGStr},
 		},
 	}); err != nil {
 		t.Fatalf("UpdateAttribute: %v", err)
@@ -288,6 +325,19 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	attr, err = repo.GetAttribute(ctx, merchantID, attrID)
 	if err != nil || attr.Title != "Sauces ?" || len(attr.Options) != 2 {
 		t.Fatalf("GetAttribute après update = (%+v, %v)", attr, err)
+	}
+	ketchupBio, harissa := findOpt(attr.Options, "Ketchup bio"), findOpt(attr.Options, "Harissa")
+	if ketchupBio == nil || ketchupBio.ComponentID != nil || ketchupBio.Quantity != nil || ketchupBio.UnitOfMeasureID != nil {
+		t.Fatalf("Ketchup bio: le lien ingrédient aurait dû être effacé par l'update: %+v", ketchupBio)
+	}
+	if harissa == nil || harissa.ComponentID == nil || *harissa.ComponentID != compID {
+		t.Fatalf("Harissa (branche INSERT de UpdateAttribute) ComponentID = %+v, want %q", harissa, compID)
+	}
+	if harissa.Quantity == nil || *harissa.Quantity != 5 {
+		t.Fatalf("Harissa.Quantity = %+v, want 5", harissa.Quantity)
+	}
+	if harissa.UnitOfMeasureID == nil || *harissa.UnitOfMeasureID != unitKGStr {
+		t.Fatalf("Harissa.UnitOfMeasureID = %+v, want %q", harissa.UnitOfMeasureID, unitKGStr)
 	}
 
 	// image d'option (UPDATE ... FROM + id non numérique)
@@ -338,10 +388,146 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetProduct integrations = %+v", p.Integrations)
 	}
 
+	// --- CreateProduct enrichi : produit complet en un seul appel ---
+	// Le back-office crée le produit depuis la même fiche que l'édition : les
+	// associations doivent être posées par la création elle-même, sans PATCH
+	// de rattrapage.
+	bgColor := "#123456"
+	productionColor := "#654321"
+	availableIn := true
+	availableDelivery := false
+	fullPriceOverride := 1990
+	prodFull, err := repo.CreateProduct(ctx, &CreateProductPayload{
+		MerchantID: merchantID, Name: "itest-menu-complet", ProductDesc: "créé en un appel",
+		Price: 1500, PriceTakeAway: 1400, PriceDelivery: 1600,
+		TvaInID: tvaStr, TvaDeliveryID: tvaDelivery, TvaTakeAwayID: tvaTakeAway,
+		CategoryID:        catID,
+		BgColor:           &bgColor,
+		ProductionColor:   &productionColor,
+		AvailableIn:       &availableIn,
+		AvailableDelivery: &availableDelivery,
+		Configuration:     []string{attrID},
+		Components:        []ProductComponentUpdate{{ComponentID: compID, Quantity: 75, UnitID: unitGStr}},
+		Tags:              []string{"itest-menu-tag"},
+		Allergens:         []string{"itest-menu-alg"},
+		Integrations: models.ProductIntegrations{
+			Deliveroo: models.ProductIntegrationItem{Enabled: true, PriceOverride: &fullPriceOverride},
+		},
+	})
+	if err != nil || prodFull == "0" {
+		t.Fatalf("CreateProduct(payload complet) = (%q, %v)", prodFull, err)
+	}
+
+	pFull, err := repo.GetProduct(ctx, merchantID, prodFull)
+	if err != nil {
+		t.Fatalf("GetProduct(prodFull): %v", err)
+	}
+	if len(pFull.Components) != 1 || pFull.Components[0].ComponentID != compID {
+		t.Fatalf("prodFull components = %+v", pFull.Components)
+	}
+	if len(pFull.Configuration.Attributes) != 1 {
+		t.Fatalf("prodFull configuration = %+v", pFull.Configuration)
+	}
+	if len(pFull.Tags) != 1 || pFull.Tags[0].ID != "itest-menu-tag" {
+		t.Fatalf("prodFull tags = %+v", pFull.Tags)
+	}
+	if len(pFull.Allergens) != 1 || pFull.Allergens[0].ID != "itest-menu-alg" {
+		t.Fatalf("prodFull allergens = %+v", pFull.Allergens)
+	}
+	if !pFull.Integrations.Deliveroo.Enabled || pFull.Integrations.Deliveroo.PriceOverride == nil ||
+		*pFull.Integrations.Deliveroo.PriceOverride != fullPriceOverride {
+		t.Fatalf("prodFull integrations = %+v", pFull.Integrations)
+	}
+
+	// colonnes facultatives fournies -> valeur du payload (et non le défaut)
+	var gotBg, gotProdColor string
+	var gotAvailIn, gotAvailDelivery bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT bg_color, production_color, available_in, available_delivery FROM products WHERE product_id = $1`,
+		prodFull).Scan(&gotBg, &gotProdColor, &gotAvailIn, &gotAvailDelivery); err != nil {
+		t.Fatalf("lecture colonnes facultatives: %v", err)
+	}
+	if gotBg != bgColor || gotProdColor != productionColor || !gotAvailIn || gotAvailDelivery {
+		t.Fatalf("colonnes facultatives = (%q, %q, in=%v, delivery=%v)", gotBg, gotProdColor, gotAvailIn, gotAvailDelivery)
+	}
+
+	// --- rollback : un échec d'association ne laisse aucune trace ---
+	// L'allergène dépasse product_allergens.allergen_id (varchar(255)) : l'INSERT
+	// échoue. Les allergènes étant synchronisés en dernier, le produit ET les
+	// associations déjà écrites (attributs, composition, tags) doivent tous
+	// disparaître — c'est ce que garantit la transaction.
+	const rollbackName = "itest-menu-rollback"
+	if _, err := repo.CreateProduct(ctx, &CreateProductPayload{
+		MerchantID: merchantID, Name: rollbackName, ProductDesc: "ne doit pas survivre",
+		Price: 100, PriceTakeAway: 100, PriceDelivery: 100,
+		TvaInID: tvaStr, TvaDeliveryID: tvaDelivery, TvaTakeAwayID: tvaTakeAway,
+		CategoryID:    catID,
+		Configuration: []string{attrID},
+		Components:    []ProductComponentUpdate{{ComponentID: compID, Quantity: 10, UnitID: unitGStr}},
+		Tags:          []string{"itest-menu-tag"},
+		Allergens:     []string{strings.Repeat("x", 300)},
+	}); err == nil {
+		t.Fatalf("CreateProduct(allergène trop long) devrait échouer")
+	}
+	var rollbackProducts int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM products WHERE merchant_id = $1 AND name = $2`,
+		merchantID, rollbackName).Scan(&rollbackProducts); err != nil {
+		t.Fatalf("comptage produit annulé: %v", err)
+	}
+	if rollbackProducts != 0 {
+		t.Fatalf("produit non annulé par le rollback: %d ligne(s)", rollbackProducts)
+	}
+	// les associations du produit annulé ne doivent pas non plus subsister
+	var orphanRecipes int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM recipes r WHERE r.merchant_id = $1
+		 AND NOT EXISTS (SELECT 1 FROM products p WHERE p.product_id::text = r.product_id::text)`,
+		merchantID).Scan(&orphanRecipes); err != nil {
+		t.Fatalf("comptage recettes orphelines: %v", err)
+	}
+	if orphanRecipes != 0 {
+		t.Fatalf("recette orpheline laissée par le rollback: %d", orphanRecipes)
+	}
+
+	// --- TVA modifiable après création (ProductUpdatePayload) ---
+	readTvaIn := func(productID string) string {
+		t.Helper()
+		var v string
+		if err := db.QueryRowContext(ctx, `SELECT tva_in_id FROM products WHERE product_id = $1`, productID).Scan(&v); err != nil {
+			t.Fatalf("lecture tva_in_id: %v", err)
+		}
+		return v
+	}
+	if err := repo.UpdateProduct(ctx, merchantID, prodFull, ProductUpdatePayload{TvaInID: &tvaDelivery}); err != nil {
+		t.Fatalf("UpdateProduct(tva_in_id): %v", err)
+	}
+	if got := readTvaIn(prodFull); got != tvaDelivery {
+		t.Fatalf("tva_in_id = %q, want %q", got, tvaDelivery)
+	}
+	// TVA absente du payload : le taux en place ne bouge pas (COALESCE)
+	if err := repo.UpdateProduct(ctx, merchantID, prodFull, ProductUpdatePayload{}); err != nil {
+		t.Fatalf("UpdateProduct(sans TVA): %v", err)
+	}
+	if got := readTvaIn(prodFull); got != tvaDelivery {
+		t.Fatalf("tva_in_id après update sans TVA = %q, want %q inchangé", got, tvaDelivery)
+	}
+	// taux inexistant : refus explicite plutôt qu'ignoré silencieusement
+	unknownTva := "987654321"
+	if err := repo.UpdateProduct(ctx, merchantID, prodFull, ProductUpdatePayload{TvaInID: &unknownTva}); err == nil {
+		t.Fatalf("UpdateProduct(TVA inexistante) devrait échouer")
+	}
+	if got := readTvaIn(prodFull); got != tvaDelivery {
+		t.Fatalf("tva_in_id après refus = %q, want %q inchangé", got, tvaDelivery)
+	}
+
 	// --- GetMenu (assemblage complet + no_update_required) ---
 	menu, err := repo.GetMenu(ctx, merchantID, nil)
-	if err != nil || menu.Status != "ok" {
-		t.Fatalf("GetMenu = (%+v, %v)", menu.Status, err)
+	if err != nil {
+		t.Fatalf("GetMenu error = %v", err)
+	}
+	if menu.Status != "ok" {
+		t.Fatalf("GetMenu status = %q, want ok", menu.Status)
 	}
 	var menuCat *models.ProductCategory
 	for i := range menu.ProductsTypes {

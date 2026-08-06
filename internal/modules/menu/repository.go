@@ -13,16 +13,19 @@ import (
 	"unicode/utf8"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
+	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type MenuRepository struct {
 	database *sql.DB
+	redis    *redisclient.Client
 }
 
-func NewMenuRepository(db *sql.DB) *MenuRepository {
-	return &MenuRepository{database: db}
+func NewMenuRepository(db *sql.DB, redis *redisclient.Client) *MenuRepository {
+	return &MenuRepository{database: db, redis: redis}
 }
 
 // menuCastChar caste une expression en texte selon le dialecte — même pattern
@@ -273,7 +276,8 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	// 2. Récupération des options
 	// ca.enabled est boolean en cible, cao.enabled est resté integer (0/1)
 	optQuery := `
-        SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url
+        SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url,
+               cao.component_id, cao.quantity, cao.unit_of_measure
         FROM configurable_attributes ca
         INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
         WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND ca.brand = ? AND cao.enabled = 1`
@@ -287,9 +291,25 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	for optRows.Next() {
 		var opt AttributeOption
 		var parentAttrID string
+		var componentID sql.NullInt64
+		var quantity sql.NullFloat64
+		var unitOfMeasure sql.NullInt64
 
-		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL); err != nil {
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL,
+			&componentID, &quantity, &unitOfMeasure); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
+		}
+		if componentID.Valid {
+			cid := strconv.FormatInt(componentID.Int64, 10)
+			opt.ComponentID = &cid
+		}
+		if quantity.Valid {
+			q := quantity.Float64
+			opt.Quantity = &q
+		}
+		if unitOfMeasure.Valid {
+			uom := strconv.FormatInt(unitOfMeasure.Int64, 10)
+			opt.UnitOfMeasureID = &uom
 		}
 
 		// 3. Mapping Magique : on trouve l'attribut parent instantanément grâce à la map
@@ -366,7 +386,8 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 
 	// 2. Récupération des options (enabled est resté integer sur cette table)
 	optQuery := `
-        SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled, image_url
+        SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled, image_url,
+               component_id, quantity, unit_of_measure
         FROM configurable_attribute_options
         WHERE configurable_attribute_id = ? AND enabled = 1`
 
@@ -379,9 +400,25 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 	for optRows.Next() {
 		var opt AttributeOption
 		var parentAttrID string
+		var componentID sql.NullInt64
+		var quantity sql.NullFloat64
+		var unitOfMeasure sql.NullInt64
 
-		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL); err != nil {
+		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL,
+			&componentID, &quantity, &unitOfMeasure); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
+		}
+		if componentID.Valid {
+			cid := strconv.FormatInt(componentID.Int64, 10)
+			opt.ComponentID = &cid
+		}
+		if quantity.Valid {
+			q := quantity.Float64
+			opt.Quantity = &q
+		}
+		if unitOfMeasure.Valid {
+			uom := strconv.FormatInt(unitOfMeasure.Int64, 10)
+			opt.UnitOfMeasureID = &uom
 		}
 
 		attr.Options = append(attr.Options, opt)
@@ -396,6 +433,29 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 
 func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string, payload *UpdateAttributePayload) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
+
+	// Vérifier qu'aucun attribut actif ne porte déjà ce nom
+	var attributeNameExists int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM configurable_attributes WHERE merchant_id = ? AND LOWER(name) = LOWER(?) AND enabled = TRUE`,
+		merchantID, strings.TrimSpace(payload.Name),
+	).Scan(&attributeNameExists)
+	if err != nil {
+		return "", fmt.Errorf("failed to check attribute name uniqueness: %w", err)
+	}
+	if attributeNameExists > 0 {
+		if r.redis == nil {
+			return "", models.ErrAttributeNameAlreadyExists
+		}
+		// Redis actif : le 1er appel pose une clé de confirmation et bloque ;
+		// un 2e appel identique (même merchant + même nom) la trouve déjà
+		// posée et la création est acceptée malgré le doublon.
+		confirmKey := helpers.GetMenuAttributeNameConfirmKey(merchantID, payload.Name)
+		if r.redis.SetNX(ctx, confirmKey, "1", models.MenuNameConfirmTTL) {
+			return "", models.ErrAttributeNameAlreadyExistsWithRetry
+		}
+		r.redis.Delete(ctx, confirmKey)
+	}
 
 	// Generate new UUID for attribute
 	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
@@ -418,7 +478,7 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 		) VALUES (?, ?, 0, ?, ?, ?, ?, ?, TRUE)
 	`
 
-	_, err := db.ExecContext(ctx, insertAttrQuery,
+	_, err = db.ExecContext(ctx, insertAttrQuery,
 		attributeID,
 		merchantID,
 		payload.Type,
@@ -447,6 +507,17 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 			enabled = *opt.Enabled
 		}
 
+		// Lien ingrédient défensif : jamais de quantity/unit_of_measure
+		// orphelins sans component_id valide, quoi que le client envoie.
+		var componentIDArg, quantityArg, unitArg interface{}
+		if opt.ComponentID != "" && menuNumericID(opt.ComponentID) {
+			componentIDArg = opt.ComponentID
+			quantityArg = opt.Quantity
+			if opt.UnitOfMeasureID != "" && menuNumericID(opt.UnitOfMeasureID) {
+				unitArg = opt.UnitOfMeasureID
+			}
+		}
+
 		// id est une colonne auto-incrémentée (identity en cible) : l'ancien
 		// ID préfixé généré côté client était silencieusement coercé à 0 par
 		// MySQL, qui générait alors sa propre valeur — on laisse la base
@@ -459,8 +530,11 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 				extra_price,
 				max_quantity,
 				enabled,
-				image_url
-			) VALUES (?, ?, ?, ?, ?, ?)
+				image_url,
+				component_id,
+				quantity,
+				unit_of_measure
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 
 		enabledInt := 0
@@ -473,7 +547,10 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 			price,
 			maxQty,
 			enabledInt,
-			opt.ImageURL)
+			opt.ImageURL,
+			componentIDArg,
+			quantityArg,
+			unitArg)
 		if err != nil {
 			return "", fmt.Errorf("insert option error: %w", err)
 		}
@@ -545,11 +622,25 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				enabled = *opt.Enabled
 			}
 
+			// Lien ingrédient défensif : jamais de quantity/unit_of_measure
+			// orphelins sans component_id valide, quoi que le client envoie.
+			var componentIDArg, quantityArg, unitArg interface{}
+			if opt.ComponentID != "" && menuNumericID(opt.ComponentID) {
+				componentIDArg = opt.ComponentID
+				quantityArg = opt.Quantity
+				if opt.UnitOfMeasureID != "" && menuNumericID(opt.UnitOfMeasureID) {
+					unitArg = opt.UnitOfMeasureID
+				}
+			}
+
 			// image_url passe par COALESCE : si le payload ne le fournit pas
 			// (cas du formulaire back-office actuel, qui ne connaît pas ce
 			// champ), l'image déjà uploadée via le endpoint dédié est
 			// préservée plutôt qu'écrasée à NULL à chaque sauvegarde de
-			// l'attribut.
+			// l'attribut. component_id/quantity/unit_of_measure n'utilisent
+			// PAS ce COALESCE : le formulaire les envoie systématiquement
+			// (valeurs vides comprises), un écrasement direct est donc ce qui
+			// permet d'effacer un lien ingrédient déjà posé.
 			updateOptQuery := `
 				UPDATE configurable_attribute_options
 				SET
@@ -557,7 +648,10 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 					extra_price = ?,
 					max_quantity = ?,
 					enabled = ?,
-					image_url = COALESCE(?, image_url)
+					image_url = COALESCE(?, image_url),
+					component_id = ?,
+					quantity = ?,
+					unit_of_measure = ?
 				WHERE id = ? AND configurable_attribute_id = ?
 			`
 
@@ -578,6 +672,9 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				maxQty,
 				enabledInt,
 				opt.ImageURL,
+				componentIDArg,
+				quantityArg,
+				unitArg,
 				optID,
 				attributeID)
 			if err != nil {
@@ -600,6 +697,17 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				enabled = *opt.Enabled
 			}
 
+			// Lien ingrédient défensif : jamais de quantity/unit_of_measure
+			// orphelins sans component_id valide, quoi que le client envoie.
+			var componentIDArg, quantityArg, unitArg interface{}
+			if opt.ComponentID != "" && menuNumericID(opt.ComponentID) {
+				componentIDArg = opt.ComponentID
+				quantityArg = opt.Quantity
+				if opt.UnitOfMeasureID != "" && menuNumericID(opt.UnitOfMeasureID) {
+					unitArg = opt.UnitOfMeasureID
+				}
+			}
+
 			insertOptQuery := `
 				INSERT INTO configurable_attribute_options (
 					configurable_attribute_id,
@@ -607,8 +715,11 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 					extra_price,
 					max_quantity,
 					enabled,
-					image_url
-				) VALUES (?, ?, ?, ?, ?, ?)
+					image_url,
+					component_id,
+					quantity,
+					unit_of_measure
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`
 
 			enabledInt := 0
@@ -621,7 +732,10 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				price,
 				maxQty,
 				enabledInt,
-				opt.ImageURL)
+				opt.ImageURL,
+				componentIDArg,
+				quantityArg,
+				unitArg)
 			if err != nil {
 				return fmt.Errorf("insert option error: %w", err)
 			}
@@ -2217,6 +2331,29 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
 	}
 
+	// --- VALIDATION 5: Vérifier qu'aucun produit actif ne porte déjà ce nom ---
+	var productNameExists int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM products WHERE merchant_id = ? AND LOWER(name) = LOWER(?) AND enabled = TRUE`,
+		p.MerchantID, strings.TrimSpace(p.Name),
+	).Scan(&productNameExists)
+	if err != nil {
+		return "0", fmt.Errorf("failed to check product name uniqueness: %w", err)
+	}
+	if productNameExists > 0 {
+		if r.redis == nil {
+			return "0", models.ErrProductNameAlreadyExists
+		}
+		// Redis actif : le 1er appel pose une clé de confirmation et bloque ;
+		// un 2e appel identique (même merchant + même nom) la trouve déjà
+		// posée et la création est acceptée malgré le doublon.
+		confirmKey := helpers.GetMenuProductNameConfirmKey(p.MerchantID, p.Name)
+		if r.redis.SetNX(ctx, confirmKey, "1", models.MenuNameConfirmTTL) {
+			return "0", models.ErrProductNameAlreadyExistsWithRetry
+		}
+		r.redis.Delete(ctx, confirmKey)
+	}
+
 	// Calculer le prix le plus haut entre price, price_delivery, et price_takeaway.
 	// Les prix arrivent en float64 (JSON) sur des colonnes integer : MySQL
 	// non-strict arrondissait silencieusement, pgx refuse d'encoder un float
@@ -2232,28 +2369,22 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		maxPrice = priceTakeAway
 	}
 
-	query := `
-		INSERT INTO products (
-			merchant_id,
-			name,
-			product_desc,
-			price,
-			price_take_away,
-			price_delivery,
-			price_uber_eats,
-			price_deliveroo,
-			tva_in_id,
-			tva_delivery_id,
-			tva_take_away_id,
-			category,
-			is_product_group
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	id, err := db.InsertReturningID(
-		ctx,
-		query,
-		"product_id",
+	columns := []string{
+		"merchant_id",
+		"name",
+		"product_desc",
+		"price",
+		"price_take_away",
+		"price_delivery",
+		"price_uber_eats",
+		"price_deliveroo",
+		"tva_in_id",
+		"tva_delivery_id",
+		"tva_take_away_id",
+		"category",
+		"is_product_group",
+	}
+	args := []interface{}{
 		p.MerchantID,
 		p.Name,
 		p.ProductDesc,
@@ -2267,14 +2398,96 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		p.TvaTakeAwayID,
 		p.CategoryID,
 		p.IsProductGroup,
-	)
+	}
+
+	// Colonnes facultatives : seules celles fournies sont insérées, pour que
+	// les autres gardent le défaut de la colonne — un pointeur nil passé tel
+	// quel insérerait NULL et écraserait ce défaut.
+	addOptional := func(column string, value interface{}) {
+		columns = append(columns, column)
+		args = append(args, value)
+	}
+	if p.BgColor != nil {
+		addOptional("bg_color", *p.BgColor)
+	}
+	if p.ProductionColor != nil {
+		addOptional("production_color", *p.ProductionColor)
+	}
+	if p.Status != nil {
+		addOptional("status", *p.Status)
+	}
+	if p.IsAvailableOnSno != nil {
+		addOptional("is_available_on_sno", *p.IsAvailableOnSno)
+	}
+	if p.AvailableIn != nil {
+		addOptional("available_in", *p.AvailableIn)
+	}
+	if p.AvailableTakeAway != nil {
+		addOptional("available_take_away", *p.AvailableTakeAway)
+	}
+	if p.AvailableDelivery != nil {
+		addOptional("available_delivery", *p.AvailableDelivery)
+	}
+
+	query := `INSERT INTO products (` + strings.Join(columns, ", ") + `) VALUES (` +
+		strings.TrimSuffix(strings.Repeat("?, ", len(columns)), ", ") + `)`
+
+	// Le produit et ses associations (composition, options, tags, allergènes,
+	// intégrations) sont écrits dans une seule transaction : un échec sur une
+	// association annule la création au lieu de laisser en base un produit
+	// incomplet que l'appelant croit ne pas avoir créé.
+	var productID string
+	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		txDB := dbx.GetDB(txCtx, r.database)
+
+		id, insertErr := txDB.InsertReturningID(txCtx, query, "product_id", args...)
+		if insertErr != nil {
+			return insertErr
+		}
+		productID = strconv.FormatInt(id, 10)
+
+		if len(p.Configuration) > 0 {
+			if err := r.SyncProductAttributes(txCtx, p.MerchantID, productID, p.Configuration); err != nil {
+				return fmt.Errorf("failed to sync product attributes: %w", err)
+			}
+		}
+
+		if len(p.Components) > 0 {
+			if err := r.SyncProductComponents(txCtx, p.MerchantID, productID, p.Components); err != nil {
+				return fmt.Errorf("failed to sync product components: %w", err)
+			}
+		}
+
+		if len(p.Tags) > 0 {
+			if err := r.SyncProductTags(txCtx, p.MerchantID, productID, p.Tags); err != nil {
+				return fmt.Errorf("failed to sync product tags: %w", err)
+			}
+		}
+
+		if len(p.Allergens) > 0 {
+			if err := r.SyncProductAllergens(txCtx, p.MerchantID, productID, p.Allergens); err != nil {
+				return fmt.Errorf("failed to sync product allergens: %w", err)
+			}
+		}
+
+		// SyncProductIntegrations n'écrit rien si aucun canal n'est renseigné :
+		// on évite alors sa requête de contrôle d'appartenance.
+		if p.Integrations.UberEats.Enabled || p.Integrations.UberEats.PriceOverride != nil ||
+			p.Integrations.Deliveroo.Enabled || p.Integrations.Deliveroo.PriceOverride != nil {
+			if err := r.SyncProductIntegrations(txCtx, p.MerchantID, productID, p.Integrations); err != nil {
+				return fmt.Errorf("failed to sync product integrations: %w", err)
+			}
+		}
+
+		_ = r.setMenuUpdated(txCtx, p.MerchantID)
+
+		return nil
+	})
 	if err != nil {
 		return "0", err
 	}
 
-	_ = r.setMenuUpdated(ctx, p.MerchantID)
-
-	return strconv.FormatInt(id, 10), nil
+	return productID, nil
 }
 
 func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID, name, description string, price int) (int64, error) {
@@ -3085,6 +3298,29 @@ func (r *MenuRepository) CreateComponent(ctx context.Context, p *UpdateComponent
 	// Mettre la première lettre en majuscule
 	name := capitalizeFirst(strings.TrimSpace(*p.Name))
 
+	// Vérifier qu'aucun composant actif ne porte déjà ce nom
+	var componentNameExists int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM components WHERE merchant_id = ? AND LOWER(name) = LOWER(?) AND enabled = TRUE`,
+		p.MerchantID, name,
+	).Scan(&componentNameExists)
+	if err != nil {
+		return "0", fmt.Errorf("failed to check component name uniqueness: %w", err)
+	}
+	if componentNameExists > 0 {
+		if r.redis == nil {
+			return "0", models.ErrComponentNameAlreadyExists
+		}
+		// Redis actif : le 1er appel pose une clé de confirmation et bloque ;
+		// un 2e appel identique (même merchant + même nom) la trouve déjà
+		// posée et la création est acceptée malgré le doublon.
+		confirmKey := helpers.GetMenuComponentNameConfirmKey(p.MerchantID, name)
+		if r.redis.SetNX(ctx, confirmKey, "1", models.MenuNameConfirmTTL) {
+			return "0", models.ErrComponentNameAlreadyExistsWithRetry
+		}
+		r.redis.Delete(ctx, confirmKey)
+	}
+
 	// Déterminer les valeurs optionnelles d'achat
 	var purchaseCost interface{} = 0
 	if p.PurchaseCost != nil {
@@ -3290,6 +3526,36 @@ func (r *MenuRepository) CreateProductCategory(ctx context.Context, p *CreatePro
 	return strconv.FormatInt(id, 10), nil
 }
 
+// resolveUpdatableTvaID valide un taux de TVA fourni dans une mise à jour et le
+// convertit pour une colonne integer. nil (champ absent du payload) laisse le
+// taux inchangé via COALESCE. Un taux inexistant ou désactivé est refusé plutôt
+// qu'ignoré silencieusement : sans ça l'appelant croirait la TVA enregistrée.
+func (r *MenuRepository) resolveUpdatableTvaID(ctx context.Context, id *string, field string) (*int, error) {
+	if id == nil {
+		return nil, nil
+	}
+
+	trimmed := strings.TrimSpace(*id)
+	value, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("%s '%s' does not exist or is disabled", field, trimmed)
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?`,
+		trimmed,
+	).Scan(&count); err != nil {
+		return nil, fmt.Errorf("failed to validate %s: %w", field, err)
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("%s '%s' does not exist or is disabled", field, trimmed)
+	}
+
+	return &value, nil
+}
+
 func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productID string, p ProductUpdatePayload) error {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -3311,9 +3577,28 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 			status = COALESCE(?, status),
 			available_in = COALESCE(?, available_in),
 			available_take_away = COALESCE(?, available_take_away),
-			available_delivery = COALESCE(?, available_delivery)
+			available_delivery = COALESCE(?, available_delivery),
+			tva_in_id = COALESCE(?, tva_in_id),
+			tva_take_away_id = COALESCE(?, tva_take_away_id),
+			tva_delivery_id = COALESCE(?, tva_delivery_id)
 		WHERE product_id = ? AND merchant_id = ?
 	`
+
+	// tva_*_id sont des colonnes integer : on valide puis on convertit en *int.
+	// Un *string dans le COALESCE ferait échouer l'inférence de type Postgres
+	// face à une colonne integer (cf. même contrainte à la création).
+	tvaIn, err := r.resolveUpdatableTvaID(ctx, p.TvaInID, "tva_in_id")
+	if err != nil {
+		return err
+	}
+	tvaTakeAway, err := r.resolveUpdatableTvaID(ctx, p.TvaTakeAwayID, "tva_take_away_id")
+	if err != nil {
+		return err
+	}
+	tvaDelivery, err := r.resolveUpdatableTvaID(ctx, p.TvaDeliveryID, "tva_delivery_id")
+	if err != nil {
+		return err
+	}
 
 	// by_product_of est un integer nullable : MySQL coerçait '' en 0 ; côté
 	// Go, une chaîne vide ou non numérique devient NULL (même effet racine
@@ -3323,7 +3608,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		byProductOf = nil
 	}
 
-	_, err := db.ExecContext(ctx, query,
+	_, err = db.ExecContext(ctx, query,
 		p.Name,
 		p.Description,
 		p.BgColor,
@@ -3339,6 +3624,9 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.AvailableIn,
 		p.AvailableTakeAway,
 		p.AvailableDelivery,
+		tvaIn,
+		tvaTakeAway,
+		tvaDelivery,
 		productID,
 		merchantID,
 	)

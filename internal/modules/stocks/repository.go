@@ -732,6 +732,93 @@ func (r *StocksRepository) ConsumeOrderStock(ctx context.Context, merchantID, us
 	return nil
 }
 
+// ConsumeOrderOptionsStock déduit le stock des ingrédients liés aux options
+// d'attributs configurables sélectionnées sur la commande (ex. option
+// "Extra fromage" liée au composant "Fromage râpé"). Indépendante de
+// ConsumeOrderStock (recette du produit) : les deux s'exécutent séparément,
+// l'échec de l'une n'affecte jamais l'autre — cf. appelant dans
+// order_life_cycle/service.go.
+func (r *StocksRepository) ConsumeOrderOptionsStock(ctx context.Context, merchantID, userID, orderID string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	// Même logique à deux quantités que ConsumeOrderStock, au niveau des
+	// options sélectionnées plutôt que des composants requis par la recette :
+	//   deduct_qty   = cao.quantity * uomc.ratio * oic.quantity → unité native du composant (mise à jour du stock)
+	//   movement_qty = cao.quantity * oic.quantity              → unité de l'option (traçabilité du mouvement)
+	// Le INNER JOIN sur components exclut naturellement les options sans
+	// ingrédient lié (cao.component_id IS NULL ne matche jamais).
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			oi.order_item_id,
+			oi.product_id,
+			c.component_id,
+			%s AS deduct_qty,
+			%s              AS movement_qty,
+			cao.unit_of_measure                              AS movement_uom
+		FROM orderitems oi
+		INNER JOIN order_item_configuration oic
+			ON oic.order_item_id = oi.order_item_id
+		INNER JOIN configurable_attribute_options cao
+			ON cao.id = oic.configuration_attribute_option_id
+		INNER JOIN components c
+			ON c.component_id = cao.component_id AND c.merchant_id = ?
+		INNER JOIN unit_of_measure_convert uomc
+			ON uomc.id_from = c.unit_of_measure AND uomc.id_to = cao.unit_of_measure
+		WHERE oi.order_id = ?
+	`, round4("cao.quantity * uomc.ratio * oic.quantity"), round4("cao.quantity * oic.quantity")), merchantID, orderID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type consumptionRow struct {
+		OrderItemID string
+		ProductID   string
+		ComponentID string
+		DeductQty   float64 // in component's native unit — used to update components.stock
+		MovementQty float64 // in the option's unit — stored in stock_movements
+		MovementUOM string  // option's unit id — stored in stock_movements
+	}
+
+	var items []consumptionRow
+	for rows.Next() {
+		var cr consumptionRow
+		if err := rows.Scan(&cr.OrderItemID, &cr.ProductID, &cr.ComponentID, &cr.DeductQty, &cr.MovementQty, &cr.MovementUOM); err != nil {
+			return err
+		}
+		items = append(items, cr)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	for _, cr := range items {
+		// Deduct from component stock using the native unit quantity.
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE components
+			SET stock = %s
+			WHERE component_id = ? AND merchant_id = ?
+		`, round4("stock - ?")), cr.DeductQty, cr.ComponentID, merchantID); err != nil {
+			return err
+		}
+
+		// Record the movement in the option's unit for human-readable traceability.
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO stock_movements
+				(id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, order_id)
+			VALUES (?, ?, ?, ?, ?, 'order', 'consume', ?, ?, ?, ?)
+		`, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), merchantID, userID, cr.ComponentID, cr.ProductID, cr.MovementQty, cr.MovementUOM, cr.OrderItemID, orderID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // GetMovements fetches all component stock movements for a merchant between two dates (inclusive, UTC).
 // Type is derived:
 //   - movement '1'                           → "add"

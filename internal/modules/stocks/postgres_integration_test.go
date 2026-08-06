@@ -22,9 +22,11 @@ func TestStocksRepository_Postgres(t *testing.T) {
 	var uomIntID int64
 	var componentIntID int64
 	var componentIntID2 int64
+	var componentIntID3 int64
 	var productIntID int64
 	var recipeIntID int64
 	var orderIntID int64
+	const attrID = "itest-stk-attr-1"
 
 	cleanup := func() {
 		_, _ = db.ExecContext(ctx, `DELETE FROM stock_movements WHERE merchant_id = $1`, merchantID)
@@ -32,9 +34,12 @@ func TestStocksRepository_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM purchased_components WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM barcodes WHERE merchant_id = $1`, merchantID)
 		if orderIntID != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM order_item_configuration WHERE order_item_id IN (SELECT order_item_id FROM orderitems WHERE order_id = $1)`, orderIntID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM orderitems WHERE order_id = $1`, orderIntID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE order_id = $1`, orderIntID)
 		}
+		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attribute_options WHERE configurable_attribute_id = $1`, attrID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attributes WHERE id = $1`, attrID)
 		if recipeIntID != 0 {
 			_, _ = db.ExecContext(ctx, `DELETE FROM requires WHERE recipe_id = $1`, recipeIntID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM recipes WHERE recipe_id = $1`, recipeIntID)
@@ -47,6 +52,9 @@ func TestStocksRepository_Postgres(t *testing.T) {
 		}
 		if componentIntID2 != 0 {
 			_, _ = db.ExecContext(ctx, `DELETE FROM components WHERE component_id = $1`, componentIntID2)
+		}
+		if componentIntID3 != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM components WHERE component_id = $1`, componentIntID3)
 		}
 		_, _ = db.ExecContext(ctx, `DELETE FROM productcateg WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM component_category WHERE merchant_id = $1`, merchantID)
@@ -295,9 +303,11 @@ func TestStocksRepository_Postgres(t *testing.T) {
 		RETURNING order_id`, merchantID, userID).Scan(&orderIntID); err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `
+	var orderItemIntID int64
+	if err := db.QueryRowContext(ctx, `
 		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
-		VALUES ($1, $2, $3, 2, 500)`, orderIntID, productIntID, merchantID); err != nil {
+		VALUES ($1, $2, $3, 2, 500)
+		RETURNING order_item_id`, orderIntID, productIntID, merchantID).Scan(&orderItemIntID); err != nil {
 		t.Fatalf("seed orderitem: %v", err)
 	}
 	if err := repo.ConsumeOrderStock(ctx, merchantID, userID, strconv.FormatInt(orderIntID, 10)); err != nil {
@@ -309,6 +319,61 @@ func TestStocksRepository_Postgres(t *testing.T) {
 	// deduct = ROUND(rq.quantity(2) * ratio(1) * oi.quantity(2), 4) = 4 -> 94 - 4 = 90.
 	if stockComponent2 != 90 {
 		t.Fatalf("expected component 2 stock 90 after ConsumeOrderStock, got %v", stockComponent2)
+	}
+
+	// --- ConsumeOrderOptionsStock: consumes componentIntID3 via a selected
+	// attribute option ("Extra itest"), independently of the recipe above.
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO components (merchant_id, name, category_id, unit_of_measure, stock, safety_stock, auto_update_purchase_info)
+		VALUES ($1, 'ITest Component 3 (option)', 'cat-1', $2, 50, 5, true)
+		RETURNING component_id`, merchantID, uomIntID).Scan(&componentIntID3); err != nil {
+		t.Fatalf("seed components 3: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, product_id, merchant_id, attribute_type, name, title, min_options, max_options, enabled)
+		VALUES ($1, 0, $2, 'CHECK', 'itest-attr', 'itest-attr', 0, 1, true)`, attrID, merchantID); err != nil {
+		t.Fatalf("seed configurable_attributes: %v", err)
+	}
+	var optionIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, max_quantity, extra_price, enabled, component_id, quantity, unit_of_measure)
+		VALUES ($1, 'Extra itest', 5, 100, 1, $2, 2, $3)
+		RETURNING id`, attrID, componentIntID3, uomIntID).Scan(&optionIntID); err != nil {
+		t.Fatalf("seed configurable_attribute_options: %v", err)
+	}
+	// configuration_attribute_id est resté "integer" sur cette table alors que
+	// configurable_attributes.id est varchar(64) (IDs préfixés applicatifs) —
+	// mismatch de schéma préexistant, sans lien avec ConsumeOrderOptionsStock
+	// (qui ne lit pas cette colonne). Un entier factice suffit ici.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity)
+		VALUES ($1, 0, $2, 3)`, orderItemIntID, optionIntID); err != nil {
+		t.Fatalf("seed order_item_configuration: %v", err)
+	}
+	if err := repo.ConsumeOrderOptionsStock(ctx, merchantID, userID, strconv.FormatInt(orderIntID, 10)); err != nil {
+		t.Fatalf("ConsumeOrderOptionsStock failed against postgres: %v", err)
+	}
+	var stockComponent3 float64
+	if err := db.QueryRowContext(ctx, `SELECT stock FROM components WHERE component_id = $1`, componentIntID3).Scan(&stockComponent3); err != nil {
+		t.Fatalf("read back component 3 after ConsumeOrderOptionsStock: %v", err)
+	}
+	// deduct = ROUND(cao.quantity(2) * ratio(1) * oic.quantity(3), 4) = 6 -> 50 - 6 = 44.
+	if stockComponent3 != 44 {
+		t.Fatalf("expected component 3 stock 44 after ConsumeOrderOptionsStock, got %v", stockComponent3)
+	}
+	var optionConsumeMovementCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stock_movements WHERE component_id = $1 AND movement = 'consume'`, strconv.FormatInt(componentIntID3, 10)).Scan(&optionConsumeMovementCount); err != nil {
+		t.Fatalf("count option consume movements: %v", err)
+	}
+	if optionConsumeMovementCount != 1 {
+		t.Fatalf("expected 1 consume movement for component 3, got %d", optionConsumeMovementCount)
+	}
+	// componentIntID2 (recette) ne doit pas être affecté par la déduction des options.
+	if err := db.QueryRowContext(ctx, `SELECT stock FROM components WHERE component_id = $1`, componentIntID2).Scan(&stockComponent2); err != nil {
+		t.Fatalf("read back component 2 after ConsumeOrderOptionsStock: %v", err)
+	}
+	if stockComponent2 != 90 {
+		t.Fatalf("expected component 2 stock unchanged at 90 after ConsumeOrderOptionsStock, got %v", stockComponent2)
 	}
 
 	// --- GetMovements: DATE_FORMAT/DATE() fix + cross-type (varchar/integer) joins.

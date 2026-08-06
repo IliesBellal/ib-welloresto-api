@@ -781,6 +781,8 @@ COMMENT ON COLUMN configurable_attributes.attribute_type IS 'CHECK | QUANTITY';
 -- ---------------------------------------------------------------------
 -- configurable_attribute_options
 --   collation table utf8mb3_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
+--   FK candidate (non creee) : component_id -> components.component_id
+--   FK candidate (non creee) : unit_of_measure -> unit_of_measure.id
 -- ---------------------------------------------------------------------
 CREATE TABLE configurable_attribute_options (
     id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -790,9 +792,15 @@ CREATE TABLE configurable_attribute_options (
     extra_price integer NOT NULL DEFAULT 0,
     image_url varchar(500),
     enabled integer NOT NULL DEFAULT 1,
+    component_id integer,
+    quantity double precision,
+    unit_of_measure integer,
     PRIMARY KEY (id)
 );
 CREATE INDEX idx_configurable_attribute_options_configurable_attribute_id ON configurable_attribute_options (configurable_attribute_id);
+COMMENT ON COLUMN configurable_attribute_options.component_id IS 'Ingredient (components.component_id) lie a cette option, pour projection de cout. NULL = aucun ingredient. Pas de FK (convention du depot).';
+COMMENT ON COLUMN configurable_attribute_options.quantity IS 'Quantite de l''ingredient consommee par selection de cette option, dans l''unite unit_of_measure. NULL si component_id est NULL.';
+COMMENT ON COLUMN configurable_attribute_options.unit_of_measure IS 'Unite (unit_of_measure.id) de la quantite ci-dessus. NULL si component_id est NULL.';
 
 -- ---------------------------------------------------------------------
 -- consumables
