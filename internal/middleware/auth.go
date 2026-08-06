@@ -99,11 +99,16 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 					// middleware, ou le fallback SMS), elle est toujours accompagnée du destinataire.
 					// Champs "status"/"message"/"error" alignés sur ce que SendErrorJSON(ErrMFARequired)
 					// produisait, pour ne pas casser la détection côté front (errorData.status === 'mfa_required').
+					// Seul le canal email (mfa_type "email_sms") est géré pour l'instant.
+					var recipient string
+					if user.MFAType != nil && *user.MFAType == "email_sms" {
+						recipient = helpers.MaskEmail(user.Email)
+					}
 					models.SendJSON(w, http.StatusUnauthorized, "auth", "login", map[string]string{
 						"status":    "mfa_required",
 						"message":   "MFA required, please try login",
 						"error":     "MFA required, please try login",
-						"recipient": helpers.MaskEmail(user.Email),
+						"recipient": recipient,
 					})
 					return
 				}

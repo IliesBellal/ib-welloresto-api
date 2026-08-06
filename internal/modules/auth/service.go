@@ -580,9 +580,11 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 	}
 
 	// Le recipient n'a de sens que si une vérification MFA est en attente
-	// (sinon on n'a envoyé aucun code, rien à afficher).
+	// (sinon on n'a envoyé aucun code, rien à afficher), et le seul canal géré
+	// pour l'instant à la connexion est l'email (mfa_type "email_sms").
 	var mfaRecipient string
-	if user.MFAStatus != nil && *user.MFAStatus == models.MFAStatusPending {
+	if user.MFAStatus != nil && *user.MFAStatus == models.MFAStatusPending &&
+		user.MFAType != nil && *user.MFAType == "email_sms" {
 		mfaRecipient = helpers.MaskEmail(user.Email)
 	}
 
