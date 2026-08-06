@@ -431,6 +431,13 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 	return &attr, nil
 }
 
+// CreateAttribute est l'enveloppe unitaire du chemin POST /menu/attributes :
+// contrôle d'unicité du nom (avec sa confirmation Redis), puis insertion.
+// Le cœur d'insertion réutilisable est insertAttributeTx, volontairement
+// dépourvu de tout contrôle d'unicité.
+//
+// TODO: non atomique — attribut + options partiellement commités si une option
+// échoue ; à traiter dans un ticket dédié, hors refactor.
 func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string, payload *UpdateAttributePayload) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -457,6 +464,17 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 		r.redis.Delete(ctx, confirmKey)
 	}
 
+	return r.insertAttributeTx(ctx, merchantID, payload)
+}
+
+// insertAttributeTx insère un attribut configurable et ses options, sans aucun
+// contrôle d'unicité de nom et sans ouvrir de transaction propre : il s'exécute
+// dans celle portée par ctx s'il y en a une (dbx.GetDB), sinon en autocommit —
+// exactement le comportement de l'appel unitaire. Un appelant en lot peut donc
+// l'envelopper dans son propre RunInTx pour obtenir l'atomicité.
+func (r *MenuRepository) insertAttributeTx(ctx context.Context, merchantID string, payload *UpdateAttributePayload) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
 	// Generate new UUID for attribute
 	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
 
@@ -478,7 +496,7 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 		) VALUES (?, ?, 0, ?, ?, ?, ?, ?, TRUE)
 	`
 
-	_, err = db.ExecContext(ctx, insertAttrQuery,
+	_, err := db.ExecContext(ctx, insertAttrQuery,
 		attributeID,
 		merchantID,
 		payload.Type,
@@ -490,8 +508,22 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 		return "", fmt.Errorf("insert attribute error: %w", err)
 	}
 
+	if err := r.insertAttributeOptionsTx(ctx, attributeID, payload.Options); err != nil {
+		return "", err
+	}
+
+	return attributeID, nil
+}
+
+// insertAttributeOptionsTx insère les options d'un attribut qui vient d'être
+// créé. Même contrat transactionnel que insertAttributeTx. Sert uniquement le
+// chemin de création : la branche INSERT de UpdateAttribute, dont le corps est
+// identique, reste volontairement autonome (dedup hors périmètre du refactor).
+func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attributeID string, options []UpdateAttributeOptionPayload) error {
+	db := dbx.GetDB(ctx, r.database)
+
 	// Process options
-	for _, opt := range payload.Options {
+	for _, opt := range options {
 		price := opt.Price
 		if opt.ExtraPrice != nil {
 			price = *opt.ExtraPrice
@@ -541,7 +573,7 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 		if enabled {
 			enabledInt = 1
 		}
-		_, err = db.ExecContext(ctx, insertOptQuery,
+		_, err := db.ExecContext(ctx, insertOptQuery,
 			attributeID,
 			opt.Title,
 			price,
@@ -552,11 +584,11 @@ func (r *MenuRepository) CreateAttribute(ctx context.Context, merchantID string,
 			quantityArg,
 			unitArg)
 		if err != nil {
-			return "", fmt.Errorf("insert option error: %w", err)
+			return fmt.Errorf("insert option error: %w", err)
 		}
 	}
 
-	return attributeID, nil
+	return nil
 }
 
 func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attributeID string, payload *UpdateAttributePayload) error {
@@ -2257,83 +2289,29 @@ func (r *MenuRepository) GetComponent(ctx context.Context, merchantID, component
 	}, nil
 }
 
+// CreateProduct est l'enveloppe unitaire du chemin POST /menu/products :
+// validations 1 à 4, puis contrôle d'unicité du nom avec sa confirmation Redis
+// (validation 5, isolée ici parce qu'elle porte un effet de bord), puis
+// insertion transactionnelle et marquage du menu comme modifié.
+//
+// Statut du produit créé : CreateProductPayload.Status étant un *string, un
+// champ absent laisse la colonne hors de l'INSERT et c'est le défaut SQL qui
+// s'applique — products.status DEFAULT '1', identique en MySQL et en Postgres.
+// Fourni, il est écrit brut, sans validation. Les deux fiches du back-office
+// divergent d'ailleurs aujourd'hui : ProductCreateSheet n'envoie pas le champ
+// (donc '1') tandis que SimpleProductSheet envoie 'available'. Les deux valeurs
+// coexistent donc en base pour des produits équivalents — d'où le filtre
+// p.status IN ('available', '1') de ListAvailableProductsForUpsell.
 func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayload) (string, error) {
+	if err := r.validateProductForCreate(ctx, p); err != nil {
+		return "0", err
+	}
+
 	db := dbx.GetDB(ctx, r.database)
-
-	// --- VALIDATION 1: Vérifier les champs obligatoires de TVA ---
-	if p.TvaInID == "" {
-		return "0", fmt.Errorf("tva_in_id is required")
-	}
-	if p.TvaDeliveryID == "" {
-		return "0", fmt.Errorf("tva_delivery_id is required")
-	}
-	if p.TvaTakeAwayID == "" {
-		return "0", fmt.Errorf("tva_take_away_id is required")
-	}
-	// tva_id est un integer : un ID non numérique valait 0 en MySQL non-strict
-	// (aucune correspondance) — même refus côté Go, sans erreur de type Postgres.
-	if !menuNumericID(p.TvaInID) {
-		return "0", fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
-	}
-	if !menuNumericID(p.TvaDeliveryID) {
-		return "0", fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
-	}
-	if !menuNumericID(p.TvaTakeAwayID) {
-		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
-	}
-
-	// --- VALIDATION 2: Vérifier que la catégorie existe et est activée ---
-	var categoryExists int
-	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
-		p.CategoryID, p.MerchantID,
-	).Scan(&categoryExists)
-	if err != nil {
-		return "0", fmt.Errorf("failed to check category existence: %w", err)
-	}
-	if categoryExists == 0 {
-		return "0", fmt.Errorf("category does not exist or is disabled")
-	}
-
-	// --- VALIDATION 3: Vérifier que tous les taux de TVA existent et sont activés ---
-	var tvaCount int
-	err = db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tva_categories 
-		 WHERE enabled = TRUE AND tva_id IN (?, ?, ?)`,
-		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
-	).Scan(&tvaCount)
-	if err != nil {
-		return "0", fmt.Errorf("failed to check tva rates existence: %w", err)
-	}
-	if tvaCount != 3 {
-		return "0", fmt.Errorf("one or more tva rates do not exist or are disabled: provided %d but found %d", 3, tvaCount)
-	}
-
-	// --- VALIDATION 4: Vérifier que les taux TVA existent tous dans les résultats ---
-	var tvaInExists, tvaDeliveryExists, tvaTakeAwayExists int
-	err = db.QueryRowContext(ctx,
-		`SELECT 
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_in_count,
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_delivery_count,
-			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_take_away_count`,
-		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
-	).Scan(&tvaInExists, &tvaDeliveryExists, &tvaTakeAwayExists)
-	if err != nil {
-		return "0", fmt.Errorf("failed to validate individual tva rates: %w", err)
-	}
-	if tvaInExists == 0 {
-		return "0", fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
-	}
-	if tvaDeliveryExists == 0 {
-		return "0", fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
-	}
-	if tvaTakeAwayExists == 0 {
-		return "0", fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
-	}
 
 	// --- VALIDATION 5: Vérifier qu'aucun produit actif ne porte déjà ce nom ---
 	var productNameExists int
-	err = db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM products WHERE merchant_id = ? AND LOWER(name) = LOWER(?) AND enabled = TRUE`,
 		p.MerchantID, strings.TrimSpace(p.Name),
 	).Scan(&productNameExists)
@@ -2353,6 +2331,126 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		}
 		r.redis.Delete(ctx, confirmKey)
 	}
+
+	// Le produit et ses associations (composition, options, tags, allergènes,
+	// intégrations) sont écrits dans une seule transaction : un échec sur une
+	// association annule la création au lieu de laisser en base un produit
+	// incomplet que l'appelant croit ne pas avoir créé.
+	var productID string
+	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		id, insertErr := r.insertProductTx(txCtx, p)
+		if insertErr != nil {
+			return insertErr
+		}
+		productID = id
+
+		_ = r.setMenuUpdated(txCtx, p.MerchantID)
+
+		return nil
+	})
+	if err != nil {
+		return "0", err
+	}
+
+	return productID, nil
+}
+
+// validateProductForCreate exécute les validations 1 à 4 de la création d'un
+// produit : champs TVA obligatoires et numériques, catégorie existante et
+// activée, puis existence des trois taux de TVA. Ces contrôles sont en lecture
+// seule et rejouables tels quels.
+//
+// La validation 5 (unicité du nom) en est volontairement absente : elle porte
+// un effet de bord — la clé de confirmation Redis qui autorise un doublon au
+// second appel — et reste donc dans l'enveloppe unitaire CreateProduct.
+func (r *MenuRepository) validateProductForCreate(ctx context.Context, p *CreateProductPayload) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	// --- VALIDATION 1: Vérifier les champs obligatoires de TVA ---
+	if p.TvaInID == "" {
+		return fmt.Errorf("tva_in_id is required")
+	}
+	if p.TvaDeliveryID == "" {
+		return fmt.Errorf("tva_delivery_id is required")
+	}
+	if p.TvaTakeAwayID == "" {
+		return fmt.Errorf("tva_take_away_id is required")
+	}
+	// tva_id est un integer : un ID non numérique valait 0 en MySQL non-strict
+	// (aucune correspondance) — même refus côté Go, sans erreur de type Postgres.
+	if !menuNumericID(p.TvaInID) {
+		return fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
+	}
+	if !menuNumericID(p.TvaDeliveryID) {
+		return fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
+	}
+	if !menuNumericID(p.TvaTakeAwayID) {
+		return fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
+	}
+
+	// --- VALIDATION 2: Vérifier que la catégorie existe et est activée ---
+	var categoryExists int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM productcateg WHERE merchant_categ_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		p.CategoryID, p.MerchantID,
+	).Scan(&categoryExists)
+	if err != nil {
+		return fmt.Errorf("failed to check category existence: %w", err)
+	}
+	if categoryExists == 0 {
+		return fmt.Errorf("category does not exist or is disabled")
+	}
+
+	// --- VALIDATION 3: Vérifier que tous les taux de TVA existent et sont activés ---
+	var tvaCount int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tva_categories 
+		 WHERE enabled = TRUE AND tva_id IN (?, ?, ?)`,
+		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
+	).Scan(&tvaCount)
+	if err != nil {
+		return fmt.Errorf("failed to check tva rates existence: %w", err)
+	}
+	if tvaCount != 3 {
+		return fmt.Errorf("one or more tva rates do not exist or are disabled: provided %d but found %d", 3, tvaCount)
+	}
+
+	// --- VALIDATION 4: Vérifier que les taux TVA existent tous dans les résultats ---
+	var tvaInExists, tvaDeliveryExists, tvaTakeAwayExists int
+	err = db.QueryRowContext(ctx,
+		`SELECT 
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_in_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_delivery_count,
+			(SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?) as tva_take_away_count`,
+		p.TvaInID, p.TvaDeliveryID, p.TvaTakeAwayID,
+	).Scan(&tvaInExists, &tvaDeliveryExists, &tvaTakeAwayExists)
+	if err != nil {
+		return fmt.Errorf("failed to validate individual tva rates: %w", err)
+	}
+	if tvaInExists == 0 {
+		return fmt.Errorf("tva_in_id '%s' does not exist or is disabled", p.TvaInID)
+	}
+	if tvaDeliveryExists == 0 {
+		return fmt.Errorf("tva_delivery_id '%s' does not exist or is disabled", p.TvaDeliveryID)
+	}
+	if tvaTakeAwayExists == 0 {
+		return fmt.Errorf("tva_take_away_id '%s' does not exist or is disabled", p.TvaTakeAwayID)
+	}
+
+	return nil
+}
+
+// insertProductTx insère le produit puis ses associations (options, composition,
+// tags, allergènes) et retourne l'ID généré. Volontairement dépourvu de tout
+// contrôle d'unicité, de setMenuUpdated, d'invalidation de cache et de
+// rattachement à une catégorie marketing : ces effets restent à la charge de
+// l'appelant.
+//
+// Il n'ouvre pas de transaction propre et s'exécute dans celle portée par ctx
+// (dbx.GetDB). RunInTx étant réentrant, un appelant en lot peut envelopper
+// plusieurs appels dans une transaction unique.
+func (r *MenuRepository) insertProductTx(ctx context.Context, p *CreateProductPayload) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
 
 	// Calculer le prix le plus haut entre price, price_delivery, et price_takeaway.
 	// Les prix arrivent en float64 (JSON) sur des colonnes integer : MySQL
@@ -2453,54 +2551,38 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	query := `INSERT INTO products (` + strings.Join(columns, ", ") + `) VALUES (` +
 		strings.TrimSuffix(strings.Repeat("?, ", len(columns)), ", ") + `)`
 
-	// Le produit et ses associations (composition, options, tags, allergènes,
-	// intégrations) sont écrits dans une seule transaction : un échec sur une
-	// association annule la création au lieu de laisser en base un produit
-	// incomplet que l'appelant croit ne pas avoir créé.
-	var productID string
-	err = dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
-		txDB := dbx.GetDB(txCtx, r.database)
-
-		id, insertErr := txDB.InsertReturningID(txCtx, query, "product_id", args...)
-		if insertErr != nil {
-			return insertErr
-		}
-		productID = strconv.FormatInt(id, 10)
-
-		if len(p.Configuration) > 0 {
-			if err := r.SyncProductAttributes(txCtx, p.MerchantID, productID, p.Configuration); err != nil {
-				return fmt.Errorf("failed to sync product attributes: %w", err)
-			}
-		}
-
-		if len(p.Components) > 0 {
-			if err := r.SyncProductComponents(txCtx, p.MerchantID, productID, p.Components); err != nil {
-				return fmt.Errorf("failed to sync product components: %w", err)
-			}
-		}
-
-		if len(p.Tags) > 0 {
-			if err := r.SyncProductTags(txCtx, p.MerchantID, productID, p.Tags); err != nil {
-				return fmt.Errorf("failed to sync product tags: %w", err)
-			}
-		}
-
-		if len(p.Allergens) > 0 {
-			if err := r.SyncProductAllergens(txCtx, p.MerchantID, productID, p.Allergens); err != nil {
-				return fmt.Errorf("failed to sync product allergens: %w", err)
-			}
-		}
-
-		// Les intégrations (sync_* et prix plateformes) sont déjà portées par
-		// l'INSERT ci-dessus — pas de synchronisation séparée ici.
-
-		_ = r.setMenuUpdated(txCtx, p.MerchantID)
-
-		return nil
-	})
-	if err != nil {
-		return "0", err
+	id, insertErr := db.InsertReturningID(ctx, query, "product_id", args...)
+	if insertErr != nil {
+		return "", insertErr
 	}
+	productID := strconv.FormatInt(id, 10)
+
+	if len(p.Configuration) > 0 {
+		if err := r.SyncProductAttributes(ctx, p.MerchantID, productID, p.Configuration); err != nil {
+			return "", fmt.Errorf("failed to sync product attributes: %w", err)
+		}
+	}
+
+	if len(p.Components) > 0 {
+		if err := r.SyncProductComponents(ctx, p.MerchantID, productID, p.Components); err != nil {
+			return "", fmt.Errorf("failed to sync product components: %w", err)
+		}
+	}
+
+	if len(p.Tags) > 0 {
+		if err := r.SyncProductTags(ctx, p.MerchantID, productID, p.Tags); err != nil {
+			return "", fmt.Errorf("failed to sync product tags: %w", err)
+		}
+	}
+
+	if len(p.Allergens) > 0 {
+		if err := r.SyncProductAllergens(ctx, p.MerchantID, productID, p.Allergens); err != nil {
+			return "", fmt.Errorf("failed to sync product allergens: %w", err)
+		}
+	}
+
+	// Les intégrations (sync_* et prix plateformes) sont déjà portées par
+	// l'INSERT ci-dessus — pas de synchronisation séparée ici.
 
 	return productID, nil
 }
