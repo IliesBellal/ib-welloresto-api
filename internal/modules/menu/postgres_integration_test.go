@@ -410,7 +410,10 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		Components:        []ProductComponentUpdate{{ComponentID: compID, Quantity: 75, UnitID: unitGStr}},
 		Tags:              []string{"itest-menu-tag"},
 		Allergens:         []string{"itest-menu-alg"},
-		Integrations: models.ProductIntegrations{
+		// Deliveroo actif, Uber Eats explicitement désactivé : les colonnes
+		// sync_* valant TRUE par défaut, la désactivation doit être écrite.
+		Integrations: &models.ProductIntegrations{
+			UberEats:  models.ProductIntegrationItem{Enabled: false},
 			Deliveroo: models.ProductIntegrationItem{Enabled: true, PriceOverride: &fullPriceOverride},
 		},
 	})
@@ -437,6 +440,18 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	if !pFull.Integrations.Deliveroo.Enabled || pFull.Integrations.Deliveroo.PriceOverride == nil ||
 		*pFull.Integrations.Deliveroo.PriceOverride != fullPriceOverride {
 		t.Fatalf("prodFull integrations = %+v", pFull.Integrations)
+	}
+	// la désactivation doit primer sur le défaut TRUE de la colonne
+	if pFull.Integrations.UberEats.Enabled {
+		t.Fatalf("Uber Eats devait rester désactivé: %+v", pFull.Integrations.UberEats)
+	}
+	var gotSyncUber bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT sync_uber_eats FROM products WHERE product_id = $1`, prodFull).Scan(&gotSyncUber); err != nil {
+		t.Fatalf("lecture sync_uber_eats: %v", err)
+	}
+	if gotSyncUber {
+		t.Fatalf("sync_uber_eats = true, want false (défaut de colonne non écrasé)")
 	}
 
 	// colonnes facultatives fournies -> valeur du payload (et non le défaut)

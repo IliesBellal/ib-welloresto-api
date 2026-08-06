@@ -236,11 +236,17 @@ type CreateProductPayload struct {
 	AvailableIn       *bool                      `json:"available_in,omitempty"`
 	AvailableTakeAway *bool                      `json:"available_take_away,omitempty"`
 	AvailableDelivery *bool                      `json:"available_delivery,omitempty"`
-	Configuration     []string                   `json:"configuration,omitempty"` // IDs d'attributs configurables
-	Components        []ProductComponentUpdate   `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
-	Tags              []string                   `json:"tags,omitempty"`          // IDs de tags
-	Allergens         []string                   `json:"allergens,omitempty"`     // IDs d'allergènes
-	Integrations      models.ProductIntegrations `json:"integrations,omitempty"`  // Uber Eats / Deliveroo
+	Configuration     []string                 `json:"configuration,omitempty"` // IDs d'attributs configurables
+	Components        []ProductComponentUpdate `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
+	Tags              []string                 `json:"tags,omitempty"`          // IDs de tags
+	Allergens         []string                 `json:"allergens,omitempty"`     // IDs d'allergènes
+
+	// Pointeur volontairement : sync_uber_eats et sync_deliveroo valent TRUE par
+	// défaut en base. Avec une valeur non-pointeur, « désactivé » et « champ
+	// absent » seraient indistinguables et un produit créé avec les plateformes
+	// désactivées ressortirait actif. nil = garder les défauts, non-nil = la
+	// valeur des deux canaux fait foi.
+	Integrations *models.ProductIntegrations `json:"integrations,omitempty"`
 }
 
 // ProductComponentUpdate pour mettre à jour les composants d'un produit

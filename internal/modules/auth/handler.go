@@ -136,15 +136,16 @@ func (h *AuthHandler) SendVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.svc.SendVerificationCode(r.Context(), token, req.Mode)
+	recipient, err := h.svc.SendVerificationCode(r.Context(), token, req.Mode)
 	if err != nil {
 		models.SendErrorJSON(w, "auth", "send_verification", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "auth", "send_verification", map[string]string{
-		"status":  "success",
-		"message": "Verification code sent.",
+		"status":    "success",
+		"message":   "Verification code sent.",
+		"recipient": recipient,
 	})
 }
 
@@ -287,15 +288,16 @@ func (h *AuthHandler) FallbackSMS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.svc.FallbackSMS(r.Context(), token)
+	recipient, err := h.svc.FallbackSMS(r.Context(), token)
 	if err != nil {
 		models.SendErrorJSON(w, "auth", "fallback_sms", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "auth", "fallback_sms", map[string]string{
-		"status":  "success",
-		"message": "A new SMS code has been sent. Previous code has been invalidated.",
+		"status":    "success",
+		"message":   "A new SMS code has been sent. Previous code has been invalidated.",
+		"recipient": recipient,
 	})
 }
 

@@ -579,17 +579,25 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		SNOSettings:                     LoginSNOSettingsResponse{Activated: user.SNOActivated},
 	}
 
+	// Le recipient n'a de sens que si une vérification MFA est en attente
+	// (sinon on n'a envoyé aucun code, rien à afficher).
+	var mfaRecipient string
+	if user.MFAStatus != nil && *user.MFAStatus == models.MFAStatusPending {
+		mfaRecipient = helpers.MaskEmail(user.Email)
+	}
+
 	return &LoginResponse{
 		Status:         "1",
 		DeviceCashDesk: nil,
 		Enabled:        "true",
 		Session: &LoginSessionResponse{
-			Enabled:    true,
-			MerchantID: user.MerchantID,
-			Token:      user.Token,
-			MFAStatus:  user.MFAStatus,
-			MFAType:    user.MFAType,
-			Merchants:  merchants,
+			Enabled:      true,
+			MerchantID:   user.MerchantID,
+			Token:        user.Token,
+			MFAStatus:    user.MFAStatus,
+			MFAType:      user.MFAType,
+			MFARecipient: mfaRecipient,
+			Merchants:    merchants,
 		},
 		User: &LoginUserResponse{
 			ID:                 user.UserID,
@@ -795,30 +803,34 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	return nil
 }
 
-// FallbackSMS génère un nouvel OTP et l'envoie par SMS
-func (s *AuthService) FallbackSMS(ctx context.Context, token string) error {
+// FallbackSMS génère un nouvel OTP et l'envoie par SMS.
+// Retourne le numéro masqué auquel le code a été envoyé.
+func (s *AuthService) FallbackSMS(ctx context.Context, token string) (string, error) {
 	// 1. Récupérer l'utilisateur pour avoir son numéro (via la fonction existante)
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
-		return errors.New("session invalide ou expirée")
+		return "", errors.New("session invalide ou expirée")
 	}
 
-	err = s.SendMFACode(ctx, user, true)
+	if err := s.SendMFACode(ctx, user, true); err != nil {
+		return "", err
+	}
 
-	return err
+	return helpers.MaskPhone(user.Tel), nil
 }
 
 // SendVerificationCode génère un OTP pour valider un email ou un téléphone
 // mode: "EMAIL" ou "SMS"
-func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode string) error {
+// Retourne le destinataire masqué auquel le code a été envoyé.
+func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode string) (string, error) {
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
-		return errors.New("session invalide ou expirée")
+		return "", errors.New("session invalide ou expirée")
 	}
 
 	otp, err := helpers.GenerateOTP()
 	if err != nil {
-		return errors.New("impossible de générer le code de vérification")
+		return "", errors.New("impossible de générer le code de vérification")
 	}
 
 	// Clé Redis temporaire (ex: verify_email:TOKEN)
@@ -827,20 +839,23 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 	// On stocke x minutes
 	saved := s.redis.Set(ctx, cacheKey, otp, models.OTPCacheTTL)
 	if !saved {
-		return models.ErrRedisNotAvailable
+		return "", models.ErrRedisNotAvailable
 	}
 
+	var recipient string
 	if strings.ToUpper(mode) == "EMAIL" {
+		recipient = helpers.MaskEmail(user.Email)
 		s.email.SendOTP(mailer.MfaOTPData{
 			UserName:  user.FirstName + ", " + user.LastName,
 			OTP:       otp,
 			UserEmail: user.Email,
 		})
 	} else if strings.ToUpper(mode) == "SMS" || strings.ToUpper(mode) == "TEL" {
+		recipient = helpers.MaskPhone(user.Tel)
 		s.sms.SendOTP(user.Tel, otp)
 	}
 
-	return nil
+	return recipient, nil
 }
 
 // ConfirmVerification valide le code et met à jour la DB

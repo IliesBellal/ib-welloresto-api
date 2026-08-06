@@ -36,12 +36,13 @@ func (r LoginResponse) MarshalJSON() ([]byte, error) {
 type LoginDeviceCashDeskResponse struct{}
 
 type LoginSessionResponse struct {
-	Enabled    bool          `json:"enabled"`
-	MerchantID string        `json:"merchant_id"`
-	Token      string        `json:"token"`
-	MFAStatus  *string       `json:"mfa_status"`
-	MFAType    *string       `json:"mfa_type"`
-	Merchants  []MerchantRow `json:"merchants"`
+	Enabled      bool          `json:"enabled"`
+	MerchantID   string        `json:"merchant_id"`
+	Token        string        `json:"token"`
+	MFAStatus    *string       `json:"mfa_status"`
+	MFAType      *string       `json:"mfa_type"`
+	MFARecipient string        `json:"mfa_recipient,omitempty"`
+	Merchants    []MerchantRow `json:"merchants"`
 }
 
 type LoginUserResponse struct {

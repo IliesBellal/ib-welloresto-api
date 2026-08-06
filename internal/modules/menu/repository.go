@@ -2369,6 +2369,19 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		maxPrice = priceTakeAway
 	}
 
+	// Les prix plateformes valent le prix le plus élevé, sauf si la fiche impose
+	// un prix dédié.
+	uberEatsPrice := maxPrice
+	deliverooPrice := maxPrice
+	if p.Integrations != nil {
+		if p.Integrations.UberEats.PriceOverride != nil {
+			uberEatsPrice = *p.Integrations.UberEats.PriceOverride
+		}
+		if p.Integrations.Deliveroo.PriceOverride != nil {
+			deliverooPrice = *p.Integrations.Deliveroo.PriceOverride
+		}
+	}
+
 	columns := []string{
 		"merchant_id",
 		"name",
@@ -2391,8 +2404,8 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		price,
 		priceTakeAway,
 		priceDelivery,
-		maxPrice, // price_uber_eats
-		maxPrice, // price_deliveroo
+		uberEatsPrice,
+		deliverooPrice,
 		p.TvaInID,
 		p.TvaDeliveryID,
 		p.TvaTakeAwayID,
@@ -2427,6 +2440,14 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 	}
 	if p.AvailableDelivery != nil {
 		addOptional("available_delivery", *p.AvailableDelivery)
+	}
+	// Écrit explicitement plutôt que délégué à SyncProductIntegrations : ce
+	// dernier ne touche à rien quand les deux canaux sont désactivés, ce qui
+	// laissait les colonnes à leur défaut TRUE — un produit créé avec Uber Eats
+	// désactivé ressortait actif.
+	if p.Integrations != nil {
+		addOptional("sync_uber_eats", p.Integrations.UberEats.Enabled)
+		addOptional("sync_deliveroo", p.Integrations.Deliveroo.Enabled)
 	}
 
 	query := `INSERT INTO products (` + strings.Join(columns, ", ") + `) VALUES (` +
@@ -2470,14 +2491,8 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 			}
 		}
 
-		// SyncProductIntegrations n'écrit rien si aucun canal n'est renseigné :
-		// on évite alors sa requête de contrôle d'appartenance.
-		if p.Integrations.UberEats.Enabled || p.Integrations.UberEats.PriceOverride != nil ||
-			p.Integrations.Deliveroo.Enabled || p.Integrations.Deliveroo.PriceOverride != nil {
-			if err := r.SyncProductIntegrations(txCtx, p.MerchantID, productID, p.Integrations); err != nil {
-				return fmt.Errorf("failed to sync product integrations: %w", err)
-			}
-		}
+		// Les intégrations (sync_* et prix plateformes) sont déjà portées par
+		// l'INSERT ci-dessus — pas de synchronisation séparée ici.
 
 		_ = r.setMenuUpdated(txCtx, p.MerchantID)
 

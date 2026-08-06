@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -93,7 +94,17 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 					// Sinon le navigateur bloque la réponse avec une erreur CORS
 					service.UpdateMFAStatus(r.Context(), user.UserID, models.MFAStatusPending)
 					SetCORSHeaders(w, r)
-					models.SendErrorJSON(w, "auth", "login", models.ErrMFARequired)
+					// On envoie directement le JSON (plutôt que SendErrorJSON) pour pouvoir y glisser
+					// le recipient masqué : peu importe d'où vient la demande de MFA (login, ce
+					// middleware, ou le fallback SMS), elle est toujours accompagnée du destinataire.
+					// Champs "status"/"message"/"error" alignés sur ce que SendErrorJSON(ErrMFARequired)
+					// produisait, pour ne pas casser la détection côté front (errorData.status === 'mfa_required').
+					models.SendJSON(w, http.StatusUnauthorized, "auth", "login", map[string]string{
+						"status":    "mfa_required",
+						"message":   "MFA required, please try login",
+						"error":     "MFA required, please try login",
+						"recipient": helpers.MaskEmail(user.Email),
+					})
 					return
 				}
 			}
