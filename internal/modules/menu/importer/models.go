@@ -224,19 +224,24 @@ func (k *TvaRateKey) UnmarshalText(text []byte) error {
 
 // ImportDecisions porte les arbitrages pris dans la preview et rejoues au
 // commit. Un IntermediateImport seul ne suffit pas a ecrire en base.
+// Les tags JSON sont explicites : ImportDecisions transite par HTTP dans les
+// deux sens (la preview la propose, le commit la recoit amendee) et par Redis
+// dans le snapshot. Sans eux, encoding/json emettrait les noms de champs Go en
+// PascalCase, seule entorse au snake_case de tout le reste du contrat d'import.
 type ImportDecisions struct {
 	// TagClassification indique, pour chaque libelle source, s'il devient une
 	// categorie caisse ou un tag Wello.
-	TagClassification map[string]TagClass
+	TagClassification map[string]TagClass `json:"tag_classification"`
 
 	// CategoryPerProduct force la categorie d'un produit, par identifiant
 	// externe de produit -> identifiant externe du libelle. Elle couvre les
 	// produits sans categorie explicite et les corrections manuelles.
-	CategoryPerProduct map[string]string
+	CategoryPerProduct map[string]string `json:"category_per_product"`
 
-	// TvaMapping resout un couple (taux, canal) en tva_categories.tva_id.
-	TvaMapping map[TvaRateKey]int
+	// TvaMapping resout un couple (taux, canal) en tva_categories.tva_id. Les
+	// cles sont serialisees "<taux>:<canal>" par TvaRateKey.MarshalText.
+	TvaMapping map[TvaRateKey]int `json:"tva_mapping"`
 
 	// NameCollisions tranche les produits homonymes d'un produit existant.
-	NameCollisions map[string]NameCollisionResolution
+	NameCollisions map[string]NameCollisionResolution `json:"name_collisions"`
 }

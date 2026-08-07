@@ -160,3 +160,63 @@ func TestPreviewResultIsJSONSerializable(t *testing.T) {
 		t.Fatalf("produits après aller-retour = %d, want %d", len(roundTrip.Products), len(result.Products))
 	}
 }
+
+// Le contrat JSON d'ImportDecisions est verrouillé ici : c'est la seule
+// structure de la chaîne d'import qui transite dans les deux sens — la preview
+// la propose, le commit la reçoit amendée par le wizard. Sans tags explicites,
+// encoding/json émettrait les noms de champs Go en PascalCase, à contre-courant
+// du snake_case de tout le reste, et le front se brancherait sur des clés qui
+// changeraient au premier renommage de champ.
+func TestImportDecisionsJSONContract(t *testing.T) {
+	decisions := ImportDecisions{
+		TagClassification:  map[string]TagClass{"ZT1": TagClassCategory},
+		CategoryPerProduct: map[string]string{"ZD1": "ZT1"},
+		TvaMapping:         map[TvaRateKey]int{{Rate: 5.5, Channel: TvaChannelDelivery}: 7},
+		NameCollisions:     map[string]NameCollisionResolution{"ZD2": CollisionSkip},
+	}
+
+	payload, err := json.Marshal(decisions)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &generic); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	wantKeys := []string{"tag_classification", "category_per_product", "tva_mapping", "name_collisions"}
+	if len(generic) != len(wantKeys) {
+		t.Fatalf("clés = %v, want %v", generic, wantKeys)
+	}
+	for _, key := range wantKeys {
+		if _, ok := generic[key]; !ok {
+			t.Fatalf("clé %q absente de %s", key, payload)
+		}
+	}
+
+	// La clé composite du mapping de TVA reste rendue par TextMarshaler.
+	if !strings.Contains(string(payload), `"5.5:1"`) {
+		t.Fatalf("clé de TVA absente ou mal formée dans %s", payload)
+	}
+
+	// Aller-retour complet : ce que le wizard renvoie doit se relire à
+	// l'identique, sinon le commit rejouerait d'autres décisions que celles
+	// prises à l'écran.
+	var decoded ImportDecisions
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("relecture: %v", err)
+	}
+	if decoded.TagClassification["ZT1"] != TagClassCategory {
+		t.Fatalf("TagClassification = %v", decoded.TagClassification)
+	}
+	if decoded.CategoryPerProduct["ZD1"] != "ZT1" {
+		t.Fatalf("CategoryPerProduct = %v", decoded.CategoryPerProduct)
+	}
+	if got := decoded.TvaMapping[TvaRateKey{Rate: 5.5, Channel: TvaChannelDelivery}]; got != 7 {
+		t.Fatalf("TvaMapping[5.5, delivery] = %d, want 7", got)
+	}
+	if decoded.NameCollisions["ZD2"] != CollisionSkip {
+		t.Fatalf("NameCollisions = %v", decoded.NameCollisions)
+	}
+}
