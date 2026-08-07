@@ -447,7 +447,9 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// Import de produits : dépendances propres (lecture seule + registry de
 	// providers + cache), volontairement disjointes de celles de MenuService.
 	menuImportH := menuModule.NewImportHandler(
-		menuModule.NewImportService(menuRepoLegacy, importerModule.DefaultRegistry(), redisClient),
+		menuModule.NewImportService(
+			menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo,
+		),
 	)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
@@ -704,6 +706,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		// écart ouvert sur les routes existantes).
 		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
 			Post("/import/preview", menuImportH.PreviewImport)
+		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+			Post("/import/commit", menuImportH.CommitImport)
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office

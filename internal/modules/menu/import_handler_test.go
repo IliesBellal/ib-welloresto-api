@@ -3,6 +3,7 @@ package menu
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"welloresto-api/internal/middleware"
 	authpkg "welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/menu/importer"
+	tagsModule "welloresto-api/internal/modules/tags"
 )
 
 const (
@@ -35,6 +37,9 @@ type fakePreviewStore struct {
 	values map[string]string
 	ttls   map[string]time.Duration
 	fail   bool
+
+	deleted     []string
+	invalidated []string
 }
 
 func newFakePreviewStore() *fakePreviewStore {
@@ -55,6 +60,24 @@ func (s *fakePreviewStore) Get(_ context.Context, key string) (string, bool) {
 	return value, ok
 }
 
+func (s *fakePreviewStore) Delete(_ context.Context, key string) bool {
+	_, existed := s.values[key]
+	delete(s.values, key)
+	s.deleted = append(s.deleted, key)
+	return existed
+}
+
+func (s *fakePreviewStore) InvalidateMerchantMenuCaches(_ context.Context, merchantID string) {
+	s.invalidated = append(s.invalidated, merchantID)
+}
+
+// newTestImportService câble le service sur une base simulée. Le dépôt tient
+// les deux rôles (lecture et écriture), comme en production.
+func newTestImportService(db *sql.DB, store importPreviewStore) *ImportService {
+	repo := NewMenuRepository(db, nil)
+	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db))
+}
+
 // newImportPreviewHandler câble le handler sur une base simulée.
 //
 // Seuls des ExpectQuery sont déclarés : sqlmock échoue sur tout appel non
@@ -71,7 +94,7 @@ func newImportPreviewHandler(t *testing.T) (*ImportHandler, *fakePreviewStore, f
 	expectImportPreviewLookups(mock)
 
 	store := newFakePreviewStore()
-	service := NewImportService(NewMenuRepository(db, nil), importer.DefaultRegistry(), store)
+	service := newTestImportService(db, store)
 
 	cleanup := func() {
 		if err := mock.ExpectationsWereMet(); err != nil {
@@ -389,7 +412,7 @@ func TestPreviewImportRejectsBadInput(t *testing.T) {
 				_ = db.Close()
 			}()
 
-			service := NewImportService(NewMenuRepository(db, nil), importer.DefaultRegistry(), newFakePreviewStore())
+			service := newTestImportService(db, newFakePreviewStore())
 			handler := NewImportHandler(service)
 
 			body := tc.body(t)
@@ -423,7 +446,7 @@ func TestPreviewImportRequiresToken(t *testing.T) {
 		_ = db.Close()
 	}()
 
-	handler := NewImportHandler(NewImportService(NewMenuRepository(db, nil), importer.DefaultRegistry(), newFakePreviewStore()))
+	handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
 
 	req := httptest.NewRequest(http.MethodPost, "/menu/import/preview", bytes.NewBufferString(`{"products":[]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -449,7 +472,7 @@ func TestPreviewImportFailsWhenSnapshotCannotBeStored(t *testing.T) {
 
 	store := newFakePreviewStore()
 	store.fail = true
-	handler := NewImportHandler(NewImportService(NewMenuRepository(db, nil), importer.DefaultRegistry(), store))
+	handler := NewImportHandler(newTestImportService(db, store))
 
 	tenPercent := 10.0
 	payload, _ := json.Marshal(ImportPreviewJSONRequest{
@@ -521,7 +544,7 @@ func TestPreviewImportIsGuardedByMenuPermission(t *testing.T) {
 			}()
 
 			handler := NewImportHandler(
-				NewImportService(NewMenuRepository(db, nil), importer.DefaultRegistry(), newFakePreviewStore()),
+				newTestImportService(db, newFakePreviewStore()),
 			)
 			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
 				http.HandlerFunc(handler.PreviewImport),
@@ -531,6 +554,231 @@ func TestPreviewImportIsGuardedByMenuPermission(t *testing.T) {
 			// service et se fait refuser en 400, un utilisateur sans droit est
 			// arrêté avant, en 403.
 			req := newImportRequest(t, bytes.NewBufferString(`{"products":[]}`), "application/json")
+			req = req.WithContext(middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+				UserID:     "u-1",
+				MerchantID: testMerchantID,
+				Rights:     tc.rights,
+			}))
+
+			rec := httptest.NewRecorder()
+			guarded.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d — body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+		})
+	}
+}
+
+// storeWithSnapshot dépose un snapshot prêt à être consommé par le commit,
+// comme la preview l'aurait fait.
+func storeWithSnapshot(t *testing.T, merchantID string, snapshot *importer.PreviewSnapshot) *fakePreviewStore {
+	t.Helper()
+
+	payload, err := snapshot.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	store := newFakePreviewStore()
+	store.Set(context.Background(), helpers.GetMenuImportPreviewKey(merchantID, snapshot.Token), payload, time.Minute)
+	return store
+}
+
+func commitRequestBody(t *testing.T, req ImportCommitRequest) *bytes.Buffer {
+	t.Helper()
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return bytes.NewBuffer(payload)
+}
+
+// Un token inconnu, expiré ou déjà consommé donne 410 : dans les trois cas le
+// client doit relancer un import, pas réessayer.
+func TestCommitImportGoneOnUnknownToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("appel SQL inattendu sur un token inconnu: %v", err)
+		}
+		_ = db.Close()
+	}()
+
+	handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+
+	rec := httptest.NewRecorder()
+	handler.CommitImport(rec, newImportRequest(t,
+		commitRequestBody(t, ImportCommitRequest{Token: "jamais-vu"}), "application/json"))
+
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410 — body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "preview_expired") {
+		t.Fatalf("body = %s, want preview_expired", rec.Body.String())
+	}
+}
+
+// Un snapshot déposé pour un autre marchand ne doit pas être exploitable, même
+// si le token est deviné : la clé porte le marchand, et le contenu est revérifié.
+func TestCommitImportRejectsSnapshotOfAnotherMerchant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("appel SQL inattendu: %v", err)
+		}
+		_ = db.Close()
+	}()
+
+	// Snapshot déposé sous la clé du marchand appelant, mais dont le contenu
+	// désigne quelqu'un d'autre.
+	snapshot := &importer.PreviewSnapshot{
+		Token:      "token-forge",
+		MerchantID: "un-autre-marchand",
+		Provider:   importer.ZeltySlug,
+		Import:     &importer.IntermediateImport{Provider: importer.ZeltySlug},
+	}
+	store := storeWithSnapshot(t, testMerchantID, snapshot)
+
+	handler := NewImportHandler(newTestImportService(db, store))
+
+	rec := httptest.NewRecorder()
+	handler.CommitImport(rec, newImportRequest(t,
+		commitRequestBody(t, ImportCommitRequest{Token: snapshot.Token}), "application/json"))
+
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410 — body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Un lot dont il reste une décision à prendre part en 422 avec la liste des
+// blocages — et surtout sans qu'une seule écriture ait eu lieu.
+func TestCommitImportUnprocessableWithBlockers(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("attentes SQL non satisfaites (ou écriture inattendue): %v", err)
+		}
+		_ = db.Close()
+	}()
+
+	// Seules les lectures sont déclarées : toute écriture ferait échouer le test.
+	expectImportPreviewLookups(mock)
+
+	// Un produit sans le moindre libellé, donc sans catégorie possible.
+	snapshot := &importer.PreviewSnapshot{
+		Token:      "token-bloque",
+		MerchantID: testMerchantID,
+		Provider:   importer.ZeltySlug,
+		Import: &importer.IntermediateImport{
+			Provider: importer.ZeltySlug,
+			Products: []importer.CanonicalProduct{{ExternalID: "ZD1", Name: "Frais de livraison"}},
+		},
+	}
+	store := storeWithSnapshot(t, testMerchantID, snapshot)
+
+	handler := NewImportHandler(newTestImportService(db, store))
+
+	rec := httptest.NewRecorder()
+	handler.CommitImport(rec, newImportRequest(t,
+		commitRequestBody(t, ImportCommitRequest{Token: snapshot.Token}), "application/json"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 — body=%s", rec.Code, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Error    string                   `json:"error"`
+			Blockers []importer.CommitBlocker `json:"blockers"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("réponse illisible: %v — body=%s", err, rec.Body.String())
+	}
+	if envelope.Data.Error != "import_not_committable" {
+		t.Fatalf("error = %q, want import_not_committable", envelope.Data.Error)
+	}
+	if len(envelope.Data.Blockers) == 0 {
+		t.Fatal("aucun blocage listé")
+	}
+	if envelope.Data.Blockers[0].Code != importer.BlockerProductNeedsCategory {
+		t.Fatalf("code = %q, want %q", envelope.Data.Blockers[0].Code, importer.BlockerProductNeedsCategory)
+	}
+
+	// Le token n'est pas consommé : l'utilisateur corrige et rejoue.
+	if len(store.deleted) != 0 {
+		t.Fatalf("token consommé malgré le refus: %v", store.deleted)
+	}
+}
+
+func TestCommitImportRequiresPreviewToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("appel SQL inattendu: %v", err)
+		}
+		_ = db.Close()
+	}()
+
+	handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+
+	rec := httptest.NewRecorder()
+	handler.CommitImport(rec, newImportRequest(t,
+		commitRequestBody(t, ImportCommitRequest{}), "application/json"))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 — body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing_preview_token") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+// Le commit écrit le catalogue : la garde RBAC doit l'arrêter avant le service.
+func TestCommitImportIsGuardedByMenuPermission(t *testing.T) {
+	cases := []struct {
+		name       string
+		rights     authpkg.UserRowRights
+		wantStatus int
+	}{
+		{"droit menu", authpkg.UserRowRights{CanManageMenu: true}, http.StatusBadRequest},
+		{"administrateur", authpkg.UserRowRights{Admin: true}, http.StatusBadRequest},
+		{"sans droit menu", authpkg.UserRowRights{}, http.StatusForbidden},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New() error = %v", err)
+			}
+			defer func() {
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Errorf("appel SQL inattendu: %v", err)
+				}
+				_ = db.Close()
+			}()
+
+			handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
+				http.HandlerFunc(handler.CommitImport),
+			)
+
+			req := newImportRequest(t, commitRequestBody(t, ImportCommitRequest{}), "application/json")
 			req = req.WithContext(middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
 				UserID:     "u-1",
 				MerchantID: testMerchantID,

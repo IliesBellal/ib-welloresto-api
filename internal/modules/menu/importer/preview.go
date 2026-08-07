@@ -262,6 +262,9 @@ type PreviewWarning struct {
 // une différence de représentation.
 type tvaResolver struct {
 	byRateChannel map[tvaLookupKey]int
+	// keyByID retient le couple de chaque tva_id actif, pour pouvoir vérifier
+	// qu'un identifiant renvoyé par le wizard correspond bien au canal annoncé.
+	keyByID map[int]tvaLookupKey
 }
 
 type tvaLookupKey struct {
@@ -270,9 +273,14 @@ type tvaLookupKey struct {
 }
 
 func newTvaResolver(rows []TvaRateRow) *tvaResolver {
-	r := &tvaResolver{byRateChannel: make(map[tvaLookupKey]int, len(rows))}
+	r := &tvaResolver{
+		byRateChannel: make(map[tvaLookupKey]int, len(rows)),
+		keyByID:       make(map[int]tvaLookupKey, len(rows)),
+	}
 	for _, row := range rows {
 		key := tvaLookupKey{rate: rateToHundredths(row.Rate), channel: row.Channel}
+		r.keyByID[row.TvaID] = key
+
 		// Plusieurs lignes peuvent porter le même couple (titres différents) :
 		// on retient le plus petit tva_id, pour que la preview soit stable.
 		if existing, ok := r.byRateChannel[key]; ok && existing <= row.TvaID {
@@ -286,6 +294,14 @@ func newTvaResolver(rows []TvaRateRow) *tvaResolver {
 func (r *tvaResolver) resolve(rate float64, channel TvaChannel) (int, bool) {
 	id, ok := r.byRateChannel[tvaLookupKey{rate: rateToHundredths(rate), channel: channel}]
 	return id, ok
+}
+
+// hasID dit si tvaID est un taux actif portant exactement ce couple. Accepte
+// les homonymes : deux lignes au même taux et au même canal sont toutes deux
+// légitimes, seule la plus petite est proposée par défaut.
+func (r *tvaResolver) hasID(tvaID int, rate float64, channel TvaChannel) bool {
+	key, ok := r.keyByID[tvaID]
+	return ok && key == tvaLookupKey{rate: rateToHundredths(rate), channel: channel}
 }
 
 func rateToHundredths(rate float64) int { return int(math.Round(rate * 100)) }

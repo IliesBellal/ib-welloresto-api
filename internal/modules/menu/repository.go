@@ -508,7 +508,9 @@ func (r *MenuRepository) insertAttributeTx(ctx context.Context, merchantID strin
 		return "", fmt.Errorf("insert attribute error: %w", err)
 	}
 
-	if err := r.insertAttributeOptionsTx(ctx, attributeID, payload.Options); err != nil {
+	// Les id d'options ne servent pas au chemin unitaire, qui ne renvoie que
+	// l'attribut.
+	if _, err := r.insertAttributeOptionsTx(ctx, attributeID, payload.Options); err != nil {
 		return "", err
 	}
 
@@ -519,8 +521,15 @@ func (r *MenuRepository) insertAttributeTx(ctx context.Context, merchantID strin
 // créé. Même contrat transactionnel que insertAttributeTx. Sert uniquement le
 // chemin de création : la branche INSERT de UpdateAttribute, dont le corps est
 // identique, reste volontairement autonome (dedup hors périmètre du refactor).
-func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attributeID string, options []UpdateAttributeOptionPayload) error {
+//
+// Retourne les id générés, dans l'ordre des options fournies. Le chemin
+// unitaire les ignore ; l'import s'en sert pour alimenter
+// import_attribute_options_mapping sans avoir à relire la table ni à supposer
+// que l'ordre d'identity reflète l'ordre d'insertion.
+func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attributeID string, options []UpdateAttributeOptionPayload) ([]int64, error) {
 	db := dbx.GetDB(ctx, r.database)
+
+	optionIDs := make([]int64, 0, len(options))
 
 	// Process options
 	for _, opt := range options {
@@ -573,7 +582,7 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attribute
 		if enabled {
 			enabledInt = 1
 		}
-		_, err := db.ExecContext(ctx, insertOptQuery,
+		optionID, err := db.InsertReturningID(ctx, insertOptQuery, "id",
 			attributeID,
 			opt.Title,
 			price,
@@ -584,11 +593,12 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attribute
 			quantityArg,
 			unitArg)
 		if err != nil {
-			return fmt.Errorf("insert option error: %w", err)
+			return nil, fmt.Errorf("insert option error: %w", err)
 		}
+		optionIDs = append(optionIDs, optionID)
 	}
 
-	return nil
+	return optionIDs, nil
 }
 
 func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attributeID string, payload *UpdateAttributePayload) error {

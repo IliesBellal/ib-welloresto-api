@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -147,4 +149,65 @@ func (h *ImportHandler) sendImportError(w http.ResponseWriter, err error) {
 func isImportRowError(err error) bool {
 	var rowErr *importer.RowError
 	return errors.As(err, &rowErr)
+}
+
+// CommitImport matérialise un lot précédemment prévisualisé.
+//
+// Seul endpoint du chemin d'import qui écrit. Il refuse plutôt que d'écrire à
+// moitié : un lot dont il reste un produit sans catégorie, un taux de TVA non
+// résolu ou une collision non tranchée repart en 422 avec la liste des
+// blocages, sans qu'une seule ligne ait été insérée.
+func (h *ImportHandler) CommitImport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "commit_import", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req ImportCommitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "commit_import", map[string]string{
+			"error":   "invalid_body",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	result, err := h.service.CommitImport(ctx, &req)
+	if err != nil {
+		h.sendCommitError(w, log, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "commit_import", result)
+}
+
+func (h *ImportHandler) sendCommitError(w http.ResponseWriter, log *zap.Logger, err error) {
+	var notCommittable *ImportNotCommittableError
+	switch {
+	case errors.Is(err, ErrImportTokenRequired):
+		models.SendJSON(w, http.StatusBadRequest, "menu", "commit_import", map[string]string{"error": "missing_preview_token"})
+
+	case errors.Is(err, ErrImportPreviewNotFound):
+		// 410 plutôt que 404 : la preview a existé ou n'existera plus, dans les
+		// deux cas le client doit en relancer une, pas réessayer celle-ci.
+		models.SendJSON(w, http.StatusGone, "menu", "commit_import", map[string]string{
+			"error":   "preview_expired",
+			"message": "cette prévisualisation a expiré ou a déjà été validée — relancez un import",
+		})
+
+	case errors.As(err, &notCommittable):
+		models.SendJSON(w, http.StatusUnprocessableEntity, "menu", "commit_import", map[string]interface{}{
+			"error":    "import_not_committable",
+			"message":  "des décisions manquent avant de pouvoir valider l'import",
+			"blockers": notCommittable.Blockers,
+		})
+
+	default:
+		log.Error("[ERROR] CommitImport: " + err.Error())
+		models.SendErrorJSON(w, "menu", "commit_import", err)
+	}
 }
