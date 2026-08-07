@@ -70,16 +70,19 @@ func (r *Registry) Slugs() []string {
 	return slugs
 }
 
-// rowError situe une erreur de parsing dans le fichier. Le numero de ligne est
+// RowError situe une erreur de parsing dans le fichier. Le numero de ligne est
 // celui affiche par le tableur (1-indexe), pour que le message soit
 // directement actionnable par le restaurateur.
-type rowError struct {
+//
+// Exporte pour que la couche HTTP puisse la distinguer d'une panne serveur :
+// une ligne mal remplie est une erreur de l'appelant, pas du service.
+type RowError struct {
 	Line   int
 	Column string
 	Reason string
 }
 
-func (e *rowError) Error() string {
+func (e *RowError) Error() string {
 	if e.Column == "" {
 		return fmt.Sprintf("ligne %d: %s", e.Line, e.Reason)
 	}
@@ -87,5 +90,5 @@ func (e *rowError) Error() string {
 }
 
 func rowErrorf(line int, column, format string, args ...any) error {
-	return &rowError{Line: line, Column: column, Reason: fmt.Sprintf(format, args...)}
+	return &RowError{Line: line, Column: column, Reason: fmt.Sprintf(format, args...)}
 }

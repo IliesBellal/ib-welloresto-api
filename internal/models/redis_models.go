@@ -78,4 +78,15 @@ const (
 	MenuComponentNameConfirmPrefix = "menu:component:name_confirm:"
 	MenuAttributeNameConfirmPrefix = "menu:attribute:name_confirm:"
 	MenuNameConfirmTTL             = 5 * time.Minute
+
+	// Préfixe des clés portant le snapshot d'une preview d'import de produits.
+	// La clé est scopée par marchand en plus du token : un token égaré ne doit
+	// pas pouvoir être rejoué depuis un autre compte.
+	//
+	// 30 minutes : le wizard fait classer les libellés, mapper les taux de TVA
+	// et arbitrer les collisions avant de valider. C'est un travail de
+	// plusieurs minutes sur un menu complet, sans commune mesure avec les
+	// 5 minutes d'une confirmation de doublon.
+	MenuImportPreviewPrefix = "menu:import:preview:"
+	MenuImportPreviewTTL    = 30 * time.Minute
 )

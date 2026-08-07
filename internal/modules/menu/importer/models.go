@@ -13,6 +13,12 @@
 // pris dans la preview et redescendent via ImportDecisions.
 package importer
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // AttributeTypeCheck est la seule valeur d'attribute_type reellement emise par
 // le chemin menu (le back-office l'envoie en dur, la distinction radio/checkbox
 // etant derivee de min == max == 1). L'import s'aligne dessus.
@@ -56,6 +62,12 @@ type CanonicalCategory struct {
 type CanonicalTag struct {
 	ExternalID string
 	Name       string
+
+	// Synthetic marque un libelle que la source n'a pas declare : un produit
+	// le cite, mais aucune ligne ne le definit. Le parser le fabrique pour ne
+	// pas perdre l'information ; la preview le signale, car c'est souvent le
+	// symptome d'un export tronque.
+	Synthetic bool
 }
 
 // CanonicalProduct est un produit du fichier source.
@@ -158,11 +170,56 @@ const (
 	TvaChannelTakeAway TvaChannel = 3
 )
 
+// AllTvaChannels liste les canaux dans l'ordre d'affichage du back-office.
+var AllTvaChannels = []TvaChannel{TvaChannelIn, TvaChannelTakeAway, TvaChannelDelivery}
+
+// String rend le libelle stable du canal, utilise dans les reponses JSON.
+func (c TvaChannel) String() string {
+	switch c {
+	case TvaChannelIn:
+		return "in"
+	case TvaChannelDelivery:
+		return "delivery"
+	case TvaChannelTakeAway:
+		return "take_away"
+	default:
+		return strconv.Itoa(int(c))
+	}
+}
+
 // TvaRateKey est la cle composite du mapping de TVA : un meme taux se resout
 // en trois tva_id differents selon le canal.
 type TvaRateKey struct {
 	Rate    float64
 	Channel TvaChannel
+}
+
+// MarshalText / UnmarshalText rendent TvaRateKey utilisable comme cle de map
+// en JSON. encoding/json refuse les cles de type struct : sans ces methodes,
+// ImportDecisions.TvaMapping ne peut pas etre serialise dans le snapshot de
+// preview. Le format est "<taux>:<canal>", ex. "5.5:0".
+func (k TvaRateKey) MarshalText() ([]byte, error) {
+	return []byte(strconv.FormatFloat(k.Rate, 'f', -1, 64) + ":" + strconv.Itoa(int(k.Channel))), nil
+}
+
+func (k *TvaRateKey) UnmarshalText(text []byte) error {
+	rawRate, rawChannel, ok := strings.Cut(string(text), ":")
+	if !ok {
+		return fmt.Errorf("cle de TVA %q: format attendu \"<taux>:<canal>\"", text)
+	}
+
+	rate, err := strconv.ParseFloat(rawRate, 64)
+	if err != nil {
+		return fmt.Errorf("cle de TVA %q: taux illisible", text)
+	}
+	channel, err := strconv.Atoi(rawChannel)
+	if err != nil {
+		return fmt.Errorf("cle de TVA %q: canal illisible", text)
+	}
+
+	k.Rate = rate
+	k.Channel = TvaChannel(channel)
+	return nil
 }
 
 // ImportDecisions porte les arbitrages pris dans la preview et rejoues au

@@ -47,3 +47,11 @@ func GetMenuComponentNameConfirmKey(merchantID, name string) string {
 func GetMenuAttributeNameConfirmKey(merchantID, name string) string {
 	return fmt.Sprintf(models.MenuAttributeNameConfirmPrefix+"%s:%s", merchantID, normalizeMenuName(name))
 }
+
+// GetMenuImportPreviewKey construit la clé du snapshot d'une preview d'import.
+// Le marchand fait partie de la clé : le commit relit avec le marchand du
+// token d'authentification, donc un token de preview d'un autre compte ne
+// résout simplement pas.
+func GetMenuImportPreviewKey(merchantID, token string) string {
+	return fmt.Sprintf(models.MenuImportPreviewPrefix+"%s:%s", merchantID, token)
+}

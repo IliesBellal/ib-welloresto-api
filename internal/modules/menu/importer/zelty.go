@@ -217,7 +217,7 @@ func resolveZeltyTags(out *IntermediateImport, tagIDByLabel map[string]string, r
 		if !known {
 			id = generatedExternalID(zeltySyntheticTagPrefix, label)
 			tagIDByLabel[key] = id
-			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: label})
+			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: label, Synthetic: true})
 		}
 
 		// Un meme tag cite deux fois sur la ligne ne doit pas produire deux

@@ -9,8 +9,15 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ErrEmptyWorkbook signale un classeur sans feuille exploitable.
-var ErrEmptyWorkbook = errors.New("classeur sans feuille de calcul")
+var (
+	// ErrEmptyWorkbook signale un classeur sans feuille exploitable.
+	ErrEmptyWorkbook = errors.New("classeur sans feuille de calcul")
+
+	// ErrInvalidWorkbook signale un flux qui n'est pas un classeur .xlsx —
+	// typiquement un CSV ou un .xls renommé. C'est une erreur de l'appelant,
+	// pas du service : la couche HTTP doit la rendre en 400, d'où le sentinel.
+	ErrInvalidWorkbook = errors.New("fichier illisible : un classeur .xlsx est attendu")
+)
 
 // readSheetRows lit la premiere feuille d'un classeur et rend ses lignes.
 //
@@ -24,7 +31,7 @@ var ErrEmptyWorkbook = errors.New("classeur sans feuille de calcul")
 func readSheetRows(r io.Reader) ([][]string, error) {
 	f, err := excelize.OpenReader(r)
 	if err != nil {
-		return nil, fmt.Errorf("ouverture du classeur: %w", err)
+		return nil, fmt.Errorf("%w (%s)", ErrInvalidWorkbook, err)
 	}
 	defer func() { _ = f.Close() }()
 

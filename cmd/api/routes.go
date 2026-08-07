@@ -44,6 +44,7 @@ import (
 	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
+	importerModule "welloresto-api/internal/modules/menu/importer"
 	messaggioModule "welloresto-api/internal/modules/messaggio"
 	notificationModule "welloresto-api/internal/modules/notification"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
@@ -443,6 +444,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	posH := posModule.NewPOSHandler(posService)
 	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
+	// Import de produits : dépendances propres (lecture seule + registry de
+	// providers + cache), volontairement disjointes de celles de MenuService.
+	menuImportH := menuModule.NewImportHandler(
+		menuModule.NewImportService(menuRepoLegacy, importerModule.DefaultRegistry(), redisClient),
+	)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	printersH := printersModule.NewHandler(printersService)
@@ -690,6 +696,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
 		r.Get("/products/allergens/poster.pdf", menuH.GetAllergensPosterPDF)
+
+		// --- Import de produits en masse ---
+		// Seule route du bloc /menu à porter un contrôle RBAC : l'import écrit
+		// le catalogue entier d'un coup, il ne peut pas hériter de l'absence
+		// de garde du reste du bloc (cf. docs/audit-import-produits.md §1.7,
+		// écart ouvert sur les routes existantes).
+		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+			Post("/import/preview", menuImportH.PreviewImport)
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office
