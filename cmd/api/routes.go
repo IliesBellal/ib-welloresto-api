@@ -708,6 +708,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 			Post("/import/preview", menuImportH.PreviewImport)
 		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
 			Post("/import/commit", menuImportH.CommitImport)
+		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+			Get("/import/template", menuImportH.DownloadImportTemplate)
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office

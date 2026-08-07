@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -178,4 +179,36 @@ func (s *ImportService) LoadPreviewSnapshot(ctx context.Context, merchantID, tok
 		return nil, fmt.Errorf("preview d'import %q introuvable ou expirée", token)
 	}
 	return importer.DecodePreviewSnapshot(payload)
+}
+
+// ErrImportTemplateUnavailable : le provider existe mais ne fournit pas de
+// modèle. C'est le cas d'un export produit par un logiciel tiers — il n'y a
+// rien que Wello puisse proposer à remplir.
+var ErrImportTemplateUnavailable = errors.New("import_template_unavailable")
+
+// ImportTemplate génère le classeur vierge d'un provider.
+//
+// Aucune lecture ni écriture en base : le modèle ne dépend pas du marchand,
+// seulement du format attendu par le parser.
+func (s *ImportService) ImportTemplate(providerSlug string) (data []byte, filename string, err error) {
+	if providerSlug == "" {
+		return nil, "", ErrImportProviderRequired
+	}
+
+	provider, err := s.registry.Get(providerSlug)
+	if err != nil {
+		return nil, "", err
+	}
+
+	template, ok := provider.(importer.TemplateProvider)
+	if !ok {
+		return nil, "", fmt.Errorf("%w: %q", ErrImportTemplateUnavailable, providerSlug)
+	}
+
+	var buf bytes.Buffer
+	if err := template.BuildTemplate(&buf); err != nil {
+		return nil, "", err
+	}
+
+	return buf.Bytes(), template.TemplateFilename(), nil
 }

@@ -3,7 +3,9 @@ package menu
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -210,4 +212,59 @@ func (h *ImportHandler) sendCommitError(w http.ResponseWriter, log *zap.Logger, 
 		log.Error("[ERROR] CommitImport: " + err.Error())
 		models.SendErrorJSON(w, "menu", "commit_import", err)
 	}
+}
+
+// mimeXLSX est le type des classeurs OpenXML.
+const mimeXLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+// DownloadImportTemplate renvoie le classeur vierge d'un provider.
+//
+// En attachment, comme l'export comptable : c'est un fichier à remplir, pas un
+// document à consulter — contrairement à l'affiche allergènes, servie inline.
+//
+// Le paramètre provider est exigé, sans valeur par défaut : un défaut
+// masquerait un appel fautif du back-office le jour où un second provider
+// proposera un modèle.
+func (h *ImportHandler) DownloadImportTemplate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "import_template", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	provider := strings.TrimSpace(r.URL.Query().Get(importFormProviderField))
+
+	data, filename, err := h.service.ImportTemplate(provider)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrImportProviderRequired):
+			models.SendJSON(w, http.StatusBadRequest, "menu", "import_template", map[string]string{
+				"error":   "missing_provider",
+				"message": "le paramètre provider est requis",
+			})
+		case errors.Is(err, importer.ErrUnknownProvider):
+			models.SendJSON(w, http.StatusBadRequest, "menu", "import_template", map[string]string{
+				"error":   "unknown_provider",
+				"message": err.Error(),
+			})
+		case errors.Is(err, ErrImportTemplateUnavailable):
+			models.SendJSON(w, http.StatusBadRequest, "menu", "import_template", map[string]string{
+				"error":   "template_unavailable",
+				"message": "ce provider est un export tiers : il n'y a pas de modèle Wello à remplir",
+			})
+		default:
+			log.Error("[ERROR] DownloadImportTemplate: " + err.Error())
+			models.SendErrorJSON(w, "menu", "import_template", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", mimeXLSX)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

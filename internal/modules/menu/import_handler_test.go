@@ -794,3 +794,145 @@ func TestCommitImportIsGuardedByMenuPermission(t *testing.T) {
 		})
 	}
 }
+
+func newTemplateRequest(t *testing.T, query string) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/menu/import/template"+query, nil)
+	req.Header.Set("Authorization", "Bearer "+testAuthToken)
+
+	return req.WithContext(middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+		UserID:     "u-1",
+		MerchantID: testMerchantID,
+	}))
+}
+
+// Le modèle est un fichier statique : il ne dépend pas du marchand et ne doit
+// donc toucher ni la base ni le cache. Aucune attente SQL n'est déclarée.
+func TestDownloadImportTemplate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("appel SQL inattendu pour un fichier statique: %v", err)
+		}
+		_ = db.Close()
+	}()
+
+	handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+
+	rec := httptest.NewRecorder()
+	handler.DownloadImportTemplate(rec, newTemplateRequest(t, "?provider="+importer.WelloGenericSlug))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != mimeXLSX {
+		t.Fatalf("Content-Type = %q, want %q", got, mimeXLSX)
+	}
+
+	disposition := rec.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(disposition, "attachment;") {
+		t.Fatalf("Content-Disposition = %q, want un attachment", disposition)
+	}
+	if !strings.Contains(disposition, ".xlsx") {
+		t.Fatalf("Content-Disposition = %q, want un nom de fichier .xlsx", disposition)
+	}
+	if got, want := rec.Header().Get("Content-Length"), strconv.Itoa(rec.Body.Len()); got != want {
+		t.Fatalf("Content-Length = %q, want %q", got, want)
+	}
+
+	// Le corps est bien un classeur, et le parser le relit : c'est le contrat
+	// vérifié en profondeur par le round-trip du paquet importer, on s'assure
+	// ici que c'est bien ce fichier-là qui sort de l'endpoint.
+	imp, err := importer.NewWelloGenericProvider().Parse(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("le fichier téléchargé n'est pas relisible: %v", err)
+	}
+	if len(imp.Products) != 1 || imp.Products[0].PriceIn != 950 {
+		t.Fatalf("ligne d'exemple = %+v, want 1 produit à 950 centimes", imp.Products)
+	}
+}
+
+func TestDownloadImportTemplateRejectsBadProvider(t *testing.T) {
+	cases := []struct {
+		name      string
+		query     string
+		wantError string
+	}{
+		{"provider absent", "", "missing_provider"},
+		{"provider vide", "?provider=", "missing_provider"},
+		{"provider inconnu", "?provider=zelty-v2", "unknown_provider"},
+		{"provider sans modèle", "?provider=" + importer.ZeltySlug, "template_unavailable"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New() error = %v", err)
+			}
+			defer func() {
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Errorf("appel SQL inattendu: %v", err)
+				}
+				_ = db.Close()
+			}()
+
+			handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+
+			rec := httptest.NewRecorder()
+			handler.DownloadImportTemplate(rec, newTemplateRequest(t, tc.query))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 — body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantError) {
+				t.Fatalf("body = %s, want qu'il contienne %q", rec.Body.String(), tc.wantError)
+			}
+		})
+	}
+}
+
+func TestDownloadImportTemplateIsGuardedByMenuPermission(t *testing.T) {
+	cases := []struct {
+		name       string
+		rights     authpkg.UserRowRights
+		wantStatus int
+	}{
+		{"droit menu", authpkg.UserRowRights{CanManageMenu: true}, http.StatusOK},
+		{"administrateur", authpkg.UserRowRights{Admin: true}, http.StatusOK},
+		{"sans droit menu", authpkg.UserRowRights{}, http.StatusForbidden},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New() error = %v", err)
+			}
+			defer func() { _ = db.Close() }()
+
+			handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
+			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
+				http.HandlerFunc(handler.DownloadImportTemplate),
+			)
+
+			req := newTemplateRequest(t, "?provider="+importer.WelloGenericSlug)
+			req = req.WithContext(middleware.WithUser(req.Context(), &authpkg.UserLoginRow{
+				UserID:     "u-1",
+				MerchantID: testMerchantID,
+				Rights:     tc.rights,
+			}))
+
+			rec := httptest.NewRecorder()
+			guarded.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d — body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+		})
+	}
+}
