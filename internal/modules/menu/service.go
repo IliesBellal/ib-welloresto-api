@@ -446,6 +446,65 @@ func (s *MenuService) SetProductStatus(ctx context.Context, token, pid, status s
 	return updated, nil
 }
 
+// BulkSetProductsStatus applique un statut de vente à plusieurs produits d'un
+// coup (action de groupe du back-office). La synchro Uber Eats / Deliveroo est
+// enfilée produit par produit, comme sur le chemin unitaire : les connecteurs
+// externes n'exposent pas d'API de mise à jour groupée.
+func (s *MenuService) BulkSetProductsStatus(ctx context.Context, token string, productIDs []string, status string) (int64, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	updated, err := s.legacy.BulkSetProductStatus(ctx, user.MerchantID, productIDs, status)
+	if err != nil {
+		return 0, err
+	}
+
+	if updated > 0 {
+		s.invalidateMenuCache(ctx, user.MerchantID)
+		for _, productID := range productIDs {
+			s.enqueueProductStatusSync(ctx, user.MerchantID, productID, status)
+		}
+	}
+
+	return updated, nil
+}
+
+// BulkDeleteProducts désactive plusieurs produits (soft delete).
+func (s *MenuService) BulkDeleteProducts(ctx context.Context, token string, productIDs []string) (int64, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	updated, err := s.legacy.BulkDeleteProducts(ctx, user.MerchantID, productIDs)
+	if err != nil {
+		return 0, err
+	}
+
+	if updated > 0 {
+		s.invalidateMenuCache(ctx, user.MerchantID)
+	}
+
+	return updated, nil
+}
+
+// BulkSetProductsAttributes remplace la configuration (options et suppléments)
+// de plusieurs produits par la même liste de groupes d'attributs.
+func (s *MenuService) BulkSetProductsAttributes(ctx context.Context, token string, productIDs []string, configIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkUpdateProductAttributes(ctx, user.MerchantID, productIDs, configIDs); err != nil {
+		return err
+	}
+	s.invalidateMenuCache(ctx, user.MerchantID)
+	return nil
+}
+
 func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, productID, status string) {
 	available, shouldSync := mapWelloStatusToAvailability(status)
 	if !shouldSync {

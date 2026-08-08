@@ -391,6 +391,28 @@ type BulkUpdateProductPricesPayload struct {
 	Products []BulkUpdateProductPrice `json:"products"` // Array of products with prices to update
 }
 
+// BulkProductsPayload est le corps commun des actions de groupe qui ne portent
+// que sur une liste de produits (suppression pour l'instant).
+type BulkProductsPayload struct {
+	ProductIDs []string `json:"product_ids"` // Produits ciblés par l'action
+}
+
+// BulkSetProductsStatusPayload — passage en masse d'un statut de vente.
+// Status reprend les valeurs textuelles de la colonne products.status
+// ('available', 'not_available', 'out_of_stock', 'removed_from_menu').
+type BulkSetProductsStatusPayload struct {
+	ProductIDs []string `json:"product_ids"`
+	Status     string   `json:"status"`
+}
+
+// BulkSetProductsAttributesPayload — remplace la configuration (groupes
+// d'options/suppléments) de chaque produit ciblé par la liste fournie.
+// Une liste vide est valide : elle retire toutes les options.
+type BulkSetProductsAttributesPayload struct {
+	ProductIDs    []string `json:"product_ids"`
+	Configuration []string `json:"configuration"`
+}
+
 type MarketingCategoryEntry struct {
 	CategoryID   string   `json:"category_id"`
 	Name         string   `json:"name"`

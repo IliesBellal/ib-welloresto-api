@@ -2926,6 +2926,162 @@ func (r *MenuRepository) SetProductStatus(ctx context.Context, merchantID, pid, 
 	return res.RowsAffected()
 }
 
+// bulkProductPlaceholders construit la clause IN (?,?,…) et le slice d'arguments
+// correspondant. Les trois actions de groupe du back-office (statut, suppression,
+// options) ciblent toutes une liste de produits bornée par le merchant.
+func bulkProductPlaceholders(productIDs []string) (string, []interface{}) {
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, 0, len(productIDs))
+	for i, id := range productIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+// BulkSetProductStatus applique un statut de vente à plusieurs produits en un
+// seul UPDATE. Le filtre merchant_id borne l'écriture au marchand appelant :
+// les IDs d'un autre marchand sont ignorés silencieusement (RowsAffected
+// permet à l'appelant de détecter l'écart).
+func (r *MenuRepository) BulkSetProductStatus(ctx context.Context, merchantID string, productIDs []string, status string) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	args := make([]interface{}, 0, len(idArgs)+2)
+	args = append(args, status, merchantID)
+	args = append(args, idArgs...)
+
+	res, err := db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE products
+		SET status = ?
+		WHERE merchant_id = ? AND product_id IN (%s) AND enabled = TRUE`, inClause), args...)
+	if err != nil {
+		return 0, err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return res.RowsAffected()
+}
+
+// BulkDeleteProducts désactive plusieurs produits (soft delete, enabled = FALSE),
+// ainsi que leurs sous-produits : laisser les enfants actifs alors que leur
+// groupe a disparu les rendrait orphelins dans le menu.
+func (r *MenuRepository) BulkDeleteProducts(ctx context.Context, merchantID string, productIDs []string) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	// La liste d'IDs sert deux fois : une pour product_id, une pour by_product_of.
+	args := make([]interface{}, 0, 2*len(idArgs)+1)
+	args = append(args, merchantID)
+	args = append(args, idArgs...)
+	args = append(args, idArgs...)
+
+	res, err := db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE products
+		SET enabled = FALSE
+		WHERE merchant_id = ? AND (product_id IN (%[1]s) OR by_product_of IN (%[1]s))`,
+		inClause), args...)
+	if err != nil {
+		return 0, err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return res.RowsAffected()
+}
+
+// BulkUpdateProductAttributes remplace la configuration (groupes d'options et
+// suppléments) de plusieurs produits par la même liste. Même sémantique que
+// UpdateProductAttributes : reset complet puis upsert, une liste vide retire
+// toutes les options. L'appel se fait dans une transaction pour qu'un échec en
+// cours de route ne laisse pas une partie des produits sans configuration.
+func (r *MenuRepository) BulkUpdateProductAttributes(ctx context.Context, merchantID string, productIDs []string, configIDs []string) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		return r.bulkUpdateProductAttributesTx(txCtx, merchantID, productIDs, configIDs)
+	})
+}
+
+func (r *MenuRepository) bulkUpdateProductAttributesTx(ctx context.Context, merchantID string, productIDs []string, configIDs []string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+
+	// Ownership check groupé : on refuse l'opération entière dès qu'un ID
+	// n'appartient pas au marchand, plutôt que d'en traiter une partie.
+	ownedArgs := make([]interface{}, 0, len(idArgs)+1)
+	ownedArgs = append(ownedArgs, merchantID)
+	ownedArgs = append(ownedArgs, idArgs...)
+
+	var owned int
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)`, inClause),
+		ownedArgs...,
+	).Scan(&owned); err != nil {
+		return err
+	}
+	if owned != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	resetArgs := make([]interface{}, len(idArgs))
+	copy(resetArgs, idArgs)
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE product_configurable_attribute
+		SET enabled = FALSE
+		WHERE product_id IN (%s)`, inClause), resetArgs...); err != nil {
+		return err
+	}
+
+	if len(configIDs) == 0 {
+		_ = r.setMenuUpdated(ctx, merchantID)
+		return nil
+	}
+
+	stmtQuery := `
+		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
+		VALUES(?, ?, ?, TRUE)
+		ON DUPLICATE KEY UPDATE enabled = 1, num_order = VALUES(num_order)
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		stmtQuery = `
+		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
+		VALUES(?, ?, ?, TRUE)
+		ON CONFLICT (configurable_attribute_id, product_id) DO UPDATE SET enabled = TRUE, num_order = EXCLUDED.num_order
+	`
+	}
+
+	stmt, err := db.PrepareContext(ctx, stmtQuery)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, productID := range productIDs {
+		for i, attributeID := range configIDs {
+			if _, err := stmt.ExecContext(ctx, productID, attributeID, i); err != nil {
+				return err
+			}
+		}
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return nil
+}
+
 func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 

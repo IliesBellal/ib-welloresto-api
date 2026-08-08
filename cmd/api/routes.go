@@ -758,6 +758,14 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
 
+		// --- Édition de groupe du back-office ---
+		// Déclarées avant /products/{product_id} : chi donne la priorité aux
+		// segments statiques, mais les garder groupées ici évite toute
+		// ambiguïté de lecture avec la route paramétrée.
+		r.Patch("/products/bulk/status", menuH.BulkSetProductsStatus)         // used by: back-office
+		r.Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
+		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)             // used by: back-office
+
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
 			r.Post("/allergens/assign", menuH.BulkAssignAllergen)

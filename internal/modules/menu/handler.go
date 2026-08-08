@@ -2090,3 +2090,130 @@ func (h *MenuHandler) BulkUpdateProductPrices(w http.ResponseWriter, r *http.Req
 		"message": "products_prices_updated",
 	})
 }
+
+// bulkProductStatuses liste les statuts de vente acceptés par l'action de
+// groupe. On refuse tout le reste : la colonne products.status est en texte
+// libre, une faute de frappe rendrait les produits invisibles côté POS sans
+// aucun signal d'erreur.
+var bulkProductStatuses = map[string]bool{
+	"available":         true,
+	"not_available":     true,
+	"out_of_stock":      true,
+	"removed_from_menu": true,
+}
+
+// BulkSetProductsStatus — PATCH /menu/products/bulk/status
+// Passe plusieurs produits au même statut de vente en une requête.
+func (h *MenuHandler) BulkSetProductsStatus(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_status", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload BulkSetProductsStatusPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_status", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_status", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	status := strings.ToLower(strings.TrimSpace(payload.Status))
+	if !bulkProductStatuses[status] {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_status", map[string]string{"error": "invalid_status"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	updated, err := h.service.BulkSetProductsStatus(ctx, token, payload.ProductIDs, status)
+	if err != nil {
+		log.Error("[ERROR] BulkSetProductsStatus error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_status", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_status", map[string]interface{}{
+		"status":  "success",
+		"message": "products_status_updated",
+		"updated": updated,
+	})
+}
+
+// BulkDeleteProducts — POST /menu/products/bulk/delete
+// Suppression logique (enabled = FALSE) de plusieurs produits et de leurs
+// sous-produits. En POST plutôt qu'en DELETE : le corps d'une requête DELETE
+// n'est pas garanti d'être transmis de bout en bout par les intermédiaires.
+func (h *MenuHandler) BulkDeleteProducts(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_delete_products", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload BulkProductsPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_delete_products", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_delete_products", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	deleted, err := h.service.BulkDeleteProducts(ctx, token, payload.ProductIDs)
+	if err != nil {
+		log.Error("[ERROR] BulkDeleteProducts error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_delete_products", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_delete_products", map[string]interface{}{
+		"status":  "success",
+		"message": "products_disabled",
+		"deleted": deleted,
+	})
+}
+
+// BulkSetProductsAttributes — PATCH /menu/products/bulk/attributes
+// Remplace la configuration (options/suppléments) de plusieurs produits par la
+// liste fournie. Une liste vide retire toutes les options.
+func (h *MenuHandler) BulkSetProductsAttributes(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_attributes", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload BulkSetProductsAttributesPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_attributes", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_attributes", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkSetProductsAttributes(ctx, token, payload.ProductIDs, payload.Configuration); err != nil {
+		log.Error("[ERROR] BulkSetProductsAttributes error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_attributes", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_attributes", map[string]interface{}{
+		"status":  "success",
+		"message": "products_attributes_updated",
+		"updated": len(payload.ProductIDs),
+	})
+}
