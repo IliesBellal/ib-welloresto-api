@@ -176,11 +176,27 @@ func (r *OrdersRepository) GetOrdersBasic(ctx context.Context, merchantID string
 	return out, nil
 }
 
-func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, int, int64, int, int, error) {
+// historyFilter porte la clause de selection de l'historique. La liste paginee
+// et les agregats du resume DOIVENT tous deux passer par ici : c'est ce qui
+// garantit qu'un filtre ajoute plus tard s'applique aux deux, sans divergence
+// silencieuse entre les commandes affichees et les totaux annonces.
+type historyFilter struct {
+	From  string
+	Where string
+	Args  []interface{}
+}
 
-	// =========================
-	// 1️⃣ BUILD WHERE + ARGS
-	// =========================
+// argsWith retourne une copie des arguments completee par extra. Le caller ne
+// doit pas append() directement sur Args : plusieurs requetes partagent le
+// filtre et se marcheraient dessus si le tableau sous-jacent etait reutilise.
+func (f historyFilter) argsWith(extra ...interface{}) []interface{} {
+	out := make([]interface{}, 0, len(f.Args)+len(extra))
+	out = append(out, f.Args...)
+	out = append(out, extra...)
+	return out
+}
+
+func buildHistoryFilter(merchantID string, req models.OrderHistoryRequest) historyFilter {
 	fromClause := " FROM orders o LEFT JOIN customer c ON o.customer_id = c.customer_id "
 	where := " WHERE o.merchant_id = ? AND o.state = 'CLOSED' "
 	args := []interface{}{merchantID}
@@ -247,6 +263,16 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 		where += fmt.Sprintf(" AND o.brand_status IN (%s) ", strings.Join(placeholders, ","))
 	}
 
+	return historyFilter{From: fromClause, Where: where, Args: args}
+}
+
+func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, req models.OrderHistoryRequest) ([]models.Order, int, int64, int, int, error) {
+
+	// =========================
+	// 1️⃣ BUILD WHERE + ARGS
+	// =========================
+	filter := buildHistoryFilter(merchantID, req)
+
 	// =========================
 	// 2️⃣ PAGINATION (IDS ONLY)
 	// =========================
@@ -262,11 +288,11 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 
 	countQuery := `
 		SELECT COUNT(*), COALESCE(SUM(o.price), 0)
-	` + fromClause + where
+	` + filter.From + filter.Where
 
 	var totalItems int
 	var totalRevenue int64
-	if err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, countQuery, args...).Scan(&totalItems, &totalRevenue); err != nil {
+	if err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, countQuery, filter.Args...).Scan(&totalItems, &totalRevenue); err != nil {
 		return nil, 0, 0, page, limit, err
 	}
 
@@ -277,14 +303,12 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	// =========================
 	query := `
 		SELECT o.order_id
-	` + fromClause + where + `
+	` + filter.From + filter.Where + `
 		ORDER BY o.creation_date DESC
 		LIMIT ? OFFSET ?
 	`
 
-	args = append(args, limit, offset)
-
-	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, filter.argsWith(limit, offset)...)
 	if err != nil {
 		return nil, 0, 0, page, limit, err
 	}
@@ -329,6 +353,193 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	}
 
 	return orders, totalItems, totalRevenue, page, limit, nil
+}
+
+const (
+	labelTypeMOP       = "mop"
+	labelTypeOrderType = "order_type"
+
+	// summaryLabelLang fige la langue des libelles du resume.
+	// TODO(i18n) : brancher sur la langue du marchand (table
+	// merchant_translation_languages) quand le multilingue sera active.
+	summaryLabelLang = "FR"
+
+	// summaryScope restreint le perimetre du resume par rapport a celui de la
+	// liste : une commande annulee ou a prix nul reste affichee (le POS a un
+	// filtre « supprimees ») mais ne doit peser ni dans le CA ni dans le
+	// nombre de couverts. C'est pourquoi OrdersCount et TotalItems different.
+	summaryScope = " AND o.brand_status NOT IN ('CANCELED','DELETED') AND o.price > 0 "
+)
+
+// GetHistorySummary agrege TOUTE la periode filtree, sans pagination, pour que
+// le POS affiche le resume de la journee des la premiere page.
+//
+// Le filtre est celui de GetHistory (buildHistoryFilter), restreint par
+// summaryScope. Les libelles sont resolus apres agregation, jamais par une
+// jointure : voir loadLabels.
+func (r *OrdersRepository) GetHistorySummary(ctx context.Context, merchantID string, req models.OrderHistoryRequest) (models.OrderHistorySummary, error) {
+	filter := buildHistoryFilter(merchantID, req)
+	where := filter.Where + summaryScope
+	db := dbx.GetDB(ctx, r.database)
+
+	summary := models.OrderHistorySummary{
+		ByChannel: []models.ChannelSummaryRow{},
+		ByPayment: []models.PaymentSummaryRow{},
+	}
+
+	labels, err := r.loadLabels(ctx, labelTypeMOP, labelTypeOrderType)
+	if err != nil {
+		return summary, err
+	}
+
+	// --- 1) Ventilation par canal (marque x type de commande) ---------------
+	// Les totaux globaux sont derives de ces lignes plutot que recalcules par
+	// une requete distincte : le total affiche ne peut donc pas diverger de la
+	// somme des sections.
+	//
+	// GROUP BY sur les expressions completes (et non sur des positions
+	// ordinales) : seule forme acceptee sans reserve par MySQL comme par
+	// Postgres.
+	channelQuery := `
+		SELECT COALESCE(o.brand, 'WELLO_RESTO'),
+		       COALESCE(o.order_type, ''),
+		       COUNT(*),
+		       COALESCE(SUM(o.price), 0),
+		       COALESCE(SUM(o.places_settings), 0)
+	` + filter.From + where + `
+		GROUP BY COALESCE(o.brand, 'WELLO_RESTO'), COALESCE(o.order_type, '')
+		ORDER BY COALESCE(o.brand, 'WELLO_RESTO'), COALESCE(o.order_type, '')
+	`
+
+	channelRows, err := db.QueryContext(ctx, channelQuery, filter.Args...)
+	if err != nil {
+		return summary, err
+	}
+	defer channelRows.Close()
+
+	for channelRows.Next() {
+		var row models.ChannelSummaryRow
+		var covers int64
+		if err := channelRows.Scan(&row.Brand, &row.OrderType, &row.OrdersCount, &row.Total, &covers); err != nil {
+			return summary, err
+		}
+
+		row.OrderTypeLabel = resolveLabel(labels, labelTypeOrderType, row.OrderType)
+		summary.ByChannel = append(summary.ByChannel, row)
+
+		summary.OrdersCount += row.OrdersCount
+		summary.TotalRevenue += row.Total
+		summary.CoversCount += covers
+	}
+	if err := channelRows.Err(); err != nil {
+		return summary, err
+	}
+
+	// --- 2) Ventilation par moyen de paiement ------------------------------
+	// SUM(p.amount) est deja NET : un remboursement est stocke comme un
+	// paiement de montant negatif portant le meme mop (ProcessRefund). La
+	// seconde somme isole cette part pour pouvoir l'afficher, car elle seule
+	// explique l'ecart entre TotalRevenue (somme des TTC, inchangee par un
+	// remboursement) et la somme des paiements.
+	//
+	// Le LEFT JOIN customer est indispensable : la branche Search du filtre
+	// reference des colonnes de c.
+	paymentFrom := ` FROM payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+		LEFT JOIN customer c ON o.customer_id = c.customer_id `
+
+	paymentQuery := `
+		SELECT p.mop,
+		       COALESCE(SUM(p.amount), 0),
+		       COALESCE(SUM(CASE WHEN p.operation_type = 'REFUND' THEN p.amount ELSE 0 END), 0)
+	` + paymentFrom + where + `
+		  AND p.enabled = TRUE
+		GROUP BY p.mop
+		ORDER BY p.mop
+	`
+
+	paymentRows, err := db.QueryContext(ctx, paymentQuery, filter.Args...)
+	if err != nil {
+		return summary, err
+	}
+	defer paymentRows.Close()
+
+	for paymentRows.Next() {
+		var row models.PaymentSummaryRow
+		var refunds int64
+		if err := paymentRows.Scan(&row.MOP, &row.Total, &refunds); err != nil {
+			return summary, err
+		}
+
+		row.Label = resolveLabel(labels, labelTypeMOP, row.MOP)
+		summary.ByPayment = append(summary.ByPayment, row)
+		summary.RefundsTotal += refunds
+	}
+	if err := paymentRows.Err(); err != nil {
+		return summary, err
+	}
+
+	return summary, nil
+}
+
+// loadLabels charge les libelles demandes dans une map indexee "type|valeur".
+//
+// La resolution se fait ici, en Go, et non par un JOIN dans les requetes
+// d'agregat, pour deux raisons :
+//
+//   - la table labels n'a qu'une PK sur id, rien n'y garantit l'unicite de
+//     (label_value, label_type, lang) ; un doublon multiplierait les lignes
+//     agregees et fausserait silencieusement les SUM ;
+//   - l'INNER JOIN pratique ailleurs (accounting, reports) fait disparaitre du
+//     resultat toute ligne dont le code n'a pas de libelle. Acceptable pour un
+//     export comptable, pas pour un total qui doit se reconcilier a l'ecran.
+func (r *OrdersRepository) loadLabels(ctx context.Context, labelTypes ...string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(labelTypes) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(labelTypes))
+	args := make([]interface{}, 0, len(labelTypes)+1)
+	args = append(args, summaryLabelLang)
+	for i, labelType := range labelTypes {
+		placeholders[i] = "?"
+		args = append(args, labelType)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT label_type, label_value, label
+		FROM labels
+		WHERE lang = ? AND label_type IN (%s)
+		ORDER BY id
+	`, strings.Join(placeholders, ","))
+
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var labelType, labelValue, label string
+		if err := rows.Scan(&labelType, &labelValue, &label); err != nil {
+			return nil, err
+		}
+		// ORDER BY id + ecrasement : en presence d'un doublon, c'est la ligne
+		// la plus recente qui gagne, de facon deterministe.
+		out[labelType+"|"+labelValue] = label
+	}
+
+	return out, rows.Err()
+}
+
+// resolveLabel retombe sur le code brut faute de libelle : une ligne du resume
+// ne doit jamais s'afficher sans texte.
+func resolveLabel(labels map[string]string, labelType, value string) string {
+	if label := strings.TrimSpace(labels[labelType+"|"+value]); label != "" {
+		return label
+	}
+	return value
 }
 
 func (r *OrdersRepository) GetPaymentsForOrder(ctx context.Context, orderID string) ([]models.Payment, error) {

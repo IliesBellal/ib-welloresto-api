@@ -295,6 +295,16 @@ func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryR
 		return nil, err
 	}
 
+	// Le resume est recalcule a chaque page. C'est volontairement le cas le
+	// plus simple : la valeur est identique d'une page a l'autre (meme filtre),
+	// et le cout tient en deux agregats sur la periode. En echange, un
+	// rechargement apres remboursement ou reouverture renvoie toujours des
+	// chiffres a jour, quelle que soit la page demandee.
+	summary, err := s.ordersRepo.GetHistorySummary(ctx, user.MerchantID, req)
+	if err != nil {
+		return nil, err
+	}
+
 	totalPages := 0
 	if totalItems > 0 {
 		totalPages = int(math.Ceil(float64(totalItems) / float64(limit)))
@@ -315,6 +325,7 @@ func (s *OrdersService) GetHistory(ctx context.Context, req models.OrderHistoryR
 			},
 			TotalRevenue: totalRevenue,
 			AvgBasket:    avgBasket,
+			Summary:      summary,
 		},
 		Orders: orders,
 	}, nil

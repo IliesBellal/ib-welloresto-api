@@ -24,6 +24,50 @@ type OrderHistoryMetadata struct {
 	PaginationMetadata
 	TotalRevenue int64   `json:"total_revenue"`
 	AvgBasket    float64 `json:"avg_basket"`
+	// Summary agrege TOUTE la periode filtree, independamment de la pagination :
+	// il permet au POS d'afficher le resume de la journee sans avoir charge les
+	// pages suivantes. Attention, son perimetre n'est PAS celui de la pagination
+	// (voir OrderHistorySummary.OrdersCount).
+	Summary OrderHistorySummary `json:"summary"`
+}
+
+// OrderHistorySummary porte les agregats de la periode. Les moyennes (panier
+// moyen, couvert moyen) ne sont volontairement pas calculees ici : seules les
+// sommes brutes sont exposees, le client derive les moyennes lui-meme.
+type OrderHistorySummary struct {
+	// OrdersCount ne compte que les commandes retenues par le resume
+	// (hors CANCELED/DELETED, hors price <= 0). Il differe donc de
+	// PaginationMetadata.TotalItems, qui couvre tout ce qu'affiche la liste.
+	OrdersCount  int   `json:"orders_count"`
+	CoversCount  int64 `json:"covers_count"`
+	TotalRevenue int64 `json:"total_revenue"`
+	// RefundsTotal est negatif (les remboursements sont stockes comme des
+	// paiements a montant negatif) et vaut 0 en l'absence de remboursement.
+	// C'est lui qui explique l'ecart entre TotalRevenue (somme des TTC, qui
+	// ignore les remboursements) et la somme des ByPayment (nette).
+	RefundsTotal int64               `json:"refunds_total"`
+	ByChannel    []ChannelSummaryRow `json:"by_channel"`
+	ByPayment    []PaymentSummaryRow `json:"by_payment"`
+}
+
+// ChannelSummaryRow : un couple (marque, type de commande). OrderTypeLabel est
+// resolu via la table labels ; il retombe sur le code brut si aucun libelle
+// n'existe, de sorte qu'une ligne ne soit jamais affichee vide.
+type ChannelSummaryRow struct {
+	Brand          string `json:"brand"`
+	OrderType      string `json:"order_type"`
+	OrderTypeLabel string `json:"order_type_label"`
+	Total          int64  `json:"total"`
+	OrdersCount    int    `json:"orders_count"`
+}
+
+// PaymentSummaryRow : un moyen de paiement. Total est NET des remboursements.
+// Les commandes marketplace ont de vraies lignes de paiement (mop UBER_EATS /
+// DELIVEROO), elles sont donc couvertes ici sans traitement particulier.
+type PaymentSummaryRow struct {
+	MOP   string `json:"mop"`
+	Label string `json:"label"`
+	Total int64  `json:"total"`
 }
 
 type OrderHistoryData struct {

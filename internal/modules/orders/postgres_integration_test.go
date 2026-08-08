@@ -60,6 +60,9 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 			`DELETE FROM tva_categories WHERE tva_id IN (9201, 9202, 9203)`,
 			`DELETE FROM customer WHERE merchant_id = $1`,
 			`DELETE FROM merchant_parameters WHERE merchant_id = $1`,
+			// labels est une table de référence globale, non scopée merchant :
+			// on ne supprime que les lignes semées par ce test.
+			`DELETE FROM labels WHERE label LIKE 'itest-lbl-%'`,
 		} {
 			if strings.Contains(q, "$1") {
 				_, _ = db.ExecContext(ctx, q, mid)
@@ -361,6 +364,153 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	hist, total, _, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{Search: &order3Str})
 	if err != nil || total != 1 {
 		t.Fatalf("GetHistory (search by id) = total=%d err=%v, want 1", total, err)
+	}
+
+	// ============ GetHistorySummary ============
+	// Le jeu de données est semé ici, et non en tête de test, pour ne pas
+	// fausser les comptages des assertions précédentes. Il est isolé sur une
+	// date distinctive : le filtre de période l'exclut des commandes déjà
+	// créées (creation_date = now()) et réciproquement.
+	const summaryDay = "2001-02-03"
+	newSummaryOrder := func(brand, orderType, brandStatus string, price, places int) int64 {
+		t.Helper()
+		return mustID("summary order", `
+			INSERT INTO orders (merchant_id, order_num, brand, brand_status, order_type, state,
+			                    price, TVA, HT, created_by, fulfillment_type, places_settings, creation_date)
+			VALUES ($1, 1, $2, $3, $4, 'CLOSED', $5, 0, $5, $6, 'DELIVERY_BY_RESTAURANT', $7, $8)
+			RETURNING order_id`,
+			merchantID, brand, brandStatus, orderType, price, userID, places,
+			summaryDay+" 12:00:00+00")
+	}
+	addPayment := func(orderID int64, mop string, amount int, operationType string) {
+		t.Helper()
+		mustExec("summary payment", `
+			INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled, operation_type)
+			VALUES ($1, $2, $3, $4, $5, true, $6)`, merchantID, userID, orderID, amount, mop, operationType)
+	}
+
+	sIn1 := newSummaryOrder("WELLO_RESTO", "IN", "ACCEPTED", 1000, 2)
+	sIn2 := newSummaryOrder("WELLO_RESTO", "IN", "ACCEPTED", 3000, 4)
+	sTake := newSummaryOrder("WELLO_RESTO", "TAKE_AWAY", "ACCEPTED", 500, 1)
+	sUber := newSummaryOrder("UBER_EATS", "DELIVERY", "DELIVERED", 2500, 0)
+	sNoLabel := newSummaryOrder("WELLO_RESTO", "IN", "ACCEPTED", 700, 1)
+	// Hors périmètre du résumé, mais bien comptées par la pagination.
+	newSummaryOrder("WELLO_RESTO", "IN", "CANCELED", 9999, 9)
+	newSummaryOrder("WELLO_RESTO", "IN", "ACCEPTED", 0, 3)
+
+	addPayment(sIn1, "ES", 1000, "SALE")
+	addPayment(sIn2, "CB", 3000, "SALE")
+	addPayment(sTake, "CB", 500, "SALE")
+	addPayment(sUber, "UBER_EATS", 2500, "SALE")
+	addPayment(sNoLabel, "ITEST-NOLBL", 700, "SALE")
+	// Remboursement partiel : montant négatif, même mop que la vente.
+	addPayment(sIn2, "CB", -1200, "REFUND")
+
+	// Deux lignes concurrentes pour ('CB','mop','FR') : la table labels n'a pas
+	// de contrainte d'unicité. Un JOIN dans l'agrégat doublerait le total CB —
+	// c'est précisément ce que la résolution en Go doit empêcher. La dernière
+	// ligne insérée (id le plus élevé) doit gagner.
+	mustExec("labels order_type", `
+		INSERT INTO labels (label_value, label_type, lang, label)
+		VALUES ('IN', 'order_type', 'FR', 'itest-lbl-surplace')`)
+	mustExec("labels mop", `
+		INSERT INTO labels (label_value, label_type, lang, label)
+		VALUES ('CB', 'mop', 'FR', 'itest-lbl-cb')`)
+	mustExec("labels mop (doublon)", `
+		INSERT INTO labels (label_value, label_type, lang, label)
+		VALUES ('CB', 'mop', 'FR', 'itest-lbl-cb-dup')`)
+
+	dayFrom := summaryDay + " 00:00:00"
+	dayTo := summaryDay + " 23:59:59"
+	summaryReq := models.OrderHistoryRequest{DateFrom: &dayFrom, DateTo: &dayTo}
+
+	summary, err := repo.GetHistorySummary(ctx, merchantID, summaryReq)
+	if err != nil {
+		t.Fatalf("GetHistorySummary failed against postgres: %v", err)
+	}
+
+	// Annulée et prix nul exclus : 5 commandes retenues sur les 7 semées.
+	if summary.OrdersCount != 5 {
+		t.Fatalf("summary.OrdersCount = %d, want 5", summary.OrdersCount)
+	}
+	if summary.CoversCount != 8 {
+		t.Fatalf("summary.CoversCount = %d, want 8 (2+4+1+0+1)", summary.CoversCount)
+	}
+	if summary.TotalRevenue != 7700 {
+		t.Fatalf("summary.TotalRevenue = %d, want 7700", summary.TotalRevenue)
+	}
+	if summary.RefundsTotal != -1200 {
+		t.Fatalf("summary.RefundsTotal = %d, want -1200", summary.RefundsTotal)
+	}
+
+	// La pagination, elle, voit les 7 commandes : les deux compteurs diffèrent
+	// par construction.
+	_, summaryTotalItems, _, _, _, err := repo.GetHistory(ctx, merchantID, summaryReq)
+	if err != nil {
+		t.Fatalf("GetHistory (période résumé): %v", err)
+	}
+	if summaryTotalItems != summary.OrdersCount+2 {
+		t.Fatalf("total_items = %d, want orders_count+2 = %d", summaryTotalItems, summary.OrdersCount+2)
+	}
+
+	// Le résumé ne doit pas dépendre de la page demandée.
+	pageTwo := 2
+	pageSize := 2
+	summaryPage2, err := repo.GetHistorySummary(ctx, merchantID, models.OrderHistoryRequest{
+		DateFrom: &dayFrom, DateTo: &dayTo, Page: &pageTwo, Limit: &pageSize,
+	})
+	if err != nil {
+		t.Fatalf("GetHistorySummary (page 2): %v", err)
+	}
+	if summaryPage2.TotalRevenue != summary.TotalRevenue || summaryPage2.OrdersCount != summary.OrdersCount {
+		t.Fatalf("résumé dépendant de la page : page2=%+v page1=%+v", summaryPage2, summary)
+	}
+
+	// --- ventilation par canal ---
+	channels := map[string]models.ChannelSummaryRow{}
+	channelSum := int64(0)
+	for _, row := range summary.ByChannel {
+		channels[row.Brand+"/"+row.OrderType] = row
+		channelSum += row.Total
+	}
+	if channelSum != summary.TotalRevenue {
+		t.Fatalf("somme by_channel = %d, want total_revenue = %d", channelSum, summary.TotalRevenue)
+	}
+	if row := channels["WELLO_RESTO/IN"]; row.Total != 4700 || row.OrdersCount != 3 {
+		t.Fatalf("by_channel WELLO_RESTO/IN = %+v, want total=4700 count=3", row)
+	}
+	if row := channels["WELLO_RESTO/IN"]; row.OrderTypeLabel != "itest-lbl-surplace" {
+		t.Fatalf("order_type_label = %q, want itest-lbl-surplace", row.OrderTypeLabel)
+	}
+	if row := channels["UBER_EATS/DELIVERY"]; row.Total != 2500 || row.OrdersCount != 1 {
+		t.Fatalf("by_channel UBER_EATS/DELIVERY = %+v, want total=2500 count=1", row)
+	}
+
+	// --- ventilation par moyen de paiement ---
+	payments := map[string]models.PaymentSummaryRow{}
+	paymentSum := int64(0)
+	for _, row := range summary.ByPayment {
+		payments[row.MOP] = row
+		paymentSum += row.Total
+	}
+	// Réconciliation : les paiements nets = CA - remboursements.
+	if paymentSum != summary.TotalRevenue+summary.RefundsTotal {
+		t.Fatalf("somme by_payment = %d, want %d", paymentSum, summary.TotalRevenue+summary.RefundsTotal)
+	}
+	// 3000 + 500 - 1200, et surtout PAS le double malgré le doublon de labels.
+	if row := payments["CB"]; row.Total != 2300 {
+		t.Fatalf("by_payment CB = %d, want 2300 (doublon labels ne doit pas gonfler le SUM)", row.Total)
+	}
+	if row := payments["CB"]; row.Label != "itest-lbl-cb-dup" {
+		t.Fatalf("label CB = %q, want itest-lbl-cb-dup (dernière ligne insérée)", row.Label)
+	}
+	// Les commandes marketplace ont de vraies lignes de paiement.
+	if row := payments["UBER_EATS"]; row.Total != 2500 {
+		t.Fatalf("by_payment UBER_EATS = %d, want 2500", row.Total)
+	}
+	// Un mop sans libellé reste présent et retombe sur son code brut.
+	if row, ok := payments["ITEST-NOLBL"]; !ok || row.Total != 700 || row.Label != "ITEST-NOLBL" {
+		t.Fatalf("by_payment ITEST-NOLBL = %+v (present=%v), want total=700 label=ITEST-NOLBL", row, ok)
 	}
 
 	// ============ GetPaymentsForOrder ============

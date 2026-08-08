@@ -43,7 +43,12 @@ CREATE TYPE hours_amendments_type_enum AS ENUM ('permanent', 'temporary');
 CREATE TYPE kiosks_status_enum AS ENUM ('pending', 'active', 'inactive', 'revoked');
 CREATE TYPE planning_leave_requests_leave_type_enum AS ENUM ('paid', 'unpaid', 'sick', 'other');
 CREATE TYPE planning_leave_requests_status_enum AS ENUM ('pending', 'approved', 'rejected', 'cancelled');
-CREATE TYPE planning_shifts_status_enum AS ENUM ('planned', 'confirmed', 'done', 'cancelled');
+-- !! 'draft' est present sur Render staging mais absent du DDL MySQL source, de tout fichier de
+--    migrations/ et de toute documentation : valeur posee hors migration versionnee, vraisemblablement
+--    par confusion avec planning_weeks_status_enum (qui, lui, porte legitimement 'draft').
+--    Reproduite ici pour que ce fichier reflete l'etat reel de staging ; a retirer de staging plutot
+--    qu'a adopter — voir rapport 63 §5. Aucun code Go ne lit ni n'ecrit cette valeur sur planning_shifts.
+CREATE TYPE planning_shifts_status_enum AS ENUM ('planned', 'confirmed', 'done', 'cancelled', 'draft');
 CREATE TYPE planning_shift_swap_requests_status_enum AS ENUM ('pending', 'approved', 'rejected', 'cancelled');
 CREATE TYPE planning_weeks_status_enum AS ENUM ('draft', 'published', 'locked');
 CREATE TYPE temperature_readings_status_enum AS ENUM ('ok', 'alert', 'critical');
@@ -801,6 +806,12 @@ CREATE INDEX idx_configurable_attribute_options_configurable_attribute_id ON con
 COMMENT ON COLUMN configurable_attribute_options.component_id IS 'Ingredient (components.component_id) lie a cette option, pour projection de cout. NULL = aucun ingredient. Pas de FK (convention du depot).';
 COMMENT ON COLUMN configurable_attribute_options.quantity IS 'Quantite de l''ingredient consommee par selection de cette option, dans l''unite unit_of_measure. NULL si component_id est NULL.';
 COMMENT ON COLUMN configurable_attribute_options.unit_of_measure IS 'Unite (unit_of_measure.id) de la quantite ci-dessus. NULL si component_id est NULL.';
+-- !! INCOHERENCE REELLE SUR STAGING, reproduite ici a l'identique : le commentaire ci-dessous annonce
+--    varchar(80) alors que la colonne est restee en varchar(25). migrations/081 porte bien les deux
+--    instructions (ALTER ... TYPE varchar(80) puis COMMENT), mais seule la seconde a pris effet sur
+--    l'instance. Correctif = rejouer l'ALTER de la migration 081 sur staging, puis passer title a
+--    varchar(80) ci-dessus. Voir rapport 63 §5.
+COMMENT ON COLUMN configurable_attribute_options.title IS 'Libelle de l''option affiche au client. Elargi de 25 a 80 caracteres (migration 081), aligne sur configurable_attributes.title.';
 
 -- ---------------------------------------------------------------------
 -- consumables
@@ -1129,6 +1140,7 @@ CREATE INDEX idx_discount_redemptions_idx_discount_redemptions_customer ON disco
 --   collation table utf8mb3_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 --   discount_scope/max_redemptions/max_redemptions_per_customer : colonnes ajoutees par migrations/done/041_cart_discounts.up.sql, posterieures au dump du 2026-07-13 audite (meme situation que planning_day_comments/haccp_traceability, rapports 26/56) ; absentes de wello-resto-mysql-ddl.md, ajoutees ici par le rapport 57 ; discount_scope ENUM -> discounts_discount_scope_enum
+--   discount_scope est declaree en fin de table et non apres discount_code : sur staging elle a ete posee par ALTER TABLE ADD COLUMN, donc en derniere position avant max_redemptions (rapport 63)
 -- ---------------------------------------------------------------------
 CREATE TABLE discounts (
     discount_id varchar(50) NOT NULL,
@@ -1137,7 +1149,6 @@ CREATE TABLE discounts (
     discount_desc varchar(100) NOT NULL,
     prefered_order integer NOT NULL DEFAULT 0,
     discount_code varchar(20),
-    discount_scope discounts_discount_scope_enum NOT NULL DEFAULT 'PRODUCT',
     discount_order_type varchar(40),
     discount_value integer NOT NULL DEFAULT 0,
     discount_unit varchar(20) NOT NULL,
@@ -1153,6 +1164,7 @@ CREATE TABLE discounts (
     available boolean NOT NULL DEFAULT false,
     enabled boolean NOT NULL DEFAULT true,
     creation_date timestamptz NOT NULL DEFAULT now(),
+    discount_scope discounts_discount_scope_enum NOT NULL DEFAULT 'PRODUCT',
     max_redemptions integer,
     max_redemptions_per_customer integer,
     PRIMARY KEY (discount_id)
@@ -1261,6 +1273,7 @@ CREATE TABLE employees (
     deleted_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    display_order integer NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX uq_employees_uq_employees_merchant_user ON employees (merchant_id, user_id);
@@ -1270,6 +1283,7 @@ CREATE INDEX idx_employees_idx_employees_merchant ON employees (merchant_id);
 CREATE INDEX idx_employees_idx_employees_contract_type ON employees (contract_type_code);
 CREATE INDEX idx_employees_idx_employees_position_id ON employees (position_id);
 CREATE INDEX idx_employees_idx_employees_member_id ON employees (member_id);
+CREATE INDEX idx_employees_merchant_display_order ON employees (merchant_id, display_order);
 
 -- ---------------------------------------------------------------------
 -- employee_documents
@@ -1636,6 +1650,106 @@ CREATE TABLE hours_of_operation (
 COMMENT ON COLUMN hours_of_operation.day_of_week_from IS '1 => Monday, 7 => Sunday';
 
 -- ---------------------------------------------------------------------
+-- import_products_mapping / import_categories_mapping / import_tags_mapping /
+-- import_attributes_mapping / import_attribute_options_mapping
+--   Tables nees directement en PostgreSQL (migrations/080_import_provider_mappings.up.sql) : aucune
+--   contrepartie MySQL, donc rien a convertir. Correspondance identifiant provider externe -> entite
+--   WelloResto creee par l'import de produits en masse ; wello_id est type sur la vraie PK de la table
+--   cible et non sur un varchar(50) indifferencie comme dans les tables integration_*_mapping.
+--   FK candidates (non creees) :
+--     import_products_mapping.wello_id          -> products.product_id
+--     import_categories_mapping.wello_id        -> productcateg.categ_id
+--     import_tags_mapping.wello_id              -> tags.tag_id
+--     import_attributes_mapping.wello_id        -> configurable_attributes.id
+--     import_attribute_options_mapping.wello_id -> configurable_attribute_options.id
+--     <toutes>.merchant_id                      -> merchant.id
+-- ---------------------------------------------------------------------
+CREATE TABLE import_products_mapping (
+    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    provider varchar(32) NOT NULL,
+    external_id varchar(64) NOT NULL,
+    wello_id integer NOT NULL,
+    creation_date timestamptz NOT NULL DEFAULT now(),
+    deletion_date timestamptz,
+    enabled boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_import_products_mapping_provider_external ON import_products_mapping (merchant_id, provider, external_id);
+CREATE INDEX idx_import_products_mapping_wello_id ON import_products_mapping (merchant_id, wello_id);
+COMMENT ON TABLE import_products_mapping IS 'Correspondance identifiant provider externe -> products.product_id, posee par l''import de produits en masse.';
+COMMENT ON COLUMN import_products_mapping.provider IS 'Source de l''import : ''zelty'', ''wello-generic''... Fait partie de la cle d''idempotence, deux providers pouvant emettre le meme external_id.';
+COMMENT ON COLUMN import_products_mapping.external_id IS 'Identifiant de l''entite chez le provider (ex. Zelty : ZD1557688).';
+COMMENT ON COLUMN import_products_mapping.wello_id IS 'products.product_id (integer). Pas de FK (convention du depot).';
+COMMENT ON COLUMN import_products_mapping.deletion_date IS 'Horodatage de desactivation logique du mapping. NULL tant que le mapping est actif ; complete enabled, sur le modele des tables integration_*_mapping.';
+-- Note : migrations/080_import_provider_mappings.up.sql porte aussi un COMMENT ON INDEX
+-- uq_import_products_mapping_provider_external, absent de staging (rapport 63 §5) — non reproduit ici.
+
+CREATE TABLE import_categories_mapping (
+    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    provider varchar(32) NOT NULL,
+    external_id varchar(64) NOT NULL,
+    wello_id integer NOT NULL,
+    creation_date timestamptz NOT NULL DEFAULT now(),
+    deletion_date timestamptz,
+    enabled boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_import_categories_mapping_provider_external ON import_categories_mapping (merchant_id, provider, external_id);
+CREATE INDEX idx_import_categories_mapping_wello_id ON import_categories_mapping (merchant_id, wello_id);
+COMMENT ON TABLE import_categories_mapping IS 'Correspondance identifiant provider externe -> productcateg.categ_id, posee par l''import de produits en masse.';
+COMMENT ON COLUMN import_categories_mapping.wello_id IS 'productcateg.categ_id (integer, PK) - et NON productcateg.merchant_categ_id, qui est la valeur varchar(20) par laquelle products.category reference la categorie. La resolution categ_id -> merchant_categ_id est a la charge de l''applicatif.';
+
+CREATE TABLE import_tags_mapping (
+    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    provider varchar(32) NOT NULL,
+    external_id varchar(64) NOT NULL,
+    wello_id varchar(42) NOT NULL,
+    creation_date timestamptz NOT NULL DEFAULT now(),
+    deletion_date timestamptz,
+    enabled boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_import_tags_mapping_provider_external ON import_tags_mapping (merchant_id, provider, external_id);
+CREATE INDEX idx_import_tags_mapping_wello_id ON import_tags_mapping (merchant_id, wello_id);
+COMMENT ON TABLE import_tags_mapping IS 'Correspondance identifiant provider externe -> tags.tag_id, posee par l''import de produits en masse.';
+COMMENT ON COLUMN import_tags_mapping.wello_id IS 'tags.tag_id (varchar(42), ID prefixe). Pas de FK (convention du depot).';
+
+CREATE TABLE import_attributes_mapping (
+    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    provider varchar(32) NOT NULL,
+    external_id varchar(64) NOT NULL,
+    wello_id varchar(64) NOT NULL,
+    creation_date timestamptz NOT NULL DEFAULT now(),
+    deletion_date timestamptz,
+    enabled boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_import_attributes_mapping_provider_external ON import_attributes_mapping (merchant_id, provider, external_id);
+CREATE INDEX idx_import_attributes_mapping_wello_id ON import_attributes_mapping (merchant_id, wello_id);
+COMMENT ON TABLE import_attributes_mapping IS 'Correspondance identifiant provider externe -> configurable_attributes.id, posee par l''import de produits en masse.';
+COMMENT ON COLUMN import_attributes_mapping.wello_id IS 'configurable_attributes.id (varchar(64), ID prefixe). Pas de FK (convention du depot).';
+
+CREATE TABLE import_attribute_options_mapping (
+    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    provider varchar(32) NOT NULL,
+    external_id varchar(64) NOT NULL,
+    wello_id integer NOT NULL,
+    creation_date timestamptz NOT NULL DEFAULT now(),
+    deletion_date timestamptz,
+    enabled boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_import_attribute_options_mapping_provider_external ON import_attribute_options_mapping (merchant_id, provider, external_id);
+CREATE INDEX idx_import_attribute_options_mapping_wello_id ON import_attribute_options_mapping (merchant_id, wello_id);
+COMMENT ON TABLE import_attribute_options_mapping IS 'Correspondance identifiant provider externe -> configurable_attribute_options.id, posee par l''import de produits en masse.';
+COMMENT ON COLUMN import_attribute_options_mapping.wello_id IS 'configurable_attribute_options.id (integer identity). Pas de FK (convention du depot).';
+
+-- ---------------------------------------------------------------------
 -- integration_deliveroo
 --   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
@@ -1879,6 +1993,8 @@ CREATE TABLE invoices (
 --   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
 --   FK candidate (non creee) : location_id -> locations.location_id
+--   device_id : colonne ajoutee par migrations/done/062_kiosks_device_id.up.sql, posterieure au dump du 2026-07-13 audite ; en derniere position, comme sur staging (rapport 63)
+--   os_version : varchar(120) sur staging alors que le DDL MySQL source donne varchar(50) — elargissement applique hors migration versionnee, aucun fichier du depot ne le porte (rapport 63 §5)
 -- ---------------------------------------------------------------------
 CREATE TABLE kiosks (
     id varchar(64) NOT NULL,
@@ -1889,7 +2005,7 @@ CREATE TABLE kiosks (
     app_version varchar(20),
     hardware_model varchar(100),
     admin_pin_encrypted bytea,
-    os_version varchar(50),
+    os_version varchar(120),
     last_heartbeat_at timestamptz,
     last_ip varchar(45),
     last_error text,
@@ -1897,6 +2013,7 @@ CREATE TABLE kiosks (
     enabled boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz,
+    device_id varchar(191) DEFAULT NULL,
     PRIMARY KEY (id)
 );
 
@@ -2048,6 +2165,7 @@ CREATE TABLE marketing_categories (
     available boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    image_url varchar(512),
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX uq_marketing_categories_uq_marketing_categories_merchant_name ON marketing_categories (merchant_id, name);
@@ -2341,6 +2459,7 @@ CREATE INDEX idx_orderitems_idx_orderitems_product_id ON orderitems (product_id)
 --   FK candidate (non creee) : cash_register_id -> cash_registers.cash_register_id
 --   FK candidate (non creee) : deletion_reason_id -> deletion_reasons.deletion_reason_id
 --   cart_discount_id/cart_discount_code/cart_discount_amount : colonnes ajoutees par migrations/done/041_cart_discounts.up.sql, posterieures au dump du 2026-07-13 audite (meme situation que discount_scope sur discounts ci-dessus, rapport 57) ; aucun module Go ne les lit/ecrit a ce jour
+--     declarees en fin de table et non apres HT : sur staging elles ont ete posees par ALTER TABLE ADD COLUMN, donc en dernieres positions (rapport 63)
 --   FK candidate (non creee) : cart_discount_id -> discounts.discount_id
 -- ---------------------------------------------------------------------
 CREATE TABLE orders (
@@ -2369,9 +2488,6 @@ CREATE TABLE orders (
     delivered_on timestamptz,
     TVA integer NOT NULL,
     HT integer NOT NULL,
-    cart_discount_id varchar(64),
-    cart_discount_code varchar(64),
-    cart_discount_amount integer NOT NULL DEFAULT 0,
     delivery_fees integer NOT NULL DEFAULT 0,
     comment text,
     cutlery_notes boolean DEFAULT false,
@@ -2392,6 +2508,9 @@ CREATE TABLE orders (
     hash varchar(64),
     signature text,
     previous_hash varchar(64),
+    cart_discount_id varchar(64),
+    cart_discount_code varchar(64),
+    cart_discount_amount integer NOT NULL DEFAULT 0,
     PRIMARY KEY (order_id)
 );
 COMMENT ON COLUMN orders.order_num IS 'Numéro de la commande affiché au client et au marchand';
@@ -2486,6 +2605,31 @@ CREATE TABLE order_ratings (
 COMMENT ON COLUMN order_ratings.delivery_rating IS 'Note de 1 à 5 pour la livraison';
 COMMENT ON COLUMN order_ratings.comment IS 'Commentaire textuel de l''utilisateur';
 CREATE UNIQUE INDEX uq_order_ratings_uniq_order_id ON order_ratings (order_id);
+
+-- ---------------------------------------------------------------------
+-- outbound_messages
+--   Table nee directement en PostgreSQL (migrations/072_outbound_messages.up.sql) : aucune contrepartie
+--   MySQL, donc rien a convertir. Journal des messages sortants (SMS/email) et de leur statut provider.
+--   !! sent_at/updated_at sont en `timestamp` SANS fuseau et non en `timestamptz`, contrairement a la
+--   convention du reste de ce fichier : c'est l'etat reel de staging, herite du texte de la migration 072.
+--   Reproduit tel quel ici ; l'alignement sur timestamptz est a traiter par une migration dediee (rapport 63 §5).
+--   FK candidate (non creee) : domain_ref_id -> selon domain (orders.order_id, bookings.id...)
+-- ---------------------------------------------------------------------
+CREATE TABLE outbound_messages (
+    id varchar(64) NOT NULL,
+    channel varchar(16) NOT NULL,
+    provider varchar(32) NOT NULL,
+    provider_message_id varchar(255) NOT NULL,
+    domain varchar(64) NOT NULL,
+    domain_ref_id varchar(64) NOT NULL,
+    recipient varchar(255) NOT NULL,
+    status varchar(32) NOT NULL,
+    sent_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+);
+CREATE INDEX idx_outbound_messages_provider_message_id ON outbound_messages (provider_message_id);
+CREATE INDEX idx_outbound_messages_domain_ref ON outbound_messages (domain, domain_ref_id);
 
 -- ---------------------------------------------------------------------
 -- packages
@@ -2705,6 +2849,31 @@ CREATE INDEX idx_planning_positions_idx_planning_positions_merchant_label ON pla
 CREATE INDEX idx_planning_positions_idx_planning_positions_merchant_sort ON planning_positions (merchant_id, sort_order);
 
 -- ---------------------------------------------------------------------
+-- planning_published_shift_snapshots
+--   Table nee directement en PostgreSQL (migrations/073_planning_sms_notifications_and_publish_snapshots.up.sql) :
+--   aucune contrepartie MySQL. Photo des shifts au moment de la publication d'une semaine, pour
+--   comparer publication N et N-1 et n'notifier que les changements reels.
+--   !! published_at/created_at sont en `timestamp` SANS fuseau et start_time/end_time en `time` sans
+--   fuseau, contrairement a la convention du reste de ce fichier : etat reel de staging, herite du
+--   texte de la migration 073. Reproduit tel quel (rapport 63 §5).
+--   FK candidates (non creees) : merchant_id -> merchant.id | week_id -> planning_weeks.id | employee_id -> employees.id
+-- ---------------------------------------------------------------------
+CREATE TABLE planning_published_shift_snapshots (
+    id varchar(64) NOT NULL,
+    merchant_id varchar(64) NOT NULL,
+    week_id varchar(64) NOT NULL,
+    employee_id varchar(64) NOT NULL,
+    shift_date date NOT NULL,
+    start_time time NOT NULL,
+    end_time time NOT NULL,
+    title varchar(255) NOT NULL,
+    position_label varchar(150),
+    published_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+);
+
+-- ---------------------------------------------------------------------
 -- planning_revenue_forecasts
 --   updated_at: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes)
 --   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
@@ -2742,6 +2911,9 @@ CREATE TABLE planning_roles (
 --   updated_at: ON UPDATE current_timestamp() sans equivalent declaratif en PG -> necessite un trigger (voir notes)
 --   collation table utf8mb4_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 --   FK candidate (non creee) : merchant_id -> average_distribution_time.merchant_id | average_distribution_time_by_category.merchant_id | employment_agreement.merchant_id | haccp_settings.merchant_id | integration_deliveroo.merchant_id | integration_uber_direct.merchant_id | integration_uber_eats.merchant_id | kiosk_settings.merchant_id | merchant_parameters.merchant_id | scannorder_settings.merchant_id | stripe_accounts.merchant_id | welloresto_stripe_customers.merchant_id
+--   planning_sms_notifications_enabled / sunday_multiplier / premium_cumulation_mode / night_sunday_combined_multiplier :
+--     colonnes ajoutees par migrations/073, 076 et 077, posterieures au dump du 2026-07-13 audite ; declarees en fin de
+--     table dans l'ordre d'application des migrations, comme sur staging (rapport 63)
 -- ---------------------------------------------------------------------
 CREATE TABLE planning_settings (
     id varchar(64) NOT NULL,
@@ -2759,6 +2931,10 @@ CREATE TABLE planning_settings (
     enabled boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    planning_sms_notifications_enabled boolean NOT NULL DEFAULT false,
+    sunday_multiplier numeric(4,2) NOT NULL DEFAULT 1.00,
+    premium_cumulation_mode varchar(16) NOT NULL DEFAULT 'highest',
+    night_sunday_combined_multiplier numeric(4,2),
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX uq_planning_settings_uq_planning_settings_merchant ON planning_settings (merchant_id);
@@ -2990,6 +3166,7 @@ CREATE TABLE productcateg (
     bg_color varchar(9) NOT NULL DEFAULT '#ffffff',
     available boolean NOT NULL DEFAULT true,
     enabled boolean NOT NULL DEFAULT true,
+    image_url varchar(512),
     PRIMARY KEY (categ_id)
 );
 
