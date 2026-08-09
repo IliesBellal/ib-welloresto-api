@@ -341,13 +341,12 @@ func TestStocksRepository_Postgres(t *testing.T) {
 		RETURNING id`, attrID, componentIntID3, uomIntID).Scan(&optionIntID); err != nil {
 		t.Fatalf("seed configurable_attribute_options: %v", err)
 	}
-	// configuration_attribute_id est resté "integer" sur cette table alors que
-	// configurable_attributes.id est varchar(64) (IDs préfixés applicatifs) —
-	// mismatch de schéma préexistant, sans lien avec ConsumeOrderOptionsStock
-	// (qui ne lit pas cette colonne). Un entier factice suffit ici.
+	// configuration_attribute_id est varchar(64) (migration 082), aligné sur
+	// configurable_attributes.id — ConsumeOrderOptionsStock ne lit pas cette
+	// colonne, attrID (déjà seedé ci-dessus) suffit ici.
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity)
-		VALUES ($1, 0, $2, 3)`, orderItemIntID, optionIntID); err != nil {
+		VALUES ($1, $2, $3, 3)`, orderItemIntID, attrID, optionIntID); err != nil {
 		t.Fatalf("seed order_item_configuration: %v", err)
 	}
 	if err := repo.ConsumeOrderOptionsStock(ctx, merchantID, userID, strconv.FormatInt(orderIntID, 10)); err != nil {

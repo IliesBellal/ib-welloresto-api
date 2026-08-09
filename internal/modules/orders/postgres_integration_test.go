@@ -207,7 +207,7 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		VALUES ('itest-attr-1', 'Ketchup', 50, 3) RETURNING id`)
 	mustExec("order_item_configuration", `
 		INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity)
-		VALUES ($1, 1, $2, 2)`, item1, optionID)
+		VALUES ($1, 'itest-attr-1', $2, 2)`, item1, optionID)
 
 	mustExec("order_comments (order)", `
 		INSERT INTO order_comments (order_id, user_id, content) VALUES ($1, $2, 'sans oignon svp')`, order1, userID)

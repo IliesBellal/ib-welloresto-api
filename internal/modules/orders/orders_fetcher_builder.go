@@ -243,8 +243,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
-		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
-		INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
+		INNER JOIN configurable_attributes ca on ` + castChar("ca.id") + ` = ` + castChar("pca.configurable_attribute_id") + `
+		INNER JOIN configurable_attribute_options cao on ` + castChar("cao.configurable_attribute_id") + ` = ` + castChar("ca.id") + `
 		LEFT JOIN order_item_configuration oic on oic.order_item_id = oi.order_item_id and cao.id = oic.configuration_attribute_option_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -287,7 +287,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
-		INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
+		INNER JOIN configurable_attributes ca on ` + castChar("ca.id") + ` = ` + castChar("pca.configurable_attribute_id") + `
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
 		WHERE o.merchant_id = ? ` + whereFilters.SQL

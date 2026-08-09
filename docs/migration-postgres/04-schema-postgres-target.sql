@@ -3910,7 +3910,7 @@ CREATE TABLE tva_categories (
     enabled boolean NOT NULL DEFAULT true,
     PRIMARY KEY (tva_id)
 );
-COMMENT ON COLUMN tva_categories.delivery_type IS '0 => in, 1 => delivery, 3=> take away (2 not used because 2 is SNO is "isDelivery" field or orders)';
+COMMENT ON COLUMN tva_categories.delivery_type IS 'IN, TAKE_AWAY, DELIVERY';
 COMMENT ON COLUMN tva_categories.tva_rate IS 'in percent (5 => 5%)';
 
 -- ---------------------------------------------------------------------

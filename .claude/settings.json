@@ -23,7 +23,9 @@
       "Bash(/d/Desktop/DTL/Project/git-projects/ib-welloresto-api/tools/pgops/pgops.exe)",
       "Bash(unset CLEANUP_ONLY)",
       "Bash(export MODE=SEQUENCES)",
-      "Bash(export OUT_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\sequences_check.json')"
+      "Bash(export OUT_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\sequences_check.json')",
+      "Bash(gofmt -w internal/modules/menu/importer/preview.go internal/modules/menu/importer/commit_plan.go)",
+      "Bash(echo \"vet: $?\")"
     ]
   }
 }
