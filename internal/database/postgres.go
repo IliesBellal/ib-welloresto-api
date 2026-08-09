@@ -15,10 +15,10 @@ func NewPostgres(dsn config.DatabaseConfig) (*sql.DB, error) {
 	}
 
 	// Mêmes options de pool que la config MySQL le temps de la migration
-	db.SetMaxOpenConns(5)                  // Maximum 1 connexion ouverte en même temps
-	db.SetMaxIdleConns(2)                  // Maximum 1 connexion en attente
-	db.SetConnMaxLifetime(time.Minute * 5) // Renouveler la connexion régulièrement
-	db.SetConnMaxIdleTime(1 * time.Second) // Aligné sur la config MySQL
+	db.SetMaxOpenConns(15)                 // Maximum 1 connexion ouverte en même temps
+	db.SetMaxIdleConns(4)                  // Maximum 1 connexion en attente
+	db.SetConnMaxLifetime(5 * time.Minute) // Renouveler la connexion régulièrement
+	db.SetConnMaxIdleTime(1 * time.Minute) // Aligné sur la config MySQL
 
 	if err := db.Ping(); err != nil {
 		return nil, err
