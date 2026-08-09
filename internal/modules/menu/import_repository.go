@@ -3,7 +3,7 @@ package menu
 import (
 	"context"
 	"fmt"
-	"strconv"
+	"strings"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/modules/menu/importer"
@@ -57,8 +57,10 @@ func (r *MenuRepository) LoadImportPreviewLookups(ctx context.Context, merchantI
 // loadImportTvaRates lit la table globale des taux. tva_categories n'a pas de
 // merchant_id : un couple (taux, canal) suffit à désigner un tva_id.
 //
-// delivery_type est un varchar portant '0', '1' ou '3' — il est converti ici
-// pour que le cœur de preview manipule un canal typé.
+// delivery_type est un varchar portant 'IN', 'TAKE_AWAY' ou 'DELIVERY'. Le
+// commentaire SQL de la colonne annonce des valeurs numériques (« 0 => in,
+// 1 => delivery, 3 => take away ») : il est faux, et l'avoir suivi rendait
+// toutes les lignes illisibles, donc tous les taux non résolus.
 func (r *MenuRepository) loadImportTvaRates(ctx context.Context) ([]importer.TvaRateRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -84,16 +86,16 @@ func (r *MenuRepository) loadImportTvaRates(ctx context.Context) ([]importer.Tva
 			return nil, fmt.Errorf("failed to scan tva rate: %w", err)
 		}
 
-		channel, err := strconv.Atoi(deliveryType)
-		if err != nil {
-			// Un delivery_type non numérique ne correspond à aucun canal
-			// connu : on l'ignore plutôt que d'échouer toute la preview.
+		channel := importer.TvaChannel(strings.ToUpper(strings.TrimSpace(deliveryType)))
+		if !channel.IsKnown() {
+			// Un delivery_type hors des trois canaux de vente ne concerne pas
+			// l'import : on l'écarte plutôt que d'échouer toute la preview.
 			continue
 		}
 
 		out = append(out, importer.TvaRateRow{
 			TvaID:   tvaID,
-			Channel: importer.TvaChannel(channel),
+			Channel: channel,
 			Rate:    rate,
 		})
 	}

@@ -91,8 +91,10 @@ func itestImportMerchant(t *testing.T, db *sql.DB, suffix string) (merchantID st
 	}
 
 	// Le référentiel réel : chaque taux sur chacun des trois canaux.
+	// delivery_type porte 'IN' / 'TAKE_AWAY' / 'DELIVERY', et non les valeurs
+	// numériques qu'annonce le commentaire de la colonne.
 	tvaIDs = make(map[string]int, 9)
-	for _, channel := range []string{"0", "3", "1"} {
+	for _, channel := range []string{"IN", "TAKE_AWAY", "DELIVERY"} {
 		for _, rate := range []string{"5.5", "10", "20"} {
 			title := tvaTitlePrefix + channel + "-" + rate
 			var tvaID int
@@ -231,14 +233,14 @@ func TestImportCommit_Postgres_EndToEndAndIdempotent(t *testing.T) {
 		t.Fatalf("lecture Carbonara: %v", err)
 	}
 
-	if tvaIn != tvaIDs["0/10"] {
-		t.Fatalf("tva_in_id = %d, want %d (10%% sur place)", tvaIn, tvaIDs["0/10"])
+	if tvaIn != tvaIDs["IN/10"] {
+		t.Fatalf("tva_in_id = %d, want %d (10%% sur place)", tvaIn, tvaIDs["IN/10"])
 	}
-	if tvaTakeAway != tvaIDs["3/10"] {
-		t.Fatalf("tva_take_away_id = %d, want %d (backfill du taux 10 sur le canal emporté)", tvaTakeAway, tvaIDs["3/10"])
+	if tvaTakeAway != tvaIDs["TAKE_AWAY/10"] {
+		t.Fatalf("tva_take_away_id = %d, want %d (backfill du taux 10 sur le canal emporté)", tvaTakeAway, tvaIDs["TAKE_AWAY/10"])
 	}
-	if tvaDelivery != tvaIDs["1/10"] {
-		t.Fatalf("tva_delivery_id = %d, want %d (backfill du taux 10 sur le canal livraison)", tvaDelivery, tvaIDs["1/10"])
+	if tvaDelivery != tvaIDs["DELIVERY/10"] {
+		t.Fatalf("tva_delivery_id = %d, want %d (backfill du taux 10 sur le canal livraison)", tvaDelivery, tvaIDs["DELIVERY/10"])
 	}
 	if !availIn || availTakeAway || availDelivery {
 		t.Fatalf("available = (%v, %v, %v), want (true, false, false)", availIn, availTakeAway, availDelivery)
@@ -407,9 +409,9 @@ func TestImportCommit_Postgres_RollsBackEntireBatchOnError(t *testing.T) {
 			PriceIn:            990,
 			PriceTakeAway:      990,
 			PriceDelivery:      990,
-			TvaInID:            tvaIDs["0/10"],
-			TvaTakeAwayID:      tvaIDs["3/10"],
-			TvaDeliveryID:      tvaIDs["1/10"],
+			TvaInID:            tvaIDs["IN/10"],
+			TvaTakeAwayID:      tvaIDs["TAKE_AWAY/10"],
+			TvaDeliveryID:      tvaIDs["DELIVERY/10"],
 			AvailableIn:        true,
 			AvailableTakeAway:  true,
 			AvailableDelivery:  true,

@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -201,7 +202,7 @@ func TestBuildPreviewDisablesZeroRatedChannelsAndBackfills(t *testing.T) {
 	// Le couple ajouté par le backfill est signalé comme tel.
 	found := false
 	for _, couple := range res.TvaRates {
-		if couple.Rate == 10 && couple.Channel == int(TvaChannelTakeAway) {
+		if couple.Rate == 10 && couple.Channel == TvaChannelTakeAway {
 			found = true
 		}
 	}
@@ -585,4 +586,92 @@ func hasWarning(res *PreviewResult, code string) bool {
 		}
 	}
 	return false
+}
+
+// Référentiel de TVA tel qu'il existe réellement en base, relevé sur un
+// marchand de production. Il sert à vérifier que la résolution fonctionne sur
+// les valeurs qui arrivent vraiment, et non sur celles que décrit le
+// commentaire — désormais faux — de tva_categories.delivery_type.
+func productionTvaRates() []TvaRateRow {
+	return []TvaRateRow{
+		// tva_id -1 et 0 existent mais sont désactivés : la requête les écarte.
+		{TvaID: 1, Channel: TvaChannelTakeAway, Rate: 5.5},
+		{TvaID: 2, Channel: TvaChannelTakeAway, Rate: 10},
+		{TvaID: 3, Channel: TvaChannelTakeAway, Rate: 20},
+		{TvaID: 5, Channel: TvaChannelIn, Rate: 10},
+		{TvaID: 6, Channel: TvaChannelIn, Rate: 20},
+		{TvaID: 7, Channel: TvaChannelDelivery, Rate: 10},
+		{TvaID: 8, Channel: TvaChannelDelivery, Rate: 5.5},
+		{TvaID: 9, Channel: TvaChannelDelivery, Rate: 20},
+	}
+}
+
+// Sur le référentiel réel, l'export 2026 doit se résoudre presque entièrement.
+// Seul 5,5 % sur place reste ouvert : ce taux n'est tout simplement pas
+// configuré pour ce canal, et c'est exactement ce que l'écran de vérification
+// est là pour faire compléter.
+func TestBuildPreviewAgainstProductionTvaReferential(t *testing.T) {
+	lk := defaultLookups()
+	lk.TvaRates = productionTvaRates()
+
+	res := previewFixture(t, fixtureZelty2026, lk)
+
+	unresolved := make(map[string]bool)
+	for _, couple := range res.TvaRates {
+		if !couple.Resolved {
+			unresolved[string(couple.Channel)+"/"+fmt.Sprintf("%g", couple.Rate)] = true
+			continue
+		}
+		if couple.TvaID == 0 {
+			t.Fatalf("couple %v%% / %s marqué résolu sans tva_id", couple.Rate, couple.Channel)
+		}
+	}
+
+	if len(unresolved) != 1 || !unresolved["IN/5.5"] {
+		t.Fatalf("couples non résolus = %v, want uniquement IN/5.5", unresolved)
+	}
+
+	// Les taux qui existent bien doivent pointer sur le bon identifiant, canal
+	// par canal — c'est là que la confusion sur delivery_type se voyait.
+	cases := []struct {
+		rate    float64
+		channel TvaChannel
+		want    int
+	}{
+		{10, TvaChannelIn, 5},
+		{20, TvaChannelIn, 6},
+		{10, TvaChannelTakeAway, 2},
+		{20, TvaChannelTakeAway, 3},
+		{10, TvaChannelDelivery, 7},
+		{5.5, TvaChannelDelivery, 8},
+		{20, TvaChannelDelivery, 9},
+	}
+	for _, tc := range cases {
+		got, ok := res.Decisions.TvaMapping[TvaRateKey{Rate: tc.rate, Channel: tc.channel}]
+		if !ok {
+			t.Fatalf("couple %v%% / %s absent du mapping", tc.rate, tc.channel)
+		}
+		if got != tc.want {
+			t.Fatalf("couple %v%% / %s = tva_id %d, want %d", tc.rate, tc.channel, got, tc.want)
+		}
+	}
+}
+
+// Un delivery_type inconnu est écarté sans faire tomber la preview, mais ne
+// doit jamais résoudre un couple par accident.
+func TestTvaResolverIgnoresUnknownChannels(t *testing.T) {
+	resolver := newTvaResolver([]TvaRateRow{
+		{TvaID: 42, Channel: TvaChannel("SNO"), Rate: 10},
+		{TvaID: 5, Channel: TvaChannelIn, Rate: 10},
+	})
+
+	if id, ok := resolver.resolve(10, TvaChannelIn); !ok || id != 5 {
+		t.Fatalf("résolution sur place = (%d, %v), want (5, true)", id, ok)
+	}
+	if _, ok := resolver.resolve(10, TvaChannelTakeAway); ok {
+		t.Fatal("un canal sans taux configuré ne doit pas se résoudre")
+	}
+	if resolver.hasID(42, 10, TvaChannelIn) {
+		t.Fatal("un tva_id d'un autre canal est accepté")
+	}
 }

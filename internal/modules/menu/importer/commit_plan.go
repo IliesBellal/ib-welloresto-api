@@ -191,13 +191,13 @@ func (b *commitPlanner) validateTvaDecisions() {
 		resolved, ok := b.resolver.resolve(key.Rate, key.Channel)
 		if !ok {
 			b.block(BlockerInvalidTvaMapping, tvaKeyRef(key),
-				fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s", key.Rate, key.Channel))
+				fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s", key.Rate, key.Channel.Label()))
 			continue
 		}
 		if !b.resolver.hasID(tvaID, key.Rate, key.Channel) {
 			b.block(BlockerInvalidTvaMapping, tvaKeyRef(key),
 				fmt.Sprintf("le tva_id %d ne correspond pas à %g%% sur le canal %s (attendu : %d)",
-					tvaID, key.Rate, key.Channel, resolved))
+					tvaID, key.Rate, key.Channel.Label(), resolved))
 		}
 	}
 }
@@ -513,7 +513,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 		switch {
 		case ch.rate == nil:
 			b.block(BlockerTvaRateUnresolved, p.ExternalID,
-				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, ch.channel))
+				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, ch.channel.Label()))
 
 		case *ch.rate == 0:
 			// Canal fermé, mais tva_*_id et price_* restent NOT NULL : on les
@@ -535,7 +535,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 			if !resolved {
 				b.block(BlockerTvaRateUnresolved, p.ExternalID,
 					fmt.Sprintf("le canal %s de %q est désactivé mais aucun taux de repli n'est configuré pour ce canal",
-						ch.channel, p.Name))
+						ch.channel.Label(), p.Name))
 			}
 
 		default:
@@ -543,7 +543,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 			if !ok {
 				b.block(BlockerTvaRateUnresolved, p.ExternalID,
 					fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s (produit %q)",
-						*ch.rate, ch.channel, p.Name))
+						*ch.rate, ch.channel.Label(), p.Name))
 				continue
 			}
 			*ch.tvaID = tvaID

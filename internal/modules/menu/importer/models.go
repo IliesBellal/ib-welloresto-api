@@ -162,30 +162,51 @@ const (
 // TvaChannel reprend les valeurs de tva_categories.delivery_type telles
 // qu'elles sont stockees, pour que le mapping soit directement utilisable en
 // requete.
-type TvaChannel int
+//
+// Attention : le commentaire SQL de la colonne annonce « 0 => in, 1 =>
+// delivery, 3 => take away ». Il est faux — les donnees portent 'IN',
+// 'TAKE_AWAY' et 'DELIVERY', ce que confirment la jointure
+// labels.label_value = tva_categories.delivery_type de GetTVARates et le
+// back-office, qui compare a ces memes chaines. La colonne fait foi, pas son
+// commentaire.
+type TvaChannel string
 
 const (
-	TvaChannelIn       TvaChannel = 0
-	TvaChannelDelivery TvaChannel = 1
-	TvaChannelTakeAway TvaChannel = 3
+	TvaChannelIn       TvaChannel = "IN"
+	TvaChannelTakeAway TvaChannel = "TAKE_AWAY"
+	TvaChannelDelivery TvaChannel = "DELIVERY"
 )
 
 // AllTvaChannels liste les canaux dans l'ordre d'affichage du back-office.
 var AllTvaChannels = []TvaChannel{TvaChannelIn, TvaChannelTakeAway, TvaChannelDelivery}
 
-// String rend le libelle stable du canal, utilise dans les reponses JSON.
-func (c TvaChannel) String() string {
+// IsKnown ecarte une valeur de delivery_type qui ne correspond a aucun canal
+// de vente connu.
+func (c TvaChannel) IsKnown() bool {
 	switch c {
-	case TvaChannelIn:
-		return "in"
-	case TvaChannelDelivery:
-		return "delivery"
-	case TvaChannelTakeAway:
-		return "take_away"
+	case TvaChannelIn, TvaChannelTakeAway, TvaChannelDelivery:
+		return true
 	default:
-		return strconv.Itoa(int(c))
+		return false
 	}
 }
+
+// Label rend le nom du canal en francais. Il apparait dans les messages de
+// blocage lus par le restaurateur, ou « TAKE_AWAY » n'aurait rien dit.
+func (c TvaChannel) Label() string {
+	switch c {
+	case TvaChannelIn:
+		return "sur place"
+	case TvaChannelTakeAway:
+		return "a emporter"
+	case TvaChannelDelivery:
+		return "en livraison"
+	default:
+		return string(c)
+	}
+}
+
+func (c TvaChannel) String() string { return string(c) }
 
 // TvaRateKey est la cle composite du mapping de TVA : un meme taux se resout
 // en trois tva_id differents selon le canal.
@@ -197,9 +218,9 @@ type TvaRateKey struct {
 // MarshalText / UnmarshalText rendent TvaRateKey utilisable comme cle de map
 // en JSON. encoding/json refuse les cles de type struct : sans ces methodes,
 // ImportDecisions.TvaMapping ne peut pas etre serialise dans le snapshot de
-// preview. Le format est "<taux>:<canal>", ex. "5.5:0".
+// preview. Le format est "<taux>:<canal>", ex. "5.5:DELIVERY".
 func (k TvaRateKey) MarshalText() ([]byte, error) {
-	return []byte(strconv.FormatFloat(k.Rate, 'f', -1, 64) + ":" + strconv.Itoa(int(k.Channel))), nil
+	return []byte(strconv.FormatFloat(k.Rate, 'f', -1, 64) + ":" + string(k.Channel)), nil
 }
 
 func (k *TvaRateKey) UnmarshalText(text []byte) error {
@@ -212,13 +233,13 @@ func (k *TvaRateKey) UnmarshalText(text []byte) error {
 	if err != nil {
 		return fmt.Errorf("cle de TVA %q: taux illisible", text)
 	}
-	channel, err := strconv.Atoi(rawChannel)
-	if err != nil {
-		return fmt.Errorf("cle de TVA %q: canal illisible", text)
+	channel := TvaChannel(rawChannel)
+	if !channel.IsKnown() {
+		return fmt.Errorf("cle de TVA %q: canal inconnu", text)
 	}
 
 	k.Rate = rate
-	k.Channel = TvaChannel(channel)
+	k.Channel = channel
 	return nil
 }
 

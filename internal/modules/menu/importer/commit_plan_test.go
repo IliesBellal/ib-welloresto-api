@@ -276,7 +276,7 @@ func TestBuildCommitPlanRejectsTvaMappingFromWrongChannel(t *testing.T) {
 	if plan != nil {
 		t.Fatal("un plan a été produit malgré un tva_id du mauvais canal")
 	}
-	if !hasBlocker(blockers, BlockerInvalidTvaMapping, "10:1") {
+	if !hasBlocker(blockers, BlockerInvalidTvaMapping, "10:DELIVERY") {
 		t.Fatalf("blocage %q attendu, obtenu : %s", BlockerInvalidTvaMapping, BlockersMessage(blockers))
 	}
 }

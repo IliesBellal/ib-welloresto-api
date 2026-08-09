@@ -150,12 +150,14 @@ type PreviewSummary struct {
 
 // PreviewTvaRate est un couple (taux, canal) à résoudre en tva_id.
 type PreviewTvaRate struct {
-	Rate         float64 `json:"rate"`
-	Channel      int     `json:"channel"`
-	ChannelLabel string  `json:"channel_label"`
-	TvaID        int     `json:"tva_id"`
-	Resolved     bool    `json:"resolved"`
-	ProductCount int     `json:"product_count"`
+	Rate float64 `json:"rate"`
+	// Channel porte la valeur de tva_categories.delivery_type : « IN »,
+	// « TAKE_AWAY » ou « DELIVERY ».
+	Channel      TvaChannel `json:"channel"`
+	ChannelLabel string     `json:"channel_label"`
+	TvaID        int        `json:"tva_id"`
+	Resolved     bool       `json:"resolved"`
+	ProductCount int        `json:"product_count"`
 
 	// NeededForBackfill marque un couple qui ne figure pas tel quel dans le
 	// fichier : il est requis parce qu'un canal désactivé (taux 0) doit tout
@@ -305,6 +307,17 @@ func (r *tvaResolver) hasID(tvaID int, rate float64, channel TvaChannel) bool {
 }
 
 func rateToHundredths(rate float64) int { return int(math.Round(rate * 100)) }
+
+// channelOrder classe les canaux dans l'ordre d'affichage du back-office
+// plutot que dans l'ordre alphabetique de leur valeur en base.
+func channelOrder(channel TvaChannel) int {
+	for i, known := range AllTvaChannels {
+		if known == channel {
+			return i
+		}
+	}
+	return len(AllTvaChannels)
+}
 
 // ---------------------------------------------------------------------------
 // BuildPreview
@@ -619,7 +632,7 @@ func (b *previewBuilder) buildChannel(
 		// Aucune information : tva_*_id est NOT NULL, le wizard devra choisir.
 		if instruct {
 			b.warn(WarningTvaRateMissing, p.ExternalID,
-				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, channel))
+				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, channel.Label()))
 		}
 
 	case *rate == 0:
@@ -667,8 +680,8 @@ func (b *previewBuilder) noteTvaCouple(rate float64, channel TvaChannel, tvaID i
 	if !seen {
 		b.res.TvaRates = append(b.res.TvaRates, PreviewTvaRate{
 			Rate:              rate,
-			Channel:           int(channel),
-			ChannelLabel:      channel.String(),
+			Channel:           channel,
+			ChannelLabel:      channel.Label(),
 			TvaID:             tvaID,
 			Resolved:          resolved,
 			NeededForBackfill: forBackfill,
@@ -681,7 +694,7 @@ func (b *previewBuilder) noteTvaCouple(rate float64, channel TvaChannel, tvaID i
 		} else {
 			b.res.Summary.UnresolvedTvaRates++
 			b.warn(WarningTvaRateUnresolved, fmt.Sprintf("%g:%s", rate, channel),
-				fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s", rate, channel))
+				fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s", rate, channel.Label()))
 		}
 	}
 
@@ -697,7 +710,7 @@ func (b *previewBuilder) noteTvaCouple(rate float64, channel TvaChannel, tvaID i
 func (b *previewBuilder) buildTvaRates() {
 	sort.SliceStable(b.res.TvaRates, func(i, j int) bool {
 		if b.res.TvaRates[i].Channel != b.res.TvaRates[j].Channel {
-			return b.res.TvaRates[i].Channel < b.res.TvaRates[j].Channel
+			return channelOrder(b.res.TvaRates[i].Channel) < channelOrder(b.res.TvaRates[j].Channel)
 		}
 		return b.res.TvaRates[i].Rate < b.res.TvaRates[j].Rate
 	})

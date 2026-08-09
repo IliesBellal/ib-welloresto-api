@@ -16,9 +16,9 @@ func TestTvaRateKeyTextRoundTrip(t *testing.T) {
 		key  TvaRateKey
 		want string
 	}{
-		{"taux entier sur place", TvaRateKey{Rate: 10, Channel: TvaChannelIn}, "10:0"},
-		{"taux décimal en livraison", TvaRateKey{Rate: 5.5, Channel: TvaChannelDelivery}, "5.5:1"},
-		{"taux nul à emporter", TvaRateKey{Rate: 0, Channel: TvaChannelTakeAway}, "0:3"},
+		{"taux entier sur place", TvaRateKey{Rate: 10, Channel: TvaChannelIn}, "10:IN"},
+		{"taux décimal en livraison", TvaRateKey{Rate: 5.5, Channel: TvaChannelDelivery}, "5.5:DELIVERY"},
+		{"taux nul à emporter", TvaRateKey{Rate: 0, Channel: TvaChannelTakeAway}, "0:TAKE_AWAY"},
 	}
 
 	for _, tc := range cases {
@@ -42,7 +42,7 @@ func TestTvaRateKeyTextRoundTrip(t *testing.T) {
 	}
 
 	var key TvaRateKey
-	for _, invalid := range []string{"", "10", "dix:0", "10:canal"} {
+	for _, invalid := range []string{"", "10", "dix:IN", "10:CANAL_INCONNU"} {
 		if err := key.UnmarshalText([]byte(invalid)); err == nil {
 			t.Fatalf("UnmarshalText(%q) = nil, want une erreur", invalid)
 		}
@@ -120,7 +120,7 @@ func TestPreviewSnapshotRoundTrip(t *testing.T) {
 	}
 
 	// La clé sérialisée doit être lisible, pas un blob opaque.
-	if !strings.Contains(payload, `"10:0"`) {
+	if !strings.Contains(payload, `"10:IN"`) {
 		t.Fatalf("le mapping de TVA n'apparaît pas sous la forme \"<taux>:<canal>\" dans %.200s", payload)
 	}
 }
@@ -196,7 +196,7 @@ func TestImportDecisionsJSONContract(t *testing.T) {
 	}
 
 	// La clé composite du mapping de TVA reste rendue par TextMarshaler.
-	if !strings.Contains(string(payload), `"5.5:1"`) {
+	if !strings.Contains(string(payload), `"5.5:DELIVERY"`) {
 		t.Fatalf("clé de TVA absente ou mal formée dans %s", payload)
 	}
 

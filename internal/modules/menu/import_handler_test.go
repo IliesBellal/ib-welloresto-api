@@ -112,8 +112,10 @@ func expectImportPreviewLookups(mock sqlmock.Sqlmock) {
 	tvaID := 1
 	for _, channel := range []importer.TvaChannel{importer.TvaChannelIn, importer.TvaChannelTakeAway, importer.TvaChannelDelivery} {
 		for _, rate := range []float64{5.5, 10, 20} {
-			// delivery_type est un varchar en base : '0', '1', '3'.
-			tvaRates.AddRow(tvaID, strconv.Itoa(int(channel)), rate)
+			// delivery_type est un varchar en base : 'IN', 'TAKE_AWAY',
+			// 'DELIVERY' — surtout pas les valeurs numériques annoncées par le
+			// commentaire de la colonne.
+			tvaRates.AddRow(tvaID, string(channel), rate)
 			tvaID++
 		}
 	}
