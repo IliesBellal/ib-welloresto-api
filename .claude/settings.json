@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(if \\($env:POSTGRES_PROD_URL\\) { \"set\" } else { \"not set\" })",
+      "Bash(python3 -c ' *)",
+      "Bash(export PGURL_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\pgurl_prod.txt')",
+      "Bash(time ./tools/pgops/pgops.exe)",
+      "Bash(pwd; echo *)",
+      "Read(//d//**)",
+      "Bash(time ./pgops.exe)",
+      "Bash(python3 data-migration/transform_mysql_csv.py --help)",
+      "Bash(time python3 data-migration/transform_mysql_csv.py generate-all-sql --dump data-migration/migration_welloresto_data.sql --output-dir /c/Users/Ilies/AppData/Local/Temp/claude/d--Desktop-DTL-Project-git-projects-ib-welloresto-api/1da9321a-1aff-471b-b8fc-c59f16823aa3/scratchpad/prod_load_sql)",
+      "Bash(export SQL_DIR=\"$SCRATCH/prod_load_sql\")",
+      "Bash(export MODE=DRY_RUN)",
+      "Bash(time ./pgload.exe)",
+      "Bash(export MODE=COUNTS)",
+      "Bash(export OUT_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\prod_counts_after.json')",
+      "Bash(time ./pgverify.exe)",
+      "Bash(export MODE=AUDIT)",
+      "Bash(./pgops.exe)",
+      "Bash(export CLEANUP_ONLY=1)",
+      "Bash(./pgverify.exe)",
+      "Bash(/d/Desktop/DTL/Project/git-projects/ib-welloresto-api/tools/pgops/pgops.exe)",
+      "Bash(unset CLEANUP_ONLY)",
+      "Bash(export MODE=SEQUENCES)",
+      "Bash(export OUT_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\sequences_check.json')"
+    ]
+  }
+}

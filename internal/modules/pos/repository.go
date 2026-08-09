@@ -67,34 +67,27 @@ func NewPOSRepository(db *sql.DB) *POSRepository {
 // --------------------
 // UPDATE is_open
 // --------------------
-func (r *POSRepository) UpdatePOSStatus(ctx context.Context, userID string, status bool) error {
+// UpdatePOSStatus bascule l'ouverture du point de vente pour l'établissement
+// de la session. Le marchand vient du contexte d'authentification (donc de
+// users_rights) et non plus de users.merchant_id : cette colonne héritée est
+// nullable et ne porte qu'un seul établissement, alors qu'un compte peut être
+// rattaché à plusieurs marchands — la jointure échouait donc silencieusement
+// pour ces comptes.
+func (r *POSRepository) UpdatePOSStatus(ctx context.Context, merchantID string, status bool) error {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	// is_open est boolean côté Postgres, tinyint(1) côté MySQL : lier le bool
 	// Go directement fonctionne dans les deux dialectes (le driver MySQL
-	// encode true/false en 1/0).
-	query := `
-		UPDATE merchant_parameters mp
-		INNER JOIN users u ON mp.merchant_id = u.merchant_id
-		INNER JOIN users_rights ur ON ur.id = u.access_id
-		SET is_open = ?
-		WHERE u.user_id = ?`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		// UPDATE multi-table MySQL -> UPDATE ... FROM (cible SET non qualifiée)
-		query = `
+	// encode true/false en 1/0). L'UPDATE mono-table est portable tel quel,
+	// plus besoin de variante par dialecte.
+	_, err := db.ExecContext(ctx, `
 		UPDATE merchant_parameters
 		SET is_open = ?
-		FROM users u
-		INNER JOIN users_rights ur ON ur.id = u.access_id
-		WHERE merchant_parameters.merchant_id = u.merchant_id
-		  AND u.user_id = ?`
-	}
-
-	_, err := db.ExecContext(ctx, query, status, userID)
+		WHERE merchant_id = ?`, status, merchantID)
 
 	if err != nil {
-		log.Error(fmt.Sprintf("Error updating POS status for user %s: %v", userID, err))
+		log.Error(fmt.Sprintf("Error updating POS status for merchant %s: %v", merchantID, err))
 		return err
 	}
 

@@ -42,7 +42,7 @@ func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status b
 		return nil, models.ErrForbidden
 	}
 
-	err = s.posRepo.UpdatePOSStatus(ctx, user.UserID, status)
+	err = s.posRepo.UpdatePOSStatus(ctx, user.MerchantID, status)
 	if err != nil {
 		return nil, err
 	}

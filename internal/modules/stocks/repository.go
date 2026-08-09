@@ -268,13 +268,14 @@ func (r *StocksRepository) SetStockLoss(ctx context.Context, merchantID string, 
 		}
 
 		// 2️⃣ INSERT MOVEMENT
+		// Le mouvement est rattaché au marchand de la session : la lecture de
+		// users.merchant_id écrivait un marchand faux (ou n'insérait rien) pour
+		// un compte rattaché à plusieurs établissements via users_rights.
 		_, err = db.ExecContext(ctx, `
             INSERT INTO stock_movements
                 (id, merchant_id, user_id, component_id, product_id, source, movement, quantity, unit_of_measure, order_item_id, comment)
-            SELECT ?, u.merchant_id, u.user_id, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?
-            FROM users u
-            WHERE u.user_id = ?;
-        `, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), req.ObjectID, req.Qty, req.UOM, req.Comment, userID)
+            VALUES (?, ?, ?, ?, NULL, 'manual', 'loss', ?, ?, NULL, ?);
+        `, helpers.GeneratePrefixedID(helpers.StockMovementPrefix), merchantID, userID, req.ObjectID, req.Qty, req.UOM, req.Comment)
 		if err != nil {
 			log.Error(err.Error())
 			return err

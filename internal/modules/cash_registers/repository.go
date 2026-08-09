@@ -1240,6 +1240,14 @@ func (r *CashRegisterRepository) IsCircularDeviceLink(ctx context.Context, devic
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// Auto-liaison : un appareil qui se lie à lui-même est un cycle de longueur
+	// 1. Le cas se produit quand l'app propose de « rejoindre » une caisse déjà
+	// ouverte sur ce même appareil ; sans ce garde-fou la liaison est écrite et
+	// l'appareil se retrouve durablement marqué comme lié à un autre poste.
+	if strings.TrimSpace(deviceID) == strings.TrimSpace(onBehalfOf) {
+		return true, nil
+	}
+
 	var exists int
 	err := db.QueryRowContext(ctx, `
 		SELECT 1 FROM device_link WHERE device_id = ? AND on_behalf_of = ?

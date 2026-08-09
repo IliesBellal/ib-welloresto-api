@@ -97,15 +97,15 @@ func TestPOSRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed users: %v", err)
 	}
 
-	// --- UpdatePOSStatus (UPDATE ... FROM) ---
-	if err := repo.UpdatePOSStatus(ctx, "itest-pos-user", true); err != nil {
+	// --- UpdatePOSStatus (scopé sur le marchand de la session) ---
+	if err := repo.UpdatePOSStatus(ctx, merchantID, true); err != nil {
 		t.Fatalf("UpdatePOSStatus(true): %v", err)
 	}
 	var isOpen bool
 	if err := db.QueryRowContext(ctx, `SELECT is_open FROM merchant_parameters WHERE merchant_id = $1`, merchantID).Scan(&isOpen); err != nil || !isOpen {
 		t.Fatalf("is_open after UpdatePOSStatus = (%v, %v), want true", isOpen, err)
 	}
-	if err := repo.UpdatePOSStatus(ctx, "itest-pos-user", false); err != nil {
+	if err := repo.UpdatePOSStatus(ctx, merchantID, false); err != nil {
 		t.Fatalf("UpdatePOSStatus(false): %v", err)
 	}
 

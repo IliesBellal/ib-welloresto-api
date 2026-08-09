@@ -920,7 +920,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrCircularDeviceLink):
 		status = http.StatusConflict
 		errorStatus = "circular_device_link"
-		errorMsg = "Impossible de se lier à cet appareil : il est déjà lié au vôtre. Supprimez d'abord la liaison existante sur l'autre appareil."
+		errorMsg = "Liaison impossible : cet appareil est le vôtre, ou il est déjà lié au vôtre. Supprimez d'abord la liaison existante sur l'autre appareil."
 
 	case errors.Is(err, ErrCashRegisterStillOpen):
 		status = http.StatusConflict

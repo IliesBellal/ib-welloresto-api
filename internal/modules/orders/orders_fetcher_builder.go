@@ -602,6 +602,12 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		step := "header"
 		// o.use_customer_temporary_address est boolean en Postgres mais scanné
 		// en NullInt64 côté Go — CASE 1/0 portable.
+		// La jointure du responsable ne porte plus que sur users.user_id (PK) :
+		// la condition o.merchant_id = u.merchant_id s'appuyait sur la colonne
+		// héritée users.merchant_id (nullable, mono-établissement) et faisait
+		// disparaître le livreur de la commande pour tout compte rattaché à
+		// plusieurs marchands. Le périmètre marchand reste garanti par le
+		// WHERE o.merchant_id = ? ci-dessous.
 		q := `
 	SELECT
 		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
@@ -634,7 +640,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	
 	FROM orders o
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
-	LEFT JOIN users u ON ` + castChar("o.responsible") + ` = u.user_id AND o.merchant_id = u.merchant_id
+	LEFT JOIN users u ON ` + castChar("o.responsible") + ` = u.user_id
     LEFT JOIN cash_registers cr on ` + castChar("cr.cash_register_id") + ` = o.cash_register_id
 	WHERE o.merchant_id = ? ` + whereFilters.SQL + " " + orderByFilter + " " + limitsFilters
 
