@@ -105,7 +105,7 @@ func newImportPreviewHandler(t *testing.T) (*ImportHandler, *fakePreviewStore, f
 	return NewImportHandler(service), store, cleanup
 }
 
-// expectImportPreviewLookups décrit les huit lectures de la preview, dans
+// expectImportPreviewLookups décrit les neuf lectures de la preview, dans
 // l'ordre où LoadImportPreviewLookups les émet.
 func expectImportPreviewLookups(mock sqlmock.Sqlmock) {
 	tvaRates := sqlmock.NewRows([]string{"tva_id", "delivery_type", "tva_rate"})
@@ -133,6 +133,10 @@ func expectImportPreviewLookups(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery("SELECT product_id, name").
 		WithArgs(testMerchantID).
 		WillReturnRows(sqlmock.NewRows([]string{"product_id", "name"}))
+
+	mock.ExpectQuery("SELECT id").
+		WithArgs(testMerchantID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	for _, table := range []string{"import_products_mapping", "import_categories_mapping"} {
 		mock.ExpectQuery("SELECT external_id, wello_id FROM " + table).

@@ -50,11 +50,16 @@ type PlannedCategory struct {
 	// AlreadyImported : un import précédent du même provider l'a déjà créée.
 	// Elle est sautée, et le mapping n'est pas réécrit.
 	AlreadyImported bool
+
+	// RemapExisting : une correspondance existe déjà pour cet identifiant
+	// externe, mais elle désigne une entité disparue. On recrée, et le mapping
+	// est mis à jour au lieu d'être inséré — l'index unique l'exige.
+	RemapExisting bool
 }
 
-// Usable dit si la catégorie sera référençable par un produit — soit qu'elle
-// existe déjà, soit qu'elle va être créée. Une catégorie déjà importée mais
-// depuis désactivée ne l'est pas : products.category pointerait dans le vide.
+// Usable dit si la catégorie sera référençable par un produit : soit elle
+// existe déjà, soit elle va être créée — y compris quand elle est recréée
+// après la disparition de celle qu'un import précédent avait posée.
 func (c PlannedCategory) Usable() bool {
 	return !c.AlreadyImported || c.ReuseMerchantCategID != ""
 }
@@ -65,6 +70,7 @@ type PlannedTag struct {
 
 	ReuseTagID      string
 	AlreadyImported bool
+	RemapExisting   bool
 }
 
 type PlannedAttribute struct {
@@ -76,6 +82,7 @@ type PlannedAttribute struct {
 	Options    []PlannedOption
 
 	AlreadyImported bool
+	RemapExisting   bool
 }
 
 type PlannedOption struct {
@@ -111,6 +118,11 @@ type PlannedProduct struct {
 
 	AlreadyImported bool
 
+	// RemapExisting : le produit est recréé alors qu'une correspondance existe
+	// déjà — soit qu'elle désigne un produit supprimé, soit que l'utilisateur
+	// ait demandé une nouvelle création. Le mapping est réaffecté.
+	RemapExisting bool
+
 	// SkippedByCollision : un produit du marchand porte déjà ce nom et
 	// l'utilisateur a tranché « ignorer ».
 	SkippedByCollision bool
@@ -141,6 +153,7 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 		imp:       imp,
 		decisions: decisions,
 		lk:        lk,
+		live:      newLiveImportedEntities(lk),
 		resolver:  newTvaResolver(lk.TvaRates),
 		plan:      &CommitPlan{Provider: imp.Provider},
 	}
@@ -162,6 +175,7 @@ type commitPlanner struct {
 	imp       *IntermediateImport
 	decisions ImportDecisions
 	lk        PreviewLookups
+	live      liveImportedEntities
 	resolver  *tvaResolver
 
 	plan     *CommitPlan
@@ -273,13 +287,21 @@ func (b *commitPlanner) buildCategories() {
 		entry := PlannedCategory{ExternalID: c.externalID, Name: c.name}
 
 		if categID, imported := b.lk.Imported.Categories[c.externalID]; imported {
-			entry.AlreadyImported = true
-			// La catégorie créée par un import précédent a pu être désactivée
-			// depuis : elle reste mappée (donc non recréée) mais devient
-			// inutilisable, ce que Usable signale.
 			if match, alive := byID[categID]; alive {
+				entry.AlreadyImported = true
 				entry.ReuseCategID = match.CategID
 				entry.ReuseMerchantCategID = match.MerchantCategID
+			} else if match, ok := byName[normalizeLabel(c.name)]; ok {
+				// Recréée à la main entre-temps sous le même nom : on s'y
+				// rattache et on réaffecte la correspondance.
+				entry.ReuseCategID = match.CategID
+				entry.ReuseMerchantCategID = match.MerchantCategID
+				entry.RemapExisting = true
+			} else {
+				// La catégorie a disparu. La laisser « déjà importée » la
+				// rendrait définitivement irrécupérable : on la recrée et on
+				// réaffecte la correspondance.
+				entry.RemapExisting = true
 			}
 		} else if match, ok := byName[normalizeLabel(c.name)]; ok {
 			entry.ReuseCategID = match.CategID
@@ -311,13 +333,17 @@ func (b *commitPlanner) buildTags() {
 		entry := PlannedTag{ExternalID: tag.ExternalID, Name: tag.Name}
 
 		if tagID, imported := b.lk.Imported.Tags[tag.ExternalID]; imported {
-			entry.AlreadyImported = true
-			// tags n'a pas de suppression logique : un tag disparu est
-			// physiquement supprimé. Le mapping subsiste (on ne le recrée
-			// donc pas) mais le tag n'est plus rattachable — contrairement à
-			// la catégorie, ce n'est pas bloquant, un tag est facultatif.
 			if _, ok := alive[tagID]; ok {
+				entry.AlreadyImported = true
 				entry.ReuseTagID = tagID
+			} else if match, ok := byName[normalizeLabel(tag.Name)]; ok {
+				entry.ReuseTagID = match.TagID
+				entry.RemapExisting = true
+			} else {
+				// tags n'a pas de suppression logique : un tag disparu l'est
+				// physiquement. On le recrée et on réaffecte, sans quoi les
+				// produits recréés perdraient leurs étiquettes.
+				entry.RemapExisting = true
 			}
 		} else if match, ok := byName[normalizeLabel(tag.Name)]; ok {
 			entry.ReuseTagID = match.TagID
@@ -334,12 +360,21 @@ func (b *commitPlanner) buildTags() {
 func (b *commitPlanner) buildAttributes() {
 	for _, attribute := range b.imp.Attributes {
 		entry := PlannedAttribute{
-			ExternalID:      attribute.ExternalID,
-			Name:            attribute.Name,
-			Type:            attribute.Type,
-			MinOptions:      attribute.MinOptions,
-			MaxOptions:      attribute.MaxOptions,
-			AlreadyImported: hasStringMapping(b.lk.Imported.Attributes, attribute.ExternalID),
+			ExternalID: attribute.ExternalID,
+			Name:       attribute.Name,
+			Type:       attribute.Type,
+			MinOptions: attribute.MinOptions,
+			MaxOptions: attribute.MaxOptions,
+		}
+
+		if hasStringMapping(b.lk.Imported.Attributes, attribute.ExternalID) {
+			if b.live.stale(b.live.attributes, attribute.ExternalID) {
+				// Le groupe d'options a été supprimé depuis : on le recrée et
+				// on réaffecte la correspondance.
+				entry.RemapExisting = true
+			} else {
+				entry.AlreadyImported = true
+			}
 		}
 
 		for _, option := range attribute.Options {
@@ -373,12 +408,18 @@ func (b *commitPlanner) buildProducts() {
 			entry.Status = ProductStatusRemovedFromMenu
 		}
 
-		// Déjà importé : il ne sera pas écrit, donc rien à lui réclamer. Le
-		// contrôler ferait échouer un lot pour un produit qu'on ignore.
+		// Déjà importé : ignoré par défaut, donc rien à lui réclamer — le
+		// contrôler ferait échouer un lot pour un produit qu'on écarte.
+		// L'utilisateur peut demander sa recréation, et il redevient alors un
+		// produit à instruire comme les autres : c'est ce qui permet de
+		// réimporter un menu supprimé.
 		if _, imported := b.lk.Imported.Products[p.ExternalID]; imported {
-			entry.AlreadyImported = true
-			b.plan.Products = append(b.plan.Products, entry)
-			continue
+			if b.decisions.AlreadyImported[p.ExternalID] != ReimportRecreate {
+				entry.AlreadyImported = true
+				b.plan.Products = append(b.plan.Products, entry)
+				continue
+			}
+			entry.RemapExisting = true
 		}
 
 		if match, collides := collisions[normalizeLabel(p.Name)]; collides {

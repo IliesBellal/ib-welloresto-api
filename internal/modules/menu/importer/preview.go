@@ -82,6 +82,13 @@ type ExistingProduct struct {
 	Name      string
 }
 
+// ExistingAttribute est un groupe d'options actif du marchand. Seul son
+// identifiant sert : il permet de savoir si un mapping d'import le designe
+// encore, ou pointe dans le vide.
+type ExistingAttribute struct {
+	AttributeID string
+}
+
 // ImportedEntities est le contenu des tables import_*_mapping pour le couple
 // (marchand, provider) : identifiant externe -> identifiant Wello.
 type ImportedEntities struct {
@@ -98,7 +105,71 @@ type PreviewLookups struct {
 	ExistingCategories []ExistingCategory
 	ExistingTags       []ExistingTag
 	ExistingProducts   []ExistingProduct
+	ExistingAttributes []ExistingAttribute
 	Imported           ImportedEntities
+}
+
+// liveImportedEntities dit, pour chaque entite deja mappee, si l'entite Wello
+// qu'elle designe existe toujours.
+//
+// Rien ne desactive un mapping quand le marchand supprime le produit
+// correspondant : la correspondance survit a sa cible. Sans ce controle, un
+// menu supprime puis reimporte donnait un commit sans effet — tout etait
+// « deja importe », donc ignore, et aucun moyen de revenir en arriere.
+type liveImportedEntities struct {
+	products   map[string]bool
+	categories map[string]bool
+	tags       map[string]bool
+	attributes map[string]bool
+}
+
+func newLiveImportedEntities(lk PreviewLookups) liveImportedEntities {
+	liveProducts := make(map[int]struct{}, len(lk.ExistingProducts))
+	for _, product := range lk.ExistingProducts {
+		liveProducts[product.ProductID] = struct{}{}
+	}
+	liveCategories := make(map[int]struct{}, len(lk.ExistingCategories))
+	for _, category := range lk.ExistingCategories {
+		liveCategories[category.CategID] = struct{}{}
+	}
+	liveTags := make(map[string]struct{}, len(lk.ExistingTags))
+	for _, tag := range lk.ExistingTags {
+		liveTags[tag.TagID] = struct{}{}
+	}
+	liveAttributes := make(map[string]struct{}, len(lk.ExistingAttributes))
+	for _, attribute := range lk.ExistingAttributes {
+		liveAttributes[attribute.AttributeID] = struct{}{}
+	}
+
+	live := liveImportedEntities{
+		products:   make(map[string]bool, len(lk.Imported.Products)),
+		categories: make(map[string]bool, len(lk.Imported.Categories)),
+		tags:       make(map[string]bool, len(lk.Imported.Tags)),
+		attributes: make(map[string]bool, len(lk.Imported.Attributes)),
+	}
+	for externalID, welloID := range lk.Imported.Products {
+		_, ok := liveProducts[welloID]
+		live.products[externalID] = ok
+	}
+	for externalID, welloID := range lk.Imported.Categories {
+		_, ok := liveCategories[welloID]
+		live.categories[externalID] = ok
+	}
+	for externalID, welloID := range lk.Imported.Tags {
+		_, ok := liveTags[welloID]
+		live.tags[externalID] = ok
+	}
+	for externalID, welloID := range lk.Imported.Attributes {
+		_, ok := liveAttributes[welloID]
+		live.attributes[externalID] = ok
+	}
+	return live
+}
+
+// stale dit qu'une correspondance existe mais que sa cible a disparu.
+func (l liveImportedEntities) stale(index map[string]bool, externalID string) bool {
+	alive, mapped := index[externalID]
+	return mapped && !alive
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +204,9 @@ type PreviewSummary struct {
 	ProductsRemovedFromMenu   int `json:"products_removed_from_menu"`
 	ProductsNeedingCategory   int `json:"products_needing_category"`
 	ProductsWithNameCollision int `json:"products_with_name_collision"`
+	// ProductsMappingStale : deja importes, mais le produit Wello
+	// correspondant n'existe plus. Ce sont ceux qu'un reimport repare.
+	ProductsMappingStale int `json:"products_mapping_stale"`
 
 	CategoriesToCreate int `json:"categories_to_create"`
 	CategoriesReused   int `json:"categories_reused"`
@@ -172,6 +246,8 @@ type PreviewCategory struct {
 	// ExistingCategoryID est le merchant_categ_id réutilisé, pas la PK.
 	ExistingCategoryID string `json:"existing_category_id,omitempty"`
 	ProductCount       int    `json:"product_count"`
+
+	MappingStale bool `json:"mapping_stale,omitempty"`
 }
 
 type PreviewTag struct {
@@ -184,6 +260,10 @@ type PreviewTag struct {
 
 	ExistingTagID      string `json:"existing_tag_id,omitempty"`
 	ExistingCategoryID string `json:"existing_category_id,omitempty"`
+
+	// MappingStale : deja importe, mais l'entite Wello a disparu. Elle sera
+	// recreee d'office — un contenant ne merite pas d'arbitrage.
+	MappingStale bool `json:"mapping_stale,omitempty"`
 }
 
 type PreviewProduct struct {
@@ -207,6 +287,13 @@ type PreviewProduct struct {
 	Channels PreviewChannels `json:"channels"`
 
 	NameCollision *PreviewNameCollision `json:"name_collision,omitempty"`
+
+	// MappingStale : un import precedent a cree ce produit, mais il n'existe
+	// plus dans Wello. Le reimporter le recree ; sans cette information, il
+	// resterait ignore indefiniment.
+	MappingStale bool `json:"mapping_stale,omitempty"`
+	// Reimport est l'arbitrage propose pour un produit deja importe.
+	Reimport string `json:"reimport,omitempty"`
 }
 
 type PreviewChannels struct {
@@ -238,6 +325,8 @@ type PreviewAttribute struct {
 	OptionCount int    `json:"option_count"`
 	MinOptions  int    `json:"min_options"`
 	MaxOptions  int    `json:"max_options"`
+
+	MappingStale bool `json:"mapping_stale,omitempty"`
 }
 
 type PreviewNameCollision struct {
@@ -345,6 +434,7 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 	b := &previewBuilder{
 		imp:      imp,
 		lk:       lk,
+		live:     newLiveImportedEntities(lk),
 		resolver: newTvaResolver(lk.TvaRates),
 		res: &PreviewResult{
 			Provider: imp.Provider,
@@ -353,6 +443,7 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 				CategoryPerProduct: make(map[string]string),
 				TvaMapping:         make(map[TvaRateKey]int),
 				NameCollisions:     make(map[string]NameCollisionResolution),
+				AlreadyImported:    make(map[string]ReimportResolution),
 			},
 		},
 		tvaSeen: make(map[tvaLookupKey]int),
@@ -371,6 +462,7 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 type previewBuilder struct {
 	imp      *IntermediateImport
 	lk       PreviewLookups
+	live     liveImportedEntities
 	resolver *tvaResolver
 	res      *PreviewResult
 
@@ -432,8 +524,13 @@ func (b *previewBuilder) buildCategories() {
 			Action:       ActionCreate,
 		}
 
+		entry.MappingStale = b.live.stale(b.live.categories, category.ExternalID)
+
 		switch {
-		case hasIntMapping(b.lk.Imported.Categories, category.ExternalID):
+		// Un mapping périmé ne compte pas comme déjà importé : l'entité a
+		// disparu, elle sera recréée. Le dire ici garde les compteurs en phase
+		// avec ce que le commit fera réellement.
+		case hasIntMapping(b.lk.Imported.Categories, category.ExternalID) && !entry.MappingStale:
 			entry.Action = ActionAlreadyImported
 		default:
 			if match, ok := existing[normalizeLabel(category.Name)]; ok {
@@ -477,9 +574,11 @@ func (b *previewBuilder) buildTags() {
 
 		alreadyImported := hasStringMapping(b.lk.Imported.Tags, tag.ExternalID) ||
 			hasIntMapping(b.lk.Imported.Categories, tag.ExternalID)
+		entry.MappingStale = b.live.stale(b.live.tags, tag.ExternalID) ||
+			b.live.stale(b.live.categories, tag.ExternalID)
 
 		switch {
-		case alreadyImported:
+		case alreadyImported && !entry.MappingStale:
 			entry.Action = ActionAlreadyImported
 		case class == TagClassCategory:
 			if match, ok := existingCategories[normalizeLabel(tag.Name)]; ok {
@@ -519,12 +618,22 @@ func (b *previewBuilder) buildProducts() {
 			entry.Status = ProductStatusRemovedFromMenu
 		}
 
-		// Un produit déjà importé sera ignoré au commit : inutile de lui
+		// Un produit déjà importé est ignoré par défaut : inutile de lui
 		// réclamer une catégorie ou d'arbitrer une collision qui ne se
-		// produira pas. On le liste, on ne l'instruit pas.
+		// produira pas. On le liste, on ne l'instruit pas — l'écran de
+		// vérification peut décider de le recréer, et c'est alors le plan de
+		// commit qui l'instruira.
 		if _, imported := b.lk.Imported.Products[p.ExternalID]; imported {
 			entry.Action = ActionAlreadyImported
+			entry.MappingStale = b.live.stale(b.live.products, p.ExternalID)
+			entry.Reimport = string(ReimportSkip)
+			b.res.Decisions.AlreadyImported[p.ExternalID] = ReimportSkip
+
 			b.res.Summary.ProductsAlreadyImported++
+			if entry.MappingStale {
+				b.res.Summary.ProductsMappingStale++
+			}
+
 			entry.Channels = b.buildChannels(p, false)
 			b.res.Products = append(b.res.Products, entry)
 			continue
@@ -735,7 +844,9 @@ func (b *previewBuilder) buildAttributes() {
 			MaxOptions:  attribute.MaxOptions,
 		}
 
-		if hasStringMapping(b.lk.Imported.Attributes, attribute.ExternalID) {
+		entry.MappingStale = b.live.stale(b.live.attributes, attribute.ExternalID)
+
+		if hasStringMapping(b.lk.Imported.Attributes, attribute.ExternalID) && !entry.MappingStale {
 			entry.Action = ActionAlreadyImported
 			b.res.Summary.AttributesAlreadyImported++
 		} else {

@@ -15,7 +15,7 @@ import (
 // doit muter quoi que ce soit. Les données sont ensuite passées telles quelles
 // à importer.BuildPreview, qui reste ainsi sans dépendance à la base.
 //
-// Huit SELECT séquentiels : le pool est plafonné à une connexion ouverte
+// Neuf SELECT séquentiels : le pool est plafonné à une connexion ouverte
 // (contrainte d'hébergement, cf. internal/database/mysql.go), toute tentative
 // de parallélisation serait illusoire.
 func (r *MenuRepository) LoadImportPreviewLookups(ctx context.Context, merchantID, provider string) (importer.PreviewLookups, error) {
@@ -44,6 +44,12 @@ func (r *MenuRepository) LoadImportPreviewLookups(ctx context.Context, merchantI
 		return lookups, err
 	}
 	lookups.ExistingProducts = products
+
+	attributes, err := r.loadImportExistingAttributes(ctx, merchantID)
+	if err != nil {
+		return lookups, err
+	}
+	lookups.ExistingAttributes = attributes
 
 	imported, err := r.loadImportedEntities(ctx, merchantID, provider)
 	if err != nil {
@@ -184,6 +190,36 @@ func (r *MenuRepository) loadImportExistingProducts(ctx context.Context, merchan
 			return nil, fmt.Errorf("failed to scan product: %w", err)
 		}
 		out = append(out, product)
+	}
+	return out, rows.Err()
+}
+
+// loadImportExistingAttributes lit les groupes d'options actifs du marchand.
+//
+// Seul l'identifiant sert : il permet de savoir si une correspondance d'import
+// désigne encore un groupe existant, ou pointe dans le vide parce qu'il a été
+// supprimé depuis.
+func (r *MenuRepository) loadImportExistingAttributes(ctx context.Context, merchantID string) ([]importer.ExistingAttribute, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT id
+		 FROM configurable_attributes
+		 WHERE merchant_id = ? AND enabled = TRUE`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load attributes for import preview: %w", err)
+	}
+	defer rows.Close()
+
+	var out []importer.ExistingAttribute
+	for rows.Next() {
+		var attribute importer.ExistingAttribute
+		if err := rows.Scan(&attribute.AttributeID); err != nil {
+			return nil, fmt.Errorf("failed to scan attribute: %w", err)
+		}
+		out = append(out, attribute)
 	}
 	return out, rows.Err()
 }

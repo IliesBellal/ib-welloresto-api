@@ -384,6 +384,7 @@ func TestBuildCommitPlanIsIdempotent(t *testing.T) {
 	lk.Imported.Products = map[string]int{}
 	for i, p := range imp.Products {
 		lk.Imported.Products[p.ExternalID] = 1000 + i
+		lk.ExistingProducts = append(lk.ExistingProducts, ExistingProduct{ProductID: 1000 + i, Name: p.Name})
 	}
 	lk.Imported.Tags = map[string]string{}
 	lk.Imported.Categories = map[string]int{}
@@ -397,7 +398,9 @@ func TestBuildCommitPlanIsIdempotent(t *testing.T) {
 	}
 	lk.Imported.Attributes = map[string]string{}
 	for _, attribute := range imp.Attributes {
-		lk.Imported.Attributes[attribute.ExternalID] = "attribute-existing"
+		attributeID := "attribute-existing-" + attribute.ExternalID
+		lk.Imported.Attributes[attribute.ExternalID] = attributeID
+		lk.ExistingAttributes = append(lk.ExistingAttributes, ExistingAttribute{AttributeID: attributeID})
 	}
 
 	plan, blockers := BuildCommitPlan(imp, defaultDecisions(t, imp, lk), lk)
@@ -422,11 +425,10 @@ func TestBuildCommitPlanIsIdempotent(t *testing.T) {
 	}
 }
 
-// Une catégorie créée par un import précédent puis désactivée ne peut plus être
-// référencée, et le mapping empêche de la recréer : il faut le dire, pas écrire
-// un produit qui pointe dans le vide. C'est le pendant en mémoire de la
-// validation 2 de validateProductForCreate.
-func TestBuildCommitPlanRejectsDisabledAlreadyImportedCategory(t *testing.T) {
+// Une catégorie créée par un import précédent puis supprimée doit être
+// recréée, et sa correspondance réaffectée. La laisser « déjà importée » la
+// rendrait définitivement irrécupérable, et le produit pointerait dans le vide.
+func TestBuildCommitPlanRecreatesDisappearedImportedCategory(t *testing.T) {
 	ten := 10.0
 	imp := &IntermediateImport{
 		Provider: ZeltySlug,
@@ -443,19 +445,38 @@ func TestBuildCommitPlanRejectsDisabledAlreadyImportedCategory(t *testing.T) {
 	lk.Imported.Categories = map[string]int{"ZT1": 55}
 
 	plan, blockers := BuildCommitPlan(imp, ImportDecisions{}, lk)
-
-	if plan != nil {
-		t.Fatal("un plan a été produit avec une catégorie désactivée")
+	if len(blockers) > 0 {
+		t.Fatalf("blocages inattendus : %s", BlockersMessage(blockers))
 	}
-	if !hasBlocker(blockers, BlockerProductNeedsCategory, "ZD1") {
-		t.Fatalf("blocage %q attendu, obtenu : %s", BlockerProductNeedsCategory, BlockersMessage(blockers))
+
+	var category *PlannedCategory
+	for i := range plan.Categories {
+		if plan.Categories[i].ExternalID == "ZT1" {
+			category = &plan.Categories[i]
+		}
+	}
+	if category == nil {
+		t.Fatal("la catégorie ZT1 est absente du plan")
+	}
+	if category.AlreadyImported {
+		t.Fatal("une catégorie disparue reste marquée déjà importée, donc irrécupérable")
+	}
+	if !category.RemapExisting {
+		t.Fatal("la correspondance existante doit être réaffectée, pas dupliquée")
+	}
+	if !category.Usable() {
+		t.Fatal("la catégorie recréée doit être référençable")
+	}
+
+	if got := plannedProduct(t, plan, "ZD1").CategoryExternalID; got != "ZT1" {
+		t.Fatalf("catégorie du produit = %q, want ZT1", got)
 	}
 }
 
-// Un tag mappé mais physiquement supprimé est simplement écarté : contrairement
-// à la catégorie, il est facultatif, et faire échouer le produit entier pour
-// lui serait disproportionné.
-func TestBuildCommitPlanDropsDeletedAlreadyImportedTag(t *testing.T) {
+// Un tag mappé mais physiquement supprimé est recréé, et sa correspondance
+// réaffectée : sinon les produits recréés perdraient leurs étiquettes sans que
+// personne ne l'ait demandé.
+func TestBuildCommitPlanRecreatesDeletedAlreadyImportedTag(t *testing.T) {
 	ten := 10.0
 	imp := &IntermediateImport{
 		Provider: ZeltySlug,
@@ -479,8 +500,18 @@ func TestBuildCommitPlanDropsDeletedAlreadyImportedTag(t *testing.T) {
 	}
 
 	planned := plannedProduct(t, plan, "ZD1")
-	if len(planned.TagExternalIDs) != 0 {
-		t.Fatalf("TagExternalIDs = %v, want vide (le tag mappé n'existe plus)", planned.TagExternalIDs)
+	if len(planned.TagExternalIDs) != 1 || planned.TagExternalIDs[0] != "ZT2" {
+		t.Fatalf("TagExternalIDs = %v, want [ZT2] (le tag est recréé)", planned.TagExternalIDs)
+	}
+
+	var tag *PlannedTag
+	for i := range plan.Tags {
+		if plan.Tags[i].ExternalID == "ZT2" {
+			tag = &plan.Tags[i]
+		}
+	}
+	if tag == nil || tag.AlreadyImported || !tag.RemapExisting {
+		t.Fatalf("tag planifié = %+v, want une recréation avec réaffectation", tag)
 	}
 }
 
@@ -563,17 +594,12 @@ func TestBuildCommitPlanMirrorsValidateProductForCreate(t *testing.T) {
 			},
 			wantCode: BlockerTvaRateUnresolved,
 		},
-		{
-			name:     "catégorie désactivée",
-			unitaire: "validation 2 : la catégorie doit exister et être activée",
-			imp:      newImport(&ten, &ten, &ten),
-			lookups: func() PreviewLookups {
-				lk := defaultLookups()
-				lk.Imported.Categories = map[string]int{"ZT1": 55}
-				return lk
-			},
-			wantCode: BlockerProductNeedsCategory,
-		},
+		// La validation 2 (« la catégorie existe et est activée ») n'a plus de
+		// cas de rejet ici : toute catégorie du plan est soit réutilisée
+		// depuis la liste des actives, soit créée — y compris quand un import
+		// précédent l'avait posée et qu'elle a disparu depuis, cas couvert par
+		// TestBuildCommitPlanRecreatesDisappearedImportedCategory. La garantie
+		// est plus forte que le contrôle unitaire, pas plus faible.
 		{
 			name:     "tva_id du mauvais canal",
 			unitaire: "validation 4 : chaque taux est vérifié individuellement",
@@ -736,5 +762,130 @@ func TestBuildCommitPlanRejectsTvaSubstitutionFromAnotherChannel(t *testing.T) {
 				t.Fatalf("blocage %q attendu, obtenu : %s", BlockerInvalidTvaMapping, BlockersMessage(blockers))
 			}
 		})
+	}
+}
+
+// Le scénario qui motive tout ceci : un import raté, un menu supprimé, un
+// réimport. Sans arbitrage, tout est « déjà importé » et le commit ne fait
+// rien — sans que rien ne le signale.
+func TestBuildCommitPlanReimportsAfterDeletion(t *testing.T) {
+	imp := parseZeltyFixture(t, fixtureZelty2026)
+
+	lk := defaultLookups()
+	// Tout a été importé, puis supprimé côté Wello : les correspondances
+	// subsistent mais ne désignent plus rien.
+	lk.Imported.Products = map[string]int{}
+	for i, p := range imp.Products {
+		lk.Imported.Products[p.ExternalID] = 9000 + i
+	}
+	lk.Imported.Categories = map[string]int{}
+	lk.Imported.Tags = map[string]string{}
+	for i, tag := range imp.Tags {
+		lk.Imported.Categories[tag.ExternalID] = 8000 + i
+		lk.Imported.Tags[tag.ExternalID] = "tag-supprime-" + tag.ExternalID
+	}
+	lk.Imported.Attributes = map[string]string{}
+	for _, attribute := range imp.Attributes {
+		lk.Imported.Attributes[attribute.ExternalID] = "attribute-supprime"
+	}
+
+	// Sans décision : rien n'est recréé côté produits, c'est le défaut.
+	plan, blockers := BuildCommitPlan(imp, defaultDecisions(t, imp, lk), lk)
+	if len(blockers) > 0 {
+		t.Fatalf("blocages inattendus : %s", BlockersMessage(blockers))
+	}
+	for _, p := range plan.Products {
+		if p.Materializable() {
+			t.Fatalf("produit %q recréé sans qu'on l'ait demandé", p.ExternalID)
+		}
+	}
+	// Les contenants, eux, sont recréés d'office : ils ne font l'objet
+	// d'aucun arbitrage.
+	for _, category := range plan.Categories {
+		if category.AlreadyImported {
+			t.Fatalf("catégorie %q laissée irrécupérable", category.ExternalID)
+		}
+		if !category.RemapExisting {
+			t.Fatalf("catégorie %q recréée sans réaffecter sa correspondance", category.ExternalID)
+		}
+	}
+	for _, attribute := range plan.Attributes {
+		if attribute.AlreadyImported || !attribute.RemapExisting {
+			t.Fatalf("groupe d'options %q = %+v, want une recréation réaffectée", attribute.ExternalID, attribute)
+		}
+	}
+
+	// Avec la décision de tout réimporter, les 141 produits repartent.
+	decisions := defaultDecisions(t, imp, lk)
+	for _, p := range imp.Products {
+		decisions.AlreadyImported[p.ExternalID] = ReimportRecreate
+	}
+
+	plan, blockers = BuildCommitPlan(imp, decisions, lk)
+	if len(blockers) > 0 {
+		t.Fatalf("blocages inattendus au réimport : %s", BlockersMessage(blockers))
+	}
+
+	recreated := 0
+	for _, p := range plan.Products {
+		if !p.Materializable() {
+			t.Fatalf("produit %q toujours ignoré malgré la demande de réimport", p.ExternalID)
+		}
+		if !p.RemapExisting {
+			t.Fatalf("produit %q recréé sans réaffecter sa correspondance", p.ExternalID)
+		}
+		// Un produit réimporté est instruit comme les autres.
+		if p.CategoryExternalID == "" || p.TvaInID == 0 {
+			t.Fatalf("produit %q réimporté sans catégorie ni TVA : %+v", p.ExternalID, p)
+		}
+		recreated++
+	}
+	if recreated != 141 {
+		t.Fatalf("produits réimportés = %d, want 141", recreated)
+	}
+}
+
+// Un produit toujours vivant reste ignoré par défaut, et n'est recréé que si
+// on le demande explicitement — au risque assumé d'un doublon.
+func TestBuildCommitPlanReimportOfLiveProductIsOptIn(t *testing.T) {
+	ten := 10.0
+	imp := &IntermediateImport{
+		Provider: ZeltySlug,
+		Tags:     []CanonicalTag{{ExternalID: "ZT1", Name: "PIZZAS"}},
+		Products: []CanonicalProduct{{
+			ExternalID: "ZD1", Name: "Margherita", TagExternalIDs: []string{"ZT1"},
+			PriceIn: 990, PriceTakeAway: 990, PriceDelivery: 990,
+			TvaRateIn: &ten, TvaRateTakeAway: &ten, TvaRateDelivery: &ten,
+		}},
+	}
+
+	lk := defaultLookups()
+	lk.Imported.Products = map[string]int{"ZD1": 77}
+	lk.ExistingProducts = []ExistingProduct{{ProductID: 77, Name: "Margherita"}}
+
+	plan, blockers := BuildCommitPlan(imp, ImportDecisions{}, lk)
+	if len(blockers) > 0 {
+		t.Fatalf("blocages inattendus : %s", BlockersMessage(blockers))
+	}
+	if plannedProduct(t, plan, "ZD1").Materializable() {
+		t.Fatal("un produit vivant est recréé sans arbitrage")
+	}
+
+	decisions := ImportDecisions{
+		AlreadyImported: map[string]ReimportResolution{"ZD1": ReimportRecreate},
+	}
+	plan, blockers = BuildCommitPlan(imp, decisions, lk)
+	if len(blockers) > 0 {
+		t.Fatalf("blocages inattendus : %s", BlockersMessage(blockers))
+	}
+
+	planned := plannedProduct(t, plan, "ZD1")
+	if !planned.Materializable() || !planned.RemapExisting {
+		t.Fatalf("produit = %+v, want une recréation réaffectée", planned)
+	}
+	// Le produit d'origine est le sien : il ne doit pas être vu comme une
+	// collision de nom avec un tiers.
+	if planned.SkippedByCollision || planned.Name == "" {
+		t.Fatalf("produit = %+v", planned)
 	}
 }

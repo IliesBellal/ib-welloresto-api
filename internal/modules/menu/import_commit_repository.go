@@ -125,7 +125,7 @@ func (r *MenuRepository) materializeCategoriesTx(
 
 		case category.ReuseMerchantCategID != "":
 			state.merchantCategIDByExternal[category.ExternalID] = category.ReuseMerchantCategID
-			if err := r.insertImportMappingTx(ctx, importCategoriesMappingTable,
+			if err := r.upsertImportMappingTx(ctx, importCategoriesMappingTable,
 				merchantID, plan.Provider, category.ExternalID, category.ReuseCategID); err != nil {
 				return err
 			}
@@ -164,7 +164,7 @@ func (r *MenuRepository) materializeCategoriesTx(
 		}
 
 		state.merchantCategIDByExternal[category.ExternalID] = merchantCategID
-		if err := r.insertImportMappingTx(ctx, importCategoriesMappingTable,
+		if err := r.upsertImportMappingTx(ctx, importCategoriesMappingTable,
 			merchantID, plan.Provider, category.ExternalID, categID); err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func (r *MenuRepository) materializeTagsTx(
 
 		case tag.ReuseTagID != "":
 			state.tagIDByExternal[tag.ExternalID] = tag.ReuseTagID
-			if err := r.insertImportMappingTx(ctx, importTagsMappingTable,
+			if err := r.upsertImportMappingTx(ctx, importTagsMappingTable,
 				merchantID, plan.Provider, tag.ExternalID, tag.ReuseTagID); err != nil {
 				return err
 			}
@@ -241,7 +241,7 @@ func (r *MenuRepository) materializeTagsTx(
 		}
 
 		state.tagIDByExternal[tag.ExternalID] = created.ID
-		if err := r.insertImportMappingTx(ctx, importTagsMappingTable,
+		if err := r.upsertImportMappingTx(ctx, importTagsMappingTable,
 			merchantID, plan.Provider, tag.ExternalID, created.ID); err != nil {
 			return err
 		}
@@ -313,13 +313,13 @@ func (r *MenuRepository) materializeAttributesTx(
 				len(optionIDs), attribute.Name, len(attribute.Options))
 		}
 
-		if err := r.insertImportMappingTx(ctx, importAttributesMappingTable,
+		if err := r.upsertImportMappingTx(ctx, importAttributesMappingTable,
 			merchantID, plan.Provider, attribute.ExternalID, attributeID); err != nil {
 			return err
 		}
 
 		for i, option := range attribute.Options {
-			if err := r.insertImportMappingTx(ctx, importAttributeOptionsMappingTable,
+			if err := r.upsertImportMappingTx(ctx, importAttributeOptionsMappingTable,
 				merchantID, plan.Provider, option.ExternalID, optionIDs[i]); err != nil {
 				return err
 			}
@@ -401,7 +401,7 @@ func (r *MenuRepository) materializeProductsTx(
 		if err != nil {
 			return fmt.Errorf("import: identifiant de produit inattendu %q: %w", productID, err)
 		}
-		if err := r.insertImportMappingTx(ctx, importProductsMappingTable,
+		if err := r.upsertImportMappingTx(ctx, importProductsMappingTable,
 			merchantID, plan.Provider, product.ExternalID, welloID); err != nil {
 			return err
 		}
@@ -422,21 +422,42 @@ func (r *MenuRepository) TouchMenuUpdated(ctx context.Context, merchantID string
 	return r.setMenuUpdated(ctx, merchantID)
 }
 
-// insertImportMappingTx pose une correspondance identifiant externe ->
-// identifiant Wello. Le nom de table vient d'une constante du paquet, jamais
-// d'une entrée utilisateur.
-func (r *MenuRepository) insertImportMappingTx(
+// upsertImportMappingTx pose ou réaffecte une correspondance identifiant
+// externe -> identifiant Wello. Le nom de table vient d'une constante du
+// paquet, jamais d'une entrée utilisateur.
+//
+// La mise à jour d'abord, l'insertion ensuite : quand une entité est recréée —
+// parce que celle d'un import précédent a été supprimée, ou parce que
+// l'utilisateur a demandé un réimport — la ligne existe déjà et l'index unique
+// (merchant_id, provider, external_id) refuserait un second INSERT. Deux
+// requêtes plutôt qu'un upsert, pour rester indépendant du dialecte.
+//
+// deletion_date et enabled sont remis à neuf : la correspondance redevient
+// active, elle désigne une entité qui existe.
+func (r *MenuRepository) upsertImportMappingTx(
 	ctx context.Context,
 	table, merchantID, provider, externalID string,
 	welloID interface{},
 ) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO `+table+` (merchant_id, provider, external_id, wello_id) VALUES (?, ?, ?, ?)`,
-		merchantID, provider, externalID, welloID,
+	result, err := db.ExecContext(ctx,
+		`UPDATE `+table+`
+		 SET wello_id = ?, deletion_date = NULL, enabled = TRUE
+		 WHERE merchant_id = ? AND provider = ? AND external_id = ?`,
+		welloID, merchantID, provider, externalID,
 	)
 	if err != nil {
+		return fmt.Errorf("import: réaffectation de %s pour %q: %w", table, externalID, err)
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected > 0 {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO `+table+` (merchant_id, provider, external_id, wello_id) VALUES (?, ?, ?, ?)`,
+		merchantID, provider, externalID, welloID,
+	); err != nil {
 		return fmt.Errorf("import: écriture de %s pour %q: %w", table, externalID, err)
 	}
 	return nil

@@ -159,6 +159,21 @@ const (
 	CollisionImportAnyway NameCollisionResolution = "import_anyway"
 )
 
+// ReimportResolution est l'arbitrage retenu pour une entite qu'un import
+// precedent a deja creee.
+//
+// Par defaut on ignore : c'est ce qui rend l'import rejouable sans dupliquer.
+// Mais le mapping survit a l'entite qu'il designe — supprimer un produit dans
+// Wello ne le retire pas de import_products_mapping — et sans arbitrage
+// explicite, un marchand qui a supprime son menu pour le reimporter se
+// retrouvait devant un commit sans effet : « 0 cree, 141 ignores ».
+type ReimportResolution string
+
+const (
+	ReimportSkip     ReimportResolution = "skip"
+	ReimportRecreate ReimportResolution = "recreate"
+)
+
 // TvaChannel reprend les valeurs de tva_categories.delivery_type telles
 // qu'elles sont stockees, pour que le mapping soit directement utilisable en
 // requete.
@@ -265,4 +280,10 @@ type ImportDecisions struct {
 
 	// NameCollisions tranche les produits homonymes d'un produit existant.
 	NameCollisions map[string]NameCollisionResolution `json:"name_collisions"`
+
+	// AlreadyImported tranche les produits qu'un import precedent a deja
+	// crees : les ignorer (defaut) ou les recreer. Ne concerne que les
+	// produits — categories, tags et groupes d'options dont le mapping est
+	// perime sont recrees d'office, personne ne voulant arbitrer un contenant.
+	AlreadyImported map[string]ReimportResolution `json:"already_imported"`
 }

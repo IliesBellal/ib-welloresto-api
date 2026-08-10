@@ -391,9 +391,14 @@ func TestBuildPreviewIgnoresCollisionWithOwnImportedProduct(t *testing.T) {
 // ne compte pas dans ce qui sera créé.
 func TestBuildPreviewMarksAlreadyImportedEntities(t *testing.T) {
 	lk := defaultLookups()
+	// Une correspondance ne vaut que si l'entité Wello qu'elle désigne existe
+	// encore : sinon elle est périmée, et l'entité sera recréée.
 	lk.Imported.Products = map[string]int{productCreeTa2026: 4242}
+	lk.ExistingProducts = []ExistingProduct{{ProductID: 4242, Name: "Crée Ta Pizza 🫡🍕"}}
 	lk.Imported.Tags = map[string]string{tagVege2026: "tag-existing"}
+	lk.ExistingTags = []ExistingTag{{TagID: "tag-existing", Name: "VÉGÉ"}}
 	lk.Imported.Attributes = map[string]string{"ZO247656": "attribute-existing"}
+	lk.ExistingAttributes = []ExistingAttribute{{AttributeID: "attribute-existing"}}
 
 	res := previewFixture(t, fixtureZelty2026, lk)
 

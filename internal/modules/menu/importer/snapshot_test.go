@@ -173,6 +173,7 @@ func TestImportDecisionsJSONContract(t *testing.T) {
 		CategoryPerProduct: map[string]string{"ZD1": "ZT1"},
 		TvaMapping:         map[TvaRateKey]int{{Rate: 5.5, Channel: TvaChannelDelivery}: 7},
 		NameCollisions:     map[string]NameCollisionResolution{"ZD2": CollisionSkip},
+		AlreadyImported:    map[string]ReimportResolution{"ZD3": ReimportRecreate},
 	}
 
 	payload, err := json.Marshal(decisions)
@@ -185,7 +186,10 @@ func TestImportDecisionsJSONContract(t *testing.T) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 
-	wantKeys := []string{"tag_classification", "category_per_product", "tva_mapping", "name_collisions"}
+	wantKeys := []string{
+		"tag_classification", "category_per_product", "tva_mapping",
+		"name_collisions", "already_imported",
+	}
 	if len(generic) != len(wantKeys) {
 		t.Fatalf("clés = %v, want %v", generic, wantKeys)
 	}
@@ -218,5 +222,8 @@ func TestImportDecisionsJSONContract(t *testing.T) {
 	}
 	if decoded.NameCollisions["ZD2"] != CollisionSkip {
 		t.Fatalf("NameCollisions = %v", decoded.NameCollisions)
+	}
+	if decoded.AlreadyImported["ZD3"] != ReimportRecreate {
+		t.Fatalf("AlreadyImported = %v", decoded.AlreadyImported)
 	}
 }
