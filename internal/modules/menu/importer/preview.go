@@ -298,12 +298,20 @@ func (r *tvaResolver) resolve(rate float64, channel TvaChannel) (int, bool) {
 	return id, ok
 }
 
-// hasID dit si tvaID est un taux actif portant exactement ce couple. Accepte
-// les homonymes : deux lignes au même taux et au même canal sont toutes deux
-// légitimes, seule la plus petite est proposée par défaut.
-func (r *tvaResolver) hasID(tvaID int, rate float64, channel TvaChannel) bool {
+// describeID rend le canal et le taux d'un tva_id actif.
+//
+// Sert à valider ce que le wizard renvoie. Le contrôle porte sur le canal et
+// non sur le taux : quand un taux du fichier n'existe pas chez le marchand,
+// l'écran de vérification lui fait justement désigner un autre taux du même
+// canal pour le remplacer. Exiger la correspondance exacte rendrait ce choix
+// impossible — c'est le canal qui doit être respecté, tva_*_id devant matcher
+// le delivery_type de la colonne.
+func (r *tvaResolver) describeID(tvaID int) (TvaChannel, float64, bool) {
 	key, ok := r.keyByID[tvaID]
-	return ok && key == tvaLookupKey{rate: rateToHundredths(rate), channel: channel}
+	if !ok {
+		return "", 0, false
+	}
+	return key.channel, float64(key.rate) / 100, true
 }
 
 func rateToHundredths(rate float64) int { return int(math.Round(rate * 100)) }

@@ -641,3 +641,100 @@ func hasPlannedCategory(plan *CommitPlan, externalID string) bool {
 	}
 	return false
 }
+
+// Le cas d'usage même de l'écran de vérification : un taux du fichier qui
+// n'existe pas chez le marchand, remplacé par un autre taux du même canal.
+//
+// C'est ce que faisait un import réel — 5,5 % sur place n'est pas configuré,
+// l'utilisateur désigne le 10 % sur place — et que le commit refusait, rendant
+// le sélecteur de remplacement inutilisable.
+func TestBuildCommitPlanAcceptsTvaSubstitutionOnSameChannel(t *testing.T) {
+	reduced := 5.5
+
+	imp := &IntermediateImport{
+		Provider: ZeltySlug,
+		Tags:     []CanonicalTag{{ExternalID: "ZT1", Name: "BOISSONS"}},
+		Products: []CanonicalProduct{{
+			ExternalID: "ZD1", Name: "Coca Cola - 33 cl", TagExternalIDs: []string{"ZT1"},
+			PriceIn: 350, PriceTakeAway: 350, PriceDelivery: 350,
+			// 5,5 % sur place n'existe pas dans le référentiel réel.
+			TvaRateIn: &reduced, TvaRateTakeAway: &reduced, TvaRateDelivery: &reduced,
+		}},
+	}
+
+	lk := defaultLookups()
+	lk.TvaRates = productionTvaRates()
+
+	// Sans arbitrage, le canal sur place bloque : c'est le point de départ.
+	if plan, blockers := BuildCommitPlan(imp, ImportDecisions{}, lk); plan != nil {
+		t.Fatal("un plan a été produit alors que 5,5 % sur place n'existe pas")
+	} else if !hasBlocker(blockers, BlockerTvaRateUnresolved, "ZD1") {
+		t.Fatalf("blocage attendu sur ZD1, obtenu : %s", BlockersMessage(blockers))
+	}
+
+	// L'utilisateur désigne le 10 % sur place (tva_id 5) à la place.
+	decisions := ImportDecisions{
+		TvaMapping: map[TvaRateKey]int{
+			{Rate: 5.5, Channel: TvaChannelIn}: 5,
+		},
+	}
+
+	plan, blockers := BuildCommitPlan(imp, decisions, lk)
+	if len(blockers) > 0 {
+		t.Fatalf("substitution refusée : %s", BlockersMessage(blockers))
+	}
+
+	planned := plannedProduct(t, plan, "ZD1")
+	if planned.TvaInID != 5 {
+		t.Fatalf("tva_in_id = %d, want 5 (le taux choisi en remplacement)", planned.TvaInID)
+	}
+	// Les canaux qui se résolvaient d'eux-mêmes ne sont pas affectés.
+	if planned.TvaTakeAwayID != 1 || planned.TvaDeliveryID != 8 {
+		t.Fatalf("emporté/livraison = (%d, %d), want (1, 8)", planned.TvaTakeAwayID, planned.TvaDeliveryID)
+	}
+}
+
+// Une substitution reste bornée au canal : désigner un taux d'un autre canal
+// écrirait un produit dont la TVA ne correspond à rien.
+func TestBuildCommitPlanRejectsTvaSubstitutionFromAnotherChannel(t *testing.T) {
+	reduced := 5.5
+
+	imp := &IntermediateImport{
+		Provider: ZeltySlug,
+		Tags:     []CanonicalTag{{ExternalID: "ZT1", Name: "BOISSONS"}},
+		Products: []CanonicalProduct{{
+			ExternalID: "ZD1", Name: "Coca Cola - 33 cl", TagExternalIDs: []string{"ZT1"},
+			PriceIn: 350, PriceTakeAway: 350, PriceDelivery: 350,
+			TvaRateIn: &reduced, TvaRateTakeAway: &reduced, TvaRateDelivery: &reduced,
+		}},
+	}
+
+	lk := defaultLookups()
+	lk.TvaRates = productionTvaRates()
+
+	cases := []struct {
+		name  string
+		tvaID int
+	}{
+		// 2 est le 10 % à emporter : bon taux, mauvais canal.
+		{"taux d'un autre canal", 2},
+		// 4242 n'existe pas.
+		{"taux inexistant", 4242},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			decisions := ImportDecisions{
+				TvaMapping: map[TvaRateKey]int{{Rate: 5.5, Channel: TvaChannelIn}: tc.tvaID},
+			}
+
+			plan, blockers := BuildCommitPlan(imp, decisions, lk)
+			if plan != nil {
+				t.Fatal("un plan a été produit malgré une substitution invalide")
+			}
+			if !hasBlocker(blockers, BlockerInvalidTvaMapping, "5.5:IN") {
+				t.Fatalf("blocage %q attendu, obtenu : %s", BlockerInvalidTvaMapping, BlockersMessage(blockers))
+			}
+		})
+	}
+}

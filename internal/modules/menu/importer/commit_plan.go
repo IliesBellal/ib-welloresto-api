@@ -183,21 +183,30 @@ func (b *commitPlanner) block(code, ref, message string) {
 }
 
 // validateTvaDecisions vérifie que chaque tva_id renvoyé par le wizard existe,
-// est actif, et porte bien le delivery_type du canal annoncé. Un client qui
-// enverrait le tva_id « 10 % sur place » pour le canal livraison écrirait un
-// produit dont la TVA ne correspond à rien.
+// est actif, et appartient au canal annoncé.
+//
+// Le taux, lui, n'a pas à correspondre : c'est le sens même de l'écran de
+// vérification. Quand un taux du fichier n'existe pas chez le marchand — 5,5 %
+// sur place, par exemple, alors que sa caisse n'a que 10 % et 20 % — celui-ci
+// désigne le taux à utiliser à la place. Exiger la correspondance exacte
+// rendrait ce choix systématiquement refusé, donc la fonctionnalité
+// inutilisable.
+//
+// Ce qui reste vérifié est ce qui compte : products.tva_*_id doit pointer sur
+// une ligne du bon delivery_type, faute de quoi la TVA appliquée ne
+// correspondrait à rien.
 func (b *commitPlanner) validateTvaDecisions() {
 	for key, tvaID := range b.decisions.TvaMapping {
-		resolved, ok := b.resolver.resolve(key.Rate, key.Channel)
+		channel, _, ok := b.resolver.describeID(tvaID)
 		if !ok {
 			b.block(BlockerInvalidTvaMapping, tvaKeyRef(key),
-				fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s", key.Rate, key.Channel.Label()))
+				fmt.Sprintf("le taux de TVA n° %d n'existe pas ou est désactivé", tvaID))
 			continue
 		}
-		if !b.resolver.hasID(tvaID, key.Rate, key.Channel) {
+		if channel != key.Channel {
 			b.block(BlockerInvalidTvaMapping, tvaKeyRef(key),
-				fmt.Sprintf("le tva_id %d ne correspond pas à %g%% sur le canal %s (attendu : %d)",
-					tvaID, key.Rate, key.Channel.Label(), resolved))
+				fmt.Sprintf("le taux de TVA n° %d est configuré pour le canal %s, pas %s",
+					tvaID, channel.Label(), key.Channel.Label()))
 		}
 	}
 }
@@ -553,9 +562,12 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 
 // lookupTva privilégie la décision du wizard quand elle existe et qu'elle a
 // passé validateTvaDecisions, et retombe sinon sur la résolution directe.
+//
+// La décision l'emporte même si le taux du fichier existe par ailleurs : c'est
+// un choix explicite de l'utilisateur, pas une valeur par défaut à corriger.
 func (b *commitPlanner) lookupTva(rate float64, channel TvaChannel) (int, bool) {
 	if tvaID, ok := b.decisions.TvaMapping[TvaRateKey{Rate: rate, Channel: channel}]; ok {
-		if b.resolver.hasID(tvaID, rate, channel) {
+		if decided, _, exists := b.resolver.describeID(tvaID); exists && decided == channel {
 			return tvaID, true
 		}
 	}

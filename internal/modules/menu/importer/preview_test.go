@@ -671,7 +671,10 @@ func TestTvaResolverIgnoresUnknownChannels(t *testing.T) {
 	if _, ok := resolver.resolve(10, TvaChannelTakeAway); ok {
 		t.Fatal("un canal sans taux configuré ne doit pas se résoudre")
 	}
-	if resolver.hasID(42, 10, TvaChannelIn) {
-		t.Fatal("un tva_id d'un autre canal est accepté")
+	if channel, _, ok := resolver.describeID(42); !ok || channel == TvaChannelIn {
+		t.Fatalf("le taux 42 est décrit comme (%s, %v), want un canal autre que sur place", channel, ok)
+	}
+	if _, _, ok := resolver.describeID(999); ok {
+		t.Fatal("un tva_id inexistant est décrit comme actif")
 	}
 }
