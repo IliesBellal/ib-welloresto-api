@@ -606,3 +606,152 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		t.Fatalf("GetRealPaymentsData (merchant A, après B) ITESTCB = (%d, %v), want toujours 300", amount, ok)
 	}
 }
+
+// TestExportAccountingReport_Postgres est le seul test qui appelle réellement
+// AccountingService.ExportAccountingReport de bout en bout (pas seulement les
+// méthodes du repository) : c'est la garantie que service.go appelle bien
+// GetTrustedEnclosedRegisterIDs+GetRealPaymentsData et non plus l'ancien
+// GetPaymentsData si quelqu'un revert le branchement par erreur. L'upload R2
+// est intercepté par un faux serveur S3 (httptest) qui capture le PDF
+// uploadé, décompressé ensuite avec extractPDFText pour vérifier que le
+// total Encaissements du PDF généré correspond bien au réel attendu.
+func TestExportAccountingReport_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	acctRepo := NewAccountingRepository(db)
+	crRepo := cash_registers.NewCashRegisterRepository(db)
+	svc := NewAccountingService(acctRepo)
+
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	const siret = "siret-real-e2e"
+	const userID = "itest-real-e2e-user"
+
+	cleanup := func(merchantID string) {
+		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_custom_items WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_items WHERE cash_register_id IN (SELECT cash_register_id FROM cash_registers WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_desks WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
+	}
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, vat_number)
+		VALUES ('ITest E2E Merchant', 'a', '1', 's', '75001', 'Paris', $1, 'https://x', '06', $1, 'Europe/Paris', 'FR999')
+		RETURNING id`, siret).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+	t.Cleanup(func() { cleanup(merchantID) })
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, currency) VALUES ($1, now(), 'EUR')`, merchantID); err != nil {
+		t.Fatalf("seed merchant_parameters: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (user_id, name, first_name, last_name, password, email, token)
+		VALUES ($1, $1, 'Real', 'E2E', 'x', $2, $1)`, userID, userID+"@example.com"); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	var cashDeskID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO cash_desks (merchant_id, name) VALUES ($1, 'ITest E2E Desk')
+		RETURNING cash_desk_id`, merchantID).Scan(&cashDeskID); err != nil {
+		t.Fatalf("seed cash_desks: %v", err)
+	}
+
+	// Période définitivement passée (juin 2025, "aujourd'hui" étant après)
+	// pour qu'IsMonthClosed passe : mois terminé + toutes les commandes du
+	// merchant sur ce mois sont CLOSED (la seule seedée ici l'est).
+	juneStart := time.Date(2025, 6, 15, 10, 0, 0, 0, paris)
+
+	openReq := &models.OpenCashRegisterRequest{DeviceID: "itest-e2e-device"}
+	openReq.CashRegister.CashDeskID = strconv.FormatInt(cashDeskID, 10)
+	openReq.CashRegister.UserID = userID
+	openReq.CashRegister.CashFund = 0
+	openResp, err := crRepo.OpenCashRegister(ctx, openReq, merchantID)
+	if err != nil || openResp.CashRegister == nil {
+		t.Fatalf("OpenCashRegister: (%+v, %v)", openResp, err)
+	}
+	regIDStr := openResp.CashRegister.CashRegisterId
+	regID, err := strconv.ParseInt(regIDStr, 10, 64)
+	if err != nil {
+		t.Fatalf("parse regID: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE cash_registers SET start_date = $1 WHERE cash_register_id = $2`, juneStart, regID); err != nil {
+		t.Fatalf("force start_date: %v", err)
+	}
+
+	var orderID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, cash_register_id, order_num, brand, brand_status, state, price, TVA, HT, created_by, creation_date)
+		VALUES ($1, $2, 1, 'WELLO_RESTO', 'ACCEPTED', 'CLOSED', 0, 0, 0, $3, $4)
+		RETURNING order_id`, merchantID, regIDStr, userID, juneStart).Scan(&orderID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+		VALUES ($1, $2, $3, 650, 'ITESTE2E', $4, true)`, merchantID, userID, orderID, regIDStr); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+
+	if _, err := crRepo.CloseCashRegister(ctx, regIDStr, merchantID, &models.CloseCashRegisterRequest{}); err != nil {
+		t.Fatalf("CloseCashRegister: %v", err)
+	}
+	if err := crRepo.EncloseCashRegister(ctx, userID, regIDStr, "itest e2e close"); err != nil {
+		t.Fatalf("EncloseCashRegister: %v", err)
+	}
+
+	// Faux endpoint S3/R2 : capture le corps uploadé (le PDF), répond 200 OK.
+	var uploadedPDF []byte
+	var uploadedPath string
+	fakeR2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			body, _ := io.ReadAll(r.Body)
+			uploadedPDF = body
+			uploadedPath = r.URL.Path
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeR2.Close()
+
+	r2Client, err := r2.NewClient(r2.UploadConfig{
+		AccessKeyID:     "itest-key",
+		SecretAccessKey: "itest-secret",
+		Endpoint:        fakeR2.URL,
+		Bucket:          "itest-bucket",
+		PublicBaseURL:   fakeR2.URL,
+	})
+	if err != nil {
+		t.Fatalf("r2.NewClient: %v", err)
+	}
+
+	authedCtx := middleware.WithUser(ctx, &auth.UserLoginRow{UserID: userID, MerchantID: merchantID})
+
+	resp, err := svc.ExportAccountingReport(authedCtx, "itest-token", "2025-06-01", "2025-06-30", r2Client)
+	if err != nil {
+		t.Fatalf("ExportAccountingReport error: %v", err)
+	}
+	if resp.Status != "1" {
+		t.Fatalf("ExportAccountingReport = %+v, want Status=1 (erreur: %s)", resp, resp.Error)
+	}
+	if uploadedPDF == nil {
+		t.Fatalf("ExportAccountingReport : aucun PDF n'a été uploadé vers le faux R2 (path=%q)", uploadedPath)
+	}
+
+	text := extractPDFText(t, uploadedPDF)
+	if bytes.Contains([]byte(text), []byte("Aucune")) {
+		t.Fatalf("PDF généré par ExportAccountingReport : le placeholder ne devrait pas apparaître, il y a un registre de confiance avec du réel")
+	}
+	if !bytes.Contains([]byte(text), []byte("ITESTE2E")) || !bytes.Contains([]byte(text), []byte("6.50")) {
+		t.Fatalf("PDF généré par ExportAccountingReport : libellé/montant ITESTE2E=650 absents du rendu (%d octets de texte extrait) — le call site service.go semble ne pas utiliser GetTrustedEnclosedRegisterIDs/GetRealPaymentsData", len(text))
+	}
+}
