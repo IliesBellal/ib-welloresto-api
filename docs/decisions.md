@@ -1,5 +1,69 @@
 # Decisions
 
+### Rapport comptable — section Encaissements sur le réel des caisses closes (2026-08-11)
+
+- **Contexte** : un bug (`orders.price=0` alors que `orderitems` avait les
+  bons prix) a fait diverger le total TVA et le total Encaissements du
+  rapport comptable mensuel d'un merchant, révélant que la section
+  Encaissements (`AccountingRepository.GetPaymentsData`,
+  `internal/modules/pos/accounting/repository.go`) sommait le théorique en
+  direct (table `payments`), sans lien avec ce que le restaurateur déclare
+  réellement à la clôture de caisse. Décision produit (sur le modèle
+  Zelty) : la section Encaissements du PDF affiche désormais le **réel
+  uniquement** — `cash_registers_items` (figé à la clôture) +
+  `cash_registers_custom_items` (ajustements manuels du caissier) — pour
+  les registres `enclosed=true` dans la période, **sans repli théorique
+  mélangé dans ce rapport**. Un merchant/mois sans registre correctement
+  clôturé affiche une table vide avec un message explicite plutôt qu'un
+  tableau théorique.
+- **`GetPaymentsData` (théorique) non modifié** : reste utilisé tel quel
+  par `internal/modules/pos/reports` (page back-office séparée,
+  `/pos/reports/tva` et `/pos/reports/payments`, déjà l'extraction
+  théorique jour par jour) — aucune régression possible puisqu'aucun
+  fichier de ce module n'est touché.
+- **Nouvelles méthodes** `GetTrustedEnclosedRegisterIDs` et
+  `GetRealPaymentsData` (`accounting/repository.go`) :
+  - Garde-fou anti-dérive : `cash_registers_items` est un instantané figé
+    à la clôture, jamais recalculé. Avant de faire confiance à un
+    registre `enclosed`, son instantané est comparé à un recalcul live
+    des mêmes paiements (même filtre que `cashRegisterReportMOPSQL`,
+    `internal/modules/cash_registers/repository.go`). Le moindre écart
+    par `(cash_register_id, mop)` — ex. un paiement corrigé sur une
+    commande après que son registre a été enclosed, exactement le cas qui
+    a motivé ce chantier — écarte le **registre entier** du réel pour ce
+    rapport (pas de repli partiel mélangé).
+  - Exclusion de canal (`accountingExcludedChannelMOPs` :
+    `STRIPE`/`UBER_EATS`/`DELIVEROO`) : `cash_registers_items` est déjà
+    agrégé par `(cash_register_id, mop)` à la clôture et ne porte donc pas
+    nativement le filtre `brand`/`created_by` du théorique — Uber Eats et
+    Deliveroo ont leur propre gestion TVA à venir, `STRIPE` est
+    exclusivement ScanNOrder (confirmé par recherche exhaustive dans le
+    repo).
+  - `LEFT JOIN` volontaire vers `labels` (au lieu de `INNER JOIN` comme le
+    théorique) : un code MOP non libellé ne doit jamais faire disparaître
+    silencieusement un montant du total censé être le plus fiable —
+    affiché sous son code brut à défaut de libellé. Un custom item à
+    texte libre sans correspondance MOP apparaît de la même façon comme
+    sa propre ligne.
+- **Immuabilité post-enclose durcie** (prérequis) :
+  `AddCustomItem`/`DeleteCustomItem`
+  (`internal/modules/cash_registers/repository.go`) ne vérifiaient que
+  `closed`, jamais `enclosed` — rien n'empêchait de modifier les custom
+  items d'un registre déjà verrouillé définitivement. Nouvelle méthode
+  `isCashRegisterEditable` (`closed AND NOT enclosed`), utilisée
+  uniquement par ces deux méthodes. `isCashRegisterClosed` reste inchangée
+  pour `GetCashRegisterSummary` et `EncloseCashRegister`, qui doivent
+  continuer de fonctionner sur un registre déjà enclosed (trouvé en
+  écrivant les tests : réutiliser `isCashRegisterClosed` pour tout aurait
+  cassé l'affichage du résumé d'un registre déjà clôturé).
+- **Non traité (limite assumée)** : un registre ouvert en toute fin de
+  mois et encore ouvert après minuit local pourrait contenir des
+  commandes du mois suivant, comptées dans le réel du mauvais mois
+  (ancrage sur `start_date`, cohérent avec l'ancrage `creation_date` des
+  commandes ailleurs dans le module). Cas marginal, non traité par du
+  code cette itération — un `log.Warn` signale les registres en dérive
+  pour investigation manuelle.
+
 ### Traçabilité HACCP (photos + commentaire) — trou schéma Postgres cible (2026-07-23)
 
 - Migration `067_haccp_traceability` (`haccp_traceability_records`/`haccp_traceability_photos`) ajoutée après la préparation Postgres, comme `planning_day_comments` en son temps (voir `docs/migration-postgres/26-planning-day-comments-integration.md`) : il manque encore sa traduction dans `04-schema-postgres-target.sql` (+ mise à jour `03-table-usage-audit.md`/`07-module-inventory.md`) — à rattraper avant le cutover Postgres (Phase 8), sinon la section traçabilité de `internal/modules/haccp/postgres_integration_test.go` échouera contre le Postgres de dev.
