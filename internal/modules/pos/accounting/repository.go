@@ -494,23 +494,34 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 	// Un registre est "de confiance" seulement si toutes ses paires
 	// (cash_register_id, mop) — figées comme live — se correspondent
 	// exactement. Le moindre écart, ou une clé présente d'un seul côté,
-	// écarte le registre entier.
-	drifted := make(map[int64]bool)
+	// écarte le registre entier. On garde le détail par MOP (montant figé vs
+	// live) pour que le log d'alerte soit exploitable sans avoir à
+	// re-dériver l'écart manuellement.
+	type driftDetail struct {
+		mop    string
+		frozen int64
+		live   int64
+	}
+	driftedDetails := make(map[int64][]driftDetail)
 	for key, frozenAmount := range frozen {
 		if liveAmount, ok := live[key]; !ok || liveAmount != frozenAmount {
-			drifted[key.registerID] = true
+			driftedDetails[key.registerID] = append(driftedDetails[key.registerID], driftDetail{mop: key.mop, frozen: frozenAmount, live: liveAmount})
 		}
 	}
-	for key := range live {
+	for key, liveAmount := range live {
 		if _, ok := frozen[key]; !ok {
-			drifted[key.registerID] = true
+			driftedDetails[key.registerID] = append(driftedDetails[key.registerID], driftDetail{mop: key.mop, frozen: 0, live: liveAmount})
 		}
 	}
 
 	trusted := make([]int64, 0, len(candidateIDs))
 	for _, id := range candidateIDs {
-		if drifted[id] {
-			log.Warn(fmt.Sprintf("cash register %d (merchant %s) excluded from 'réel' accounting: frozen cash_registers_items no longer matches live payments — likely a payment corrected after enclose", id, merchantID))
+		if details, ok := driftedDetails[id]; ok {
+			parts := make([]string, 0, len(details))
+			for _, d := range details {
+				parts = append(parts, fmt.Sprintf("mop=%s frozen=%d live=%d", d.mop, d.frozen, d.live))
+			}
+			log.Warn(fmt.Sprintf("cash register %d (merchant %s) excluded from 'réel' accounting: frozen cash_registers_items no longer matches live payments [%s] — likely a payment corrected after enclose", id, merchantID, strings.Join(parts, ", ")))
 			continue
 		}
 		trusted = append(trusted, id)
@@ -551,7 +562,7 @@ func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, register
 	sqlQuery := `
 		SELECT label, SUM(amount) AS amount
 		FROM (
-			SELECT COALESCE(l.label, cri.mop) AS label, cri.amount AS amount
+			SELECT COALESCE(NULLIF(l.label, ''), cri.mop) AS label, cri.amount AS amount
 			FROM cash_registers_items cri
 			LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = cri.mop AND l.lang = 'FR'
 			WHERE cri.cash_register_id IN (` + idInClause + `)

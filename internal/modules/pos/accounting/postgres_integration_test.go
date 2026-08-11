@@ -498,6 +498,20 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		t.Fatalf("buildPDFReport (aucun paiement réel) : message placeholder absent du rendu (%d octets de texte extrait)", len(emptyText))
 	}
 
+	// Fix A (audit) : un code MOP avec une ligne `labels` existante mais au
+	// libellé vide ('') doit retomber sur le code brut, exactement comme un
+	// code sans aucune ligne `labels` — pas une ligne à blanc. Asymétrie
+	// trouvée entre les deux branches de l'UNION (cash_registers_items ne
+	// gérait que NULL, pas ''), corrigée pour utiliser NULLIF des deux côtés.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO labels (label_value, label_type, lang, label)
+		VALUES ('ITESTEMPTY', 'mop', 'FR', '')`); err != nil {
+		t.Fatalf("seed labels (empty label): %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM labels WHERE label_value = 'ITESTEMPTY' AND label_type = 'mop'`)
+	})
+
 	// (b)+(e) Un registre enclosed, MOP connus + un canal hors périmètre.
 	// 'ITESTES'/'ITESTCB' sont des codes propres à ce test, volontairement
 	// absents de `labels` (table de référence globale partagée, où de vrais
@@ -508,6 +522,7 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		{mop: "ITESTES", amount: 500},
 		{mop: "ITESTCB", amount: 300},
 		{mop: "UBER_EATS", amount: 999},
+		{mop: "ITESTEMPTY", amount: 123},
 	}, nil)
 
 	// (c) Un second registre avec un custom item à libellé libre.
@@ -557,6 +572,13 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	}
 	if _, ok := amountFor(realA, "UBER_EATS"); ok {
 		t.Fatalf("GetRealPaymentsData (merchant A) : UBER_EATS ne doit pas apparaître (canal hors périmètre)")
+	}
+	// Fix A (audit) : label='' en base -> repli sur le code brut, pas de ligne à blanc.
+	if amount, ok := amountFor(realA, "ITESTEMPTY"); !ok || amount != 123 {
+		t.Fatalf("GetRealPaymentsData (merchant A) ITESTEMPTY = (%d, %v), want 123 sous le code brut (labels.label='' doit retomber comme si absent)", amount, ok)
+	}
+	if _, ok := amountFor(realA, ""); ok {
+		t.Fatalf("GetRealPaymentsData (merchant A) : une ligne à libellé vide ('') ne doit jamais apparaître")
 	}
 
 	// (a) contrepreuve : avec du réel présent, le placeholder ne doit pas
