@@ -1,5 +1,34 @@
 # Decisions
 
+### Rapport comptable "réel" — deux correctifs d'audit + dette de test notée (2026-08-11)
+
+- **Asymétrie `COALESCE`/`NULLIF` corrigée** : la branche
+  `cash_registers_items` de `GetRealPaymentsData`
+  (`internal/modules/pos/accounting/repository.go`) ne gérait qu'un
+  `labels.label` `NULL` (`COALESCE(l.label, cri.mop)`), pas une ligne
+  `labels` existante mais au libellé vide (`''`) — contrairement à la
+  branche `cash_registers_custom_items`, déjà en
+  `COALESCE(NULLIF(l.label, ''), ...)`. Un libellé `''` produisait une
+  ligne à blanc dans le rapport (ou pire, une ligne invisible : `''` fait
+  disparaître le montant du regroupement par libellé attendu) au lieu du
+  repli sur le code brut. Alignée sur le même pattern des deux côtés.
+  Confirmé par un cas de test dédié (`labels.label=''` pour un MOP connu) :
+  échoue sans le correctif, passe avec.
+- **Détail du `log.Warn` de dérive enrichi** : `GetTrustedEnclosedRegisterIDs`
+  loggait seulement `cash_register_id`/`merchant_id` en cas d'écart. Ajoute
+  le(s) MOP en dérive avec montant figé (`cash_registers_items`) et montant
+  live recalculé, pour que le support puisse diagnostiquer un événement de
+  dérive sans avoir à re-dériver l'écart manuellement en base.
+- **Dette de test notée, non traitée ici** : ce `log.Warn` n'est vérifié
+  que par lecture de code, pas par une assertion automatisée — les
+  binaires de test `postgres_integration` n'appellent jamais
+  `zap.ReplaceGlobals` (contrairement à `cmd/api/main.go`), donc
+  `logger.FromContext` retombe sur le logger zap global no-op et rien
+  n'est capturable depuis un test tel quel. Pour fermer ce trou
+  proprement : injecter un logger observer via `logger.WithLogger(ctx,
+  ...)` dans le contexte de test (pattern à créer, n'existe pas encore
+  dans ce dépôt) plutôt que de compter sur `context.Background()` nu.
+
 ### `TestPOSAccountingReports_Postgres` — échec pré-existant, sans rapport avec ce dépôt (2026-08-11)
 
 - Le sous-test `GetTVAData = (..., want 1 ligne)` de
