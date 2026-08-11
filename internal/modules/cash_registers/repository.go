@@ -761,7 +761,7 @@ func (r *CashRegisterRepository) AddCustomItem(ctx context.Context, cashRegister
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
+	if !r.isCashRegisterEditable(ctx, cashRegisterID) {
 		return "", models.ErrCashRegisterStillOpen
 	}
 
@@ -798,11 +798,38 @@ func (r *CashRegisterRepository) isCashRegisterClosed(ctx context.Context, cashR
 	return closed
 }
 
+// isCashRegisterEditable indique si les custom items du registre peuvent
+// encore être modifiés : clôturé (closed) mais pas encore verrouillé
+// définitivement (enclosed). Distinct de isCashRegisterClosed — celui-ci
+// reste utilisé tel quel par GetCashRegisterSummary (une commande doit
+// pouvoir consulter un registre déjà enclosed) et EncloseCashRegister (ne
+// doit pas se comporter différemment pour un registre déjà enclosed). Une
+// fois enclosed, cash_registers_items/cash_registers_custom_items doivent
+// rester immuables — c'est l'hypothèse dont dépend le "réel" du rapport
+// comptable (accounting.GetRealPaymentsData).
+func (r *CashRegisterRepository) isCashRegisterEditable(ctx context.Context, cashRegisterID string) bool {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	var closed, enclosed bool
+	err := db.QueryRowContext(ctx, `
+		SELECT closed, enclosed
+		FROM cash_registers
+		WHERE cash_register_id = ?
+	`, cashRegisterID).Scan(&closed, &enclosed)
+
+	if err != nil {
+		log.Error(err.Error())
+		return false // If error, consider not editable
+	}
+	return closed && !enclosed
+}
+
 func (r *CashRegisterRepository) DeleteCustomItem(ctx context.Context, cashRegisterID string, itemID string, user *auth.UserLoginRow) error {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	if !r.isCashRegisterClosed(ctx, cashRegisterID) {
+	if !r.isCashRegisterEditable(ctx, cashRegisterID) {
 		return models.ErrCashRegisterStillOpen
 	}
 

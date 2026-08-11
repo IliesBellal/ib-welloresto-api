@@ -476,16 +476,22 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 		t.Fatalf("expected MOP items + 1 custom item, got %d / %d", len(cr.Items), len(cr.CustomItems))
 	}
 
-	// --- DeleteCustomItem (soft delete boolean) ---
-	if err := repo.DeleteCustomItem(ctx, regID, itemID, user); err != nil {
-		t.Fatalf("DeleteCustomItem failed against postgres: %v", err)
+	// --- AddCustomItem / DeleteCustomItem rejetés une fois enclosed : le
+	// registre doit rester immuable (cf. accounting.GetRealPaymentsData, qui
+	// suppose que cash_registers_items/cash_registers_custom_items ne bougent
+	// plus après enclose). ---
+	if _, err := repo.AddCustomItem(ctx, regID, &models.AddCustomItemRequest{Label: "Trop tard", Value: 50}, user); err != models.ErrCashRegisterStillOpen {
+		t.Fatalf("AddCustomItem after enclose: expected ErrCashRegisterStillOpen, got %v", err)
+	}
+	if err := repo.DeleteCustomItem(ctx, regID, itemID, user); err != models.ErrCashRegisterStillOpen {
+		t.Fatalf("DeleteCustomItem after enclose: expected ErrCashRegisterStillOpen, got %v", err)
 	}
 	summary, err = repo.GetCashRegisterSummary(ctx, regID, merchantID)
 	if err != nil {
-		t.Fatalf("GetCashRegisterSummary (after delete) failed: %v", err)
+		t.Fatalf("GetCashRegisterSummary (after rejected mutations) failed: %v", err)
 	}
-	if len(summary.CashRegister.CustomItems) != 0 {
-		t.Fatalf("expected no custom items after soft delete, got %+v", summary.CashRegister.CustomItems)
+	if len(summary.CashRegister.CustomItems) != 1 {
+		t.Fatalf("expected the custom item to remain untouched after enclose, got %+v", summary.CashRegister.CustomItems)
 	}
 
 	// --- GetCashRegisterHistory (IN dynamique + agrégats paiements) ---
