@@ -1,5 +1,29 @@
 # Decisions
 
+### `TestPOSAccountingReports_Postgres` — échec pré-existant, sans rapport avec ce dépôt (2026-08-11)
+
+- Le sous-test `GetTVAData = (..., want 1 ligne)` de
+  `TestPOSAccountingReports_Postgres`
+  (`internal/modules/pos/accounting/postgres_integration_test.go`) échoue
+  contre le Postgres de dev actuel : une vraie catégorie `tva_id=-1`
+  ("TVA Delivery fees 20%", `tva_desc` ≠ `'itest'`) existe déjà dans la base
+  partagée, ce que l'assertion (écrite avant l'existence de cette ligne)
+  n'anticipait pas — `GetTVAData` retourne une ligne "frais de livraison" à
+  TTC=0 pour toute commande sans frais de livraison dès que cette catégorie
+  sentinelle existe globalement (`repository.go`, jointure
+  `tva_fees.tva_id = '-1'` sans filtre `delivery_fees > 0`).
+- **Confirmé indépendant du chantier "réel des caisses closes"** (entrée
+  suivante) : reproduit à l'identique en stashant les 3 commits de ce
+  chantier et en relançant le test sur le code d'origine, contre la même
+  base. Aucun fichier de ce chantier ne touche `GetTVAData`,
+  `tva_categories`, ni les fixtures de ce test.
+- **Non corrigé ici** (hors périmètre) : soit scoper l'assertion aux lignes
+  du test (même pattern que `TestGetCashRegisterReport_Postgres`, qui filtre
+  déjà ses assertions par clé plutôt que par nombre total de lignes, pour
+  cette même raison de table de référence globale partagée), soit filtrer
+  `delivery_fees > 0` dans la branche frais de livraison de `GetTVAData` —
+  à trancher et traiter dans un ticket dédié.
+
 ### Rapport comptable — section Encaissements sur le réel des caisses closes (2026-08-11)
 
 - **Contexte** : un bug (`orders.price=0` alors que `orderitems` avait les
