@@ -33,7 +33,7 @@ func (h *ReservationHandler) HandleGetOpenHours(w http.ResponseWriter, r *http.R
 	response := h.svc.GetOpenHours(r.Context(), slug)
 
 	// Envoi de la réponse formatée
-	models.SendJSON(w, 200, "rsv", "update.booking", response)
+	models.SendJSON(w, 200, "rsv", "get_open_hours", response)
 }
 
 func (h *ReservationHandler) HandleGetAvailability(w http.ResponseWriter, r *http.Request) {

@@ -3,17 +3,65 @@
 package accounting
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/infrastructure/r2"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/cash_registers"
 	"welloresto-api/internal/modules/pos/reports"
 )
+
+// extractPDFText décompresse les content streams FlateDecode d'un PDF
+// gofpdf (compression activée par défaut) et concatène leur contenu brut, de
+// façon à pouvoir chercher un texte attendu dans le rendu réel plutôt que de
+// se fier uniquement aux données en amont. Le texte est encodé cp1252 par
+// `translate()` dans buildPDFReport : ne chercher que des sous-chaînes
+// ASCII des libellés attendus (pas d'accents) pour rester indépendant de cet
+// encodage.
+func extractPDFText(t *testing.T, pdfBytes []byte) string {
+	t.Helper()
+	var out bytes.Buffer
+	const startMarker = "stream"
+	const endMarker = "endstream"
+	pos := 0
+	for {
+		si := bytes.Index(pdfBytes[pos:], []byte(startMarker))
+		if si < 0 {
+			break
+		}
+		si += pos + len(startMarker)
+		for si < len(pdfBytes) && (pdfBytes[si] == '\r' || pdfBytes[si] == '\n') {
+			si++
+		}
+		ei := bytes.Index(pdfBytes[si:], []byte(endMarker))
+		if ei < 0 {
+			break
+		}
+		ei += si
+		block := pdfBytes[si:ei]
+		if r, err := zlib.NewReader(bytes.NewReader(block)); err == nil {
+			decompressed, readErr := io.ReadAll(r)
+			if readErr == nil {
+				out.Write(decompressed)
+			}
+		} else {
+			out.Write(block)
+		}
+		pos = ei + len(endMarker)
+	}
+	return out.String()
+}
 
 // Vérification accounting + reports : agrégats TVA/paiements sur données
 // réelles (DATE_FORMAT -> to_char, IFNULL -> COALESCE, ROUND -> numeric).
@@ -436,6 +484,20 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		t.Fatalf("GetRealPaymentsData (aucun registre) = (%+v, %v), want vide", realNone, err)
 	}
 
+	// (a) suite : le PDF doit afficher le message placeholder plutôt qu'un
+	// tableau vide silencieux — assertion sur le rendu réel (stream PDF
+	// décompressé), pas seulement sur les données en amont.
+	svc := NewAccountingService(acctRepo)
+	header := &MerchantHeader{MerchantName: "ITest Real Merchant", SIRET: "000", Currency: "EUR", Timezone: "Europe/Paris"}
+	emptyPDF, err := svc.buildPDFReport(2025, 6, header, nil, realNone, periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
+	if err != nil {
+		t.Fatalf("buildPDFReport (aucun paiement réel): %v", err)
+	}
+	emptyText := extractPDFText(t, emptyPDF)
+	if !bytes.Contains([]byte(emptyText), []byte("Aucune")) || !bytes.Contains([]byte(emptyText), []byte("caisse valid")) {
+		t.Fatalf("buildPDFReport (aucun paiement réel) : message placeholder absent du rendu (%d octets de texte extrait)", len(emptyText))
+	}
+
 	// (b)+(e) Un registre enclosed, MOP connus + un canal hors périmètre.
 	// 'ITESTES'/'ITESTCB' sont des codes propres à ce test, volontairement
 	// absents de `labels` (table de référence globale partagée, où de vrais
@@ -495,6 +557,20 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	}
 	if _, ok := amountFor(realA, "UBER_EATS"); ok {
 		t.Fatalf("GetRealPaymentsData (merchant A) : UBER_EATS ne doit pas apparaître (canal hors périmètre)")
+	}
+
+	// (a) contrepreuve : avec du réel présent, le placeholder ne doit pas
+	// apparaître et les montants doivent être lisibles dans le rendu.
+	filledPDF, err := svc.buildPDFReport(2025, 6, header, nil, realA, periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
+	if err != nil {
+		t.Fatalf("buildPDFReport (avec réel): %v", err)
+	}
+	filledText := extractPDFText(t, filledPDF)
+	if bytes.Contains([]byte(filledText), []byte("Aucune")) {
+		t.Fatalf("buildPDFReport (avec réel) : le message placeholder ne devrait pas apparaître quand il y a du réel")
+	}
+	if !bytes.Contains([]byte(filledText), []byte("ITESTES")) || !bytes.Contains([]byte(filledText), []byte("7.00")) {
+		t.Fatalf("buildPDFReport (avec réel) : libellé/montant ITESTES=700 absents du rendu (%d octets de texte extrait)", len(filledText))
 	}
 
 	// --- (h) Merchant B : isolation stricte, même MOP, même période ---

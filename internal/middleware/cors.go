@@ -25,6 +25,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 
 		"https://rsv-staging.onrender.com": true,
 		"https://rsv.onrender.com":         true,
+		"https://rsv.welloresto.fr":        true,
 
 		"https://wello-resto.postman.co": true,
 
@@ -55,6 +56,7 @@ func CORSMiddleware() *cors.Cors {
 			"https://rsv-staging.onrender.com",
 			"https://rsv-prod.onrender.com",
 			"https://rsv.onrender.com",
+			"https://rsv.welloresto.fr",
 
 			// Postman
 			"https://wello-resto.postman.co",
