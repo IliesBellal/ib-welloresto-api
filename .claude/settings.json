@@ -25,7 +25,19 @@
       "Bash(export MODE=SEQUENCES)",
       "Bash(export OUT_FILE='C:\\\\Users\\\\Ilies\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\\\1da9321a-1aff-471b-b8fc-c59f16823aa3\\\\scratchpad\\\\sequences_check.json')",
       "Bash(gofmt -w internal/modules/menu/importer/preview.go internal/modules/menu/importer/commit_plan.go)",
-      "Bash(echo \"vet: $?\")"
+      "Bash(echo \"vet: $?\")",
+      "Bash(npx --prefix \"d:/Desktop/DTL/Project/git-projects/wello-back-office\" tsc --noEmit -p \"d:/Desktop/DTL/Project/git-projects/wello-back-office\")",
+      "Bash(\"d:/Desktop/DTL/Project/git-projects/wello-back-office/node_modules/.bin/tsc.cmd\" --noEmit -p \"d:/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.json\")",
+      "Bash(\"d:/Desktop/DTL/Project/git-projects/wello-back-office/node_modules/.bin/tsc.cmd\" -b \"d:/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.json\" --force)",
+      "Bash(gofmt -w internal/modules/menu/importer/models.go)",
+      "Bash(d:/Desktop/DTL/Project/git-projects/wello-back-office/node_modules/.bin/eslint.cmd d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/manual/ImportManualRow.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/ImportManualStep.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/ProductImportDialog.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/lib/manualImport.ts d:/Desktop/DTL/Project/git-projects/wello-back-office/src/pages/Menu.tsx)",
+      "Bash(d:/Desktop/DTL/Project/git-projects/wello-back-office/node_modules/.bin/eslint.cmd --config d:/Desktop/DTL/Project/git-projects/wello-back-office/eslint.config.js d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/manual/ImportManualRow.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/ImportManualStep.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/components/menu/import/ProductImportDialog.tsx d:/Desktop/DTL/Project/git-projects/wello-back-office/src/lib/manualImport.ts d:/Desktop/DTL/Project/git-projects/wello-back-office/src/pages/Menu.tsx)",
+      "Bash(node \"C:/Users/Ilies/AppData/Local/Temp/claude/d--Desktop-DTL-Project-git-projects-ib-welloresto-api/5d38e3e9-13c7-4372-aab6-c5d3d87346ba/scratchpad/lint-check.mjs\")",
+      "Bash(git -C \"/d/Desktop/DTL/Project/git-projects/wello-back-office\" status --porcelain)",
+      "Bash(rm -f \"/d/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.app.tsbuildinfo\" \"/d/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.node.tsbuildinfo\")",
+      "Bash(git -C \"/d/Desktop/DTL/Project/git-projects/wello-back-office\" diff -- src/pages/Menu.tsx)",
+      "Bash(gofmt -w internal/modules/menu/import_repository.go)",
+      "Bash(gofmt -w internal/modules/menu/import_commit_repository.go)"
     ]
   }
 }
