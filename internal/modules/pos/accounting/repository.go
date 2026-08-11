@@ -356,6 +356,258 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID s
 	return result, nil
 }
 
+// accountingExcludedChannelMOPs liste les codes MOP de canaux hors périmètre
+// du rapport WELLO_RESTO (Uber Eats/Deliveroo : TVA pas encore gérée par
+// notre système ; STRIPE : exclusivement ScanNOrder — commandes déjà exclues
+// de GetPaymentsData/GetTVAData via created_by). cash_registers_items /
+// cash_registers_custom_items sont déjà agrégés par (cash_register_id, mop) à
+// la clôture de caisse et ne portent donc pas nativement le filtre
+// brand/created_by des requêtes ci-dessus : cette liste le reproduit pour le
+// "réel".
+var accountingExcludedChannelMOPs = []string{"STRIPE", "UBER_EATS", "DELIVEROO"}
+
+// GetTrustedEnclosedRegisterIDs retourne les cash_register_id "de confiance"
+// pour le réel du rapport comptable : registres enclosed du merchant dont
+// start_date tombe dans [from, toExclusive), et dont l'instantané figé à la
+// clôture (cash_registers_items) correspond toujours à un recalcul live des
+// mêmes paiements. Un écart signale une correction faite après la clôture
+// définitive du registre (ex. paiement ajouté a posteriori sur une commande
+// dont le registre est déjà enclosed) : le registre entier est alors écarté
+// du réel pour ce rapport — pas de repli partiel mélangé, cf. plan.
+func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]int64, error) {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	candidateRows, err := db.QueryContext(ctx, `
+		SELECT cash_register_id
+		FROM cash_registers
+		WHERE merchant_id = ?
+		  AND enclosed = TRUE
+		  AND start_date >= ?
+		  AND start_date < ?
+	`, merchantID, acctUTCParam(from), acctUTCParam(toExclusive))
+	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching candidate enclosed registers: %v", err))
+		return nil, err
+	}
+	defer candidateRows.Close()
+
+	var candidateIDs []int64
+	for candidateRows.Next() {
+		var id int64
+		if err := candidateRows.Scan(&id); err != nil {
+			log.Error(fmt.Sprintf("Error scanning candidate register id: %v", err))
+			return nil, err
+		}
+		candidateIDs = append(candidateIDs, id)
+	}
+	if err := candidateRows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating candidate registers: %v", err))
+		return nil, err
+	}
+	if len(candidateIDs) == 0 {
+		return nil, nil
+	}
+
+	idPlaceholders := make([]string, len(candidateIDs))
+	frozenArgs := make([]interface{}, len(candidateIDs))
+	liveArgs := make([]interface{}, len(candidateIDs))
+	for i, id := range candidateIDs {
+		idPlaceholders[i] = "?"
+		frozenArgs[i] = id
+		liveArgs[i] = strconv.FormatInt(id, 10) // payments.cash_register_id est varchar
+	}
+	idInClause := strings.Join(idPlaceholders, ",")
+
+	// Instantané figé (cash_registers_items), par (cash_register_id, mop).
+	frozenRows, err := db.QueryContext(ctx, `
+		SELECT cash_register_id, mop, amount
+		FROM cash_registers_items
+		WHERE cash_register_id IN (`+idInClause+`)
+	`, frozenArgs...)
+	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching frozen cash_registers_items: %v", err))
+		return nil, err
+	}
+	defer frozenRows.Close()
+
+	type registerMOPKey struct {
+		registerID int64
+		mop        string
+	}
+	frozen := make(map[registerMOPKey]int64)
+	for frozenRows.Next() {
+		var key registerMOPKey
+		var amount int64
+		if err := frozenRows.Scan(&key.registerID, &key.mop, &amount); err != nil {
+			log.Error(fmt.Sprintf("Error scanning frozen cash_registers_items row: %v", err))
+			return nil, err
+		}
+		frozen[key] = amount
+	}
+	if err := frozenRows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating frozen cash_registers_items: %v", err))
+		return nil, err
+	}
+
+	// Recalcul live des mêmes paiements, mêmes filtres que
+	// cashRegisterReportMOPSQL (cash_registers/repository.go) — sans filtre
+	// canal/brand, pour rester comparable à ce qui a produit l'instantané.
+	liveRows, err := db.QueryContext(ctx, `
+		SELECT `+acctCastChar("p.cash_register_id")+` AS cash_register_id, p.mop, SUM(p.amount) AS amount
+		FROM orders o
+		INNER JOIN payments p ON p.order_id = o.order_id
+		WHERE p.cash_register_id IN (`+idInClause+`)
+		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND p.enabled IS TRUE
+		GROUP BY `+acctCastChar("p.cash_register_id")+`, p.mop
+	`, liveArgs...)
+	if err != nil {
+		log.Error(fmt.Sprintf("Error recomputing live cash register totals: %v", err))
+		return nil, err
+	}
+	defer liveRows.Close()
+
+	live := make(map[registerMOPKey]int64)
+	for liveRows.Next() {
+		var registerIDStr, mop string
+		var amount int64
+		if err := liveRows.Scan(&registerIDStr, &mop, &amount); err != nil {
+			log.Error(fmt.Sprintf("Error scanning live register total row: %v", err))
+			return nil, err
+		}
+		registerID, convErr := strconv.ParseInt(registerIDStr, 10, 64)
+		if convErr != nil {
+			// cash_register_id non numérique : ne devrait pas arriver pour un
+			// registre candidat (sentinelles comme 'SCANNORDER'/'KIOSK' sont
+			// requalifiées vers l'id réel avant l'enclose) — ignorer plutôt
+			// que planter le rapport.
+			continue
+		}
+		live[registerMOPKey{registerID: registerID, mop: mop}] = amount
+	}
+	if err := liveRows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating live register totals: %v", err))
+		return nil, err
+	}
+
+	// Un registre est "de confiance" seulement si toutes ses paires
+	// (cash_register_id, mop) — figées comme live — se correspondent
+	// exactement. Le moindre écart, ou une clé présente d'un seul côté,
+	// écarte le registre entier.
+	drifted := make(map[int64]bool)
+	for key, frozenAmount := range frozen {
+		if liveAmount, ok := live[key]; !ok || liveAmount != frozenAmount {
+			drifted[key.registerID] = true
+		}
+	}
+	for key := range live {
+		if _, ok := frozen[key]; !ok {
+			drifted[key.registerID] = true
+		}
+	}
+
+	trusted := make([]int64, 0, len(candidateIDs))
+	for _, id := range candidateIDs {
+		if drifted[id] {
+			log.Warn(fmt.Sprintf("cash register %d (merchant %s) excluded from 'réel' accounting: frozen cash_registers_items no longer matches live payments — likely a payment corrected after enclose", id, merchantID))
+			continue
+		}
+		trusted = append(trusted, id)
+	}
+
+	return trusted, nil
+}
+
+// GetRealPaymentsData somme le "réel" des registres de caisse passés en
+// paramètre (déjà filtrés par GetTrustedEnclosedRegisterIDs) : le montant
+// figé par MOP à la clôture (cash_registers_items) plus les ajustements
+// manuels actifs (cash_registers_custom_items). Contrairement à
+// GetPaymentsData, la jointure vers labels est un LEFT JOIN délibéré : un
+// code MOP non libellé ne doit jamais faire disparaître silencieusement un
+// montant du total censé être le plus fiable — il apparaît sous son code brut
+// à défaut de libellé. Un custom item à texte libre sans correspondance MOP
+// apparaît de la même façon comme sa propre ligne (décision produit).
+func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, registerIDs []int64) ([]PaymentRow, error) {
+	if len(registerIDs) == 0 {
+		return nil, nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	idPlaceholders := make([]string, len(registerIDs))
+	for i := range registerIDs {
+		idPlaceholders[i] = "?"
+	}
+	idInClause := strings.Join(idPlaceholders, ",")
+
+	excludedPlaceholders := make([]string, len(accountingExcludedChannelMOPs))
+	for i := range accountingExcludedChannelMOPs {
+		excludedPlaceholders[i] = "?"
+	}
+	excludedInClause := strings.Join(excludedPlaceholders, ",")
+
+	sqlQuery := `
+		SELECT label, SUM(amount) AS amount
+		FROM (
+			SELECT COALESCE(l.label, cri.mop) AS label, cri.amount AS amount
+			FROM cash_registers_items cri
+			LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = cri.mop AND l.lang = 'FR'
+			WHERE cri.cash_register_id IN (` + idInClause + `)
+			  AND cri.mop NOT IN (` + excludedInClause + `)
+
+			UNION ALL
+
+			SELECT COALESCE(NULLIF(l.label, ''), crci.label) AS label, crci.amount AS amount
+			FROM cash_registers_custom_items crci
+			LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = crci.label AND l.lang = 'FR'
+			WHERE crci.cash_register_id IN (` + idInClause + `)
+			  AND crci.enabled = TRUE
+			  AND crci.label NOT IN (` + excludedInClause + `)
+		) real_payments
+		GROUP BY label
+		ORDER BY label
+	`
+
+	args := make([]interface{}, 0, 2*(len(registerIDs)+len(accountingExcludedChannelMOPs)))
+	for _, id := range registerIDs {
+		args = append(args, id)
+	}
+	for _, mop := range accountingExcludedChannelMOPs {
+		args = append(args, mop)
+	}
+	for _, id := range registerIDs {
+		args = append(args, id)
+	}
+	for _, mop := range accountingExcludedChannelMOPs {
+		args = append(args, mop)
+	}
+
+	rows, err := db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching real payments data: %v", err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []PaymentRow
+	for rows.Next() {
+		var row PaymentRow
+		if err := rows.Scan(&row.Label, &row.Amount); err != nil {
+			log.Error(fmt.Sprintf("Error scanning real payment row: %v", err))
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating real payment rows: %v", err))
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // interpolateQuery replaces query placeholders with actual parameter values for logging/debugging
 func interpolateQuery(query string, args []interface{}) string {
 	argIndex := 0

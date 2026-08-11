@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/cash_registers"
 	"welloresto-api/internal/modules/pos/reports"
 )
 
@@ -259,5 +262,271 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 	}
 	if len(payReports[0].Payments) != 1 || payReports[0].Payments[0].Amount != 2200 {
 		t.Fatalf("GetPaymentsReportData jour = %+v", payReports[0])
+	}
+}
+
+// mopPayment / customItemSeed : paramètres de seed pour openCloseRegister.
+type mopPayment struct {
+	mop    string
+	amount int
+}
+
+type customItemSeed struct {
+	label string
+	value int
+}
+
+// TestGetRealPaymentsData_Postgres vérifie le "réel" du rapport comptable
+// (GetTrustedEnclosedRegisterIDs + GetRealPaymentsData) : aucun registre
+// enclosed -> vide (comportement identique à l'ancien GetPaymentsData non
+// touché, cf. TestPOSAccountingReports_Postgres ci-dessus qui continue de le
+// couvrir séparément) ; registre enclosed sans dérive -> réel utilisé, MOP
+// non libellé affiché sous son code brut ; custom item à libellé libre ->
+// ligne à part ; canaux hors périmètre (UBER_EATS/STRIPE/DELIVEROO)
+// exclus ; registre en dérive (paiement corrigé après enclose) -> écarté
+// entièrement, pas de repli partiel ; isolation stricte entre marchands.
+func TestGetRealPaymentsData_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	acctRepo := NewAccountingRepository(db)
+	crRepo := cash_registers.NewCashRegisterRepository(db)
+
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	periodStart := time.Date(2025, 6, 1, 0, 0, 0, 0, paris)
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	insidePeriod := periodStart.Add(2 * time.Hour)
+
+	type fixture struct {
+		merchantID string
+		userID     string
+		cashDeskID int64
+	}
+
+	setupMerchant := func(siret, userID string) fixture {
+		t.Helper()
+		var merchantIntID int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, vat_number)
+			VALUES ('ITest Real Merchant', 'a', '1', 's', '75001', 'Paris', $1, 'https://x', '06', $1, 'Europe/Paris', 'FR999')
+			RETURNING id`, siret).Scan(&merchantIntID); err != nil {
+			t.Fatalf("seed merchant %s: %v", siret, err)
+		}
+		merchantID := strconv.FormatInt(merchantIntID, 10)
+		if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, currency) VALUES ($1, now(), 'EUR')`, merchantID); err != nil {
+			t.Fatalf("seed merchant_parameters %s: %v", siret, err)
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO users (user_id, name, first_name, last_name, password, email, token)
+			VALUES ($1, $2, 'Real', 'Testeur', 'x', $3, $1)`, userID, userID, userID+"@example.com"); err != nil {
+			t.Fatalf("seed users %s: %v", userID, err)
+		}
+		var cashDeskID int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO cash_desks (merchant_id, name) VALUES ($1, 'ITest Real Desk')
+			RETURNING cash_desk_id`, merchantID).Scan(&cashDeskID); err != nil {
+			t.Fatalf("seed cash_desks %s: %v", siret, err)
+		}
+		return fixture{merchantID: merchantID, userID: userID, cashDeskID: cashDeskID}
+	}
+
+	cleanup := func(f fixture) {
+		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_custom_items WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers_items WHERE cash_register_id IN (SELECT cash_register_id FROM cash_registers WHERE merchant_id = $1)`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM cash_desks WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, f.merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, f.userID)
+	}
+
+	// openCloseRegister ouvre un registre pour f, y attache les paiements
+	// donnés directement (déjà rattachés au bon cash_register_id — pas besoin
+	// de passer par la requalification de CloseCashRegister, qui ne concerne
+	// que les paiements orphelins), force start_date dans la période testée,
+	// le clôture, ajoute d'éventuels custom items, puis l'enclose. Retourne
+	// l'ID du registre (int64, colonne native) et l'ID de la commande seedée.
+	openCloseRegister := func(f fixture, startDate time.Time, payments []mopPayment, customItems []customItemSeed) (regID int64, orderID int64) {
+		t.Helper()
+		openReq := &models.OpenCashRegisterRequest{
+			DeviceID: "itest-real-device-" + f.merchantID + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		}
+		openReq.CashRegister.CashDeskID = strconv.FormatInt(f.cashDeskID, 10)
+		openReq.CashRegister.UserID = f.userID
+		openReq.CashRegister.CashFund = 0
+		openResp, err := crRepo.OpenCashRegister(ctx, openReq, f.merchantID)
+		if err != nil || openResp.CashRegister == nil {
+			t.Fatalf("OpenCashRegister: (%+v, %v)", openResp, err)
+		}
+		regIDStr := openResp.CashRegister.CashRegisterId
+		regID, err = strconv.ParseInt(regIDStr, 10, 64)
+		if err != nil {
+			t.Fatalf("parse regID %q: %v", regIDStr, err)
+		}
+
+		if _, err := db.ExecContext(ctx, `UPDATE cash_registers SET start_date = $1 WHERE cash_register_id = $2`, startDate, regID); err != nil {
+			t.Fatalf("force start_date: %v", err)
+		}
+
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, cash_register_id, order_num, brand, brand_status, state, price, TVA, HT, created_by)
+			VALUES ($1, $2, 1, 'WELLO_RESTO', 'ACCEPTED', 'CLOSED', 0, 0, 0, $3)
+			RETURNING order_id`, f.merchantID, regIDStr, f.userID).Scan(&orderID); err != nil {
+			t.Fatalf("seed order: %v", err)
+		}
+		for _, p := range payments {
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+				VALUES ($1, $2, $3, $4, $5, $6, true)`, f.merchantID, f.userID, orderID, p.amount, p.mop, regIDStr); err != nil {
+				t.Fatalf("seed payment %s: %v", p.mop, err)
+			}
+		}
+
+		if _, err := crRepo.CloseCashRegister(ctx, regIDStr, f.merchantID, &models.CloseCashRegisterRequest{}); err != nil {
+			t.Fatalf("CloseCashRegister: %v", err)
+		}
+
+		user := &auth.UserLoginRow{UserID: f.userID, MerchantID: f.merchantID}
+		for _, ci := range customItems {
+			if _, err := crRepo.AddCustomItem(ctx, regIDStr, &models.AddCustomItemRequest{Label: ci.label, Value: ci.value}, user); err != nil {
+				t.Fatalf("AddCustomItem %s: %v", ci.label, err)
+			}
+		}
+
+		if err := crRepo.EncloseCashRegister(ctx, f.userID, regIDStr, "itest close"); err != nil {
+			t.Fatalf("EncloseCashRegister: %v", err)
+		}
+
+		return regID, orderID
+	}
+
+	amountFor := func(rows []PaymentRow, label string) (int64, bool) {
+		for _, row := range rows {
+			if row.Label == label {
+				return row.Amount, true
+			}
+		}
+		return 0, false
+	}
+	containsID := func(ids []int64, want int64) bool {
+		for _, id := range ids {
+			if id == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	// --- Merchant A ---
+	fA := setupMerchant("siret-real-a", "itest-real-user-a")
+	t.Cleanup(func() { cleanup(fA) })
+
+	// (a) Aucun registre enclosed encore créé -> vide des deux côtés.
+	trustedNone, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
+	if err != nil || len(trustedNone) != 0 {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (aucun registre) = (%+v, %v), want vide", trustedNone, err)
+	}
+	realNone, err := acctRepo.GetRealPaymentsData(ctx, trustedNone)
+	if err != nil || len(realNone) != 0 {
+		t.Fatalf("GetRealPaymentsData (aucun registre) = (%+v, %v), want vide", realNone, err)
+	}
+
+	// (b)+(e) Un registre enclosed, MOP connus + un canal hors périmètre.
+	// 'ITESTES'/'ITESTCB' sont des codes propres à ce test, volontairement
+	// absents de `labels` (table de référence globale partagée, où de vrais
+	// codes comme 'ES'/'CB' ont déjà un libellé réel dans cette base de dev) :
+	// ça isole le test des données de référence existantes et vérifie du même
+	// coup le repli sur le code brut (LEFT JOIN délibéré, cf. GetRealPaymentsData).
+	regB, _ := openCloseRegister(fA, insidePeriod, []mopPayment{
+		{mop: "ITESTES", amount: 500},
+		{mop: "ITESTCB", amount: 300},
+		{mop: "UBER_EATS", amount: 999},
+	}, nil)
+
+	// (c) Un second registre avec un custom item à libellé libre.
+	regC, _ := openCloseRegister(fA, insidePeriod, []mopPayment{
+		{mop: "ITESTES", amount: 200},
+	}, []customItemSeed{
+		{label: "Pourboire", value: 150},
+	})
+
+	// (d) Un troisième registre, enclosed correctement, puis corrigé après
+	// coup (paiement ajouté directement en base sur le même cash_register_id,
+	// exactement le scénario qui a motivé ce chantier) -> doit être écarté
+	// en bloc de GetTrustedEnclosedRegisterIDs.
+	regD, orderD := openCloseRegister(fA, insidePeriod, []mopPayment{
+		{mop: "ITESTCB", amount: 400},
+	}, nil)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+		VALUES ($1, $2, $3, $4, 'ITESTCB', $5, true)`,
+		fA.merchantID, fA.userID, orderD, 999, strconv.FormatInt(regD, 10)); err != nil {
+		t.Fatalf("seed drift payment: %v", err)
+	}
+
+	trustedA, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
+	if err != nil {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A): %v", err)
+	}
+	if !containsID(trustedA, regB) || !containsID(trustedA, regC) {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A) = %v, want regB=%d et regC=%d présents", trustedA, regB, regC)
+	}
+	if containsID(trustedA, regD) {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A) = %v, want regD=%d absent (dérive post-enclose)", trustedA, regD)
+	}
+
+	realA, err := acctRepo.GetRealPaymentsData(ctx, trustedA)
+	if err != nil {
+		t.Fatalf("GetRealPaymentsData (merchant A): %v", err)
+	}
+	if amount, ok := amountFor(realA, "ITESTES"); !ok || amount != 700 {
+		t.Fatalf("GetRealPaymentsData (merchant A) ITESTES = (%d, %v), want 700 (500 regB + 200 regC)", amount, ok)
+	}
+	if amount, ok := amountFor(realA, "ITESTCB"); !ok || amount != 300 {
+		t.Fatalf("GetRealPaymentsData (merchant A) ITESTCB = (%d, %v), want 300 (regB seul — regD écarté en entier malgré son ITESTCB=400)", amount, ok)
+	}
+	if amount, ok := amountFor(realA, "Pourboire"); !ok || amount != 150 {
+		t.Fatalf("GetRealPaymentsData (merchant A) Pourboire = (%d, %v), want 150", amount, ok)
+	}
+	if _, ok := amountFor(realA, "UBER_EATS"); ok {
+		t.Fatalf("GetRealPaymentsData (merchant A) : UBER_EATS ne doit pas apparaître (canal hors périmètre)")
+	}
+
+	// --- (h) Merchant B : isolation stricte, même MOP, même période ---
+	fB := setupMerchant("siret-real-b", "itest-real-user-b")
+	t.Cleanup(func() { cleanup(fB) })
+
+	regE, _ := openCloseRegister(fB, insidePeriod, []mopPayment{
+		{mop: "ITESTCB", amount: 777},
+	}, nil)
+
+	trustedB, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fB.merchantID, periodStart, periodEnd)
+	if err != nil || !containsID(trustedB, regE) {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant B) = (%+v, %v), want regE=%d présent", trustedB, err, regE)
+	}
+	if containsID(trustedB, regB) || containsID(trustedB, regC) {
+		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant B) = %v, want aucun registre du merchant A", trustedB)
+	}
+
+	realB, err := acctRepo.GetRealPaymentsData(ctx, trustedB)
+	if err != nil {
+		t.Fatalf("GetRealPaymentsData (merchant B): %v", err)
+	}
+	if amount, ok := amountFor(realB, "ITESTCB"); !ok || amount != 777 {
+		t.Fatalf("GetRealPaymentsData (merchant B) ITESTCB = (%d, %v), want 777 (pas mélangé avec les 300 du merchant A)", amount, ok)
+	}
+
+	// Re-vérification merchant A : l'activité de B ne doit rien avoir changé.
+	realAAfterB, err := acctRepo.GetRealPaymentsData(ctx, trustedA)
+	if err != nil {
+		t.Fatalf("GetRealPaymentsData (merchant A, après B): %v", err)
+	}
+	if amount, ok := amountFor(realAAfterB, "ITESTCB"); !ok || amount != 300 {
+		t.Fatalf("GetRealPaymentsData (merchant A, après B) ITESTCB = (%d, %v), want toujours 300", amount, ok)
 	}
 }

@@ -106,7 +106,19 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		}, nil
 	}
 
-	payments, err := s.repo.GetPaymentsData(ctx, user.MerchantID, fromLocal, toExclusive)
+	// Section Encaissements : réel des registres de caisse enclosed
+	// uniquement (cf. docs/decisions.md) — pas de repli sur le théorique
+	// (payments) dans ce rapport. Un merchant sans registre correctement
+	// clôturé sur la période affiche une table vide, voir buildPDFReport.
+	trustedRegisterIDs, err := s.repo.GetTrustedEnclosedRegisterIDs(ctx, user.MerchantID, fromLocal, toExclusive)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Erreur lors de la récupération des registres de caisse",
+		}, nil
+	}
+
+	payments, err := s.repo.GetRealPaymentsData(ctx, trustedRegisterIDs)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -201,12 +213,18 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	pdf.CellFormat(190, 8, translate("Encaissements"), "", 1, "L", false, 0, "")
 
 	pdf.SetFont("Arial", "", 11)
+	paymentRowsDrawn := 0
 	for _, payment := range payments {
 		if payment.Amount == 0 {
 			continue
 		}
 		pdf.CellFormat(50, 8, translate(payment.Label), "1", 0, "L", false, 0, "")
 		pdf.CellFormat(140, 8, translate(fmt.Sprintf("%.2f %s", float64(payment.Amount)/100, header.Currency)), "1", 1, "R", false, 0, "")
+		paymentRowsDrawn++
+	}
+	if paymentRowsDrawn == 0 {
+		pdf.SetFont("Arial", "I", 10)
+		pdf.MultiCell(190, 6, translate("Aucune clôture de caisse validée sur cette période."), "", "L", false)
 	}
 
 	// --- FOOTER ---
