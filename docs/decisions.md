@@ -1,5 +1,80 @@
 # Decisions
 
+### Reservation (site public) — double conversion de fuseau à la création, résa décalée de -2h (2026-08-13)
+
+- **Symptôme rapporté** : sur le site de réservation public, sélectionner
+  un créneau à 19h (heure marchand, Europe/Paris/CEST) stockait
+  `booking_date_from` = 17h+02:00, soit 15h UTC au lieu des 17h UTC
+  attendus (19h CEST) — un décalage exact d'un offset marchand (-2h) par
+  rapport à la valeur correcte. Le POS affichait donc 17h, correctement,
+  vu que le correctif précédent (cf. entrée du jour "heure décalée dans la
+  liste des résas") lit fidèlement ce qui est en base — la donnée
+  elle-même était fausse à l'écriture, pas seulement mal affichée.
+- **Root cause : double conversion locale→UTC dans le flux public
+  `POST /rsv/{slug}/booking/create`** (`internal/modules/reservation/`) :
+  1. `service.go:193-194` (`CreateReservation`) parse correctement
+     `"19:00:00"` avec `time.ParseInLocation(..., merchant.Timezone)` →
+     19:00 CEST = 17:00 UTC. Correct.
+  2. `service.go:218-219` reconvertit ce temps en chaîne UTC naïve
+     (`"17:00:00"`, sans marqueur de fuseau — indiscernable d'une heure
+     locale dans le format `"2006-01-02 15:04:05"`) et **réécrit
+     `req.Booking.StartDate`/`EndDate` avec cette valeur déjà-UTC**.
+  3. `repository.go:434-443` (`CreateBookingTransaction`) recevait cette
+     chaîne déjà-UTC mais la reparsait **avec le fuseau marchand**
+     (`loadMerchantLocation` + `ParseInLocation(..., loc)`), la traitant à
+     tort comme de l'heure locale une deuxième fois → 17:00 CEST = 15:00
+     UTC stocké.
+  - `bookingcore.CreateBooking` (partagé avec le flux staff) n'est pas en
+    cause : il fait fidèlement le seul `.UTC()` nécessaire sur la valeur
+    qu'on lui passe — le problème est amont, dans la valeur déjà faussée
+    reçue.
+- **Écosystème audité pour écarter les autres suspects** :
+  - Site public (`luxury-table-booking`) : confirmé innocent — le payload
+    `start_date` est une simple concaténation de chaînes
+    (`` `${date} ${time}:00` ``, `src/lib/api.ts`), aucun objet `Date`,
+    aucune conversion, aucune lib de fuseau (`dayjs`/`luxon`/`date-fns-tz`)
+    sur ce chemin, vérifié source + bundle buildé.
+  - Flux staff (`internal/modules/bookings`) : non affecté — son
+    `service.go` ne pré-convertit jamais en UTC, le repository fait
+    l'unique `ParseInLocation` avec le fuseau marchand.
+  - `UpdateReservation` (reschedule public, `service.go:311-363`) : même
+    pré-conversion UTC en `service.go:350-351`, mais **pas de bug** —
+    `repository.go UpdateBooking` (ligne 405-416) ne reparse jamais,
+    bind directement la chaîne UTC déjà prête dans la requête SQL. C'est
+    ce contraste (`UpdateBooking` correct vs `CreateBookingTransaction`
+    buggé) qui a confirmé où était l'unique conversion de trop.
+  - Idempotence (`tryIdempotentReplay`/`saveIdempotencyResult`/
+    `clearPendingIdempotency`) vérifiée : clé sur `(slug, idempotencyKey)`
+    uniquement, aucune dépendance au format de date — sans impact du
+    correctif.
+  - `FindExistingActiveBookingWarning` (`service.go:225`,
+    `repository.go:288-314`) vérifiée : compare `booking_date_from = ?`
+    directement contre la colonne (vraie UTC), donc a bien besoin de la
+    chaîne déjà-UTC produite par `service.go:219` — confirme que la
+    pré-conversion UTC en `service.go` doit rester ; le correctif ne
+    devait toucher que le second parse en trop côté repository.
+- **Correctif appliqué** (`internal/modules/reservation/repository.go`,
+  `CreateBookingTransaction`) : les deux `ParseInLocation` reparsent
+  désormais avec `time.UTC` au lieu du fuseau marchand (la chaîne reçue
+  est déjà UTC à ce stade — un simple parse, pas une conversion). Le
+  helper `loadMerchantLocation` de ce fichier, devenu sans appelant,
+  supprimé.
+- **Statut d'exécution** : `go build ./...` et
+  `go vet ./internal/modules/reservation/...` (y compris sous
+  `-tags postgres_integration`, pour couvrir `postgres_integration_test.go`)
+  passent. **Dette de test notée** : `internal/modules/reservation` n'a
+  aucun test unitaire (`go test` → `[no test files]`), et son seul test
+  d'intégration (`postgres_integration_test.go`) seed les données
+  directement en SQL sans passer par `CreateReservation`/
+  `CreateBookingTransaction` — il n'exerçait donc pas ce chemin avant le
+  bug et ne le couvre toujours pas après le correctif. Une connexion
+  Postgres locale de dev (`POSTGRES_URL`, cf. doc
+  `internal/database/dbx/pgtest/pgtest.go`) serait nécessaire pour ajouter
+  et exécuter un test de bout en bout ; non fait cette session (seule
+  `RENDER_STAGING_DATABASE_URL`, une base staging partagée, était
+  disponible — écarté pour ne pas faire tourner un test mutateur dessus
+  sans validation préalable).
+
 ### Bookings — lien de gestion dans le SMS, au même titre que l'email (2026-08-13)
 
 - **Demande** : le SMS envoyé au client ne contenait pas de lien vers la

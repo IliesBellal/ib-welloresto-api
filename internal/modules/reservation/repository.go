@@ -431,16 +431,20 @@ func (r *reservationRepository) CancelBookingDB(ctx context.Context, bookingNumb
 // partagée avec le flux staff (/bookings), et tourne dans une vraie
 // transaction SQL (dbutils.RunInTx).
 func (r *reservationRepository) CreateBookingTransaction(ctx context.Context, req *BookingRequest) (string, error) {
-	loc, err := r.loadMerchantLocation(ctx, req.MerchantID)
+	// req.Booking.StartDate/EndDate sont déjà convertis en UTC par
+	// CreateReservation (service.go) avant l'appel à cette méthode — les
+	// reparser avec le fuseau marchand ici les traiterait à tort comme de
+	// l'heure locale et appliquerait une deuxième conversion (bug constaté :
+	// une résa demandée à 19h heure marchand se retrouvait stockée à 17h
+	// UTC au lieu de 17h... UTC était déjà correct, seul le second parse en
+	// heure locale la décalait encore de -2h). time.UTC ici est un simple
+	// parse sans conversion, symétrique de bookingcore.CreateBooking qui
+	// fait le seul UTC() nécessaire sur StartLocal/EndLocal.
+	start, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, time.UTC)
 	if err != nil {
 		return "", err
 	}
-
-	start, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.StartDate, loc)
-	if err != nil {
-		return "", err
-	}
-	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, loc)
+	end, err := time.ParseInLocation("2006-01-02 15:04:05", req.Booking.EndDate, time.UTC)
 	if err != nil {
 		return "", err
 	}
@@ -491,23 +495,3 @@ func stringPtr(v string) *string {
 	return &v
 }
 
-func (r *reservationRepository) loadMerchantLocation(ctx context.Context, merchantID string) (*time.Location, error) {
-	db := dbx.GetDB(ctx, r.database)
-
-	var timezone sql.NullString
-	err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ? LIMIT 1`, merchantID).Scan(&timezone)
-	if err != nil {
-		return nil, err
-	}
-
-	if !timezone.Valid || timezone.String == "" {
-		return time.UTC, nil
-	}
-
-	loc, err := time.LoadLocation(timezone.String)
-	if err != nil {
-		return time.UTC, nil
-	}
-
-	return loc, nil
-}
