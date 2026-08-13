@@ -3,6 +3,7 @@ package bookingcomm
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/sms"
@@ -226,6 +227,88 @@ func TestManagementLink_EmptyWithoutBaseURL(t *testing.T) {
 	data := svc.emailData(baseMessage(false))
 	if data.ManagementLink != "" {
 		t.Fatalf("expected empty ManagementLink without a configured base URL, got %q", data.ManagementLink)
+	}
+}
+
+func TestSendConfirmation_SMSIncludesManagementLink(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "https://rsv.welloresto.fr/", nil, nil)
+
+	svc.SendConfirmation(context.Background(), baseMessage(true))
+
+	want := "https://rsv.welloresto.fr/restaurant/le-bistrot/booking/AB12CD"
+	if !strings.Contains(txt.lastMessage, want) {
+		t.Fatalf("SMS body = %q, expected it to contain management link %q", txt.lastMessage, want)
+	}
+}
+
+func TestSendReminder_SMSIncludesManagementLink(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "https://rsv.welloresto.fr/", nil, nil)
+
+	svc.SendReminder(context.Background(), baseMessage(true))
+
+	want := "https://rsv.welloresto.fr/restaurant/le-bistrot/booking/AB12CD"
+	if !strings.Contains(txt.lastMessage, want) {
+		t.Fatalf("SMS body = %q, expected it to contain management link %q", txt.lastMessage, want)
+	}
+}
+
+func TestSendModification_SMSIncludesManagementLink(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "https://rsv.welloresto.fr/", nil, nil)
+
+	svc.SendModification(context.Background(), baseMessage(true))
+
+	want := "https://rsv.welloresto.fr/restaurant/le-bistrot/booking/AB12CD"
+	if !strings.Contains(txt.lastMessage, want) {
+		t.Fatalf("SMS body = %q, expected it to contain management link %q", txt.lastMessage, want)
+	}
+}
+
+func TestSendReconfirmation_SMSIncludesManagementLink(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "https://rsv.welloresto.fr/", nil, nil)
+
+	svc.SendReconfirmation(context.Background(), baseMessage(true))
+
+	want := "https://rsv.welloresto.fr/restaurant/le-bistrot/booking/AB12CD"
+	if !strings.Contains(txt.lastMessage, want) {
+		t.Fatalf("SMS body = %q, expected it to contain management link %q", txt.lastMessage, want)
+	}
+}
+
+// SendCancellation ne porte pas de lien de gestion, à l'image de l'email
+// (booking_cancellation.html n'a pas de bloc ManagementLink) : rien à gérer
+// une fois la résa annulée.
+func TestSendCancellation_SMSHasNoManagementLink(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "https://rsv.welloresto.fr/", nil, nil)
+
+	svc.SendCancellation(context.Background(), baseMessage(true))
+
+	if strings.Contains(txt.lastMessage, "https://") {
+		t.Fatalf("SMS body = %q, expected no management link in a cancellation SMS", txt.lastMessage)
+	}
+}
+
+func TestSendConfirmation_SMSHasNoManagementLinkWithoutBaseURL(t *testing.T) {
+	mail := &mockMailer{}
+	txt := &mockSMS{}
+	svc := New(mail, txt, "", nil, nil)
+
+	svc.SendConfirmation(context.Background(), baseMessage(true))
+
+	if strings.Contains(txt.lastMessage, "https://") {
+		t.Fatalf("SMS body = %q, expected no management link without a configured base URL", txt.lastMessage)
+	}
+	if strings.HasSuffix(txt.lastMessage, " ") {
+		t.Fatalf("SMS body = %q, expected no trailing space when the link is empty", txt.lastMessage)
 	}
 }
 

@@ -77,6 +77,18 @@ func (m BookingMessage) managementLink(baseURL string) string {
 	return fmt.Sprintf("%s/restaurant/%s/booking/%s", baseURL, m.MerchantSlug, m.BookingNumber)
 }
 
+// smsWithManagementLink ajoute au corps du SMS le même lien de gestion que
+// celui du bouton "Gérer ma réservation" de l'email (cf. emailData) ; renvoie
+// le texte tel quel si le lien n'est pas disponible (slug/booking_number
+// manquant, ou PUBLIC_RESERVATION_BASE_URL non configuré).
+func (s *Service) smsWithManagementLink(m BookingMessage, text string) string {
+	link := m.managementLink(s.baseURL)
+	if link == "" {
+		return text
+	}
+	return text + " " + link
+}
+
 func (s *Service) emailData(m BookingMessage) mailer.BookingMessageData {
 	return mailer.BookingMessageData{
 		EmailBaseData:  s.emailBase(),
@@ -139,28 +151,28 @@ func (s *Service) recordOutbound(ctx context.Context, channel, providerMessageID
 // réservation confirmed.
 func (s *Service) SendConfirmation(ctx context.Context, m BookingMessage) {
 	s.sendEmail(ctx, m, "Votre réservation est confirmée", "booking_confirmation.html")
-	s.sendSMS(ctx, m, fmt.Sprintf(
+	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Votre reservation chez %s le %s a %s (%d pers.) est confirmee. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
-	))
+	)))
 }
 
 // SendReminder envoie le rappel avant service (J-1 par défaut, cf. cron).
 func (s *Service) SendReminder(ctx context.Context, m BookingMessage) {
 	s.sendEmail(ctx, m, "Rappel de votre réservation", "booking_reminder.html")
-	s.sendSMS(ctx, m, fmt.Sprintf(
+	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Rappel : reservation chez %s le %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
-	))
+	)))
 }
 
 // SendModification notifie une modification de réservation (client ou staff).
 func (s *Service) SendModification(ctx context.Context, m BookingMessage) {
 	s.sendEmail(ctx, m, "Votre réservation a été modifiée", "booking_modification.html")
-	s.sendSMS(ctx, m, fmt.Sprintf(
+	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Votre reservation chez %s a ete modifiee : %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
-	))
+	)))
 }
 
 // SendCancellation notifie une annulation (client, staff ou système).
@@ -176,10 +188,10 @@ func (s *Service) SendCancellation(ctx context.Context, m BookingMessage) {
 // OUI/NON traitée par le webhook internal/webhook/brevo_sms_reply).
 func (s *Service) SendReconfirmation(ctx context.Context, m BookingMessage) {
 	s.sendEmail(ctx, m, "Merci de confirmer votre réservation", "booking_reconfirmation.html")
-	s.sendSMS(ctx, m, fmt.Sprintf(
+	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Confirmez-vous votre reservation chez %s le %s a %s (%d pers.) ? Repondez OUI ou NON. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
-	))
+	)))
 }
 
 // SendPostVisit envoie un message de remerciement post-visite (Should,

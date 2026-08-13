@@ -1,5 +1,49 @@
 # Decisions
 
+### Bookings — lien de gestion dans le SMS, au même titre que l'email (2026-08-13)
+
+- **Demande** : le SMS envoyé au client ne contenait pas de lien vers la
+  page de gestion de sa réservation, contrairement à l'email qui a déjà un
+  bouton "Gérer ma réservation" (`{{if .ManagementLink}}` dans les
+  templates `booking_confirmation.html`, `booking_reminder.html`,
+  `booking_modification.html`, `booking_reconfirmation.html`).
+- **Où** : tout le montage email/SMS des réservations est centralisé dans
+  `internal/modules/bookingcomm/service.go` (`BookingMessage`, un seul
+  point d'envoi par type de message, découplé des modules métier `bookings`/
+  `reservation` pour éviter les cycles d'import). Le lien existait déjà,
+  construit par `BookingMessage.managementLink(baseURL)` (`{baseURL}/restaurant/{slug}/booking/{bookingNumber}`,
+  `baseURL` = `PUBLIC_RESERVATION_BASE_URL`) mais n'était consommé que par
+  `emailData()` pour l'email — jamais passé aux `fmt.Sprintf` des corps SMS.
+  Tous les call sites (`bookings/communication.go`, `bookings/reminders.go`,
+  `bookings/service.go`, `reservation/service.go`) peuplent déjà
+  `MerchantSlug`+`BookingNumber` sur le `BookingMessage`, donc aucun
+  plumbing supplémentaire n'était nécessaire.
+- **Correctif** : nouvelle méthode `(*Service) smsWithManagementLink(m, text)`
+  qui ajoute le lien (même lien que l'email) en suffixe du corps SMS,
+  séparé par un espace, et renvoie le texte inchangé si le lien est
+  indisponible (slug/booking_number manquant ou `baseURL` non configuré) —
+  évite l'espace final orphelin. Branché sur `SendConfirmation`,
+  `SendReminder`, `SendModification`, `SendReconfirmation`. **Pas** branché
+  sur `SendCancellation`, à l'image de l'email : `booking_cancellation.html`
+  n'a pas de bloc `ManagementLink`, rien à gérer une fois la résa annulée.
+  Liste d'attente (`SendWaitlistAvailable`/`WaitlistMessage`) non concernée :
+  pas de réservation existante à gérer, pas de `BookingNumber`/`MerchantSlug`
+  dans cette struct.
+- **Point de vigilance signalé, non traité** : aucune limite de longueur/
+  encodage GSM-7 n'existe dans le code SMS (`brevo_sms/service.go`) — les
+  corps étaient déjà proches d'un segment de 160 caractères pour certains
+  marchands/numéros de résa ; l'ajout de l'URL (~50-70 caractères selon le
+  slug) fera probablement basculer une partie des envois en multi-segments
+  (facturation Brevo par segment). Aucune action prise sur ce point, à
+  arbitrer séparément si le volume/coût SMS devient un sujet.
+- **Statut d'exécution** : `go build ./...`, `go vet ./internal/modules/bookingcomm/...`
+  et `go test ./internal/modules/bookingcomm/... ./internal/modules/bookings/...`
+  passent. Tests ajoutés (`service_test.go`) vérifiant la présence du lien
+  dans le SMS pour confirmation/rappel/modification/reconfirmation, son
+  absence pour l'annulation, et l'absence de lien + absence d'espace final
+  quand `PUBLIC_RESERVATION_BASE_URL` n'est pas configuré. Pas de vérification
+  d'envoi réel (Brevo) dans cette session.
+
 ### Bookings — heure décalée (-2h) dans la liste des résas tablette POS (2026-08-13)
 
 - **Symptôme rapporté** : une résa créée pour 18h heure française (stockée
