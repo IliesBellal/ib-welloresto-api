@@ -160,6 +160,16 @@ func GenerateScanNOrderKey(merchantID, imageType, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/scannorder/%s%s", merchantID, imageType, ext)
 }
 
+// GenerateMerchantLogoKey génère la clé R2 pour le logo général de
+// l'établissement (identité merchant, distinct du logo Kiosk/ScanNOrder).
+// Clé déterministe : un nouvel upload écrase l'ancien fichier.
+func GenerateMerchantLogoKey(merchantID, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/logo%s", merchantID, ext)
+}
+
 // GenerateKioskKey génère la clé R2 pour les images de configuration Kiosk
 // (logo merchant, image de veille). imageType doit être "logo" ou "idle".
 // Clé déterministe : un nouvel upload écrase l'ancien fichier.

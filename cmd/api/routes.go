@@ -441,7 +441,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 
 	authH := authModule.NewAuthHandler(authService)
-	posH := posModule.NewPOSHandler(posService)
+	posH := posModule.NewPOSHandler(posService, r2Client)
 	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
 	// Import de produits : dépendances propres (lecture seule + registry de
@@ -596,6 +596,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/settings", func(r chi.Router) {
 			r.Get("/", posH.GetSettings)              // used by: back-office
 			r.Patch("/", posH.UpdateMerchantSettings) // used by: back-office
+			r.Post("/logo", posH.UploadMerchantLogo)  // used by: back-office
 			r.Get("/holidays", posH.ListPlanningHolidays)
 			r.Patch("/holidays/{date}", posH.PatchPlanningHolidayOverride)
 			r.Delete("/holidays/{date}", posH.DeletePlanningHolidayOverride)

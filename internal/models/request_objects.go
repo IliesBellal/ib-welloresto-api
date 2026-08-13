@@ -708,6 +708,7 @@ type POSSettingsInfo struct {
 	PrimaryColor string  `json:"primary_color"`
 	TextColor    string  `json:"text_color"`
 	IsOpen       bool    `json:"is_open"`
+	LogoURL      string  `json:"logo_url"`
 }
 
 type POSSettingsInfoPatch struct {

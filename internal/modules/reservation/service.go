@@ -592,7 +592,7 @@ func (s *reservationService) toBookingPublic(merchant *Merchant, booking *Bookin
 			BusinessName: merchant.BusinessName,
 			Phone:        merchant.Phone,
 			Address:      merchant.Address,
-			LogoURL:      merchant.LogoURL,
+			LogoURL:      *merchant.LogoURL,
 			Design:       merchant.Design,
 			Timezone:     merchant.Timezone,
 		},

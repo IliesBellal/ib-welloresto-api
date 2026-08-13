@@ -2,20 +2,29 @@ package pos
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/r2"
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
 
+// maxMerchantLogoBytes plafonne l'upload du logo général de l'établissement,
+// même limite que le logo Kiosk (voir kiosk.AdminHandler).
+const maxMerchantLogoBytes = 2 << 20
+
 type POSHandler struct {
-	service *POSService
+	service  *POSService
+	r2Client *r2.Client
 }
 
-func NewPOSHandler(s *POSService) *POSHandler {
-	return &POSHandler{service: s}
+func NewPOSHandler(s *POSService, r2Client *r2.Client) *POSHandler {
+	return &POSHandler{service: s, r2Client: r2Client}
 }
 
 func (h *POSHandler) GetPOSStatus(w http.ResponseWriter, r *http.Request) {
@@ -391,4 +400,75 @@ func (h *POSHandler) DeleteHourOfOperation(w http.ResponseWriter, r *http.Reques
 	models.SendJSON(w, http.StatusOK, "pos", "delete_hour_of_operation", map[string]string{
 		"status": "1",
 	})
+}
+
+// UploadMerchantLogo handles POST /pos/settings/logo — upload du logo général
+// de l'établissement (identité merchant, distinct du logo Kiosk/ScanNOrder).
+// Même pattern que kiosk.AdminHandler.uploadSettingsImage.
+func (h *POSHandler) UploadMerchantLogo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	fnName := "upload_merchant_logo"
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "pos", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	if err := r.ParseMultipartForm(maxMerchantLogoBytes); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "pos", fnName, map[string]string{"error": "file_too_large_or_invalid"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "pos", fnName, map[string]string{"error": "missing_file_field"})
+		return
+	}
+	defer file.Close()
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r2.GetContentTypeFromExtension(header.Filename)
+	}
+	if !r2.ValidateImageType(contentType) {
+		models.SendJSON(w, http.StatusBadRequest, "pos", fnName, map[string]string{
+			"error":   "invalid_image_type",
+			"message": "Only JPEG, PNG, and WebP images are allowed",
+		})
+		return
+	}
+
+	settings, err := h.service.GetMerchantSettings(ctx, "")
+	if err != nil {
+		models.SendErrorJSON(w, "pos", fnName, err)
+		return
+	}
+	oldURL := settings.Info.LogoURL
+
+	ext := r2.GetExtensionFromContentType(contentType)
+	key := r2.GenerateMerchantLogoKey(user.MerchantID, ext)
+
+	if oldURL != "" {
+		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" && oldKey != key {
+			h.r2Client.DeleteFile(ctx, oldKey)
+		}
+	}
+
+	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", fnName, fmt.Errorf("failed to upload image"))
+		return
+	}
+	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
+	// sans ce paramètre le navigateur/CDN continue de servir l'ancienne image.
+	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
+
+	updated, err := h.service.SetLogoURL(ctx, user.MerchantID, publicURL)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", fnName, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", fnName, map[string]string{"logo_url": updated.Info.LogoURL})
 }

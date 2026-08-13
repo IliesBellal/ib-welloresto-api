@@ -20,7 +20,7 @@ type Address struct {
 type Merchant struct {
 	MerchantID                    string            `json:"merchant_id"`
 	Timezone                      string            `json:"timezone"`
-	LogoURL                       string            `json:"logo_url"`
+	LogoURL                       *string           `json:"logo_url"`
 	BusinessName                  string            `json:"business_name"`
 	HandicapAccess                bool              `json:"handicap_access"`
 	Phone                         string            `json:"phone"`

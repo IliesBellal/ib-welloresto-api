@@ -405,6 +405,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			PrimaryColor: stringVal(params.PrimaryColor),
 			TextColor:    stringVal(params.TextColorOnPrimaryColor),
 			IsOpen:       boolVal(params.IsOpen),
+			LogoURL:      stringVal(m.LogoURL),
 		},
 		Timings: models.POSSettingsTimings{
 			WaitTimeMin:      secondsToMinutes(intVal(params.MinimumPreparationTime)),
@@ -442,6 +443,15 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 	}
 
 	return resp, nil
+}
+
+// SetLogoURL persiste l'URL du logo de l'établissement après upload R2 (voir
+// POSHandler.UploadMerchantLogo) — même pattern que kiosk.Service.SetLogoURL.
+func (s *POSService) SetLogoURL(ctx context.Context, merchantID, url string) (*models.POSSettingsResponse, error) {
+	if err := s.posRepo.UpdateMerchant(ctx, merchantID, &models.MerchantSettings{LogoURL: &url}); err != nil {
+		return nil, err
+	}
+	return s.GetMerchantSettings(ctx, "")
 }
 
 func boolVal(v *bool) bool {

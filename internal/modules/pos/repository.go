@@ -1044,6 +1044,10 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, merchantID string, r
 		updates = append(updates, "logo = ?")
 		args = append(args, *req.Logo)
 	}
+	if req.LogoURL != nil {
+		updates = append(updates, "logo_url = ?")
+		args = append(args, *req.LogoURL)
+	}
 	if req.HandicapAccess != nil {
 		updates = append(updates, "handicap_access = ?")
 		args = append(args, *req.HandicapAccess)
