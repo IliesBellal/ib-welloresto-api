@@ -307,6 +307,83 @@ func (h *POSHandler) DeletePlanningHolidayOverride(w http.ResponseWriter, r *htt
 	models.SendJSON(w, http.StatusOK, "pos", "delete_holiday", map[string]interface{}{"status": "success"})
 }
 
+func (h *POSHandler) ListPlanningVacationPeriods(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "list_vacation_periods", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	items, err := h.service.ListPlanningVacationPeriods(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "list_vacation_periods", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "list_vacation_periods", map[string]interface{}{"status": "success", "vacation_periods": items})
+}
+
+func (h *POSHandler) CreatePlanningVacationPeriod(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "create_vacation_period", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req PlanningVacationPeriodCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "pos", "create_vacation_period", models.ErrInvalidRequestBody)
+		return
+	}
+
+	item, err := h.service.CreatePlanningVacationPeriod(r.Context(), token, req)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "create_vacation_period", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusCreated, "pos", "create_vacation_period", map[string]interface{}{"status": "success", "vacation_period": item})
+}
+
+func (h *POSHandler) UpdatePlanningVacationPeriod(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "update_vacation_period", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req PlanningVacationPeriodUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "pos", "update_vacation_period", models.ErrInvalidRequestBody)
+		return
+	}
+
+	item, err := h.service.UpdatePlanningVacationPeriod(r.Context(), token, id, req)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "update_vacation_period", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "update_vacation_period", map[string]interface{}{"status": "success", "vacation_period": item})
+}
+
+func (h *POSHandler) DeletePlanningVacationPeriod(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "pos", "delete_vacation_period", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if err := h.service.DeletePlanningVacationPeriod(r.Context(), token, id); err != nil {
+		models.SendErrorJSON(w, "pos", "delete_vacation_period", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "pos", "delete_vacation_period", map[string]interface{}{"status": "success"})
+}
+
 func (h *POSHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

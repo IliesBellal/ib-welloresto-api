@@ -136,6 +136,39 @@ type PlanningHolidayOverridePatchRequest struct {
 	ClearCountAsHoliday *bool   `json:"clear_count_as_holiday,omitempty"`
 }
 
+// PlanningVacationPeriod force la fermeture de l'etablissement (statut POS,
+// cf. pos.GetPOSStatus) sur toute la plage [StartAt, EndAt], en plus des
+// horaires d'ouverture habituels — meme mecanisme que PlanningHoliday mais
+// sur une periode plutot qu'une seule date.
+//
+// StartAt/EndAt sont des chaines "YYYY-MM-DD HH:MM:SS" en heure locale du
+// marchand, pas des time.Time : meme convention que
+// models.POSHoursOfOperation.ValidFrom/ValidTo, qui evite toute ambiguite de
+// fuseau (aucune conversion Go, la valeur saisie est stockee et comparee telle
+// quelle).
+type PlanningVacationPeriod struct {
+	ID        string    `json:"id"`
+	Label     *string   `json:"label,omitempty"`
+	StartAt   string    `json:"start_at"`
+	EndAt     string    `json:"end_at"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PlanningVacationPeriodCreateRequest struct {
+	Label   *string `json:"label,omitempty"`
+	StartAt string  `json:"start_at"`
+	EndAt   string  `json:"end_at"`
+}
+
+type PlanningVacationPeriodUpdateRequest struct {
+	Label   *string `json:"label,omitempty"`
+	StartAt *string `json:"start_at,omitempty"`
+	EndAt   *string `json:"end_at,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+}
+
 type LaborRule struct {
 	CountryCode          string    `json:"country_code"`
 	Label                string    `json:"label"`

@@ -5,6 +5,9 @@ import settingspkg "welloresto-api/internal/modules/planning/settings"
 type PlanningHoliday = settingspkg.PlanningHoliday
 type PlanningHolidayListFilters = settingspkg.PlanningHolidayListFilters
 type PlanningHolidayOverridePatchRequest = settingspkg.PlanningHolidayOverridePatchRequest
+type PlanningVacationPeriod = settingspkg.PlanningVacationPeriod
+type PlanningVacationPeriodCreateRequest = settingspkg.PlanningVacationPeriodCreateRequest
+type PlanningVacationPeriodUpdateRequest = settingspkg.PlanningVacationPeriodUpdateRequest
 
 type DeletionReason struct {
 	DeletionReasonID     string  `json:"deletion_reason_id"`

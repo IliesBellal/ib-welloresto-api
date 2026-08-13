@@ -93,6 +93,22 @@ func (s *POSService) DeletePlanningHolidayOverride(ctx context.Context, token, h
 	return s.holidayService.DeletePlanningHolidayOverride(ctx, holidayDate)
 }
 
+func (s *POSService) ListPlanningVacationPeriods(ctx context.Context, token string) ([]PlanningVacationPeriod, error) {
+	return s.holidayService.ListPlanningVacationPeriods(ctx)
+}
+
+func (s *POSService) CreatePlanningVacationPeriod(ctx context.Context, token string, req PlanningVacationPeriodCreateRequest) (*PlanningVacationPeriod, error) {
+	return s.holidayService.CreatePlanningVacationPeriod(ctx, req)
+}
+
+func (s *POSService) UpdatePlanningVacationPeriod(ctx context.Context, token, id string, req PlanningVacationPeriodUpdateRequest) (*PlanningVacationPeriod, error) {
+	return s.holidayService.UpdatePlanningVacationPeriod(ctx, id, req)
+}
+
+func (s *POSService) DeletePlanningVacationPeriod(ctx context.Context, token, id string) error {
+	return s.holidayService.DeletePlanningVacationPeriod(ctx, id)
+}
+
 func (s *POSService) ToggleSafetyStock(ctx context.Context, token, status string) (int64, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

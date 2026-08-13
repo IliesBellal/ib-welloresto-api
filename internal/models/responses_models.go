@@ -314,6 +314,8 @@ var (
 	ErrPlanningShiftSwapApprovalModeInvalid     = errors.New("planning_shift_swap_approval_mode_invalid")
 	ErrPlanningPremiumCumulationModeInvalid     = errors.New("planning_premium_cumulation_mode_invalid")
 	ErrPlanningHolidayOverrideNotFound          = errors.New("planning_holiday_override_not_found")
+	ErrPlanningVacationPeriodNotFound           = errors.New("planning_vacation_period_not_found")
+	ErrPlanningVacationPeriodInvalidRange       = errors.New("planning_vacation_period_invalid_range")
 	ErrPlanningPositionNotFound                 = errors.New("planning_position_not_found")
 	ErrPlanningPositionLabelRequired            = errors.New("planning_position_label_required")
 	ErrPlanningPositionAlreadyExists            = errors.New("planning_position_already_exists")
@@ -681,6 +683,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusNotFound
 		errorStatus = "planning_holiday_override_not_found"
 		errorMsg = "Planning holiday override not found."
+
+	case errors.Is(err, ErrPlanningVacationPeriodNotFound):
+		status = http.StatusNotFound
+		errorStatus = "planning_vacation_period_not_found"
+		errorMsg = "Planning vacation period not found."
+
+	case errors.Is(err, ErrPlanningVacationPeriodInvalidRange):
+		status = http.StatusBadRequest
+		errorStatus = "planning_vacation_period_invalid_range"
+		errorMsg = "The vacation period date range is invalid."
 
 	case errors.Is(err, ErrPlanningEmployeeTimeTrackingModeInvalid):
 		status = http.StatusBadRequest
