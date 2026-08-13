@@ -1,5 +1,63 @@
 # Decisions
 
+### Bookings — heure décalée (-2h) dans la liste des résas tablette POS (2026-08-13)
+
+- **Symptôme rapporté** : une résa créée pour 18h heure française (stockée
+  correctement en base — `booking_date_from` = l'instant UTC équivalent,
+  vérifié via inspection directe) s'affichait à 16h dans le carnet de
+  réservations de la tablette POS (Flutter).
+- **Root cause identifiée** : régression de la migration `056_bookings_dates_utc`
+  (bascule du stockage `booking_date_from`/`booking_date_to` en UTC).
+  `ListBookingsBackOffice` (`internal/modules/bookings/repository.go`,
+  utilisé par `GET /bookings`, l'endpoint carnet de résas de la tablette)
+  formatait encore la date via `bkgDateTimeFmt` (`to_char`/`DATE_FORMAT`)
+  **sans conversion vers le fuseau du marchand** — correct avant la 056
+  quand la colonne stockait déjà l'heure locale marchand en naïf, faux
+  depuis puisque `to_char` restitue l'heure "wall-clock" du fuseau de
+  session Postgres (UTC), renvoyée en chaîne brute sans offset. Le client
+  Flutter (`booking_date_utils.dart`, fonction `bookingDateTimeFromUtcString`
+  — mal nommée, elle ne faisait aucune conversion UTC→local) parsait cette
+  chaîne en supposant qu'elle était déjà en heure locale marchand (c'était
+  vrai avant la 056, plus depuis). D'où le décalage exact de l'offset du
+  marchand (+2h l'été).
+- **Endpoint détail (`GetBooking`) non affecté** : celui-ci renvoyait déjà un
+  timestamp Unix UTC (`bookings_fetcher.go`), correctement reconverti côté
+  client par `bookingDateTimeFromUnixSeconds`
+  (`DateTime.fromMillisecondsSinceEpoch` → heure locale de l'appareil). Ce
+  pattern déjà existant a servi de référence pour le correctif.
+- **Autres usages de `bkgDateTimeFmt("b.booking_date_from")` audités et
+  écartés** : `ListPendingBookingsToExpire` / `ListBookingsForReminder`
+  (SMS/email de rappel) utilisent aussi ce format brut UTC, mais
+  `BookingContact.StartDate` est explicitement documenté `// UTC` et
+  reconverti côté Go dans `reminders.go` via `time.LoadLocation(b.Timezone)`
+  avant formatage du message — pattern déjà correct, non touché.
+- **Correctif appliqué (serveur + client, décision : aligner sur le pattern
+  Unix déjà en place plutôt que patcher le format string)** :
+  - Serveur : `ListBookingsBackOffice` sélectionne désormais la colonne
+    brute `b.booking_date_from` (au lieu de `bkgDateTimeFmt(...)`), scannée
+    en `sql.NullTime` puis convertie en Unix UTC (`helpers.NullTimePtr(...).UTC().Unix()`,
+    même pattern que `bookings_fetcher.go`). `BookingListItem.BookingDateFrom`
+    passe de `string` à `int64` (`internal/modules/bookings/models.go`).
+  - Client : `BookingListItemDto.dateFrom` bascule sur
+    `bookingDateTimeFromUnixSeconds` (comme `BookingDto`) ; l'ancienne
+    fonction `bookingDateTimeFromUtcString`, plus utilisée nulle part,
+    supprimée (`booking_date_utils.dart`).
+- **Non traité ici, signalé mais hors périmètre demandé** : les filtres
+  `date_from`/`date_to` de `GET /bookings` (jour affiché sur la tablette)
+  sont envoyés par le client comme bornes de journée en heure locale
+  naïve (`bookings_api.dart`, `_formatDateTime` sur un `DateTime` local)
+  et comparés tels quels à la colonne UTC côté SQL
+  (`ListBookingsBackOffice`, `repository.go`) — même classe de bug que
+  celui corrigé ici, mais côté filtrage plutôt qu'affichage. Impact limité
+  aux résas proches de minuit (le reste de la journée retombe dans la même
+  fenêtre malgré le décalage). À traiter séparément si confirmé.
+- **Statut d'exécution** : `go build ./...`, `go vet ./internal/modules/bookings/...`
+  et `go test ./internal/modules/bookings/...` passent (tests unitaires ;
+  la suite `postgres_integration_test.go` n'a pas été relancée, nécessite
+  une base Postgres vivante). Côté Flutter, `flutter analyze` passe sur les
+  deux fichiers modifiés ; pas de test automatisé existant sur ce chemin,
+  vérification manuelle sur device non faite dans cette session.
+
 ### Rapport comptable "réel" — deux correctifs d'audit + dette de test notée (2026-08-11)
 
 - **Asymétrie `COALESCE`/`NULLIF` corrigée** : la branche

@@ -109,7 +109,7 @@ type BookingListItem struct {
 	BookingNumber   string   `json:"booking_number"`
 	Status          string   `json:"status"`
 	Source          string   `json:"source"`
-	BookingDateFrom string   `json:"booking_date_from"`
+	BookingDateFrom int64    `json:"booking_date_from"`
 	PartySize       int      `json:"party_size"`
 	CustomerName    string   `json:"customer_name"`
 	CustomerTel     string   `json:"customer_tel"`
@@ -204,13 +204,30 @@ type CancelBookingRequest struct {
 	DeletionReasonID *string `json:"deletion_reason_id"`
 }
 
-// RescheduleBookingRequest — modification staff de date/heure (et
-// optionnellement du nombre de couverts) d'une résa confirmed. Les deux
-// bornes sont fournies par le client au format "2006-01-02 15:04:05".
+// RescheduleBookingRequest — modification staff d'une résa pending|confirmed :
+// date/heure (obligatoires), et en option couverts, note et client. Les deux
+// bornes sont fournies par le client au format "2006-01-02 15:04:05". Un
+// pointeur nil laisse le champ inchangé ; Comment accepte une chaîne vide
+// pour effacer explicitement la note (distinct de nil = ne pas toucher).
 type RescheduleBookingRequest struct {
-	BookingDateFrom string `json:"booking_date_from"`
-	BookingDateTo   string `json:"booking_date_to"`
-	PartySize       *int   `json:"party_size"`
+	BookingDateFrom string                 `json:"booking_date_from"`
+	BookingDateTo   string                 `json:"booking_date_to"`
+	PartySize       *int                   `json:"party_size"`
+	Comment         *string                `json:"comment"`
+	Customer        *BookingCustomerUpdate `json:"customer"`
+}
+
+// BookingCustomerUpdate porte les champs client modifiables lors de l'édition
+// staff d'une résa. CustomerID identifie un client existant sélectionné via
+// la recherche ; absent/vide, CustomerName+CustomerTel décrivent soit une
+// mise à jour du client déjà lié à la résa (résolu par téléphone), soit un
+// nouveau client (même logique de fallback qu'à la création, cf.
+// bookingcore.CreateBooking).
+type BookingCustomerUpdate struct {
+	CustomerID    *string `json:"customer_id"`
+	CustomerName  *string `json:"customer_name"`
+	CustomerTel   *string `json:"customer_tel"`
+	CustomerEmail *string `json:"customer_email"`
 }
 
 type AssignBookingLocationsRequest struct {

@@ -266,7 +266,7 @@ func TestBookingsRepository_Postgres(t *testing.T) {
 	}
 
 	// --- reschedule (durée calculée côté Go) ---
-	if err := repo.RescheduleBooking(ctx, merchantID, bookingID, tomorrow+" 14:00:00", tomorrow+" 15:30:00", nil); err != nil {
+	if err := repo.RescheduleBooking(ctx, merchantID, bookingID, tomorrow+" 14:00:00", tomorrow+" 15:30:00", nil, nil, nil); err != nil {
 		t.Fatalf("RescheduleBooking: %v", err)
 	}
 	var storedDuration int

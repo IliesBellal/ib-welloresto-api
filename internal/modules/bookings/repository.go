@@ -770,7 +770,7 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 			b.booking_number,
 			b.status,
 			COALESCE(b.source, 'staff') AS source,
-			` + bkgDateTimeFmt("b.booking_date_from") + ` AS booking_date_from,
+			b.booking_date_from,
 			b.party_size,
 			COALESCE(c.customer_name, '') AS customer_name,
 			COALESCE(c.customer_tel, '') AS customer_tel,
@@ -796,13 +796,14 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 	items := make([]BookingListItem, 0)
 	for rows.Next() {
 		var item BookingListItem
+		var dateFrom sql.NullTime
 		var assignedTables sql.NullString
 		if err := rows.Scan(
 			&item.BookingID,
 			&item.BookingNumber,
 			&item.Status,
 			&item.Source,
-			&item.BookingDateFrom,
+			&dateFrom,
 			&item.PartySize,
 			&item.CustomerName,
 			&item.CustomerTel,
@@ -810,6 +811,7 @@ func (r *BookingsRepository) ListBookingsBackOffice(ctx context.Context, merchan
 		); err != nil {
 			return nil, 0, err
 		}
+		item.BookingDateFrom = helpers.NullTimePtr(dateFrom).UTC().Unix()
 
 		if assignedTables.Valid && strings.TrimSpace(assignedTables.String) != "" {
 			item.AssignedTables = strings.Split(assignedTables.String, "||")
@@ -1147,10 +1149,10 @@ func (r *BookingsRepository) CancelBooking(ctx context.Context, merchantID, book
 }
 
 // RescheduleBooking modifie staff la date/heure (et éventuellement le nombre
-// de couverts) d'une résa. Le statut n'est pas touché (aligné sur le contrat
-// staff, à la différence de la modification publique qui peut repasser en
-// pending — cf. reservation.UpdateReservation).
-func (r *BookingsRepository) RescheduleBooking(ctx context.Context, merchantID, bookingID, dateFrom, dateTo string, partySize *int) error {
+// de couverts, la note et le client) d'une résa. Le statut n'est pas touché
+// (aligné sur le contrat staff, à la différence de la modification publique
+// qui peut repasser en pending — cf. reservation.UpdateReservation).
+func (r *BookingsRepository) RescheduleBooking(ctx context.Context, merchantID, bookingID, dateFrom, dateTo string, partySize *int, comment *string, customer *BookingCustomerUpdate) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	// TIMESTAMPDIFF est MySQL-only : la durée est calculée côté Go, avec la
@@ -1165,15 +1167,78 @@ func (r *BookingsRepository) RescheduleBooking(ctx context.Context, merchantID, 
 	}
 	durationMinutes := int(to.Sub(from).Minutes())
 
+	if customer != nil {
+		if err := r.upsertBookingCustomer(ctx, merchantID, bookingID, customer); err != nil {
+			return err
+		}
+	}
+
 	_, err = db.ExecContext(ctx, `
 		UPDATE bookings
 		SET booking_date_from = ?,
 		    booking_date_to = ?,
 		    booking_duration = ?,
 		    party_size = COALESCE(?, party_size),
+		    comment = COALESCE(?, comment),
 		    sequence_number = sequence_number + 1
 		WHERE booking_id = ? AND merchant_id = ?
-	`, dateFrom, dateTo, durationMinutes, partySize, bookingID, merchantID)
+	`, dateFrom, dateTo, durationMinutes, partySize, comment, bookingID, merchantID)
+	return err
+}
+
+// upsertBookingCustomer résout puis upsert le client rattaché à la résa
+// éditée, avec le même fallback téléphone + tag brand qu'à la création (cf.
+// bookingcore.CreateBooking) : si aucun customer_id n'est fourni, on tente de
+// retrouver un client existant par téléphone avant de tagger comme nouveau
+// client WelloResto.
+func (r *BookingsRepository) upsertBookingCustomer(ctx context.Context, merchantID, bookingID string, update *BookingCustomerUpdate) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	var normalizedCustomerID *string
+	if update.CustomerID != nil {
+		trimmed := strings.TrimSpace(*update.CustomerID)
+		if trimmed != "" {
+			normalizedCustomerID = &trimmed
+		}
+	}
+
+	var brand *string
+	if normalizedCustomerID == nil {
+		if update.CustomerTel != nil && strings.TrimSpace(*update.CustomerTel) != "" {
+			existing, err := r.customerUpdater.FindCustomerByPhone(ctx, *update.CustomerTel, merchantID)
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("find customer by phone: %w", err)
+			}
+			if err == nil && existing != nil && existing.CustomerID != nil && *existing.CustomerID != "" {
+				normalizedCustomerID = existing.CustomerID
+			}
+		}
+		if normalizedCustomerID == nil {
+			b := models.BrandWelloResto
+			brand = &b
+		}
+	}
+
+	customer := &models.Customer{
+		MerchantID:    merchantID,
+		CustomerID:    normalizedCustomerID,
+		CustomerName:  update.CustomerName,
+		CustomerTel:   update.CustomerTel,
+		CustomerEmail: update.CustomerEmail,
+		CustomerBrand: brand,
+	}
+
+	resolvedID, err := r.customerUpdater.UpdateOrCreateCustomer(ctx, customer)
+	if err != nil {
+		return fmt.Errorf("upsert customer: %w", err)
+	}
+	if resolvedID == nil || *resolvedID == "" {
+		return fmt.Errorf("customer_upsert_failed")
+	}
+
+	_, err = db.ExecContext(ctx, `
+		UPDATE bookings SET customer_id = ? WHERE booking_id = ? AND merchant_id = ?
+	`, *resolvedID, bookingID, merchantID)
 	return err
 }
 

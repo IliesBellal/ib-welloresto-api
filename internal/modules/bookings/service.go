@@ -302,8 +302,10 @@ func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID st
 }
 
 // RescheduleBooking modifie staff la date/heure (et éventuellement le nombre
-// de couverts) d'une résa confirmed, en revalidant la disponibilité via le
-// moteur unifié (booking exclue de son propre calcul d'occupation).
+// de couverts, la note et le client) d'une résa pending|confirmed, en
+// revalidant la disponibilité via le moteur unifié (booking exclue de son
+// propre calcul d'occupation). Les autres statuts (seated/completed/
+// cancelled/denied/no_show) sont verrouillés côté staff.
 func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingID string, req *RescheduleBookingRequest) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -323,7 +325,8 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 			return err
 		}
 
-		if bookingcore.NormalizeLegacyStatus(booking.Status) != bookingcore.StatusConfirmed {
+		normalizedStatus := bookingcore.NormalizeLegacyStatus(booking.Status)
+		if normalizedStatus != bookingcore.StatusPending && normalizedStatus != bookingcore.StatusConfirmed {
 			return models.ErrInvalidInput
 		}
 
@@ -358,7 +361,7 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 			return models.ErrSlotUnavailable
 		}
 
-		if err := s.repo.RescheduleBooking(txCtx, user.MerchantID, bookingID, req.BookingDateFrom, req.BookingDateTo, req.PartySize); err != nil {
+		if err := s.repo.RescheduleBooking(txCtx, user.MerchantID, bookingID, req.BookingDateFrom, req.BookingDateTo, req.PartySize, req.Comment, req.Customer); err != nil {
 			return err
 		}
 

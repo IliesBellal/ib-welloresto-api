@@ -20,10 +20,10 @@ func TestRescheduleBooking_QueryShapeAndArgs(t *testing.T) {
 	// la durée (90 min) est désormais calculée côté Go, TIMESTAMPDIFF étant
 	// MySQL-only (cf. conversion dbx, rapport 29)
 	mock.ExpectExec("anything").
-		WithArgs("2026-07-10 20:00:00", "2026-07-10 21:30:00", 90, &partySize, "42", "m_1").
+		WithArgs("2026-07-10 20:00:00", "2026-07-10 21:30:00", 90, &partySize, nil, "42", "m_1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := repo.RescheduleBooking(context.Background(), "m_1", "42", "2026-07-10 20:00:00", "2026-07-10 21:30:00", &partySize)
+	err := repo.RescheduleBooking(context.Background(), "m_1", "42", "2026-07-10 20:00:00", "2026-07-10 21:30:00", &partySize, nil, nil)
 	if err != nil {
 		t.Fatalf("RescheduleBooking() error = %v", err)
 	}
