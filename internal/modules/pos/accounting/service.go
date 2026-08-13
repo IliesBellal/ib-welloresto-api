@@ -125,6 +125,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 			Error:  "Erreur lors de la récupération des paiements",
 		}, nil
 	}
+	payments = filterExcludedPaymentLabels(payments)
 
 	// Construire le PDF
 	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments, fromLocal, toLocal, tzName)
@@ -152,6 +153,36 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		Filename:    filename,
 		DownloadURL: downloadURL,
 	}, nil
+}
+
+// accountingExcludedPaymentLabels liste les libellés d'encaissement à exclure
+// du rapport comptable, comparés en majuscule pour rester robustes à la casse
+// et aux libellés saisis librement (ex. cash_registers_custom_items dont le
+// texte ne matche pas les codes MOP bruts déjà filtrés par
+// accountingExcludedChannelMOPs côté repository). Ces canaux externes ont leur
+// propre gestion de TVA à venir, cf. docs/decisions.md.
+var accountingExcludedPaymentLabels = []string{"UBER EATS", "DELIVEROO", "SCANNORDER"}
+
+// filterExcludedPaymentLabels retire du "réel" les encaissements dont le
+// libellé correspond (en majuscule) à un canal externe hors périmètre TVA de
+// ce rapport.
+func filterExcludedPaymentLabels(payments []PaymentRow) []PaymentRow {
+	filtered := make([]PaymentRow, 0, len(payments))
+	for _, payment := range payments {
+		upperLabel := strings.ToUpper(strings.TrimSpace(payment.Label))
+		excluded := false
+		for _, excludedLabel := range accountingExcludedPaymentLabels {
+			if upperLabel == excludedLabel {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+		filtered = append(filtered, payment)
+	}
+	return filtered
 }
 
 // buildPDFReport génère le PDF avec les données comptables
