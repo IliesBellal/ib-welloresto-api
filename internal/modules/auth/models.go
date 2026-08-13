@@ -9,7 +9,7 @@ import (
 
 const (
 	OTPResendCooldown = 60 * time.Second
-	MFAExpiration     = 1 * 24 * time.Hour // For testing purposes, we will use 24 hours  //30 * 24 * time.Hour
+	MFAExpiration     = 30 * 24 * time.Hour // For testing purposes, we will use 24 hours  //30 * 24 * time.Hour
 
 	PINLength      = 4
 	PINMaxAttempts = 5
