@@ -126,6 +126,27 @@ func (r *Repository) ResolveVacationOverlap(ctx context.Context, merchantID stri
 	return exists, err
 }
 
+// ResolveVacationRangeOverlap indique si l'intervalle [rangeStart, rangeEnd)
+// (heure locale naive du marchand, meme convention que ResolveVacationOverlap)
+// chevauche une periode de vacances active. A la difference de
+// ResolveVacationOverlap (un instant precis, pour le statut temps reel
+// POS/scannorder), cette variante couvre une plage — utilisee par le module
+// reservation pour bloquer toute une journee de disponibilites.
+func (r *Repository) ResolveVacationRangeOverlap(ctx context.Context, merchantID string, rangeStart, rangeEnd time.Time) (bool, error) {
+	db := dbx.GetDB(ctx, r.db)
+	start := rangeStart.Format("2006-01-02 15:04:05")
+	end := rangeEnd.Format("2006-01-02 15:04:05")
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM planning_vacation_periods
+			WHERE merchant_id = ? AND enabled = TRUE
+			  AND start_at < ? AND end_at > ?
+		)
+	`, merchantID, end, start).Scan(&exists)
+	return exists, err
+}
+
 type planningVacationPeriodScannable interface {
 	Scan(dest ...any) error
 }

@@ -37,7 +37,8 @@
       "Bash(rm -f \"/d/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.app.tsbuildinfo\" \"/d/Desktop/DTL/Project/git-projects/wello-back-office/tsconfig.node.tsbuildinfo\")",
       "Bash(git -C \"/d/Desktop/DTL/Project/git-projects/wello-back-office\" diff -- src/pages/Menu.tsx)",
       "Bash(gofmt -w internal/modules/menu/import_repository.go)",
-      "Bash(gofmt -w internal/modules/menu/import_commit_repository.go)"
+      "Bash(gofmt -w internal/modules/menu/import_commit_repository.go)",
+      "Bash(git push *)"
     ]
   }
 }

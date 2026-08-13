@@ -418,6 +418,16 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 	}
 	forcedClosed := holiday.IsOpen != nil && !*holiday.IsOpen
 
+	// Vacances : periode de fermeture exceptionnelle definie par le marchand
+	// (planning_vacation_periods), meme effet que forcedClosed ci-dessus mais
+	// sur une plage de dates plutot qu'un jour ferie isole (meme logique que
+	// pos.GetPOSStatus).
+	onVacation, err := holidayRepo.ResolveVacationOverlap(ctx, merchantID, localNow)
+	if err != nil {
+		return nil, err
+	}
+	forcedClosed = forcedClosed || onVacation
+
 	// 4️⃣ Statut horaires : ex-procédure GET_POS_STATUS, calculée en Go
 	slots, err := openinghours.FetchActiveSlots(ctx, r.database, merchantID, localNow)
 	if err != nil {

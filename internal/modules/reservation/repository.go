@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/customers"
+	settingspkg "welloresto-api/internal/modules/planning/settings"
 )
 
 // ReservationRepository définit le contrat pour l'accès aux données
@@ -17,6 +18,7 @@ type ReservationRepository interface {
 	GetMerchantByQR(ctx context.Context, qr string) (*Merchant, error)
 	GetOperationHoursByQR(ctx context.Context, qr string) ([]OperationHour, error)
 	GetOperationRanges(ctx context.Context, merchantID string, dayOfWeek int, requestedDate string) ([]OperationRange, error)
+	HasVacationOverlap(ctx context.Context, merchantID string, rangeStart, rangeEnd time.Time) (bool, error)
 	GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error)
 	GetBookedCapacityExcludingBooking(ctx context.Context, merchantID string, requestedDate string, excludeBookingNumber string) ([]bookingcore.IntervalBooking, error)
 	GetBookingDurationRules(ctx context.Context, merchantID string) ([]bookingcore.DurationRule, error)
@@ -193,6 +195,14 @@ func (r *reservationRepository) GetOperationRanges(ctx context.Context, merchant
 		ranges = append(ranges, o)
 	}
 	return ranges, nil
+}
+
+// HasVacationOverlap indique si [rangeStart, rangeEnd) (heure locale du
+// marchand) chevauche une periode de vacances active — utilisee pour bloquer
+// les disponibilites de reservation en ligne, meme mecanisme que
+// pos.GetPOSStatus/scannorder.GetMerchantStatus pour le statut temps reel.
+func (r *reservationRepository) HasVacationOverlap(ctx context.Context, merchantID string, rangeStart, rangeEnd time.Time) (bool, error) {
+	return settingspkg.NewRepository(r.database).ResolveVacationRangeOverlap(ctx, merchantID, rangeStart, rangeEnd)
 }
 
 func (r *reservationRepository) GetBookedCapacity(ctx context.Context, merchantID string, requestedDate string) ([]bookingcore.IntervalBooking, error) {

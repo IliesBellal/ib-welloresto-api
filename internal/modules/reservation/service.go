@@ -476,6 +476,14 @@ func (s *reservationService) buildComputedAvailability(ctx context.Context, merc
 		dayOfWeek = 7
 	}
 
+	onVacation, err := s.repo.HasVacationOverlap(ctx, merchant.MerchantID, requestedDateTime, requestedDateTime.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, err
+	}
+	if onVacation {
+		return []bookingcore.ComputedSlot{}, nil
+	}
+
 	ranges, err := s.repo.GetOperationRanges(ctx, merchant.MerchantID, dayOfWeek, requestedDate)
 	if err != nil {
 		return nil, err
