@@ -328,11 +328,18 @@ type customItemSeed struct {
 // (GetTrustedEnclosedRegisterIDs + GetRealPaymentsData) : aucun registre
 // enclosed -> vide (comportement identique à l'ancien GetPaymentsData non
 // touché, cf. TestPOSAccountingReports_Postgres ci-dessus qui continue de le
-// couvrir séparément) ; registre enclosed sans dérive -> réel utilisé, MOP
-// non libellé affiché sous son code brut ; custom item à libellé libre ->
-// ligne à part ; canaux hors périmètre (UBER_EATS/STRIPE/DELIVEROO)
-// exclus ; registre en dérive (paiement corrigé après enclose) -> écarté
-// entièrement, pas de repli partiel ; isolation stricte entre marchands.
+// couvrir séparément) ; registre enclosed sans dérive -> réel utilisé,
+// exclusivement depuis cash_registers_custom_items (cash_registers_items,
+// l'instantané MOP automatique à la clôture, est ignoré — le restaurateur ne
+// peut enclose sa caisse qu'après avoir ressaisi lui-même le détail réel en
+// custom items avec un écart proche de 0, ce qui rend cash_registers_items
+// redondant pour ce rapport) ; custom item non libellé affiché sous son code
+// brut ; custom item à libellé libre -> ligne à part ; canaux hors périmètre
+// (UBER_EATS/STRIPE/DELIVEROO) exclus ; registre en dérive (paiement corrigé
+// après enclose) -> écarté entièrement, pas de repli partiel ; isolation
+// stricte entre marchands. Les mopPayment ci-dessous restent seedés pour
+// exercer GetTrustedEnclosedRegisterIDs (comparaison frozen/live) ; seuls les
+// customItemSeed correspondants alimentent désormais GetRealPaymentsData.
 func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
 	ctx := context.Background()
@@ -500,9 +507,8 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 
 	// Fix A (audit) : un code MOP avec une ligne `labels` existante mais au
 	// libellé vide ('') doit retomber sur le code brut, exactement comme un
-	// code sans aucune ligne `labels` — pas une ligne à blanc. Asymétrie
-	// trouvée entre les deux branches de l'UNION (cash_registers_items ne
-	// gérait que NULL, pas ''), corrigée pour utiliser NULLIF des deux côtés.
+	// code sans aucune ligne `labels` — pas une ligne à blanc (NULLIF sur
+	// l.label).
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO labels (label_value, label_type, lang, label)
 		VALUES ('ITESTEMPTY', 'mop', 'FR', '')`); err != nil {
@@ -518,17 +524,26 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	// codes comme 'ES'/'CB' ont déjà un libellé réel dans cette base de dev) :
 	// ça isole le test des données de référence existantes et vérifie du même
 	// coup le repli sur le code brut (LEFT JOIN délibéré, cf. GetRealPaymentsData).
+	// Les customItemSeed reproduisent ici la ressaisie que le restaurateur
+	// doit faire pour pouvoir enclose (écart proche de 0) : ce sont eux, pas
+	// les mopPayment/cash_registers_items, qui alimentent GetRealPaymentsData.
 	regB, _ := openCloseRegister(fA, insidePeriod, []mopPayment{
 		{mop: "ITESTES", amount: 500},
 		{mop: "ITESTCB", amount: 300},
 		{mop: "UBER_EATS", amount: 999},
 		{mop: "ITESTEMPTY", amount: 123},
-	}, nil)
+	}, []customItemSeed{
+		{label: "ITESTES", value: 500},
+		{label: "ITESTCB", value: 300},
+		{label: "UBER_EATS", value: 999},
+		{label: "ITESTEMPTY", value: 123},
+	})
 
 	// (c) Un second registre avec un custom item à libellé libre.
 	regC, _ := openCloseRegister(fA, insidePeriod, []mopPayment{
 		{mop: "ITESTES", amount: 200},
 	}, []customItemSeed{
+		{label: "ITESTES", value: 200},
 		{label: "Pourboire", value: 150},
 	})
 
@@ -601,7 +616,9 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 
 	regE, _ := openCloseRegister(fB, insidePeriod, []mopPayment{
 		{mop: "ITESTCB", amount: 777},
-	}, nil)
+	}, []customItemSeed{
+		{label: "ITESTCB", value: 777},
+	})
 
 	trustedB, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fB.merchantID, periodStart, periodEnd)
 	if err != nil || !containsID(trustedB, regE) {
@@ -727,6 +744,13 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 
 	if _, err := crRepo.CloseCashRegister(ctx, regIDStr, merchantID, &models.CloseCashRegisterRequest{}); err != nil {
 		t.Fatalf("CloseCashRegister: %v", err)
+	}
+	// GetRealPaymentsData ne lit plus que cash_registers_custom_items : il faut
+	// la ressaisie manuelle (comme le restaurateur doit le faire pour pouvoir
+	// enclose) pour que le montant apparaisse dans le rapport.
+	authedUser := &auth.UserLoginRow{UserID: userID, MerchantID: merchantID}
+	if _, err := crRepo.AddCustomItem(ctx, regIDStr, &models.AddCustomItemRequest{Label: "ITESTE2E", Value: 650}, authedUser); err != nil {
+		t.Fatalf("AddCustomItem: %v", err)
 	}
 	if err := crRepo.EncloseCashRegister(ctx, userID, regIDStr, "itest e2e close"); err != nil {
 		t.Fatalf("EncloseCashRegister: %v", err)

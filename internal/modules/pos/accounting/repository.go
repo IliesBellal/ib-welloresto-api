@@ -531,14 +531,16 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 }
 
 // GetRealPaymentsData somme le "réel" des registres de caisse passés en
-// paramètre (déjà filtrés par GetTrustedEnclosedRegisterIDs) : le montant
-// figé par MOP à la clôture (cash_registers_items) plus les ajustements
-// manuels actifs (cash_registers_custom_items). Contrairement à
-// GetPaymentsData, la jointure vers labels est un LEFT JOIN délibéré : un
-// code MOP non libellé ne doit jamais faire disparaître silencieusement un
-// montant du total censé être le plus fiable — il apparaît sous son code brut
-// à défaut de libellé. Un custom item à texte libre sans correspondance MOP
-// apparaît de la même façon comme sa propre ligne (décision produit).
+// paramètre (déjà filtrés par GetTrustedEnclosedRegisterIDs) : uniquement les
+// ajustements manuels actifs (cash_registers_custom_items). cash_registers_items
+// (snapshot MOP automatique à la clôture) est délibérément ignoré — le
+// restaurateur ne peut enclose sa caisse qu'après avoir ressaisi lui-même le
+// détail réel en custom items avec un écart proche de 0 ; cash_registers_items
+// serait donc redondant et n'a pas vocation à apparaître dans ce rapport.
+// Contrairement à GetPaymentsData, la jointure vers labels est un LEFT JOIN
+// délibéré : un custom item à texte libre sans correspondance MOP apparaît
+// sous son propre libellé plutôt que de disparaître silencieusement
+// (décision produit).
 func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, registerIDs []int64) ([]PaymentRow, error) {
 	if len(registerIDs) == 0 {
 		return nil, nil
@@ -562,14 +564,6 @@ func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, register
 	sqlQuery := `
 		SELECT label, SUM(amount) AS amount
 		FROM (
-			SELECT COALESCE(NULLIF(l.label, ''), cri.mop) AS label, cri.amount AS amount
-			FROM cash_registers_items cri
-			LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = cri.mop AND l.lang = 'FR'
-			WHERE cri.cash_register_id IN (` + idInClause + `)
-			  AND cri.mop NOT IN (` + excludedInClause + `)
-
-			UNION ALL
-
 			SELECT COALESCE(NULLIF(l.label, ''), crci.label) AS label, crci.amount AS amount
 			FROM cash_registers_custom_items crci
 			LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = crci.label AND l.lang = 'FR'
@@ -581,13 +575,7 @@ func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, register
 		ORDER BY label
 	`
 
-	args := make([]interface{}, 0, 2*(len(registerIDs)+len(accountingExcludedChannelMOPs)))
-	for _, id := range registerIDs {
-		args = append(args, id)
-	}
-	for _, mop := range accountingExcludedChannelMOPs {
-		args = append(args, mop)
-	}
+	args := make([]interface{}, 0, len(registerIDs)+len(accountingExcludedChannelMOPs))
 	for _, id := range registerIDs {
 		args = append(args, id)
 	}

@@ -294,6 +294,39 @@
   code cette itération — un `log.Warn` signale les registres en dérive
   pour investigation manuelle.
 
+### Rapport comptable — labels exclus en plus des codes MOP, `cash_registers_items` retiré du réel (2026-08-13)
+
+- **Exclusion par libellé affiché** : `accountingExcludedChannelMOPs`
+  (`STRIPE`/`UBER_EATS`/`DELIVEROO`) filtre en SQL le code MOP brut
+  (`cri.mop`/`crci.label`) *avant* la jointure vers `labels` — un custom
+  item à texte libre saisi littéralement "Uber Eats"/"Deliveroo"/
+  "ScanNOrder" (au lieu du code MOP exact) passait donc au travers. Ajout
+  d'un filtre applicatif `filterExcludedPaymentLabels`
+  (`accounting/service.go`), en aval de `GetRealPaymentsData`, qui compare
+  le libellé affiché en majuscule (`UBER EATS`/`DELIVEROO`/`SCANNORDER`)
+  — garde-fou en plus du filtre SQL existant, pas un remplacement.
+- **`cash_registers_items` totalement retiré de `GetRealPaymentsData`** :
+  confirmé par le métier (Ilies, 2026-08-13) — un restaurateur ne peut
+  enclose sa caisse qu'après avoir lui-même ressaisi le détail réel en
+  `cash_registers_custom_items`, avec un écart proche de 0 exigé avant de
+  pouvoir valider. `cash_registers_items` (instantané MOP automatique posé
+  à la clôture, cf. entrée précédente) est donc redondant pour ce
+  rapport : la requête de `GetRealPaymentsData` ne lit plus que
+  `cash_registers_custom_items`, l'UNION vers `cash_registers_items` a été
+  supprimée.
+  - `GetTrustedEnclosedRegisterIDs` (comparaison frozen `cash_registers_items`
+    vs live `payments`, garde-fou anti-dérive) **n'est pas concernée** :
+    elle continue de s'appuyer sur `cash_registers_items` pour détecter
+    qu'un paiement a été corrigé après l'enclose d'un registre — ce
+    garde-fou reste nécessaire même si son contenu ne sert plus à
+    afficher les montants du rapport.
+  - Tests d'intégration Postgres mis à jour
+    (`accounting/postgres_integration_test.go`) : les `mopPayment` seedés
+    restent nécessaires pour exercer le frozen/live check, mais les
+    montants attendus dans `GetRealPaymentsData` viennent désormais de
+    `customItemSeed`/`AddCustomItem` ajoutés en parallèle, pas des
+    `mopPayment` seuls.
+
 ### Traçabilité HACCP (photos + commentaire) — trou schéma Postgres cible (2026-07-23)
 
 - Migration `067_haccp_traceability` (`haccp_traceability_records`/`haccp_traceability_photos`) ajoutée après la préparation Postgres, comme `planning_day_comments` en son temps (voir `docs/migration-postgres/26-planning-day-comments-integration.md`) : il manque encore sa traduction dans `04-schema-postgres-target.sql` (+ mise à jour `03-table-usage-audit.md`/`07-module-inventory.md`) — à rattraper avant le cutover Postgres (Phase 8), sinon la section traçabilité de `internal/modules/haccp/postgres_integration_test.go` échouera contre le Postgres de dev.
