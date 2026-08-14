@@ -1,6 +1,7 @@
 package importutil
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,24 @@ func TestReadCSVRowsLazyQuotes(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("ReadCSVRows = %d lignes, want 2: %v", len(rows), rows)
+	}
+}
+
+// Reproduit l'incident production du 2026-08-14 : un export Zelty en
+// Windows-1252 contenait 0x89 (le "‰" per mille) dans une colonne texte,
+// invalide en UTF-8. Non retranscodé, cet octet traversait intact jusqu'au
+// commit et Postgres le rejetait a l'insertion (SQLSTATE 22021), bien apres
+// que la preview ait accepte le fichier.
+func TestReadCSVRowsTranscodesWindows1252(t *testing.T) {
+	// "Progrès ‰" en Windows-1252 : 0xE8 = "è", 0x89 = "‰".
+	input := []byte("Nom,Notes\nJean,Progr\xe8s \x89\n")
+
+	rows, err := ReadCSVRows(bytes.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadCSVRows: %v", err)
+	}
+	if got, want := rows[1][1], "Progrès ‰"; got != want {
+		t.Fatalf("cellule retranscodee = %q, want %q", got, want)
 	}
 }
 

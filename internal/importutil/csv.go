@@ -1,11 +1,13 @@
 package importutil
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // utf8BOM est le marqueur d'ordre des octets UTF-8 que certains tableurs
@@ -20,13 +22,27 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // les lignes de longueur variable (sections, lignes de séparation), et
 // LazyQuotes est activé : les exports CSV rencontrés ne respectent pas
 // toujours strictement la RFC 4180 sur l'échappement des guillemets.
+//
+// Certains exports (Zelty en tête) sortent en Windows-1252 plutôt qu'en
+// UTF-8 : encoding/csv ne valide pas l'encodage et laisse passer les octets
+// invalides tels quels, qui atterrissent ensuite dans une colonne texte
+// Postgres — lequel les rejette (SQLSTATE 22021 invalid byte sequence for
+// encoding "UTF8") au moment du commit, bien après la preview. On détecte ce
+// cas ici, en amont de tout parsing, et on retranscode en UTF-8.
 func ReadCSVRows(r io.Reader) ([][]string, error) {
-	br := bufio.NewReader(r)
-	if bom, err := br.Peek(len(utf8BOM)); err == nil && bytes.Equal(bom, utf8BOM) {
-		_, _ = br.Discard(len(utf8BOM))
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("lecture du fichier CSV: %w", err)
+	}
+	data = bytes.TrimPrefix(data, utf8BOM)
+
+	if !utf8.Valid(data) {
+		if decoded, decErr := charmap.Windows1252.NewDecoder().Bytes(data); decErr == nil {
+			data = decoded
+		}
 	}
 
-	reader := csv.NewReader(br)
+	reader := csv.NewReader(bytes.NewReader(data))
 	reader.FieldsPerRecord = -1
 	reader.LazyQuotes = true
 	reader.Comma = ','
