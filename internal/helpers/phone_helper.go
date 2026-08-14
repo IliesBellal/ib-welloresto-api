@@ -3,6 +3,8 @@ package helpers
 import (
 	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/nyaruka/phonenumbers"
 )
@@ -119,9 +121,20 @@ func FormatToE164(phone string, defaultRegion string) (string, error) {
 	return phonenumbers.Format(number, phonenumbers.E164), nil
 }
 
+// Ucfirst met en majuscule le premier caractere de s.
+//
+// s[:1] decoupe par octet, pas par rune : sur un premier caractere accentue
+// (ex. "ÉQUITATION", E-accent = 0xC3 0x89 en UTF-8), ca isole l'octet de tete
+// 0xC3 et laisse 0x89 en tete du reste — une sequence UTF-8 invalide que
+// Postgres rejette a l'insertion (SQLSTATE 22021). DecodeRuneInString lit le
+// premier caractere entier, quelle que soit sa largeur en octets.
 func Ucfirst(s string) string {
 	if s == "" {
 		return ""
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
 }
