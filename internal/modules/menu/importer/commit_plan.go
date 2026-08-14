@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"welloresto-api/internal/importutil"
 )
 
 // Codes de blocage. Le commit est refusé tant qu'il en reste un : il vaut mieux
@@ -291,7 +293,7 @@ func (b *commitPlanner) buildCategories() {
 				entry.AlreadyImported = true
 				entry.ReuseCategID = match.CategID
 				entry.ReuseMerchantCategID = match.MerchantCategID
-			} else if match, ok := byName[normalizeLabel(c.name)]; ok {
+			} else if match, ok := byName[importutil.NormalizeLabel(c.name)]; ok {
 				// Recréée à la main entre-temps sous le même nom : on s'y
 				// rattache et on réaffecte la correspondance.
 				entry.ReuseCategID = match.CategID
@@ -303,7 +305,7 @@ func (b *commitPlanner) buildCategories() {
 				// réaffecte la correspondance.
 				entry.RemapExisting = true
 			}
-		} else if match, ok := byName[normalizeLabel(c.name)]; ok {
+		} else if match, ok := byName[importutil.NormalizeLabel(c.name)]; ok {
 			entry.ReuseCategID = match.CategID
 			entry.ReuseMerchantCategID = match.MerchantCategID
 		}
@@ -336,7 +338,7 @@ func (b *commitPlanner) buildTags() {
 			if _, ok := alive[tagID]; ok {
 				entry.AlreadyImported = true
 				entry.ReuseTagID = tagID
-			} else if match, ok := byName[normalizeLabel(tag.Name)]; ok {
+			} else if match, ok := byName[importutil.NormalizeLabel(tag.Name)]; ok {
 				entry.ReuseTagID = match.TagID
 				entry.RemapExisting = true
 			} else {
@@ -345,7 +347,7 @@ func (b *commitPlanner) buildTags() {
 				// produits recréés perdraient leurs étiquettes.
 				entry.RemapExisting = true
 			}
-		} else if match, ok := byName[normalizeLabel(tag.Name)]; ok {
+		} else if match, ok := byName[importutil.NormalizeLabel(tag.Name)]; ok {
 			entry.ReuseTagID = match.TagID
 		}
 
@@ -422,7 +424,7 @@ func (b *commitPlanner) buildProducts() {
 			entry.RemapExisting = true
 		}
 
-		if match, collides := collisions[normalizeLabel(p.Name)]; collides {
+		if match, collides := collisions[importutil.NormalizeLabel(p.Name)]; collides {
 			switch b.decisions.NameCollisions[p.ExternalID] {
 			case CollisionSkip:
 				entry.SkippedByCollision = true

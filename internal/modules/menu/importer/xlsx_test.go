@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/xuri/excelize/v2"
+
+	"welloresto-api/internal/importutil"
 )
 
 // buildXLSX fabrique un classeur en memoire a partir d'une grille de chaines.
@@ -55,53 +57,26 @@ func openFixture(t *testing.T, name string) io.ReadCloser {
 // verrouille l'hypothese dont ils dependent : excelize conserve les lignes
 // vides, donc l'index de la ligne dans le resultat vaut son numero moins un.
 // Les exports Zelty commencent par une ligne vide, l'en-tete est en ligne 2.
+//
+// readSheetRows/cellAt/rowIsEmpty vivent desormais dans internal/importutil
+// (couverts par leurs propres tests generiques) ; ce test reste ici car il
+// verrouille une hypothese specifique aux fixtures Zelty du package.
 func TestReadSheetRowsPreservesRowNumbering(t *testing.T) {
-	rows, err := readSheetRows(openFixture(t, fixtureZelty2026))
+	rows, err := importutil.ReadSheetRows(openFixture(t, fixtureZelty2026))
 	if err != nil {
-		t.Fatalf("readSheetRows: %v", err)
+		t.Fatalf("ReadSheetRows: %v", err)
 	}
 	if len(rows) == 0 {
 		t.Fatal("aucune ligne lue")
 	}
 
-	if !rowIsEmpty(rows[0]) {
+	if !importutil.RowIsEmpty(rows[0]) {
 		t.Fatalf("ligne 1 = %v, want vide", rows[0])
 	}
-	if got := cellAt(rows[1], zeltyColID); got != "ID" {
+	if got := importutil.CellAt(rows[1], zeltyColID); got != "ID" {
 		t.Fatalf("ligne 2, colonne A = %q, want %q", got, "ID")
 	}
-	if got := cellAt(rows[1], zeltyColType); got != "Type" {
+	if got := importutil.CellAt(rows[1], zeltyColType); got != "Type" {
 		t.Fatalf("ligne 2, colonne B = %q, want %q", got, "Type")
-	}
-}
-
-// cellAt doit tolerer les lignes courtes : excelize tronque les cellules vides
-// de fin de ligne, et les sections de l'export Zelty n'utilisent pas toutes le
-// meme nombre de colonnes.
-func TestCellAtToleratesShortRows(t *testing.T) {
-	row := []string{"ZD1", "Produit", "  Margherita  "}
-
-	cases := []struct {
-		name string
-		idx  int
-		want string
-	}{
-		{"cellule presente rognee", 2, "Margherita"},
-		{"au-dela de la ligne", zeltyColTags, ""},
-		{"index negatif (colonne absente)", -1, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := cellAt(row, tc.idx); got != tc.want {
-				t.Fatalf("cellAt(row, %d) = %q, want %q", tc.idx, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestReadSheetRowsRejectsNonWorkbook(t *testing.T) {
-	if _, err := readSheetRows(bytes.NewReader([]byte("Nom;Prix\nMargherita;9,90\n"))); err == nil {
-		t.Fatal("readSheetRows(csv) = nil, want une erreur")
 	}
 }

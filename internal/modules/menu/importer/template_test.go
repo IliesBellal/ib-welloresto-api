@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/xuri/excelize/v2"
+
+	"welloresto-api/internal/importutil"
 )
 
 func buildWelloGenericTemplate(t *testing.T) *bytes.Buffer {
@@ -117,7 +119,7 @@ func TestWelloGenericTemplateHeadersResolve(t *testing.T) {
 	seen := make(map[welloGenericField]string, len(welloGenericTemplate))
 
 	for _, column := range welloGenericTemplate {
-		field, known := welloGenericAliases[foldHeader(column.header)]
+		field, known := welloGenericAliases[importutil.FoldHeader(column.header)]
 		if !known {
 			t.Fatalf("l'en-tête %q du modèle n'est reconnu par aucun alias", column.header)
 		}

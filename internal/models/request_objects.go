@@ -151,10 +151,11 @@ type CashReportDeliveryGroup struct {
 }
 
 type TVACategoryLine struct {
-	TVATitle string `json:"tva_title"`
-	HT       int    `json:"HT"`
-	TTC      int    `json:"TTC"`
-	TVA      int    `json:"TVA"`
+	TVATitle string  `json:"tva_title"`
+	Rate     float64 `json:"tva_rate"`
+	HT       int     `json:"HT"`
+	TTC      int     `json:"TTC"`
+	TVA      int     `json:"TVA"`
 }
 
 type MOPLine struct {

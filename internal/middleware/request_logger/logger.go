@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	appLogger "welloresto-api/internal/logger"
 
 	"go.uber.org/zap"
@@ -128,9 +129,9 @@ func (l *Logger) flush(batch []LogEntry) {
 		)
 	}
 
-	stmt := `INSERT INTO api_request_logs 
+	stmt := dbx.Rebind(`INSERT INTO api_request_logs
 		(user_id, merchant_id, method, url, payload, status_code, ip) VALUES ` +
-		strings.Join(valueStrings, ",")
+		strings.Join(valueStrings, ","))
 
 	_, err := l.db.ExecContext(ctx, stmt, valueArgs...)
 	finishedAt := time.Now()

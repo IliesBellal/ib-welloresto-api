@@ -2,6 +2,8 @@ package importer
 
 import (
 	"io"
+
+	"welloresto-api/internal/importutil"
 )
 
 // ZeltySlug identifie le provider Zelty. Il est stocke tel quel dans la colonne
@@ -58,7 +60,7 @@ func (p *ZeltyProvider) Slug() string { return ZeltySlug }
 // Le seul etat reellement necessaire est le groupe d'options courant : les
 // lignes "Option Value" suivent leur "Option" sans jamais la referencer.
 func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
-	rows, err := readSheetRows(r)
+	rows, err := importutil.ReadSheetRows(r)
 	if err != nil {
 		return nil, err
 	}
@@ -73,12 +75,12 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 
 	for i, row := range rows {
 		line := i + 1 // numerotation du tableur
-		if rowIsEmpty(row) {
+		if importutil.RowIsEmpty(row) {
 			continue
 		}
 
-		id := cellAt(row, zeltyColID)
-		rowType := cellAt(row, zeltyColType)
+		id := importutil.CellAt(row, zeltyColID)
+		rowType := importutil.CellAt(row, zeltyColType)
 
 		// Ligne d'en-tete de section : elle ouvre une nouvelle section, donc
 		// clot le groupe d'options en cours.
@@ -89,12 +91,12 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 
 		switch rowType {
 		case zeltyTypeTag:
-			name := cellAt(row, zeltyColName)
+			name := importutil.CellAt(row, zeltyColName)
 			if id == "" || name == "" {
 				return nil, rowErrorf(line, "Nom", "tag sans identifiant ou sans nom")
 			}
 			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: name})
-			if key := normalizeLabel(name); tagIDByLabel[key] == "" {
+			if key := importutil.NormalizeLabel(name); tagIDByLabel[key] == "" {
 				tagIDByLabel[key] = id
 			}
 
@@ -103,11 +105,11 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 			if err != nil {
 				return nil, err
 			}
-			product.TagExternalIDs = resolveZeltyTags(out, tagIDByLabel, cellAt(row, zeltyColTags))
+			product.TagExternalIDs = resolveZeltyTags(out, tagIDByLabel, importutil.CellAt(row, zeltyColTags))
 			out.Products = append(out.Products, *product)
 
 		case zeltyTypeOption:
-			name := cellAt(row, zeltyColName)
+			name := importutil.CellAt(row, zeltyColName)
 			if id == "" || name == "" {
 				return nil, rowErrorf(line, "Nom", "groupe d'options sans identifiant ou sans nom")
 			}
@@ -118,11 +120,11 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 			if currentAttribute < 0 {
 				return nil, rowErrorf(line, "Type", "valeur d'option rencontree avant tout groupe d'options")
 			}
-			title := cellAt(row, zeltyColName)
+			title := importutil.CellAt(row, zeltyColName)
 			if id == "" || title == "" {
 				return nil, rowErrorf(line, "Nom", "valeur d'option sans identifiant ou sans nom")
 			}
-			extraPrice, err := parsePriceCents(cellAt(row, zeltyColPrice))
+			extraPrice, err := parsePriceCents(importutil.CellAt(row, zeltyColPrice))
 			if err != nil {
 				return nil, rowErrorf(line, "Prix", "%s", err)
 			}
@@ -155,26 +157,26 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 // les trois. Les taux de TVA sont conserves bruts, 0 compris — c'est la preview
 // qui traduira un 0 en canal desactive et choisira le taux de repli.
 func parseZeltyProduct(row []string, line int) (*CanonicalProduct, error) {
-	id := cellAt(row, zeltyColID)
-	name := cellAt(row, zeltyColName)
+	id := importutil.CellAt(row, zeltyColID)
+	name := importutil.CellAt(row, zeltyColName)
 	if id == "" || name == "" {
 		return nil, rowErrorf(line, "Nom", "produit sans identifiant ou sans nom")
 	}
 
-	price, err := parsePriceCents(cellAt(row, zeltyColPrice))
+	price, err := parsePriceCents(importutil.CellAt(row, zeltyColPrice))
 	if err != nil {
 		return nil, rowErrorf(line, "Prix", "%s", err)
 	}
 
-	tvaIn, err := parseTvaRate(cellAt(row, zeltyColTvaIn))
+	tvaIn, err := parseTvaRate(importutil.CellAt(row, zeltyColTvaIn))
 	if err != nil {
 		return nil, rowErrorf(line, "TVA", "%s", err)
 	}
-	tvaTakeAway, err := parseTvaRate(cellAt(row, zeltyColTvaTakeAway))
+	tvaTakeAway, err := parseTvaRate(importutil.CellAt(row, zeltyColTvaTakeAway))
 	if err != nil {
 		return nil, rowErrorf(line, "TVA emporte", "%s", err)
 	}
-	tvaDelivery, err := parseTvaRate(cellAt(row, zeltyColTvaDelivery))
+	tvaDelivery, err := parseTvaRate(importutil.CellAt(row, zeltyColTvaDelivery))
 	if err != nil {
 		return nil, rowErrorf(line, "TVA livraison", "%s", err)
 	}
@@ -202,7 +204,7 @@ func parseZeltyProduct(row []string, line int) (*CanonicalProduct, error) {
 // ferait disparaitre une categorie potentielle du produit. Cas jamais observe
 // sur les exports connus, c'est un filet.
 func resolveZeltyTags(out *IntermediateImport, tagIDByLabel map[string]string, raw string) []string {
-	labels := splitLabels(raw)
+	labels := importutil.SplitLabels(raw)
 	if len(labels) == 0 {
 		return nil
 	}
@@ -211,11 +213,11 @@ func resolveZeltyTags(out *IntermediateImport, tagIDByLabel map[string]string, r
 	seen := make(map[string]struct{}, len(labels))
 
 	for _, label := range labels {
-		key := normalizeLabel(label)
+		key := importutil.NormalizeLabel(label)
 
 		id, known := tagIDByLabel[key]
 		if !known {
-			id = generatedExternalID(zeltySyntheticTagPrefix, label)
+			id = importutil.GeneratedExternalID(zeltySyntheticTagPrefix, label)
 			tagIDByLabel[key] = id
 			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: label, Synthetic: true})
 		}

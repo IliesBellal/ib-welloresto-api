@@ -10,7 +10,7 @@ import (
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
 
-	//requestlogger "welloresto-api/internal/middleware/request_logger"
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
 	kioskModule "welloresto-api/internal/modules/kiosk"
@@ -37,6 +37,7 @@ import (
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
 	customersModule "welloresto-api/internal/modules/customers"
+	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	discountsModule "welloresto-api/internal/modules/discounts"
@@ -81,7 +82,7 @@ import (
 	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
 )
 
-func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
+func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
 
 	r := chi.NewRouter()
 
@@ -89,9 +90,12 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	//  GLOBAL MIDDLEWARES
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
-	r.Use(middleware.LoggingMiddleware(log, mysqlDB))
-	// Il semblerait que ce middleware cause des timeout lors d'appels d'API uber eats, désactivé temporairement
-	//r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(mysqlDB, log, 1000)))
+	r.Use(middleware.LoggingMiddleware(log, selectedDB))
+	// Réactivé : les timeouts d'origine venaient du pool MySQL à 1 connexion partagée
+	// (voir internal/database/mysql.go) saturé par les flush périodiques de ce logger ;
+	// le pool Postgres (internal/database/postgres.go) en autorise 15. Le logger a aussi
+	// été corrigé pour passer par dbx.Rebind (placeholders ? -> $N, requis par Postgres).
+	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(selectedDB, log, 1000)))
 
 	// ============================
 	// REDIS
@@ -146,7 +150,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// =============================
 
 	// ---- Audit Logger ----
-	auditRepo := auditModule.NewAuditRepository(mysqlDB)
+	auditRepo := auditModule.NewAuditRepository(selectedDB)
 	auditService := auditModule.NewAuditService(auditRepo)
 
 	// ---- MAILER & SMS (BREVO) ----
@@ -161,7 +165,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	})
 
 	// 2. Initialisation des couches (Injection de dépendances)
-	repo := googlemaps.NewGoogleMapsRepository(mysqlDB)
+	repo := googlemaps.NewGoogleMapsRepository(selectedDB)
 	googleClient := googlemaps.NewGoogleMapsClient(cfg.Google)
 	svc := googlemaps.NewRouteService(repo, googleClient)
 	routeHandler := googlemaps.NewRouteHandler(svc)
@@ -173,52 +177,56 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	fcmClient := notificationModule.NewFCMClient()
 	saPath := "/etc/secrets/wello-resto-150721-6d1253e00d6d.json"
 	fcmTokenManager := notificationModule.NewGoogleFCMTokenManager(saPath)
-	notificationRepo := notificationModule.NewNotificationRepository(mysqlDB)
+	notificationRepo := notificationModule.NewNotificationRepository(selectedDB)
 	notificationService := notificationModule.NewNotificationService(notificationRepo, fcmClient, fcmTokenManager, wsHub)
 
 	// ---- Auth ----
-	authRepo := authModule.NewAuthRepository(mysqlDB)
+	authRepo := authModule.NewAuthRepository(selectedDB)
 	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper, cfg.Auth.PasswordResetBaseURL)
 	authMiddleware := middleware.Auth(&authService)
 
 	// ---- POS ----
-	posRepo := posModule.NewPOSRepository(mysqlDB)
+	posRepo := posModule.NewPOSRepository(selectedDB)
 	posService := posModule.NewPOSService(posRepo)
 
 	// ---- POS Reports ----
-	posReportsRepo := posReportsModule.NewReportsRepository(mysqlDB)
+	posReportsRepo := posReportsModule.NewReportsRepository(selectedDB)
 	posReportsService := posReportsModule.NewReportsService(posReportsRepo)
-	posReportsHandler := posReportsModule.NewReportsHandler(posReportsService)
+	posReportsHandler := posReportsModule.NewReportsHandler(posReportsService, r2Client)
+
+	// ---- Cash Register (repo remonté ici : requis par POS Accounting pour
+	// l'export PDF d'un registre unique) ----
+	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(selectedDB)
 
 	// ---- POS Accounting ----
-	posAccountingRepo := posAccountingModule.NewAccountingRepository(mysqlDB)
-	posAccountingService := posAccountingModule.NewAccountingService(posAccountingRepo)
+	posAccountingRepo := posAccountingModule.NewAccountingRepository(selectedDB)
+	posAccountingService := posAccountingModule.NewAccountingService(posAccountingRepo, cashRegisterRepo)
 	posAccountingHandler := posAccountingModule.NewAccountingHandler(posAccountingService, r2Client)
 
 	// ---- STATS ----
-	statsRepo := statsModule.NewStatsRepository(mysqlDB)
+	statsRepo := statsModule.NewStatsRepository(selectedDB)
 	statsService := statsModule.NewStatsService(statsRepo)
 
 	// ---- Allergens (repo construit tôt : requis par Menu pour l'affiche PDF des allergènes) ----
-	allergensRepo := allergensModule.NewRepository(mysqlDB)
+	allergensRepo := allergensModule.NewRepository(selectedDB)
 
 	// ---- Menu ----
-	menuRepoLegacy := menuModule.NewMenuRepository(mysqlDB, redisClient)
+	menuRepoLegacy := menuModule.NewMenuRepository(selectedDB, redisClient)
 	// NOTE: deliverooService and uberService are initialized below; we forward-declare menuService
 	// and re-assign after their initialization using a late-binding approach via a pointer.
 	// To keep initialization order clean, menuService is assigned after deliveroo/uber init.
 
 	// ---- Orders ----
-	ordersFetcher := ordersModule.NewOrdersFetcher(mysqlDB)
-	ordersRepo := ordersModule.NewOrdersRepository(mysqlDB, ordersFetcher)
-	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(mysqlDB, ordersFetcher)
+	ordersFetcher := ordersModule.NewOrdersFetcher(selectedDB)
+	ordersRepo := ordersModule.NewOrdersRepository(selectedDB, ordersFetcher)
+	deliverySessionsRepo := deliverysessionsModule.NewDeliverySessionsRepository(selectedDB, ordersFetcher)
 	ordersService := ordersModule.NewOrdersService(ordersRepo, notificationService, redisClient, auditService)
 
 	// ---- WEBHOOK STRIPE
 	// Dans main.go
 
 	// 1. Initialiser le Repo
-	stripeRepo := webhookstripe.NewRepository(mysqlDB) // db est ta connexion *sql.DB
+	stripeRepo := webhookstripe.NewRepository(selectedDB) // db est ta connexion *sql.DB
 
 	// 2. Initialiser les dépendances (Mocks ou implémentations réelles)
 	// mailerService vient de l'étape précédente
@@ -228,11 +236,11 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// ex: webhookHandler.HandleWebhook(w, r) -> switch event.Type -> stripeService.HandleCheckoutSessionCompleted(...)
 
 	// ---- Deliveroo ----
-	deliverooService := deliverooModule.NewDeliverooService(mysqlDB, cfg.Deliveroo)
+	deliverooService := deliverooModule.NewDeliverooService(selectedDB, cfg.Deliveroo)
 	deliverooHandler := deliverooModule.NewDeliverooHandler(deliverooService)
 
 	// ---- Customers ----
-	customersRepo := customersModule.NewCustomerRepository(mysqlDB)
+	customersRepo := customersModule.NewCustomerRepository(selectedDB)
 	customersService := customersModule.NewCustomersService(customersRepo)
 
 	// ---- Stripe ----
@@ -245,45 +253,45 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// mapping order_id/payment_intent_id".
 	terminalService := stripeInternalClient.NewTerminalService(
 		stripeManager,
-		stripeInternalClient.NewTerminalAccountStore(mysqlDB),
-		stripeInternalClient.NewTerminalPaymentStore(mysqlDB),
+		stripeInternalClient.NewTerminalAccountStore(selectedDB),
+		stripeInternalClient.NewTerminalPaymentStore(selectedDB),
 	)
 
 	// ---- Uber ----
-	uberService := uberModule.NewUberEatsService(mysqlDB, cfg.UberEats, redisClient)
+	uberService := uberModule.NewUberEatsService(selectedDB, cfg.UberEats, redisClient)
 	uberHandler := uberModule.NewUberHandler(uberService)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, redisClient, posAccountingRepo, allergensRepo)
 
 	// ---- Translation ----
-	translationRepo := translationModule.NewRepository(mysqlDB)
+	translationRepo := translationModule.NewRepository(selectedDB)
 	translationService := translationModule.NewService(translationRepo, aiRegistry, aiCache)
 
 	// ---- Upsell ----
-	upsellRepo := upsellModule.NewRepository(mysqlDB)
+	upsellRepo := upsellModule.NewRepository(selectedDB)
 	upsellTracker := upsellModule.NewTracker(upsellRepo, log)
 	upsellService := upsellModule.NewService(upsellRepo, menuRepoLegacy, aiRegistry, aiCache, log)
 
 	// ---- Receipt ----
-	receiptRepo := receipt.NewReceiptRepository(mysqlDB)
+	receiptRepo := receipt.NewReceiptRepository(selectedDB)
 	receiptService := receipt.NewReceiptService(receiptRepo)
 
 	// ---- Stocks (initialized here because ordersLifeCycleService depends on it) ----
-	stocksRepo := stocksModule.NewStockRepository(mysqlDB)
+	stocksRepo := stocksModule.NewStockRepository(selectedDB)
 	stocksService := stocksModule.NewStockService(stocksRepo)
 
 	// ---- Bookings (initialized here because ordersLifeCycleService depends on it
 	// for the auto-seat/auto-complete hooks, cf. CreateOrder/DeliverOrder) ----
-	bookingEventsRepo := bookingEventsModule.NewRepository(mysqlDB)
-	outboundRepo := outboundModule.NewRepository(mysqlDB)
+	bookingEventsRepo := bookingEventsModule.NewRepository(selectedDB)
+	outboundRepo := outboundModule.NewRepository(selectedDB)
 	outboundService := outboundModule.NewService(outboundRepo, log)
 	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, outboundService, log)
-	bookingsRepo := bookingsModule.NewBookingsRepository(mysqlDB, log)
-	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, mysqlDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
+	bookingsRepo := bookingsModule.NewBookingsRepository(selectedDB, log)
+	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, selectedDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
 	// ---- Orders Lifecycle ----
-	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(mysqlDB, customersRepo)
+	ordersLifeCycleRepo := ordersLCModule.NewOrdersLifeCycleRepository(selectedDB, customersRepo)
 	ordersLifeCycleService := ordersLCModule.NewOrdersLifeCycleService(
 		ordersLifeCycleRepo,
 		stripeManager,
@@ -297,7 +305,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		auditService,
 		ordersService,
 		receiptService,
-		mysqlDB,
+		selectedDB,
 		stocksRepo,
 		upsellTracker,
 		posAccountingRepo,
@@ -306,19 +314,19 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	)
 
 	// ---- Delivery Sessions ----
-	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(mysqlDB)
+	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(selectedDB)
 	messaggioClient := messaggioModule.NewMessaggioClient()
 	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
 
 	// ---- ScanNOrder ----
-	scannRepo := scannorder.NewRepository(mysqlDB)
+	scannRepo := scannorder.NewRepository(selectedDB)
 	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
 	integrationsService := integrationsModule.NewService(
-		mysqlDB,
+		selectedDB,
 		stripeManager,
 		uberService,
 		deliverooService,
@@ -337,21 +345,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		ordersLifeCycleService,
 		notificationService,
 		redisClient,
-		mysqlDB,
+		selectedDB,
 	)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
-	deliverooWebhookRepo := deliveroo_orders.NewRepository(mysqlDB)
+	deliverooWebhookRepo := deliveroo_orders.NewRepository(selectedDB)
 	deliverooWebhookService := deliveroo_orders.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService, redisClient)
 	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService)
 
-	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(mysqlDB)
+	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(selectedDB)
 	deliverooMenuWebhookService := deliveroo_menu.NewMenuWebhookService(deliverooMenuWebhookRepo, deliverooService)
 	deliverooMenuWebhookHandler := deliveroo_menu.NewMenuWebhookHandler(deliverooMenuWebhookService)
 
 	uberWebhookService := webhookuberservice.NewService(
-		mysqlDB,
+		selectedDB,
 		"",
 		"",
 		uberService,
@@ -366,21 +374,20 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	uberWebhookHandler := webhookuberheandler.NewHandler(uberWebhookService)
 
 	// ---- Locations ----
-	locationsRepo := locModule.NewLocationsRepository(mysqlDB)
+	locationsRepo := locModule.NewLocationsRepository(selectedDB)
 	locationsService := locModule.NewLocationsService(locationsRepo)
 
-	// ---- Cash Register ----
-	cashRegisterRepo := cashregisterModule.NewCashRegisterRepository(mysqlDB)
+	// ---- Cash Register (repo construit plus haut, avant POS Accounting) ----
 	cashRegisterService := cashregisterModule.NewCashRegisterService(cashRegisterRepo)
 
 	// ---- Reservation (externe) ----
-	reservationRepo := reservation.NewReservationRepository(mysqlDB)
+	reservationRepo := reservation.NewReservationRepository(selectedDB)
 	reservationService := reservation.NewReservationService(reservationRepo, bookingsService, redisClient, notificationService, bookingCommService)
 	reservationHandler := reservation.NewReservationHandler(reservationService)
 
 	// ---- Webhook Brevo SMS entrant (réponses client) ----
 	brevoSMSReplyService := brevoSMSReplyModule.NewService(
-		brevoSMSReplyModule.NewRepository(mysqlDB),
+		brevoSMSReplyModule.NewRepository(selectedDB),
 		bookingEventsRepo,
 		log,
 	)
@@ -389,50 +396,50 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	brevoEventsHandler := brevoEventsModule.NewHandler(brevoEventsService, cfg.Brevo.WebhookToken)
 
 	// ---- Users ----
-	usersRepo := usersModule.NewUserRepository(mysqlDB)
+	usersRepo := usersModule.NewUserRepository(selectedDB)
 	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService)
 
 	// ---- Services ----
-	servicesRepo := servicesModule.NewServicesRepository(mysqlDB)
+	servicesRepo := servicesModule.NewServicesRepository(selectedDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
 
 	// ---- Allergens ---- (allergensRepo construit plus haut, avant Menu)
 	allergensService := allergensModule.NewService(allergensRepo)
 
 	// ---- Tags ----
-	tagsRepo := tagsModule.NewRepository(mysqlDB)
+	tagsRepo := tagsModule.NewRepository(selectedDB)
 	tagsService := tagsModule.NewService(tagsRepo)
 
 	// ---- Printers ----
-	printersRepo := printersModule.NewRepository(mysqlDB)
+	printersRepo := printersModule.NewRepository(selectedDB)
 	printersService := printersModule.NewService(printersRepo)
 
 	// ---- Discounts ----
-	discountsRepo := discountsModule.NewRepository(mysqlDB)
+	discountsRepo := discountsModule.NewRepository(selectedDB)
 	discountsService := discountsModule.NewService(discountsRepo)
 
 	// ---- Availabilities ----
-	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(mysqlDB)
+	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(selectedDB)
 	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
 
 	// ---- HACCP ----
-	haccpRepo := haccpModule.NewRepository(mysqlDB)
-	haccpService := haccpModule.NewService(haccpRepo, auditService, mysqlDB, r2Client)
+	haccpRepo := haccpModule.NewRepository(selectedDB)
+	haccpService := haccpModule.NewService(haccpRepo, auditService, selectedDB, r2Client)
 
 	// ---- Planning ----
-	planningRepo := planningModule.NewRepository(mysqlDB)
+	planningRepo := planningModule.NewRepository(selectedDB)
 	planningCommService := planningcommModule.New(mailService, smsService, cfg.Planning.PublicBaseURL, outboundService, log)
 	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService, planningCommService)
 
 	// ---- Kiosk ----
-	kioskRepo := kioskModule.NewRepository(mysqlDB)
+	kioskRepo := kioskModule.NewRepository(selectedDB)
 	kioskCfg := kioskModule.Config{
 		EnrollmentCodeTTLMinutes:  cfg.Kiosk.EnrollmentCodeTTLMinutes,
 		DeviceRefreshTokenTTLDays: cfg.Kiosk.DeviceRefreshTokenTTLDays,
 		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
 		Pepper:                    cfg.Kiosk.Pepper,
 	}
-	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, mysqlDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
+	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
 
@@ -465,13 +472,23 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	cashRegisterH := cashregisterModule.NewCashRegisterHandler(cashRegisterService)
 	bookingsH := bookingsModule.NewBookingsHandler(bookingsService)
 	customersH := customersModule.NewCustomersHandler(customersService)
+	// Import de clients : dépendances propres (lecture + écriture batchées +
+	// registry de providers + cache), volontairement disjointes de celles de
+	// CustomersService — même parti pris que l'import de produits. customersRepo
+	// tient les deux rôles lecture (preview) et écriture (commit), comme
+	// menuRepoLegacy pour l'import produits.
+	customerImportH := customersModule.NewCustomerImportHandler(
+		customersModule.NewCustomerImportService(
+			customersRepo, customersRepo, selectedDB, customersImporterModule.DefaultRegistry(), redisClient,
+		),
+	)
 	usersH := usersModule.NewUsersHandler(usersService, r2Client)
 	stocksH := stocksModule.NewStocksHandler(stocksService)
 	servicesH := servicesModule.NewServicesHandler(servicesService)
 	notificationH := notificationModule.NewNotificationHandler(notificationService)
 
 	// Option A: instantiate a single TasksManager in SetupRoutes and share it with cron wiring and admin manual trigger.
-	taskManager := tasksPkg.NewTasksManager(mysqlDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, log)
+	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, log)
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
 	// ============================================================
@@ -618,6 +635,8 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Route("/reports", func(r chi.Router) {
 			r.Post("/tva", posReportsHandler.GetTVAReport)
 			r.Post("/payments", posReportsHandler.GetPaymentsReport)
+			r.Post("/tva/export", posReportsHandler.ExportTVAReport)
+			r.Post("/payments/export", posReportsHandler.ExportPaymentsReport)
 		})
 
 		r.Route("/accounting", func(r chi.Router) {
@@ -654,6 +673,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 
 		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
 		r.Post("/vat/export-csv", posAccountingHandler.ExportVATCSV)
+		r.Post("/registers/{register_id}/export-pdf", posAccountingHandler.ExportRegisterPDF)
 	})
 
 	// --- STOCKS ---
@@ -701,7 +721,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Get("/translation-langs", menuH.GetTranslationLanguages)
 		r.Patch("/translation-langs", menuH.PatchTranslationLanguages)
 
-		r.Get("/products", menuH.GetAllProducts)     // used by: back-office
+		r.Get("/products", menuH.GetAllProducts) // used by: back-office
 		r.Get("/products/allergens/poster.pdf", menuH.GetAllergensPosterPDF)
 
 		// --- Import de produits en masse ---
@@ -792,7 +812,7 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office
 		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
 		r.Post("/components", menuH.CreateComponent)                                                            // used by: back-office
-		r.Post("/components/categories", menuH.CreateComponentCategory) // used by: back-office
+		r.Post("/components/categories", menuH.CreateComponentCategory)                                         // used by: back-office
 		// display-order avant {category_id} : chi priorise le segment statique,
 		// même disposition que /marketing-categories ci-dessus
 		r.Patch("/components/categories/display-order", menuH.UpdateComponentCategoriesDisplayOrder) // used by: back-office
@@ -1128,6 +1148,21 @@ func SetupRoutes(log *zap.Logger, mysqlDB *sql.DB, cfg *config.AppConfig) *chi.M
 	// --- CUSTOMERS ---
 	r.Route("/customers", func(r chi.Router) {
 		r.Use(authMiddleware)
+
+		// --- Import de clients en masse ---
+		// Comme l'import de produits (/menu/import/preview + /commit +
+		// /template), seules routes de ce bloc à porter un contrôle RBAC
+		// explicite : preview lit, commit écrit potentiellement tout le
+		// fichier client d'un marchand, template sert un fichier statique
+		// mais reste derrière la même garde par cohérence. La permission
+		// existe déjà (middleware.HasCustomerManagementAccess) mais n'était
+		// utilisée nulle part avant ces routes.
+		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+			Post("/import/preview", customerImportH.PreviewImport)
+		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+			Post("/import/commit", customerImportH.CommitImport)
+		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+			Get("/import/template", customerImportH.DownloadImportTemplate)
 
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app

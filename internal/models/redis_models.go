@@ -89,4 +89,11 @@ const (
 	// 5 minutes d'une confirmation de doublon.
 	MenuImportPreviewPrefix = "menu:import:preview:"
 	MenuImportPreviewTTL    = 30 * time.Minute
+
+	// Préfixe des clés portant le snapshot d'une preview d'import de clients.
+	// Même convention que MenuImportPreviewPrefix : scopée par marchand en plus
+	// du token, même TTL de 30 minutes (le wizard de dédup/arbitrage demande le
+	// même ordre de grandeur de travail qu'un import de menu).
+	CustomerImportPreviewPrefix = "customer:import:preview:"
+	CustomerImportPreviewTTL    = 30 * time.Minute
 )

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"welloresto-api/internal/importutil"
 )
 
 // WelloGenericSlug identifie le template .xlsx defini par Wello : le
@@ -101,7 +103,7 @@ func NewWelloGenericProvider() *WelloGenericProvider { return &WelloGenericProvi
 func (p *WelloGenericProvider) Slug() string { return WelloGenericSlug }
 
 func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
-	rows, err := readSheetRows(r)
+	rows, err := importutil.ReadSheetRows(r)
 	if err != nil {
 		return nil, err
 	}
@@ -122,16 +124,16 @@ func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 	for i := headerIdx + 1; i < len(rows); i++ {
 		row := rows[i]
 		line := i + 1
-		if rowIsEmpty(row) {
+		if importutil.RowIsEmpty(row) {
 			continue
 		}
 
-		name := cellAt(row, columns[wgFieldName])
+		name := importutil.CellAt(row, columns[wgFieldName])
 		if name == "" {
 			return nil, rowErrorf(line, welloGenericLabels[wgFieldName], "ligne renseignee sans nom de produit")
 		}
 
-		externalID := generatedExternalID(welloGenericProductPrefix, name)
+		externalID := importutil.GeneratedExternalID(welloGenericProductPrefix, name)
 		if previous, dup := productLineByID[externalID]; dup {
 			return nil, rowErrorf(line, welloGenericLabels[wgFieldName],
 				"nom deja utilise ligne %d ; les noms doivent etre uniques pour que l'import reste rejouable", previous)
@@ -141,7 +143,7 @@ func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 		product := CanonicalProduct{
 			ExternalID:  externalID,
 			Name:        name,
-			Description: cellAt(row, columns[wgFieldDescription]),
+			Description: importutil.CellAt(row, columns[wgFieldDescription]),
 		}
 
 		prices := [...]struct {
@@ -153,7 +155,7 @@ func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 			{wgFieldPriceDelivery, &product.PriceDelivery},
 		}
 		for _, p := range prices {
-			value, err := parsePriceCents(cellAt(row, columns[p.field]))
+			value, err := parsePriceCents(importutil.CellAt(row, columns[p.field]))
 			if err != nil {
 				return nil, rowErrorf(line, welloGenericLabels[p.field], "%s", err)
 			}
@@ -170,7 +172,7 @@ func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 			{wgFieldTvaDelivery, &product.TvaRateDelivery},
 		}
 		for _, rate := range rates {
-			value, err := parseTvaRate(cellAt(row, columns[rate.field]))
+			value, err := parseTvaRate(importutil.CellAt(row, columns[rate.field]))
 			if err != nil {
 				return nil, rowErrorf(line, welloGenericLabels[rate.field], "%s", err)
 			}
@@ -180,18 +182,18 @@ func (p *WelloGenericProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 		// Cellule categorie vide : on laisse la categorie indeterminee plutot
 		// que de rejeter le fichier. Elle est obligatoire a la creation, mais
 		// c'est la preview qui la reclame, avec le produit sous les yeux.
-		if categoryName := cellAt(row, columns[wgFieldCategory]); categoryName != "" {
-			key := normalizeLabel(categoryName)
+		if categoryName := importutil.CellAt(row, columns[wgFieldCategory]); categoryName != "" {
+			key := importutil.NormalizeLabel(categoryName)
 			id, known := categoryIDByName[key]
 			if !known {
-				id = generatedExternalID(welloGenericCategoryPrefix, categoryName)
+				id = importutil.GeneratedExternalID(welloGenericCategoryPrefix, categoryName)
 				categoryIDByName[key] = id
 				out.Categories = append(out.Categories, CanonicalCategory{ExternalID: id, Name: categoryName})
 			}
 			product.CategoryExternalID = id
 		}
 
-		product.TagExternalIDs = resolveWelloGenericTags(out, tagIDByName, cellAt(row, columns[wgFieldTags]))
+		product.TagExternalIDs = resolveWelloGenericTags(out, tagIDByName, importutil.CellAt(row, columns[wgFieldTags]))
 		out.Products = append(out.Products, product)
 	}
 
@@ -212,7 +214,7 @@ func parseWelloGenericHeader(rows [][]string) (int, [wgFieldCount]int, error) {
 
 	headerIdx := -1
 	for i, row := range rows {
-		if !rowIsEmpty(row) {
+		if !importutil.RowIsEmpty(row) {
 			headerIdx = i
 			break
 		}
@@ -222,7 +224,7 @@ func parseWelloGenericHeader(rows [][]string) (int, [wgFieldCount]int, error) {
 	}
 
 	for idx, cell := range rows[headerIdx] {
-		field, known := welloGenericAliases[foldHeader(cell)]
+		field, known := welloGenericAliases[importutil.FoldHeader(cell)]
 		if !known {
 			continue
 		}
@@ -246,7 +248,7 @@ func parseWelloGenericHeader(rows [][]string) (int, [wgFieldCount]int, error) {
 // resolveWelloGenericTags enregistre les tags cites par un produit et rend
 // leurs identifiants, dans l'ordre de la cellule.
 func resolveWelloGenericTags(out *IntermediateImport, tagIDByName map[string]string, raw string) []string {
-	labels := splitLabels(raw)
+	labels := importutil.SplitLabels(raw)
 	if len(labels) == 0 {
 		return nil
 	}
@@ -255,11 +257,11 @@ func resolveWelloGenericTags(out *IntermediateImport, tagIDByName map[string]str
 	seen := make(map[string]struct{}, len(labels))
 
 	for _, label := range labels {
-		key := normalizeLabel(label)
+		key := importutil.NormalizeLabel(label)
 
 		id, known := tagIDByName[key]
 		if !known {
-			id = generatedExternalID(welloGenericTagPrefix, label)
+			id = importutil.GeneratedExternalID(welloGenericTagPrefix, label)
 			tagIDByName[key] = id
 			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: label})
 		}

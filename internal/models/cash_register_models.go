@@ -35,10 +35,11 @@ type CashRegisterDetails struct {
 }
 
 type CashReportLine struct {
-	DeliveryType string `json:"delivery_type"`
-	Label        string `json:"label"`
-	TVATitle     string `json:"tva_title"`
-	HT           int    `json:"HT"`
-	TTC          int    `json:"TTC"`
-	TVA          int    `json:"TVA"`
+	DeliveryType string  `json:"delivery_type"`
+	Label        string  `json:"label"`
+	TVATitle     string  `json:"tva_title"`
+	Rate         float64 `json:"tva_rate"`
+	HT           int     `json:"HT"`
+	TTC          int     `json:"TTC"`
+	TVA          int     `json:"TVA"`
 }

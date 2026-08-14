@@ -1,7 +1,6 @@
 package importer
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -86,86 +85,6 @@ func TestParseTvaRate(t *testing.T) {
 		if _, err := parseTvaRate(invalid); err == nil {
 			t.Fatalf("parseTvaRate(%q) = nil, want une erreur", invalid)
 		}
-	}
-}
-
-func TestSplitLabels(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want []string
-	}{
-		{"liste simple", "NOS PIZZA, VEGE, BASE TOMATE", []string{"NOS PIZZA", "VEGE", "BASE TOMATE"}},
-		{"sans espace", "a,b", []string{"a", "b"}},
-		{"cellule vide", "", nil},
-		{"virgules seules", " , , ", nil},
-		{"element vide intercale", "a,,b", []string{"a", "b"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := splitLabels(tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("splitLabels(%q) = %v, want %v", tc.in, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("splitLabels(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
-}
-
-// Deux libelles qui ne different que par les accents sont deux tags distincts
-// pour le restaurateur : normalizeLabel doit les separer. foldHeader, lui, ne
-// sert qu'aux en-tetes de colonnes et doit au contraire les confondre.
-func TestNormalizeLabelKeepsAccentsAndFoldHeaderDropsThem(t *testing.T) {
-	if normalizeLabel("VÉGÉ") == normalizeLabel("VEGE") {
-		t.Fatal("normalizeLabel confond VÉGÉ et VEGE")
-	}
-	if got, want := normalizeLabel("  NOS   PIZZA "), "nos pizza"; got != want {
-		t.Fatalf("normalizeLabel = %q, want %q", got, want)
-	}
-	if got, want := foldHeader(" Catégorie "), "categorie"; got != want {
-		t.Fatalf("foldHeader = %q, want %q", got, want)
-	}
-	if foldHeader("Prix emporté") != foldHeader("PRIX  EMPORTE") {
-		t.Fatal("foldHeader distingue deux ecritures du meme en-tete")
-	}
-}
-
-// L'identifiant genere porte l'idempotence de l'import : il doit etre stable
-// pour un meme libelle, distinct pour deux libelles differents, et tenir dans
-// import_*_mapping.external_id (varchar(64)).
-func TestGeneratedExternalID(t *testing.T) {
-	const maxExternalIDLen = 64
-
-	pizza := generatedExternalID(welloGenericProductPrefix, "Pizza Margherita")
-
-	if got := generatedExternalID(welloGenericProductPrefix, "  pizza   MARGHERITA "); got != pizza {
-		t.Fatalf("identifiant instable selon la casse et l'espacement: %q != %q", got, pizza)
-	}
-	if got := generatedExternalID(welloGenericProductPrefix, "Pizza Margarita"); got == pizza {
-		t.Fatalf("deux libelles differents partagent l'identifiant %q", got)
-	}
-	if !strings.HasPrefix(pizza, welloGenericProductPrefix+"-pizza-margherita-") {
-		t.Fatalf("identifiant = %q, want un slug lisible apres le prefixe", pizza)
-	}
-
-	long := generatedExternalID(welloGenericProductPrefix, strings.Repeat("Pizza tres longuement nommee ", 10))
-	if len(long) > maxExternalIDLen {
-		t.Fatalf("identifiant de %d caracteres, want <= %d: %q", len(long), maxExternalIDLen, long)
-	}
-
-	// Un nom sans caractere latin ne donne pas de slug : l'empreinte doit
-	// suffire a produire un identifiant exploitable.
-	emoji := generatedExternalID(welloGenericProductPrefix, "🍕🔥")
-	if suffix := strings.TrimPrefix(emoji, welloGenericProductPrefix+"-"); suffix == emoji || len(suffix) != generatedIDHashLen {
-		t.Fatalf("identifiant pour un libelle non latin = %q, want prefixe + empreinte seule", emoji)
-	}
-	if got := generatedExternalID(welloGenericProductPrefix, "🍕🔥"); got != emoji {
-		t.Fatalf("identifiant non latin instable: %q != %q", got, emoji)
 	}
 }
 

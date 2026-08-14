@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"welloresto-api/internal/importutil"
 )
 
 // Statuts posés par l'import. `available` pour un produit normal (il est
@@ -533,7 +535,7 @@ func (b *previewBuilder) buildCategories() {
 		case hasIntMapping(b.lk.Imported.Categories, category.ExternalID) && !entry.MappingStale:
 			entry.Action = ActionAlreadyImported
 		default:
-			if match, ok := existing[normalizeLabel(category.Name)]; ok {
+			if match, ok := existing[importutil.NormalizeLabel(category.Name)]; ok {
 				entry.Action = ActionReuseExisting
 				entry.ExistingCategoryID = match.MerchantCategID
 				b.res.Summary.CategoriesReused++
@@ -581,7 +583,7 @@ func (b *previewBuilder) buildTags() {
 		case alreadyImported && !entry.MappingStale:
 			entry.Action = ActionAlreadyImported
 		case class == TagClassCategory:
-			if match, ok := existingCategories[normalizeLabel(tag.Name)]; ok {
+			if match, ok := existingCategories[importutil.NormalizeLabel(tag.Name)]; ok {
 				entry.Action = ActionReuseExisting
 				entry.ExistingCategoryID = match.MerchantCategID
 				b.res.Summary.CategoriesReused++
@@ -589,7 +591,7 @@ func (b *previewBuilder) buildTags() {
 				b.res.Summary.CategoriesToCreate++
 			}
 		default:
-			if match, ok := existingTags[normalizeLabel(tag.Name)]; ok {
+			if match, ok := existingTags[importutil.NormalizeLabel(tag.Name)]; ok {
 				entry.Action = ActionReuseExisting
 				entry.ExistingTagID = match.TagID
 				b.res.Summary.TagsReused++
@@ -649,7 +651,7 @@ func (b *previewBuilder) buildProducts() {
 		b.assignCategory(p, &entry)
 		entry.Channels = b.buildChannels(p, true)
 
-		if match, ok := existingByName[normalizeLabel(p.Name)]; ok {
+		if match, ok := existingByName[importutil.NormalizeLabel(p.Name)]; ok {
 			entry.NameCollision = &PreviewNameCollision{
 				ExistingProductID: match.ProductID,
 				ExistingName:      match.Name,
@@ -869,7 +871,7 @@ func (b *previewBuilder) warn(code, ref, message string) {
 func indexCategoriesByName(categories []ExistingCategory) map[string]ExistingCategory {
 	out := make(map[string]ExistingCategory, len(categories))
 	for _, category := range categories {
-		key := normalizeLabel(category.Name)
+		key := importutil.NormalizeLabel(category.Name)
 		// Les homonymes existent (aucune contrainte d'unicité) : le premier
 		// gagne, pour que deux previews successives se rattachent au même.
 		if _, ok := out[key]; !ok {
@@ -882,7 +884,7 @@ func indexCategoriesByName(categories []ExistingCategory) map[string]ExistingCat
 func indexTagsByName(tags []ExistingTag) map[string]ExistingTag {
 	out := make(map[string]ExistingTag, len(tags))
 	for _, tag := range tags {
-		key := normalizeLabel(tag.Name)
+		key := importutil.NormalizeLabel(tag.Name)
 		if _, ok := out[key]; !ok {
 			out[key] = tag
 		}
@@ -904,7 +906,7 @@ func indexProductsByName(products []ExistingProduct, imported map[string]int) ma
 		if _, ok := fromImport[product.ProductID]; ok {
 			continue
 		}
-		key := normalizeLabel(product.Name)
+		key := importutil.NormalizeLabel(product.Name)
 		if _, ok := out[key]; !ok {
 			out[key] = product
 		}

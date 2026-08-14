@@ -46,3 +46,15 @@ type PaymentItem struct {
 	Label  string `json:"label"`  // Mode of Payment label
 	Amount int64  `json:"amount"` // Amount in centimes
 }
+
+// ============ Export (CSV) ============
+
+// ExportReportResponse structure de réponse pour les exports CSV TVA/Paiements.
+// Mêmes tags JSON que accounting.ExportAccountingResponse (le frontend
+// consomme les deux via le même type ExportResponse).
+type ExportReportResponse struct {
+	Status      string `json:"status"`
+	Filename    string `json:"filename"`
+	DownloadURL string `json:"download_url"` // URL R2 pour télécharger le CSV
+	Error       string `json:"error,omitempty"`
+}

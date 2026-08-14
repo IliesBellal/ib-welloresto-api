@@ -8,6 +8,8 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type AccountingHandler struct {
@@ -88,4 +90,30 @@ func (h *AccountingHandler) ExportVATCSV(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(csvData)
+}
+
+// ExportRegisterPDF POST /accounting/registers/{register_id}/export-pdf
+func (h *AccountingHandler) ExportRegisterPDF(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "accounting", "register_export_pdf", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	registerID := chi.URLParam(r, "register_id")
+	if strings.TrimSpace(registerID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "accounting", "register_export_pdf", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	pdfBytes, filename, err := h.service.ExportRegisterPDF(r.Context(), registerID)
+	if err != nil {
+		models.SendErrorJSON(w, "accounting", "register_export_pdf", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
 }

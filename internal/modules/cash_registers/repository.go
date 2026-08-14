@@ -106,6 +106,7 @@ const cashRegisterReportSQL = `
 SELECT all_tva.delivery_type,
        l.label,
        all_tva.tva_title,
+       all_tva.tva_rate,
        COALESCE(ROUND(CAST(cash_report.ht  AS DECIMAL(20,6)), 0), 0) AS ht,
        COALESCE(ROUND(CAST(cash_report.ttc AS DECIMAL(20,6)), 0), 0) AS ttc,
        COALESCE(ROUND(CAST(cash_report.tva AS DECIMAL(20,6)), 0), 0) AS tva
@@ -138,6 +139,7 @@ UNION
 SELECT all_tva.delivery_type,
        l.label,
        all_tva.tva_title,
+       all_tva.tva_rate,
        COALESCE(ROUND(CAST(SUM(cash_fees.ht)  AS DECIMAL(20,6)), 0), 0) AS ht,
        COALESCE(ROUND(CAST(SUM(cash_fees.ttc) AS DECIMAL(20,6)), 0), 0) AS ttc,
        COALESCE(ROUND(CAST(SUM(cash_fees.tva) AS DECIMAL(20,6)), 0), 0) AS tva
@@ -157,7 +159,7 @@ LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
     AND l.lang = 'FR'
     AND l.label_type = 'delivery_type'
 WHERE all_tva.tva_id = -1
-GROUP BY all_tva.tva_id, all_tva.delivery_type, all_tva.tva_title, l.label`
+GROUP BY all_tva.tva_id, all_tva.delivery_type, all_tva.tva_title, all_tva.tva_rate, l.label`
 
 // Traduction SQL inline de l'ex-procédure stockée MySQL
 // GET_CASH_REGISTER_REPORT_MOP. Le corps d'origine portait deux filtres
@@ -192,6 +194,7 @@ func (r *CashRegisterRepository) queryCashRegisterReportLines(ctx context.Contex
 			&line.DeliveryType,
 			&line.Label,
 			&line.TVATitle,
+			&line.Rate,
 			&line.HT,
 			&line.TTC,
 			&line.TVA,
@@ -325,6 +328,7 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 				cashReport[i].TVACategories = append(cashReport[i].TVACategories,
 					models.TVACategoryLine{
 						TVATitle: r.TVATitle,
+						Rate:     r.Rate,
 						HT:       r.HT,
 						TTC:      r.TTC,
 						TVA:      r.TVA,
@@ -1236,6 +1240,7 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 
 		g.TVACategories = append(g.TVACategories, models.TVACategoryLine{
 			TVATitle: line.TVATitle,
+			Rate:     line.Rate,
 			HT:       line.HT,
 			TTC:      line.TTC,
 			TVA:      line.TVA,

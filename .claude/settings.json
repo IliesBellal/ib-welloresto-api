@@ -38,7 +38,24 @@
       "Bash(git -C \"/d/Desktop/DTL/Project/git-projects/wello-back-office\" diff -- src/pages/Menu.tsx)",
       "Bash(gofmt -w internal/modules/menu/import_repository.go)",
       "Bash(gofmt -w internal/modules/menu/import_commit_repository.go)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(iconv -f UTF-16LE -t UTF-8 staging_schema_dump.sql)",
+      "Bash(gofmt -l internal/middleware/request_logger/ cmd/api/routes.go)",
+      "Bash(gofmt -d internal/middleware/request_logger/logger.go cmd/api/routes.go)",
+      "Bash(gofmt -l internal/modules/audit/repository.go internal/database/dbx/dialect.go)",
+      "Bash(gofmt -l ./internal/importutil ./internal/modules/customers/importer ./internal/modules/menu/importer)",
+      "Bash(gofmt -l internal/modules/menu/importer/zelty_test.go internal/modules/menu/importer/snapshot.go internal/modules/menu/importer/manual_test.go)",
+      "Bash(gofmt -d internal/modules/menu/importer/manual.go)",
+      "Bash(cp internal/modules/menu/importer/manual.go /tmp/manual_orig.go)",
+      "Bash(gofmt internal/modules/menu/importer/manual.go)",
+      "Bash(tr -d '\\\\r')",
+      "Bash(gofmt /tmp/text_test_lf.go)",
+      "Bash(cd \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api\" && sed -n '1,40p' internal/infrastructure/redis/*.go 2>/dev/null | head -80 *)",
+      "Bash(gofmt /tmp/lf.go)",
+      "Bash(xargs grep -l \"func.*GetPanes\\\\|type Panes struct\")"
+    ],
+    "additionalDirectories": [
+      "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis"
     ]
   }
 }

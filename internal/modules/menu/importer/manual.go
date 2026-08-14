@@ -1,6 +1,10 @@
 package importer
 
-import "strings"
+import (
+	"strings"
+
+	"welloresto-api/internal/importutil"
+)
 
 // ManualSlug identifie la saisie en masse : le back-office envoie directement
 // des produits en JSON, sans fichier. C'est la troisieme porte d'entree du
@@ -57,7 +61,7 @@ func BuildManualImport(products []ManualProduct) (*IntermediateImport, error) {
 			return nil, rowErrorf(line, "name", "produit sans nom")
 		}
 
-		externalID := generatedExternalID(manualProductPrefix, name)
+		externalID := importutil.GeneratedExternalID(manualProductPrefix, name)
 		if previous, dup := productLineByID[externalID]; dup {
 			return nil, rowErrorf(line, "name",
 				"nom deja utilise ligne %d ; les noms doivent etre uniques pour que l'import reste rejouable", previous)
@@ -92,10 +96,10 @@ func BuildManualImport(products []ManualProduct) (*IntermediateImport, error) {
 		}
 
 		if categoryName := strings.TrimSpace(in.Category); categoryName != "" {
-			key := normalizeLabel(categoryName)
+			key := importutil.NormalizeLabel(categoryName)
 			id, known := categoryIDByName[key]
 			if !known {
-				id = generatedExternalID(manualCategoryPrefix, categoryName)
+				id = importutil.GeneratedExternalID(manualCategoryPrefix, categoryName)
 				categoryIDByName[key] = id
 				out.Categories = append(out.Categories, CanonicalCategory{ExternalID: id, Name: categoryName})
 			}
@@ -121,11 +125,11 @@ func registerManualTags(out *IntermediateImport, tagIDByName map[string]string, 
 		if label == "" {
 			continue
 		}
-		key := normalizeLabel(label)
+		key := importutil.NormalizeLabel(label)
 
 		id, known := tagIDByName[key]
 		if !known {
-			id = generatedExternalID(manualTagPrefix, label)
+			id = importutil.GeneratedExternalID(manualTagPrefix, label)
 			tagIDByName[key] = id
 			out.Tags = append(out.Tags, CanonicalTag{ExternalID: id, Name: label})
 		}

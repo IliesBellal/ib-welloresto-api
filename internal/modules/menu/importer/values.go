@@ -1,23 +1,10 @@
 package importer
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 )
-
-// maxSlugLen borne la partie lisible d'un identifiant genere. Les colonnes
-// external_id des tables import_*_mapping sont en varchar(64) : avec un prefixe
-// de 5 caracteres et une empreinte de 8, on reste sous la limite.
-const maxSlugLen = 40
-
-// generatedIDHashLen est la longueur de l'empreinte hexadecimale accolee au
-// slug. Elle desambigue deux libelles dont le slug serait identique
-// ("Pizza 4 fromages" et "Pizza 4 Fromages !") sans rendre l'identifiant
-// illisible en preview.
-const generatedIDHashLen = 8
 
 // numericCleaner retire de la saisie tout ce qui n'appartient pas au nombre :
 // separateurs de milliers (espaces ordinaire, insecable, insecable etroit,
@@ -31,20 +18,6 @@ var numericCleaner = strings.NewReplacer(
 	"€", "", // symbole euro
 	"%", "",
 	",", ".",
-)
-
-// frenchDiacritics ramene les lettres accentuees francaises a leur base. Sert
-// aux en-tetes de colonnes et aux slugs, jamais a la comparaison de libelles
-// metier : "VEGE" et "VEGE" accentue sont deux tags distincts et doivent le
-// rester.
-var frenchDiacritics = strings.NewReplacer(
-	"à", "a", "â", "a", "ä", "a", // a grave, circonflexe, trema
-	"é", "e", "è", "e", "ê", "e", "ë", "e",
-	"î", "i", "ï", "i",
-	"ô", "o", "ö", "o",
-	"ù", "u", "û", "u", "ü", "u",
-	"ÿ", "y", "ç", "c",
-	"œ", "oe", "æ", "ae",
 )
 
 // parsePriceCents convertit un montant en centimes entiers.
@@ -139,73 +112,3 @@ func isDigits(s string) bool {
 }
 
 func digit(b byte) int { return int(b - '0') }
-
-// splitLabels decoupe une liste de libelles separes par des virgules.
-func splitLabels(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	labels := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if label := strings.TrimSpace(part); label != "" {
-			labels = append(labels, label)
-		}
-	}
-	return labels
-}
-
-// normalizeLabel produit la cle de rapprochement d'un libelle : casse et
-// espacement neutralises, accents conserves.
-func normalizeLabel(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
-}
-
-// foldHeader normalise un en-tete de colonne. Contrairement a normalizeLabel,
-// les accents sont replies : un restaurateur qui retape "Categorie" sans
-// accent dans le template doit etre compris.
-func foldHeader(s string) string {
-	return frenchDiacritics.Replace(normalizeLabel(s))
-}
-
-// slugify rend la partie lisible d'un identifiant genere.
-func slugify(s string) string {
-	folded := foldHeader(s)
-
-	var b strings.Builder
-	lastDash := true // evite le tiret de tete
-	for _, r := range folded {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-		if b.Len() >= maxSlugLen {
-			break
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
-}
-
-// generatedExternalID fabrique un identifiant externe pour une source qui n'en
-// fournit pas. Il doit etre stable dans le temps : c'est lui qui porte
-// l'idempotence via la cle (merchant_id, provider, external_id), donc deux
-// imports successifs du meme libelle doivent produire la meme valeur.
-func generatedExternalID(prefix, name string) string {
-	sum := sha256.Sum256([]byte(normalizeLabel(name)))
-	fingerprint := hex.EncodeToString(sum[:])[:generatedIDHashLen]
-
-	slug := slugify(name)
-	if slug == "" {
-		// Un libelle entierement compose de caracteres non latins (emoji,
-		// ideogrammes) n'a pas de slug exploitable : l'empreinte suffit.
-		return prefix + "-" + fingerprint
-	}
-	return prefix + "-" + slug + "-" + fingerprint
-}

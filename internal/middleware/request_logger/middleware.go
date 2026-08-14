@@ -2,6 +2,8 @@ package requestlogger
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"welloresto-api/internal/models"
@@ -27,11 +29,19 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 
 			if r.Body != nil {
 				bodyCopy, _ := io.ReadAll(r.Body)
-				if len(bodyCopy) > 0 {
-					payload = bodyCopy
-				}
-				// On remet le body pour la suite
+				// On remet le body pour la suite, avant tout traitement du payload de log
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyCopy))
+
+				if len(bodyCopy) > 0 {
+					// La colonne api_request_logs.payload est un jsonb : un body non-JSON
+					// (upload multipart, binaire...) ferait échouer tout le batch d'insertion,
+					// pas seulement cette ligne. On ne stocke que sa taille dans ce cas.
+					if json.Valid(bodyCopy) {
+						payload = bodyCopy
+					} else {
+						payload = []byte(fmt.Sprintf(`{"non_json_body_bytes":%d}`, len(bodyCopy)))
+					}
+				}
 			}
 
 			// Utilisation du WrapResponseWriter de Chi
@@ -40,15 +50,13 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 
 			var userID *int64
-			var merchantID *int64
+			var merchantID *string
 
-			if v := r.Context().Value(models.ContextUserID); v != nil {
-				id := v.(int64)
+			if id, ok := r.Context().Value(models.ContextUserID).(int64); ok {
 				userID = &id
 			}
 
-			if v := r.Context().Value(models.ContextMerchantID); v != nil {
-				id := v.(int64)
+			if id, ok := r.Context().Value(models.ContextMerchantID).(string); ok {
 				merchantID = &id
 			}
 

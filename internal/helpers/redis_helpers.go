@@ -55,3 +55,9 @@ func GetMenuAttributeNameConfirmKey(merchantID, name string) string {
 func GetMenuImportPreviewKey(merchantID, token string) string {
 	return fmt.Sprintf(models.MenuImportPreviewPrefix+"%s:%s", merchantID, token)
 }
+
+// GetCustomerImportPreviewKey construit la clé du snapshot d'une preview
+// d'import de clients. Même convention que GetMenuImportPreviewKey.
+func GetCustomerImportPreviewKey(merchantID, token string) string {
+	return fmt.Sprintf(models.CustomerImportPreviewPrefix+"%s:%s", merchantID, token)
+}

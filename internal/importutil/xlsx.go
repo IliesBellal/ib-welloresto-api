@@ -1,4 +1,4 @@
-package importer
+package importutil
 
 import (
 	"errors"
@@ -19,16 +19,16 @@ var (
 	ErrInvalidWorkbook = errors.New("fichier illisible : un classeur .xlsx est attendu")
 )
 
-// readSheetRows lit la premiere feuille d'un classeur et rend ses lignes.
+// ReadSheetRows lit la première feuille d'un classeur et rend ses lignes.
 //
-// La premiere feuille plutot qu'un nom en dur : les deux exports Zelty connus
-// nomment la leur "Sheet1", mais rien ne le garantit d'un export a l'autre et
-// aucun des formats vises n'est multi-feuilles.
+// La première feuille plutôt qu'un nom en dur : rien ne garantit qu'un
+// export tiers nomme toujours sa feuille de la même façon d'une version à
+// l'autre, et aucun des formats visés n'est multi-feuilles.
 //
 // excelize tronque les cellules vides de fin de ligne : une ligne peut donc
-// etre plus courte que l'en-tete, et un index de colonne n'est jamais sur
-// d'exister. Toute lecture passe par cellAt.
-func readSheetRows(r io.Reader) ([][]string, error) {
+// être plus courte que l'en-tête, et un index de colonne n'est jamais sûr
+// d'exister. Toute lecture passe par CellAt.
+func ReadSheetRows(r io.Reader) ([][]string, error) {
 	f, err := excelize.OpenReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("%w (%s)", ErrInvalidWorkbook, err)
@@ -47,18 +47,18 @@ func readSheetRows(r io.Reader) ([][]string, error) {
 	return rows, nil
 }
 
-// cellAt lit une cellule par index de colonne, en tolerant les lignes courtes.
-// La valeur est rognee : les exports comportent des espaces de bordure sur les
-// libelles comme sur les nombres.
-func cellAt(row []string, idx int) string {
+// CellAt lit une cellule par index de colonne, en tolérant les lignes
+// courtes. La valeur est rognée : les exports comportent des espaces de
+// bordure sur les libellés comme sur les nombres.
+func CellAt(row []string, idx int) string {
 	if idx < 0 || idx >= len(row) {
 		return ""
 	}
 	return strings.TrimSpace(row[idx])
 }
 
-// rowIsEmpty repere les lignes de separation entre sections.
-func rowIsEmpty(row []string) bool {
+// RowIsEmpty repère les lignes de séparation entre sections.
+func RowIsEmpty(row []string) bool {
 	for _, cell := range row {
 		if strings.TrimSpace(cell) != "" {
 			return false

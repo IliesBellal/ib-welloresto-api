@@ -13,16 +13,18 @@ import (
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	cashregisters "welloresto-api/internal/modules/cash_registers"
 
 	"github.com/jung-kurt/gofpdf"
 )
 
 type AccountingService struct {
-	repo *AccountingRepository
+	repo              *AccountingRepository
+	cashRegistersRepo *cashregisters.CashRegisterRepository
 }
 
-func NewAccountingService(repo *AccountingRepository) *AccountingService {
-	return &AccountingService{repo: repo}
+func NewAccountingService(repo *AccountingRepository, cashRegistersRepo *cashregisters.CashRegisterRepository) *AccountingService {
+	return &AccountingService{repo: repo, cashRegistersRepo: cashRegistersRepo}
 }
 
 // ExportAccountingReport génère un rapport comptable en PDF et l'upload vers R2
@@ -190,24 +192,12 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	translate := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 	pdf.AddPage()
-	pdf.SetFont("Arial", "", 12)
 
-	// --- HEADER ---
-	pdf.CellFormat(190, 6, translate("Rapport comptable"), "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 14)
-	pdf.CellFormat(190, 10, translate(header.MerchantName), "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "", 12)
-	pdf.CellFormat(190, 6, fmt.Sprintf("%02d/%d", month, year), "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "", 11)
-	pdf.Ln(5)
 	vatNumber := ""
 	if header.VATNumber != nil {
 		vatNumber = *header.VATNumber
 	}
-	headerText := fmt.Sprintf(
+	infoText := fmt.Sprintf(
 		"Période : %s -> %s (%s)\nAdresse : %s\nSIRET : %s\nTVA : %s\nTéléphone : %s",
 		fromLocal.Format("02/01/2006 15:04:05"),
 		toLocal.Format("02/01/2006 15:04:05"),
@@ -217,26 +207,8 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 		vatNumber,
 		header.Phone,
 	)
-	pdf.MultiCell(190, 6, translate(headerText), "", "L", false)
-
-	// --- TVA ---
-	pdf.Ln(5)
-	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(190, 8, translate("TVA"), "", 1, "L", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 10)
-	pdf.CellFormat(60, 8, translate("Taux"), "1", 0, "L", false, 0, "")
-	pdf.CellFormat(40, 8, "HT", "1", 0, "R", false, 0, "")
-	pdf.CellFormat(40, 8, "TVA", "1", 0, "R", false, 0, "")
-	pdf.CellFormat(50, 8, "TTC", "1", 1, "R", false, 0, "")
-
-	pdf.SetFont("Arial", "", 10)
-	for _, row := range tvaRows {
-		pdf.CellFormat(60, 8, translate(fmt.Sprintf("%s (%.1f%%)", row.TVATitle, row.Rate)), "1", 0, "L", false, 0, "")
-		pdf.CellFormat(40, 8, translate(fmt.Sprintf("%.2f %s", row.HT/100, header.Currency)), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(40, 8, translate(fmt.Sprintf("%.2f %s", row.TVA/100, header.Currency)), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(50, 8, translate(fmt.Sprintf("%.2f %s", row.TTC/100, header.Currency)), "1", 1, "R", false, 0, "")
-	}
+	drawPDFHeader(pdf, translate, "Rapport comptable", header.MerchantName, fmt.Sprintf("%02d/%d", month, year), infoText)
+	drawTVATable(pdf, translate, tvaRows, header.Currency)
 
 	// --- PAYMENTS ---
 	pdf.Ln(8)
@@ -258,7 +230,102 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 		pdf.MultiCell(190, 6, translate("Aucune clôture de caisse validée sur cette période."), "", "L", false)
 	}
 
-	// --- FOOTER ---
+	drawPDFFooter(pdf, translate)
+
+	// Convertir en bytes
+	buf := new(bytes.Buffer)
+	err := pdf.Output(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// RegisterComparisonRow représente une ligne théorique/réel/écart par moyen
+// de paiement pour le PDF d'un registre unique.
+type RegisterComparisonRow struct {
+	Label       string
+	Theoretical int64
+	Real        int64
+}
+
+// drawPDFHeader dessine l'entête commune aux PDF comptables (rapport mensuel
+// et registre unique) : titre, nom du merchant, sous-titre (période
+// mois/année ou numéro de registre), puis un bloc d'infos libre.
+func drawPDFHeader(pdf *gofpdf.Fpdf, translate func(string) string, title, merchantName, subtitle, infoText string) {
+	pdf.SetFont("Arial", "", 12)
+	pdf.CellFormat(190, 6, translate(title), "", 1, "C", false, 0, "")
+
+	pdf.SetFont("Arial", "B", 14)
+	pdf.CellFormat(190, 10, translate(merchantName), "", 1, "C", false, 0, "")
+
+	pdf.SetFont("Arial", "", 12)
+	pdf.CellFormat(190, 6, translate(subtitle), "", 1, "C", false, 0, "")
+
+	pdf.SetFont("Arial", "", 11)
+	pdf.Ln(5)
+	pdf.MultiCell(190, 6, translate(infoText), "", "L", false)
+}
+
+// drawTVATable dessine le tableau TVA (Taux/HT/TVA/TTC), commun au rapport
+// mensuel et au PDF d'un registre unique.
+func drawTVATable(pdf *gofpdf.Fpdf, translate func(string) string, tvaRows []TVARow, currency string) {
+	pdf.Ln(5)
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(190, 8, translate("TVA"), "", 1, "L", false, 0, "")
+
+	pdf.SetFont("Arial", "B", 10)
+	pdf.CellFormat(60, 8, translate("Taux"), "1", 0, "L", false, 0, "")
+	pdf.CellFormat(40, 8, "HT", "1", 0, "R", false, 0, "")
+	pdf.CellFormat(40, 8, "TVA", "1", 0, "R", false, 0, "")
+	pdf.CellFormat(50, 8, "TTC", "1", 1, "R", false, 0, "")
+
+	pdf.SetFont("Arial", "", 10)
+	for _, row := range tvaRows {
+		pdf.CellFormat(60, 8, translate(fmt.Sprintf("%s (%.1f%%)", row.TVATitle, row.Rate)), "1", 0, "L", false, 0, "")
+		pdf.CellFormat(40, 8, translate(fmt.Sprintf("%.2f %s", row.HT/100, currency)), "1", 0, "R", false, 0, "")
+		pdf.CellFormat(40, 8, translate(fmt.Sprintf("%.2f %s", row.TVA/100, currency)), "1", 0, "R", false, 0, "")
+		pdf.CellFormat(50, 8, translate(fmt.Sprintf("%.2f %s", row.TTC/100, currency)), "1", 1, "R", false, 0, "")
+	}
+}
+
+// drawComparisonTable dessine le tableau théorique/réel/écart par moyen de
+// paiement (spécifique au PDF d'un registre unique — pas de section
+// équivalente dans le rapport mensuel).
+func drawComparisonTable(pdf *gofpdf.Fpdf, translate func(string) string, rows []RegisterComparisonRow, currency string) {
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(190, 8, translate("Théorique / Réel"), "", 1, "L", false, 0, "")
+
+	pdf.SetFont("Arial", "B", 10)
+	pdf.CellFormat(60, 8, translate("Moyen"), "1", 0, "L", false, 0, "")
+	pdf.CellFormat(43, 8, translate("Théorique"), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(43, 8, translate("Réel"), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(44, 8, translate("Écart"), "1", 1, "R", false, 0, "")
+
+	pdf.SetFont("Arial", "", 10)
+	var totalTheoretical, totalReal int64
+	for _, row := range rows {
+		variance := row.Real - row.Theoretical
+		pdf.CellFormat(60, 8, translate(row.Label), "1", 0, "L", false, 0, "")
+		pdf.CellFormat(43, 8, translate(fmt.Sprintf("%.2f %s", float64(row.Theoretical)/100, currency)), "1", 0, "R", false, 0, "")
+		pdf.CellFormat(43, 8, translate(fmt.Sprintf("%.2f %s", float64(row.Real)/100, currency)), "1", 0, "R", false, 0, "")
+		pdf.CellFormat(44, 8, translate(fmt.Sprintf("%.2f %s", float64(variance)/100, currency)), "1", 1, "R", false, 0, "")
+		totalTheoretical += row.Theoretical
+		totalReal += row.Real
+	}
+
+	pdf.SetFont("Arial", "B", 10)
+	totalVariance := totalReal - totalTheoretical
+	pdf.CellFormat(60, 8, translate("Total"), "1", 0, "L", false, 0, "")
+	pdf.CellFormat(43, 8, translate(fmt.Sprintf("%.2f %s", float64(totalTheoretical)/100, currency)), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(43, 8, translate(fmt.Sprintf("%.2f %s", float64(totalReal)/100, currency)), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(44, 8, translate(fmt.Sprintf("%.2f %s", float64(totalVariance)/100, currency)), "1", 1, "R", false, 0, "")
+}
+
+// drawPDFFooter dessine le pied de page légal, commun aux PDF comptables.
+func drawPDFFooter(pdf *gofpdf.Fpdf, translate func(string) string) {
 	pdf.Ln(10)
 	pdf.SetFont("Arial", "I", 9)
 	footerText := "Document comptable généré automatiquement par le système WR.\n" +
@@ -271,15 +338,233 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 
 	pdf.SetFont("Arial", "I", 9)
 	pdf.CellFormat(190, 6, translate(fmt.Sprintf("Généré le : %s", time.Now().Format("2006-01-02 15:04"))), "", 1, "R", false, 0, "")
+}
 
-	// Convertir en bytes
+// buildRegisterPDFReport génère le PDF pour un seul registre de caisse —
+// même chrome visuel que buildPDFReport (header/tableau TVA/footer partagés
+// via drawPDFHeader/drawTVATable/drawPDFFooter), avec en plus un tableau
+// théorique/réel/écart par moyen de paiement à la place de la section
+// Encaissements (qui n'a de sens qu'agrégée sur plusieurs registres).
+func (s *AccountingService) buildRegisterPDFReport(
+	header *MerchantHeader,
+	registerNumber string,
+	openedBy string,
+	closedBy string,
+	periodFrom, periodTo time.Time,
+	cashFundInitial, cashFundFinal int64,
+	tvaRows []TVARow,
+	comparisonRows []RegisterComparisonRow,
+	tzName string,
+) ([]byte, error) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	translate := pdf.UnicodeTranslatorFromDescriptor("cp1252")
+	pdf.AddPage()
+
+	infoText := fmt.Sprintf(
+		"Période : %s -> %s (%s)\nOuvert par : %s\nClôturé par : %s\nFond de caisse initial : %.2f %s\nFond de caisse final : %.2f %s\nAdresse : %s\nSIRET : %s",
+		periodFrom.Format("02/01/2006 15:04:05"),
+		periodTo.Format("02/01/2006 15:04:05"),
+		tzName,
+		openedBy,
+		closedBy,
+		float64(cashFundInitial)/100, header.Currency,
+		float64(cashFundFinal)/100, header.Currency,
+		header.Address,
+		header.SIRET,
+	)
+	drawPDFHeader(pdf, translate, "Registre de caisse", header.MerchantName, fmt.Sprintf("#%s", registerNumber), infoText)
+	drawTVATable(pdf, translate, tvaRows, header.Currency)
+	drawComparisonTable(pdf, translate, comparisonRows, header.Currency)
+	drawPDFFooter(pdf, translate)
+
 	buf := new(bytes.Buffer)
-	err := pdf.Output(buf)
-	if err != nil {
+	if err := pdf.Output(buf); err != nil {
 		return nil, err
 	}
-
 	return buf.Bytes(), nil
+}
+
+// ExportRegisterPDF génère le PDF d'un seul registre de caisse (théorique/
+// réel + TVA), en réutilisant le générateur du rapport comptable mensuel.
+// Le registre doit être enclosed : ce PDF s'appuie sur les mêmes données
+// figées que le rapport mensuel fait confiance une fois clôturées.
+func (s *AccountingService) ExportRegisterPDF(ctx context.Context, registerID string) ([]byte, string, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, "", models.ErrUnauthorized
+	}
+
+	// GetCashRegisterTVADetails filtre par merchant_id (WHERE cash_register_id = ?
+	// AND merchant_id = ?) — sert de garde d'autorisation avant tout accès à
+	// GetCashRegisterSummary, qui lui ne filtre pas par merchant.
+	details, err := s.cashRegistersRepo.GetCashRegisterTVADetails(ctx, user.MerchantID, registerID)
+	if err != nil {
+		return nil, "", err
+	}
+	if details == nil {
+		return nil, "", fmt.Errorf("registre introuvable")
+	}
+
+	summaryResp, err := s.cashRegistersRepo.GetCashRegisterSummary(ctx, registerID, user.MerchantID)
+	if err != nil {
+		return nil, "", err
+	}
+	if summaryResp == nil || summaryResp.CashRegister == nil {
+		return nil, "", fmt.Errorf("registre introuvable")
+	}
+	summary := summaryResp.CashRegister
+
+	if !summary.Enclosed {
+		return nil, "", fmt.Errorf("le registre doit être clôturé pour être exporté")
+	}
+
+	header, err := s.repo.GetMerchantHeader(ctx, user.MerchantID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	tzName := strings.TrimSpace(header.Timezone)
+	if tzName == "" {
+		tzName = "Europe/Paris"
+	}
+	loc, err := time.LoadLocation(tzName)
+	if err != nil {
+		loc = time.FixedZone("UTC", 0)
+		tzName = "UTC"
+	}
+
+	periodFrom := time.Unix(summary.StartDate, 0).In(loc)
+	periodTo := time.Now().In(loc)
+	if summary.EndDate != nil {
+		periodTo = time.Unix(int64(*summary.EndDate), 0).In(loc)
+	}
+
+	pdfBytes, err := s.buildRegisterPDFReport(
+		header,
+		summary.CashRegisterID,
+		formatUserName(summary.OpenedBy),
+		formatUserName(summary.ClosedBy),
+		periodFrom,
+		periodTo,
+		int64(summary.CashFund),
+		int64(summary.FinalCashFund),
+		buildRegisterTVARows(details),
+		buildComparisonRows(summary.Items, summary.CustomItems),
+		tzName,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+
+	filename := fmt.Sprintf("WR_registre_%s.pdf", summary.CashRegisterID)
+	return pdfBytes, filename, nil
+}
+
+// formatUserName construit un nom affichable à partir d'un UserBaseInfo dont
+// les champs sont nullable en base.
+func formatUserName(u models.UserBaseInfo) string {
+	first := ""
+	if u.FirstName != nil {
+		first = *u.FirstName
+	}
+	last := ""
+	if u.LastName != nil {
+		last = *u.LastName
+	}
+	name := strings.TrimSpace(first + " " + last)
+	if name == "" {
+		return "-"
+	}
+	return name
+}
+
+// buildRegisterTVARows aplatit le détail TVA par type de service
+// (CashReportDeliveryGroup) d'un registre en lignes TVARow fusionnées par
+// (titre, taux) — même shape que le tableau TVA du rapport mensuel.
+func buildRegisterTVARows(details *models.CashRegisterDetails) []TVARow {
+	type acc struct {
+		title string
+		rate  float64
+		ht    float64
+		ttc   float64
+		tva   float64
+	}
+	rows := make(map[string]*acc)
+	var order []string
+
+	for _, group := range details.CashReport {
+		for _, cat := range group.TVACategories {
+			if cat.HT == 0 && cat.TTC == 0 && cat.TVA == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%s|%.2f", cat.TVATitle, cat.Rate)
+			row, ok := rows[key]
+			if !ok {
+				row = &acc{title: cat.TVATitle, rate: cat.Rate}
+				rows[key] = row
+				order = append(order, key)
+			}
+			row.ht += float64(cat.HT)
+			row.ttc += float64(cat.TTC)
+			row.tva += float64(cat.TVA)
+		}
+	}
+
+	result := make([]TVARow, 0, len(order))
+	for _, key := range order {
+		r := rows[key]
+		result = append(result, TVARow{TVATitle: r.title, Rate: r.rate, HT: r.ht, TTC: r.ttc, TVA: r.tva})
+	}
+	return result
+}
+
+// buildComparisonRows regroupe les items théorique (CRItem, par MOP) et réel
+// (CRCustomItem, par MOP) d'un registre en lignes théorique/réel par moyen
+// de paiement — même logique de regroupement que ClosureModal.tsx
+// (theoreticalByMop/realByMop) côté back-office, reproduite ici pour le PDF.
+func buildComparisonRows(items []models.CRItem, customItems []models.CRCustomItem) []RegisterComparisonRow {
+	type acc struct {
+		label       string
+		theoretical int64
+		real        int64
+	}
+	rows := make(map[string]*acc)
+	var order []string
+
+	for _, item := range items {
+		label := item.MOP
+		if item.Label != nil && strings.TrimSpace(*item.Label) != "" {
+			label = *item.Label
+		}
+		row, ok := rows[item.MOP]
+		if !ok {
+			row = &acc{label: label}
+			rows[item.MOP] = row
+			order = append(order, item.MOP)
+		}
+		row.theoretical += int64(math.Round(item.Amount))
+	}
+
+	for _, item := range customItems {
+		key := item.MOP
+		if key == "" {
+			key = "OTHER"
+		}
+		row, ok := rows[key]
+		if !ok {
+			row = &acc{label: item.Label}
+			rows[key] = row
+			order = append(order, key)
+		}
+		row.real += int64(math.Round(item.Amount))
+	}
+
+	result := make([]RegisterComparisonRow, 0, len(order))
+	for _, key := range order {
+		r := rows[key]
+		result = append(result, RegisterComparisonRow{Label: r.label, Theoretical: r.theoretical, Real: r.real})
+	}
+	return result
 }
 
 // parseLocalDate interprète une date de calendrier nue ('YYYY-MM-DD') comme le
