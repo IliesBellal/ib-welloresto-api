@@ -64,3 +64,41 @@ func (r *ImportPreviewJSONRequest) toManualCustomerInputs() []importer.ManualCus
 	}
 	return inputs
 }
+
+// CreateCustomerRequest est le corps de POST /customers : création (ou mise à
+// jour si un client correspondant existe déjà) d'un client unique. Mêmes
+// champs que ImportPreviewJSONCustomer, sans floor_number/door_number/
+// additional_address — absents du formulaire de saisie manuelle côté front.
+type CreateCustomerRequest struct {
+	Name              string `json:"name"`
+	FirstName         string `json:"first_name"`
+	LastName          string `json:"last_name"`
+	Email             string `json:"email"`
+	Phone             string `json:"phone"`
+	Address           string `json:"address"`
+	BusinessName      string `json:"business_name"`
+	Birthdate         string `json:"birthdate"`
+	AdditionalInfo    string `json:"additional_info"`
+	DeliveryNotes     string `json:"delivery_notes"`
+
+	AdvertisingConsent *bool `json:"advertising_consent"`
+}
+
+// toManualCustomerInput traduit la requête vers l'entrée du constructeur
+// canonique — même validation que la saisie manuelle en masse (voir
+// importer.BuildManualCustomerImport), appliquée à une seule ligne.
+func (r *CreateCustomerRequest) toManualCustomerInput() importer.ManualCustomerInput {
+	return importer.ManualCustomerInput{
+		Name:               r.Name,
+		FirstName:          r.FirstName,
+		LastName:           r.LastName,
+		Email:              r.Email,
+		Phone:              r.Phone,
+		Address:            r.Address,
+		BusinessName:       r.BusinessName,
+		Birthdate:          r.Birthdate,
+		AdditionalInfo:     r.AdditionalInfo,
+		DeliveryNotes:      r.DeliveryNotes,
+		AdvertisingConsent: r.AdvertisingConsent,
+	}
+}

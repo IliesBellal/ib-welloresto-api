@@ -2,6 +2,8 @@ package customers
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -9,15 +11,19 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/audit"
+	"welloresto-api/internal/modules/customers/importer"
 )
 
 type CustomersService struct {
 	customerRepo *CustomersRepository
+	auditService audit.AuditService
 }
 
-func NewCustomersService(_customerRepo *CustomersRepository) *CustomersService {
+func NewCustomersService(_customerRepo *CustomersRepository, _auditService audit.AuditService) *CustomersService {
 	return &CustomersService{
 		customerRepo: _customerRepo,
+		auditService: _auditService,
 	}
 }
 
@@ -42,6 +48,83 @@ func (s *CustomersService) FindCustomerByEmail(ctx context.Context, merchantID, 
 // UpsertCustomer crée ou met à jour partiellement un client (seuls les champs non-vides du modèle sont écrits).
 func (s *CustomersService) UpsertCustomer(ctx context.Context, c *models.Customer) (*string, error) {
 	return s.customerRepo.UpdateOrCreateCustomer(ctx, c)
+}
+
+// CreateCustomer crée un client unique (endpoint POST /customers), en
+// réutilisant la validation de la saisie manuelle en masse
+// (importer.BuildManualCustomerImport, mêmes règles que "Saisir plusieurs
+// clients" côté front) et le mapping canonique->models.Customer déjà écrit
+// pour le commit d'import (importer.BuildCommitCustomer).
+//
+// Si un client existant du même marchand partage l'email ou le téléphone
+// fourni, il est mis à jour (partiellement — les champs non fournis restent
+// intacts) plutôt que d'échouer : décision produit alignée sur ce que fait
+// déjà le commit d'import en cas de doublon détecté.
+func (s *CustomersService) CreateCustomer(ctx context.Context, req CreateCustomerRequest) (*string, bool, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	parsed, err := importer.BuildManualCustomerImport([]importer.ManualCustomerInput{req.toManualCustomerInput()})
+	if err != nil {
+		return nil, false, err
+	}
+	canonical := parsed.Customers[0]
+
+	customer := importer.BuildCommitCustomer(user.MerchantID, canonical)
+
+	existingID, err := s.findExistingCustomerID(ctx, user.MerchantID, canonical.Email, canonical.Phone)
+	if err != nil {
+		return nil, false, err
+	}
+
+	created := existingID == nil
+	if !created {
+		customer.CustomerID = existingID
+	}
+
+	id, err := s.customerRepo.UpdateOrCreateCustomer(ctx, &customer)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if s.auditService != nil {
+		action := "customer_created"
+		if !created {
+			action = "customer_updated"
+		}
+		_ = s.auditService.LogChange(ctx, user.MerchantID, user.UserID, action, models.ResourceCustomer, *id, nil, customer)
+	}
+
+	return id, created, nil
+}
+
+// findExistingCustomerID cherche un client déjà rattaché au marchand par
+// email (priorité) puis par téléphone. Retourne (nil, nil) si aucune
+// collision — sql.ErrNoRows n'est pas une erreur ici.
+func (s *CustomersService) findExistingCustomerID(ctx context.Context, merchantID string, email, phone *string) (*string, error) {
+	if email != nil {
+		existing, err := s.customerRepo.FindCustomerByEmail(ctx, *email, merchantID)
+		if err == nil {
+			return existing.CustomerID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+
+	if phone != nil {
+		existing, err := s.customerRepo.FindCustomerByPhone(ctx, *phone, merchantID)
+		if err == nil {
+			return existing.CustomerID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+
+	return nil, nil
 }
 
 func (s *CustomersService) GetCustomerLoyalty(ctx context.Context, token, customerID string) (*CustomerLoyalty, error) {

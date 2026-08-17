@@ -241,7 +241,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(selectedDB)
-	customersService := customersModule.NewCustomersService(customersRepo)
+	customersService := customersModule.NewCustomersService(customersRepo, auditService)
 
 	// ---- Stripe ----
 	stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
@@ -1163,6 +1163,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			Post("/import/commit", customerImportH.CommitImport)
 		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
 			Get("/import/template", customerImportH.DownloadImportTemplate)
+
+		// Création unitaire d'un client (bouton "Créer un client" du
+		// back-office) — même garde RBAC que l'import, pour la même raison :
+		// ça écrit dans le fichier client d'un marchand.
+		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+			Post("/", customersH.CreateCustomer) // used by: back-office
 
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app

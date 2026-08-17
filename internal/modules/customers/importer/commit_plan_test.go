@@ -380,7 +380,7 @@ func TestBuildCommitCustomerAdvertisingConsentAlwaysExplicit(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			customer := buildCommitCustomer("m1", CanonicalCustomer{ExternalID: "Z1", AdvertisingConsent: tc.input})
+			customer := BuildCommitCustomer("m1", CanonicalCustomer{ExternalID: "Z1", AdvertisingConsent: tc.input})
 			if customer.AdvertisingConsent == nil {
 				t.Fatal("AdvertisingConsent = nil, want toujours une valeur explicite")
 			}
@@ -394,7 +394,7 @@ func TestBuildCommitCustomerAdvertisingConsentAlwaysExplicit(t *testing.T) {
 // --- C3 : les champs absents du canonique restent nil (mise a jour partielle) ---
 
 func TestBuildCommitCustomerOmitsAbsentFields(t *testing.T) {
-	customer := buildCommitCustomer("m1", CanonicalCustomer{
+	customer := BuildCommitCustomer("m1", CanonicalCustomer{
 		ExternalID: "Z1",
 		Name:       "Jean Dupont",
 		// Email, Phone, BusinessName, Birthdate, AdditionalInfo, DeliveryNotes,

@@ -2,10 +2,12 @@ package customers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/customers/importer"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -268,6 +270,44 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 	}
 
 	models.SendJSON(w, http.StatusOK, "customers", "search", customerData)
+}
+
+// CreateCustomer gère POST /customers : création d'un client unique, ou mise
+// à jour d'un client existant si l'email/téléphone fourni collisionne (voir
+// CustomersService.CreateCustomer).
+func (h *CustomersHandler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req CreateCustomerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "customers", "create", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	customerID, created, err := h.svc.CreateCustomer(ctx, req)
+	if err != nil {
+		var rowErr *importer.RowError
+		if errors.As(err, &rowErr) {
+			models.SendJSON(w, http.StatusBadRequest, "customers", "create", map[string]string{
+				"error":   "invalid_customer",
+				"message": err.Error(),
+			})
+			return
+		}
+		models.SendErrorJSON(w, "customers", "create", err)
+		return
+	}
+
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+
+	models.SendJSON(w, status, "customers", "create", map[string]interface{}{
+		"status":      "success",
+		"created":     created,
+		"customer_id": *customerID,
+	})
 }
 
 func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request) {

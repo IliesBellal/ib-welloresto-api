@@ -4,6 +4,7 @@ package menu
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 	"testing"
@@ -193,6 +194,44 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	if err := repo.UpdateProduct(ctx, merchantID, prodC, ProductUpdatePayload{ByProductOf: &prodA}); err != nil {
 		t.Fatalf("UpdateProduct(sous-produit): %v", err)
 	}
+	assertByProductOf := func(t *testing.T, want *string) {
+		t.Helper()
+		var got sql.NullString
+		if err := db.QueryRowContext(ctx, `SELECT by_product_of FROM products WHERE product_id = $1`, prodC).Scan(&got); err != nil {
+			t.Fatalf("SELECT by_product_of: %v", err)
+		}
+		switch {
+		case want == nil && got.Valid:
+			t.Fatalf("by_product_of = %q, want NULL", got.String)
+		case want != nil && (!got.Valid || got.String != *want):
+			t.Fatalf("by_product_of = (valid=%v, %q), want %q", got.Valid, got.String, *want)
+		}
+	}
+	assertByProductOf(t, &prodA)
+
+	// Un PATCH qui omet by_product_of (nil) ne doit PAS le détacher : seule une
+	// valeur explicite (id ou chaîne vide) doit toucher la colonne, cf. fix du
+	// bug de désattachement silencieux (COALESCE ne peut pas distinguer
+	// "omis" de "détache" sur un *string, d'où le traitement à part).
+	newName := "itest-menu-sous-produit-renamed"
+	if err := repo.UpdateProduct(ctx, merchantID, prodC, ProductUpdatePayload{Name: &newName}); err != nil {
+		t.Fatalf("UpdateProduct(rename sans toucher by_product_of): %v", err)
+	}
+	assertByProductOf(t, &prodA)
+
+	// Une chaîne vide est le sentinel de détachement explicite.
+	empty := ""
+	if err := repo.UpdateProduct(ctx, merchantID, prodC, ProductUpdatePayload{ByProductOf: &empty}); err != nil {
+		t.Fatalf("UpdateProduct(détache): %v", err)
+	}
+	assertByProductOf(t, nil)
+
+	// Réattache pour la suite du test (menu, upsell, etc. plus bas comptent sur
+	// prodC comme sous-produit de prodA).
+	if err := repo.UpdateProduct(ctx, merchantID, prodC, ProductUpdatePayload{ByProductOf: &prodA}); err != nil {
+		t.Fatalf("UpdateProduct(réattache): %v", err)
+	}
+	assertByProductOf(t, &prodA)
 
 	// --- composants ---
 	compCatID, err := repo.CreateComponentCategory(ctx, &UpsertComponentCategoryPayload{Name: "frais itest", MerchantID: merchantID})

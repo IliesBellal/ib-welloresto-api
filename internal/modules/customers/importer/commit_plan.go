@@ -247,14 +247,14 @@ func resolveUpdateTarget(emailMatch, phoneMatch int) int {
 }
 
 func newCreateAction(merchantID string, c CanonicalCustomer) CommitAction {
-	return CommitAction{ExternalID: c.ExternalID, Customer: buildCommitCustomer(merchantID, c)}
+	return CommitAction{ExternalID: c.ExternalID, Customer: BuildCommitCustomer(merchantID, c)}
 }
 
 func newUpdateAction(merchantID string, c CanonicalCustomer, targetCustomerID int) CommitAction {
 	target := targetCustomerID
 	return CommitAction{
 		ExternalID:       c.ExternalID,
-		Customer:         buildCommitCustomer(merchantID, c),
+		Customer:         BuildCommitCustomer(merchantID, c),
 		TargetCustomerID: &target,
 	}
 }
@@ -275,7 +275,7 @@ func invalidUpdateTargetBlocker(externalID string) CommitBlocker {
 	}
 }
 
-// buildCommitCustomer traduit un CanonicalCustomer en models.Customer, prêt à
+// BuildCommitCustomer traduit un CanonicalCustomer en models.Customer, prêt à
 // être passé à CustomersRepository.UpdateOrCreateCustomer. Quatre points de
 // correction (audit clients), tous traités ici plutôt que dans le
 // repository :
@@ -337,7 +337,10 @@ func invalidUpdateTargetBlocker(externalID string) CommitBlocker {
 // customer_import_commit_service.go). Le type est internal/models.Customer,
 // pas customers.Customer (customers/models.go), qui est un type orphelin non
 // branché sur ce repository.
-func buildCommitCustomer(merchantID string, c CanonicalCustomer) models.Customer {
+//
+// Exportée pour être réutilisée par CustomersService.CreateCustomer (endpoint
+// POST /customers, création unitaire) sans dupliquer ce mapping.
+func BuildCommitCustomer(merchantID string, c CanonicalCustomer) models.Customer {
 	consent := false
 	if c.AdvertisingConsent != nil {
 		consent = *c.AdvertisingConsent

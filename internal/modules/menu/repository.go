@@ -2656,6 +2656,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			price_deliveroo,
 			category,
 			is_product_group,
+			by_product_of,
 			available_in,
 			available_take_away,
 			available_delivery,
@@ -2699,6 +2700,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&priceDeliveroo,
 		&p.Category,
 		&p.IsProductGroup,
+		&p.ByProductOf,
 		&p.AvailableIn,
 		&p.AvailableTakeAway,
 		&p.AvailableDelivery,
@@ -3825,7 +3827,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	// Update basic product fields
 	query := `
 		UPDATE products
-		SET 
+		SET
 			name = COALESCE(?, name),
 			product_desc = COALESCE(?, product_desc),
 			bg_color = COALESCE(?, bg_color),
@@ -3834,7 +3836,6 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 			price = COALESCE(?, price),
 			price_take_away = COALESCE(?, price_take_away),
 			price_delivery = COALESCE(?, price_delivery),
-			by_product_of = ?,
 			is_available_on_sno = COALESCE(?, is_available_on_sno),
 			enabled = COALESCE(?, enabled),
 			status = COALESCE(?, status),
@@ -3863,14 +3864,6 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		return err
 	}
 
-	// by_product_of est un integer nullable : MySQL coerçait '' en 0 ; côté
-	// Go, une chaîne vide ou non numérique devient NULL (même effet racine
-	// dans les deux dialectes, cf. rapport 29).
-	byProductOf := p.ByProductOf
-	if byProductOf != nil && !menuNumericID(*byProductOf) {
-		byProductOf = nil
-	}
-
 	_, err = db.ExecContext(ctx, query,
 		p.Name,
 		p.Description,
@@ -3880,7 +3873,6 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.Price,
 		p.PriceTakeAway,
 		p.PriceDelivery,
-		byProductOf,
 		p.IsAvailableOnSno,
 		p.Enabled,
 		p.Status,
@@ -3895,6 +3887,26 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update product basic fields: %w", err)
+	}
+
+	// by_product_of est traité hors du COALESCE ci-dessus : un champ absent du
+	// payload (nil) ne doit rien changer, alors qu'un détachement explicite
+	// doit pouvoir mettre NULL — deux cas que COALESCE(?, by_product_of) ne
+	// peut pas distinguer d'une simple omission (les deux valent nil côté Go).
+	//   p.ByProductOf == nil                    -> colonne non touchée.
+	//   p.ByProductOf == "" (ou non numérique)   -> détache (NULL).
+	//   p.ByProductOf == "123"                   -> attache au produit 123.
+	if p.ByProductOf != nil {
+		var byProductOf interface{}
+		if menuNumericID(*p.ByProductOf) {
+			byProductOf = *p.ByProductOf
+		}
+		if _, err := db.ExecContext(ctx,
+			`UPDATE products SET by_product_of = ? WHERE product_id = ? AND merchant_id = ?`,
+			byProductOf, productID, merchantID,
+		); err != nil {
+			return fmt.Errorf("failed to update product by_product_of: %w", err)
+		}
 	}
 
 	// Sync integration settings (Uber Eats, Deliveroo)
