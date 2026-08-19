@@ -1406,8 +1406,13 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
-			-- Remet isDistributed à 0 seulement si la quantité distribuée ne correspond plus
+			-- Remet isDistributed et le statut de production à zéro seulement si la
+			-- quantité distribuée ne correspond plus à la nouvelle quantité commandée
+			-- (ex: un serveur recommande un plat déjà partiellement servi) : la ligne
+			-- redevient à produire pour la quantité restante.
 			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
+			production_status = CASE WHEN distributed_quantity = VALUES(quantity) THEN production_status ELSE 'CREATION' END,
+			production_status_done_quantity = CASE WHEN distributed_quantity = VALUES(quantity) THEN production_status_done_quantity ELSE 0 END,
 			quantity      = VALUES(quantity),
 			base_price    = VALUES(base_price),
 			price         = VALUES(price),
@@ -1425,6 +1430,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 		ON CONFLICT (order_item_id, order_id, product_id) DO UPDATE SET
 			isDistributed = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.isDistributed ELSE FALSE END,
+			production_status = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.production_status ELSE 'CREATION' END,
+			production_status_done_quantity = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.production_status_done_quantity ELSE 0 END,
 			quantity      = EXCLUDED.quantity,
 			base_price    = EXCLUDED.base_price,
 			price         = EXCLUDED.price,
@@ -1757,6 +1764,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	}
 	PublicID := helpers.GeneratePrefixedID("order-")
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
+	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
@@ -1765,7 +1773,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
-		req.Order.MerchantApproval, req.Order.IsScheduled,
+		req.Order.MerchantApproval, isScheduled,
 		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
 	)
@@ -1908,6 +1916,17 @@ func normalizeEstimatedReady(value string) interface{} {
 	return nil
 }
 
+// resolveIsScheduled empêche l'état incohérent scheduled=true sans estimated_ready
+// exploitable : sans date, l'app (OrderDto.scheduleDateTime) ne peut afficher la
+// commande ni dans la liste principale ni dans la bannière programmée, elle
+// devient invisible en production. On force donc scheduled=false dans ce cas.
+func resolveIsScheduled(isScheduled bool, estimatedReady interface{}) bool {
+	if isScheduled && estimatedReady == nil {
+		return false
+	}
+	return isScheduled
+}
+
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
 func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, merchantID string) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -1995,6 +2014,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 	}
 
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
+	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = db.ExecContext(ctx, `
@@ -2003,7 +2023,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 			    price = ?,
 			    tva = ?,
 			    ht = ?,
-				isDistributed = FALSE, 
+				isDistributed = FALSE,
 				isPaid = FALSE,
 				last_update = `+dbx.UTCNow()+`,
 				delivery_fees = ?,
@@ -2020,7 +2040,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		req.Order.DeliveryFees,
 		req.Order.UseCustomerTemporaryAddress,
 		req.Order.OrderType,
-		req.Order.IsScheduled,
+		isScheduled,
 		estimatedReady,
 		req.Order.PlacesSettings,
 		customerID,

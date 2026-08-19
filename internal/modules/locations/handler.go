@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 
@@ -28,13 +29,65 @@ func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := h.locationsService.GetLocations(r.Context(), token)
+	window, err := parseBookingWindow(r)
+	if err != nil {
+		models.SendErrorJSON(w, "locations", "get", err)
+		return
+	}
+
+	resp, err := h.locationsService.GetLocations(r.Context(), token, window)
 	if err != nil {
 		models.SendErrorJSON(w, "locations", "get", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "locations", "get", resp)
+}
+
+// bookingWindowLayout : même format naïf "YYYY-MM-DD HH:MM:SS" que
+// bookings.FindConflictingBookings reçoit déjà de ses appelants (booking.StartDate/
+// EndDate, req.Booking.StartDate/EndDate — cf. bookings/service.go) et que
+// stocke booking_date_from/to. Volontairement pas de RFC3339/offset : ce
+// codebase compare ces dates telles quelles, sans passage par une conversion
+// de fuseau horaire (booking_date_from/to sont une heure murale opaque, pas un
+// instant UTC) — booking_date_from/to ici doivent rester le même texte que
+// celui déjà envoyé par le client à la création/réaffectation d'une résa
+// (BookingSlotDto.dateFrom/dateTo), pour que l'aperçu corresponde exactement
+// au contrôle serveur qui s'appliquera à l'enregistrement.
+const bookingWindowLayout = "2006-01-02 15:04:05"
+
+// parseBookingWindow lit booking_date_from/booking_date_to/exclude_booking_id
+// depuis la query string de GET /locations. Les deux dates sont optionnelles
+// mais solidaires : ni l'une ni l'autre (comportement par défaut, occupation
+// "maintenant" inchangée) ou les deux, from strictement avant to.
+func parseBookingWindow(r *http.Request) (*BookingWindow, error) {
+	rawFrom := strings.TrimSpace(r.URL.Query().Get("booking_date_from"))
+	rawTo := strings.TrimSpace(r.URL.Query().Get("booking_date_to"))
+
+	if rawFrom == "" && rawTo == "" {
+		return nil, nil
+	}
+	if rawFrom == "" || rawTo == "" {
+		return nil, models.ErrInvalidBookingWindow
+	}
+
+	from, err := time.Parse(bookingWindowLayout, rawFrom)
+	if err != nil {
+		return nil, models.ErrInvalidBookingWindow
+	}
+	to, err := time.Parse(bookingWindowLayout, rawTo)
+	if err != nil {
+		return nil, models.ErrInvalidBookingWindow
+	}
+	if !from.Before(to) {
+		return nil, models.ErrInvalidBookingWindow
+	}
+
+	return &BookingWindow{
+		DateFrom:         from,
+		DateTo:           to,
+		ExcludeBookingID: strings.TrimSpace(r.URL.Query().Get("exclude_booking_id")),
+	}, nil
 }
 
 func (h *LocationsHandler) CreateTable(w http.ResponseWriter, r *http.Request) {

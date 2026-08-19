@@ -1,5 +1,18 @@
 package locations
 
+import "time"
+
+// BookingWindow porte le créneau optionnel passé à GET /locations
+// (booking_date_from/booking_date_to) pour calculer, par table, un conflit
+// de réservation sur ce créneau plutôt que l'occupation "maintenant" par
+// défaut. ExcludeBookingID exclut la résa elle-même du calcul (cas de la
+// réaffectation de tables sur une résa existante) ; vide en création.
+type BookingWindow struct {
+	DateFrom         time.Time
+	DateTo           time.Time
+	ExcludeBookingID string
+}
+
 type TableAttributes struct {
 	PMR     bool `json:"pmr"`
 	Terrace bool `json:"terrace"`

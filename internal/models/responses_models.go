@@ -429,6 +429,7 @@ var (
 	ErrFloorNotFound           = errors.New("floor_not_found")
 	ErrInvalidObstacleGeometry = errors.New("invalid_obstacle_geometry")
 	ErrInvalidAreaGeometry     = errors.New("invalid_area_geometry")
+	ErrInvalidBookingWindow    = errors.New("invalid_booking_window")
 
 	// Erreurs du module réservation
 	ErrTableConflict   = errors.New("table_conflict")
@@ -1303,6 +1304,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnprocessableEntity
 		errorStatus = "invalid_area_geometry"
 		errorMsg = "Area properties are invalid (name 1-50 chars, stroke_color/color must be hex #RRGGBB[AA], points >= 3, angle 0-359)."
+
+	case errors.Is(err, ErrInvalidBookingWindow):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_booking_window"
+		errorMsg = "booking_date_from and booking_date_to must both be provided as RFC3339 timestamps, with booking_date_from before booking_date_to."
 
 	case errors.Is(err, ErrTableConflict):
 		status = http.StatusConflict

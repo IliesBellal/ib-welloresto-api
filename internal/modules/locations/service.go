@@ -18,13 +18,13 @@ func NewLocationsService(locationsRepo *LocationsRepository) *LocationsService {
 	}
 }
 
-func (s *LocationsService) GetLocations(ctx context.Context, token string) (*models.LocationResponse, error) {
+func (s *LocationsService) GetLocations(ctx context.Context, token string, window *BookingWindow) (*models.LocationResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.locationsRepo.GetLocations(ctx, user.MerchantID)
+	return s.locationsRepo.GetLocations(ctx, user.MerchantID, window)
 }
 
 // validTableShapes reflète les trois formes proposées par l'éditeur BO.

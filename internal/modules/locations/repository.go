@@ -21,7 +21,7 @@ func NewLocationsRepository(db *sql.DB) *LocationsRepository {
 	return &LocationsRepository{db: db}
 }
 
-func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string) (*models.LocationResponse, error) {
+func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID string, window *BookingWindow) (*models.LocationResponse, error) {
 	db := dbx.GetDB(ctx, r.db)
 	res := &models.LocationResponse{
 		Locations: []models.Location{},
@@ -203,6 +203,16 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		}
 	}
 
+	// 6. CONFLITS DE RÉSERVATION SUR UN CRÉNEAU DONNÉ (optionnel)
+	// N'est calculé que si l'appelant a fourni booking_date_from/booking_date_to
+	// (flux réservation) ; le flux commande (aucun window) ne déclenche pas
+	// cette requête et garde un comportement strictement inchangé.
+	if window != nil {
+		if err := r.loadBookingConflicts(ctx, merchantID, window, locMap); err != nil {
+			return nil, err
+		}
+	}
+
 	// FINAL MERGE : Injecter les bookings dans les locations
 	for _, loc := range locMap {
 		loc.Booking = nextActiveBooking(loc.Bookings)
@@ -210,6 +220,90 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 	}
 
 	return res, nil
+}
+
+// locEndOfBooking reflète bookings.bkgEndOfBooking (module bookings, non
+// importé ici pour éviter un couplage inter-module sur une simple requête de
+// lecture) : fin effective d'une résa (booking_date_to si posé, sinon départ +
+// booking_duration, défaut 90 min). Même convention que
+// bookings.FindConflictingBookings, pour qu'une table marquée en conflit ici
+// soit exactement celle qui déclencherait un 409 table_conflict côté écriture.
+func locEndOfBooking(alias string) string {
+	prefix := alias + "."
+	if dbx.ActiveDialect() == dbx.Postgres {
+		return "COALESCE(" + prefix + "booking_date_to, " + prefix + "booking_date_from + (COALESCE(" + prefix + "booking_duration, 90) * INTERVAL '1 minute'))"
+	}
+	return "COALESCE(" + prefix + "booking_date_to, " + prefix + "booking_date_from + INTERVAL COALESCE(" + prefix + "booking_duration, 90) MINUTE)"
+}
+
+// loadBookingConflicts renseigne Location.BookingConflict pour chaque table
+// de locMap ayant une réservation active (PENDING_APPROVAL, ACCEPTED ou
+// ORDER_OPEN) chevauchant strictement [window.DateFrom, window.DateTo).
+func (r *LocationsRepository) loadBookingConflicts(ctx context.Context, merchantID string, window *BookingWindow, locMap map[string]*models.Location) error {
+	db := dbx.GetDB(ctx, r.db)
+
+	endExpr := locEndOfBooking("b")
+	// DateFrom/DateTo restent l'heure murale opaque reçue en query string (cf.
+	// bookingWindowLayout dans handler.go) : pas de .UTC() ici, sous peine de
+	// désaligner ce calcul de bookings.FindConflictingBookings, qui compare
+	// ces mêmes chaînes telles quelles à booking_date_from/to.
+	dateFrom := window.DateFrom.Format(bookingWindowLayout)
+	dateTo := window.DateTo.Format(bookingWindowLayout)
+	excludeBookingID := window.ExcludeBookingID
+	if excludeBookingID == "" {
+		excludeBookingID = "0" // booking_id est un AUTO_INCREMENT : 0 n'existe jamais
+	}
+
+	query := fmt.Sprintf(`
+		SELECT bl.location_id, b.booking_id, b.booking_number, b.party_size,
+			b.booking_date_from, %s, COALESCE(c.customer_name, '')
+		FROM booked_location bl
+		INNER JOIN bookings b ON b.booking_id = bl.booking_id
+		LEFT JOIN customer c ON c.customer_id = b.customer_id
+		WHERE b.merchant_id = ?
+			AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
+			AND b.booking_date_from < ?
+			AND %s > ?
+			AND b.booking_id <> ?`, endExpr, endExpr)
+
+	rows, err := db.QueryContext(ctx, query, merchantID, dateTo, dateFrom, excludeBookingID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var locID, bID, bNum, bFrom, bEnd, cName string
+		var bSize int
+		if err := rows.Scan(&locID, &bID, &bNum, &bSize, &bFrom, &bEnd, &cName); err != nil {
+			return err
+		}
+
+		loc, ok := locMap[locID]
+		if !ok || loc.BookingConflict != nil {
+			continue
+		}
+
+		startsAt := bFrom
+		if t, err := time.Parse("2006-01-02 15:04:05", bFrom); err == nil {
+			startsAt = t.UTC().Format(time.RFC3339)
+		}
+		endsAt := bEnd
+		if t, err := time.Parse("2006-01-02 15:04:05", bEnd); err == nil {
+			endsAt = t.UTC().Format(time.RFC3339)
+		}
+
+		loc.BookingConflict = &models.LocationBooking{
+			BookingID:     bID,
+			BookingNumber: bNum,
+			PartySize:     bSize,
+			StartsAt:      startsAt,
+			EndsAt:        endsAt,
+			CustomerName:  cName,
+		}
+	}
+
+	return rows.Err()
 }
 
 // nextActiveBooking sélectionne, parmi les réservations ACCEPTED déjà

@@ -98,12 +98,19 @@ type Location struct {
 	Available     bool             `json:"available,omitempty"`
 	Bookings      []Booking        `json:"bookings"`
 	Booking       *LocationBooking `json:"booking,omitempty"`
-	Attributes    *TableAttributes `json:"attributes,omitempty"`
+	// BookingConflict n'est renseigné que si booking_date_from/booking_date_to
+	// sont passés à GET /locations : réservation active (PENDING_APPROVAL,
+	// ACCEPTED ou ORDER_OPEN) chevauchant ce créneau sur cette table, calculée
+	// avec la même règle que le contrôle serveur de bookings.FindConflictingBookings
+	// (qui renverrait 409 table_conflict pour cette table sur ce créneau).
+	BookingConflict *LocationBooking `json:"booking_conflict,omitempty"`
+	Attributes      *TableAttributes `json:"attributes,omitempty"`
 }
 
 // LocationBooking résume, pour une table du plan de salle, la prochaine
 // réservation ACCEPTED sur le créneau actif (dérivée de Location.Bookings,
-// déjà chargées via la jointure booked_location de GetLocations).
+// déjà chargées via la jointure booked_location de GetLocations). Réutilisé
+// tel quel pour Location.BookingConflict (même shape, sémantique différente).
 type LocationBooking struct {
 	BookingID     string `json:"booking_id"`
 	BookingNumber string `json:"booking_number"`

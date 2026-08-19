@@ -178,7 +178,7 @@ func TestLocationsRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed order_location: %v", err)
 	}
 
-	res, err := repo.GetLocations(ctx, merchantID)
+	res, err := repo.GetLocations(ctx, merchantID, nil)
 	if err != nil {
 		t.Fatalf("GetLocations failed against postgres: %v", err)
 	}
@@ -203,6 +203,88 @@ func TestLocationsRepository_Postgres(t *testing.T) {
 	}
 	if len(t1.Bookings) != 1 || t1.Bookings[0].BookingNumber != "ITL001" {
 		t.Fatalf("expected table 1 to carry the seeded booking (UTC_TIMESTAMP/INTERVAL window fix), got %+v", t1.Bookings)
+	}
+
+	// --- booking_conflict (booking_date_from/booking_date_to query params) :
+	// exercise loadBookingConflicts / locEndOfBooking against a table with no
+	// prior order/booking, so the only signal is the window overlap.
+	locationID3, err := repo.CreateTable(ctx, merchantID, floorID, CreateTableRequest{
+		LocationName: "T3", Seats: 4, Shape: "round", X: 30, Y: 30, Width: 40, Height: 40, Angle: 0,
+	})
+	if err != nil {
+		t.Fatalf("CreateTable (3rd) failed against postgres: %v", err)
+	}
+	locIntID3 := parseLocationID(t, locationID3)
+
+	slotFrom := time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)
+	slotTo := time.Date(2026, 8, 20, 21, 0, 0, 0, time.UTC)
+	var bookingIntID2 int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO bookings (booking_number, merchant_id, customer_id, booking_date_from, booking_date_to, booking_duration, party_size, status, created_by)
+		VALUES ('ITL002', $1, $2, $3, $4, 120, 2, 'ACCEPTED', 'itest')
+		RETURNING booking_id`, merchantID, customerID, slotFrom, slotTo).Scan(&bookingIntID2); err != nil {
+		t.Fatalf("seed 2nd booking: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO booked_location (booking_id, location_id) VALUES ($1, $2)`, bookingIntID2, locIntID3); err != nil {
+		t.Fatalf("seed 2nd booked_location: %v", err)
+	}
+	bookingID2 := int64ToString(bookingIntID2)
+
+	overlapping := &BookingWindow{
+		DateFrom: time.Date(2026, 8, 20, 20, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 8, 20, 22, 0, 0, 0, time.UTC),
+	}
+	resConflict, err := repo.GetLocations(ctx, merchantID, overlapping)
+	if err != nil {
+		t.Fatalf("GetLocations (overlapping window) failed against postgres: %v", err)
+	}
+	byID3 := map[string]models.Location{}
+	for _, l := range resConflict.Locations {
+		byID3[l.LocationID] = l
+	}
+	t3 := byID3[locationID3]
+	if t3.BookingConflict == nil || t3.BookingConflict.BookingID != bookingID2 {
+		t.Fatalf("expected table 3 to report a booking_conflict for %s on the overlapping window, got %+v", bookingID2, t3.BookingConflict)
+	}
+
+	// exclude_booking_id : la résa ne doit pas se bloquer elle-même (cas de la
+	// réaffectation de tables sur une résa existante).
+	excluding := &BookingWindow{
+		DateFrom:         overlapping.DateFrom,
+		DateTo:           overlapping.DateTo,
+		ExcludeBookingID: bookingID2,
+	}
+	resExcluded, err := repo.GetLocations(ctx, merchantID, excluding)
+	if err != nil {
+		t.Fatalf("GetLocations (excluded booking) failed against postgres: %v", err)
+	}
+	byID3Excluded := map[string]models.Location{}
+	for _, l := range resExcluded.Locations {
+		byID3Excluded[l.LocationID] = l
+	}
+	if byID3Excluded[locationID3].BookingConflict != nil {
+		t.Fatalf("expected no booking_conflict once the booking itself is excluded, got %+v", byID3Excluded[locationID3].BookingConflict)
+	}
+
+	// fenêtre non chevauchante : pas de conflit.
+	nonOverlapping := &BookingWindow{
+		DateFrom: time.Date(2026, 8, 20, 22, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 8, 20, 23, 0, 0, 0, time.UTC),
+	}
+	resNoConflict, err := repo.GetLocations(ctx, merchantID, nonOverlapping)
+	if err != nil {
+		t.Fatalf("GetLocations (non-overlapping window) failed against postgres: %v", err)
+	}
+	byID3NoConflict := map[string]models.Location{}
+	for _, l := range resNoConflict.Locations {
+		byID3NoConflict[l.LocationID] = l
+	}
+	if byID3NoConflict[locationID3].BookingConflict != nil {
+		t.Fatalf("expected no booking_conflict outside the booked slot, got %+v", byID3NoConflict[locationID3].BookingConflict)
+	}
+
+	if err := repo.DeleteTable(ctx, merchantID, locationID3); err != nil {
+		t.Fatalf("DeleteTable (3rd) failed against postgres: %v", err)
 	}
 
 	// DeleteObstacle / DeleteTable / DeleteArea / DeleteFloor.
