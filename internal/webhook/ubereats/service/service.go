@@ -21,7 +21,6 @@ import (
 )
 
 type Service struct {
-	systemToken     string
 	signatureSecret string
 
 	productMappingRepo   ProductMappingRepository
@@ -49,7 +48,7 @@ type CatalogService interface {
 
 type AttributeMappingRepository interface {
 	GetAttributeIDByModifierGroupID(ctx context.Context, merchantID, groupID string) (*string, error)
-	CreateAttributeFromUberGroup(ctx context.Context, merchantID, name string) (string, error)
+	CreateAttributeFromUberGroup(ctx context.Context, merchantID, name, productID string) (string, error)
 	CreateAttributeMapping(ctx context.Context, merchantID, attrID, groupID string) error
 
 	GetOptionIDByUberItemID(ctx context.Context, attributeID, uberItemID string) (*string, error)
@@ -57,16 +56,9 @@ type AttributeMappingRepository interface {
 	CreateOptionMapping(ctx context.Context, merchantID, optionID, uberItemID string) error
 }
 
-type OrderLifeCycleService interface {
-	SendUpdateOrderNotification(merchantID, orderID string)
-	SetOrderAccepted(source, merchantID, orderID string)
-	SetDelivered(source string, auto bool, merchantID, orderID string)
-}
-
 func NewService(
 	db *sql.DB,
 	signatureSecret string,
-	systemToken string,
 	uberClient *ubereats.UberEatsService,
 	googleClient *googlemaps.GoogleMapsClient,
 	ordersService *orders.OrdersService,
@@ -87,7 +79,6 @@ func NewService(
 		ordersRepo:           repository.NewOrdersRepository(db),
 		orderLifeCycleSvc:    orderLifeCycleSvc,
 		notificationsService: notificationService,
-		systemToken:          systemToken,
 		redis:                redis,
 	}
 }

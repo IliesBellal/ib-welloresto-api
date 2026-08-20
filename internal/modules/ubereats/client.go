@@ -59,7 +59,7 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 	data.Set("client_secret", c.config.ClientSecret)
 	data.Set("client_id", c.config.ClientID)
 	data.Set("grant_type", "client_credentials")
-	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write")
+	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write eats.store.orders.restaurantdelivery.status eats.byoc.position")
 
 	resp, err := c.client.PostForm(c.config.TokenURL, data)
 	if err != nil {
@@ -133,11 +133,6 @@ func (c *UberClient) GetMerchantStores(ctx context.Context, accessToken string) 
 
 // AcceptOrder envoie la requête d'acceptation
 func (c *UberClient) AcceptOrder(ctx context.Context, uberOrderID string, token string, req UberAcceptRequest) error {
-	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/accept", c.config.BaseURL, uberOrderID)
-	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
-}
-
-func (c *UberClient) GetOrderByURLUsingOrderID(ctx context.Context, uberOrderID string, token string, req UberAcceptRequest) error {
 	endpoint := fmt.Sprintf("%s/v1/delivery/order/%s/accept", c.config.BaseURL, uberOrderID)
 	return c.doJSONRequest(ctx, "POST", endpoint, token, req)
 }
@@ -241,6 +236,29 @@ func (c *UberClient) buildDenyPayload(rType, rCode, info string) UberCancelReque
 func (c *UberClient) UpdateBYOCStatus(ctx context.Context, uberOrderID string, token string, status string) error {
 	endpoint := fmt.Sprintf("%s/v1/eats/orders/%s/restaurantdelivery/status", c.config.BaseURL, uberOrderID)
 	payload := BYOCStatusRequest{Status: status}
+	return c.doJSONRequest(ctx, "POST", endpoint, token, payload)
+}
+
+// IngestLiveLocation reports the BYOC courier's (our delivery driver's) current position
+// to Uber Eats. orderWorkflowUUID/restaurantUUID: see BYOCLocationRequest for the
+// working hypothesis on what these identifiers are (documented — not confirmed against
+// a live Uber sandbox).
+func (c *UberClient) IngestLiveLocation(ctx context.Context, token, restaurantUUID, orderWorkflowUUID string, lat, lng float64, atMillis int64) error {
+	endpoint := fmt.Sprintf("%s/v1/eats/byoc/restaurants/orders/event/location", c.config.BaseURL)
+	payload := BYOCLocationRequest{
+		LocationRequest: BYOCLocationRequestBody{
+			OrderWorkflowUUID: orderWorkflowUUID,
+			RestaurantUUID:    restaurantUUID,
+			LocationEvents: []BYOCLocationEvent{
+				{
+					PositionEvent: BYOCPositionEvent{
+						Point: BYOCPoint{Latitude: lat, Longitude: lng},
+						Time:  BYOCEventTime{EpochMillis: atMillis},
+					},
+				},
+			},
+		},
+	}
 	return c.doJSONRequest(ctx, "POST", endpoint, token, payload)
 }
 

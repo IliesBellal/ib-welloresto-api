@@ -19,7 +19,7 @@ func NewAttributeMappingRepository(db *sql.DB) *AttributeMappingRepository {
 	return &AttributeMappingRepository{database: db}
 }
 
-func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Context, merchantID, title string) (string, error) {
+func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Context, merchantID, title, productID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -35,10 +35,18 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 	// there is no auto-increment to read back via LastInsertId.
 	attributeID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
 
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO configurable_attributes (id, merchant_id, brand, name, title, min_options, max_options, is_required)
-		VALUES (?, ?, 'UBER_EATS', ?, ?, 0, 99, false)
-	`, attributeID, merchantID, attrName, title)
+	// product_id is NOT NULL on configurable_attributes - omitting it made this
+	// insert fail for every previously-unseen Uber modifier group.
+	productIDInt, err := strconv.Atoi(productID)
+	if err != nil {
+		log.Error("Error parsing product ID for Uber attribute: " + err.Error())
+		return "", err
+	}
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, product_id, merchant_id, brand, name, title, min_options, max_options, is_required)
+		VALUES (?, ?, ?, 'UBER_EATS', ?, ?, 0, 99, false)
+	`, attributeID, productIDInt, merchantID, attrName, title)
 
 	if err != nil {
 		log.Error("Error creating attribute from Uber group: " + err.Error())

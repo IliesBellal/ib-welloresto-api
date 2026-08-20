@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
@@ -14,6 +15,7 @@ import (
 	auditpkg "welloresto-api/internal/modules/audit"
 	"welloresto-api/internal/modules/notification"
 	planningemployees "welloresto-api/internal/modules/planning/employees"
+	"welloresto-api/internal/modules/ubereats"
 )
 
 // GeofenceRadiusMeters is the maximum distance from the delivery address at which
@@ -26,17 +28,23 @@ type UsersService struct {
 	audit               auditpkg.AuditService
 	memberEmployee      memberEmployeeFacade
 	notificationService *notification.NotificationService
+	uberSvc             *ubereats.UberEatsService
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
-func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService, redis *redisclient.Client, notificationService *notification.NotificationService) *UsersService {
+// byocLocationShareThrottle is the minimum delay between two location shares sent to
+// Uber Eats for the same order, to avoid hammering their API on closely-spaced GPS pings.
+const byocLocationShareThrottle = 8 * time.Second
+
+func NewUsersService(u *UsersRepository, auditService auditpkg.AuditService, redis *redisclient.Client, notificationService *notification.NotificationService, uberSvc *ubereats.UberEatsService) *UsersService {
 	return &UsersService{
 		userRepo:            u,
 		redis:               redis,
 		audit:               auditService,
 		memberEmployee:      newMemberEmployeeFacade(u.database),
 		notificationService: notificationService,
+		uberSvc:             uberSvc,
 	}
 }
 
@@ -90,10 +98,19 @@ func (s *UsersService) SetUserLocation(ctx context.Context, token string, req mo
 		return nil
 	}
 
-	stopStatus, destLat, destLng, ok, err := s.userRepo.GetDeliveryStopDestination(ctx, sessionID, currentOrderID)
+	stopStatus, destLat, destLng, ok, brand, brandOrderID, err := s.userRepo.GetDeliveryStopDestination(ctx, sessionID, currentOrderID)
 	if err != nil {
 		return err
 	}
+
+	// Relay the driver's position to Uber Eats for BYOC (self-delivery) orders, at
+	// every position update while the stop is in progress - throttled via Redis so a
+	// burst of GPS pings doesn't hammer Uber's API. Best-effort: never blocks or fails
+	// this request.
+	if brand == models.BrandUberEats && brandOrderID != nil && (stopStatus == "en_route" || stopStatus == "arrived") {
+		s.shareDriverLocationWithUber(user.MerchantID, *brandOrderID, req.Lat, req.Lng)
+	}
+
 	if !ok || stopStatus != "en_route" {
 		return nil
 	}
@@ -106,11 +123,62 @@ func (s *UsersService) SetUserLocation(ctx context.Context, token string, req mo
 	if err != nil {
 		return err
 	}
-	if arrived && s.notificationService != nil {
-		_ = s.notificationService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
+	if arrived {
+		// The delivery_sessions module's own MarkDeliveryStopArrived (manual path)
+		// relays "arriving" to Uber Eats - this automatic geofence-triggered arrival
+		// bypasses that service entirely, so it must notify Uber itself.
+		// notifyUberBYOCArriving takes our *internal* order id (currentOrderID), not
+		// brandOrderID - UberEatsBYOCStatusUpdate resolves the brand id itself.
+		if brand == models.BrandUberEats {
+			s.notifyUberBYOCArriving(user.MerchantID, currentOrderID)
+		}
+		if s.notificationService != nil {
+			_ = s.notificationService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
+		}
 	}
 
 	return nil
+}
+
+// shareDriverLocationWithUber forwards the driver's current position to Uber Eats for a
+// BYOC order, throttled to at most one call per byocLocationShareThrottle per order.
+func (s *UsersService) shareDriverLocationWithUber(merchantID, brandOrderID string, lat, lng float64) {
+	if s.uberSvc == nil {
+		return
+	}
+
+	if s.redis != nil {
+		throttleKey := "ubereats:byoc:loc:" + brandOrderID
+		if _, found := s.redis.Get(context.Background(), throttleKey); found {
+			return
+		}
+		_ = s.redis.Set(context.Background(), throttleKey, "1", byocLocationShareThrottle)
+	}
+
+	go func(mID, oID string, lt, lg float64) {
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.uberSvc.ShareDriverLocation(ctxTimeout, mID, oID, lt, lg); err != nil {
+			logger.FromContext(ctxTimeout).Error("uber BYOC location share failed for order " + oID + ": " + err.Error())
+		}
+	}(merchantID, brandOrderID, lat, lng)
+}
+
+// notifyUberBYOCArriving relays the geofence-triggered automatic arrival to Uber Eats.
+// orderID is our *internal* order id - UberEatsBYOCStatusUpdate resolves the Uber brand
+// order id itself (unlike ShareDriverLocation, which needs the brand id directly).
+func (s *UsersService) notifyUberBYOCArriving(merchantID, orderID string) {
+	if s.uberSvc == nil {
+		return
+	}
+
+	go func(mID, oID string) {
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.uberSvc.UberEatsBYOCStatusUpdate(ctxTimeout, mID, oID, ubereats.StatusBYOCArriving); err != nil {
+			logger.FromContext(ctxTimeout).Error("uber BYOC arriving status update failed for order " + oID + ": " + err.Error())
+		}
+	}(merchantID, orderID)
 }
 
 // haversineMeters returns the great-circle distance between two lat/lng points, in meters.

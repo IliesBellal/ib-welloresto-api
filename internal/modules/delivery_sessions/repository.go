@@ -383,6 +383,25 @@ func (r *DeliverySessionsRepository) GetOrderCustomerPhones(ctx context.Context,
 	return phones, rows.Err()
 }
 
+// GetOrderBrandAndBrandOrderID resolves an order's brand and external (brand)
+// order id, used to decide whether a stop transition must also be relayed to
+// an external platform (Uber Eats BYOC). Kept as a small dedicated query
+// rather than reusing order_life_cycle's equivalent lookup: order_life_cycle
+// already imports this package, so the reverse import would create a cycle.
+func (r *DeliverySessionsRepository) GetOrderBrandAndBrandOrderID(ctx context.Context, orderID string) (brand string, brandOrderID *string, err error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var brandVal, brandOrderIDVal sql.NullString
+	err = db.QueryRowContext(ctx, `
+		SELECT brand, brand_order_id FROM orders WHERE order_id = ?
+	`, orderID).Scan(&brandVal, &brandOrderIDVal)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return brandVal.String, helpers.NullStringToPtr(brandOrderIDVal), nil
+}
+
 func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)

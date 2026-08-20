@@ -30,7 +30,7 @@ func TestUsersHandlerListMerchantUsers(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	handler := NewUsersHandler(svc, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(1)
@@ -97,7 +97,7 @@ func TestUsersHandlerSearchLinkableUsers(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	handler := NewUsersHandler(svc, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(1)
@@ -133,7 +133,7 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	ctx := middleware.WithUser(testingContext(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
@@ -196,7 +196,7 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	handler := NewUsersHandler(svc, nil)
 
 	body, _ := json.Marshal(MerchantUserRightsUpsertRequest{
@@ -260,7 +260,7 @@ func TestUsersServiceUnlinkMerchantUserLooksUpTokenBeforeDisabling(t *testing.T)
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
@@ -312,7 +312,7 @@ func TestUsersServiceLinkMerchantUserRejectsAlreadyLinked(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(1) FROM users WHERE user_id = ?`)).
@@ -345,7 +345,7 @@ func TestUsersServiceGetMerchantUserRightsNotFound(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
@@ -418,7 +418,7 @@ func TestUsersServiceGetMerchantUserMemberNilWhenNotLinked(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			return nil, sql.ErrNoRows
@@ -453,7 +453,7 @@ func TestUsersServicePatchMerchantUserMemberCreateRequiresPositionAndContract(t 
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			return nil, sql.ErrNoRows
@@ -487,7 +487,7 @@ func TestUsersServicePatchMerchantUserMemberCreateAndUpdateFlow(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 
 	callOrder := make([]string, 0, 4)
 	svc.memberEmployee = &memberEmployeeStub{
@@ -560,7 +560,7 @@ func TestUsersServicePatchMerchantUserMemberRollbackOnLinkFailure(t *testing.T) 
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			return nil, sql.ErrNoRows
@@ -603,7 +603,7 @@ func TestUsersHandlerPatchMerchantUserMemberAcceptsDateOnlyJSON(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 
 	var capturedDate *time.Time
 	svc.memberEmployee = &memberEmployeeStub{
@@ -658,7 +658,7 @@ func TestUsersServicePatchMerchantUserMemberDateAbsentNotModified(t *testing.T) 
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
@@ -697,7 +697,7 @@ func TestUsersHandlerPatchMerchantUserMemberDateNullHandled(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi"}, nil
@@ -743,7 +743,7 @@ func TestUsersHandlerGetMerchantUserMemberSerializesDateOnly(t *testing.T) {
 	defer db.Close()
 
 	repo := NewUserRepository(db)
-	svc := NewUsersService(repo, nil, nil, nil)
+	svc := NewUsersService(repo, nil, nil, nil, nil)
 	svc.memberEmployee = &memberEmployeeStub{
 		getActiveByUserIDFn: func(ctx context.Context, merchantID, userID string) (*planningemployees.Employee, error) {
 			start := time.Date(2026, 6, 1, 18, 42, 0, 0, time.FixedZone("UTC+3", 3*3600))

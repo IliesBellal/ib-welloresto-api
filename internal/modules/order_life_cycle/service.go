@@ -321,7 +321,13 @@ func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, Merch
 	// 5) Handle integration (Deliveroo, UberEats, etc.)
 	switch orderMeta.Brand {
 	case models.BrandUberEats:
-		// No endpoint to call...
+		go func(mID, oID string) {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.uberSvc.UberEatsBYOCStatusUpdate(ctxTimeout, mID, oID, ubereats.StatusBYOCDelivered); err != nil {
+				s.log.Error("uber BYOC delivered status update failed", zap.String("order_id", oID), zap.Error(err))
+			}
+		}(MerchantID, orderID)
 		return nil
 
 	case models.BrandDeliveroo:
@@ -638,6 +644,7 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 			defer cancel()
 			if err := s.uberSvc.AcceptOrder(ctxTimeout, mID, oID); err != nil {
 				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
+				s.uberSvc.RecoverOrderState(ctxTimeout, oID)
 			}
 
 			s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
@@ -717,13 +724,13 @@ func (s *OrdersLifeCycleService) StartDelivery(ctx context.Context, orderID stri
 	// 3) Branch Uber Eats / Deliveroo asynchronously
 	switch integrationInfo.Brand {
 	case models.BrandUberEats:
-		go func() {
-			//TODO recherche le bon endpoint chez Uber Eats
-			//err := s.uberSvc.SetOrderStarted(ctx, integrationInfo.MerchantID, integrationInfo.BrandOrderID)
-			if err != nil {
-				//log.Println("UberEats StartDelivery error:", err)
+		go func(mID, oID string) {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.uberSvc.UberEatsBYOCStatusUpdate(ctxTimeout, mID, oID, ubereats.StatusBYOCStarted); err != nil {
+				s.log.Error("uber BYOC started status update failed", zap.String("order_id", oID), zap.Error(err))
 			}
-		}()
+		}(integrationInfo.MerchantID, orderID)
 
 	case models.BrandDeliveroo:
 		go func() {

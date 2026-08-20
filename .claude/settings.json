@@ -52,7 +52,8 @@
       "Bash(gofmt /tmp/text_test_lf.go)",
       "Bash(cd \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api\" && sed -n '1,40p' internal/infrastructure/redis/*.go 2>/dev/null | head -80 *)",
       "Bash(gofmt /tmp/lf.go)",
-      "Bash(xargs grep -l \"func.*GetPanes\\\\|type Panes struct\")"
+      "Bash(xargs grep -l \"func.*GetPanes\\\\|type Panes struct\")",
+      "Bash(echo \"VET_EXIT:$?\")"
     ],
     "additionalDirectories": [
       "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis"

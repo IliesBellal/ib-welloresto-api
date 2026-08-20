@@ -18,11 +18,10 @@ type UberWebhookEvent struct {
 // =======================
 
 type UberWebhookMeta struct {
-	UserID        string `json:"user_id,omitempty"`
-	ResourceID    string `json:"resource_id,omitempty"`
-	OrderID       string `json:"order_id,omitempty"`
-	Status        string `json:"status,omitempty"`
-	CourierTripID string `json:"courier_trip_id,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
+	ResourceID string `json:"resource_id,omitempty"`
+	OrderID    string `json:"order_id,omitempty"`
+	Status     string `json:"status,omitempty"`
 }
 
 // =======================

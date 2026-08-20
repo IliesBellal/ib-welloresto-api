@@ -317,7 +317,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(selectedDB)
 	messaggioClient := messaggioModule.NewMessaggioClient()
 	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService, uberService, log)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(selectedDB)
@@ -361,7 +361,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	uberWebhookService := webhookuberservice.NewService(
 		selectedDB,
 		"",
-		"",
 		uberService,
 		&googleClient,
 		ordersService,
@@ -397,7 +396,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(selectedDB)
-	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService)
+	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService, uberService)
 
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(selectedDB)

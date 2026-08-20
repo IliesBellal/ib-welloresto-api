@@ -90,11 +90,50 @@ const (
 
 	StateOpen   = "OPEN"
 	StateClosed = "CLOSED"
+
+	// BYOC delivery status values accepted by POST
+	// /v1/eats/orders/{order_id}/restaurantdelivery/status (self-delivery orders
+	// only — see developer.uber.com/docs/eats/references/api/v1/post-eats-orders-orderid-restaurantdelivery-status).
+	StatusBYOCStarted   = "started"
+	StatusBYOCArriving  = "arriving"
+	StatusBYOCDelivered = "delivered"
 )
 
 // BYOCStatusRequest pour mettre à jour le statut de livraison (BYOC)
 type BYOCStatusRequest struct {
 	Status string `json:"status"`
+}
+
+// BYOCLocationRequest is the payload for POST
+// /v1/eats/byoc/restaurants/orders/event/location (Ingest Courier Live Location).
+// order_workflow_uuid/restaurant_uuid are populated from brand_order_id/store_id -
+// see IngestLiveLocation/ShareDriverLocation for the documented working hypothesis.
+type BYOCLocationRequest struct {
+	LocationRequest BYOCLocationRequestBody `json:"location_request"`
+}
+
+type BYOCLocationRequestBody struct {
+	OrderWorkflowUUID string              `json:"order_workflow_uuid"`
+	RestaurantUUID    string              `json:"restaurant_uuid"`
+	LocationEvents    []BYOCLocationEvent `json:"location_events"`
+}
+
+type BYOCLocationEvent struct {
+	PositionEvent BYOCPositionEvent `json:"position_event"`
+}
+
+type BYOCPositionEvent struct {
+	Point BYOCPoint     `json:"point"`
+	Time  BYOCEventTime `json:"time"`
+}
+
+type BYOCPoint struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+type BYOCEventTime struct {
+	EpochMillis int64 `json:"epochMillis"`
 }
 
 // UberPrepTimeRequest structure flexible pour update-store-prep-time

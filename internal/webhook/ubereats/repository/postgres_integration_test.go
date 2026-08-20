@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +117,31 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if state != "CLOSED" || brandStatus != "FAILED" {
 		t.Fatalf("unexpected order state after MarkFailed: state=%q status=%q", state, brandStatus)
 	}
+
+	// CancelOrder must not touch an order already finalized (audit item #6 —
+	// a late/duplicate "orders.cancel" webhook used to unconditionally
+	// overwrite brand_status/state even on an already-delivered order).
+	const brandOrderID3 = "itest-ue-brand-order-3"
+	var orderID3 int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, order_num, brand, brand_order_id, brand_status, state, price, tva, ht, created_by)
+		VALUES ($1, 3, 'UBER_EATS', $2, 'CLOSED', 'CLOSED', 1200, 90, 1110, 'itest')
+		RETURNING order_id`, merchantID, brandOrderID3).Scan(&orderID3); err != nil {
+		t.Fatalf("seed order 3: %v", err)
+	}
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE order_id = $1`, orderID3) })
+
+	if err := repo.CancelOrder(ctx, brandOrderID3); err != nil {
+		t.Fatalf("CancelOrder (already closed) failed against postgres: %v", err)
+	}
+	var brandStatus3, state3 string
+	if err := db.QueryRowContext(ctx, `SELECT brand_status, state FROM orders WHERE order_id = $1`, orderID3).
+		Scan(&brandStatus3, &state3); err != nil {
+		t.Fatalf("read back order 3 after CancelOrder: %v", err)
+	}
+	if brandStatus3 != "CLOSED" || state3 != "CLOSED" {
+		t.Fatalf("CancelOrder must not alter an already-closed order, got status=%q state=%q", brandStatus3, state3)
+	}
 }
 
 func TestAttributeMappingRepository_Postgres(t *testing.T) {
@@ -139,20 +163,23 @@ func TestAttributeMappingRepository_Postgres(t *testing.T) {
 
 	repo := NewAttributeMappingRepository(db)
 
-	// CreateAttributeFromUberGroup: id is now generated client-side (varchar PK,
-	// no LastInsertId — fixed per Tier2 report). The insert still fails on
-	// postgres because configurable_attributes.product_id is NOT NULL with no
-	// default and this method never sets it — a second, independent
-	// pre-existing bug (confirmed present in the MySQL source DDL too, so this
-	// insert has apparently never actually succeeded in production). Left
-	// unfixed per the Tier2 report; this assertion pins the *specific* failure
-	// (product_id, not id) so a regression in the id fix would be caught here.
-	_, err := repo.CreateAttributeFromUberGroup(ctx, merchantID, "Sauces & Extras")
-	if err == nil {
-		t.Fatal("expected CreateAttributeFromUberGroup to fail on the pre-existing product_id NOT NULL bug")
+	// CreateAttributeFromUberGroup: id is generated client-side (varchar PK, no
+	// LastInsertId). product_id is NOT NULL on configurable_attributes with no
+	// default; the caller (mapUberItemsToOrderProducts) always resolves the
+	// internal product id before mapping modifiers, so it's threaded through
+	// here too (audit item #7 — this insert used to fail on every previously
+	// unseen Uber modifier group).
+	const productID = "9001"
+	createdAttrID, err := repo.CreateAttributeFromUberGroup(ctx, merchantID, "Sauces & Extras", productID)
+	if err != nil {
+		t.Fatalf("CreateAttributeFromUberGroup failed against postgres: %v", err)
 	}
-	if !strings.Contains(err.Error(), "product_id") {
-		t.Fatalf("expected a product_id NOT NULL violation (id-generation fix regressed?), got: %v", err)
+	var gotProductID int
+	if err := db.QueryRowContext(ctx, `SELECT product_id FROM configurable_attributes WHERE id = $1`, createdAttrID).Scan(&gotProductID); err != nil {
+		t.Fatalf("read back attribute after CreateAttributeFromUberGroup: %v", err)
+	}
+	if gotProductID != 9001 {
+		t.Fatalf("expected product_id=9001, got %d", gotProductID)
 	}
 
 	// Exercise the rest of the repository directly against a fabricated

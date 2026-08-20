@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 )
 
@@ -94,49 +95,56 @@ func (r *UsersRepository) InsertDeliveryPosition(ctx context.Context, userID, se
 	return nil
 }
 
-// GetDeliveryStopDestination returns the per-stop status and delivery coordinates for
-// the given session/order, resolving the temporary-vs-permanent address switch. ok is
-// false when no destination coordinates are available (status is still returned).
-func (r *UsersRepository) GetDeliveryStopDestination(ctx context.Context, sessionID, orderID string) (status string, lat, lng float64, ok bool, err error) {
+// GetDeliveryStopDestination returns the per-stop status, delivery coordinates, and
+// brand info for the given session/order, resolving the temporary-vs-permanent address
+// switch. ok is false when no destination coordinates are available (status/brand are
+// still returned). brand/brandOrderID let the caller decide whether to relay this stop's
+// progress to an external platform (Uber Eats BYOC).
+func (r *UsersRepository) GetDeliveryStopDestination(ctx context.Context, sessionID, orderID string) (status string, lat, lng float64, ok bool, brand string, brandOrderID *string, err error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	var useTemporary bool
 	var customerLat, customerLng sql.NullFloat64
 	var customerTemporaryLat, customerTemporaryLng sql.NullString
+	var brandVal, brandOrderIDVal sql.NullString
 
 	err = db.QueryRowContext(ctx, `
 		SELECT dso.status, o.use_customer_temporary_address,
 		       c.customer_lat, c.customer_lng,
-		       c.customer_temporary_lat, c.customer_temporary_lng
+		       c.customer_temporary_lat, c.customer_temporary_lng,
+		       o.brand, o.brand_order_id
 		FROM delivery_session_order dso
 		JOIN orders o ON o.order_id = dso.order_id
 		LEFT JOIN customer c ON c.customer_id = o.customer_id
 		WHERE dso.delivery_session_id = ? AND dso.order_id = ?
-	`, sessionID, orderID).Scan(&status, &useTemporary, &customerLat, &customerLng, &customerTemporaryLat, &customerTemporaryLng)
+	`, sessionID, orderID).Scan(&status, &useTemporary, &customerLat, &customerLng, &customerTemporaryLat, &customerTemporaryLng, &brandVal, &brandOrderIDVal)
 	if err == sql.ErrNoRows {
-		return "", 0, 0, false, nil
+		return "", 0, 0, false, "", nil, nil
 	}
 	if err != nil {
-		return "", 0, 0, false, err
+		return "", 0, 0, false, "", nil, err
 	}
+
+	brand = brandVal.String
+	brandOrderID = helpers.NullStringToPtr(brandOrderIDVal)
 
 	if useTemporary {
 		if !customerTemporaryLat.Valid || !customerTemporaryLng.Valid {
-			return status, 0, 0, false, nil
+			return status, 0, 0, false, brand, brandOrderID, nil
 		}
 		parsedLat, errLat := strconv.ParseFloat(strings.TrimSpace(customerTemporaryLat.String), 64)
 		parsedLng, errLng := strconv.ParseFloat(strings.TrimSpace(customerTemporaryLng.String), 64)
 		if errLat != nil || errLng != nil {
-			return status, 0, 0, false, nil
+			return status, 0, 0, false, brand, brandOrderID, nil
 		}
-		return status, parsedLat, parsedLng, true, nil
+		return status, parsedLat, parsedLng, true, brand, brandOrderID, nil
 	}
 
 	if !customerLat.Valid || !customerLng.Valid {
-		return status, 0, 0, false, nil
+		return status, 0, 0, false, brand, brandOrderID, nil
 	}
 
-	return status, customerLat.Float64, customerLng.Float64, true, nil
+	return status, customerLat.Float64, customerLng.Float64, true, brand, brandOrderID, nil
 }
 
 // MarkStopArrived transitions a stop from en_route to arrived (geofence trigger).

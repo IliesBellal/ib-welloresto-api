@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/messaggio"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/modules/ubereats"
+
+	"go.uber.org/zap"
 )
 
 // OrderDeliverer is the minimal interface this service needs to execute transition 3
@@ -25,15 +29,41 @@ type DeliverySessionsService struct {
 	notificationsService *notification.NotificationService
 	orderDeliverer       OrderDeliverer
 	smsService           messaggio.SMSService
+	uberSvc              *ubereats.UberEatsService
+	log                  *zap.Logger
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService messaggio.SMSService) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService messaggio.SMSService, uberSvc *ubereats.UberEatsService, log *zap.Logger) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		notificationsService: notificationsService,
 		orderDeliverer:       orderDeliverer,
 		smsService:           smsService,
+		uberSvc:              uberSvc,
+		log:                  log,
 	}
+}
+
+// notifyUberBYOCStatus relays a delivery_sessions stop transition to Uber Eats
+// for BYOC (self-delivery) orders. Fire-and-forget: an Uber API failure never
+// blocks or fails the stop transition already committed locally, only logged.
+func (s *DeliverySessionsService) notifyUberBYOCStatus(merchantID, orderID, status string) {
+	go func(mID, oID, st string) {
+		brand, _, err := s.deliverySessionsRepo.GetOrderBrandAndBrandOrderID(context.Background(), oID)
+		if err != nil {
+			s.log.Error("delivery_sessions: failed to resolve order brand for BYOC status update", zap.String("order_id", oID), zap.Error(err))
+			return
+		}
+		if brand != models.BrandUberEats {
+			return
+		}
+
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.uberSvc.UberEatsBYOCStatusUpdate(ctxTimeout, mID, oID, st); err != nil {
+			s.log.Error("uber BYOC status update failed", zap.String("order_id", oID), zap.String("status", st), zap.Error(err))
+		}
+	}(merchantID, orderID, status)
 }
 
 // sendDeliveryTrackingSMS notifies, by SMS, the customer of each order in the session that
@@ -158,6 +188,7 @@ func (s *DeliverySessionsService) SelectDeliveryStop(ctx context.Context, orderI
 		return nil, err
 	}
 
+	s.notifyUberBYOCStatus(user.MerchantID, orderID, ubereats.StatusBYOCStarted)
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
 
 	return s.deliverySessionsRepo.GetActiveDeliverySessionForUser(ctx, user.MerchantID, user.UserID)
@@ -176,6 +207,7 @@ func (s *DeliverySessionsService) MarkDeliveryStopArrived(ctx context.Context, o
 		return nil, err
 	}
 
+	s.notifyUberBYOCStatus(user.MerchantID, orderID, ubereats.StatusBYOCArriving)
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
 
 	return s.deliverySessionsRepo.GetActiveDeliverySessionForUser(ctx, user.MerchantID, user.UserID)

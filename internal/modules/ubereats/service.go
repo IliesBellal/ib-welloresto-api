@@ -384,7 +384,7 @@ func (s *UberEatsService) CancelOrder(ctx context.Context, merchantID, orderID, 
 }
 
 // SetOrderReady logique métier
-func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, merchantID, orderID string, updateStock bool) error {
+func (s *UberEatsService) SetOrderReady(ctx context.Context, userID, _, orderID string, updateStock bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -485,26 +485,41 @@ func (s *UberEatsService) FinishOrderIfDoesNotExist(ctx context.Context, token s
 	return nil
 }
 
-// UberEatsBYOCStatusUpdate met à jour le statut de livraison
+// UberEatsBYOCStatusUpdate notifies Uber Eats of a self-delivery (BYOC) order's
+// delivery progress. orderID is our internal order_id; the API path requires
+// Uber's own order id (brand_order_id), resolved here via GetOrderMetadata -
+// same lookup already used by AcceptOrder/DenyOrder/SetOrderReady above.
 func (s *UberEatsService) UberEatsBYOCStatusUpdate(ctx context.Context, merchantID, orderID string, status string) error {
 	token, err := s.GetValidToken(ctx)
 	if err != nil {
 		return err
 	}
 
-	// On a besoin de l'ID externe Uber Eats ici. En PHP tu utilisais juste order_id dans l'URL.
-	// Mais l'URL PHP est : .../orders/".$order_id."/...
-	// Si $order_id est l'ID interne, il faut le convertir en externe ?
-	// *Hypothèse*: Ton PHP utilise $order_id directement dans l'URL, supposons que c'est l'ID Uber passé en paramètre
-	// OU que tu as besoin de mapper. Dans le doute, je suis ton code PHP qui passe order_id direct.
-	orderIDStr := fmt.Sprintf("%s", orderID)
-
-	if err := s.client.UpdateBYOCStatus(ctx, orderIDStr, token, status); err != nil {
-		// Le PHP retourne status -1 si 404, ici on retourne l'erreur
+	meta, err := s.repo.GetOrderMetadata(ctx, orderID)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	return s.client.UpdateBYOCStatus(ctx, meta.BrandOrderID, token, status)
+}
+
+// ShareDriverLocation reports our delivery driver's current GPS position to Uber Eats
+// for a BYOC (self-delivery) order, so the customer's live tracking reflects the actual
+// courier. brandOrderID is Uber's own order id (order_workflow_uuid hypothesis - see
+// BYOCLocationRequest); restaurant_uuid is the merchant's Uber store id, already on
+// hand via GetStoreData.
+func (s *UberEatsService) ShareDriverLocation(ctx context.Context, merchantID, brandOrderID string, lat, lng float64) error {
+	token, err := s.GetValidToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	store, err := s.repo.GetStoreData(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+
+	return s.client.IngestLiveLocation(ctx, token, store.StoreID, brandOrderID, lat, lng, time.Now().UnixMilli())
 }
 
 // UpdateBusyModeTime active le mode occupé (délai supplémentaire)

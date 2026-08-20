@@ -82,7 +82,7 @@ func (s *Service) mapUberItemsToOrderProducts(
 			}
 		}
 
-		config, err := s.mapModifiers(ctx, merchantID, item) // <-- Passage de la transaction
+		config, err := s.mapModifiers(ctx, merchantID, *productID, item) // <-- Passage de la transaction
 		if err != nil {
 			return nil, err
 		}

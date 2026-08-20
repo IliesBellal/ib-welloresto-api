@@ -7,7 +7,7 @@ import (
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
-func (s *Service) mapModifiers(ctx context.Context, merchantID string, item ueModels.UberCartItem) (*ordersModels.ProductConfiguration, error) {
+func (s *Service) mapModifiers(ctx context.Context, merchantID, productID string, item ueModels.UberCartItem) (*ordersModels.ProductConfiguration, error) {
 
 	if len(item.SelectedModifierGroups) == 0 {
 		return nil, nil
@@ -23,7 +23,7 @@ func (s *Service) mapModifiers(ctx context.Context, merchantID string, item ueMo
 		}
 
 		if attrID == nil {
-			newAttrID, err := s.attributeMappingRepo.CreateAttributeFromUberGroup(ctx, merchantID, group.Title)
+			newAttrID, err := s.attributeMappingRepo.CreateAttributeFromUberGroup(ctx, merchantID, group.Title, productID)
 			if err != nil {
 				return nil, err
 			}

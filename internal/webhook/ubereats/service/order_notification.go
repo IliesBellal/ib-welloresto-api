@@ -40,7 +40,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 		return err
 	}
 
-	req := MapUberOrderToRequest(order, store.MerchantID)
+	req := MapUberOrderToRequest(ctx, order, store.MerchantID)
 	req.Order.Products = products
 	req.MerchantID = store.MerchantID
 	createdBy := models.UberEatsWebhookUserID

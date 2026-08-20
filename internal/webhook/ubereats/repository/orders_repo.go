@@ -40,12 +40,15 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// Guard against a late/duplicate webhook overwriting an order already
+	// finalized (delivered, denied, etc.) - mirrors the internal OrderStillOpen
+	// check used by DenyOrder/DeleteOrder.
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
 		SET brand_status = 'CANCELED',
 		    deletion_reason_id = '39',
 		    state = 'CLOSED'
-		WHERE brand_order_id = ?
+		WHERE brand_order_id = ? AND state = 'OPEN'
 	`, brandOrderID)
 	if err != nil {
 		log.Error("Error canceling order: " + err.Error())

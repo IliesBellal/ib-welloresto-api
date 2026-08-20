@@ -119,33 +119,39 @@ func (r *UberRepository) SaveNewToken(ctx context.Context, tokenType, accessToke
 	return err
 }
 
-// EnableIntegration insère (ou met à jour) l'intégration Uber Eats pour le marchand
+// EnableIntegration insère (ou met à jour) l'intégration Uber Eats pour le marchand.
+// Colonnes réelles (docs/migration-postgres/04-schema-postgres-target.sql:1863-1885) :
+// pas de access_token/is_active/updated_at — bearer_token/refresh_token/enabled à la
+// place. pos_provisionning_refresh_token/pos_provisionning_token_expiration_date sont
+// NOT NULL sans défaut : renseignés à une valeur neutre uniquement à la création (ce
+// sont des colonnes distinctes, pour un autre flux de provisioning POS), jamais touchés
+// sur les mises à jour suivantes.
 func (r *UberRepository) EnableIntegration(ctx context.Context, merchantID, storeID, accessToken, refreshToken string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	// NOTE bug preexistant identique aux deux dialectes (documente, non
-	// corrige) : access_token / is_active / updated_at n'existent ni dans le
-	// DDL MySQL source ni dans la cible — cette requete echoue a l'execution
-	// dans les deux dialectes (chemin OAuth Uber jamais fonctionnel).
 	query := `
-		INSERT INTO integration_uber_eats (merchant_id, store_id, access_token, refresh_token, is_active, updated_at)
-		VALUES (?, ?, ?, ?, 1, NOW())
+		INSERT INTO integration_uber_eats (
+			merchant_id, store_id, bearer_token, refresh_token, enabled,
+			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date
+		)
+		VALUES (?, ?, ?, ?, 1, '', ` + dbx.UTCNow() + `)
 		ON DUPLICATE KEY UPDATE
 			store_id = VALUES(store_id),
-			access_token = VALUES(access_token),
+			bearer_token = VALUES(bearer_token),
 			refresh_token = VALUES(refresh_token),
-			is_active = 1,
-			updated_at = NOW()`
+			enabled = 1`
 	if dbx.ActiveDialect() == dbx.Postgres {
 		query = `
-		INSERT INTO integration_uber_eats (merchant_id, store_id, access_token, refresh_token, is_active, updated_at)
-		VALUES (?, ?, ?, ?, 1, now())
+		INSERT INTO integration_uber_eats (
+			merchant_id, store_id, bearer_token, refresh_token, enabled,
+			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date
+		)
+		VALUES (?, ?, ?, ?, true, '', ` + dbx.UTCNow() + `)
 		ON CONFLICT (merchant_id) DO UPDATE SET
 			store_id = EXCLUDED.store_id,
-			access_token = EXCLUDED.access_token,
+			bearer_token = EXCLUDED.bearer_token,
 			refresh_token = EXCLUDED.refresh_token,
-			is_active = 1,
-			updated_at = now()`
+			enabled = true`
 	}
 
 	_, err := db.ExecContext(ctx, query, merchantID, storeID, accessToken, refreshToken)
@@ -156,8 +162,10 @@ func (r *UberRepository) EnableIntegration(ctx context.Context, merchantID, stor
 func (r *UberRepository) DisableIntegration(ctx context.Context, merchantID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	// Tu peux choisir de supprimer la ligne, ou juste de la marquer inactive (souvent mieux pour les logs)
-	query := `UPDATE integration_uber_eats SET is_active = 0, access_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+	query := `UPDATE integration_uber_eats SET enabled = 0, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		query = `UPDATE integration_uber_eats SET enabled = false, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+	}
 
 	_, err := db.ExecContext(ctx, query, merchantID)
 	return err

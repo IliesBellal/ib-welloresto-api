@@ -190,6 +190,19 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	// Tout ce qui suit ne s'exécute qu'une fois la transaction validée, pour ne jamais
 	// notifier/envoyer un email pour un paiement qui aurait finalement été annulé (rollback).
 
+	// Invalidation finale du cache Redis. Le snapshot avant/après pris par
+	// ExecuteOrderMutation (déclenché par CreatePaymentNoNotification ci-dessus)
+	// relit et recache la commande via ComputeGetOrder pendant la transaction,
+	// avant que UpdateOrderDetails ne pose brand_status='PENDING_APPROVAL' plus
+	// bas dans cette même transaction — le cache se retrouve donc figé sur le
+	// statut pré-paiement ('ONLINE_PAYMENT_PENDING') pour la durée du TTL (10
+	// min), après un commit pourtant réussi. On invalide une dernière fois ici,
+	// après le commit réel, pour garantir que la prochaine lecture retombe sur
+	// la DB à jour plutôt que sur ce cache périmé.
+	if s.redis != nil {
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(merchantID, orderID))
+	}
+
 	if isAppQRCode {
 		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
 		return nil
