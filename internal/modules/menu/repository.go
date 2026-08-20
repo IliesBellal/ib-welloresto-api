@@ -1220,7 +1220,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	allergenMap := make(map[string][]models.AllergenEntry)
 	{
 		q := `
-			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, ''), COALESCE(a.color, '')
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id IN (
@@ -1235,7 +1235,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var productID string
 			var a models.AllergenEntry
-			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon, &a.Color); err != nil {
 				return nil, err
 			}
 			allergenMap[productID] = append(allergenMap[productID], a)
@@ -1871,7 +1871,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	allergenMap := make(map[string][]models.AllergenEntry)
 	{
 		q := `
-			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			SELECT pa.product_id, a.allergen_id, a.name, a.code, COALESCE(a.icon, ''), COALESCE(a.color, '')
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id IN (
@@ -1886,7 +1886,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var productID string
 			var a models.AllergenEntry
-			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+			if err := rows.Scan(&productID, &a.ID, &a.Name, &a.Code, &a.Icon, &a.Color); err != nil {
 				return nil, err
 			}
 			allergenMap[productID] = append(allergenMap[productID], a)
@@ -2844,7 +2844,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	allergenSlice := []models.AllergenEntry{}
 	{
 		q := `
-			SELECT a.allergen_id, a.name, a.code, COALESCE(a.icon, '')
+			SELECT a.allergen_id, a.name, a.code, COALESCE(a.icon, ''), COALESCE(a.color, '')
 			FROM product_allergens pa
 			INNER JOIN allergens a ON a.allergen_id = pa.allergen_id
 			WHERE pa.product_id = ?
@@ -2856,7 +2856,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		defer rows.Close()
 		for rows.Next() {
 			var a models.AllergenEntry
-			if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon); err != nil {
+			if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.Icon, &a.Color); err != nil {
 				return nil, err
 			}
 			allergenSlice = append(allergenSlice, a)
