@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/middleware"
@@ -47,7 +48,12 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			// Utilisation du WrapResponseWriter de Chi
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
+			// La mesure encadre au plus près l'exécution du handler : la lecture
+			// du body ci-dessus est du coût de log, pas du coût de traitement, et
+			// la fausser gonflerait artificiellement les endpoints à gros payload.
+			startedAt := time.Now()
 			next.ServeHTTP(ww, r)
+			durationMs := time.Since(startedAt).Milliseconds()
 
 			var userID *int64
 			var merchantID *string
@@ -68,6 +74,7 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 				Payload:    payload,
 				StatusCode: ww.Status(), // ww récupère le vrai statut final
 				IP:         r.RemoteAddr,
+				DurationMs: durationMs,
 			})
 		})
 	}

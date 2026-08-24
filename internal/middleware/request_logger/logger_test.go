@@ -24,7 +24,7 @@ func TestFlush_Postgres_RebindsPlaceholders(t *testing.T) {
 	userID := int64(1)
 
 	mock.ExpectExec(`INSERT INTO api_request_logs`).
-		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4").
+		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4", int64(42)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	l := &Logger{db: mockDB, log: zap.NewNop()}
@@ -37,6 +37,7 @@ func TestFlush_Postgres_RebindsPlaceholders(t *testing.T) {
 			Payload:    []byte(`{"ok":true}`),
 			StatusCode: 200,
 			IP:         "1.2.3.4",
+			DurationMs: 42,
 		},
 	})
 
@@ -60,8 +61,8 @@ func TestFlush_MySQL_KeepsQuestionMarkPlaceholders(t *testing.T) {
 	merchantID := "m1"
 	userID := int64(1)
 
-	mock.ExpectExec(`VALUES \(\?, \?, \?, \?, \?, \?, \?\)`).
-		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4").
+	mock.ExpectExec(`VALUES \(\?, \?, \?, \?, \?, \?, \?, \?\)`).
+		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4", int64(42)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	l := &Logger{db: mockDB, log: zap.NewNop()}
@@ -74,6 +75,7 @@ func TestFlush_MySQL_KeepsQuestionMarkPlaceholders(t *testing.T) {
 			Payload:    []byte(`{"ok":true}`),
 			StatusCode: 200,
 			IP:         "1.2.3.4",
+			DurationMs: 42,
 		},
 	})
 

@@ -119,18 +119,19 @@ func (l *Logger) flush(batch []LogEntry) {
 
 	// Construction de la requête bulk insert
 	valueStrings := make([]string, 0, len(batch))
-	valueArgs := make([]interface{}, 0, len(batch)*7) // 7 colonnes
+	valueArgs := make([]interface{}, 0, len(batch)*8) // 8 colonnes
 
 	for _, entry := range batch {
-		valueStrings = append(valueStrings, "(?, ?, ?, ?, ?, ?, ?)")
+		valueStrings = append(valueStrings, "(?, ?, ?, ?, ?, ?, ?, ?)")
 		valueArgs = append(valueArgs,
 			entry.UserID, entry.MerchantID, entry.Method,
 			entry.URL, entry.Payload, entry.StatusCode, entry.IP,
+			entry.DurationMs,
 		)
 	}
 
 	stmt := dbx.Rebind(`INSERT INTO api_request_logs
-		(user_id, merchant_id, method, url, payload, status_code, ip) VALUES ` +
+		(user_id, merchant_id, method, url, payload, status_code, ip, duration_ms) VALUES ` +
 		strings.Join(valueStrings, ","))
 
 	_, err := l.db.ExecContext(ctx, stmt, valueArgs...)
