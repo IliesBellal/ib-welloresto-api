@@ -218,6 +218,10 @@ type UserLoginRow struct {
 	Currency                        string
 	IsOpen                          bool
 	POSUpsellEnabled                bool
+	POSCoversCountRequired          bool
+	// Porte par merchant_parameters.waiter_app_can_cash_in : voir le
+	// commentaire sur models.POSSettingsOrdering.
+	MobilePaymentEnabled bool
 
 	// Subscription / Package
 	AllowWaiterAccount   bool
@@ -231,6 +235,7 @@ type UserLoginRow struct {
 	ScanNOrderEnabled    bool
 	BookingsEnabled      bool
 	KiosksEnabled        bool
+	DeliveryEnabled      bool
 
 	// SNO
 	SNOActivated bool

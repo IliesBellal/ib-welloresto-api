@@ -463,87 +463,82 @@ func (r *DeliverySessionsRepository) CancelDeliverySession(ctx context.Context, 
 	}, nil
 }
 
-func (r *DeliverySessionsRepository) CloseDeliverySession(ctx context.Context, sessionID string) (*models.DeliverySession, error) {
+// GetOpenStopOrderIDs retourne, par ordre de priorite, les commandes de la
+// session qui ne sont pas encore dans un etat terminal — donc celles qu'une
+// cloture manager doit encore livrer.
+//
+// Les arrets 'failed' et 'canceled' sont volontairement exclus : leur commande
+// porte deja brand_status='DELIVERY_FAILED'/'DELIVERY_CANCELED' avec
+// state='OPEN' (re-dispatchable, cf. terminalizeDeliveryStop), et les cloturer
+// effacerait ce resultat. Les 'delivered' le sont aussi : leur commande est
+// deja close fiscalement par SetDelivered.
+func (r *DeliverySessionsRepository) GetOpenStopOrderIDs(ctx context.Context, merchantID, sessionID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT dso.order_id
+		FROM delivery_session_order dso
+		INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
+		WHERE ds.id = ?
+		  AND ds.merchant_id = ?
+		  AND ds.status NOT IN ('done','canceled')
+		  AND dso.status NOT IN ('delivered','failed','canceled')
+		ORDER BY dso.priority ASC
+	`, sessionID, merchantID)
+	if err != nil {
+		logger.FromContext(ctx).Error("GetOpenStopOrderIDs: query failed: " + err.Error())
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orderIDs []string
+	for rows.Next() {
+		var orderID string
+		if err := rows.Scan(&orderID); err != nil {
+			return nil, err
+		}
+		orderIDs = append(orderIDs, orderID)
+	}
+
+	return orderIDs, rows.Err()
+}
+
+// MarkDeliverySessionDone passe la session a 'done' et renvoie son entete.
+// Idempotent : une session deja 'done' (par exemple auto-clturee par
+// SetDeliveredLocal quand sa derniere commande OPEN a ete livree) n'est pas
+// modifiee, et la fonction reussit quand meme.
+//
+// Ne touche ni aux commandes ni aux paiements : c'est desormais
+// SetDelivered + FinalizeDeliveredStop, appeles arret par arret par le service,
+// qui s'en chargent — cf. DeliverySessionsService.CloseDeliverySession.
+func (r *DeliverySessionsRepository) MarkDeliverySessionDone(ctx context.Context, merchantID, sessionID string) (*models.DeliverySession, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// 1) Update orders
-	closeOrdersQuery := `
-        UPDATE orders o
-        INNER JOIN delivery_session_order dso ON dso.order_id = o.order_id
-        INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-        SET
-            o.brand_status = 'DONE',
-            o.state = 'CLOSED'
-        WHERE ds.id = ?
-        AND ds.status NOT IN ('done','canceled')`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		closeOrdersQuery = `
-        UPDATE orders o
-        SET brand_status = 'DONE',
-            state = 'CLOSED'
-        FROM delivery_session_order dso
-        JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-        WHERE dso.order_id = o.order_id
-        AND ds.id = ?
-        AND ds.status NOT IN ('done','canceled')`
-	}
-	_, err := db.ExecContext(ctx, closeOrdersQuery, sessionID)
-	if err != nil {
-		log.Error("CloseDeliverySession: failed to update order status: " + err.Error())
-		return nil, err
-	}
-
-	// 2) Mark session as done
-	_, err = db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
         UPDATE delivery_session
         SET status = 'done'
         WHERE id = ?
         AND status NOT IN ('done','canceled')
-	`, sessionID)
-	if err != nil {
-		log.Error("CloseDeliverySession: failed to update delivery session status: " + err.Error())
+	`, sessionID); err != nil {
+		log.Error("MarkDeliverySessionDone: failed to update delivery session status: " + err.Error())
 		return nil, err
 	}
 
-	// 3) Update payments user_id
-	payQuery := `
-        UPDATE payments p
-        INNER JOIN delivery_session_order dso ON dso.order_id = p.order_id
-        INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-        SET p.user_id = ds.user_id
-        WHERE ds.id = ?`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		payQuery = `
-        UPDATE payments p
-        SET user_id = ds.user_id
-        FROM delivery_session_order dso
-        JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-        WHERE dso.order_id = p.order_id
-        AND ds.id = ?`
-	}
-	_, err = db.ExecContext(ctx, payQuery, sessionID)
-	if err != nil {
-		log.Error("CloseDeliverySession: failed to update payment user ID: " + err.Error())
-		return nil, err
-	}
-
-	// retrieve merchant
-	var merchantID string
-	err = db.QueryRowContext(ctx, `
-        SELECT merchant_id
+	var status string
+	if err := db.QueryRowContext(ctx, `
+        SELECT status
         FROM delivery_session
-        WHERE id = ?
-	`, sessionID).Scan(&merchantID)
-	if err != nil {
-		log.Error("CloseDeliverySession: failed to retrieve merchant ID: " + err.Error())
+        WHERE id = ? AND merchant_id = ?
+	`, sessionID, merchantID).Scan(&status); err != nil {
+		log.Error("MarkDeliverySessionDone: failed to read back delivery session: " + err.Error())
 		return nil, err
 	}
 
 	return &models.DeliverySession{
 		DeliverySessionID: sessionID,
 		MerchantID:        merchantID,
-		Status:            "done",
+		Status:            status,
 	}, nil
 }
 

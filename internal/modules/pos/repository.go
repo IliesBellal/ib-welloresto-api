@@ -1351,6 +1351,10 @@ func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID
 		updates = append(updates, "pos_upsell_enabled = ?")
 		args = append(args, *req.POSUpsellEnabled)
 	}
+	if req.POSCoversCountRequired != nil {
+		updates = append(updates, "pos_covers_count_required = ?")
+		args = append(args, *req.POSCoversCountRequired)
+	}
 	if req.CustomerFormRequirements != nil {
 		updates = append(updates, "customer_form_requirements = ?")
 		args = append(args, []byte(*req.CustomerFormRequirements))
@@ -1447,7 +1451,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		       automatically_add_customer_rewards, warning_new_order_not_paid,
 		       enable_advance_orders, advance_order_days, pager_number_required,
 		       pos_auto_lock_enabled, pos_auto_lock_delay_minutes, pos_upsell_enabled,
-		       customer_form_requirements,
+		       pos_covers_count_required, customer_form_requirements,
 		       enabled_rating, currency, is_open, primary_color, text_color_on_primary_color,
 		       zoning_type, radial_cone_count, radial_zone_ranges, grid_cell_size_km,
 		       grid_origin_lat, grid_origin_lng, cardinal_cone_count, cardinal_zone_ranges
@@ -1492,6 +1496,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&params.POSAutoLockEnabled,
 		&params.POSAutoLockDelayMinutes,
 		&params.POSUpsellEnabled,
+		&params.POSCoversCountRequired,
 		&customerFormRequirementsRaw,
 		&params.EnabledRating,
 		&params.Currency,

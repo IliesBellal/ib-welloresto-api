@@ -261,6 +261,30 @@ func (h *Handler) CloseTemporaryGlobal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SetWaitTimeGlobal handles PATCH /integrations/global/wait-time
+func (h *Handler) SetWaitTimeGlobal(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	var req SetWaitTimeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "integrations", "set_wait_time_global", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	appliedUntil, affected, err := h.svc.SetWaitTimeIntegrations(r.Context(), user.MerchantID, &req)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "set_wait_time_global", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "set_wait_time_global", SetWaitTimeResponse{
+		Status:               "success",
+		WaitTimeMinutes:      req.WaitTimeMinutes,
+		AppliedUntil:         appliedUntil,
+		AffectedIntegrations: affected,
+	})
+}
+
 // DisableDeliveroo handles PATCH /integrations/deliveroo/disable
 func (h *Handler) DisableDeliveroo(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)

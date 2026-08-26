@@ -22,6 +22,22 @@ func snoMerchantJoinCast() string {
 	return "CAST(m.id AS CHAR)"
 }
 
+// snoActiveExtraPrepMinutes retourne le fragment SQL exposant le temps d'attente
+// supplementaire temporaire (scannorder_settings.extra_prep_minutes) uniquement
+// tant que son echeance n'est pas depassee, 0 sinon.
+//
+// Le filtrage temporel est fait en SQL, comme celui de closed_until dans
+// GetMerchantStatus : comparer en Go obligerait a connaitre le fuseau dans
+// lequel le driver rend le timestamp, alors qu'ici les deux operandes sont
+// evalues par la base dans la meme reference UTC.
+func snoActiveExtraPrepMinutes() string {
+	return fmt.Sprintf(`CASE
+			WHEN snos.extra_prep_until IS NOT NULL AND snos.extra_prep_until > %s
+			THEN COALESCE(snos.extra_prep_minutes, 0)
+			ELSE 0
+		END`, dbx.UTCNow())
+}
+
 type Repository struct {
 	database     *sql.DB
 	customerRepo *customers.CustomersRepository
@@ -38,7 +54,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 	SELECT m.id, m.fullName, m.address, m.lat, m.lng, m.timezone, m.merchantTel,
 		   mp.currency, mp.primary_color, mp.text_color_on_primary_color,
 		   snos.logo_url, snos.banner_url,
-           mp.delivery_fees, mp.delivery_fees_limit, mp.minimum_cart_for_delivery_order, mp.preparation_time_mode, mp.preparation_time, mp.delivery_distance_limit,
+           mp.delivery_fees, mp.delivery_fees_limit, mp.minimum_cart_for_delivery_order, mp.preparation_time_mode, mp.preparation_time, %[2]s, mp.delivery_distance_limit,
 
            qr.menu_only, qr.user_id, qr.last_waiter_call, qr.creation_date,
 
@@ -56,14 +72,14 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
           LEFT JOIN bookings_settings bs on bs.merchant_id = %[1]s
           LEFT JOIN locations l on l.location_id = qr.location_id
           LEFT JOIN (SELECT o.order_id, ol.location_id FROM orders o INNER JOIN order_location ol on ol.order_id = o.order_id WHERE o.state = 'OPEN') o on o.location_id = l.location_id
-    WHERE qr.code = ?`, snoMerchantJoinCast())
+    WHERE qr.code = ?`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
 
 	row := models.MerchantRow{}
 	err := db.QueryRowContext(ctx, query, qr).Scan(
 		&row.MerchantID, &row.FullName, &row.Address, &row.Lat, &row.Lng, &row.Timezone, &row.Phone,
 		&row.Currency, &row.PrimaryColor, &row.TextColor,
 		&row.LogoURL, &row.BannerURL,
-		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.MinimumCartForDeliveryOrder, &row.PrepTimeMode, &row.PrepTime, &row.DeliveryDistanceLimit,
+		&row.DeliveryFees, &row.DeliveryFeesLimit, &row.MinimumCartForDeliveryOrder, &row.PrepTimeMode, &row.PrepTime, &row.ExtraPrepMinutes, &row.DeliveryDistanceLimit,
 		&row.MenuOnly, &row.UserID, &row.LastWaiterCall, &row.CreationDate,
 		&row.OrderID, &row.LocationID, &row.LocationName, &row.VariableFees, &row.FixedFees, &row.AccountID,
 		&row.TakeawayEnabled, &row.TakeawayAvailable,
@@ -819,6 +835,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				snos.header_background,
 				mp.preparation_time_mode,
 				mp.preparation_time,
+				%[2]s,
 				qr.code as slug,
 				(6371 * ACOS(
 					COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
@@ -832,7 +849,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 			WHERE b.brand_id = ?
 			HAVING distance_km < 50
-			ORDER BY distance_km ASC`, snoMerchantJoinCast())
+			ORDER BY distance_km ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
 		if dbx.ActiveDialect() == dbx.Postgres {
 			merchantQuery = fmt.Sprintf(`
 			SELECT * FROM (
@@ -853,6 +870,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 					snos.header_background,
 					mp.preparation_time_mode,
 					mp.preparation_time,
+					%[2]s,
 					qr.code as slug,
 					(6371 * ACOS(
 						COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
@@ -867,7 +885,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				WHERE b.brand_id = ?
 			) nearby
 			WHERE distance_km < 50
-			ORDER BY distance_km ASC`, snoMerchantJoinCast())
+			ORDER BY distance_km ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
 		}
 
 		rows, err = db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
@@ -890,6 +908,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 				snos.header_background,
 				mp.preparation_time_mode,
 				mp.preparation_time,
+				%[2]s,
 				qr.code as slug,
 				NULL AS distance_km
 			FROM brands b
@@ -898,7 +917,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
 			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 			WHERE b.brand_id = ?
-			ORDER BY m.fullName ASC`, snoMerchantJoinCast())
+			ORDER BY m.fullName ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
 
 		rows, err = db.QueryContext(ctx, merchantQuery, brand.BrandID)
 	}
@@ -930,6 +949,7 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 			&row.BannerURL,
 			&row.PrepTimeMode,
 			&row.PrepTime,
+			&row.ExtraPrepMinutes,
 			&row.Slug,
 			&distanceKm,
 		); err != nil {

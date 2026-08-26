@@ -154,8 +154,10 @@ func (p *ZeltyProvider) Parse(r io.Reader) (*IntermediateImport, error) {
 // parseZeltyProduct lit une ligne produit, hors resolution des tags.
 //
 // Zelty n'expose qu'un prix, valable pour tous les canaux : il est recopie sur
-// les trois. Les taux de TVA sont conserves bruts, 0 compris — c'est la preview
-// qui traduira un 0 en canal desactive et choisira le taux de repli.
+// les trois. Les taux de TVA sont conserves bruts, 0 compris — un 0 ne signifie
+// pas que le canal est indisponible, seulement qu'aucun taux specifique n'est
+// defini pour ce canal ; c'est la preview qui choisira le taux de repli (le
+// seul taux defini, ou le plus bas s'il y en a plusieurs).
 func parseZeltyProduct(row []string, line int) (*CanonicalProduct, error) {
 	id := importutil.CellAt(row, zeltyColID)
 	name := importutil.CellAt(row, zeltyColName)

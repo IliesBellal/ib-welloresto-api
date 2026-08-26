@@ -539,13 +539,16 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 		maxPrice = p.PriceDelivery
 	}
 
+	// Taux candidats au repli, du plus bas au plus haut : un taux à 0 signifie
+	// « utiliser le seul taux de TVA défini », ou le plus bas s'il y en a
+	// plusieurs — pas « canal indisponible ».
 	var backfillCandidates []float64
 	for _, rate := range []*float64{p.TvaRateIn, p.TvaRateTakeAway, p.TvaRateDelivery} {
 		if rate != nil && *rate > 0 {
 			backfillCandidates = append(backfillCandidates, *rate)
 		}
 	}
-	sort.Sort(sort.Reverse(sort.Float64Slice(backfillCandidates)))
+	sort.Sort(sort.Float64Slice(backfillCandidates))
 
 	channels := []struct {
 		channel   TvaChannel
@@ -568,10 +571,12 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, ch.channel.Label()))
 
 		case *ch.rate == 0:
-			// Canal fermé, mais tva_*_id et price_* restent NOT NULL : on les
-			// remplit avec le taux le plus haut du produit et le prix le plus
-			// haut défini, pour qu'une réactivation parte d'un état cohérent.
-			*ch.available = false
+			// Un taux à 0 ne signifie pas « canal indisponible », mais « aucun
+			// taux spécifique pour ce canal » : on résout le canal avec le
+			// taux le plus bas défini par ailleurs sur le produit (ou l'unique
+			// taux défini s'il n'y en a qu'un). price_* reste NOT NULL : on le
+			// remplit avec le prix le plus haut défini si le canal n'a pas de
+			// prix propre.
 			if *ch.price == 0 && maxPrice > 0 {
 				*ch.price = maxPrice
 			}
@@ -586,7 +591,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 			}
 			if !resolved {
 				b.block(BlockerTvaRateUnresolved, p.ExternalID,
-					fmt.Sprintf("le canal %s de %q est désactivé mais aucun taux de repli n'est configuré pour ce canal",
+					fmt.Sprintf("le canal %s de %q a un taux de TVA à 0 mais aucun taux de repli n'est configuré pour ce canal",
 						ch.channel.Label(), p.Name))
 			}
 

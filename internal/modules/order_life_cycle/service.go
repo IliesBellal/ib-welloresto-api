@@ -364,6 +364,38 @@ func (s *OrdersLifeCycleService) SetDelivered(ctx context.Context, orderID strin
 	})
 }
 
+// AssertOrderFullyPaid renvoie *models.OrderNotFullyPaidError si la commande
+// n'est pas integralement encaissee, nil sinon. Une commande deja close passe
+// toujours (SetDelivered est alors un no-op idempotent).
+//
+// Pre-controle consultatif destine aux clotures multi-commandes, qui veulent
+// savoir avant d'ecrire quoi que ce soit si toutes les commandes passeront.
+// Le controle qui fait foi reste celui de SetDeliveredLocal, execute sous
+// verrou de ligne dans la transaction de cloture.
+func (s *OrdersLifeCycleService) AssertOrderFullyPaid(ctx context.Context, orderID string) error {
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return nil
+	}
+
+	price, paidAmount, err := s.ordersLifeCycleRepo.GetOrderPaymentBalance(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if paidAmount != price {
+		return &models.OrderNotFullyPaidError{
+			OrderID:    orderID,
+			PaidAmount: paidAmount,
+			Price:      price,
+		}
+	}
+
+	return nil
+}
+
 func (s *OrdersLifeCycleService) SetDeliveredExternal(ctx context.Context, MerchantID, UserID, orderID string) error {
 	// We don't check if order is still opened as it can be already closed by the merchant but we receive the delivery confirmation from the integrator (ex: Uber Eats)
 	return s.ExecuteOrderMutation(ctx, MerchantID, UserID, orderID, models.ActionOrderClose, models.ResourceOrder, true, func(txCtx context.Context) error {

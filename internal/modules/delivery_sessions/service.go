@@ -22,7 +22,29 @@ import (
 // Satisfied as-is by *order_life_cycle.OrdersLifeCycleService.
 type OrderDeliverer interface {
 	SetDelivered(ctx context.Context, orderID string) error
+
+	// AssertOrderFullyPaid renvoie *models.OrderNotFullyPaidError si la commande
+	// n'est pas integralement encaissee. Pre-controle consultatif : il permet a
+	// CloseDeliverySession de refuser une tournee avant d'avoir cloture la
+	// moindre commande. La barriere qui fait foi reste dans SetDelivered.
+	AssertOrderFullyPaid(ctx context.Context, orderID string) error
 }
+
+// UnpaidStopsError signale qu'une cloture de tournee a ete refusee parce que
+// certaines commandes ne sont pas integralement encaissees. Porte la liste
+// complete pour que le POS puisse les nommer au dispatcher d'un seul coup.
+//
+// S'unwrap en models.ErrOrderNotFullyPaid : les appelants qui testent
+// errors.Is(err, models.ErrOrderNotFullyPaid) continuent de fonctionner.
+type UnpaidStopsError struct {
+	OrderIDs []string
+}
+
+func (e *UnpaidStopsError) Error() string {
+	return "session_has_unpaid_orders: " + strings.Join(e.OrderIDs, ", ")
+}
+
+func (e *UnpaidStopsError) Unwrap() error { return models.ErrOrderNotFullyPaid }
 
 type DeliverySessionsService struct {
 	deliverySessionsRepo *DeliverySessionsRepository
@@ -134,15 +156,41 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
 
-	orderIDs := make([]string, len(session.Orders))
-	for i, o := range session.Orders {
-		orderIDs[i] = o.OrderID
+	// Le SMS de suivi client est une prestation du module Livraison : en mode
+	// standard (delivery_enabled faux), la session se crée normalement mais le
+	// client n'est pas notifie. La notification WebSocket ci-dessus reste, elle :
+	// elle est interne au POS, ce n'est pas une communication client.
+	if user.DeliveryEnabled {
+		orderIDs := make([]string, len(session.Orders))
+		for i, o := range session.Orders {
+			orderIDs[i] = o.OrderID
+		}
+		s.sendDeliveryTrackingSMS(user.MerchantID, orderIDs)
 	}
-	s.sendDeliveryTrackingSMS(user.MerchantID, orderIDs)
 
 	return session, nil
 }
 
+// CloseDeliverySession cloture une tournee entiere depuis le POS : chaque arret
+// encore ouvert est livre, puis la session passe a 'done'.
+//
+// Conformite NF525 : la fermeture de chaque commande passe par
+// OrderDeliverer.SetDelivered, donc par ExecuteOrderMutation — hash de cloture
+// chaine, signature, journal d'audit, fidelite. L'implementation precedente
+// ecrivait directement `UPDATE orders SET brand_status='DONE', state='CLOSED'`
+// en SQL, ce qui fermait les commandes sans hash ni signature et cassait la
+// chaine fiscale du marchand.
+//
+// Deux consequences voulues de ce changement :
+//   - une commande non integralement encaissee bloque la cloture (le
+//     pre-controle ci-dessous refuse la tournee entiere avant toute ecriture,
+//     plutot que de la cloturer a moitie) ;
+//   - les arrets 'failed' et 'canceled' ne sont plus ecrases en 'DONE'/'CLOSED'
+//     et gardent leur resultat (cf. GetOpenStopOrderIDs).
+//
+// Reprise sur incident : SetDelivered est idempotent (court-circuit
+// OrderStillOpen) et FinalizeDeliveredStop aussi, donc rejouer l'endpoint apres
+// un echec en cours de boucle termine la cloture sans double comptage.
 func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, token, sessionID string) (interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -152,7 +200,45 @@ func (s *DeliverySessionsService) CloseDeliverySession(ctx context.Context, toke
 		return nil, models.ErrForbidden
 	}
 
-	session, err := s.deliverySessionsRepo.CloseDeliverySession(ctx, sessionID)
+	orderIDs, err := s.deliverySessionsRepo.GetOpenStopOrderIDs(ctx, user.MerchantID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pre-controle global : on veut soit tout cloturer, soit rien. Sans lui, une
+	// commande impayee en milieu de tournee laisserait les precedentes closes et
+	// la session ouverte.
+	var unpaidOrderIDs []string
+	for _, orderID := range orderIDs {
+		if paidErr := s.orderDeliverer.AssertOrderFullyPaid(ctx, orderID); paidErr != nil {
+			var notPaidErr *models.OrderNotFullyPaidError
+			if errors.As(paidErr, &notPaidErr) {
+				unpaidOrderIDs = append(unpaidOrderIDs, orderID)
+				continue
+			}
+			return nil, paidErr
+		}
+	}
+	if len(unpaidOrderIDs) > 0 {
+		return nil, &UnpaidStopsError{OrderIDs: unpaidOrderIDs}
+	}
+
+	for _, orderID := range orderIDs {
+		if err := s.orderDeliverer.SetDelivered(ctx, orderID); err != nil {
+			var notPaidErr *models.OrderNotFullyPaidError
+			if errors.As(err, &notPaidErr) {
+				// Encaissement annule entre le pre-controle et ici.
+				return nil, &UnpaidStopsError{OrderIDs: []string{orderID}}
+			}
+			return nil, err
+		}
+
+		if err := s.deliverySessionsRepo.FinalizeDeliveredStop(ctx, sessionID, orderID); err != nil {
+			return nil, err
+		}
+	}
+
+	session, err := s.deliverySessionsRepo.MarkDeliverySessionDone(ctx, user.MerchantID, sessionID)
 	if err != nil {
 		return nil, err
 	}

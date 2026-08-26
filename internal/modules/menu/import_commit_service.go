@@ -102,7 +102,9 @@ func (s *ImportService) CommitImport(ctx context.Context, req *ImportCommitReque
 	if err := s.writer.TouchMenuUpdated(ctx, user.MerchantID); err != nil {
 		log.Warn("[WARN] CommitImport: setMenuUpdated: " + err.Error())
 	}
-	s.store.InvalidateMerchantMenuCaches(ctx, user.MerchantID)
+	// Purge des caches dérivés + diffusion `menu_updated`. Un import produit
+	// ainsi exactement un événement, quelle que soit la taille du lot.
+	s.changes.Changed(ctx, user.MerchantID)
 
 	// Le token est consommé : un double envoi du formulaire ne doit pas
 	// rejouer le lot. L'idempotence par import_*_mapping le rendrait inoffensif,

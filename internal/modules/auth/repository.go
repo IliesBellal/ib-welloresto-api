@@ -106,6 +106,8 @@ SELECT
     mp.currency,
     mp.is_open,
 	mp.pos_upsell_enabled,
+	mp.pos_covers_count_required,
+	mp.waiter_app_can_cash_in,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -118,6 +120,7 @@ SELECT
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
 	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
+	COALESCE(s.delivery_enabled, p.delivery_enabled, TRUE) AS delivery_enabled,
 
     sset.activated,
 
@@ -183,11 +186,12 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.CustomerFormRequirements,
 		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
+		&data.POSCoversCountRequired, &data.MobilePaymentEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
-		&data.KiosksEnabled,
+		&data.KiosksEnabled, &data.DeliveryEnabled,
 
 		&data.SNOActivated,
 
@@ -278,6 +282,8 @@ SELECT
     mp.currency,
     mp.is_open,
 	mp.pos_upsell_enabled,
+	mp.pos_covers_count_required,
+	mp.waiter_app_can_cash_in,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -290,6 +296,7 @@ SELECT
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
 	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
+	COALESCE(s.delivery_enabled, p.delivery_enabled, TRUE) AS delivery_enabled,
 
     sset.activated,
 
@@ -360,11 +367,12 @@ LIMIT 1;
 		&data.CashRegisterRequiredForOrdering, &data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.CustomerFormRequirements,
 		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
+		&data.POSCoversCountRequired, &data.MobilePaymentEnabled,
 
 		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
-		&data.KiosksEnabled,
+		&data.KiosksEnabled, &data.DeliveryEnabled,
 
 		&data.SNOActivated,
 
@@ -644,6 +652,8 @@ SELECT
     mp.currency,
     mp.is_open,
 	mp.pos_upsell_enabled,
+	mp.pos_covers_count_required,
+	mp.waiter_app_can_cash_in,
 
     p.allow_waiter_account,
     p.allow_delivery_account,
@@ -656,6 +666,7 @@ SELECT
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
 	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
+	COALESCE(s.delivery_enabled, p.delivery_enabled, TRUE) AS delivery_enabled,
 
     sset.activated,
 

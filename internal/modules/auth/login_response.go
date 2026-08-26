@@ -88,6 +88,8 @@ type LoginMerchantSettingsResponse struct {
 	CashRegisterRequiredForOrdering bool             `json:"cash_register_required_for_ordering"`
 	WarningNewOrderNotPaid          bool             `json:"warning_new_order_not_paid"`
 	POSUpsellEnabled                bool             `json:"pos_upsell_enabled"`
+	POSCoversCountRequired          bool             `json:"pos_covers_count_required"`
+	MobilePaymentEnabled            bool             `json:"mobile_payment_enabled"`
 	DisableSafetyStock              bool             `json:"disable_safety_stock"`
 	CustomerFormRequirements        *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
@@ -142,6 +144,7 @@ type LoginCapabilityModulesResponse struct {
 	HACCP      bool `json:"haccp"`
 	Bookings   bool `json:"bookings"`
 	Kiosks     bool `json:"kiosks"`
+	Delivery   bool `json:"delivery"`
 	Reports    bool `json:"reports"`
 	Financials bool `json:"financials"`
 	Customers  bool `json:"customers"`

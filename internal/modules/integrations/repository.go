@@ -217,6 +217,8 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 			snos.activated,
 			snos.commission_rate,
 			snos.closed_until,
+			snos.extra_prep_minutes,
+			snos.extra_prep_until,
 			snos.last_sync,
 			snos.synced_items,
 			snos.logo_url,
@@ -270,6 +272,8 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		activated             bool
 		commissionRate        int
 		closedUntil           sql.NullTime
+		extraPrepMinutes      sql.NullInt64
+		extraPrepUntil        sql.NullTime
 		lastSync              sql.NullTime
 		syncedItems           int
 		logoURL               sql.NullString
@@ -296,7 +300,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		merchantID, // slug subquery
 		merchantID, // WHERE clause
 	).Scan(
-		&activated, &commissionRate, &closedUntil, &lastSync, &syncedItems,
+		&activated, &commissionRate, &closedUntil, &extraPrepMinutes, &extraPrepUntil, &lastSync, &syncedItems,
 		&logoURL, &bannerURL, &primaryColor,
 		&headerTitle, &headerText,
 		&cgvLink, &returnPolicyLink, &legalNoticesLink,
@@ -343,6 +347,14 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 	if closedUntil.Valid {
 		t := closedUntil.Time
 		result.ClosedUntil = &t
+	}
+	if extraPrepMinutes.Valid {
+		m := int(extraPrepMinutes.Int64)
+		result.ExtraPrepMinutes = &m
+	}
+	if extraPrepUntil.Valid {
+		t := extraPrepUntil.Time
+		result.ExtraPrepUntil = &t
 	}
 	if logoURL.Valid {
 		result.LogoURL = &logoURL.String
@@ -488,6 +500,19 @@ func (r *Repository) SetScanNOrderClosedUntil(ctx context.Context, merchantID st
 	const q = `UPDATE scannorder_settings SET closed_until = ? WHERE merchant_id = ?`
 
 	_, err := db.ExecContext(ctx, q, closedUntil.UTC(), merchantID)
+	return err
+}
+
+// SetScanNOrderExtraPrep sets the temporary extra preparation time for ScanNOrder.
+//
+// Les deux colonnes sont écrites ensemble : un supplément sans échéance ne
+// s'effacerait jamais, une échéance sans supplément ne veut rien dire.
+func (r *Repository) SetScanNOrderExtraPrep(ctx context.Context, merchantID string, minutes int, until time.Time) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	const q = `UPDATE scannorder_settings SET extra_prep_minutes = ?, extra_prep_until = ? WHERE merchant_id = ?`
+
+	_, err := db.ExecContext(ctx, q, minutes, until.UTC(), merchantID)
 	return err
 }
 

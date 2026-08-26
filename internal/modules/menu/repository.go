@@ -3084,6 +3084,219 @@ func (r *MenuRepository) bulkUpdateProductAttributesTx(ctx context.Context, merc
 	return nil
 }
 
+// BulkAssignAttribute ajoute un groupe d'options/suppléments à plusieurs
+// produits sans toucher à leurs autres groupes déjà attachés (additif, miroir
+// de BulkAssignAllergen / BulkAssignTag ci-dessous).
+func (r *MenuRepository) BulkAssignAttribute(ctx context.Context, merchantID, attributeID string, productIDs []string) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+
+	// Le groupe d'options doit appartenir au marchand.
+	var attrCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM configurable_attributes WHERE id = ? AND merchant_id = ?`,
+		attributeID, merchantID,
+	).Scan(&attrCount); err != nil {
+		return err
+	}
+	if attrCount == 0 {
+		return models.ErrForbidden
+	}
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	ownedArgs := make([]interface{}, 0, len(idArgs)+1)
+	ownedArgs = append(ownedArgs, merchantID)
+	ownedArgs = append(ownedArgs, idArgs...)
+
+	var owned int
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)`, inClause),
+		ownedArgs...,
+	).Scan(&owned); err != nil {
+		return err
+	}
+	if owned != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	// Le nouveau groupe prend la dernière position (num_order = max existant +
+	// 1 pour ce produit) sans retoucher l'ordre des groupes déjà attachés.
+	stmtQuery := `
+		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
+		SELECT ?, ?, COALESCE(MAX(num_order) + 1, 0), TRUE
+		FROM product_configurable_attribute WHERE product_id = ?
+		ON DUPLICATE KEY UPDATE enabled = TRUE
+	`
+	if dbx.ActiveDialect() == dbx.Postgres {
+		stmtQuery = `
+		INSERT INTO product_configurable_attribute(product_id, configurable_attribute_id, num_order, enabled)
+		SELECT ?, ?, COALESCE(MAX(num_order) + 1, 0), TRUE
+		FROM product_configurable_attribute WHERE product_id = ?
+		ON CONFLICT (configurable_attribute_id, product_id) DO UPDATE SET enabled = TRUE
+	`
+	}
+
+	stmt, err := db.PrepareContext(ctx, stmtQuery)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, productID := range productIDs {
+		if _, err := stmt.ExecContext(ctx, productID, attributeID, productID); err != nil {
+			return err
+		}
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+	return nil
+}
+
+// BulkSetProductsTags remplace la liste complète des tags de plusieurs
+// produits par la même liste, en une transaction. Mêmes garanties que
+// SyncProductTags (ownership produits + tags) mais sur plusieurs produits.
+func (r *MenuRepository) BulkSetProductsTags(ctx context.Context, merchantID string, productIDs []string, tagIDs []string) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+
+		inClause, idArgs := bulkProductPlaceholders(productIDs)
+		ownedArgs := make([]interface{}, 0, len(idArgs)+1)
+		ownedArgs = append(ownedArgs, merchantID)
+		ownedArgs = append(ownedArgs, idArgs...)
+
+		var owned int
+		if err := db.QueryRowContext(txCtx, fmt.Sprintf(
+			`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)`, inClause),
+			ownedArgs...,
+		).Scan(&owned); err != nil {
+			return err
+		}
+		if owned != len(productIDs) {
+			return models.ErrForbidden
+		}
+
+		if len(tagIDs) > 0 {
+			tagInClause, tagArgs := bulkProductPlaceholders(tagIDs)
+			tagOwnedArgs := make([]interface{}, 0, len(tagArgs)+1)
+			tagOwnedArgs = append(tagOwnedArgs, merchantID)
+			tagOwnedArgs = append(tagOwnedArgs, tagArgs...)
+
+			var validTags int
+			if err := db.QueryRowContext(txCtx, fmt.Sprintf(
+				`SELECT COUNT(1) FROM tags WHERE merchant_id = ? AND tag_id IN (%s)`, tagInClause),
+				tagOwnedArgs...,
+			).Scan(&validTags); err != nil {
+				return err
+			}
+			if validTags != len(tagIDs) {
+				return models.ErrForbidden
+			}
+		}
+
+		resetArgs := make([]interface{}, len(idArgs))
+		copy(resetArgs, idArgs)
+		if _, err := db.ExecContext(txCtx, fmt.Sprintf(
+			`DELETE FROM product_tags WHERE product_id IN (%s)`, inClause), resetArgs...,
+		); err != nil {
+			return err
+		}
+
+		if len(tagIDs) == 0 {
+			_ = r.setMenuUpdated(txCtx, merchantID)
+			return nil
+		}
+
+		stmt, err := db.PrepareContext(txCtx, `INSERT INTO product_tags (product_id, tag_id) VALUES (?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, productID := range productIDs {
+			for _, tagID := range tagIDs {
+				if _, err := stmt.ExecContext(txCtx, productID, tagID); err != nil {
+					return err
+				}
+			}
+		}
+
+		_ = r.setMenuUpdated(txCtx, merchantID)
+		return nil
+	})
+}
+
+// bulkTvaColumnByScope mappe un scope de TVA validé en amont (handler) vers la
+// colonne products correspondante. Un nom de colonne ne doit jamais provenir
+// directement d'une valeur utilisateur interpolée dans le SQL — d'où la table
+// de correspondance plutôt qu'une concaténation du scope brut.
+var bulkTvaColumnByScope = map[string]string{
+	"on_site":   "tva_in_id",
+	"take_away": "tva_take_away_id",
+	"delivery":  "tva_delivery_id",
+}
+
+// BulkSetProductsTva applique un taux de TVA à plusieurs produits pour un seul
+// type de vente (scope: "on_site", "take_away" ou "delivery").
+func (r *MenuRepository) BulkSetProductsTva(ctx context.Context, merchantID string, productIDs []string, scope string, tvaID string) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	column, ok := bulkTvaColumnByScope[scope]
+	if !ok {
+		return fmt.Errorf("invalid tva scope '%s'", scope)
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	var tvaCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tva_categories WHERE enabled = TRUE AND tva_id = ?`,
+		tvaID,
+	).Scan(&tvaCount); err != nil {
+		return fmt.Errorf("failed to validate tva_id: %w", err)
+	}
+	if tvaCount == 0 {
+		return fmt.Errorf("tva_id '%s' does not exist or is disabled", tvaID)
+	}
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	ownedArgs := make([]interface{}, 0, len(idArgs)+1)
+	ownedArgs = append(ownedArgs, merchantID)
+	ownedArgs = append(ownedArgs, idArgs...)
+
+	var owned int
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)`, inClause),
+		ownedArgs...,
+	).Scan(&owned); err != nil {
+		return err
+	}
+	if owned != len(productIDs) {
+		return models.ErrForbidden
+	}
+
+	updateArgs := make([]interface{}, 0, len(idArgs)+2)
+	updateArgs = append(updateArgs, tvaID, merchantID)
+	updateArgs = append(updateArgs, idArgs...)
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE products SET %s = ? WHERE merchant_id = ? AND product_id IN (%s)`, column, inClause),
+		updateArgs...,
+	); err != nil {
+		return err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+	return nil
+}
+
 func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/infrastructure/redis"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/auth"
@@ -23,11 +24,24 @@ import (
 // A dedicated client with a bounded timeout prevents runaway goroutines under load.
 var logoDownloadClient = &http.Client{Timeout: 30 * time.Second}
 
+// defaultWaitTimeWindowMinutes est la durée d'application par défaut d'un temps
+// d'attente supplémentaire, quand l'appelant n'en fournit pas.
+//
+// Le POS Flutter n'envoie que le supplément (5 à 30 min) : sans échéance, il
+// resterait actif indéfiniment et le personnel devrait penser à l'annuler — le
+// contraire d'une action rapide de coup de feu. Une heure couvre un rush sans
+// déborder sur le service suivant ; passé ce délai, le temps annoncé au client
+// redevient le temps de base, sans intervention.
+const defaultWaitTimeWindowMinutes = 60
+
 type Service struct {
 	repo             *Repository
 	stripeManager    *stripeclient.StripeManager
 	uberService      *uberModule.UberEatsService
 	deliverooService *deliverooModule.DeliverooService
+	// Cache scannorder à invalider quand le statut public change (fermeture
+	// temporaire, temps d'attente). Peut être nil : Redis est optionnel.
+	redis *redis.Client
 	// Stripe Connect redirect URLs (loaded from config).
 	stripeReturnURL  string
 	stripeRefreshURL string
@@ -40,6 +54,7 @@ func NewService(
 	stripeManager *stripeclient.StripeManager,
 	uberService *uberModule.UberEatsService,
 	deliverooService *deliverooModule.DeliverooService,
+	redisClient *redis.Client,
 	stripeReturnURL,
 	stripeRefreshURL,
 	scannorderBaseURL string,
@@ -49,6 +64,7 @@ func NewService(
 		stripeManager:     stripeManager,
 		uberService:       uberService,
 		deliverooService:  deliverooService,
+		redis:             redisClient,
 		stripeReturnURL:   stripeReturnURL,
 		stripeRefreshURL:  stripeRefreshURL,
 		scannorderBaseURL: scannorderBaseURL,
@@ -206,7 +222,122 @@ func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID str
 		return time.Time{}, nil, fmt.Errorf("affected_integrations cannot be empty")
 	}
 
+	s.invalidateScanNOrderStatus(ctx, merchantID, processed)
+
 	return closedUntil, processed, nil
+}
+
+// SetWaitTimeIntegrations applique un temps d'attente supplémentaire temporaire
+// sur les plateformes demandées, sur le modèle de CloseTemporaryIntegrations :
+// une plateforme en échec est loguée sans interrompre les autres — en plein
+// service, appliquer le délai sur un canal sur deux vaut mieux que rien.
+//
+// Seules deux plateformes portent nativement cette notion :
+//   - Uber Eats : busy mode (delay_config), additif au temps de base et borné
+//     par delay_until — il expire tout seul.
+//   - ScanNOrder : colonnes extra_prep_minutes/extra_prep_until, même principe.
+//
+// Deliveroo en est volontairement exclu : son API n'expose qu'un mode de charge
+// (PUT workload/mode), sans durée ni échéance, et sa documentation marchand
+// impose de le redescendre à la main sous peine de pénalité de visibilité.
+// L'y brancher aurait produit un réglage qui ne respecte ni le supplément
+// demandé ni sa date de fin. Le refus est explicite plutôt que silencieux :
+// Deliveroo n'est jamais listé dans les plateformes traitées.
+func (s *Service) SetWaitTimeIntegrations(ctx context.Context, merchantID string, req *SetWaitTimeRequest) (time.Time, []string, error) {
+	log := logger.FromContext(ctx)
+
+	if req.WaitTimeMinutes <= 0 {
+		return time.Time{}, nil, fmt.Errorf("wait_time_minutes must be greater than 0")
+	}
+	if len(req.AffectedIntegrations) == 0 {
+		return time.Time{}, nil, fmt.Errorf("affected_integrations cannot be empty")
+	}
+
+	windowMinutes := defaultWaitTimeWindowMinutes
+	if req.DurationMinutes != nil {
+		if *req.DurationMinutes <= 0 {
+			return time.Time{}, nil, fmt.Errorf("duration_minutes must be greater than 0")
+		}
+		windowMinutes = *req.DurationMinutes
+	}
+
+	appliedUntil := time.Now().UTC().Add(time.Duration(windowMinutes) * time.Minute)
+	seen := make(map[string]struct{}, len(req.AffectedIntegrations))
+	processed := make([]string, 0, len(req.AffectedIntegrations))
+
+	for _, rawName := range req.AffectedIntegrations {
+		name := normalizeIntegrationName(rawName)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+
+		switch name {
+		case "uber_eats":
+			if err := s.uberService.UpdateBusyModeTime(ctx, merchantID, req.WaitTimeMinutes, windowMinutes); err != nil {
+				log.Error("failed to set uber eats wait time for merchant",
+					zap.String("merchant_id", merchantID),
+					zap.Int("wait_time_minutes", req.WaitTimeMinutes),
+					zap.Error(err),
+				)
+			}
+		case "deliveroo":
+			// Ignoré sciemment (cf. commentaire de la fonction). On ne l'ajoute
+			// pas à `processed` : annoncer Deliveroo comme traité alors que rien
+			// n'a été poussé donnerait au restaurateur une fausse assurance en
+			// plein coup de feu.
+			log.Info("deliveroo skipped for wait time: platform has no temporary extra delay",
+				zap.String("merchant_id", merchantID),
+				zap.Int("wait_time_minutes", req.WaitTimeMinutes),
+			)
+			continue
+		case "scannorder":
+			if err := s.repo.SetScanNOrderExtraPrep(ctx, merchantID, req.WaitTimeMinutes, appliedUntil); err != nil {
+				log.Error("failed to set scannorder wait time for merchant",
+					zap.String("merchant_id", merchantID),
+					zap.Int("wait_time_minutes", req.WaitTimeMinutes),
+					zap.Error(err),
+				)
+			}
+		default:
+			log.Warn("unsupported integration in SetWaitTimeRequest",
+				zap.String("merchant_id", merchantID),
+				zap.String("integration", rawName),
+			)
+		}
+
+		processed = append(processed, name)
+	}
+
+	if len(processed) == 0 {
+		return time.Time{}, nil, fmt.Errorf("affected_integrations cannot be empty")
+	}
+
+	s.invalidateScanNOrderStatus(ctx, merchantID, processed)
+
+	return appliedUntil, processed, nil
+}
+
+// invalidateScanNOrderStatus purge le cache vitrine du merchant dès que
+// ScanNOrder fait partie des plateformes touchées — sans quoi le client
+// continuerait de voir l'ancien statut / temps de préparation jusqu'à
+// expiration du TTL.
+//
+// Uber Eats et Deliveroo ne lisent pas ce cache : rien à purger quand eux seuls
+// sont concernés.
+func (s *Service) invalidateScanNOrderStatus(ctx context.Context, merchantID string, processed []string) {
+	if s.redis == nil {
+		return
+	}
+	for _, name := range processed {
+		if name == "scannorder" {
+			s.redis.InvalidateMerchantStatusCache(ctx, merchantID)
+			return
+		}
+	}
 }
 
 func normalizeIntegrationName(name string) string {

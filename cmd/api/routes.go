@@ -187,7 +187,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(selectedDB)
-	posService := posModule.NewPOSService(posRepo)
+	posService := posModule.NewPOSService(posRepo, notificationService)
 
 	// ---- POS Reports ----
 	posReportsRepo := posReportsModule.NewReportsRepository(selectedDB)
@@ -262,7 +262,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	uberHandler := uberModule.NewUberHandler(uberService)
 
 	// ---- Menu (initialized after deliveroo + uber) ----
-	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, redisClient, posAccountingRepo, allergensRepo)
+	// Instance unique et partagée avec le service d'import : la fenêtre
+	// d'amortissement de `menu_updated` doit être commune aux deux chemins
+	// d'écriture du catalogue.
+	menuChanges := menuModule.NewMenuChangeNotifier(redisClient, notificationService)
+	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, menuChanges, posAccountingRepo, allergensRepo)
 
 	// ---- Translation ----
 	translationRepo := translationModule.NewRepository(selectedDB)
@@ -330,6 +334,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		stripeManager,
 		uberService,
 		deliverooService,
+		redisClient,
 		cfg.Stripe.OnboardingReturnURL,
 		cfg.Stripe.OnboardingRefreshURL,
 		cfg.ScanNOrder.SNORedirectBaseURL,
@@ -451,10 +456,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
 	// Import de produits : dépendances propres (lecture seule + registry de
-	// providers + cache), volontairement disjointes de celles de MenuService.
+	// providers + cache), volontairement disjointes de celles de MenuService —
+	// à l'exception de menuChanges, partagé à dessein (voir plus haut).
 	menuImportH := menuModule.NewImportHandler(
 		menuModule.NewImportService(
-			menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo,
+			menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo, menuChanges,
 		),
 	)
 	allergensH := allergensModule.NewHandler(allergensService)
@@ -789,10 +795,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Patch("/products/bulk/status", menuH.BulkSetProductsStatus)         // used by: back-office
 		r.Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
 		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)             // used by: back-office
+		r.Patch("/products/bulk/tags", menuH.BulkSetProductsTags)             // used by: back-office
+		r.Patch("/products/bulk/tva", menuH.BulkSetProductsTva)               // used by: back-office
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
 			r.Post("/allergens/assign", menuH.BulkAssignAllergen)
+			r.Post("/tags/assign", menuH.BulkAssignTag)
+			r.Post("/attributes/assign", menuH.BulkAssignAttribute)
 		})
 
 		// --- Plateformes externes ---
@@ -1283,6 +1293,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
 			r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
 			r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
+			r.Patch("/global/wait-time", integrationsHandler.SetWaitTimeGlobal)
 
 			// ---- Stripe Connect ----
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)

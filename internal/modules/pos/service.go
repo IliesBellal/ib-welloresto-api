@@ -8,18 +8,31 @@ import (
 	"time"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/notification"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 )
+
+// realtimeBroadcaster diffuse un message WebSocket à tous les devices d'un
+// merchant. Satisfait par *notification.NotificationService ; déclaré ici en
+// interface pour que le service reste testable sans hub réel.
+type realtimeBroadcaster interface {
+	BroadcastToMerchant(merchantID string, payload map[string]interface{}) bool
+}
 
 type POSService struct {
 	posRepo        *POSRepository
 	holidayService *settingspkg.Service
+	broadcaster    realtimeBroadcaster
 }
 
-func NewPOSService(p *POSRepository) *POSService {
+// NewPOSService construit le service. broadcaster peut être nil (la diffusion
+// temps réel est alors simplement inactive) : elle est best-effort et ne doit
+// jamais faire échouer une mutation métier qui vient d'aboutir.
+func NewPOSService(p *POSRepository, broadcaster realtimeBroadcaster) *POSService {
 	return &POSService{
 		posRepo:        p,
 		holidayService: settingspkg.NewService(settingspkg.NewRepository(p.database)),
+		broadcaster:    broadcaster,
 	}
 }
 
@@ -47,7 +60,31 @@ func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status b
 		return nil, err
 	}
 
+	// La bascule est écrite : on prévient tous les devices du merchant, y
+	// compris celui qui vient de l'émettre (l'appliquer deux fois est
+	// idempotent). Diffusé après l'écriture et non après le GET ci-dessous
+	// pour que l'événement parte même si la relecture du statut composé
+	// échoue — le changement, lui, a bien eu lieu.
+	s.broadcastPOSStatus(user.MerchantID, status)
+
 	return s.posRepo.GetPOSStatus(ctx, user.MerchantID)
+}
+
+// broadcastPOSStatus diffuse l'ouverture/fermeture manuelle du point de vente.
+// Best-effort et nil-safe : un merchant sans device connecté (ou une API
+// démarrée sans hub) n'est pas une erreur.
+//
+// is_open est le flag brut de merchant_parameters, pas le statut composé
+// renvoyé par GET /pos/status — voir notification.WSEventPOSStatusChanged.
+func (s *POSService) broadcastPOSStatus(merchantID string, isOpen bool) {
+	if s.broadcaster == nil {
+		return
+	}
+	s.broadcaster.BroadcastToMerchant(merchantID, map[string]interface{}{
+		"type":        notification.WSEventPOSStatusChanged,
+		"merchant_id": merchantID,
+		"is_open":     isOpen,
+	})
 }
 
 func (s *POSService) GetDeletionReasons(ctx context.Context, object string) ([]models.DeletionReason, error) {
@@ -323,6 +360,14 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			if req.Ordering.UpsellEnabled != nil {
 				req.Parameters.POSUpsellEnabled = req.Ordering.UpsellEnabled
 			}
+			if req.Ordering.CoversCountRequired != nil {
+				req.Parameters.POSCoversCountRequired = req.Ordering.CoversCountRequired
+			}
+			// mobile_payment_enabled est porte par waiter_app_can_cash_in :
+			// voir le commentaire sur models.POSSettingsOrdering.
+			if req.Ordering.MobilePaymentEnabled != nil {
+				req.Parameters.WaiterAppCanCashIn = req.Ordering.MobilePaymentEnabled
+			}
 		}
 
 		if req.ScanOrder != nil {
@@ -439,6 +484,8 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			ActiveTakeaway:     boolVal(params.ManageTakeAway),
 			ActiveDelivery:     boolVal(params.ManageDelivery),
 			UpsellEnabled:      boolVal(params.POSUpsellEnabled),
+			CoversCountRequired:  boolVal(params.POSCoversCountRequired),
+			MobilePaymentEnabled: boolVal(params.WaiterAppCanCashIn),
 			CustomerFormRequirements: params.CustomerFormRequirements,
 		},
 		ScanOrder: models.POSSettingsScanOrder{

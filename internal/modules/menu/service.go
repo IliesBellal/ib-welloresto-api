@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 	"welloresto-api/internal/helpers"
-	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -39,7 +38,7 @@ type MenuService struct {
 	legacy           *MenuRepository
 	deliveroo        *deliveroo.DeliverooService
 	uber             *ubereats.UberEatsService
-	redis            *redisclient.Client
+	changes          *MenuChangeNotifier
 	merchantHeader   merchantHeaderProvider
 	allergensCatalog allergenCatalogProvider
 
@@ -47,12 +46,12 @@ type MenuService struct {
 	statusSyncSem     chan struct{}
 }
 
-func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, redis *redisclient.Client, merchantHeader merchantHeaderProvider, allergensCatalog allergenCatalogProvider) *MenuService {
+func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, changes *MenuChangeNotifier, merchantHeader merchantHeaderProvider, allergensCatalog allergenCatalogProvider) *MenuService {
 	return &MenuService{
 		legacy:            legacy,
 		deliveroo:         deliverooSvc,
 		uber:              uberSvc,
-		redis:             redis,
+		changes:           changes,
 		merchantHeader:    merchantHeader,
 		allergensCatalog:  allergensCatalog,
 		statusSyncTimeout: defaultExternalStatusSyncTimeout,
@@ -60,12 +59,21 @@ func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooSer
 	}
 }
 
-// invalidateMenuCache purge les caches Redis dérivés du catalogue produits
-// (menus scannorder/kiosk, upsell scannorder) après une mutation réussie du
-// menu. Best-effort et nil-safe (client Redis absent = no-op) : n'échoue
-// jamais la mutation métier qui vient d'aboutir.
-func (s *MenuService) invalidateMenuCache(ctx context.Context, merchantID string) {
-	s.redis.InvalidateMerchantMenuCaches(ctx, merchantID)
+// onMenuChanged signale une mutation aboutie du catalogue : purge des caches
+// Redis dérivés (menus scannorder/kiosk, upsell scannorder) puis diffusion
+// WebSocket de `menu_updated` vers les devices du merchant.
+//
+// À appeler après le succès de l'écriture, jamais à l'intérieur d'une
+// transaction : le client rappelle l'API dès réception. Best-effort et
+// nil-safe — n'échoue jamais la mutation qui vient d'aboutir.
+//
+// TODO(menus multiples) : quand un merchant pourra détenir plusieurs menus
+// dont un seul actif, cette fonction devra recevoir l'id du menu touché et ne
+// diffuser que s'il s'agit du menu actif. Sans ce garde-fou, éditer un
+// brouillon ferait recharger le menu en service sur toutes les bornes.
+// Décision D1 de docs/audits/2026-08-24-websocket-menu-haccp-status.md.
+func (s *MenuService) onMenuChanged(ctx context.Context, merchantID string) {
+	s.changes.Changed(ctx, merchantID)
 }
 
 func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string, updates ProductUpdatePayload) error {
@@ -78,7 +86,7 @@ func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string
 	if err := s.legacy.UpdateProduct(ctx, user.MerchantID, productID, updates); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -100,7 +108,7 @@ func (s *MenuService) UpdateProductImage(ctx context.Context, token, productID, 
 	if err := s.legacy.UpdateProductImage(ctx, user.MerchantID, productID, imageURL); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -122,7 +130,7 @@ func (s *MenuService) UpdateProductCategoryImageURL(ctx context.Context, token, 
 	if err := s.legacy.UpdateProductCategoryImageURL(ctx, user.MerchantID, categoryID, imageURL); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -135,7 +143,7 @@ func (s *MenuService) ClearProductCategoryImageURL(ctx context.Context, token, c
 	if err := s.legacy.ClearProductCategoryImageURL(ctx, user.MerchantID, categoryID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -157,7 +165,7 @@ func (s *MenuService) UpdateMarketingCategoryImageURL(ctx context.Context, token
 	if err := s.legacy.UpdateMarketingCategoryImageURL(ctx, user.MerchantID, categoryID, imageURL); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -170,7 +178,7 @@ func (s *MenuService) ClearMarketingCategoryImageURL(ctx context.Context, token,
 	if err := s.legacy.ClearMarketingCategoryImageURL(ctx, user.MerchantID, categoryID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -192,7 +200,7 @@ func (s *MenuService) UpdateAttributeOptionImageURL(ctx context.Context, token, 
 	if err := s.legacy.UpdateAttributeOptionImageURL(ctx, user.MerchantID, optionID, imageURL); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -205,7 +213,7 @@ func (s *MenuService) UpdateProductAttributes(ctx context.Context, token, produc
 	if err := s.legacy.UpdateProductAttributes(ctx, user.MerchantID, productID, attributeIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -295,7 +303,7 @@ func (s *MenuService) CreateProduct(ctx context.Context, token string, req *Crea
 		_ = s.legacy.AssignProductMarketingCategory(ctx, req.MerchantID, productID, *req.MarketingCategoryID)
 	}
 
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return s.legacy.GetProduct(ctx, req.MerchantID, productID)
 }
 
@@ -306,7 +314,15 @@ func (s *MenuService) CreateComponent(ctx context.Context, token string, req *Up
 	}
 
 	req.MerchantID = user.MerchantID
-	return s.legacy.CreateComponent(ctx, req)
+	componentID, err := s.legacy.CreateComponent(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	// Les composants apparaissent dans le menu servi aux bornes et à la
+	// vitrine : leurs mutations doivent purger le cache au même titre que
+	// celles des produits. Elles ne le faisaient pas avant l'incrément B.
+	s.onMenuChanged(ctx, user.MerchantID)
+	return componentID, nil
 }
 
 func (s *MenuService) CreateComponentCategory(ctx context.Context, token string, req *UpsertComponentCategoryPayload) (string, error) {
@@ -322,7 +338,7 @@ func (s *MenuService) CreateComponentCategory(ctx context.Context, token string,
 	}
 	// Les catégories d'ingrédients font partie du menu mis en cache : sans
 	// invalidation la nouvelle catégorie n'apparaît qu'à l'expiration du cache.
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return categoryID, nil
 }
 
@@ -337,7 +353,7 @@ func (s *MenuService) CreateProductCategory(ctx context.Context, token string, r
 	if err != nil {
 		return "", err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return categoryID, nil
 }
 
@@ -388,7 +404,7 @@ func (s *MenuService) CreateAttribute(ctx context.Context, token string, payload
 	if err != nil {
 		return "", err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return attributeID, nil
 }
 
@@ -401,7 +417,7 @@ func (s *MenuService) UpdateAttribute(ctx context.Context, token, attributeID st
 	if err := s.legacy.UpdateAttribute(ctx, user.MerchantID, attributeID, payload); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -414,7 +430,7 @@ func (s *MenuService) DeleteAttribute(ctx context.Context, token, attributeID st
 	if err := s.legacy.DeleteAttribute(ctx, user.MerchantID, attributeID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -424,7 +440,14 @@ func (s *MenuService) SetComponentStatus(ctx context.Context, token, cid, status
 		return 0, err
 	}
 
-	return s.legacy.SetComponentStatus(ctx, user.MerchantID, cid, status)
+	affected, err := s.legacy.SetComponentStatus(ctx, user.MerchantID, cid, status)
+	if err != nil {
+		return 0, err
+	}
+	if affected > 0 {
+		s.onMenuChanged(ctx, user.MerchantID)
+	}
+	return affected, nil
 }
 
 func (s *MenuService) SetProductStatus(ctx context.Context, token, pid, status string) (int64, error) {
@@ -439,7 +462,7 @@ func (s *MenuService) SetProductStatus(ctx context.Context, token, pid, status s
 	}
 
 	if updated > 0 {
-		s.invalidateMenuCache(ctx, user.MerchantID)
+		s.onMenuChanged(ctx, user.MerchantID)
 		s.enqueueProductStatusSync(ctx, user.MerchantID, pid, status)
 	}
 
@@ -462,7 +485,7 @@ func (s *MenuService) BulkSetProductsStatus(ctx context.Context, token string, p
 	}
 
 	if updated > 0 {
-		s.invalidateMenuCache(ctx, user.MerchantID)
+		s.onMenuChanged(ctx, user.MerchantID)
 		for _, productID := range productIDs {
 			s.enqueueProductStatusSync(ctx, user.MerchantID, productID, status)
 		}
@@ -484,7 +507,7 @@ func (s *MenuService) BulkDeleteProducts(ctx context.Context, token string, prod
 	}
 
 	if updated > 0 {
-		s.invalidateMenuCache(ctx, user.MerchantID)
+		s.onMenuChanged(ctx, user.MerchantID)
 	}
 
 	return updated, nil
@@ -501,7 +524,52 @@ func (s *MenuService) BulkSetProductsAttributes(ctx context.Context, token strin
 	if err := s.legacy.BulkUpdateProductAttributes(ctx, user.MerchantID, productIDs, configIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
+}
+
+// BulkAssignAttribute ajoute un groupe d'options/suppléments à plusieurs
+// produits sans retirer leurs autres groupes déjà attachés.
+func (s *MenuService) BulkAssignAttribute(ctx context.Context, token, attributeID string, productIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkAssignAttribute(ctx, user.MerchantID, attributeID, productIDs); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
+}
+
+// BulkSetProductsTags remplace la liste complète des tags de plusieurs
+// produits par la même liste, en une seule action de groupe.
+func (s *MenuService) BulkSetProductsTags(ctx context.Context, token string, productIDs []string, tagIDs []string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkSetProductsTags(ctx, user.MerchantID, productIDs, tagIDs); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
+}
+
+// BulkSetProductsTva applique un taux de TVA à plusieurs produits pour un seul
+// type de vente (scope: "on_site", "take_away" ou "delivery").
+func (s *MenuService) BulkSetProductsTva(ctx context.Context, token string, productIDs []string, scope string, tvaID string) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkSetProductsTva(ctx, user.MerchantID, productIDs, scope, tvaID); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -586,7 +654,7 @@ func (s *MenuService) SetProductCategoryAvailability(ctx context.Context, token,
 	if err != nil {
 		return 0, err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return updated, nil
 }
 
@@ -600,7 +668,7 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, product
 	if err != nil {
 		return 0, err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return updated, nil
 }
 
@@ -613,7 +681,7 @@ func (s *MenuService) UpdateProductCategory(ctx context.Context, token, category
 	if err := s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, payload.Name); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -626,7 +694,7 @@ func (s *MenuService) BulkAssignProductsToCategory(ctx context.Context, token, c
 	if err := s.legacy.BulkAssignProductsToCategory(ctx, user.MerchantID, categoryID, productIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -636,7 +704,11 @@ func (s *MenuService) UpdateComponent(ctx context.Context, token, componentID st
 		return err
 	}
 
-	return s.legacy.UpdateComponent(ctx, user.MerchantID, componentID, updates)
+	if err := s.legacy.UpdateComponent(ctx, user.MerchantID, componentID, updates); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
 }
 
 func (s *MenuService) GetComponent(ctx context.Context, token, componentID string) (*models.ComponentBasic, error) {
@@ -657,7 +729,7 @@ func (s *MenuService) DeleteProductCategory(ctx context.Context, token, category
 	if err := s.legacy.DeleteProductCategory(ctx, user.MerchantID, categoryID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -667,7 +739,11 @@ func (s *MenuService) DeleteComponent(ctx context.Context, token, componentID st
 		return err
 	}
 
-	return s.legacy.DeleteComponent(ctx, user.MerchantID, componentID)
+	if err := s.legacy.DeleteComponent(ctx, user.MerchantID, componentID); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
 }
 
 // Modes de suppression d'une catégorie d'ingrédients non vide.
@@ -732,7 +808,7 @@ func (s *MenuService) DeleteComponentCategory(ctx context.Context, token, catego
 	if err := s.legacy.DeleteComponentCategory(ctx, user.MerchantID, categoryID, target); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -754,7 +830,7 @@ func (s *MenuService) UpdateComponentCategory(ctx context.Context, token, catego
 	if err := s.legacy.UpdateComponentCategory(ctx, user.MerchantID, categoryID, req); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -768,7 +844,7 @@ func (s *MenuService) UpdateComponentCategoriesDisplayOrder(ctx context.Context,
 	if err := s.legacy.UpdateComponentCategoriesDisplayOrder(ctx, user.MerchantID, categoryIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -781,7 +857,7 @@ func (s *MenuService) DeleteProduct(ctx context.Context, token, productID string
 	if err := s.legacy.DeleteProduct(ctx, user.MerchantID, productID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -794,7 +870,7 @@ func (s *MenuService) UpdateDisplayOrder(ctx context.Context, token string, payl
 	if err := s.legacy.UpdateDisplayOrder(ctx, user.MerchantID, payload); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -865,7 +941,7 @@ func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID,
 		return nil, err
 	}
 
-	s.invalidateMenuCache(ctx, merchantID)
+	s.onMenuChanged(ctx, merchantID)
 	return helpers.Int64ToStringPtr(productID), nil
 }
 
@@ -880,7 +956,7 @@ func (s *MenuService) SyncProductAllergens(ctx context.Context, token, productID
 	if err := s.legacy.SyncProductAllergens(ctx, user.MerchantID, productID, allergenIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -894,7 +970,7 @@ func (s *MenuService) BulkAssignTag(ctx context.Context, token, tagID string, pr
 	if err := s.legacy.BulkAssignTag(ctx, user.MerchantID, tagID, productIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -909,7 +985,7 @@ func (s *MenuService) BulkAssignProductsToTag(ctx context.Context, token, tagID 
 	if err := s.legacy.BulkAssignProductsToTag(ctx, user.MerchantID, tagID, productIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -923,7 +999,7 @@ func (s *MenuService) BulkAssignAllergen(ctx context.Context, token, allergenID 
 	if err := s.legacy.BulkAssignAllergen(ctx, user.MerchantID, allergenID, productIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -938,7 +1014,7 @@ func (s *MenuService) SyncProductTags(ctx context.Context, token, productID stri
 	if err := s.legacy.SyncProductTags(ctx, user.MerchantID, productID, tagIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -962,7 +1038,7 @@ func (s *MenuService) BulkUpdateProductPrices(ctx context.Context, token string,
 	if err := s.legacy.BulkUpdateProductPrices(ctx, user.MerchantID, products); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -985,7 +1061,7 @@ func (s *MenuService) CreateMarketingCategory(ctx context.Context, token string,
 	if err != nil {
 		return "", err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return categoryID, nil
 }
 
@@ -998,7 +1074,7 @@ func (s *MenuService) UpdateMarketingCategory(ctx context.Context, token, catego
 	if err := s.legacy.UpdateMarketingCategory(ctx, user.MerchantID, categoryID, req); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -1011,7 +1087,7 @@ func (s *MenuService) DeleteMarketingCategory(ctx context.Context, token, catego
 	if err := s.legacy.DeleteMarketingCategory(ctx, user.MerchantID, categoryID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -1024,7 +1100,7 @@ func (s *MenuService) UpdateMarketingCategoriesDisplayOrder(ctx context.Context,
 	if err := s.legacy.UpdateMarketingCategoriesDisplayOrder(ctx, user.MerchantID, categoryIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -1037,7 +1113,7 @@ func (s *MenuService) AssignProductMarketingCategory(ctx context.Context, token,
 	if err := s.legacy.AssignProductMarketingCategory(ctx, user.MerchantID, productID, categoryID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -1050,7 +1126,7 @@ func (s *MenuService) UnassignProductMarketingCategory(ctx context.Context, toke
 	if err := s.legacy.UnassignProductMarketingCategory(ctx, user.MerchantID, productID); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }
 
@@ -1063,6 +1139,6 @@ func (s *MenuService) BulkAssignProductsToMarketingCategory(ctx context.Context,
 	if err := s.legacy.BulkAssignProductsToMarketingCategory(ctx, user.MerchantID, categoryID, productIDs); err != nil {
 		return err
 	}
-	s.invalidateMenuCache(ctx, user.MerchantID)
+	s.onMenuChanged(ctx, user.MerchantID)
 	return nil
 }

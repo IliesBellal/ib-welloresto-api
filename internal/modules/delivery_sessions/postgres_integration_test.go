@@ -259,24 +259,53 @@ func TestDeliverySessionsRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected order reverted to READY_FOR_HANDOFF, got %q", brandStatus)
 	}
 
-	// --- CloseDeliverySession (manager) sur une troisième tournée ---
+	// --- Clôture manager sur une troisième tournée ---
+	//
+	// La clôture manager est désormais orchestrée par le service
+	// (DeliverySessionsService.CloseDeliverySession) : il livre chaque arrêt
+	// ouvert via order_life_cycle.SetDelivered — hash NF525, signature, audit —
+	// puis appelle MarkDeliverySessionDone. Le repo ne ferme donc plus les
+	// commandes lui-même, et ce test couvre les deux primitives qu'il expose.
 	s3, err := repo.StartDeliverySession(ctx, req2)
 	if err != nil {
 		t.Fatalf("StartDeliverySession (3) failed: %v", err)
 	}
-	closed, err := repo.CloseDeliverySession(ctx, s3.DeliverySessionID)
+
+	openStops, err := repo.GetOpenStopOrderIDs(ctx, merchantID, s3.DeliverySessionID)
 	if err != nil {
-		t.Fatalf("CloseDeliverySession failed against postgres: %v", err)
+		t.Fatalf("GetOpenStopOrderIDs failed against postgres: %v", err)
+	}
+	if len(openStops) != 1 || openStops[0] != order3 {
+		t.Fatalf("expected the session's only open stop to be %q, got %v", order3, openStops)
+	}
+
+	closed, err := repo.MarkDeliverySessionDone(ctx, merchantID, s3.DeliverySessionID)
+	if err != nil {
+		t.Fatalf("MarkDeliverySessionDone failed against postgres: %v", err)
 	}
 	if closed.Status != "done" {
 		t.Fatalf("unexpected closed session: %+v", closed)
 	}
+
+	// La commande reste intacte : sa clôture fiscale appartient à SetDelivered,
+	// pas au repository. Cette assertion garde la régression d'origine — un
+	// UPDATE en masse qui fermait les commandes sans hash ni signature.
 	var state string
 	if err := db.QueryRowContext(ctx, `SELECT state, brand_status FROM orders WHERE order_id = $1`, order3).Scan(&state, &brandStatus); err != nil {
-		t.Fatalf("read back closed order: %v", err)
+		t.Fatalf("read back order after session close: %v", err)
 	}
-	if state != "CLOSED" || brandStatus != "DONE" {
-		t.Fatalf("expected CLOSED/DONE, got %s/%s", state, brandStatus)
+	if state != "OPEN" || brandStatus != "EN_ROUTE_TO_DROPOFF" {
+		t.Fatalf("expected the repository to leave the order untouched (OPEN/EN_ROUTE_TO_DROPOFF), got %s/%s", state, brandStatus)
+	}
+
+	// Une session close n'expose plus d'arrêt ouvert : rejouer la clôture est
+	// un no-op, ce sur quoi repose la reprise sur incident du service.
+	openStops, err = repo.GetOpenStopOrderIDs(ctx, merchantID, s3.DeliverySessionID)
+	if err != nil {
+		t.Fatalf("GetOpenStopOrderIDs (after close) failed against postgres: %v", err)
+	}
+	if len(openStops) != 0 {
+		t.Fatalf("expected no open stop on a done session, got %v", openStops)
 	}
 
 	// --- GetDeliverySessionByIDForUser (sans filtre de statut) ---

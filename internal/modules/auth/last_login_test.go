@@ -24,24 +24,25 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
-		WillReturnRows(sqlmock.NewRows(makeColumns(84)).AddRow(
+		WillReturnRows(sqlmock.NewRows(makeColumns(86)).AddRow(
 			// user (0-10)
 			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, true, "ignored", nil,
 			// rights (11-34)
 			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil,
 			// merchant (35-42)
 			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil,
-			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62)
-			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false,
-			// package (63-73): AllowWaiterAccount..KiosksEnabled
+			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62),
+			// pos_covers_count_required (63), waiter_app_can_cash_in (64)
+			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
+			// package (65-75): AllowWaiterAccount..KiosksEnabled
 			true, true, false, 0, false, true, true, true, false, true, true,
-			// SNO (74)
+			// SNO (76)
 			false,
-			// uber eats (75-80)
+			// uber eats (77-82)
 			nil, nil, nil, nil, nil, nil,
-			// uber direct (81)
+			// uber direct (83)
 			nil,
-			// deliveroo (82-83)
+			// deliveroo (84-85)
 			nil, nil,
 		))
 

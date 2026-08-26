@@ -105,7 +105,18 @@ func (h *DeliverySessionsHandler) CloseDeliverySession(w http.ResponseWriter, r 
 
 	resp, err := h.deliverySessionsService.CloseDeliverySession(ctx, token, id)
 	if err != nil {
-		models.SendErrorJSON(w, "delivery_sessions", "close", err)
+		// Les commandes impayees sont nommees pour que le POS puisse proposer de
+		// les encaisser directement, sans faire deviner le dispatcher.
+		var unpaidErr *UnpaidStopsError
+		if errors.As(err, &unpaidErr) {
+			models.SendJSON(w, http.StatusConflict, "delivery_sessions", "close", map[string]interface{}{
+				"status":  "error",
+				"message": "order_not_fully_paid",
+				"details": map[string]interface{}{"order_ids": unpaidErr.OrderIDs},
+			})
+			return
+		}
+		writeDeliveryStopError(w, "close", err)
 		return
 	}
 

@@ -160,16 +160,17 @@ func TestBuildPreviewFlagsUnresolvedTvaRate(t *testing.T) {
 	}
 }
 
-// Le taux 0 est la façon dont Zelty exprime « pas vendu sur ce canal ». Le
-// canal est désactivé, mais tva_*_id reste NOT NULL : il est rempli avec le
-// taux le plus haut du produit, re-résolu sur le canal concerné.
-func TestBuildPreviewDisablesZeroRatedChannelsAndBackfills(t *testing.T) {
+// Le taux 0 ne signifie pas « pas vendu sur ce canal », seulement qu'aucun
+// taux spécifique n'est défini pour ce canal : tva_*_id reste NOT NULL, il est
+// rempli avec le taux de repli (l'unique taux défini sur le produit, ou le
+// plus bas s'il y en a plusieurs), re-résolu sur le canal concerné.
+func TestBuildPreviewResolvesZeroRatedChannelsAndBackfills(t *testing.T) {
 	res := previewFixture(t, fixtureZelty2026, defaultLookups())
 
 	carbonara := previewProduct(t, res, productCarbonara26)
 
 	if !carbonara.Channels.In.Available {
-		t.Fatal("canal sur place désactivé alors que le taux vaut 10")
+		t.Fatal("canal sur place indisponible alors que le taux vaut 10")
 	}
 	if carbonara.Channels.In.TvaID != 2 || carbonara.Channels.In.Backfilled {
 		t.Fatalf("canal sur place = %+v, want tva_id 2 sans backfill", carbonara.Channels.In)
@@ -184,8 +185,8 @@ func TestBuildPreviewDisablesZeroRatedChannelsAndBackfills(t *testing.T) {
 		{"livraison", carbonara.Channels.Delivery, 8},
 	}
 	for _, tc := range cases {
-		if tc.got.Available {
-			t.Fatalf("canal %s : available = true, want false (taux 0)", tc.channel)
+		if !tc.got.Available {
+			t.Fatalf("canal %s : available = false, want true (un taux à 0 ne rend pas le canal indisponible)", tc.channel)
 		}
 		if !tc.got.Backfilled || !tc.got.Resolved {
 			t.Fatalf("canal %s = %+v, want backfillé et résolu", tc.channel, tc.got)
@@ -208,6 +209,43 @@ func TestBuildPreviewDisablesZeroRatedChannelsAndBackfills(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("le couple 10%% / take_away n'apparaît pas dans la liste à résoudre")
+	}
+}
+
+// Quand plusieurs canaux portent un taux non nul, le repli d'un canal à 0
+// retient le plus bas des deux — pas le plus haut : un taux à 0 ne marque pas
+// un canal indisponible, donc il n'y a pas de raison de privilégier le taux le
+// plus élevé.
+func TestBuildPreviewBackfillsWithLowestAvailableRate(t *testing.T) {
+	rateIn, rateTakeAway, rateDelivery := 20.0, 5.5, 0.0
+	imp := &IntermediateImport{
+		Provider: WelloGenericSlug,
+		Products: []CanonicalProduct{{
+			ExternalID:         "wg-p-2",
+			Name:               "Margherita",
+			CategoryExternalID: "wg-c-1",
+			PriceIn:            990,
+			PriceTakeAway:      990,
+			PriceDelivery:      990,
+			TvaRateIn:          &rateIn,
+			TvaRateTakeAway:    &rateTakeAway,
+			TvaRateDelivery:    &rateDelivery,
+		}},
+	}
+
+	res, err := BuildPreview(imp, defaultLookups())
+	if err != nil {
+		t.Fatalf("BuildPreview: %v", err)
+	}
+
+	delivery := res.Products[0].Channels.Delivery
+	if !delivery.Available {
+		t.Fatal("canal livraison indisponible, want disponible (taux à 0)")
+	}
+	// 5.5 -> tva_id 7 sur le canal livraison (fullTvaRates) : le plus bas des
+	// deux taux définis (5.5 et 20), pas le plus haut.
+	if delivery.TvaID != 7 || !delivery.Backfilled || !delivery.Resolved {
+		t.Fatalf("canal livraison = %+v, want tva_id 7 (taux 5.5, le plus bas) backfillé et résolu", delivery)
 	}
 }
 

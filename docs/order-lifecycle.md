@@ -399,21 +399,27 @@ Un livreur dédié à une seule commande, sans session de livraison.
             UPDATE delivery_session SET status='done', end_date=UTC_TIMESTAMP()
         Guard : ErrSessionHasPendingStops si des stops ne sont pas en état terminal.
 
-    C — Force-close manager :
-        Endpoint : POST /delivery_sessions/{id}/close
+    C — Clôture manager :
+        Endpoint : PATCH /delivery_sessions/{id}/close
         Handler  : CloseDeliverySession (delivery_sessions/handler.go:96)
-        SQL (repository.go:435) :
-            UPDATE orders SET brand_status='DONE', state='CLOSED'   ← 'DONE', pas 'CLOSED' !
-            UPDATE delivery_session SET status='done'
-            UPDATE payments SET user_id=ds.user_id
+        Service  : DeliverySessionsService.CloseDeliverySession
+            1. GetOpenStopOrderIDs — arrêts non terminaux, par priorité
+               ('failed'/'canceled' exclus : ils gardent leur résultat)
+            2. Pré-contrôle AssertOrderFullyPaid sur chacun
+               → refus global (UnpaidStopsError) si l'un n'est pas encaissé,
+                 avant toute écriture : on clôture tout ou rien
+            3. Par arrêt : SetDelivered (hash NF525 + signature + audit +
+               fidélité) puis FinalizeDeliveredStop
+            4. MarkDeliverySessionDone
 
 [TERMINAL — parcours normal par-stop]
     COMMANDE : brand_status='CLOSED', state='CLOSED', isPaid=1, isDistributed=1
     SESSION  : status='done'
 
-[TERMINAL — force-close manager]
-    COMMANDE : brand_status='DONE', state='CLOSED'   ← incohérence, voir §Pièges P5
+[TERMINAL — clôture manager]
+    COMMANDE : brand_status='CLOSED', state='CLOSED', isPaid=1, isDistributed=1
     SESSION  : status='done'
+    (identique au parcours par-stop : même chemin SetDelivered)
 ```
 
 ---
@@ -627,17 +633,19 @@ Le cron `DenyOrders` (`tasks/orders.go:61`) filtre sur `brand_status='PENDING_AP
 
 L'intégralité du cycle de vie repose sur des actions HTTP explicites et les webhooks Stripe.
 
-### P5 — `DONE` vs `CLOSED` : deux valeurs terminales pour la livraison
+### P5 — `DONE` vs `CLOSED` : ~~deux valeurs terminales pour la livraison~~ (résolu)
 
-La valeur terminale de `brand_status` diffère selon le chemin de clôture :
+**Résolu.** Les trois chemins de clôture d'une livraison convergent désormais sur `SetDeliveredLocal`, donc sur `brand_status='CLOSED'` :
 
 | Chemin | brand_status final |
 |---|---|
 | Per-stop `MarkDeliveryStopDelivered` → `SetDeliveredLocal` | `'CLOSED'` |
 | Mono-commande `SetDelivered` → `SetDeliveredLocal` | `'CLOSED'` |
-| Force-close manager `CloseDeliverySession` | `'DONE'` |
+| Clôture manager `CloseDeliverySession` | `'CLOSED'` |
 
-Toute requête cherchant les commandes livrées doit inclure les deux : `brand_status IN ('CLOSED', 'DONE')`. Les queries de stats (`stats/repository.go:253, 361, 477`) font déjà ce double-check.
+Auparavant, la clôture manager écrivait `brand_status='DONE', state='CLOSED'` en SQL direct, sans hash ni signature — les commandes d'une tournée clôturée depuis le POS sortaient donc **hors chaîne fiscale NF525**. Elle passe maintenant par `order_life_cycle.SetDelivered`, comme les deux autres.
+
+`brand_status='DONE'` reste produit par d'autres chemins (`SetDistributedProducts` pour les commandes IN, voir P6), donc une requête cherchant les commandes livrées **toutes catégories** doit toujours inclure les deux valeurs : `brand_status IN ('CLOSED', 'DONE')`. Les queries de stats (`stats/repository.go:253, 361, 477`) font déjà ce double-check. Les données historiques antérieures au correctif portent encore `'DONE'` sans hash.
 
 ### P6 — `SetDistributedProducts` vs `MarkProductsBackToProduction` : valeurs inconsistantes pour les commandes IN
 

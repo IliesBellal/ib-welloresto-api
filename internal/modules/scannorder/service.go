@@ -179,7 +179,25 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	return resp, nil
 }
 
+// GetEffectivePrepMinutes renvoie le temps de préparation annoncé au client :
+// le temps de base (manuel ou calculé), augmenté du temps d'attente
+// supplémentaire temporaire encore actif.
+//
+// row.ExtraPrepMinutes vaut déjà 0 dès que l'échéance est dépassée (filtrage
+// SQL, cf. snoActiveExtraPrepMinutes) : rien à purger, le supplément cesse de
+// s'appliquer de lui-même.
 func (s *Service) GetEffectivePrepMinutes(ctx context.Context, row *models.MerchantRow) int {
+	base := s.computeBasePrepMinutes(ctx, row)
+
+	if row.ExtraPrepMinutes > 0 {
+		return base + row.ExtraPrepMinutes
+	}
+	return base
+}
+
+// computeBasePrepMinutes porte le calcul historique du temps de préparation,
+// hors supplément temporaire.
+func (s *Service) computeBasePrepMinutes(ctx context.Context, row *models.MerchantRow) int {
 	if row.PrepTimeMode == "MANUAL" {
 		return row.PrepTime
 	}
@@ -384,10 +402,11 @@ func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*B
 		}
 
 		merchantRow := &models.MerchantRow{
-			MerchantID:   row.MerchantID,
-			Timezone:     row.Timezone,
-			PrepTimeMode: row.PrepTimeMode,
-			PrepTime:     row.PrepTime,
+			MerchantID:       row.MerchantID,
+			Timezone:         row.Timezone,
+			PrepTimeMode:     row.PrepTimeMode,
+			PrepTime:         row.PrepTime,
+			ExtraPrepMinutes: row.ExtraPrepMinutes,
 		}
 		prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
 
@@ -1412,10 +1431,11 @@ func (s *Service) GetSlots(ctx context.Context, qr string) (*SlotsResponse, erro
 
 	// 3️⃣ Récupérer le temps de préparation effectif
 	merchantRow := &models.MerchantRow{
-		MerchantID:   merchant.MerchantID,
-		Timezone:     merchant.Timezone,
-		PrepTimeMode: merchant.PrepTimeMode,
-		PrepTime:     merchant.PrepTime,
+		MerchantID:       merchant.MerchantID,
+		Timezone:         merchant.Timezone,
+		PrepTimeMode:     merchant.PrepTimeMode,
+		PrepTime:         merchant.PrepTime,
+		ExtraPrepMinutes: merchant.ExtraPrepMinutes,
 	}
 	prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
 

@@ -122,6 +122,34 @@ func (c *Client) InvalidateMerchantMenuCaches(ctx context.Context, merchantID st
 	}
 }
 
+// InvalidateMerchantStatusCache supprime le cache scannorder du merchant
+// (réponse GetMerchant : statut ouvert/fermé, temps de préparation, order
+// types…). À appeler après toute mutation qui change ce que la vitrine doit
+// afficher immédiatement : fermeture temporaire, temps d'attente supplémentaire.
+//
+// Sans cet appel, la seule limite à la péremption est le TTL de
+// models.ScannorderMerchantTTL : une fermeture annoncée « immédiate » restait
+// jusqu'à 2 minutes invisible côté client. La commande, elle, n'a jamais été
+// concernée — CreateOrderSNO relit GetMerchantStatus en base, sans cache.
+//
+// Le pattern est scopé au merchant (`scannorder:merchant:<id>:*`) : il ne
+// recouvre ni les clés menu (`scannorder:merchant:menu:<id>:*`) ni upsell,
+// dont l'invalidation reste portée par InvalidateMerchantMenuCaches.
+//
+// Best-effort, comme le reste du cache : une erreur est loguée, jamais
+// propagée — la mutation métier qui vient de réussir ne doit pas échouer pour
+// un problème de cache.
+func (c *Client) InvalidateMerchantStatusCache(ctx context.Context, merchantID string) {
+	if c == nil || c.rdb == nil || merchantID == "" {
+		return
+	}
+
+	pattern := models.ScannorderMerchant + merchantID + ":*"
+	if _, err := c.ScanDeleteByPattern(ctx, pattern); err != nil {
+		logger.FromContext(ctx).Warn("⚠️ Redis Error (InvalidateMerchantStatusCache): " + err.Error())
+	}
+}
+
 // ScanDeleteByPattern supprime toutes les clés correspondant au pattern via SCAN + DEL par batch.
 // Retourne le nombre total de clés supprimées.
 // Utilise SCAN avec COUNT 100 par itération pour ne pas bloquer Redis.

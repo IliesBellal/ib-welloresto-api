@@ -191,8 +191,11 @@ type BrandMerchantRow struct {
 	InAvailable       bool
 	PrepTimeMode      string
 	PrepTime          int
-	Slug              string
-	DistanceKm        *float64
+	// ExtraPrepMinutes : temps d'attente supplémentaire temporaire, déjà filtré
+	// par son échéance côté SQL (cf. snoActiveExtraPrepMinutes).
+	ExtraPrepMinutes int
+	Slug             string
+	DistanceKm       *float64
 }
 
 // --- Delivery Zone Check ---

@@ -2217,3 +2217,137 @@ func (h *MenuHandler) BulkSetProductsAttributes(w http.ResponseWriter, r *http.R
 		"updated": len(payload.ProductIDs),
 	})
 }
+
+// BulkAssignAttribute — POST /menu/bulk/attributes/assign
+// Ajoute un groupe d'options/suppléments à plusieurs produits sans toucher à
+// leurs autres groupes (additif, miroir de BulkAssignAllergen/BulkAssignTag).
+func (h *MenuHandler) BulkAssignAttribute(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_assign_attribute", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var body struct {
+		AttributeID string   `json:"attribute_id"`
+		ProductIDs  []string `json:"product_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_attribute", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if strings.TrimSpace(body.AttributeID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_attribute", map[string]string{"error": "attribute_id_required"})
+		return
+	}
+	if len(body.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_assign_attribute", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	if err := h.service.BulkAssignAttribute(r.Context(), token, body.AttributeID, body.ProductIDs); err != nil {
+		models.SendErrorJSON(w, "menu", "bulk_assign_attribute", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_assign_attribute", map[string]interface{}{
+		"status":  "success",
+		"message": "attribute assigned",
+		"updated": len(body.ProductIDs),
+	})
+}
+
+// BulkSetProductsTags — PATCH /menu/products/bulk/tags
+// Remplace la liste complète des tags de plusieurs produits par la même liste.
+// Une liste vide retire tous les tags des produits ciblés.
+func (h *MenuHandler) BulkSetProductsTags(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_tags", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload struct {
+		ProductIDs []string `json:"product_ids"`
+		TagIDs     []string `json:"tag_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tags", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tags", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkSetProductsTags(ctx, token, payload.ProductIDs, payload.TagIDs); err != nil {
+		log.Error("[ERROR] BulkSetProductsTags error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_tags", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_tags", map[string]interface{}{
+		"status":  "success",
+		"message": "products_tags_updated",
+		"updated": len(payload.ProductIDs),
+	})
+}
+
+// bulkTvaScopes liste les valeurs de scope acceptées par BulkSetProductsTva —
+// elles désignent la colonne TVA à modifier (sur place, à emporter, livraison).
+var bulkTvaScopes = map[string]bool{
+	"on_site":   true,
+	"take_away": true,
+	"delivery":  true,
+}
+
+// BulkSetProductsTva — PATCH /menu/products/bulk/tva
+// Applique un taux de TVA à plusieurs produits pour un seul type de vente
+// (scope), désigné par "on_site", "take_away" ou "delivery".
+func (h *MenuHandler) BulkSetProductsTva(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_tva", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload struct {
+		ProductIDs []string `json:"product_ids"`
+		Scope      string   `json:"scope"`
+		TvaID      string   `json:"tva_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tva", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tva", map[string]string{"error": "product_ids_required"})
+		return
+	}
+	if !bulkTvaScopes[payload.Scope] {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tva", map[string]string{"error": "invalid_scope"})
+		return
+	}
+	if strings.TrimSpace(payload.TvaID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_tva", map[string]string{"error": "tva_id_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkSetProductsTva(ctx, token, payload.ProductIDs, payload.Scope, payload.TvaID); err != nil {
+		log.Error("[ERROR] BulkSetProductsTva error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_tva", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_tva", map[string]interface{}{
+		"status":  "success",
+		"message": "products_tva_updated",
+		"updated": len(payload.ProductIDs),
+	})
+}

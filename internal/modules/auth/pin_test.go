@@ -92,10 +92,10 @@ func seedAnchorInMemRedis(mem *memRedis, token, merchantID, userID string) {
 	mem.store[models.UserCachePrefix+token] = string(data)
 }
 
-// pinColumns returns the 76 column names expected by scanUserLoginRow.
-func pinColumns() []string { return makeColumns(77) }
+// pinColumns returns the 79 column names expected by scanUserLoginRow.
+func pinColumns() []string { return makeColumns(79) }
 
-// pinMinRow returns 77 driver.Value values for a minimal active users_rights row.
+// pinMinRow returns 79 driver.Value values for a minimal active users_rights row.
 // The filter columns (ur.enabled, ur.login_enabled) are in WHERE, not SELECT,
 // so they don't appear here — a non-empty result means the link passed the filter.
 func pinMinRow(userID, token, merchantID string) []driver.Value {
@@ -106,17 +106,18 @@ func pinMinRow(userID, token, merchantID string) []driver.Value {
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil,
 		// merchant (34-41)
 		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
-		// params (42-53), currency/is_open/pos_upsell_enabled reinterpreted (54-55)
-		0, 0, 0, true, true, true, false, false, false, false, nil, "EUR", true, false,
-		// package (56-66): AllowWaiterAccount..KiosksEnabled
+		// params (42-53), currency/is_open/pos_upsell_enabled (54-56),
+		// pos_covers_count_required/waiter_app_can_cash_in (57-58)
+		0, 0, 0, true, true, true, false, false, false, false, nil, "EUR", true, false, false, true,
+		// package (59-69): AllowWaiterAccount..KiosksEnabled
 		true, true, false, 0, false, true, true, true, false, true, true,
-		// SNO (67)
+		// SNO (70)
 		false,
-		// UE (67-72)
+		// UE (71-76)
 		nil, nil, nil, nil, nil, nil,
-		// UD (73)
+		// UD (77)
 		nil,
-		// Droo (74-75)
+		// Droo (78-79)
 		nil, nil,
 	}
 }
@@ -502,9 +503,9 @@ func TestGetUserByToken_PINTokenNotInDB(t *testing.T) {
 	}
 }
 
-// loginMinRow returns 84 driver.Value values for a minimal active row as scanned
-// by repo.Login (SELECT u.user_id, u.name, ... — 84 columns, different from the
-// 77-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
+// loginMinRow returns 86 driver.Value values for a minimal active row as scanned
+// by repo.Login (SELECT u.user_id, u.name, ... — 86 columns, different from the
+// 79-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
 func loginMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
 		// user (0-10): user_id, name, first_name, last_name, email, tel, enabled,
@@ -517,13 +518,14 @@ func loginMinRow(userID, token, merchantID string) []driver.Value {
 		// params (43-59): 12 base fields + kitchen_distribution_mode, production_display_mode,
 		//                  pager_number_required, pos_auto_lock_enabled, pos_auto_lock_delay_minutes,
 		//                  service_required_for_ordering, cash_register_required_for_ordering, ...
-		// currency/is_open/pos_upsell_enabled reinterpreted (60-61)
-		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false,
-		// package (63-73): AllowWaiterAccount..KiosksEnabled
+		// currency/is_open/pos_upsell_enabled (60-62),
+		// pos_covers_count_required/waiter_app_can_cash_in (63-64)
+		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
+		// package (65-75): AllowWaiterAccount..KiosksEnabled
 		true, true, false, 0, false, true, true, true, false, true, true,
-		// SNO (74)
+		// SNO (76)
 		false,
-		// UE (75-80), UD (81), Droo (82-83)
+		// UE (77-82), UD (83), Droo (84-85)
 		nil, nil, nil, nil, nil, nil,
 		nil,
 		nil, nil,
@@ -568,7 +570,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(84)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(86)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

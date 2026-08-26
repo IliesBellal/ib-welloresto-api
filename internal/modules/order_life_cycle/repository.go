@@ -817,6 +817,35 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 	return err
 }
 
+// GetOrderPaymentBalance retourne le prix de la commande et le total encaisse
+// (paiements actifs). Lecture seule, sans FOR UPDATE : c'est un pre-controle
+// consultatif, pas la barriere fiscale.
+//
+// La barriere, elle, reste le meme controle execute sous verrou de ligne au
+// debut de SetDeliveredLocal : cette fonction sert seulement a repondre "cette
+// commande passera-t-elle ?" avant d'entamer une cloture multi-commandes, pour
+// eviter de fermer la moitie d'une tournee puis d'echouer.
+func (r *OrdersLifeCycleRepository) GetOrderPaymentBalance(ctx context.Context, orderID string) (price int, paidAmount int, err error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	if err = db.QueryRowContext(ctx, `
+		SELECT price FROM orders WHERE order_id = ?
+	`, orderID).Scan(&price); err != nil {
+		return 0, 0, err
+	}
+
+	if err = db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(amount), 0)
+		FROM payments
+		WHERE order_id = ?
+		  AND enabled = TRUE
+	`, orderID).Scan(&paidAmount); err != nil {
+		return 0, 0, err
+	}
+
+	return price, paidAmount, nil
+}
+
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
 	db := dbx.GetDB(ctx, r.database)
 

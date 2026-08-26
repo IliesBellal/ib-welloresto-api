@@ -85,8 +85,9 @@ func TestBuildCommitPlanResolvesFixture(t *testing.T) {
 	}
 }
 
-// Carbonara : 10 sur place, 0 ailleurs. Les deux canaux fermés reçoivent quand
-// même un tva_id, re-résolu depuis le taux le plus haut du produit.
+// Carbonara : 10 sur place, 0 ailleurs. Un taux à 0 ne rend pas le canal
+// indisponible : les deux autres canaux reçoivent quand même un tva_id,
+// re-résolu depuis l'unique taux défini sur le produit.
 func TestBuildCommitPlanResolvesChannelsAndBackfill(t *testing.T) {
 	plan := planFixture(t, fixtureZelty2026, defaultLookups())
 
@@ -95,11 +96,11 @@ func TestBuildCommitPlanResolvesChannelsAndBackfill(t *testing.T) {
 	if !carbonara.AvailableIn || carbonara.TvaInID != 2 {
 		t.Fatalf("sur place = (available %v, tva %d), want (true, 2)", carbonara.AvailableIn, carbonara.TvaInID)
 	}
-	if carbonara.AvailableTakeAway || carbonara.TvaTakeAwayID != 5 {
-		t.Fatalf("emporté = (available %v, tva %d), want (false, 5)", carbonara.AvailableTakeAway, carbonara.TvaTakeAwayID)
+	if !carbonara.AvailableTakeAway || carbonara.TvaTakeAwayID != 5 {
+		t.Fatalf("emporté = (available %v, tva %d), want (true, 5)", carbonara.AvailableTakeAway, carbonara.TvaTakeAwayID)
 	}
-	if carbonara.AvailableDelivery || carbonara.TvaDeliveryID != 8 {
-		t.Fatalf("livraison = (available %v, tva %d), want (false, 8)", carbonara.AvailableDelivery, carbonara.TvaDeliveryID)
+	if !carbonara.AvailableDelivery || carbonara.TvaDeliveryID != 8 {
+		t.Fatalf("livraison = (available %v, tva %d), want (true, 8)", carbonara.AvailableDelivery, carbonara.TvaDeliveryID)
 	}
 	if carbonara.PriceIn != 1390 || carbonara.PriceTakeAway != 1390 || carbonara.PriceDelivery != 1390 {
 		t.Fatalf("prix = (%d, %d, %d), want 1390 partout",
@@ -171,8 +172,8 @@ func TestBuildCommitPlanRejectsUnresolvedTvaRate(t *testing.T) {
 	}
 }
 
-// Règle de rejet : un canal fermé dont aucun taux de repli ne se résout bloque
-// aussi — tva_*_id est NOT NULL.
+// Règle de rejet : un canal dont le taux vaut 0 et dont aucun taux de repli ne
+// se résout bloque aussi — tva_*_id est NOT NULL.
 func TestBuildCommitPlanRejectsUnresolvableBackfill(t *testing.T) {
 	zero, ten := 0.0, 10.0
 
@@ -187,7 +188,7 @@ func TestBuildCommitPlanRejectsUnresolvableBackfill(t *testing.T) {
 	}
 
 	lk := defaultLookups()
-	// Le taux 10 n'existe que sur place : le repli des canaux fermés échoue.
+	// Le taux 10 n'existe que sur place : le repli des autres canaux échoue.
 	lk.TvaRates = []TvaRateRow{{TvaID: 2, Channel: TvaChannelIn, Rate: 10}}
 
 	plan, blockers := BuildCommitPlan(imp, ImportDecisions{}, lk)

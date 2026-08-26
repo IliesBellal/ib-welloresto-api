@@ -75,6 +75,18 @@ func (s *UsersService) SetUserLocation(ctx context.Context, token string, req mo
 
 	req.UserID = user.UserID
 
+	// Le suivi de position est une prestation du module Livraison. Sans
+	// souscription (mode livraison standard), on ne persiste ni la position
+	// courante ni l'historique, et ni le geofence d'arrivee ni le relais de
+	// position vers Uber BYOC ne se declenchent.
+	//
+	// No-op silencieux plutot que 403 : c'est deja le comportement quand le
+	// livreur n'a pas de session active (voir le `sessionID == ""` ci-dessous),
+	// et un 403 ferait echouer en boucle les apps coursier deja deployees.
+	if ctxUser, ctxErr := middleware.UserFromContext(ctx); ctxErr == nil && !ctxUser.DeliveryEnabled {
+		return nil
+	}
+
 	// 3. Delivery-specific: position history + arrival geofence, only if the caller
 	// has an active delivery session.
 	sessionID, currentOrderID, err := s.userRepo.GetActiveDeliverySessionForUser(ctx, user.MerchantID, user.UserID)

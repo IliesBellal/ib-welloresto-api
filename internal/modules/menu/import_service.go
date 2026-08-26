@@ -25,15 +25,17 @@ var (
 )
 
 // importPreviewStore est ce que le service attend du cache : déposer, relire
-// et consommer un snapshot, plus l'invalidation des caches de menu après un
-// commit. Une interface plutôt que *redisclient.Client directement, parce que
-// ce dernier est une struct concrète à champ privé — impossible à simuler en
-// test autrement.
+// et consommer un snapshot. Une interface plutôt que *redisclient.Client
+// directement, parce que ce dernier est une struct concrète à champ privé —
+// impossible à simuler en test autrement.
+//
+// L'invalidation des caches de menu après un commit n'en fait plus partie :
+// elle est portée par MenuChangeNotifier, avec la diffusion `menu_updated`
+// qui doit l'accompagner (incrément B).
 type importPreviewStore interface {
 	Set(ctx context.Context, key string, value string, ttl time.Duration) bool
 	Get(ctx context.Context, key string) (string, bool)
 	Delete(ctx context.Context, key string) bool
-	InvalidateMerchantMenuCaches(ctx context.Context, merchantID string)
 }
 
 // importPreviewReader est la part de MenuRepository utilisée ici. La déclarer
@@ -54,6 +56,7 @@ type ImportService struct {
 	registry   *importer.Registry
 	store      importPreviewStore
 	tagCreator importTagCreator
+	changes    *MenuChangeNotifier
 
 	previewTTL time.Duration
 }
@@ -61,12 +64,17 @@ type ImportService struct {
 // NewImportService câble la preview et le commit. reader et writer sont la même
 // instance de MenuRepository en production ; les séparer permet de vérifier en
 // test qu'un lot refusé n'atteint jamais la part qui écrit.
+//
+// changes est partagé avec MenuService : la fenêtre d'amortissement de
+// `menu_updated` doit être commune aux deux chemins d'écriture, sinon un
+// import lancé pendant des éditions unitaires diffuserait en double.
 func NewImportService(
 	reader importPreviewReader,
 	writer importCommitWriter,
 	registry *importer.Registry,
 	store importPreviewStore,
 	tagCreator importTagCreator,
+	changes *MenuChangeNotifier,
 ) *ImportService {
 	return &ImportService{
 		reader:     reader,
@@ -74,6 +82,7 @@ func NewImportService(
 		registry:   registry,
 		store:      store,
 		tagCreator: tagCreator,
+		changes:    changes,
 		previewTTL: models.MenuImportPreviewTTL,
 	}
 }

@@ -267,9 +267,16 @@ type MerchantRow struct {
 	InEnabled         bool `json:"in_enabled"`
 	InAvailable       bool `json:"in_available"`
 
-	PrepTimeMode        string `json:"prep_time_mode"` // AUTO | MANUAL
-	PrepTime            int    `json:"prep_time"`      // en minutes
-	EnableAdvanceOrders bool   `json:"enable_advance_orders"`
+	PrepTimeMode string `json:"prep_time_mode"` // AUTO | MANUAL
+	PrepTime     int    `json:"prep_time"`      // en minutes
+
+	// ExtraPrepMinutes : temps d'attente supplémentaire temporaire, déjà filtré
+	// par son échéance côté SQL (0 dès que scannorder_settings.extra_prep_until
+	// est dépassé ou nul). S'additionne à PrepTime — voir
+	// scannorder.Service.GetEffectivePrepMinutes.
+	ExtraPrepMinutes int `json:"extra_prep_minutes"`
+
+	EnableAdvanceOrders bool `json:"enable_advance_orders"`
 }
 
 type PricingResult struct {
@@ -615,6 +622,7 @@ type MerchantParametersSettings struct {
 	POSAutoLockEnabled                *bool   `json:"pos_auto_lock_enabled,omitempty"`
 	POSAutoLockDelayMinutes           *int    `json:"pos_auto_lock_delay_minutes,omitempty"`
 	POSUpsellEnabled                  *bool   `json:"pos_upsell_enabled,omitempty"`
+	POSCoversCountRequired            *bool   `json:"pos_covers_count_required,omitempty"`
 	CustomerFormRequirements          *json.RawMessage `json:"customer_form_requirements,omitempty"`
 	Currency                          *string `json:"currency,omitempty"`
 	IsOpen                            *bool   `json:"is_open,omitempty"`
@@ -753,6 +761,13 @@ type POSSettingsOrdering struct {
 	ActiveTakeaway     bool   `json:"active_takeaway"`
 	ActiveDelivery     bool   `json:"active_delivery"`
 	UpsellEnabled      bool   `json:"upsell_enabled"`
+	// Persiste dans merchant_parameters.pos_covers_count_required.
+	CoversCountRequired bool `json:"covers_count_required"`
+	// Persiste dans merchant_parameters.waiter_app_can_cash_in : colonne
+	// heritee de l'app serveur, reaffectee ici a l'encaissement sur telephone
+	// (le POS et l'app serveur sont le meme binaire, distingues par la classe
+	// d'appareil). Le nom expose dit ce que le reglage fait aujourd'hui.
+	MobilePaymentEnabled bool `json:"mobile_payment_enabled"`
 	CustomerFormRequirements *json.RawMessage `json:"customer_form_requirements,omitempty"`
 }
 
@@ -766,6 +781,8 @@ type POSSettingsOrderingPatch struct {
 	ActiveTakeaway     *bool   `json:"active_takeaway,omitempty"`
 	ActiveDelivery     *bool   `json:"active_delivery,omitempty"`
 	UpsellEnabled      *bool   `json:"upsell_enabled,omitempty"`
+	CoversCountRequired  *bool `json:"covers_count_required,omitempty"`
+	MobilePaymentEnabled *bool `json:"mobile_payment_enabled,omitempty"`
 }
 
 type POSSettingsScanOrder struct {

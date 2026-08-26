@@ -48,6 +48,13 @@ type ScanNOrderIntegration struct {
 	SyncedItems      int             `json:"synced_items"`
 	KPIs             IntegrationKPIs `json:"kpis"`
 
+	// Temps d'attente supplémentaire temporaire. Renvoyés bruts (sans filtrage
+	// par l'échéance) : c'est l'écran de réglages, il doit montrer ce qui est
+	// enregistré. Le filtrage temporel n'a lieu que sur le chemin client
+	// (scannorder.snoActiveExtraPrepMinutes).
+	ExtraPrepMinutes *int       `json:"extra_prep_minutes"`
+	ExtraPrepUntil   *time.Time `json:"extra_prep_until"`
+
 	// Visual / branding
 	LogoURL   *string `json:"logo_url"`
 	BannerURL *string `json:"banner_url"`
@@ -100,6 +107,29 @@ type CloseTemporaryIntegrationsRequest struct {
 type CloseTemporaryIntegrationsResponse struct {
 	Status               string    `json:"status"`
 	ClosedUntil          time.Time `json:"closed_until"`
+	AffectedIntegrations []string  `json:"affected_integrations"`
+}
+
+// SetWaitTimeRequest is the body for PATCH /integrations/global/wait-time.
+//
+// Le nom de route et des champs reprennent à l'identique ce que le POS Flutter
+// envoie déjà (data/api/integration_api.dart) : l'action rapide « Temps
+// d'attente » existe et est déployée, seul l'endpoint manquait côté API.
+type SetWaitTimeRequest struct {
+	WaitTimeMinutes      int      `json:"wait_time_minutes"`
+	AffectedIntegrations []string `json:"affected_integrations"`
+
+	// DurationMinutes : durée pendant laquelle le supplément s'applique avant
+	// de s'effacer seul. Optionnel — le POS n'envoie que le supplément, d'où le
+	// défaut defaultWaitTimeWindowMinutes.
+	DurationMinutes *int `json:"duration_minutes,omitempty"`
+}
+
+// SetWaitTimeResponse is the response for a temporary extra wait time.
+type SetWaitTimeResponse struct {
+	Status               string    `json:"status"`
+	WaitTimeMinutes      int       `json:"wait_time_minutes"`
+	AppliedUntil         time.Time `json:"applied_until"`
 	AffectedIntegrations []string  `json:"affected_integrations"`
 }
 

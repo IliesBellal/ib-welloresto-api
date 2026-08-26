@@ -236,8 +236,8 @@ type PreviewTvaRate struct {
 	ProductCount int        `json:"product_count"`
 
 	// NeededForBackfill marque un couple qui ne figure pas tel quel dans le
-	// fichier : il est requis parce qu'un canal désactivé (taux 0) doit tout
-	// de même recevoir un tva_id, tva_*_id étant NOT NULL.
+	// fichier : il est requis parce qu'un canal dont le taux de TVA vaut 0
+	// doit tout de même recevoir un tva_id, tva_*_id étant NOT NULL.
 	NeededForBackfill bool `json:"needed_for_backfill"`
 }
 
@@ -309,13 +309,15 @@ type PreviewChannel struct {
 	Rate  *float64 `json:"rate"`
 	TvaID int      `json:"tva_id"`
 
-	// Available passe à false quand le taux vaut 0 : c'est ainsi que la source
-	// exprime « ce produit n'est pas vendu sur ce canal ».
+	// Available reste toujours vrai pour l'instant : un taux de TVA à 0 ne
+	// signifie pas que le canal est indisponible, seulement qu'aucun taux
+	// spécifique n'est défini pour ce canal (voir buildChannel).
 	Available bool `json:"available"`
 	Resolved  bool `json:"resolved"`
 
 	// Backfilled : le tva_id ne vient pas du taux du canal (qui vaut 0) mais du
-	// taux le plus haut du produit, re-résolu sur ce canal.
+	// taux le plus bas défini par ailleurs sur le produit (ou de l'unique
+	// taux défini s'il n'y en a qu'un), re-résolu sur ce canal.
 	Backfilled      bool `json:"backfilled"`
 	PriceBackfilled bool `json:"price_backfilled"`
 }
@@ -719,14 +721,16 @@ func (b *previewBuilder) buildChannels(p *CanonicalProduct, instruct bool) Previ
 		maxPrice = p.PriceDelivery
 	}
 
-	// Taux candidats au backfill, du plus haut au plus bas.
+	// Taux candidats au repli, du plus bas au plus haut : un taux à 0 signifie
+	// « utiliser le seul taux de TVA défini », ou le plus bas s'il y en a
+	// plusieurs — pas « canal indisponible ».
 	var candidates []float64
 	for _, rate := range []*float64{p.TvaRateIn, p.TvaRateTakeAway, p.TvaRateDelivery} {
 		if rate != nil && *rate > 0 {
 			candidates = append(candidates, *rate)
 		}
 	}
-	sort.Sort(sort.Reverse(sort.Float64Slice(candidates)))
+	sort.Sort(sort.Float64Slice(candidates))
 
 	return PreviewChannels{
 		In:       b.buildChannel(p, TvaChannelIn, p.PriceIn, p.TvaRateIn, maxPrice, candidates, instruct),
@@ -755,11 +759,12 @@ func (b *previewBuilder) buildChannel(
 		}
 
 	case *rate == 0:
-		// Le canal est désactivé, mais tva_*_id et price_* restent NOT NULL :
-		// on les remplit avec le taux le plus haut du produit et le prix le
-		// plus haut défini, pour qu'une réactivation ultérieure parte d'un
-		// état cohérent plutôt que d'un zéro.
-		out.Available = false
+		// Un taux à 0 ne signifie pas « canal indisponible », mais « aucun
+		// taux spécifique pour ce canal » : Zelty n'exprime ainsi que le taux
+		// de TVA, pas la disponibilité. On résout le canal avec le taux le
+		// plus bas défini par ailleurs sur le produit (ou l'unique taux
+		// défini s'il n'y en a qu'un). price_* reste NOT NULL : on le remplit
+		// avec le prix le plus haut défini si le canal n'a pas de prix propre.
 		if price == 0 && maxPrice > 0 {
 			out.Price = maxPrice
 			out.PriceBackfilled = true

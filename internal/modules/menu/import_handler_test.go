@@ -39,7 +39,6 @@ type fakePreviewStore struct {
 	fail   bool
 
 	deleted     []string
-	invalidated []string
 }
 
 func newFakePreviewStore() *fakePreviewStore {
@@ -67,15 +66,11 @@ func (s *fakePreviewStore) Delete(_ context.Context, key string) bool {
 	return existed
 }
 
-func (s *fakePreviewStore) InvalidateMerchantMenuCaches(_ context.Context, merchantID string) {
-	s.invalidated = append(s.invalidated, merchantID)
-}
-
 // newTestImportService câble le service sur une base simulée. Le dépôt tient
 // les deux rôles (lecture et écriture), comme en production.
 func newTestImportService(db *sql.DB, store importPreviewStore) *ImportService {
 	repo := NewMenuRepository(db, nil)
-	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db))
+	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil))
 }
 
 // newImportPreviewHandler câble le handler sur une base simulée.
