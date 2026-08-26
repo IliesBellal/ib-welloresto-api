@@ -231,8 +231,39 @@ dans la modale plutôt que masqué.
 
 ### POS Flutter (`wello_resto_flutter`)
 
-**Aucune modification.** L'action rapide existait déjà et devient fonctionnelle
-par le seul ajout de la route côté API.
+L'action rapide « Temps d'attente » existait déjà et devient fonctionnelle par le
+seul ajout de la route côté API. Les deux tuiles ont ensuite été fusionnées, à
+l'image du back-office :
+
+- `lib/ui/widgets/dialogs/integration_wait_time_dialog.dart` — **dialogue
+  unique** portant les trois actions (`IntegrationOperation`). Remplace
+  `integration_temporary_closure_dialog.dart` (supprimé).
+- `lib/ui/widgets/dialogs/quick_actions_dialog.dart` — une seule tuile au lieu
+  de deux.
+- `lib/data/api/integration_api.dart`, `data/services/integration_service.dart`,
+  `controllers/authentication_controller.dart`,
+  `data/api/payload/integration/preparation_time_payload.dart` — ajout du
+  pilotage du temps de préparation **permanent** (`PATCH
+  /integrations/{plateforme}`), qui n'existait pas côté POS.
+
+Le nom de fichier et la classe `IntegrationWaitTimeDialog` sont conservés :
+c'est le point d'entrée déjà référencé, et le renommer n'aurait rien apporté.
+
+**Traitement des plateformes non pertinentes** : elles restent **visibles mais
+grisées** (`WelloChip(enabled: false)`), accompagnées d'une note expliquant
+pourquoi — le personnel comprend l'absence au lieu de la subir. À distinguer des
+plateformes **non souscrites**, elles absentes de la liste comme avant.
+
+| Action POS | Uber Eats | Deliveroo | ScanNOrder |
+|---|---|---|---|
+| Temps d'attente | ✅ | ✅ ⚠️ | grisé (aucun endpoint) |
+| Temps supplémentaire | ✅ | grisé (non supporté) | ✅ |
+| Fermeture temporaire | ✅ | ✅ | ✅ |
+
+⚠️ Le POS devient un second point d'entrée vers le chemin permanent Deliveroo,
+qui pousse un mode et non des minutes (voir la dette ci-dessus). Comportement
+identique à celui déjà exposé par le back-office — aucune régression, mais la
+dette gagne en visibilité et mérite d'être traitée.
 
 ## Statut d'exécution
 
@@ -290,10 +321,9 @@ couverte par le chemin `MANUAL`.
    arbitrer.
 2. **Validité de `MODERATE`** comme valeur de `workload/mode`, à confirmer sur le
    portail partenaire Deliveroo. Impacte le chemin permanent uniquement.
-3. **POS Flutter** : `IntegrationWaitTimeDialog` propose encore une puce
-   Deliveroo, désormais sans effet (l'API l'ignore et ne la renvoie pas dans
-   `affected_integrations`). Aucune régression — le dialogue ne lit pas la
-   réponse — mais la puce devrait être retirée à la prochaine release mobile.
+3. **Temps d'attente permanent Deliveroo depuis le POS** : désormais atteignable
+   depuis les actions rapides, il emprunte le chemin buggé. Argument
+   supplémentaire pour traiter le point 1.
 3. **Temps de préparation ScanNOrder non pilotable** :
    `merchant_parameters.preparation_time` / `preparation_time_mode` sont lus
    partout, écrits nulle part. Un endpoint manquerait pour compléter l'action
