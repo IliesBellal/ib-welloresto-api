@@ -2351,3 +2351,64 @@ func (h *MenuHandler) BulkSetProductsTva(w http.ResponseWriter, r *http.Request)
 		"updated": len(payload.ProductIDs),
 	})
 }
+
+// BulkSetProductsAvailability — PATCH /menu/products/bulk/availability
+// Active/désactive en une requête un sous-ensemble des six canaux de
+// disponibilité (sur place, à emporter, livraison, ScanNOrder, Uber Eats,
+// Deliveroo) pour plusieurs produits. Un canal absent du corps de la requête
+// reste inchangé — c'est l'option « Ne pas modifier » du back-office.
+func (h *MenuHandler) BulkSetProductsAvailability(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_availability", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload struct {
+		ProductIDs        []string `json:"product_ids"`
+		AvailableIn       *bool    `json:"available_in"`
+		AvailableTakeAway *bool    `json:"available_take_away"`
+		AvailableDelivery *bool    `json:"available_delivery"`
+		IsAvailableOnSno  *bool    `json:"is_available_on_sno"`
+		SyncUberEats      *bool    `json:"sync_uber_eats"`
+		SyncDeliveroo     *bool    `json:"sync_deliveroo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_availability", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_availability", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	fields := BulkAvailabilityFields{
+		AvailableIn:       payload.AvailableIn,
+		AvailableTakeAway: payload.AvailableTakeAway,
+		AvailableDelivery: payload.AvailableDelivery,
+		IsAvailableOnSno:  payload.IsAvailableOnSno,
+		SyncUberEats:      payload.SyncUberEats,
+		SyncDeliveroo:     payload.SyncDeliveroo,
+	}
+	if fields.AvailableIn == nil && fields.AvailableTakeAway == nil && fields.AvailableDelivery == nil &&
+		fields.IsAvailableOnSno == nil && fields.SyncUberEats == nil && fields.SyncDeliveroo == nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_availability", map[string]string{"error": "no_channel_provided"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	updated, err := h.service.BulkSetProductsAvailability(ctx, token, payload.ProductIDs, fields)
+	if err != nil {
+		log.Error("[ERROR] BulkSetProductsAvailability error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_availability", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_availability", map[string]interface{}{
+		"status":  "success",
+		"message": "products_availability_updated",
+		"updated": updated,
+	})
+}

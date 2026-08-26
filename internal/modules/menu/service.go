@@ -573,6 +573,27 @@ func (s *MenuService) BulkSetProductsTva(ctx context.Context, token string, prod
 	return nil
 }
 
+// BulkSetProductsAvailability applique un sous-ensemble des six canaux de
+// disponibilité (sur place, à emporter, livraison, ScanNOrder, Uber Eats,
+// Deliveroo) à plusieurs produits en une seule action de groupe.
+func (s *MenuService) BulkSetProductsAvailability(ctx context.Context, token string, productIDs []string, fields BulkAvailabilityFields) (int64, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	updated, err := s.legacy.BulkSetProductsAvailability(ctx, user.MerchantID, productIDs, fields)
+	if err != nil {
+		return 0, err
+	}
+
+	if updated > 0 {
+		s.onMenuChanged(ctx, user.MerchantID)
+	}
+
+	return updated, nil
+}
+
 func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, productID, status string) {
 	available, shouldSync := mapWelloStatusToAvailability(status)
 	if !shouldSync {

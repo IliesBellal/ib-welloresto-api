@@ -3297,6 +3297,62 @@ func (r *MenuRepository) BulkSetProductsTva(ctx context.Context, merchantID stri
 	return nil
 }
 
+// BulkAvailabilityFields liste les six canaux pilotés par l'édition de groupe
+// « Définir les disponibilités » du back-office. Un pointeur nil laisse le
+// canal inchangé (COALESCE), true/false l'active ou le désactive — cette
+// tri-state correspond aux options « Ne pas modifier / Activer / Désactiver ».
+type BulkAvailabilityFields struct {
+	AvailableIn       *bool
+	AvailableTakeAway *bool
+	AvailableDelivery *bool
+	IsAvailableOnSno  *bool
+	SyncUberEats      *bool
+	SyncDeliveroo     *bool
+}
+
+// BulkSetProductsAvailability applique en une requête un sous-ensemble des six
+// canaux de disponibilité (sur place, à emporter, livraison, ScanNOrder, Uber
+// Eats, Deliveroo) à plusieurs produits. Chaque champ nil de fields laisse la
+// colonne correspondante inchangée.
+func (r *MenuRepository) BulkSetProductsAvailability(ctx context.Context, merchantID string, productIDs []string, fields BulkAvailabilityFields) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	args := make([]interface{}, 0, len(idArgs)+7)
+	args = append(args,
+		fields.AvailableIn,
+		fields.AvailableTakeAway,
+		fields.AvailableDelivery,
+		fields.IsAvailableOnSno,
+		fields.SyncUberEats,
+		fields.SyncDeliveroo,
+		merchantID,
+	)
+	args = append(args, idArgs...)
+
+	res, err := db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE products
+		SET
+			available_in = COALESCE(?, available_in),
+			available_take_away = COALESCE(?, available_take_away),
+			available_delivery = COALESCE(?, available_delivery),
+			is_available_on_sno = COALESCE(?, is_available_on_sno),
+			sync_uber_eats = COALESCE(?, sync_uber_eats),
+			sync_deliveroo = COALESCE(?, sync_deliveroo)
+		WHERE merchant_id = ? AND product_id IN (%s) AND enabled = TRUE`, inClause), args...)
+	if err != nil {
+		return 0, err
+	}
+
+	_ = r.setMenuUpdated(ctx, merchantID)
+
+	return res.RowsAffected()
+}
+
 func (r *MenuRepository) SetProductCategoryAvailability(ctx context.Context, merchantID, categoryID, status string) (int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 

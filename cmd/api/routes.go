@@ -797,6 +797,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)             // used by: back-office
 		r.Patch("/products/bulk/tags", menuH.BulkSetProductsTags)             // used by: back-office
 		r.Patch("/products/bulk/tva", menuH.BulkSetProductsTva)               // used by: back-office
+		r.Patch("/products/bulk/availability", menuH.BulkSetProductsAvailability) // used by: back-office
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
