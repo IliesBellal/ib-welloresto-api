@@ -101,6 +101,72 @@ func TestAuthRepository_Postgres(t *testing.T) {
 	if got.UserID != userID || got.MerchantID != merchantID || got.Currency != "EUR" || !got.IsOpen {
 		t.Fatalf("unexpected user row: %+v", got)
 	}
+	if got.RoleID != nil {
+		t.Fatalf("expected nil RoleID before any role is attached, got %v", *got.RoleID)
+	}
+	if len(got.Permissions) != 0 {
+		t.Fatalf("expected no permissions before any role is attached, got %v", got.Permissions)
+	}
+
+	// RBAC lot 2: attach a role carrying two permissions to this user's
+	// users_rights link, and confirm all three constructors (GetUserByToken,
+	// Login, GetUserByPIN) load Permissions the same way — via the second
+	// query in attachRolePermissions, never aggregated in SQL.
+	roleID := "itest-role-" + userID
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO roles (id, merchant_id, name) VALUES ($1, $2, 'ITest Role')`, roleID, merchantID); err != nil {
+		t.Fatalf("seed role: %v", err)
+	}
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM roles WHERE id = $1`, roleID) })
+	for _, key := range []string{"pos.access", "catalog.manage"} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO role_permissions (role_id, permission_key) VALUES ($1, $2)`, roleID, key); err != nil {
+			t.Fatalf("seed role_permission %s: %v", key, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE users_rights SET role_id = $1 WHERE user_id = $2`, roleID, userID); err != nil {
+		t.Fatalf("attach role to users_rights: %v", err)
+	}
+
+	gotWithRole, err := repo.GetUserByToken(ctx, rightsToken)
+	if err != nil {
+		t.Fatalf("GetUserByToken (with role) failed: %v", err)
+	}
+	if gotWithRole.RoleID == nil || *gotWithRole.RoleID != roleID {
+		t.Fatalf("expected RoleID %q, got %v", roleID, gotWithRole.RoleID)
+	}
+	if len(gotWithRole.Permissions) != 2 {
+		t.Fatalf("expected 2 permissions, got %v", gotWithRole.Permissions)
+	}
+
+	loginWithRole, err := repo.Login(ctx, "", "", rightsToken)
+	if err != nil {
+		t.Fatalf("Login (with role) failed: %v", err)
+	}
+	if len(loginWithRole.Permissions) != 2 {
+		t.Fatalf("expected Login to load 2 permissions too, got %v", loginWithRole.Permissions)
+	}
+
+	pinWithRole, err := repo.GetUserByPIN(ctx, merchantID, "itest-pin-hash")
+	if err != nil {
+		t.Fatalf("GetUserByPIN (with role) failed: %v", err)
+	}
+	if pinWithRole == nil || len(pinWithRole.Permissions) != 2 {
+		t.Fatalf("expected GetUserByPIN to load 2 permissions too, got %+v", pinWithRole)
+	}
+
+	// Detach the role: Permissions must go back to empty, not stay stale from
+	// a previous role (there is no caching inside the repository itself).
+	if _, err := db.ExecContext(ctx, `UPDATE users_rights SET role_id = NULL WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("detach role: %v", err)
+	}
+	gotWithoutRole, err := repo.GetUserByToken(ctx, rightsToken)
+	if err != nil {
+		t.Fatalf("GetUserByToken (role detached) failed: %v", err)
+	}
+	if gotWithoutRole.RoleID != nil || len(gotWithoutRole.Permissions) != 0 {
+		t.Fatalf("expected no role and no permissions after detaching, got RoleID=%v Permissions=%v", gotWithoutRole.RoleID, gotWithoutRole.Permissions)
+	}
 
 	// Login by token (same CAST join + boolean fixes, different column set).
 	loginRow, err := repo.Login(ctx, "", "", rightsToken)

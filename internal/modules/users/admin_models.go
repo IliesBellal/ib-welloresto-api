@@ -73,8 +73,20 @@ type MerchantUserListItem struct {
 	EmployeeName     *string                 `json:"employee_name,omitempty"`
 }
 
+// RoleRef is the minimal role reference exposed on MerchantUserDetail — RBAC
+// lot 9, so the back-office "Accès" tab can preload the user's current role
+// without a second round trip. Nil (and RoleID nil) for a user with no
+// role_id yet (pre-lot-4 world).
+type RoleRef struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	SystemKey *string `json:"system_key,omitempty"`
+}
+
 type MerchantUserDetail struct {
 	MerchantUserListItem
+	RoleID *string  `json:"role_id,omitempty"`
+	Role   *RoleRef `json:"role,omitempty"`
 }
 
 type LinkableUser struct {

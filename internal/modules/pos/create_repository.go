@@ -2,9 +2,11 @@ package pos
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 // InsertMerchant inserts a row into the merchant table and returns the auto-incremented ID.
@@ -131,16 +133,69 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 	return nil
 }
 
+// SetDefaultRoleID points merchant.default_role_id at roleID, but only if it
+// is still unset — never overwrites a default a merchant may already have
+// (manually repointed to a custom role, for instance).
+//
+// merchant.id is an integer PK while merchantID/roleID circulate as strings
+// everywhere in application code; the CAST mirrors authMerchantJoinCast in
+// internal/modules/auth/repository.go, used for the same join elsewhere.
+func (r *POSRepository) SetDefaultRoleID(ctx context.Context, merchantID, roleID string) error {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	castExpr := "CAST(id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		castExpr = "CAST(id AS TEXT)"
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"UPDATE merchant SET default_role_id = ? WHERE "+castExpr+" = ? AND default_role_id IS NULL",
+		roleID, merchantID,
+	); err != nil {
+		log.Error("SetDefaultRoleID: failed to set merchant default_role_id: " + err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// MerchantDefaultRoleID returns merchant.default_role_id for merchantID, or
+// models.ErrMerchantDefaultRoleNotSet if the establishment has no default
+// role configured yet (RBAC lot 4: linking a user must fail explicitly
+// instead of inserting a users_rights row with no role_id — see
+// migrations/done/099_merchant_default_role_admin.up.sql). Returns
+// sql.ErrNoRows if merchantID does not match any merchant.
+func (r *POSRepository) MerchantDefaultRoleID(ctx context.Context, merchantID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	castExpr := "CAST(id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		castExpr = "CAST(id AS TEXT)"
+	}
+
+	var roleID sql.NullString
+	if err := db.QueryRowContext(ctx,
+		"SELECT default_role_id FROM merchant WHERE "+castExpr+" = ?", merchantID,
+	).Scan(&roleID); err != nil {
+		return "", err
+	}
+	if !roleID.Valid {
+		return "", models.ErrMerchantDefaultRoleNotSet
+	}
+	return roleID.String, nil
+}
+
 // InsertUserRights inserts a row into users_rights and returns the auto-incremented ID.
-func (r *POSRepository) InsertUserRights(ctx context.Context, userID, merchantID string, admin bool, token string) (int, error) {
+func (r *POSRepository) InsertUserRights(ctx context.Context, userID, merchantID string, admin bool, token string, roleID string) (int, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO users_rights
-			(user_id, merchant_id, token, admin, enabled)
-		VALUES (?, ?, ?, ?, TRUE)`, "id",
-		userID, merchantID, token, admin,
+			(user_id, merchant_id, token, admin, role_id, enabled)
+		VALUES (?, ?, ?, ?, ?, TRUE)`, "id",
+		userID, merchantID, token, admin, roleID,
 	)
 	if err != nil {
 		log.Error("InsertUserRights: failed to insert user rights: " + err.Error())

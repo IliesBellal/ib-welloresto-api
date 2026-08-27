@@ -41,9 +41,25 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 			return err
 		}
 
-		// Step 4 — optional user linkage
+		// Step 4 — RBAC lot 1 (additive, strictly groundwork): seed the two
+		// system roles and point the merchant's default at "admin" (RBAC lot 4
+		// decision: every account becomes Administrateur while permissions are
+		// not yet exploited from the UI — see internal/modules/roles and
+		// migrations/done/099_merchant_default_role_admin.up.sql). Runs before
+		// step 5 so the optional initial user linkage below has a
+		// default_role_id to read; insertUserRightsTx fails explicitly if it
+		// is still unset.
+		adminRoleID, _, err := s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)
+		if err != nil {
+			return err
+		}
+		if err := s.posRepo.SetDefaultRoleID(txCtx, merchantID, adminRoleID); err != nil {
+			return err
+		}
+
+		// Step 5 — optional user linkage
 		if strings.TrimSpace(req.UserID) != "" {
-			if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin); err != nil {
+			if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin, adminRoleID); err != nil {
 				return err
 			}
 		}
@@ -63,7 +79,16 @@ func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUse
 		return LinkUserResponse{}, models.ErrInvalidInput
 	}
 
-	token, id, err := s.insertUserRightsTx(ctx, req.UserID, req.MerchantID, req.Admin)
+	// merchant.default_role_id, not a hardcoded role: RBAC lot 4 decision.
+	// Fails explicitly (models.ErrMerchantDefaultRoleNotSet) rather than
+	// inserting a users_rights row with no role_id — see
+	// migrations/done/099_merchant_default_role_admin.up.sql.
+	roleID, err := s.posRepo.MerchantDefaultRoleID(ctx, req.MerchantID)
+	if err != nil {
+		return LinkUserResponse{}, err
+	}
+
+	token, id, err := s.insertUserRightsTx(ctx, req.UserID, req.MerchantID, req.Admin, roleID)
 	if err != nil {
 		return LinkUserResponse{}, err
 	}
@@ -73,13 +98,13 @@ func (s *POSService) LinkUser(ctx context.Context, req LinkUserRequest) (LinkUse
 
 // insertUserRightsTx is the shared helper that inserts a users_rights row and
 // returns (token, rowID, error). It is used both by CreateMerchant and LinkUser.
-func (s *POSService) insertUserRightsTx(ctx context.Context, userID, merchantID string, admin bool) (string, int, error) {
+func (s *POSService) insertUserRightsTx(ctx context.Context, userID, merchantID string, admin bool, roleID string) (string, int, error) {
 	rightsToken, err := helpers.GenerateToken(16) // 32-char hex token → VARCHAR(255)
 	if err != nil {
 		return "", 0, err
 	}
 
-	id, err := s.posRepo.InsertUserRights(ctx, userID, merchantID, admin, rightsToken)
+	id, err := s.posRepo.InsertUserRights(ctx, userID, merchantID, admin, rightsToken, roleID)
 	if err != nil {
 		return "", 0, err
 	}

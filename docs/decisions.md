@@ -1,5 +1,180 @@
 # Decisions
 
+### RBAC lot 9 — clés à points dans /login, admin dérivé du rôle, rôle exposé sur GET /users/{id} (2026-08-27)
+
+- **Contexte** : lot 9 = écrans d'administration des rôles côté back-office
+  (dépôt `wello-back-office`). Deux prémisses du brief front se sont révélées
+  fausses à la lecture du code, corrigées ici côté API avant que le front ne
+  s'appuie dessus.
+
+- **`permissions: string[]` ajouté à la réponse de login**, en sibling de
+  `access` (pas dedans — `access.permissions` garde sa forme et ses noms
+  historiques, d'autres clients en dépendent).
+  `internal/modules/auth/login_response.go` (nouveau champ) +
+  `service.go` (`buildLoginResponse`, `Permissions: user.Permissions`). Donnée
+  déjà calculée par `attachRolePermissions`/`loadRolePermissions`
+  (`repository.go`, RBAC lot 2) — rien de recalculé. Un seul site de
+  construction réel existe (`buildLoginResponse`, appelé uniquement par
+  `AuthService.Login`) : le login par mot de passe, le login par PIN
+  (`AuthenticatePIN` délègue à `Login`) et la bascule d'établissement
+  (`switchMerchant`/`loginWithToken` côté back-office, `POST /auth/login`
+  avec un autre token porteur) passent tous par ce même chemin. `LoginOld`
+  est du code mort (entièrement commenté). La restauration de session est
+  100% côté client (localStorage, aucun appel réseau) — aucun chemin API à
+  couvrir de ce côté.
+- **Garde-fou `permission.FilterValid`** (`internal/permission/filter.go`) :
+  ne garde que les clés présentes dans `permission.All`, appelé dans
+  `attachRolePermissions` avant d'écrire `data.Permissions`. La contrainte FK
+  de `role_permissions.permission_key` devrait déjà garantir cet invariant
+  (cf. entrée du lot 8 ci-dessous) ; ce filtre le rend explicite et testable
+  plutôt que de reposer uniquement sur la contrainte DB. Tests :
+  `internal/permission/filter_test.go`,
+  `internal/modules/auth/login_response_test.go`
+  (`TestBuildLoginResponse_PermissionsPassthrough` — le pendant, côté sortie,
+  de `TestRBACPermissionCoverage`/`keys_gen_test.go`).
+
+- **Bug trouvé en cours de route, corrigé le même jour** : `access.admin`
+  (réponse de login) et `is_admin` (`GET /me/permissions`) lisaient tous les
+  deux directement `user.Rights.Admin` — la colonne booléenne historique,
+  jamais le rôle. Or `Has()` (l'autorisation réelle, utilisée par
+  `RequirePermission`) ignore déjà `Rights.Admin` dès que `role_id` est
+  renseigné, même s'il contredit le rôle (`permissions.go:43-64`, testé). Les
+  deux champs d'affichage étaient donc en décalage avec l'autorisation
+  réelle — sans conséquence pour l'API elle-même (les routes catalogue
+  restent correctement gardées), mais un risque concret pour ce lot : un
+  compte non-admin avec `Rights.Admin` resté à `true` (signalé comme
+  fréquent en production) aurait affiché `access.admin = true`, et
+  `usePermissions().has()` côté front court-circuite sur ce drapeau — aucun
+  menu n'aurait jamais été masqué, quel que soit le rôle réellement assigné.
+  **Correctif** : nouvelle méthode `UserLoginRow.HasAdminRole()`
+  (`internal/modules/auth/permissions.go`), qui reprend exactement la
+  branche admin de `Has()` (role_id renseigné → `RoleSystemKey == "admin"` ;
+  sinon repli sur `Rights.Admin`). Utilisée par `buildLoginResponse` pour
+  `access.admin` et par `roles.Service.MyPermissions` pour `is_admin`
+  (remplace le `OR` avec `Rights.Admin` qui y subsistait). **Distincte
+  d'`IsAdmin()`** (`models.go`), qui reste `Rights.Admin` tel quel et continue
+  de servir `middleware.RequireAdmin()` — une décision d'autorisation
+  différente (« détient tous les droits », hors catalogue), non touchée ici,
+  hors périmètre du lot 9. Tests : 4 cas ajoutés à
+  `internal/modules/auth/permissions_test.go`.
+
+- **`GET /users/{id}` expose désormais `role_id`/`role`** (nécessaire pour le
+  sélecteur de rôle du nouvel onglet « Accès » côté back-office).
+  `internal/modules/users/admin_repository.go` :
+  `GetMerchantUserByID` a désormais sa propre requête (LEFT JOIN `roles`) et
+  son propre scan (`scanMerchantUserDetail`), plutôt que de faire grossir la
+  requête/scan partagés avec `ListMerchantUsers`
+  (`scanMerchantUserListItem`) — la liste n'a pas besoin de ces colonnes.
+  `MerchantUserDetail` (`admin_models.go`) gagne `RoleID *string` et
+  `Role *RoleRef` (nil si l'utilisateur n'a pas encore de `role_id`, monde
+  pré-lot-4). Handler inchangé : `models.SendJSON` sérialise la struct
+  directement, sans liste blanche de champs — confirmé en lisant
+  `admin_handler.go`. Fixture de test partagée
+  (`merchantUserDetailRows`, `admin_service_test.go`) mise à jour pour les 3
+  colonnes supplémentaires (nulles — aucun test existant n'exerce le chemin
+  rôle).
+
+- **Statut d'exécution** : `go build ./cmd/api/...` (et un `go build` scopé
+  aux paquets touchés — l'environnement de build a rencontré un disque C:
+  plein pendant cette session, contournement en limitant le scope plutôt
+  qu'un `./...` complet) ; `go test ./internal/permission/...
+  ./internal/modules/auth/... ./internal/modules/users/...
+  ./internal/modules/roles/...` passent, y compris après correction de la
+  fixture `merchantUserDetailRows`. `go vet` sur les mêmes paquets ne
+  signale que deux avertissements préexistants dans `auth/handler.go` (copie
+  de `sync.Mutex` via `singleflight.Group`), non liés à ce lot. Tests
+  d'intégration Postgres non relancés (pas d'accès Postgres/Redis locaux
+  dans cette session — même limite que les lots précédents).
+
+### RBAC lot 8 — catalogue 15 → 13, trois gardes mal posées retirées (2026-08-27)
+
+- **Contexte** : RBAC lot 7 (audit, `docs/RBAC_CLIENTS.md`) avait trouvé trois
+  gardes de sur-dosage (un droit `*.manage` posé sur une CONSULTATION ou une
+  SAISIE courante plutôt que sur une CONFIGURATION/CORRECTION) et huit droits
+  du catalogue qui ne gardaient aucune route. Ce lot traite les deux : retire
+  les trois gardes, relie six des huit droits orphelins à une route, et
+  supprime les deux restants du catalogue. Un des trois retraits a lui-même
+  fait naître un neuvième orphelin en cours de route (`haccp.manage`, voir
+  ci-dessous) — également résolu le même jour.
+
+- **`/haccp/traceability` — garde `haccp.manage` retirée (POST, GET, GET
+  `/{id}`).** Motif d'origine de la garde (posée le 2026-07-23, commit
+  `0b4509f` « ready for staging », message sans contexte) : **aucune trace
+  écrite n'en subsistait dans le dépôt** — ni `docs/decisions.md` (qui a une
+  entrée à cette date, mais sur un tout autre sujet : un trou de schéma
+  Postgres pour la même fonctionnalité), ni aucun autre document, ni le
+  message de commit lui-même. Confirmé par l'auteur de la décision dans cette
+  session : **le raisonnement était le même que celui retiré ci-dessous pour
+  `POST /customers/`** — « ça écrit des données », donc ça mérite une garde.
+  C'est exactement le raisonnement que le principe directeur du lot 7 invalide
+  (écrire une donnée ne rend pas une action CONFIGURATION — relever une
+  température écrit aussi une donnée, et n'est pas gardé). La traçabilité
+  HACCP (réception de marchandise tracée, photo + commentaire) est une
+  obligation légale quotidienne, saisie par n'importe quel employé de cuisine
+  via l'app Flutter — exactement comme le relevé de température ou le log de
+  nettoyage juste à côté dans le même module, tous deux libres. Lecture ET
+  écriture passent donc libres, alignées sur le reste de `/haccp`.
+  **Conséquence, tranchée le jour même** : retirer cette garde a laissé
+  `haccp.manage` sans aucune route (orphelin au sens du lot 7/8), attrapé par
+  `TestRBACPermissionCoverage`. Décision (même journée, 2026-08-27) : `PUT
+  /haccp/settings` (paramétrer les seuils et réglages du module — CONFIGURATION,
+  à l'inverse de la traçabilité qui est de la SAISIE) porte maintenant
+  `haccp.manage`. Les autres candidats CONFIGURATION identifiés par l'audit
+  (créer/éditer les zones et surfaces de nettoyage, les zones de température)
+  restent libres, non traités par ce lot. **Suivi explicitement différé à un
+  lot futur, non implémenté ici** : masquer la section HACCP du menu
+  back-office pour un compte sans `haccp.manage`, symétriquement à la garde
+  API — aujourd'hui rien ne cache ce menu, un compte sans le droit verrait
+  l'écran de paramétrage puis un 403 à l'enregistrement.
+
+- **`POST /customers/` (création unitaire) — garde `customers.manage`
+  retirée.** Créer une fiche client est une SAISIE courante (un serveur
+  inscrivant un client au programme de fidélité en salle en a besoin au
+  quotidien), pas une CONFIGURATION — `customers.manage` reste sur les 3
+  routes d'import en masse, qui écrivent potentiellement tout le fichier
+  client d'un coup. `GET /customers/list` et `GET /customers/search` restent
+  libres, comme avant ce lot (confirmé, aucun changement).
+
+- **`pos.access` et `pos.discount.apply` supprimés du catalogue** (migration
+  `100_deprecate_pos_access_and_discount_apply`). Ni l'un ni l'autre ne
+  gardait de route, et aucun remplacement n'est prévu : encaisser et
+  appliquer une remise restent, comme ils l'ont toujours été, des gestes
+  libres pour tout compte authentifié — ce ne sont pas des actions qu'un
+  restaurateur voudrait réellement restreindre à certains employés. La
+  migration supprime d'abord les lignes `role_permissions` référençant ces
+  deux clés sur tous les rôles de tous les établissements (contrainte FK,
+  même raisonnement que le down de la migration 095), puis les deux lignes du
+  catalogue `permissions`. `internal/permission/keys_gen.go` régénéré (15 →
+  13 constantes) ; `legacyPermissionFallback`
+  (`internal/modules/auth/permissions.go`) perd l'entrée `pos.access` ->
+  `AccessWaiter`.
+
+- **Rôle système « Employé polyvalent » (`system_key = 'staff'`) : ne porte
+  plus aucun droit par défaut.** C'était le seul rôle du catalogue à porter
+  `pos.access` et `pos.discount.apply` par défaut
+  (`internal/modules/roles/repository.go`, `systemRolePermissions[SystemKeyStaff]`,
+  désormais `{}`) — les deux droits supprimés ci-dessus. C'est le résultat
+  attendu de cette suppression, pas une régression à corriger après coup :
+  tout ce qu'un employé polyvalent fait au quotidien (encaisser, appliquer
+  une remise, relever une température, tracer une réception, prendre une
+  commande...) reste et est resté intégralement libre côté routes — les 13
+  droits qui restent au catalogue gardent tous des gestes d'encadrement
+  (correction : rouvrir un ticket, rembourser ; configuration : gérer le
+  menu, le planning, les stocks ; rapport : consulter les ventes ou les
+  finances) qu'un employé polyvalent n'exerce pas par définition du rôle.
+  Aucun droit n'a été réattribué arbitrairement pour « remplir » le rôle —
+  un rôle vide qui garde son nom et sa place est l'état correct ici, pas un
+  trou à combler. `staff` reste entièrement client-éditable : un
+  établissement qui veut lui donner des droits d'encadrement le fait via
+  `PUT /roles/{id}/permissions`, comme pour n'importe quel rôle personnalisé.
+
+- **Trace laissée pour la prochaine fois** : le motif de la garde HACCP de
+  juillet n'existait nulle part par écrit — reconstitué ici en croisant le
+  commit qui l'a posée, `docs/decisions.md`, `docs/migration-postgres/56-*`
+  et `docs/PERMISSIONS_MIDDLEWARE_GUIDE.md`, pour un motif qui tient en une
+  phrase. Cette entrée existe pour que personne n'ait à refaire ce travail
+  pour les décisions d'aujourd'hui.
+
 ### Reservation (site public) — double conversion de fuseau à la création, résa décalée de -2h (2026-08-13)
 
 - **Symptôme rapporté** : sur le site de réservation public, sélectionner

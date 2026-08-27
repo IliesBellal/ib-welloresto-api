@@ -1,0 +1,33 @@
+-- RBAC lot 1: seeds the two system roles ("admin", "staff") for every
+-- existing merchant, and points merchant.default_role_id at the "admin" role
+-- (RBAC lot 4 decision: every account becomes Administrateur while
+-- permissions are not yet exploited from the UI — see
+-- migrations/done/099_merchant_default_role_admin.up.sql for the equivalent
+-- correction applied to merchants that were already seeded before that
+-- decision, i.e. under this migration's original "staff" default).
+--
+-- No executable SQL here on purpose. Role ids must be
+-- "role-<uuid>" generated with helpers.GeneratePrefixedID(helpers.RoleIDPrefix)
+-- (uuid.New(), a Go-side random v4 UUID) — the same convention every other
+-- application-generated primary key in this codebase follows (see
+-- internal/helpers/ids.go and the RBAC audit report, section 4.9). Doing this
+-- with a bare SQL INSERT would mean picking a different UUID source per
+-- dialect (Postgres has gen_random_uuid()/uuid_generate_v4(); MySQL has no
+-- equivalent extension enabled in this project) purely for a one-time seed,
+-- producing a second, divergent implementation of "what a system role looks
+-- like" that has to be kept in sync with roles.Repository.EnsureSystemRoles by
+-- hand. Going through the real Go code path instead means there is exactly
+-- one implementation, and it is covered by the same tests as everything else
+-- in internal/modules/roles.
+--
+-- This migration number is reserved so migrations/todo numbering stays
+-- sequential; the actual data population is a one-shot program:
+--
+--   DB_DIALECT=postgres POSTGRES_URL=... go run ./cmd/seed_system_roles
+--
+-- (or the MySQL equivalent, MYSQL_URL=..., once DB_DIALECT defaults away from
+-- postgres). See cmd/seed_system_roles/main.go for what it does; it is
+-- idempotent (safe to re-run: EnsureSystemRoles only creates what is missing,
+-- and default_role_id is only set when still NULL).
+
+SELECT 1; -- no-op: keeps this file a valid, harmless SQL script if run by mistake.

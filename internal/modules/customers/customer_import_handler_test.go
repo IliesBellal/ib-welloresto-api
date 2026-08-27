@@ -17,6 +17,7 @@ import (
 	"welloresto-api/internal/middleware"
 	authpkg "welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/customers/importer"
+	"welloresto-api/internal/permission"
 )
 
 const (
@@ -431,7 +432,7 @@ func TestCustomerPreviewImportIsGuardedByCustomerManagementPermission(t *testing
 			}()
 
 			handler := NewCustomerImportHandler(newTestCustomerImportService(db, newFakeCustomerImportStore()))
-			guarded := middleware.RequirePermission(middleware.HasCustomerManagementAccess)(
+			guarded := middleware.RequirePermission(permission.CustomersManage)(
 				http.HandlerFunc(handler.PreviewImport),
 			)
 

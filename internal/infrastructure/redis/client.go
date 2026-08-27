@@ -17,13 +17,20 @@ type Client struct {
 	rdb *redis.Client
 }
 
-// New crée et vérifie la connexion au serveur Redis
+// New crée et vérifie la connexion au serveur Redis, en lisant REDIS_URL.
 func New() (*Client, error) {
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL n'est pas défini dans les variables d'environnement")
 	}
+	return NewFromURL(redisURL)
+}
 
+// NewFromURL est la même connexion que New, paramétrée — utilisé par New
+// lui-même, et par les tests d'intégration (postgres_integration_test.go)
+// qui ont besoin d'un *Client réel contre un Redis de test sans dépendre de
+// la variable d'environnement globale REDIS_URL.
+func NewFromURL(redisURL string) (*Client, error) {
 	// ParseURL lit automatiquement host, port, password depuis l'URL
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {

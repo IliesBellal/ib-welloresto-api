@@ -3,13 +3,16 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"os"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/r2"
 	stripeInternalClient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/infrastructure/websocket"
 
+	"welloresto-api/internal/middleware/rbacobserve"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	"welloresto-api/internal/modules/googlemaps"
@@ -27,6 +30,7 @@ import (
 
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/permission"
 
 	// ---- MODULES ----
 	allergensModule "welloresto-api/internal/modules/allergens"
@@ -57,6 +61,7 @@ import (
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
 	printersModule "welloresto-api/internal/modules/printers"
+	rolesModule "welloresto-api/internal/modules/roles"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
@@ -96,6 +101,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	// le pool Postgres (internal/database/postgres.go) en autorise 15. Le logger a aussi
 	// été corrigé pour passer par dbx.Rebind (placeholders ? -> $N, requis par Postgres).
 	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(selectedDB, log, 1000)))
+
+	// RBAC lot 2, phase d'observation : off par défaut, activable sans
+	// redéploiement de code (juste la variable d'env + un restart) via
+	// RBAC_OBSERVE=true. Voir internal/middleware/rbacobserve.
+	if os.Getenv("RBAC_OBSERVE") == "true" {
+		middleware.EnableRBACObservation(rbacobserve.NewObserver(dbx.Wrap(selectedDB), log, 1000))
+	}
 
 	// ============================
 	// REDIS
@@ -403,6 +415,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	usersRepo := usersModule.NewUserRepository(selectedDB)
 	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService, uberService)
 
+	// ---- Roles (RBAC lot 6) ---- usersRepo reused for GetUsersRightsToken
+	// (cache invalidation on a user's role change) rather than duplicating it.
+	rolesRepo := rolesModule.NewRepository(selectedDB)
+	rolesService := rolesModule.NewService(rolesRepo, usersRepo, auditService, redisClient)
+	rolesH := rolesModule.NewHandler(rolesService)
+
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(selectedDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
@@ -560,7 +578,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 		r.With(authMiddleware).Post("/pin", authH.AuthPIN)
 		r.With(authMiddleware).Post("/pin/set", authH.SetPIN)
-		r.With(authMiddleware, middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/pin/reset", authH.ResetPIN)
+		r.With(authMiddleware, middleware.RequirePermission(permission.StaffManage)).Post("/pin/reset", authH.ResetPIN)
 	})
 
 	// --- USERS ---
@@ -572,30 +590,64 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Post("/profile/avatar", usersH.UploadAvatar) // used by: back-office
 		r.Get("/notifications", usersH.GetNotifications)
 
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/", usersH.ListMerchantUsers)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/", usersH.CreateUser)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/create", usersH.CreateUser)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/linkable-search", usersH.SearchLinkableUsers)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}", usersH.GetMerchantUser)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}/rights", usersH.GetMerchantUserRights)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Get("/{id}/member", usersH.GetMerchantUserMember)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Patch("/{id}/member", usersH.PatchMerchantUserMember)
-		r.With(middleware.RequirePermission(middleware.IsAdmin)).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
-		r.With(middleware.RequirePermission(middleware.IsAdmin)).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/", usersH.ListMerchantUsers)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/", usersH.CreateUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/create", usersH.CreateUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/linkable-search", usersH.SearchLinkableUsers)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}", usersH.GetMerchantUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/rights", usersH.GetMerchantUserRights)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/member", usersH.GetMerchantUserMember)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Patch("/{id}/member", usersH.PatchMerchantUserMember)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/role", rolesH.SetUserRole)
+		r.With(middleware.RequireAdmin()).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
+		r.With(middleware.RequireAdmin()).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
 
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/location", usersH.SetUserLocation)
 		r.Patch("/reset-password", usersH.UpdatePassword)
 	})
 
+	// --- PERMISSIONS / ROLES (RBAC lot 6) ---
+	r.Route("/permissions", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Get("/", rolesH.ListPermissions)
+	})
+
+	r.Route("/me", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Get("/permissions", rolesH.MyPermissions)
+	})
+
+	r.Route("/roles", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(middleware.RequirePermission(permission.StaffManage))
+
+		r.Get("/", rolesH.ListRoles)
+		r.Post("/", rolesH.CreateRole)
+		r.Get("/{id}", rolesH.GetRole)
+		r.Patch("/{id}", rolesH.UpdateRole)
+		r.Put("/{id}/permissions", rolesH.ReplacePermissions)
+		r.Get("/{id}/members", rolesH.ListRoleMembers)
+		r.Post("/{id}/archive", rolesH.ArchiveRole)
+	})
+
+	r.Route("/merchant", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/default-role", rolesH.SetMerchantDefaultRole)
+	})
+
 	// --- STATS ---
 	r.Route("/stats", func(r chi.Router) {
 		r.Use(authMiddleware)
 
+		// RBAC lot 8 : tuile de reporting sur la page d'accueil back-office —
+		// le front doit traiter un 403 en masquant la tuile, pas en cassant
+		// la page d'accueil (voir docs/RBAC_ROUTES.md).
 		r.Route("/dashboard", func(r chi.Router) {
-			r.Get("/summary", statsH.GetDashboardSummary)
+			r.With(middleware.RequirePermission(permission.ReportsSalesRead)).
+				Get("/summary", statsH.GetDashboardSummary)
 		})
 
 		r.Get("/upsell", statsH.GetUpsellStats)
@@ -606,9 +658,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Use(authMiddleware)
 
 		r.Post("/create", posH.CreateMerchant)
-		r.With(middleware.RequirePermission(middleware.HasUserManagementAccess)).Post("/link-user", posH.LinkUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
 		r.Get("/status", posH.GetPOSStatus)
-		r.Patch("/status", posH.UpdatePOSStatus)
+		r.With(middleware.RequirePermission(permission.POSStatusManage)).Patch("/status", posH.UpdatePOSStatus)
 
 		r.Get("/deletion_reasons/{object}", posH.GetDeletionReasons)
 		r.Get("/delivery_men", posH.GetDeliveryMen)
@@ -637,7 +689,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 		r.Get("/payments/tr/check/{tr_code}", posH.CheckTR)
 
+		// RBAC lot 8 : rapports de vente — reports.sales.read.
 		r.Route("/reports", func(r chi.Router) {
+			r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
+
 			r.Post("/tva", posReportsHandler.GetTVAReport)
 			r.Post("/payments", posReportsHandler.GetPaymentsReport)
 			r.Post("/tva/export", posReportsHandler.ExportTVAReport)
@@ -673,8 +728,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	})
 
 	// --- ACCOUNTING ---
+	// RBAC lot 8 : rapports financiers — reports.financial.read.
 	r.Route("/accounting", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(middleware.RequirePermission(permission.ReportsFinancialRead))
 
 		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
 		r.Post("/vat/export-csv", posAccountingHandler.ExportVATCSV)
@@ -695,7 +752,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 		//// New endpoints, previous were probably never used and can be deleted after some time (today is 2026/04/26)
 		r.Get("/components/list", stocksH.GetComponentsList)
-		r.Put("/components/{component_id}", stocksH.RecordComponentMovement)
+		// RBAC lot 8 : add/remove/loss sur un composant est la CORRECTION de
+		// stock ; les lectures ci-dessus restent libres à dessein (arbitrage
+		// tranché : gager GET /stocks/* aurait reproduit l'anti-pattern
+		// *.manage-sur-consultation que ce lot corrige par ailleurs — voir
+		// docs/decisions.md).
+		r.With(middleware.RequirePermission(permission.InventoryManage)).
+			Put("/components/{component_id}", stocksH.RecordComponentMovement)
 		r.Get("/movements", stocksH.GetMovements)
 	})
 
@@ -734,11 +797,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		// le catalogue entier d'un coup, il ne peut pas hériter de l'absence
 		// de garde du reste du bloc (cf. docs/audit-import-produits.md §1.7,
 		// écart ouvert sur les routes existantes).
-		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/import/preview", menuImportH.PreviewImport)
-		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/import/commit", menuImportH.CommitImport)
-		r.With(middleware.RequirePermission(middleware.HasMenuAccess)).
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Get("/import/template", menuImportH.DownloadImportTemplate)
 		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
@@ -792,11 +855,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		// Déclarées avant /products/{product_id} : chi donne la priorité aux
 		// segments statiques, mais les garder groupées ici évite toute
 		// ambiguïté de lecture avec la route paramétrée.
-		r.Patch("/products/bulk/status", menuH.BulkSetProductsStatus)         // used by: back-office
-		r.Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
-		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)             // used by: back-office
-		r.Patch("/products/bulk/tags", menuH.BulkSetProductsTags)             // used by: back-office
-		r.Patch("/products/bulk/tva", menuH.BulkSetProductsTva)               // used by: back-office
+		r.Patch("/products/bulk/status", menuH.BulkSetProductsStatus)             // used by: back-office
+		r.Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes)     // used by: back-office
+		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)                 // used by: back-office
+		r.Patch("/products/bulk/tags", menuH.BulkSetProductsTags)                 // used by: back-office
+		r.Patch("/products/bulk/tva", menuH.BulkSetProductsTva)                   // used by: back-office
 		r.Patch("/products/bulk/availability", menuH.BulkSetProductsAvailability) // used by: back-office
 
 		// --- Bulk assign (additive) ---
@@ -850,7 +913,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Use(authMiddleware)
 
 		r.Get("/settings", haccpH.GetSettings)
-		r.Put("/settings", haccpH.PutSettings)
+		// RBAC lot 8 (suite) : haccp.manage regarde ici — CONFIGURATION des
+		// seuils/paramètres du module, pas la saisie quotidienne (relevés,
+		// nettoyages, traçabilité) qui reste libre juste en dessous.
+		r.With(middleware.RequirePermission(permission.HACCPManage)).
+			Put("/settings", haccpH.PutSettings)
 		r.Get("/hub", haccpH.GetHub)
 
 		r.Get("/activities", haccpH.GetActivities)
@@ -884,13 +951,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Get("/components", haccpH.GetHaccpComponents)
 
 		// --- Traçabilité HACCP (photos + commentaire) ---
-		// Contrairement au reste de /haccp ci-dessus (authMiddleware seul),
-		// ce sous-groupe applique en plus HasHACCPAccess : décision assumée
-		// pour ce nouveau module, voir la conversation d'architecture HACCP
-		// traçabilité (2026-07-23).
+		// La garde haccp.manage posée ici en juillet 2026 est retirée (RBAC
+		// lot 8, 2026-08-27) : la traçabilité est une SAISIE opérationnelle
+		// quotidienne (réception de marchandise tracée), au même titre que
+		// les autres relevés HACCP juste au-dessus (température, nettoyage) —
+		// tous libres. Motif d'origine et confirmation de sa mise à l'écart :
+		// voir docs/decisions.md.
 		r.Route("/traceability", func(r chi.Router) {
-			r.Use(middleware.RequirePermission(middleware.HasHACCPAccess))
-
 			r.Post("/", haccpH.CreateTraceabilityRecord)
 			r.Get("/", haccpH.GetTraceabilityRecords)
 			r.Get("/{id}", haccpH.GetTraceabilityRecord)
@@ -916,88 +983,104 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 	r.Route("/planning", func(r chi.Router) {
 		r.Use(authMiddleware)
-		r.Use(middleware.RequirePermission(middleware.HasPlanningAccess))
 
-		r.Get("/settings", planningH.GetSettings)
-		r.Put("/settings", planningH.UpdateSettings)
-
+		// Référentiels non sensibles (labels/couleurs, pas de donnée RH ou
+		// salariale — vérifié dans le code Go) : libres, authentifiées
+		// seulement. RBAC lot 8 (audit lot 7 §4.3) : elles étaient gardées par
+		// staff.schedule.manage uniquement parce qu'elles vivaient dans le
+		// même groupe chi que le reste de /planning, pas par choix —
+		// CONSULTATION, pas CONFIGURATION.
 		r.Get("/contract-types", planningH.ListContractTypes)
 		r.Get("/attendance-sources", planningH.ListAttendanceSources)
 		r.Get("/event-types", planningH.ListPlanningEventTypes)
 		r.Get("/positions", planningH.ListEmployeePositions)
-		r.Post("/positions", planningH.CreateEmployeePosition)
-		r.Get("/positions/{id}", planningH.GetEmployeePosition)
-		r.Patch("/positions/{id}", planningH.UpdateEmployeePosition)
-		r.Delete("/positions/{id}", planningH.DeleteEmployeePosition)
-		r.Get("/shift-templates", planningH.ListShiftTemplates)
-		r.Post("/shift-templates", planningH.CreateShiftTemplate)
-		r.Patch("/shift-templates/{id}", planningH.UpdateShiftTemplate)
-		r.Delete("/shift-templates/{id}", planningH.DeleteShiftTemplate)
-		r.Get("/week-templates", planningH.ListWeekTemplates)
-		r.Get("/week-templates/{id}", planningH.GetWeekTemplate)
-		r.Post("/week-templates", planningH.CreateWeekTemplate)
-		r.Post("/week-templates/from-week", planningH.CreateWeekTemplateFromWeek)
-		r.Post("/week-templates/{id}/preview", planningH.PreviewWeekTemplateInstantiation)
-		r.Post("/week-templates/{id}/instantiate", planningH.InstantiateWeekTemplate)
-		r.Patch("/week-templates/{id}", planningH.UpdateWeekTemplate)
-		r.Delete("/week-templates/{id}", planningH.DeleteWeekTemplate)
 
-		r.Get("/employees", planningH.ListEmployees)
-		r.Post("/employees", planningH.CreateEmployee)
-		r.Patch("/employees/display-order", planningH.UpdateEmployeesDisplayOrder)
-		r.Get("/employees/{id}", planningH.GetEmployee)
-		r.Patch("/employees/{id}", planningH.UpdateEmployee)
-		r.Delete("/employees/{id}", planningH.DeleteEmployee)
-		r.Post("/employees/{id}/user-link", planningH.LinkEmployeeUser)
-		r.Delete("/employees/{id}/user-link", planningH.UnlinkEmployeeUser)
-		r.Get("/employees/{id}/documents", planningH.ListEmployeeDocuments)
-		r.Post("/employees/{id}/documents", planningH.CreateEmployeeDocument)
-		r.Get("/employees/{id}/time-entries", planningH.ListEmployeeTimeEntries)
-		r.Get("/employees/{id}/time-entries/current", planningH.GetCurrentEmployeeTimeEntry)
-		r.Post("/employees/{id}/time-entries", planningH.CreateEmployeeTimeEntry)
-		r.Patch("/employees/{id}/time-entries/{entry_id}", planningH.UpdateEmployeeTimeEntry)
-		r.Delete("/employees/{id}/time-entries/{entry_id}", planningH.DeleteEmployeeTimeEntry)
-		r.Post("/employees/{id}/time-entries/start", planningH.StartEmployeeTimeEntry)
-		r.Post("/employees/{id}/time-entries/stop", planningH.StopEmployeeTimeEntry)
-		r.Route("/uploads", func(r chi.Router) {
-			r.Post("/employee-documents", planningH.UploadEmployeeDocument)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission(permission.StaffScheduleManage))
+
+			r.Get("/settings", planningH.GetSettings)
+			r.Put("/settings", planningH.UpdateSettings)
+
+			r.Post("/positions", planningH.CreateEmployeePosition)
+			r.Get("/positions/{id}", planningH.GetEmployeePosition)
+			r.Patch("/positions/{id}", planningH.UpdateEmployeePosition)
+			r.Delete("/positions/{id}", planningH.DeleteEmployeePosition)
+			r.Get("/shift-templates", planningH.ListShiftTemplates)
+			r.Post("/shift-templates", planningH.CreateShiftTemplate)
+			r.Patch("/shift-templates/{id}", planningH.UpdateShiftTemplate)
+			r.Delete("/shift-templates/{id}", planningH.DeleteShiftTemplate)
+			r.Get("/week-templates", planningH.ListWeekTemplates)
+			r.Get("/week-templates/{id}", planningH.GetWeekTemplate)
+			r.Post("/week-templates", planningH.CreateWeekTemplate)
+			r.Post("/week-templates/from-week", planningH.CreateWeekTemplateFromWeek)
+			r.Post("/week-templates/{id}/preview", planningH.PreviewWeekTemplateInstantiation)
+			r.Post("/week-templates/{id}/instantiate", planningH.InstantiateWeekTemplate)
+			r.Patch("/week-templates/{id}", planningH.UpdateWeekTemplate)
+			r.Delete("/week-templates/{id}", planningH.DeleteWeekTemplate)
+
+			r.Get("/employees", planningH.ListEmployees)
+			r.Post("/employees", planningH.CreateEmployee)
+			r.Patch("/employees/display-order", planningH.UpdateEmployeesDisplayOrder)
+			r.Get("/employees/{id}", planningH.GetEmployee)
+			r.Patch("/employees/{id}", planningH.UpdateEmployee)
+			r.Delete("/employees/{id}", planningH.DeleteEmployee)
+			r.Post("/employees/{id}/user-link", planningH.LinkEmployeeUser)
+			r.Delete("/employees/{id}/user-link", planningH.UnlinkEmployeeUser)
+			r.Get("/employees/{id}/documents", planningH.ListEmployeeDocuments)
+			r.Post("/employees/{id}/documents", planningH.CreateEmployeeDocument)
+			r.Get("/employees/{id}/time-entries", planningH.ListEmployeeTimeEntries)
+			r.Get("/employees/{id}/time-entries/current", planningH.GetCurrentEmployeeTimeEntry)
+			r.Post("/employees/{id}/time-entries", planningH.CreateEmployeeTimeEntry)
+			r.Patch("/employees/{id}/time-entries/{entry_id}", planningH.UpdateEmployeeTimeEntry)
+			r.Delete("/employees/{id}/time-entries/{entry_id}", planningH.DeleteEmployeeTimeEntry)
+			r.Post("/employees/{id}/time-entries/start", planningH.StartEmployeeTimeEntry)
+			r.Post("/employees/{id}/time-entries/stop", planningH.StopEmployeeTimeEntry)
+			r.Route("/uploads", func(r chi.Router) {
+				r.Post("/employee-documents", planningH.UploadEmployeeDocument)
+			})
+			r.Get("/employees/{id}/documents/{document_id}/download", planningH.GetEmployeeDocumentDownloadURL)
+			r.Delete("/employees/{id}/documents/{document_id}", planningH.DeleteEmployeeDocument)
+
+			r.Get("/weeks", planningH.ListPlanningWeeks)
+			r.Post("/weeks", planningH.CreatePlanningWeek)
+			r.Get("/weeks/{id}", planningH.GetPlanningWeek)
+			r.Patch("/weeks/{id}", planningH.UpdatePlanningWeek)
+			r.Delete("/weeks/{id}", planningH.DeletePlanningWeek)
+			r.Post("/weeks/{id}/publish", planningH.PublishPlanningWeek)
+			r.Post("/weeks/{id}/unpublish", planningH.UnpublishPlanningWeek)
+			r.Get("/weeks/{id}/shifts", planningH.ListPlanningShifts)
+			r.Post("/weeks/{id}/shifts", planningH.CreatePlanningShift)
+			r.Get("/shifts", planningH.ListPlanningShiftsByDateRange)
+			r.Get("/shifts/{id}", planningH.GetPlanningShift)
+			r.Patch("/shifts/{id}", planningH.UpdatePlanningShift)
+			r.Delete("/shifts/{id}", planningH.DeletePlanningShift)
+
+			r.Get("/day-comments", planningH.ListPlanningDayComments)
+			r.Put("/day-comments/{date}", planningH.UpsertPlanningDayComment)
+			r.Delete("/day-comments/{date}", planningH.DeletePlanningDayComment)
+
+			r.Get("/leave-requests", planningH.ListPlanningLeaveRequests)
+			r.Post("/leave-requests", planningH.CreatePlanningLeaveRequest)
+			r.Get("/leave-requests/{id}", planningH.GetPlanningLeaveRequest)
+			r.Get("/leave-requests/{id}/conflicting-shifts", planningH.ListPlanningLeaveRequestConflictingShifts)
+			r.Patch("/leave-requests/{id}", planningH.UpdatePlanningLeaveRequest)
+			r.Delete("/leave-requests/{id}", planningH.DeletePlanningLeaveRequest)
+
+			r.Get("/shift-swap-requests", planningH.ListPlanningShiftSwapRequests)
+			r.Post("/shift-swap-requests", planningH.CreatePlanningShiftSwapRequest)
+			r.Get("/shift-swap-requests/{id}", planningH.GetPlanningShiftSwapRequest)
+			r.Patch("/shift-swap-requests/{id}", planningH.UpdatePlanningShiftSwapRequest)
+			r.Delete("/shift-swap-requests/{id}", planningH.DeletePlanningShiftSwapRequest)
+
+			r.Put("/revenue-forecast", planningH.UpsertRevenueForecasts)
 		})
-		r.Get("/employees/{id}/documents/{document_id}/download", planningH.GetEmployeeDocumentDownloadURL)
-		r.Delete("/employees/{id}/documents/{document_id}", planningH.DeleteEmployeeDocument)
 
-		r.Get("/weeks", planningH.ListPlanningWeeks)
-		r.Post("/weeks", planningH.CreatePlanningWeek)
-		r.Get("/weeks/{id}", planningH.GetPlanningWeek)
-		r.Patch("/weeks/{id}", planningH.UpdatePlanningWeek)
-		r.Delete("/weeks/{id}", planningH.DeletePlanningWeek)
-		r.Post("/weeks/{id}/publish", planningH.PublishPlanningWeek)
-		r.Post("/weeks/{id}/unpublish", planningH.UnpublishPlanningWeek)
-		r.Get("/weeks/{id}/shifts", planningH.ListPlanningShifts)
-		r.Post("/weeks/{id}/shifts", planningH.CreatePlanningShift)
-		r.Get("/shifts", planningH.ListPlanningShiftsByDateRange)
-		r.Get("/shifts/{id}", planningH.GetPlanningShift)
-		r.Patch("/shifts/{id}", planningH.UpdatePlanningShift)
-		r.Delete("/shifts/{id}", planningH.DeletePlanningShift)
-
-		r.Get("/day-comments", planningH.ListPlanningDayComments)
-		r.Put("/day-comments/{date}", planningH.UpsertPlanningDayComment)
-		r.Delete("/day-comments/{date}", planningH.DeletePlanningDayComment)
-
-		r.Get("/leave-requests", planningH.ListPlanningLeaveRequests)
-		r.Post("/leave-requests", planningH.CreatePlanningLeaveRequest)
-		r.Get("/leave-requests/{id}", planningH.GetPlanningLeaveRequest)
-		r.Get("/leave-requests/{id}/conflicting-shifts", planningH.ListPlanningLeaveRequestConflictingShifts)
-		r.Patch("/leave-requests/{id}", planningH.UpdatePlanningLeaveRequest)
-		r.Delete("/leave-requests/{id}", planningH.DeletePlanningLeaveRequest)
-
-		r.Get("/shift-swap-requests", planningH.ListPlanningShiftSwapRequests)
-		r.Post("/shift-swap-requests", planningH.CreatePlanningShiftSwapRequest)
-		r.Get("/shift-swap-requests/{id}", planningH.GetPlanningShiftSwapRequest)
-		r.Patch("/shift-swap-requests/{id}", planningH.UpdatePlanningShiftSwapRequest)
-		r.Delete("/shift-swap-requests/{id}", planningH.DeletePlanningShiftSwapRequest)
-
-		r.Put("/revenue-forecast", planningH.UpsertRevenueForecasts)
-		r.Get("/performance", planningH.GetPlanningPerformance)
+		// RBAC lot 8 : coût de la main d'œuvre vs CA est un rapport financier,
+		// pas un geste d'encadrement du planning — reports.financial.read
+		// remplace staff.schedule.manage ici (voir docs/RBAC_CLIENTS.md §5 et
+		// docs/decisions.md).
+		r.With(middleware.RequirePermission(permission.ReportsFinancialRead)).
+			Get("/performance", planningH.GetPlanningPerformance)
 	})
 
 	// --- ALLERGENS (system-wide, read-only) ---
@@ -1072,14 +1155,24 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Get("/{order_id}/payments", ordersLifeCycleH.GetPayments)
 
 		// --- 2. ENDPOINTS DE CRÉATION / MODIFICATION (Protégés) ---
+		// RBAC lot 2 : le verrou IsEmailVerified qui était ici a été retiré —
+		// ce n'est pas un droit du catalogue (c'est un statut de vérification
+		// de compte) et RequirePermission ne prend plus qu'une permission.Key.
+		// Impact réel nul : IsEmailVerified() renvoie toujours true
+		// aujourd'hui (période de grâce jamais désactivée, voir
+		// internal/middleware/permissions.go). Aucune de ces routes n'a de
+		// garde RBAC pour l'instant — recensé comme trou ouvert dans
+		// docs/RBAC_ROUTES.md, à trancher dans un lot ultérieur.
 		r.Group(func(r chi.Router) {
-			// Ici, on applique le verrou. L'utilisateur doit être vérifié pour continuer.
-			r.Use(middleware.RequirePermission(middleware.IsEmailVerified))
-
 			r.Post("/create", ordersLifeCycleH.CreateOrder)
 			r.Post("/{order_id}/update", ordersLifeCycleH.UpdateOrder)
-			r.Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
-			r.Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
+			// RBAC lot 8 : rouvrir un ticket clôturé / rembourser une vente
+			// sont des CORRECTIONs (annulation d'une action déjà conclue),
+			// pas de la saisie courante — voir docs/RBAC_ROUTES.md.
+			r.With(middleware.RequirePermission(permission.POSTicketReopen)).
+				Patch("/{order_id}/reopen", ordersLifeCycleH.ReopenClosedOrder)
+			r.With(middleware.RequirePermission(permission.POSRefund)).
+				Post("/{order_id}/refund", ordersLifeCycleH.HandleRefund)
 			r.Post("/{order_id}/invoice/email-sms", ordersLifeCycleH.SendInvoiceEmail)
 
 			// Cycle de vie
@@ -1095,7 +1188,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			// Sous-route paiements (en écriture)
 			r.Route("/{order_id}/payments", func(r chi.Router) {
 				r.Post("/create", ordersLifeCycleH.AddPayment)
-				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+				// Supprimer un paiement enregistré est une CORRECTION au même
+				// titre qu'un remboursement (RBAC lot 8).
+				r.With(middleware.RequirePermission(permission.POSRefund)).
+					Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
 			})
 		})
 	})
@@ -1132,7 +1228,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	r.Route("/cash_drawer", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Get("/open", cashRegisterH.OpenCashDrawer)
+		// RBAC lot 8 : GET -> POST (un endpoint dont l'objet est de déclencher
+		// un effet de bord physique — ouvrir le tiroir-caisse hors
+		// encaissement — n'est pas une lecture) + garde pos.cash_drawer.open.
+		// Changement de contrat d'API : les clients appelant encore GET
+		// doivent migrer vers POST (voir docs/decisions.md).
+		r.With(middleware.RequirePermission(permission.POSCashDrawerOpen)).
+			Post("/open", cashRegisterH.OpenCashDrawer)
 	})
 
 	// --- CUSTOMERS ---
@@ -1165,20 +1267,21 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		// explicite : preview lit, commit écrit potentiellement tout le
 		// fichier client d'un marchand, template sert un fichier statique
 		// mais reste derrière la même garde par cohérence. La permission
-		// existe déjà (middleware.HasCustomerManagementAccess) mais n'était
-		// utilisée nulle part avant ces routes.
-		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+		// existe déjà (permission.CustomersManage) mais n'était utilisée
+		// nulle part avant ces routes.
+		r.With(middleware.RequirePermission(permission.CustomersManage)).
 			Post("/import/preview", customerImportH.PreviewImport)
-		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+		r.With(middleware.RequirePermission(permission.CustomersManage)).
 			Post("/import/commit", customerImportH.CommitImport)
-		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
+		r.With(middleware.RequirePermission(permission.CustomersManage)).
 			Get("/import/template", customerImportH.DownloadImportTemplate)
 
 		// Création unitaire d'un client (bouton "Créer un client" du
-		// back-office) — même garde RBAC que l'import, pour la même raison :
-		// ça écrit dans le fichier client d'un marchand.
-		r.With(middleware.RequirePermission(middleware.HasCustomerManagementAccess)).
-			Post("/", customersH.CreateCustomer) // used by: back-office
+		// back-office) — SAISIE courante, pas CONFIGURATION : un serveur
+		// inscrivant un client au programme de fidélité en salle en a besoin
+		// au quotidien. Garde retirée (RBAC lot 8, audit lot 7 §4.2) ;
+		// customers.manage reste sur les 3 routes d'import en masse ci-dessus.
+		r.Post("/", customersH.CreateCustomer) // used by: back-office
 
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app
@@ -1301,7 +1404,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			r.Post("/stripe/onboarding-link", integrationsHandler.CreateStripeOnboardingLink)
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)
 			r.Post("/stripe/bank-account-link", integrationsHandler.CreateStripeBankAccountLink)
-			r.Get("/stripe/balance", integrationsHandler.GetStripeBalance)
+			// RBAC lot 8 : solde Stripe — donnée financière, reports.financial.read.
+			r.With(middleware.RequirePermission(permission.ReportsFinancialRead)).
+				Get("/stripe/balance", integrationsHandler.GetStripeBalance)
 			r.Post("/stripe/branding", integrationsHandler.SyncStripeBranding)
 		})
 	})
@@ -1359,8 +1464,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		// HasSettingsAccess en plus de authMiddleware, contrairement aux
 		// autres routes /pos/settings/kiosk/* qui n'ont aucune permission
 		// dédiée, voir docs/KIOSK_DECISIONS.md.
-		r.With(middleware.RequirePermission(middleware.HasSettingsAccess)).Get("/devices/{device_id}/admin-pin", kioskAdminHandler.GetAdminPin)
-		r.With(middleware.RequirePermission(middleware.HasSettingsAccess)).Post("/devices/{device_id}/regenerate-admin-pin", kioskAdminHandler.RegenerateAdminPin)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).Get("/devices/{device_id}/admin-pin", kioskAdminHandler.GetAdminPin)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/devices/{device_id}/regenerate-admin-pin", kioskAdminHandler.RegenerateAdminPin)
 
 		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
 		r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)

@@ -451,25 +451,32 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 	}
 
 	access := &LoginAccessResponse{
-		Admin: user.Rights.Admin,
+		Admin: user.HasAdminRole(),
 		Apps: LoginAccessAppsResponse{
 			Reception: user.Rights.AccessReception,
 			Delivery:  user.Rights.AccessDelivery,
 			Waiter:    user.Rights.AccessWaiter,
 		},
+		// RBAC lot 6 (§0) : 9 des 13 champs viennent désormais de Has() (route
+		// automatiquement vers le rôle assigné quand role_id est renseigné,
+		// sinon retombe sur la colonne booléenne historique — voir
+		// UserLoginRow.HasMenuAccess et consorts). Les 4 restants
+		// (PrintMerchantCashReport, ExportReports, ExportFinancials,
+		// ExportCustomers) n'ont pas d'équivalent dans le catalogue de 15
+		// droits et restent lus directement sur la colonne historique.
 		Permissions: LoginAccessPermissionsResponse{
 			PrintMerchantCashReport: user.Rights.PrintMerchantCashReport,
-			OpenCashDrawer:          user.Rights.OpenCashDrawer,
-			ManageMenu:              user.Rights.CanManageMenu,
-			ManagePlannings:         user.Rights.CanManagePlannings,
-			ManageUsers:             user.Rights.CanManageUsers,
-			ManageSettings:          user.Rights.CanManageSettings,
-			ManageHACCP:             user.Rights.CanManageHACCP,
-			ViewReports:             user.Rights.CanViewReports,
+			OpenCashDrawer:          user.CanOpenCashDrawer(),
+			ManageMenu:              user.HasMenuAccess(),
+			ManagePlannings:         user.HasPlanningAccess(),
+			ManageUsers:             user.HasUserManagementAccess(),
+			ManageSettings:          user.HasSettingsAccess(),
+			ManageHACCP:             user.HasHACCPAccess(),
+			ViewReports:             user.HasReportsViewAccess(),
 			ExportReports:           user.Rights.CanExportReports,
-			ViewFinancials:          user.Rights.CanViewFinancials,
+			ViewFinancials:          user.HasFinancialsViewAccess(),
 			ExportFinancials:        user.Rights.CanExportFinancials,
-			ManageCustomers:         user.Rights.CanManageCustomers,
+			ManageCustomers:         user.HasCustomerManagementAccess(),
 			ExportCustomers:         user.Rights.CanExportCustomers,
 		},
 	}
@@ -648,6 +655,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			},
 		},
 		Access:       access,
+		Permissions:  user.Permissions,
 		Capabilities: capabilities,
 		Integrations: &LoginIntegrationsResponse{
 			UberEats:   uberEats,

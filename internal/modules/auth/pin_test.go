@@ -53,7 +53,6 @@ func (m *memRedis) Delete(_ context.Context, key string) bool {
 	return true
 }
 
-
 // ------------------------------------------------------------
 // AuthService adapter that accepts *memRedis
 // ------------------------------------------------------------
@@ -92,26 +91,28 @@ func seedAnchorInMemRedis(mem *memRedis, token, merchantID, userID string) {
 	mem.store[models.UserCachePrefix+token] = string(data)
 }
 
-// pinColumns returns the 79 column names expected by scanUserLoginRow.
-func pinColumns() []string { return makeColumns(79) }
+// pinColumns returns the 82 column names expected by scanUserLoginRow.
+func pinColumns() []string { return makeColumns(82) }
 
-// pinMinRow returns 79 driver.Value values for a minimal active users_rights row.
+// pinMinRow returns 82 driver.Value values for a minimal active users_rights row.
 // The filter columns (ur.enabled, ur.login_enabled) are in WHERE, not SELECT,
 // so they don't appear here — a non-empty result means the link passed the filter.
 func pinMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
 		// user (0-9)
 		userID, "hashed", "Name", "First", "Last", "email@ex.com", "+33600000000", true, nil, nil,
-		// rights (10-33)
-		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil,
+		// rights (10-35): ...booleans..., merchant_id, role_id, role_system_key, mfa×4
+		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant (34-41)
 		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
 		// params (42-53), currency/is_open/pos_upsell_enabled (54-56),
 		// pos_covers_count_required/waiter_app_can_cash_in (57-58)
 		0, 0, 0, true, true, true, false, false, false, false, nil, "EUR", true, false, false, true,
-		// package (59-69): AllowWaiterAccount..KiosksEnabled
-		true, true, false, 0, false, true, true, true, false, true, true,
-		// SNO (70)
+		// package (59-70): AllowWaiterAccount..DeliveryEnabled (pre-existing gap found while
+		// wiring role_id/role_system_key: this row was already short one value — the
+		// COALESCE(...) AS delivery_enabled column — before this lot touched the file.
+		true, true, false, 0, false, true, true, true, false, true, true, true,
+		// SNO (71)
 		false,
 		// UE (71-76)
 		nil, nil, nil, nil, nil, nil,
@@ -503,16 +504,16 @@ func TestGetUserByToken_PINTokenNotInDB(t *testing.T) {
 	}
 }
 
-// loginMinRow returns 86 driver.Value values for a minimal active row as scanned
-// by repo.Login (SELECT u.user_id, u.name, ... — 86 columns, different from the
-// 79-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
+// loginMinRow returns 89 driver.Value values for a minimal active row as scanned
+// by repo.Login (SELECT u.user_id, u.name, ... — 89 columns, different from the
+// 82-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
 func loginMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
 		// user (0-10): user_id, name, first_name, last_name, email, tel, enabled,
 		//              profile_picture, terms_of_use_accepted, password, email_verified_at
 		userID, "Name", "First", "Last", "email@ex.com", "+33600000000", true, nil, false, "hashed", nil,
-		// rights (11-34): mr_id, token, 17 bool rights, merchant_id, mfa×4
-		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil,
+		// rights (11-36): mr_id, token, 17 bool rights, merchant_id, role_id, role_system_key, mfa×4
+		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant (35-42)
 		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
 		// params (43-59): 12 base fields + kitchen_distribution_mode, production_display_mode,
@@ -521,9 +522,11 @@ func loginMinRow(userID, token, merchantID string) []driver.Value {
 		// currency/is_open/pos_upsell_enabled (60-62),
 		// pos_covers_count_required/waiter_app_can_cash_in (63-64)
 		0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
-		// package (65-75): AllowWaiterAccount..KiosksEnabled
-		true, true, false, 0, false, true, true, true, false, true, true,
-		// SNO (76)
+		// package (65-76): AllowWaiterAccount..DeliveryEnabled (pre-existing gap found while
+		// wiring role_id/role_system_key: this row was already short one value — the
+		// COALESCE(...) AS delivery_enabled column — before this lot touched the file.
+		true, true, false, 0, false, true, true, true, false, true, true, true,
+		// SNO (77)
 		false,
 		// UE (77-82), UD (83), Droo (84-85)
 		nil, nil, nil, nil, nil, nil,
@@ -570,7 +573,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(86)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(89)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

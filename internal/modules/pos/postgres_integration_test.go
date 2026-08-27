@@ -12,6 +12,7 @@ import (
 
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/models"
+	rolesModule "welloresto-api/internal/modules/roles"
 )
 
 // Vérification réelle du module pos contre le Postgres de dev.
@@ -48,6 +49,8 @@ func TestPOSRepository_Postgres(t *testing.T) {
 			`DELETE FROM subscriptions WHERE merchant_id = $1`,
 			`DELETE FROM users WHERE merchant_id = $1`,
 			`DELETE FROM users_rights WHERE merchant_id = $1`,
+			`UPDATE merchant SET default_role_id = NULL WHERE id = $1`,
+			`DELETE FROM roles WHERE merchant_id = $1`,
 			`DELETE FROM merchant WHERE id = $1`,
 		} {
 			_, _ = db.ExecContext(ctx, q, mid)
@@ -84,7 +87,11 @@ func TestPOSRepository_Postgres(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM qrcodes WHERE merchant_id = $1`, merchantID).Scan(&qrCount); err != nil || qrCount != 2 {
 		t.Fatalf("qrcodes after satellites = (%d, %v), want 2", qrCount, err)
 	}
-	rightsID, err := repo.InsertUserRights(ctx, "itest-pos-user", merchantID, true, "rtok-pos")
+	adminRoleID, _, err := rolesModule.NewRepository(db).EnsureSystemRoles(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("EnsureSystemRoles: %v", err)
+	}
+	rightsID, err := repo.InsertUserRights(ctx, "itest-pos-user", merchantID, true, "rtok-pos", adminRoleID)
 	if err != nil || rightsID == 0 {
 		t.Fatalf("InsertUserRights = (%d, %v)", rightsID, err)
 	}

@@ -108,6 +108,11 @@ func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID stri
 	return items, totalItems, rows.Err()
 }
 
+// GetMerchantUserByID has its own query and scan function rather than
+// reusing scanMerchantUserListItem — RBAC lot 9 needs the user's assigned
+// role_id/role here (for the back-office "Accès" tab's role picker), and
+// ListMerchantUsers' shared SELECT list must not grow to carry columns the
+// list view never asked for.
 func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, userID string) (*MerchantUserDetail, error) {
 	db := dbx.GetDB(ctx, r.database)
 	row := db.QueryRowContext(ctx, `
@@ -141,7 +146,10 @@ func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, u
 			COALESCE(ur.manage_customers, FALSE),
 			COALESCE(ur.export_customers, FALSE),
 			employee_link.employee_id,
-			employee_link.employee_name
+			employee_link.employee_name,
+			ur.role_id,
+			r.name,
+			r.system_key
 		FROM users_rights ur
 		INNER JOIN users u ON u.user_id = ur.user_id
 		LEFT JOIN (
@@ -150,16 +158,12 @@ func (r *UsersRepository) GetMerchantUserByID(ctx context.Context, merchantID, u
 			WHERE enabled = TRUE AND user_id IS NOT NULL
 			GROUP BY merchant_id, user_id
 		) employee_link ON employee_link.merchant_id = ur.merchant_id AND employee_link.user_id = ur.user_id
+		LEFT JOIN roles r ON r.id = ur.role_id
 		WHERE ur.merchant_id = ? AND ur.user_id = ? AND ur.enabled = TRUE
 		LIMIT 1
 	`, merchantID, strings.TrimSpace(userID))
 
-	item, err := scanMerchantUserListItem(row)
-	if err != nil {
-		return nil, err
-	}
-
-	return &MerchantUserDetail{MerchantUserListItem: *item}, nil
+	return scanMerchantUserDetail(row)
 }
 
 func (r *UsersRepository) SearchLinkableUsers(ctx context.Context, merchantID string, filters LinkableUserSearchFilters) ([]LinkableUser, int, error) {
@@ -321,12 +325,24 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 		return existingID, nil
 	}
 
+	// role_id comes from merchant.default_role_id (RBAC lot 4), never
+	// hardcoded — fails explicitly (models.ErrMerchantDefaultRoleNotSet)
+	// rather than inserting a new row with no role_id. Only this INSERT
+	// branch (a brand new link) sets it; the UPDATE branch above re-enables
+	// an existing link and must never overwrite whatever role_id it already
+	// carries. See migrations/done/099_merchant_default_role_admin.up.sql.
+	roleID, err := r.MerchantDefaultRoleID(ctx, merchantID)
+	if err != nil {
+		return 0, err
+	}
+
 	insertID, err := db.InsertReturningID(ctx, `
 		INSERT INTO users_rights (
 			user_id,
 			merchant_id,
 			token,
 			admin,
+			role_id,
 			access_wrreception,
 			access_wrdelivery,
 			access_wrwaiter,
@@ -344,8 +360,8 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 			manage_customers,
 			export_customers,
 			enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
-	`, "id", userID, merchantID, token, rights.Admin,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+	`, "id", userID, merchantID, token, rights.Admin, roleID,
 		rights.Permissions.AccessReception,
 		rights.Permissions.AccessDelivery,
 		rights.Permissions.AccessWaiter,
@@ -543,6 +559,75 @@ func scanMerchantUserListItem(scanner merchantUserScanner) (*MerchantUserListIte
 	item.EmployeeName = nullableStringPtr(employeeName)
 	item.Status = userStatus(item)
 	return item, nil
+}
+
+// scanMerchantUserDetail duplicates scanMerchantUserListItem's dest-pointer
+// list rather than delegating to it, because database/sql's Scan needs every
+// destination for the row in one call — it cannot be split across two Scan
+// calls against the same row. Keep the two in sync manually if the shared
+// column set (everything before role_id/name/system_key) ever changes.
+func scanMerchantUserDetail(scanner merchantUserScanner) (*MerchantUserDetail, error) {
+	item := &MerchantUserListItem{}
+	var email sql.NullString
+	var tel sql.NullString
+	var profilePicture sql.NullString
+	var lastLoginAt sql.NullTime
+	var employeeID sql.NullString
+	var employeeName sql.NullString
+	var roleID sql.NullString
+	var roleName sql.NullString
+	var roleSystemKey sql.NullString
+	if err := scanner.Scan(
+		&item.UserID,
+		&item.FirstName,
+		&item.LastName,
+		&email,
+		&tel,
+		&profilePicture,
+		&item.CreatedAt,
+		&lastLoginAt,
+		&item.Enabled,
+		&item.LoginEnabled,
+		&item.MerchantRightsID,
+		&item.Admin,
+		&item.Permissions.AccessReception,
+		&item.Permissions.AccessDelivery,
+		&item.Permissions.AccessWaiter,
+		&item.Permissions.PrintMerchantCashReport,
+		&item.Permissions.OpenCashDrawer,
+		&item.Permissions.ManageMenu,
+		&item.Permissions.ManagePlannings,
+		&item.Permissions.ManageUsers,
+		&item.Permissions.ManageSettings,
+		&item.Permissions.ManageHACCP,
+		&item.Permissions.ViewReports,
+		&item.Permissions.ExportReports,
+		&item.Permissions.ViewFinancials,
+		&item.Permissions.ExportFinancials,
+		&item.Permissions.ManageCustomers,
+		&item.Permissions.ExportCustomers,
+		&employeeID,
+		&employeeName,
+		&roleID,
+		&roleName,
+		&roleSystemKey,
+	); err != nil {
+		return nil, err
+	}
+	item.Email = nullableStringPtr(email)
+	item.Tel = nullableStringPtr(tel)
+	item.ProfilePicture = nullableStringPtr(profilePicture)
+	item.LastLoginAt = nullableTimePtr(lastLoginAt)
+	item.EmployeeID = nullableStringPtr(employeeID)
+	item.EmployeeName = nullableStringPtr(employeeName)
+	item.Status = userStatus(item)
+
+	detail := &MerchantUserDetail{MerchantUserListItem: *item}
+	if roleID.Valid {
+		detail.RoleID = nullableStringPtr(roleID)
+		detail.Role = &RoleRef{ID: roleID.String, Name: roleName.String, SystemKey: nullableStringPtr(roleSystemKey)}
+	}
+	return detail, nil
 }
 
 func scanLinkableUser(scanner merchantUserScanner) (*LinkableUser, error) {

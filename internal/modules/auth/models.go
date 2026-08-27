@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"welloresto-api/internal/permission"
 )
 
 const (
@@ -181,6 +183,18 @@ type UserLoginRow struct {
 	MFAVerifiedAt *string
 	MFAOTPSentAt  *string
 
+	// RBAC lot 2: role-based authorization, coexisting with Rights during the
+	// transition — see Has. RoleID mirrors users_rights.role_id (nil for
+	// every user until a later lot starts assigning roles). RoleSystemKey
+	// mirrors roles.system_key for that role (nil for a custom role, or when
+	// RoleID itself is nil). Permissions is the flat list of
+	// role_permissions.permission_key for that role, loaded by a second query
+	// in the repository only when RoleID is non-nil — never aggregated in SQL
+	// (string_agg/GROUP_CONCAT diverge between MySQL and Postgres).
+	RoleID        *string
+	RoleSystemKey *string
+	Permissions   []string
+
 	// Token de droits
 	Token            string
 	MerchantID       string
@@ -288,47 +302,63 @@ func (u *UserLoginRow) CanPrintCashReport() bool {
 
 // CanOpenCashDrawer vérifie si l'utilisateur peut ouvrir le tiroir-caisse
 func (u *UserLoginRow) CanOpenCashDrawer() bool {
-	return u.Rights.Admin || u.Rights.OpenCashDrawer
+	return u.Has(permission.POSCashDrawerOpen)
 }
 
-// HasMenuAccess vérifie si l'utilisateur peut gérer le menu
+// HasMenuAccess vérifie si l'utilisateur peut gérer le menu.
+//
+// RBAC lot 6 (§0) : route par Has(catalog.manage) plutôt que par la seule
+// colonne booléenne historique. Sans ça, un compte promu admin par role_id
+// (lot 4) restait affiché comme non-admin dans /login — le back-office
+// masquait des menus que l'API autorisait déjà. Has() retombe sur
+// Rights.Admin || Rights.CanManageMenu pour un utilisateur sans role_id
+// (RoleID nil), donc ce changement ne modifie rien pour le monde historique
+// non-admin ; pour un admin historique (Rights.Admin=true, RoleID nil),
+// Has() court-circuite à true dès l'entrée — avant ce correctif, ce champ
+// précis pouvait valoir false pour un tel compte (voir même remarque dans
+// buildLoginResponse). Repris pour les 8 méthodes suivantes.
 func (u *UserLoginRow) HasMenuAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManageMenu
+	return u.Has(permission.CatalogManage)
 }
 
 // HasPlanningAccess vérifie si l'utilisateur peut gérer les plannings
 func (u *UserLoginRow) HasPlanningAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManagePlannings
+	return u.Has(permission.StaffScheduleManage)
 }
 
 // HasUserManagementAccess vérifie si l'utilisateur peut gérer les utilisateurs
 func (u *UserLoginRow) HasUserManagementAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManageUsers
+	return u.Has(permission.StaffManage)
 }
 
 // HasSettingsAccess vérifie si l'utilisateur peut gérer les paramètres
 func (u *UserLoginRow) HasSettingsAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManageSettings
+	return u.Has(permission.SettingsManage)
 }
 
 // HasHACCPAccess vérifie si l'utilisateur peut gérer le HACCP
 func (u *UserLoginRow) HasHACCPAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManageHACCP
+	return u.Has(permission.HACCPManage)
 }
 
 // HasReportsViewAccess vérifie si l'utilisateur peut consulter les rapports
 func (u *UserLoginRow) HasReportsViewAccess() bool {
-	return u.Rights.Admin || u.Rights.CanViewReports
+	return u.Has(permission.ReportsSalesRead)
 }
 
-// HasReportsExportAccess vérifie si l'utilisateur peut exporter les rapports
+// HasReportsExportAccess vérifie si l'utilisateur peut exporter les rapports.
+// Pas de permission.Key dédiée à "export" dans le catalogue (15 droits, lot
+// 1/2) : reste sur la colonne booléenne historique, y compris pour un
+// utilisateur avec role_id — un rôle personnalisé non-admin ne peut donc pas
+// encore restreindre spécifiquement l'export des rapports. Idem pour
+// HasFinancialsExportAccess/HasCustomerExportAccess/CanPrintCashReport.
 func (u *UserLoginRow) HasReportsExportAccess() bool {
 	return u.Rights.Admin || u.Rights.CanExportReports
 }
 
 // HasFinancialsViewAccess vérifie si l'utilisateur peut consulter les données financières
 func (u *UserLoginRow) HasFinancialsViewAccess() bool {
-	return u.Rights.Admin || u.Rights.CanViewFinancials
+	return u.Has(permission.ReportsFinancialRead)
 }
 
 // HasFinancialsExportAccess vérifie si l'utilisateur peut exporter les données financières
@@ -338,7 +368,7 @@ func (u *UserLoginRow) HasFinancialsExportAccess() bool {
 
 // HasCustomerManagementAccess vérifie si l'utilisateur peut gérer les clients
 func (u *UserLoginRow) HasCustomerManagementAccess() bool {
-	return u.Rights.Admin || u.Rights.CanManageCustomers
+	return u.Has(permission.CustomersManage)
 }
 
 // HasCustomerExportAccess vérifie si l'utilisateur peut exporter les clients

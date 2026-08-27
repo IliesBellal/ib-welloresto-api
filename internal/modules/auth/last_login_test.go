@@ -24,19 +24,21 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
-		WillReturnRows(sqlmock.NewRows(makeColumns(86)).AddRow(
+		WillReturnRows(sqlmock.NewRows(makeColumns(89)).AddRow(
 			// user (0-10)
 			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, true, "ignored", nil,
-			// rights (11-34)
-			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil,
+			// rights (11-36): ...booleans..., merchant_id, role_id, role_system_key, mfa_type, mfa_status, mfa_verified_at, mfa_otp_sent_at
+			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil, nil, nil,
 			// merchant (35-42)
 			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil,
 			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62),
 			// pos_covers_count_required (63), waiter_app_can_cash_in (64)
 			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
-			// package (65-75): AllowWaiterAccount..KiosksEnabled
-			true, true, false, 0, false, true, true, true, false, true, true,
-			// SNO (76)
+			// package (65-76): AllowWaiterAccount..DeliveryEnabled (pre-existing gap found while
+			// wiring role_id/role_system_key: this row was already short one value — the
+			// COALESCE(...) AS delivery_enabled column — before this lot touched the file.
+			true, true, false, 0, false, true, true, true, false, true, true, true,
+			// SNO (77)
 			false,
 			// uber eats (77-82)
 			nil, nil, nil, nil, nil, nil,

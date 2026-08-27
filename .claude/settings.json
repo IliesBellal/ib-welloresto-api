@@ -53,10 +53,32 @@
       "Bash(cd \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api\" && sed -n '1,40p' internal/infrastructure/redis/*.go 2>/dev/null | head -80 *)",
       "Bash(gofmt /tmp/lf.go)",
       "Bash(xargs grep -l \"func.*GetPanes\\\\|type Panes struct\")",
-      "Bash(echo \"VET_EXIT:$?\")"
+      "Bash(echo \"VET_EXIT:$?\")",
+      "Bash(gofmt -w internal/modules/roles/models.go internal/modules/roles/repository.go internal/permission/keys_gen.go)",
+      "Bash(awk '/func scanUserLoginRow/,/^}/' internal/modules/auth/repository.go)",
+      "Bash(awk '/func \\\\\\(r \\\\*AuthRepository\\\\\\) Login/,/^}/' internal/modules/auth/repository.go)",
+      "Bash(awk '/func scanUserLoginRow/,/^}/')",
+      "Bash(awk '/func \\\\\\(r \\\\*AuthRepository\\\\\\) Login/,/^}/')",
+      "Bash(command -v psql)",
+      "Bash(command -v go)",
+      "Bash(mkdir -p \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api/cmd/tmp_rbac_query\" && cp /tmp/rbac_lot3_query/main.go \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api/cmd/tmp_rbac_query/main.go\" && echo copied)",
+      "Bash(rm -rf \"d:/Desktop/DTL/Project/git-projects/ib-welloresto-api/cmd/tmp_rbac_query\")",
+      "Bash(rm -rf /tmp/rbac_lot3_query)",
+      "Bash(printenv)",
+      "Bash(printenv RENDER_STAGING_DATABASE_URL)",
+      "Bash(sed -E 's/\\(:\\\\/\\\\/[^:]+:\\)[^@]+\\(@\\)/\\\\1****\\\\2/')",
+      "Bash(mkdir -p /d/tmp_gobuild)",
+      "Bash(GOTMPDIR=\"D:\\\\\\\\tmp_gobuild\" go build ./...)",
+      "Bash(GOTMPDIR=\"D:\\\\\\\\tmp_gobuild\" go test ./cmd/api/... ./internal/permission/... ./internal/modules/auth/... ./internal/modules/roles/... -v)",
+      "Bash(GOTMPDIR=\"D:\\\\\\\\tmp_gobuild\" go test ./cmd/api/... -v -run 'TestRBACCoverage|TestRBACRatchet|TestRBACPermissionCoverage')",
+      "Bash(GOTMPDIR=\"D:\\\\\\\\tmp_gobuild\" go test ./cmd/api/... ./internal/permission/... ./internal/modules/auth/... ./internal/modules/roles/...)",
+      "Bash(rm -rf /d/tmp_gobuild)",
+      "Bash(npm run *)"
     ],
     "additionalDirectories": [
-      "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis"
+      "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis",
+      "\\tmp\\rbac_lot3_query",
+      "D:\\tmp_gobuild"
     ]
   }
 }

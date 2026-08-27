@@ -11,7 +11,20 @@ const (
 
 	// Préfixe des clés Redis pour les users
 	// Permet d'identifier facilement les clés dans Redis
-	UserCachePrefix = "user:token:"
+	//
+	// Bascule "v2" (RBAC lot 2) : UserLoginRow a gagné RoleID/RoleSystemKey/
+	// Permissions. Une entrée écrite avant ce déploiement désérialise ces
+	// champs à leur zéro-value (nil/nil/vide), ce qui retombe silencieusement
+	// sur les booléens historiques — inoffensif tant que role_id n'est jamais
+	// renseigné, mais deviendrait un vrai incident de sécurité le jour où on
+	// commence à assigner des rôles (un cache "v1" encore chaud referait
+	// confiance aux anciens booléens au lieu du nouveau rôle). Changer le
+	// préfixe rend orphelines toutes les entrées "v1" : elles expirent seules
+	// (TTL 60 min, UserCacheTTL) sans jamais être relues, et la première
+	// requête suivant le déploiement recharge systématiquement depuis SQL.
+	// Ne JAMAIS construire cette clé avec un préfixe écrit en dur ailleurs
+	// dans le code — toujours passer par cette constante.
+	UserCachePrefix = "user:token:v2:"
 
 	// Préfixe des clés Redis pour les merchants (scannorder)
 	// Toutes les clés sont indexées par merchant_id (plus jamais par QR seul)

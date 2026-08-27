@@ -4,6 +4,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -11,8 +12,8 @@ import (
 	"welloresto-api/internal/models"
 )
 
-func boolPtr(b bool) *bool { return &b }
-func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool      { return &b }
+func strPtr(s string) *string   { return &s }
 func f64Ptr(f float64) *float64 { return &f }
 
 func TestUsersRepository_Postgres(t *testing.T) {
@@ -45,6 +46,8 @@ func TestUsersRepository_Postgres(t *testing.T) {
 			_, _ = db.ExecContext(ctx, `DELETE FROM employees WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM components WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
+			_, _ = db.ExecContext(ctx, `UPDATE merchant SET default_role_id = NULL WHERE id = $1`, merchantIntID)
+			_, _ = db.ExecContext(ctx, `DELETE FROM roles WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
 		}
 	}
@@ -84,7 +87,22 @@ func TestUsersRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed subscriptions: %v", err)
 	}
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM subscriptions WHERE merchant_id = $1`, merchantID) })
-	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, merchantID) })
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, merchantID)
+	})
+
+	// InsertUserRights reads role_id from merchant.default_role_id (RBAC lot 4)
+	// and fails explicitly if it is unset — seed a role directly via SQL and
+	// point the merchant at it (rather than importing internal/modules/roles:
+	// that package now imports this one for GetUsersRightsToken reuse — RBAC
+	// lot 6 — so importing it back from here would be an import cycle).
+	const testAdminRoleID = "role-itest-users-default"
+	if _, err := db.ExecContext(ctx, `INSERT INTO roles (id, merchant_id, name, system_key) VALUES ($1, $2, 'Administrateur', 'admin')`, testAdminRoleID, merchantID); err != nil {
+		t.Fatalf("seed role: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE merchant SET default_role_id = $1 WHERE id = $2`, testAdminRoleID, merchantIntID); err != nil {
+		t.Fatalf("set merchant default_role_id: %v", err)
+	}
 
 	repo := NewUserRepository(db)
 
@@ -185,7 +203,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed delivery_session_order: %v", err)
 	}
 
-	status, dLat, dLng, ok, err := repo.GetDeliveryStopDestination(ctx, gotSession, orderID)
+	status, dLat, dLng, ok, _, _, err := repo.GetDeliveryStopDestination(ctx, gotSession, orderID)
 	if err != nil {
 		t.Fatalf("GetDeliveryStopDestination failed against postgres: %v", err)
 	}
@@ -196,7 +214,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE orders SET use_customer_temporary_address = true WHERE order_id = $1`, orderIntID); err != nil {
 		t.Fatalf("switch to temporary address: %v", err)
 	}
-	status, dLat, dLng, ok, err = repo.GetDeliveryStopDestination(ctx, gotSession, orderID)
+	status, dLat, dLng, ok, _, _, err = repo.GetDeliveryStopDestination(ctx, gotSession, orderID)
 	if err != nil {
 		t.Fatalf("GetDeliveryStopDestination (temporary) failed: %v", err)
 	}
@@ -518,5 +536,62 @@ func TestRotateRightsTokensExcept_Postgres(t *testing.T) {
 	}
 	if readToken(merchantA) == tokenA {
 		t.Fatal("merchant A token was not rotated when no merchant was excluded")
+	}
+}
+
+// TestInsertUserRights_FailsExplicitlyWhenNoDefaultRole is the RBAC lot 4
+// requirement from the runbook: an establishment with merchant.default_role_id
+// still NULL (cmd/seed_system_roles / migration 099 not run for it yet) must
+// reject a new users_rights row outright, never insert one with role_id NULL
+// — that would silently reopen the two-regime gap this lot closes.
+func TestInsertUserRights_FailsExplicitlyWhenNoDefaultRole(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const userID = "itest-users-nodefaultrole"
+	var merchantIntID int64
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users_rights WHERE user_id = $1`, userID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
+		if merchantIntID != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, lat, lng)
+		VALUES ('ITest No Default Role', 'addr', '1', 'street', '75001', 'Paris', 'siret-nodefaultrole', 'https://example.com', '0600000002', 'mtok-nodefaultrole', 'Europe/Paris', 1.0, 2.0)
+		RETURNING id`).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+	// default_role_id deliberately left NULL — no roles seeded for this merchant.
+
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO users (user_id, name, first_name, last_name, email, tel, password, token)
+		VALUES ($1, 'ITest User', 'ITest', 'User', 'itest-nodefaultrole@example.com', '+33611111112', 'x', 'user-tok-nodefaultrole')
+		RETURNING user_id`).Scan(new(string)); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	repo := NewUserRepository(db)
+
+	if _, err := repo.InsertUserRights(ctx, userID, merchantID, false, "rights-tok-nodefaultrole"); !errors.Is(err, models.ErrMerchantDefaultRoleNotSet) {
+		t.Fatalf("InsertUserRights with no default_role_id: err = %v, want models.ErrMerchantDefaultRoleNotSet", err)
+	}
+
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users_rights WHERE user_id = $1`, userID).Scan(&count); err != nil {
+		t.Fatalf("count users_rights: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no users_rights row to be inserted, found %d", count)
+	}
+
+	if _, err := repo.UpsertMerchantUserRights(ctx, userID, merchantID, "rights-tok-nodefaultrole-2", defaultMerchantUserRights(false)); !errors.Is(err, models.ErrMerchantDefaultRoleNotSet) {
+		t.Fatalf("UpsertMerchantUserRights (insert branch) with no default_role_id: err = %v, want models.ErrMerchantDefaultRoleNotSet", err)
 	}
 }

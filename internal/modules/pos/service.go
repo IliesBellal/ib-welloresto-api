@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
+	rolesModule "welloresto-api/internal/modules/roles"
 )
 
 // realtimeBroadcaster diffuse un message WebSocket à tous les devices d'un
@@ -22,6 +23,7 @@ type realtimeBroadcaster interface {
 type POSService struct {
 	posRepo        *POSRepository
 	holidayService *settingspkg.Service
+	rolesRepo      *rolesModule.Repository
 	broadcaster    realtimeBroadcaster
 }
 
@@ -32,6 +34,7 @@ func NewPOSService(p *POSRepository, broadcaster realtimeBroadcaster) *POSServic
 	return &POSService{
 		posRepo:        p,
 		holidayService: settingspkg.NewService(settingspkg.NewRepository(p.database)),
+		rolesRepo:      rolesModule.NewRepository(p.database),
 		broadcaster:    broadcaster,
 	}
 }
@@ -51,10 +54,13 @@ func (s *POSService) UpdatePOSStatus(ctx context.Context, token string, status b
 		return nil, models.ErrUnauthorized
 	}
 
-	if !user.Rights.AccessReception {
-		return nil, models.ErrForbidden
-	}
-
+	// RBAC lot 1 removed the users_rights.access_wrreception gate that used to
+	// sit here (it was keyed on a flag meant for the now-decommissioned
+	// WR_RECEPTION mobile app, not this specific back-office action) without a
+	// replacement, opening PATCH /pos/status to any authenticated user for the
+	// time it took to reach lot 2. RBAC lot 2 closed it: the route is now
+	// gated by permission.POSStatusManage (see cmd/api/routes.go), enforced by
+	// middleware.RequirePermission before this method is ever called.
 	err = s.posRepo.UpdatePOSStatus(ctx, user.MerchantID, status)
 	if err != nil {
 		return nil, err
@@ -475,17 +481,17 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			AutoCloseDelay:   intVal(params.AutoCompleteOrdersDelay),
 		},
 		Ordering: models.POSSettingsOrdering{
-			PaidOrdersOnly:     boolVal(params.KitchenShowOnlyPaid),
-			ConcurrentCapacity: intVal(params.ConcurrentPreparationCapacity),
-			ServiceRequired:    serviceRequired,
-			DisableLowStock:    boolVal(params.DisableComponentsUnderSafetyStock),
-			RegisterRequired:   boolVal(params.CashRegisterRequiredForOrdering),
-			ActiveOnSite:       boolVal(params.ManageOnSite),
-			ActiveTakeaway:     boolVal(params.ManageTakeAway),
-			ActiveDelivery:     boolVal(params.ManageDelivery),
-			UpsellEnabled:      boolVal(params.POSUpsellEnabled),
-			CoversCountRequired:  boolVal(params.POSCoversCountRequired),
-			MobilePaymentEnabled: boolVal(params.WaiterAppCanCashIn),
+			PaidOrdersOnly:           boolVal(params.KitchenShowOnlyPaid),
+			ConcurrentCapacity:       intVal(params.ConcurrentPreparationCapacity),
+			ServiceRequired:          serviceRequired,
+			DisableLowStock:          boolVal(params.DisableComponentsUnderSafetyStock),
+			RegisterRequired:         boolVal(params.CashRegisterRequiredForOrdering),
+			ActiveOnSite:             boolVal(params.ManageOnSite),
+			ActiveTakeaway:           boolVal(params.ManageTakeAway),
+			ActiveDelivery:           boolVal(params.ManageDelivery),
+			UpsellEnabled:            boolVal(params.POSUpsellEnabled),
+			CoversCountRequired:      boolVal(params.POSCoversCountRequired),
+			MobilePaymentEnabled:     boolVal(params.WaiterAppCanCashIn),
 			CustomerFormRequirements: params.CustomerFormRequirements,
 		},
 		ScanOrder: models.POSSettingsScanOrder{

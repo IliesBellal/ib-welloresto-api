@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/permission"
 )
 
 type AuthRepository struct {
@@ -78,6 +79,8 @@ SELECT
 	COALESCE(ur.manage_customers, FALSE),
 	COALESCE(ur.export_customers, FALSE),
     ur.merchant_id,
+	ur.role_id,
+	rl.system_key AS role_system_key,
 	u.mfa_type,
 	u.mfa_status,
 	u.mfa_verified_at,
@@ -139,6 +142,7 @@ SELECT
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
 INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN roles rl ON rl.id = ur.role_id
 LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
@@ -154,7 +158,14 @@ LIMIT 1;
 `, joinCast)
 
 	row := db.QueryRowContext(ctx, query, token)
-	return scanUserLoginRow(row)
+	data, err := scanUserLoginRow(row)
+	if err != nil || data == nil {
+		return data, err
+	}
+	if err := r.attachRolePermissions(ctx, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // scanUserLoginRow scans a row produced by the shared SELECT used by GetUserByToken
@@ -175,6 +186,7 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.Rights.CanManageSettings, &data.Rights.CanManageHACCP, &data.Rights.CanViewReports,
 		&data.Rights.CanExportReports, &data.Rights.CanViewFinancials, &data.Rights.CanExportFinancials,
 		&data.Rights.CanManageCustomers, &data.Rights.CanExportCustomers, &data.MerchantID,
+		&data.RoleID, &data.RoleSystemKey,
 		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt, &data.MFAOTPSentAt,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
@@ -248,6 +260,8 @@ SELECT
 	COALESCE(ur.manage_customers, FALSE),
 	COALESCE(ur.export_customers, FALSE),
 	ur.merchant_id,
+	ur.role_id,
+	rl.system_key AS role_system_key,
 	u.mfa_type,
 	u.mfa_status,
 	u.mfa_verified_at,
@@ -315,6 +329,7 @@ SELECT
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
 INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN roles rl ON rl.id = ur.role_id
 LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
@@ -355,6 +370,7 @@ LIMIT 1;
 		&data.Rights.CanManageSettings, &data.Rights.CanManageHACCP, &data.Rights.CanViewReports,
 		&data.Rights.CanExportReports, &data.Rights.CanViewFinancials, &data.Rights.CanExportFinancials,
 		&data.Rights.CanManageCustomers, &data.Rights.CanExportCustomers, &data.MerchantID,
+		&data.RoleID, &data.RoleSystemKey,
 		&data.MFAType, &data.MFAStatus, &data.MFAVerifiedAt, &data.MFAOTPSentAt,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
@@ -416,7 +432,49 @@ LIMIT 1;
 		}
 	}
 
-	return data, err
+	if err := r.attachRolePermissions(ctx, data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// attachRolePermissions loads role_permissions.permission_key for data's role
+// (a second query, deliberately not aggregated in SQL — string_agg/
+// GROUP_CONCAT diverge between MySQL and Postgres) and sets data.Permissions.
+// No-op when data is nil or has no role yet: every GetUserByToken/Login/
+// GetUserByPIN call site must build a UserLoginRow through this so a session
+// looks the same in Redis regardless of which login path produced it.
+func (r *AuthRepository) attachRolePermissions(ctx context.Context, data *UserLoginRow) error {
+	if data == nil || data.RoleID == nil {
+		return nil
+	}
+	perms, err := r.loadRolePermissions(ctx, *data.RoleID)
+	if err != nil {
+		return err
+	}
+	data.Permissions = permission.FilterValid(perms)
+	return nil
+}
+
+// loadRolePermissions is the second query attachRolePermissions runs.
+func (r *AuthRepository) loadRolePermissions(ctx context.Context, roleID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `SELECT permission_key FROM role_permissions WHERE role_id = ?`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }
 
 // UpdatePassword overwrites a user's stored password hash.
@@ -624,6 +682,8 @@ SELECT
 	COALESCE(ur.manage_customers, FALSE),
 	COALESCE(ur.export_customers, FALSE),
     ur.merchant_id,
+	ur.role_id,
+	rl.system_key AS role_system_key,
 	u.mfa_type,
 	u.mfa_status,
 	u.mfa_verified_at,
@@ -685,6 +745,7 @@ SELECT
 FROM users u
 INNER JOIN users_rights ur ON ur.user_id = u.user_id
 INNER JOIN merchant m ON %[1]s = ur.merchant_id
+LEFT JOIN roles rl ON rl.id = ur.role_id
 LEFT JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
 LEFT JOIN packages p ON p.id = s.package_id
@@ -697,7 +758,14 @@ WHERE ur.merchant_id = ? AND ur.pin_hash = ? AND ur.enabled = true AND ur.login_
 LIMIT 1;
 `, joinCast)
 	row := db.QueryRowContext(ctx, query, merchantID, pinHash)
-	return scanUserLoginRow(row)
+	data, err := scanUserLoginRow(row)
+	if err != nil || data == nil {
+		return data, err
+	}
+	if err := r.attachRolePermissions(ctx, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (r *AuthRepository) SetPINHash(ctx context.Context, merchantID, userID string, pinHash *string) error {

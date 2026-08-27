@@ -11,6 +11,14 @@ type LoginResponse struct {
 	User         *LoginUserResponse         `json:"user,omitempty"`
 	Merchant     *LoginMerchantResponse     `json:"merchant,omitempty"`
 	Access       *LoginAccessResponse       `json:"access,omitempty"`
+	// Permissions is the RBAC lot 9 catalog-key view of the caller's rights on
+	// the current establishment (e.g. "staff.manage"), a sibling of Access
+	// rather than a field inside it: Access.Permissions keeps its historical
+	// snake_case shape unchanged for other clients that still depend on it.
+	// Sourced directly from UserLoginRow.Permissions (populated since RBAC lot
+	// 2 by attachRolePermissions, filtered against the live catalog) —
+	// nothing recomputed here.
+	Permissions  []string                   `json:"permissions,omitempty"`
 	Capabilities *LoginCapabilitiesResponse `json:"capabilities,omitempty"`
 	Integrations *LoginIntegrationsResponse `json:"integrations,omitempty"`
 	SNOSettings  *LoginSNOSettingsResponse  `json:"SNOSettings,omitempty"`

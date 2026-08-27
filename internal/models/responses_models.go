@@ -375,6 +375,39 @@ var (
 	ErrMerchantUserNotFound                     = errors.New("merchant_user_not_found")
 	ErrMerchantUserAlreadyLinked                = errors.New("merchant_user_already_linked")
 
+	// ErrMerchantDefaultRoleNotSet indique que merchant.default_role_id est
+	// NULL pour cet établissement (RBAC lot 4) : la création ou le
+	// rattachement d'un utilisateur ne peut pas se faire sans role_id, et
+	// échoue explicitement plutôt que d'insérer une ligne users_rights sans
+	// rôle. Voir migrations/done/099_merchant_default_role_admin.up.sql et
+	// cmd/seed_system_roles.
+	ErrMerchantDefaultRoleNotSet = errors.New("merchant_default_role_not_set")
+
+	// Erreurs du module roles (RBAC lot 6 — internal/modules/roles).
+	//
+	// ErrRoleNotFound couvre aussi bien "id inconnu" que "ce role_id
+	// appartient à un autre établissement" — les deux remontent la même
+	// réponse (404), jamais un 403, pour ne pas confirmer à l'appelant
+	// qu'un id appartient à quelqu'un d'autre.
+	ErrRoleNotFound             = errors.New("role_not_found")
+	ErrRoleNameRequired         = errors.New("role_name_required")
+	ErrRoleVersionRequired      = errors.New("role_version_required")
+	ErrRolePermissionKeyUnknown = errors.New("role_permission_key_unknown")
+	// ErrRoleImmutable : G4, le rôle système "admin" n'est ni renommable, ni
+	// archivable, ni modifiable dans ses droits — il détient tout le
+	// catalogue par construction.
+	ErrRoleImmutable = errors.New("role_immutable")
+	// ErrRoleSelfModification : G1, un utilisateur ne peut ni changer son
+	// propre rôle (PUT /users/{id}/role sur lui-même) ni modifier les droits
+	// d'un rôle qu'il porte lui-même (PUT /roles/{id}/permissions).
+	ErrRoleSelfModification = errors.New("role_self_modification")
+	// ErrRoleStaffManageRequired : G2, l'opération laisserait l'établissement
+	// sans aucun utilisateur actif détenant staff.manage.
+	ErrRoleStaffManageRequired = errors.New("role_staff_manage_required")
+	// ErrRoleIsMerchantDefault : G6, le rôle "staff" ne peut pas être archivé
+	// tant qu'il est merchant.default_role_id.
+	ErrRoleIsMerchantDefault = errors.New("role_is_merchant_default")
+
 	ErrRedisNotAvailable = errors.New("not_available")
 
 	// Erreurs du module Kiosk (internal/modules/kiosk)
@@ -894,6 +927,51 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "merchant_user_already_linked"
 		errorMsg = "The user is already linked to the current merchant."
+
+	case errors.Is(err, ErrMerchantDefaultRoleNotSet):
+		status = http.StatusConflict
+		errorStatus = "merchant_default_role_not_set"
+		errorMsg = "This establishment has no default role configured yet."
+
+	case errors.Is(err, ErrRoleNotFound):
+		status = http.StatusNotFound
+		errorStatus = "role_not_found"
+		errorMsg = "Role not found."
+
+	case errors.Is(err, ErrRoleNameRequired):
+		status = http.StatusBadRequest
+		errorStatus = "role_name_required"
+		errorMsg = "A role name is required."
+
+	case errors.Is(err, ErrRoleVersionRequired):
+		status = http.StatusBadRequest
+		errorStatus = "role_version_required"
+		errorMsg = "The version field is required for this write."
+
+	case errors.Is(err, ErrRolePermissionKeyUnknown):
+		status = http.StatusBadRequest
+		errorStatus = "role_permission_key_unknown"
+		errorMsg = "One or more permission keys are not in the catalog."
+
+	case errors.Is(err, ErrRoleImmutable):
+		status = http.StatusConflict
+		errorStatus = "role_immutable"
+		errorMsg = "The admin role cannot be renamed, archived, or have its permissions changed."
+
+	case errors.Is(err, ErrRoleSelfModification):
+		status = http.StatusConflict
+		errorStatus = "role_self_modification"
+		errorMsg = "You cannot change your own role or the permissions of a role you hold."
+
+	case errors.Is(err, ErrRoleStaffManageRequired):
+		status = http.StatusConflict
+		errorStatus = "role_staff_manage_required"
+		errorMsg = "This would leave the establishment with no active user holding staff.manage."
+
+	case errors.Is(err, ErrRoleIsMerchantDefault):
+		status = http.StatusConflict
+		errorStatus = "role_is_merchant_default"
+		errorMsg = "This role is still the establishment's default role for new accounts."
 
 	case errors.Is(err, ErrOTPMismatch):
 		status = http.StatusUnauthorized

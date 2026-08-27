@@ -22,6 +22,7 @@ import (
 	authpkg "welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/menu/importer"
 	tagsModule "welloresto-api/internal/modules/tags"
+	"welloresto-api/internal/permission"
 )
 
 const (
@@ -38,7 +39,7 @@ type fakePreviewStore struct {
 	ttls   map[string]time.Duration
 	fail   bool
 
-	deleted     []string
+	deleted []string
 }
 
 func newFakePreviewStore() *fakePreviewStore {
@@ -547,7 +548,7 @@ func TestPreviewImportIsGuardedByMenuPermission(t *testing.T) {
 			handler := NewImportHandler(
 				newTestImportService(db, newFakePreviewStore()),
 			)
-			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
+			guarded := middleware.RequirePermission(permission.CatalogManage)(
 				http.HandlerFunc(handler.PreviewImport),
 			)
 
@@ -775,7 +776,7 @@ func TestCommitImportIsGuardedByMenuPermission(t *testing.T) {
 			}()
 
 			handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
-			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
+			guarded := middleware.RequirePermission(permission.CatalogManage)(
 				http.HandlerFunc(handler.CommitImport),
 			)
 
@@ -917,7 +918,7 @@ func TestDownloadImportTemplateIsGuardedByMenuPermission(t *testing.T) {
 			defer func() { _ = db.Close() }()
 
 			handler := NewImportHandler(newTestImportService(db, newFakePreviewStore()))
-			guarded := middleware.RequirePermission(middleware.HasMenuAccess)(
+			guarded := middleware.RequirePermission(permission.CatalogManage)(
 				http.HandlerFunc(handler.DownloadImportTemplate),
 			)
 

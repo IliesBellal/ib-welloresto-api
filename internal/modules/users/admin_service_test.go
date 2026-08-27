@@ -788,9 +788,13 @@ func merchantUserDetailRows(userID, firstName, lastName string) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
 		"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
+		// RBAC lot 9: role_id/name/system_key, left null here — none of the
+		// callers of this fixture exercise the role-assignment path.
+		"role_id", "role_name", "role_system_key",
 	}).AddRow(
 		userID, firstName, lastName, "john@example.com", "+33000000000", nil, now, now, true, true, int64(1), false,
 		false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, nil, nil,
+		nil, nil, nil,
 	)
 }
 
