@@ -90,7 +90,7 @@ reste à concevoir.
 | Méthode | Route | Auth | Droit requis |
 |---|---|---|---|
 | GET | `/stats/dashboard/summary` | authMiddleware | `reports.sales.read` |
-| GET | `/stats/upsell` | authMiddleware | aucun |
+| GET | `/stats/upsell` | authMiddleware | `pos.analytics` (RBAC lot 10) |
 
 `GET /stats/dashboard/summary` alimente la tuile de reporting de la page
 d'accueil back-office (RBAC lot 8). **À traiter côté front** : un rôle sans
@@ -404,15 +404,15 @@ un rapport financier — voir ci-dessous.
 | GET | `/allergens/` | authMiddleware | aucun |
 | GET, POST | `/printers/` | authMiddleware | aucun |
 | PATCH, DELETE | `/printers/{printer_id}` | authMiddleware | aucun |
-| POST | `/floors/` | authMiddleware | aucun |
-| PATCH, DELETE | `/floors/{floor_id}` | authMiddleware | aucun |
-| POST | `/floors/{floor_id}/obstacles/` | authMiddleware | aucun |
-| PATCH, DELETE | `/floors/{floor_id}/obstacles/{obstacle_id}` | authMiddleware | aucun |
-| POST | `/floors/{floor_id}/areas/` | authMiddleware | aucun |
-| PATCH, DELETE | `/floors/{floor_id}/areas/{area_id}` | authMiddleware | aucun |
-| GET | `/locations/` | authMiddleware | aucun |
-| POST | `/locations/floors/{floor_id}/tables` | authMiddleware | aucun |
-| PATCH, DELETE | `/locations/tables/{location_id}` | authMiddleware | aucun |
+| POST | `/floors/` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| PATCH, DELETE | `/floors/{floor_id}` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| POST | `/floors/{floor_id}/obstacles/` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| PATCH, DELETE | `/floors/{floor_id}/obstacles/{obstacle_id}` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| POST | `/floors/{floor_id}/areas/` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| PATCH, DELETE | `/floors/{floor_id}/areas/{area_id}` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| GET | `/locations/` | authMiddleware | aucun (utilisé aussi par la prise de commande) |
+| POST | `/locations/floors/{floor_id}/tables` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
+| PATCH, DELETE | `/locations/tables/{location_id}` | authMiddleware | `seating_plan.manage` (RBAC lot 10) |
 | GET | `/services/{device_id}` | authMiddleware | aucun |
 
 ## `/orders`
@@ -528,10 +528,13 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 |---|---|---|---|
 | GET, POST | `/bookings/` | authMiddleware | aucun |
 | GET | `/bookings/availability/{date}` | authMiddleware | aucun |
-| GET, PUT | `/bookings/settings` | authMiddleware | aucun |
-| GET, POST | `/bookings/settings/duration-rules` | authMiddleware | aucun |
-| PATCH, DELETE | `/bookings/settings/duration-rules/{rule_id}` | authMiddleware | aucun |
-| GET, PUT | `/bookings/settings/hours` | authMiddleware | aucun |
+| GET | `/bookings/settings` | authMiddleware | aucun |
+| PUT | `/bookings/settings` | authMiddleware | `bookings.manage` (RBAC lot 10) |
+| GET | `/bookings/settings/duration-rules` | authMiddleware | aucun |
+| POST | `/bookings/settings/duration-rules` | authMiddleware | `bookings.manage` (RBAC lot 10) |
+| PATCH, DELETE | `/bookings/settings/duration-rules/{rule_id}` | authMiddleware | `bookings.manage` (RBAC lot 10) |
+| GET | `/bookings/settings/hours` | authMiddleware | aucun |
+| PUT | `/bookings/settings/hours` | authMiddleware | `bookings.manage` (RBAC lot 10) |
 | POST | `/bookings/create` | authMiddleware | aucun |
 | GET | `/bookings/{booking_id}` | authMiddleware | aucun |
 | PATCH | `/bookings/{booking_id}/accept` | authMiddleware | aucun |
@@ -571,22 +574,22 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 | GET | `/integrations/uber-eats` | authMiddleware | aucun |
 | GET | `/integrations/deliveroo` | authMiddleware | aucun |
 | GET | `/integrations/scannorder` | authMiddleware | aucun |
-| PUT | `/integrations/scannorder/logo` | authMiddleware | aucun |
-| PUT | `/integrations/scannorder/banner` | authMiddleware | aucun |
-| PATCH | `/integrations/uber-eats` | authMiddleware | aucun |
-| PATCH | `/integrations/uber-eats/disable` | authMiddleware | aucun |
-| PATCH | `/integrations/deliveroo` | authMiddleware | aucun |
-| PATCH | `/integrations/deliveroo/disable` | authMiddleware | aucun |
-| PATCH | `/integrations/scannorder` | authMiddleware | aucun |
-| POST | `/integrations/scannorder/onboarding` | authMiddleware | aucun |
-| PATCH | `/integrations/global/close-temporary` | authMiddleware | aucun |
-| PATCH | `/integrations/global/wait-time` | authMiddleware | aucun |
+| PUT | `/integrations/scannorder/logo` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PUT | `/integrations/scannorder/banner` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/uber-eats` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/uber-eats/disable` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/deliveroo` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/deliveroo/disable` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/scannorder` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| POST | `/integrations/scannorder/onboarding` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/global/close-temporary` | authMiddleware | `platforms.manage` (RBAC lot 10) |
+| PATCH | `/integrations/global/wait-time` | authMiddleware | `platforms.manage` (RBAC lot 10) |
 | GET | `/integrations/stripe/status` | authMiddleware | aucun |
-| POST | `/integrations/stripe/onboarding-link` | authMiddleware | aucun |
+| POST | `/integrations/stripe/onboarding-link` | authMiddleware | `platforms.manage` (RBAC lot 10) |
 | GET | `/integrations/stripe/bank-accounts` | authMiddleware | aucun |
-| POST | `/integrations/stripe/bank-account-link` | authMiddleware | aucun |
+| POST | `/integrations/stripe/bank-account-link` | authMiddleware | `platforms.manage` (RBAC lot 10) |
 | GET | `/integrations/stripe/balance` | authMiddleware | `reports.financial.read` |
-| POST | `/integrations/stripe/branding` | authMiddleware | aucun |
+| POST | `/integrations/stripe/branding` | authMiddleware | `platforms.manage` (RBAC lot 10) |
 
 ## `/kiosk` — device, `KioskAuth` (pas `authMiddleware`)
 
@@ -618,22 +621,23 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 | Méthode | Route | Auth | Droit requis |
 |---|---|---|---|
 | POST | `/pos/kiosk/{kiosk_id}/status` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/enrollment-codes` | authMiddleware | aucun |
+| POST | `/pos/settings/kiosk/enrollment-codes` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
 | GET | `/pos/settings/kiosk/enrollment-codes` | authMiddleware | aucun |
-| DELETE | `/pos/settings/kiosk/enrollment-codes/{code_id}` | authMiddleware | aucun |
+| DELETE | `/pos/settings/kiosk/enrollment-codes/{code_id}` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
 | GET | `/pos/settings/kiosk/devices` | authMiddleware | aucun |
 | GET | `/pos/settings/kiosk/devices/{device_id}` | authMiddleware | aucun |
-| PUT | `/pos/settings/kiosk/devices/{device_id}` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/devices/{device_id}/enable` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/devices/{device_id}/disable` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/devices/{device_id}/revoke` | authMiddleware | aucun |
+| PUT | `/pos/settings/kiosk/devices/{device_id}` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/devices/{device_id}/enable` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/devices/{device_id}/disable` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/devices/{device_id}/revoke` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
 | GET | `/pos/settings/kiosk/devices/{device_id}/admin-pin` | authMiddleware | `settings.manage` |
 | POST | `/pos/settings/kiosk/devices/{device_id}/regenerate-admin-pin` | authMiddleware | `settings.manage` |
-| GET, PUT | `/pos/settings/kiosk/settings` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/settings/logo` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/settings/idle-image` | authMiddleware | aucun |
-| POST | `/pos/settings/kiosk/settings/idle-video` | authMiddleware | aucun |
-| DELETE | `/pos/settings/kiosk/settings/idle-video` | authMiddleware | aucun |
+| GET | `/pos/settings/kiosk/settings` | authMiddleware | aucun |
+| PUT | `/pos/settings/kiosk/settings` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/settings/logo` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/settings/idle-image` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| POST | `/pos/settings/kiosk/settings/idle-video` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
+| DELETE | `/pos/settings/kiosk/settings/idle-video` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
 
 ## `/ws`, `/ws-kiosk`
 

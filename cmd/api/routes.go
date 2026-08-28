@@ -656,7 +656,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 				Get("/summary", statsH.GetDashboardSummary)
 		})
 
-		r.Get("/upsell", statsH.GetUpsellStats)
+		// RBAC lot 10 : ancre de garde pour pos.analytics — voir docs/decisions.md.
+		r.With(middleware.RequirePermission(permission.POSAnalytics)).
+			Get("/upsell", statsH.GetUpsellStats)
 	})
 
 	// --- POS ---
@@ -1119,8 +1121,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	})
 
 	// --- FLOORS ---
+	// RBAC lot 10 : seating_plan.manage — CONFIGURATION du plan de salle
+	// (salles, obstacles, zones). Tout ce groupe est de la configuration par
+	// nature, contrairement à /locations juste en dessous dont le GET reste
+	// utilisé ailleurs (prise de commande, association table/réservation).
 	r.Route("/floors", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(middleware.RequirePermission(permission.SeatingPlanManage))
 
 		r.Post("/", locationsH.CreateFloor)
 		r.Patch("/{floor_id}", locationsH.UpdateFloor)
@@ -1145,10 +1152,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 		r.Get("/", locationsH.GetLocations)
 
-		// Floor tables management
-		r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)
-		r.Patch("/tables/{location_id}", locationsH.UpdateTable)
-		r.Delete("/tables/{location_id}", locationsH.DeleteTable)
+		// Floor tables management — RBAC lot 10 : seating_plan.manage.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission(permission.SeatingPlanManage))
+
+			r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)
+			r.Patch("/tables/{location_id}", locationsH.UpdateTable)
+			r.Delete("/tables/{location_id}", locationsH.DeleteTable)
+		})
 	})
 
 	// --- SERVICES ---
@@ -1343,13 +1354,21 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Post("/", bookingsH.SearchBookings)
 		r.Get("/availability/{date}", bookingsH.GetBookingAvailability)
 		r.Get("/settings", bookingsH.GetBookingSettings)
-		r.Put("/settings", bookingsH.PutBookingSettings)
 		r.Get("/settings/duration-rules", bookingsH.ListBookingDurationRules)
-		r.Post("/settings/duration-rules", bookingsH.CreateBookingDurationRule)
-		r.Patch("/settings/duration-rules/{rule_id}", bookingsH.PatchBookingDurationRule)
-		r.Delete("/settings/duration-rules/{rule_id}", bookingsH.DeleteBookingDurationRule)
 		r.Get("/settings/hours", bookingsH.GetBookingSettingsHours)
-		r.Put("/settings/hours", bookingsH.PutBookingSettingsHours)
+
+		// RBAC lot 10 : bookings.manage — CONFIGURATION des paramètres de
+		// réservation (pas la prise/gestion courante des réservations,
+		// laissée libre juste au-dessus, cf. principe RBAC lot 8).
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission(permission.BookingsManage))
+
+			r.Put("/settings", bookingsH.PutBookingSettings)
+			r.Post("/settings/duration-rules", bookingsH.CreateBookingDurationRule)
+			r.Patch("/settings/duration-rules/{rule_id}", bookingsH.PatchBookingDurationRule)
+			r.Delete("/settings/duration-rules/{rule_id}", bookingsH.DeleteBookingDurationRule)
+			r.Put("/settings/hours", bookingsH.PutBookingSettingsHours)
+		})
 
 		r.Post("/create", bookingsH.CreateBooking)
 		r.Get("/{booking_id}", bookingsH.GetBooking)
@@ -1406,26 +1425,33 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			r.Get("/uber-eats", integrationsHandler.GetUberEats)
 			r.Get("/deliveroo", integrationsHandler.GetDeliveroo)
 			r.Get("/scannorder", integrationsHandler.GetScanNOrder)
-			r.Put("/scannorder/logo", integrationsHandler.UploadScanNOrderLogo)
-			r.Put("/scannorder/banner", integrationsHandler.UploadScanNOrderBanner)
-			r.Patch("/uber-eats", integrationsHandler.UpdateUberEats)
-			r.Patch("/uber-eats/disable", integrationsHandler.DisableUberEats)
-			r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
-			r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
-			r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
-			r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
-			r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
-			r.Patch("/global/wait-time", integrationsHandler.SetWaitTimeGlobal)
-
-			// ---- Stripe Connect ----
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)
-			r.Post("/stripe/onboarding-link", integrationsHandler.CreateStripeOnboardingLink)
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)
-			r.Post("/stripe/bank-account-link", integrationsHandler.CreateStripeBankAccountLink)
 			// RBAC lot 8 : solde Stripe — donnée financière, reports.financial.read.
 			r.With(middleware.RequirePermission(permission.ReportsFinancialRead)).
 				Get("/stripe/balance", integrationsHandler.GetStripeBalance)
-			r.Post("/stripe/branding", integrationsHandler.SyncStripeBranding)
+
+			// RBAC lot 10 : platforms.manage — CONFIGURATION des canaux et
+			// plateformes (connexion/déconnexion, réglages, image de marque).
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePermission(permission.PlatformsManage))
+
+				r.Put("/scannorder/logo", integrationsHandler.UploadScanNOrderLogo)
+				r.Put("/scannorder/banner", integrationsHandler.UploadScanNOrderBanner)
+				r.Patch("/uber-eats", integrationsHandler.UpdateUberEats)
+				r.Patch("/uber-eats/disable", integrationsHandler.DisableUberEats)
+				r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
+				r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
+				r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
+				r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
+				r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
+				r.Patch("/global/wait-time", integrationsHandler.SetWaitTimeGlobal)
+
+				// ---- Stripe Connect ----
+				r.Post("/stripe/onboarding-link", integrationsHandler.CreateStripeOnboardingLink)
+				r.Post("/stripe/bank-account-link", integrationsHandler.CreateStripeBankAccountLink)
+				r.Post("/stripe/branding", integrationsHandler.SyncStripeBranding)
+			})
 		})
 	})
 
@@ -1467,16 +1493,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	r.Route("/pos/settings/kiosk", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Post("/enrollment-codes", kioskAdminHandler.GenerateEnrollmentCode)
 		r.Get("/enrollment-codes", kioskAdminHandler.ListEnrollmentCodes)
-		r.Delete("/enrollment-codes/{code_id}", kioskAdminHandler.DeleteEnrollmentCode)
-
 		r.Get("/devices", kioskAdminHandler.ListKioskDevices)
 		r.Get("/devices/{device_id}", kioskAdminHandler.GetKioskDevice)
-		r.Put("/devices/{device_id}", kioskAdminHandler.UpdateKioskDevice)
-		r.Post("/devices/{device_id}/enable", kioskAdminHandler.EnableKioskDevice)
-		r.Post("/devices/{device_id}/disable", kioskAdminHandler.DisableKioskDevice)
-		r.Post("/devices/{device_id}/revoke", kioskAdminHandler.RevokeKioskDevice)
+		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
 
 		// PIN admin : expose un secret en clair (déchiffré) — protégé par
 		// HasSettingsAccess en plus de authMiddleware, contrairement aux
@@ -1485,12 +1505,25 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.With(middleware.RequirePermission(permission.SettingsManage)).Get("/devices/{device_id}/admin-pin", kioskAdminHandler.GetAdminPin)
 		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/devices/{device_id}/regenerate-admin-pin", kioskAdminHandler.RegenerateAdminPin)
 
-		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
-		r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)
-		r.Post("/settings/logo", kioskAdminHandler.UploadKioskLogo)
-		r.Post("/settings/idle-image", kioskAdminHandler.UploadKioskIdleImage)
-		r.Post("/settings/idle-video", kioskAdminHandler.UploadKioskIdleVideo)
-		r.Delete("/settings/idle-video", kioskAdminHandler.DeleteKioskIdleVideo)
+		// RBAC lot 10 : kiosk.manage — CONFIGURATION des bornes Kiosk
+		// (appareils, codes d'enrôlement, réglages d'affichage).
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission(permission.KioskManage))
+
+			r.Post("/enrollment-codes", kioskAdminHandler.GenerateEnrollmentCode)
+			r.Delete("/enrollment-codes/{code_id}", kioskAdminHandler.DeleteEnrollmentCode)
+
+			r.Put("/devices/{device_id}", kioskAdminHandler.UpdateKioskDevice)
+			r.Post("/devices/{device_id}/enable", kioskAdminHandler.EnableKioskDevice)
+			r.Post("/devices/{device_id}/disable", kioskAdminHandler.DisableKioskDevice)
+			r.Post("/devices/{device_id}/revoke", kioskAdminHandler.RevokeKioskDevice)
+
+			r.Put("/settings", kioskAdminHandler.UpdateKioskSettings)
+			r.Post("/settings/logo", kioskAdminHandler.UploadKioskLogo)
+			r.Post("/settings/idle-image", kioskAdminHandler.UploadKioskIdleImage)
+			r.Post("/settings/idle-video", kioskAdminHandler.UploadKioskIdleVideo)
+			r.Delete("/settings/idle-video", kioskAdminHandler.DeleteKioskIdleVideo)
+		})
 	})
 
 	// --- WEBSOCKET ---

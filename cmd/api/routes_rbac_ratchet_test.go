@@ -113,7 +113,7 @@ func TestCountUnguardedMutativeRoutes(t *testing.T) {
 // unguardedMutativeRouteCeiling is the number of mutative (POST/PUT/PATCH/
 // DELETE) routes declared under authMiddleware in cmd/api/routes.go that
 // carry neither middleware.RequirePermission nor middleware.RequireAdmin, as
-// measured on 2026-08-27 (RBAC lot 8, down from 222 at lot 2.5).
+// measured on 2026-08-28 (RBAC lot 10, down from 212 at lot 8).
 //
 // This is not a target — it is the debt this repository already carries
 // (menu outside /import, HACCP outside /traceability and /settings, orders
@@ -126,7 +126,7 @@ func TestCountUnguardedMutativeRoutes(t *testing.T) {
 // below it (a route getting guarded is welcome); when that happens the test
 // logs a reminder to lower this constant to match, so the ratchet keeps
 // tightening instead of going slack in the other direction.
-const unguardedMutativeRouteCeiling = 212
+const unguardedMutativeRouteCeiling = 175
 
 // TestRBACRatchet is the counting half of the guard TestRBACCoverage
 // (routes_rbac_coverage_test.go) already established: that test pins the

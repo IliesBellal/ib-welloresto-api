@@ -1,5 +1,65 @@
 # Decisions
 
+### RBAC lot 10 — 5 nouvelles clés (bookings/platforms/kiosk/analytics/plan de salle) + backfill des descriptions (2026-08-28)
+
+- **Contexte** : plusieurs surfaces back-office restaient accessibles à tout
+  utilisateur authentifié sans droit RBAC dédié — paramètres de réservation,
+  onglet « Canaux et Plateformes », onglet « Kiosk », page « Analyse », page
+  « Plan de salle ». Migration `migrations/todo/103_permission_catalog_lot10.up.sql`
+  ajoute 5 clés : `bookings.manage`, `platforms.manage`, `kiosk.manage`,
+  `pos.analytics`, `seating_plan.manage`. `internal/permission/keys_gen.go`
+  mis à jour en miroir (13 → 18 clés).
+- **Principe de garde appliqué** (repris du lot 8) : CONFIGURATION gardée,
+  CONSULTATION/SAISIE courante laissée libre.
+  - `bookings.manage` : uniquement `/bookings/settings*` (PUT settings,
+    CRUD des `duration-rules`, PUT hours). La liste/gestion courante des
+    réservations (`POST /create`, accept/deny/cancel/seat/…) n'est **pas**
+    concernée — hors périmètre de la demande, qui ne visait que les
+    paramètres.
+  - `platforms.manage` : toutes les routes de configuration sous
+    `/integrations` (PATCH uber-eats/deliveroo/scannorder, onboarding
+    scannorder, logo/banner, toggles globaux, liens Stripe Connect/branding).
+    `GET /integrations/stripe/balance` reste gardé par
+    `reports.financial.read` seul (lot 8) — pas de double garde.
+  - `kiosk.manage` : les mutations de `/pos/settings/kiosk` (codes
+    d'enrôlement, devices, réglages/logo/idle-media). Les deux routes
+    admin-pin restent gardées par `settings.manage` seul (exception
+    documentée de longue date, `docs/KIOSK_DECISIONS.md`, non touchée). Les
+    `GET` restent libres.
+  - `pos.analytics` : ancrage unique `GET /stats/upsell` — seule route
+    "analytics" qui n'était couverte par aucun droit `reports.*` existant.
+    La page « Analyse » du front peut afficher d'autres widgets déjà
+    couverts par `reports.sales.read`/`reports.financial.read` ; seul
+    `pos.analytics` gate la page dans son ensemble côté front.
+  - `seating_plan.manage` : tout `/floors*` (CRUD floors/obstacles/areas) et
+    les mutations de tables sous `/locations` (`POST .../tables`, PATCH/DELETE
+    `/tables/{id}`). `GET /locations` reste libre — utilisé ailleurs (prise
+    de commande, `AssignBookingLocations`), pas seulement par la page « Plan
+    de salle ».
+- **`sort_order`** : `pos.analytics` = 55 (rejoint le groupe `pos.*` existant,
+  entre `pos.cash_drawer.open`=50 et `catalog.manage`=60) ; les 4 autres sont
+  de nouveaux domaines, ajoutés après `settings.manage`=140 (150/160/170/180).
+- **Backfill des `description`** : les 13 clés existantes avaient toutes une
+  `description` vide (`095` l'omettait délibérément — "content is a
+  product-copy task"). Le back-office affiche maintenant systématiquement ce
+  champ sous chaque droit (retravail `PermissionsEditor.tsx` de la même
+  session côté front) ; laissé vide, ça rendait une ligne blanche sous
+  chaque droit. La migration 103 fait l'`UPDATE` des 13 existantes en même
+  temps qu'elle insère les 5 nouvelles avec une description dès le départ.
+- **Ratchet RBAC** (`cmd/api/routes_rbac_ratchet_test.go`) : le nombre de
+  routes mutatives non gardées passe de 212 à 175 — `unguardedMutativeRouteCeiling`
+  abaissé en conséquence.
+- **Backfill des rôles existants** : cette migration ajoute des clés au
+  catalogue mais ne touche `role_permissions` d'aucun établissement — à
+  lancer juste après déploiement : `go run ./cmd/seed_system_roles` (même
+  précédent que pour `097_permission_pos_status_manage`), pour que le rôle
+  « Administrateur » de chaque établissement récupère les 5 nouvelles clés.
+- **Statut d'exécution** : `go build ./...` et
+  `go test ./internal/permission/... ./cmd/api/... -run TestAllMatchesMigrationCatalog|TestNoDuplicateKeys|TestRBACPermissionCoverage|TestRBACRatchet`
+  passent. Tests d'intégration Postgres non relancés (pas d'accès
+  Postgres/Redis locaux dans cette session — même limite que les lots
+  précédents).
+
 ### RBAC lot 9 — clés à points dans /login, admin dérivé du rôle, rôle exposé sur GET /users/{id} (2026-08-27)
 
 - **Contexte** : lot 9 = écrans d'administration des rôles côté back-office
