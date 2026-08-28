@@ -485,7 +485,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		Apps: LoginCapabilityAppsResponse{
 			Reception: user.HasAccessReception(),
 			Delivery:  user.HasAccessDelivery() && user.AllowDeliveryAccount,
-			Waiter:    user.HasAccessWaiter() && user.AllowWaiterAccount,
+			Waiter:    user.HasAccessWaiter() && *user.AllowWaiterAccount,
 		},
 		Modules: LoginCapabilityModulesResponse{
 			Menu:       user.HasMenuAccess(),
@@ -552,7 +552,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		DeliveryFees:                    user.DeliveryFees,
 		DeliveryFeesLimit:               user.DeliveryFeesLimit,
 		KitchenShowOnlyPaid:             user.KitchenShowOnlyPaid,
-		AllowWaiterAccount:              &user.AllowWaiterAccount,
+		AllowWaiterAccount:              user.AllowWaiterAccount,
 		PrintCashReport:                 user.Rights.PrintMerchantCashReport,
 		MerchantAd:                      user.MerchantAddress,
 		MerchantAddress:                 user.MerchantAddress,

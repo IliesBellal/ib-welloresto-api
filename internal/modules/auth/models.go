@@ -238,7 +238,7 @@ type UserLoginRow struct {
 	MobilePaymentEnabled bool
 
 	// Subscription / Package
-	AllowWaiterAccount   bool
+	AllowWaiterAccount   *bool
 	AllowDeliveryAccount bool
 	ScanNOrderReady      bool
 	StockManagement      int
