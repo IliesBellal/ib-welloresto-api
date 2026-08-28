@@ -531,7 +531,6 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		IntegrationUberEats:             uberEats,
 		IntegrationUberDirect:           uberDirect,
 		IntegrationDeliveroo:            deliveroo,
-		ScanNOrderReady:                 user.ScanNOrderReady,
 		ManageOnSite:                    user.ManageOnSite,
 		ManageTakeAway:                  user.ManageTakeAway,
 		ManageDelivery:                  user.ManageDelivery,
