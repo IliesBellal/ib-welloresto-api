@@ -1367,6 +1367,38 @@ func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID
 		updates = append(updates, "is_open = ?")
 		args = append(args, *req.IsOpen)
 	}
+	if req.ZoningType != nil {
+		updates = append(updates, "zoning_type = ?")
+		args = append(args, *req.ZoningType)
+	}
+	if req.CardinalConeCount != nil {
+		updates = append(updates, "cardinal_cone_count = ?")
+		args = append(args, *req.CardinalConeCount)
+	}
+	if req.CardinalZoneRanges != nil {
+		updates = append(updates, "cardinal_zone_ranges = ?")
+		args = append(args, *req.CardinalZoneRanges)
+	}
+	if req.RadialConeCount != nil {
+		updates = append(updates, "radial_cone_count = ?")
+		args = append(args, *req.RadialConeCount)
+	}
+	if req.RadialZoneRanges != nil {
+		updates = append(updates, "radial_zone_ranges = ?")
+		args = append(args, *req.RadialZoneRanges)
+	}
+	if req.GridCellSizeKm != nil {
+		updates = append(updates, "grid_cell_size_km = ?")
+		args = append(args, *req.GridCellSizeKm)
+	}
+	if req.GridOriginLat != nil {
+		updates = append(updates, "grid_origin_lat = ?")
+		args = append(args, *req.GridOriginLat)
+	}
+	if req.GridOriginLng != nil {
+		updates = append(updates, "grid_origin_lng = ?")
+		args = append(args, *req.GridOriginLng)
+	}
 
 	if len(updates) == 0 {
 		return nil

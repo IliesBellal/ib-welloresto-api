@@ -628,14 +628,14 @@ type MerchantParametersSettings struct {
 	IsOpen                            *bool   `json:"is_open,omitempty"`
 	PrimaryColor                      *string `json:"primary_color,omitempty"`
 	TextColorOnPrimaryColor           *string `json:"text_color_on_primary_color,omitempty"`
-	ZoningType                        *string `json:"zoning_type,omitempty"`
-	RadialConeCount                   *string `json:"radial_cone_count,omitempty"`
-	GridCellSizeKm                    *string `json:"grid_cell_size_km,omitempty"`
-	RadialZoneRanges                  *string `json:"radial_zone_ranges,omitempty"`
-	GridOriginLat                     *string `json:"grid_origin_lat,omitempty"`
-	GridOriginLng                     *string `json:"grid_origin_lng,omitempty"`
-	CardinalConeCount                 *string `json:"cardinal_cone_count,omitempty"`
-	CardinalZoneRanges                *string `json:"cardinal_zone_ranges,omitempty"`
+	ZoningType                        *string  `json:"zoning_type,omitempty"`
+	RadialConeCount                   *int     `json:"radial_cone_count,omitempty"`
+	GridCellSizeKm                    *int     `json:"grid_cell_size_km,omitempty"`
+	RadialZoneRanges                  *string  `json:"radial_zone_ranges,omitempty"`
+	GridOriginLat                     *float64 `json:"grid_origin_lat,omitempty"`
+	GridOriginLng                     *float64 `json:"grid_origin_lng,omitempty"`
+	CardinalConeCount                 *int     `json:"cardinal_cone_count,omitempty"`
+	CardinalZoneRanges                *string  `json:"cardinal_zone_ranges,omitempty"`
 }
 type MerchantSettings struct {
 	MerchantID     *string  `json:"merchant_id,omitempty"`
@@ -670,6 +670,7 @@ type UpdateMerchantSettingsRequest struct {
 	Ordering          *POSSettingsOrderingPatch   `json:"ordering,omitempty"`
 	ScanOrder         *POSSettingsScanOrderPatch  `json:"scan_order,omitempty"`
 	Security          *POSSettingsSecurityPatch   `json:"security,omitempty"`
+	DeliveryZone      *POSSettingsDeliveryZonePatch `json:"delivery_zone,omitempty"`
 	HoursOfOperations *[]POSHoursOfOperationPatch `json:"hours_of_operations,omitempty"`
 	CustomerFormRequirements *json.RawMessage      `json:"customer_form_requirements,omitempty"`
 }
@@ -769,6 +770,7 @@ type POSSettingsOrdering struct {
 	// d'appareil). Le nom expose dit ce que le reglage fait aujourd'hui.
 	MobilePaymentEnabled bool `json:"mobile_payment_enabled"`
 	CustomerFormRequirements *json.RawMessage `json:"customer_form_requirements,omitempty"`
+	ProductionDisplayMode string `json:"production_display_mode"`
 }
 
 type POSSettingsOrderingPatch struct {
@@ -783,6 +785,7 @@ type POSSettingsOrderingPatch struct {
 	UpsellEnabled      *bool   `json:"upsell_enabled,omitempty"`
 	CoversCountRequired  *bool `json:"covers_count_required,omitempty"`
 	MobilePaymentEnabled *bool `json:"mobile_payment_enabled,omitempty"`
+	ProductionDisplayMode *string `json:"production_display_mode,omitempty"`
 }
 
 type POSSettingsScanOrder struct {
@@ -817,13 +820,39 @@ type POSSettingsSecurityPatch struct {
 	POSAutoLockDelayMinutes *int  `json:"pos_auto_lock_delay_minutes,omitempty"`
 }
 
+// POSSettingsDeliveryZone expose le zonage de livraison (cardinal/radial/grille)
+// stocke dans merchant_parameters. GridOriginLat/Lng restent nullable : 0,0 est
+// une coordonnee valide et ne doit pas etre confondue avec "non configure".
+type POSSettingsDeliveryZone struct {
+	ZoningType         string   `json:"zoning_type"`
+	CardinalConeCount  int      `json:"cardinal_cone_count"`
+	CardinalZoneRanges string   `json:"cardinal_zone_ranges"`
+	RadialConeCount    int      `json:"radial_cone_count"`
+	RadialZoneRanges   string   `json:"radial_zone_ranges"`
+	GridCellSizeKm     int      `json:"grid_cell_size_km"`
+	GridOriginLat      *float64 `json:"grid_origin_lat"`
+	GridOriginLng      *float64 `json:"grid_origin_lng"`
+}
+
+type POSSettingsDeliveryZonePatch struct {
+	ZoningType         *string  `json:"zoning_type,omitempty"`
+	CardinalConeCount  *int     `json:"cardinal_cone_count,omitempty"`
+	CardinalZoneRanges *string  `json:"cardinal_zone_ranges,omitempty"`
+	RadialConeCount    *int     `json:"radial_cone_count,omitempty"`
+	RadialZoneRanges   *string  `json:"radial_zone_ranges,omitempty"`
+	GridCellSizeKm     *int     `json:"grid_cell_size_km,omitempty"`
+	GridOriginLat      *float64 `json:"grid_origin_lat,omitempty"`
+	GridOriginLng      *float64 `json:"grid_origin_lng,omitempty"`
+}
+
 type POSSettingsResponse struct {
-	Info              POSSettingsInfo       `json:"info"`
-	Timings           POSSettingsTimings    `json:"timings"`
-	Ordering          POSSettingsOrdering   `json:"ordering"`
-	ScanOrder         POSSettingsScanOrder  `json:"scan_order"`
-	Security          POSSettingsSecurity   `json:"security"`
-	HoursOfOperations []POSHoursOfOperation `json:"hours_of_operations"`
+	Info              POSSettingsInfo          `json:"info"`
+	Timings           POSSettingsTimings       `json:"timings"`
+	Ordering          POSSettingsOrdering      `json:"ordering"`
+	ScanOrder         POSSettingsScanOrder     `json:"scan_order"`
+	Security          POSSettingsSecurity      `json:"security"`
+	DeliveryZone      POSSettingsDeliveryZone  `json:"delivery_zone"`
+	HoursOfOperations []POSHoursOfOperation    `json:"hours_of_operations"`
 }
 
 type UserProfileResponse struct {

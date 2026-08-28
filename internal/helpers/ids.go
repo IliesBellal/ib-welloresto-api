@@ -64,6 +64,7 @@ const (
 	ObstacleIDPrefix                     = "obs"
 	PasswordResetIDPrefix                = "pwd-reset"
 	RoleIDPrefix                         = "role"
+	ProductionProfileIDPrefix            = "production-profile"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

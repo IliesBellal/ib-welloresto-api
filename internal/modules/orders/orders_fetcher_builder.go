@@ -612,7 +612,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	SELECT
 		o.order_id, o.order_num, o.order_type, o.state, o.scheduled,
 		o.brand, o.merchant_id, o.brand_status, o.brand_order_id, o.brand_order_num,
-		o.estimated_ready, o.means_of_payement, o.price, o.TVA, o.HT,
+		o.estimated_ready, o.delivery_travel_seconds, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
 		o.isPaid, o.isDistributed, o.dateCall,
 		o.merchant_approval, o.delivery_fees, o.last_update,
@@ -654,7 +654,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var ord models.Order
 
 			var customerNbOrders, useCustomerTemporaryAddress,
-				price, TVA, HT, deliveryFees, placesSettings sql.NullInt64
+				price, TVA, HT, deliveryFees, placesSettings, deliveryTravelSeconds sql.NullInt64
 
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
@@ -676,7 +676,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			if err := rows.Scan(
 				&orderID, &orderNum, &orderType, &state, &scheduled,
 				&brand, &merchantID, &brandStatus, &brandOrderID, &brandOrderNum,
-				&estimatedReady, &meansOfPayment, &price, &TVA, &HT,
+				&estimatedReady, &deliveryTravelSeconds, &meansOfPayment, &price, &TVA, &HT,
 				&monnaie, &cutleryNotes,
 				&isPaid, &isDistributed, &dateCall,
 				&merchantApproval, &deliveryFees, &lastUpdate,
@@ -719,6 +719,10 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsSNO = userID.String == "SCANNORDER"
 			ord.CallHour = helpers.NullStringToPtr(dateCall)
 			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
+			if deliveryTravelSeconds.Valid {
+				seconds := int(deliveryTravelSeconds.Int64)
+				ord.DeliveryTravelSeconds = &seconds
+			}
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
 			ord.CreationDate = helpers.NullTimePtr(creationDate).UTC().Unix()

@@ -61,6 +61,7 @@ import (
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
 	printersModule "welloresto-api/internal/modules/printers"
+	productionprofilesModule "welloresto-api/internal/modules/productionprofiles"
 	rolesModule "welloresto-api/internal/modules/roles"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
@@ -436,6 +437,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	printersRepo := printersModule.NewRepository(selectedDB)
 	printersService := printersModule.NewService(printersRepo)
 
+	// ---- Production Profiles ----
+	productionProfilesRepo := productionprofilesModule.NewRepository(selectedDB)
+	productionProfilesService := productionprofilesModule.NewService(productionProfilesRepo)
+
 	// ---- Discounts ----
 	discountsRepo := discountsModule.NewRepository(selectedDB)
 	discountsService := discountsModule.NewService(discountsRepo)
@@ -484,6 +489,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	printersH := printersModule.NewHandler(printersService)
+	productionProfilesH := productionprofilesModule.NewHandler(productionProfilesService)
 	discountsH := discountsModule.NewHandler(discountsService)
 	availabilitiesH := availabilitiesModule.NewAvailabilitiesHandler(availabilitiesService)
 	haccpH := haccpModule.NewHandler(haccpService)
@@ -1098,6 +1104,18 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.Post("/", printersH.CreatePrinter)
 		r.Patch("/{printer_id}", printersH.UpdatePrinter)
 		r.Delete("/{printer_id}", printersH.DeletePrinter)
+	})
+
+	// --- PRODUCTION PROFILES ---
+	r.Route("/production-profiles", func(r chi.Router) {
+		r.Use(authMiddleware)
+
+		r.Get("/", productionProfilesH.ListProfiles)
+		r.Post("/", productionProfilesH.CreateProfile)
+		r.Get("/{id}", productionProfilesH.GetProfile)
+		r.Patch("/{id}", productionProfilesH.UpdateProfile)
+		r.Delete("/{id}", productionProfilesH.DeleteProfile)
+		r.Put("/{id}/products", productionProfilesH.ReplaceProducts)
 	})
 
 	// --- FLOORS ---

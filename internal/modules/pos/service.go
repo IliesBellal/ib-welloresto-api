@@ -374,6 +374,9 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			if req.Ordering.MobilePaymentEnabled != nil {
 				req.Parameters.WaiterAppCanCashIn = req.Ordering.MobilePaymentEnabled
 			}
+			if req.Ordering.ProductionDisplayMode != nil {
+				req.Parameters.ProductionDisplayMode = req.Ordering.ProductionDisplayMode
+			}
 		}
 
 		if req.ScanOrder != nil {
@@ -406,6 +409,36 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			}
 			if req.Security.POSAutoLockDelayMinutes != nil {
 				req.Parameters.POSAutoLockDelayMinutes = req.Security.POSAutoLockDelayMinutes
+			}
+		}
+
+		if req.DeliveryZone != nil {
+			if req.Parameters == nil {
+				req.Parameters = &models.MerchantParametersSettings{}
+			}
+			if req.DeliveryZone.ZoningType != nil {
+				req.Parameters.ZoningType = req.DeliveryZone.ZoningType
+			}
+			if req.DeliveryZone.CardinalConeCount != nil {
+				req.Parameters.CardinalConeCount = req.DeliveryZone.CardinalConeCount
+			}
+			if req.DeliveryZone.CardinalZoneRanges != nil {
+				req.Parameters.CardinalZoneRanges = req.DeliveryZone.CardinalZoneRanges
+			}
+			if req.DeliveryZone.RadialConeCount != nil {
+				req.Parameters.RadialConeCount = req.DeliveryZone.RadialConeCount
+			}
+			if req.DeliveryZone.RadialZoneRanges != nil {
+				req.Parameters.RadialZoneRanges = req.DeliveryZone.RadialZoneRanges
+			}
+			if req.DeliveryZone.GridCellSizeKm != nil {
+				req.Parameters.GridCellSizeKm = req.DeliveryZone.GridCellSizeKm
+			}
+			if req.DeliveryZone.GridOriginLat != nil {
+				req.Parameters.GridOriginLat = req.DeliveryZone.GridOriginLat
+			}
+			if req.DeliveryZone.GridOriginLng != nil {
+				req.Parameters.GridOriginLng = req.DeliveryZone.GridOriginLng
 			}
 		}
 
@@ -493,6 +526,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			CoversCountRequired:      boolVal(params.POSCoversCountRequired),
 			MobilePaymentEnabled:     boolVal(params.WaiterAppCanCashIn),
 			CustomerFormRequirements: params.CustomerFormRequirements,
+			ProductionDisplayMode:    stringVal(params.ProductionDisplayMode),
 		},
 		ScanOrder: models.POSSettingsScanOrder{
 			ActiveDelivery:     boolVal(params.ManageDelivery),
@@ -507,6 +541,16 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 		Security: models.POSSettingsSecurity{
 			POSAutoLockEnabled:      boolVal(params.POSAutoLockEnabled),
 			POSAutoLockDelayMinutes: intVal(params.POSAutoLockDelayMinutes),
+		},
+		DeliveryZone: models.POSSettingsDeliveryZone{
+			ZoningType:         stringVal(params.ZoningType),
+			CardinalConeCount:  intVal(params.CardinalConeCount),
+			CardinalZoneRanges: stringVal(params.CardinalZoneRanges),
+			RadialConeCount:    intVal(params.RadialConeCount),
+			RadialZoneRanges:   stringVal(params.RadialZoneRanges),
+			GridCellSizeKm:     intVal(params.GridCellSizeKm),
+			GridOriginLat:      params.GridOriginLat,
+			GridOriginLng:      params.GridOriginLng,
 		},
 		HoursOfOperations: hoursOfOperations,
 	}

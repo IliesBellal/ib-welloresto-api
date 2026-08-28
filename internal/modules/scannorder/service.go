@@ -15,6 +15,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/delivery_sessions"
+	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
@@ -123,15 +124,24 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	// 1. Calculer le temps de préparation effectif
 	prepMinutes := s.GetEffectivePrepMinutes(ctx, row)
 
+	// Moyenne de trajet livraison (cron UpdateAverageDeliveryTime) — affichée
+	// par ScanNOrder avant que l'adresse du client ne permette un calcul OSRM
+	// précis. nil si pas encore assez de données pour ce marchand.
+	var avgDeliverySeconds *int
+	if seconds, found, err := deliverytime.AverageSeconds(ctx, s.repo.database, row.MerchantID); err == nil && found {
+		avgDeliverySeconds = &seconds
+	}
+
 	resp := &MerchantResponse{
 		Status: "success",
 		Merchant: &MerchantData{
-			MerchantID:      row.MerchantID,
-			BusinessName:    row.FullName,
-			Currency:        row.Currency,
-			Phone:           *row.Phone,
-			Status:          status,
-			PreparationTime: prepMinutes,
+			MerchantID:             row.MerchantID,
+			BusinessName:           row.FullName,
+			Currency:               row.Currency,
+			Phone:                  *row.Phone,
+			Status:                 status,
+			PreparationTime:        prepMinutes,
+			AverageDeliverySeconds: avgDeliverySeconds,
 
 			OrderTypes: OrderTypes{
 				TakeawayEnabled:   row.TakeawayEnabled,

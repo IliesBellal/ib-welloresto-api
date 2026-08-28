@@ -50,6 +50,9 @@ func SetupTasks(
 	// ── Temps de préparation moyen (simulation capacité parallèle) ──────────
 	add("@every 15m", taskManager.UpdateAverageDistributionTime)
 
+	// ── Temps de trajet livraison moyen (fallback + estimation pré-checkout) ──
+	add("@every 15m", taskManager.UpdateAverageDeliveryTime)
+
 	// ── Produits populaires : fenêtre glissante 30 jours, recalcul quotidien
 	// à 2h du matin (un recalcul mensuel laissait les flags périmés). ────────
 	add("0 2 * * *", taskManager.UpdatePopularProducts)

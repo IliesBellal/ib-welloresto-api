@@ -33,6 +33,7 @@ type OrderRequest struct {
 	Locations                   []OrderLocation       `json:"locations,omitempty"`
 	DeliveryFees                int                   `json:"delivery_fees"`
 	EstimatedReady              string                `json:"estimated_ready"`
+	DeliveryTravelSeconds       *int                  `json:"delivery_travel_seconds,omitempty"`
 	IsScheduled                 bool                  `json:"is_scheduled"`
 	UseCustomerTemporaryAddress bool                  `json:"use_customer_temporary_address"`
 	MerchantApproval            string                `json:"merchant_approval"`

@@ -13,6 +13,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
+	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/utils/security"
 
@@ -1794,16 +1795,17 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	PublicID := helpers.GeneratePrefixedID("order-")
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
+	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
-		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, use_customer_temporary_address,
+		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, isScheduled,
-		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady,
+		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
 	)
 	if err != nil {
@@ -1956,6 +1958,37 @@ func resolveIsScheduled(isScheduled bool, estimatedReady interface{}) bool {
 	return isScheduled
 }
 
+// resolveDeliveryTravelSeconds returns the travel-time estimate to persist
+// alongside estimated_ready. The POS (Google Maps) and ScanNOrder (OSRM)
+// clients already compute this live when a delivery address is entered and
+// send it in the payload — this function is only a fallback: when a delivery
+// order has an address but the client didn't provide a value (older app
+// version, failed live call, address added via a flow that doesn't recompute
+// it), it falls back to the merchant's rolling average rather than silently
+// storing nil, which would make the production deadline default back to the
+// raw (wrong) estimated_ready. Non-delivery orders and delivery orders
+// without an address get nil (no travel leg to subtract).
+func (r *OrdersLifeCycleRepository) resolveDeliveryTravelSeconds(ctx context.Context, req *models.RequestObject) *int {
+	// Le type de commande gagne toujours : un client qui n'a pas vidé son état
+	// local (adresse saisie puis commande repassée en emporter/sur place, par
+	// exemple) ne doit jamais faire persister un travel time pour un ordre non
+	// livré.
+	if req.Order.OrderType != models.OrderTypeDelivery {
+		return nil
+	}
+	if req.Order.DeliveryTravelSeconds != nil {
+		return req.Order.DeliveryTravelSeconds
+	}
+	if req.Order.Customer == nil || req.Order.Customer.Address == nil || *req.Order.Customer.Address == "" {
+		return nil
+	}
+	seconds, found, err := deliverytime.AverageSeconds(ctx, r.database, req.MerchantID)
+	if err != nil || !found {
+		return nil
+	}
+	return &seconds
+}
+
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
 func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, merchantID string) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -2044,6 +2077,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
+	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = db.ExecContext(ctx, `
@@ -2060,6 +2094,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 				order_type = ?,
 				scheduled = ?,
 				estimated_ready = ?,
+				delivery_travel_seconds = ?,
 				places_settings = ?,
 				customer_id = ?
 			WHERE order_id = ?`,
@@ -2071,6 +2106,7 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		req.Order.OrderType,
 		isScheduled,
 		estimatedReady,
+		deliveryTravelSeconds,
 		req.Order.PlacesSettings,
 		customerID,
 		req.Order.OrderID,

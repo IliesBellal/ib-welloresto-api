@@ -40,16 +40,17 @@ type SlotsByDate struct {
 
 // MerchantData structure containing merchant information and order settings
 type MerchantData struct {
-	MerchantID         string          `json:"merchant_id"`
-	BusinessName       string          `json:"business_name"`
-	Phone              string          `json:"phone"`
-	Currency           string          `json:"currency"`
-	Status             *MerchantStatus `json:"status"`
-	Address            Address         `json:"address"`
-	Design             MerchantDesign  `json:"design"`
-	Fee                MerchantFees    `json:"fees"`
-	PreparationTime    int             `json:"preparation_time"`
-	MinimumOrderAmount float64         `json:"minimum_order_amount"`
+	MerchantID             string          `json:"merchant_id"`
+	BusinessName           string          `json:"business_name"`
+	Phone                  string          `json:"phone"`
+	Currency               string          `json:"currency"`
+	Status                 *MerchantStatus `json:"status"`
+	Address                Address         `json:"address"`
+	Design                 MerchantDesign  `json:"design"`
+	Fee                    MerchantFees    `json:"fees"`
+	PreparationTime        int             `json:"preparation_time"`
+	AverageDeliverySeconds *int            `json:"average_delivery_seconds,omitempty"`
+	MinimumOrderAmount     float64         `json:"minimum_order_amount"`
 
 	OrderTypes           OrderTypes   `json:"order_types"`
 	PaymentTypes         PaymentTypes `json:"payment_types"`
@@ -280,5 +281,5 @@ type PublicDeliveryMan struct {
 // GetUpsell (static is_popular) leaves it empty since it never creates a tracked suggestion.
 type UpsellResponse struct {
 	Products     []models.ProductEntry `json:"products"`
-	SuggestionID string                 `json:"suggestion_id,omitempty"`
+	SuggestionID string                `json:"suggestion_id,omitempty"`
 }
