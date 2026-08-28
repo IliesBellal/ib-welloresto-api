@@ -218,8 +218,6 @@ SELECT
     mp.currency,
     mp.is_open,
 
-    p.allow_waiter_account,
-    p.allow_delivery_account,
     p.scannorder_ready,
     p.stock_management,
     p.hr_management,
@@ -278,7 +276,6 @@ LIMIT 1;
 		&data.WarningNewOrderNotPaid, &data.DisableSafetyStock,
 		&data.Currency, &data.IsOpen,
 
-		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
 		&data.KiosksEnabled,

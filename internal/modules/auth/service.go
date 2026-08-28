@@ -322,23 +322,6 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 		return newLoginStatusResponse("account_disabled", "false"), nil
 	}
 
-	// Vérification des droits Mobile
-	/*
-		switch appID {
-		case "WR_RECEPTION":
-			if !user.Rights.AccessReception {
-				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
-			}
-		case "WR_DELIVERY":
-			if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
-				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
-			}
-		case "WR_WAITER":
-			if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
-				return map[string]interface{}{"status": "user_not_allowed", "enabled": "User can't access this app"}, nil
-			}
-		}
-	*/
 	// ==============================================================
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
@@ -397,21 +380,6 @@ func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload,
 
 	if !user.Enabled {
 		return newLoginStatusResponse("account_disabled", "false"), nil
-	}
-
-	switch appID {
-	case "WR_RECEPTION":
-		if !user.Rights.AccessReception {
-			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
-		}
-	case "WR_DELIVERY":
-		if !user.Rights.AccessDelivery || !user.AllowDeliveryAccount {
-			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
-		}
-	case "WR_WAITER":
-		if !user.Rights.AccessWaiter || !user.AllowWaiterAccount {
-			return newLoginStatusResponse("user_not_allowed", "User can't access this app"), nil
-		}
 	}
 
 	// MULTI-MERCHANT
@@ -482,11 +450,6 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 	}
 
 	capabilities := &LoginCapabilitiesResponse{
-		Apps: LoginCapabilityAppsResponse{
-			Reception: user.HasAccessReception(),
-			Delivery:  user.HasAccessDelivery() && user.AllowDeliveryAccount,
-			Waiter:    user.HasAccessWaiter() && *user.AllowWaiterAccount,
-		},
 		Modules: LoginCapabilityModulesResponse{
 			Menu:       user.HasMenuAccess(),
 			Planning:   user.HasPlanningAccess() && user.PlanningEnabled,
@@ -552,7 +515,6 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		DeliveryFees:                    user.DeliveryFees,
 		DeliveryFeesLimit:               user.DeliveryFeesLimit,
 		KitchenShowOnlyPaid:             user.KitchenShowOnlyPaid,
-		AllowWaiterAccount:              user.AllowWaiterAccount,
 		PrintCashReport:                 user.Rights.PrintMerchantCashReport,
 		MerchantAd:                      user.MerchantAddress,
 		MerchantAddress:                 user.MerchantAddress,

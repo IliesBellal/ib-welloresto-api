@@ -200,7 +200,6 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 		&data.POSCoversCountRequired, &data.MobilePaymentEnabled,
 
-		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
 		&data.KiosksEnabled, &data.DeliveryEnabled,
@@ -299,8 +298,6 @@ SELECT
 	mp.pos_covers_count_required,
 	mp.waiter_app_can_cash_in,
 
-    p.allow_waiter_account,
-    p.allow_delivery_account,
     p.scannorder_ready,
     p.stock_management,
     p.hr_management,
@@ -385,7 +382,6 @@ LIMIT 1;
 		&data.Currency, &data.IsOpen, &data.POSUpsellEnabled,
 		&data.POSCoversCountRequired, &data.MobilePaymentEnabled,
 
-		&data.AllowWaiterAccount, &data.AllowDeliveryAccount,
 		&data.ScanNOrderReady, &data.StockManagement, &data.HrManagement,
 		&data.PlanningEnabled, &data.HACCPEnabled, &data.StockEnabled, &data.ScanNOrderEnabled, &data.BookingsEnabled,
 		&data.KiosksEnabled, &data.DeliveryEnabled,
@@ -715,8 +711,6 @@ SELECT
 	mp.pos_covers_count_required,
 	mp.waiter_app_can_cash_in,
 
-    p.allow_waiter_account,
-    p.allow_delivery_account,
     p.scannorder_ready,
     p.stock_management,
     p.hr_management,

@@ -63,7 +63,6 @@ Les recherches plein-texte (`customer_name LIKE ?`…) sont couvertes par le poi
 |---|---|---|---|
 | `kiosk_settings.pager_number_required`, `pay_at_counter_enabled` | tinyint(1) | **BOOLEAN** | signalés par l'heuristique (« number », « counter ») ; modèles Go `bool`, migration 037 les déclarait `BOOLEAN` |
 | `merchant_parameters.pager_number_required`, `enabled_rating` | tinyint(1) | **BOOLEAN** | idem (Go `bool`) |
-| `packages.allow_waiter_account`, `allow_delivery_account` | tinyint(1) | **BOOLEAN** | « account » contient « count » — faux positif de l'heuristique |
 | `planning_holiday_overrides.count_as_holiday` | tinyint(1) NULL | **BOOLEAN** (nullable, tri-état) | sémantique « compte comme férié » = oui/non/hérite |
 | `order_ratings.delivery_rating`, `product_ratings.rating` | tinyint(3) UNSIGNED | **SMALLINT** + CHECK ≥ 0 | note de 1 à 5, pas un booléen |
 | `planning_week_template_shifts.day_of_week` | tinyint(4) | **SMALLINT** | jour de semaine |

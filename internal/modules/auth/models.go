@@ -238,18 +238,16 @@ type UserLoginRow struct {
 	MobilePaymentEnabled bool
 
 	// Subscription / Package
-	AllowWaiterAccount   *bool
-	AllowDeliveryAccount bool
-	ScanNOrderReady      bool
-	StockManagement      int
-	HrManagement         bool
-	PlanningEnabled      bool
-	HACCPEnabled         bool
-	StockEnabled         bool
-	ScanNOrderEnabled    bool
-	BookingsEnabled      bool
-	KiosksEnabled        bool
-	DeliveryEnabled      bool
+	ScanNOrderReady   bool
+	StockManagement   int
+	HrManagement      bool
+	PlanningEnabled   bool
+	HACCPEnabled      bool
+	StockEnabled      bool
+	ScanNOrderEnabled bool
+	BookingsEnabled   bool
+	KiosksEnabled     bool
+	DeliveryEnabled   bool
 
 	// SNO
 	SNOActivated bool

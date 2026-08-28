@@ -2633,8 +2633,6 @@ CREATE INDEX idx_outbound_messages_domain_ref ON outbound_messages (domain, doma
 
 -- ---------------------------------------------------------------------
 -- packages
---   allow_waiter_account: tinyint(1) signale par l'heuristique compteur, confirme BOOLEAN apres revue du code Go
---   allow_delivery_account: tinyint(1) signale par l'heuristique compteur, confirme BOOLEAN apres revue du code Go
 --   collation table utf8mb3_unicode_ci (insensible casse/accents) -> collation PG par defaut sensible a la casse ; colonnes candidates CITEXT/LOWER listees dans les notes
 -- ---------------------------------------------------------------------
 CREATE TABLE packages (
@@ -2642,8 +2640,6 @@ CREATE TABLE packages (
     package_name varchar(50) NOT NULL,
     stripe_price_id varchar(200) NOT NULL,
     trial_period_days integer NOT NULL DEFAULT 0,
-    allow_waiter_account boolean NOT NULL DEFAULT false,
-    allow_delivery_account boolean NOT NULL DEFAULT false,
     scannorder_ready boolean NOT NULL DEFAULT true,
     stock_management integer NOT NULL DEFAULT 0,
     hr_management boolean NOT NULL DEFAULT false,

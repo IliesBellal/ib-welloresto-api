@@ -131,17 +131,10 @@ type LoginAccessPermissionsResponse struct {
 }
 
 type LoginCapabilitiesResponse struct {
-	Apps         LoginCapabilityAppsResponse         `json:"apps"`
 	Modules      LoginCapabilityModulesResponse      `json:"modules"`
 	OrderTypes   LoginCapabilityOrderTypesResponse   `json:"order_types"`
 	Actions      LoginCapabilityActionsResponse      `json:"actions"`
 	Integrations LoginCapabilityIntegrationsResponse `json:"integrations"`
-}
-
-type LoginCapabilityAppsResponse struct {
-	Reception bool `json:"reception"`
-	Delivery  bool `json:"delivery"`
-	Waiter    bool `json:"waiter"`
 }
 
 type LoginCapabilityModulesResponse struct {
@@ -239,7 +232,6 @@ type LoginLegacyFields struct {
 	DeliveryFees                    int                                `json:"delivery_fees"`
 	DeliveryFeesLimit               int                                `json:"delivery_fees_limit"`
 	KitchenShowOnlyPaid             bool                               `json:"kitchen_show_only_paid"`
-	AllowWaiterAccount              *bool                              `json:"allow_waiter_account"`
 	PrintCashReport                 bool                               `json:"print_merchant_cash_report"`
 	MerchantAd                      string                             `json:"merchantAd"`
 	MerchantAddress                 string                             `json:"merchant_address"`

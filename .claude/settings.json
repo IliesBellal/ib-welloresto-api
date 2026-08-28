@@ -113,14 +113,16 @@
       "Bash(grep -n \"CONSTRAINT.*employees\\\\|employees.*FOREIGN KEY\\\\|FOREIGN KEY \\(\\\\`user_id\\\\`\\)\" -B2 -A2 docs/migration-postgres/wello-resto-mysql-ddl.md)",
       "Bash(xargs grep -ln \"user_id\")",
       "Bash(grep -n \"ALTER TABLE \\\\`users\\\\`\" -A 5 docs/migration-postgres/wello-resto-mysql-ddl.md)",
-      "Bash(grep -n \"^CREATE TABLE \\\\`subscriptions\\\\`\\\\|^CREATE TABLE \\\\`packages\\\\`\" -A 12 docs/migration-postgres/wello-resto-mysql-ddl.md)"
+      "Bash(grep -n \"^CREATE TABLE \\\\`subscriptions\\\\`\\\\|^CREATE TABLE \\\\`packages\\\\`\" -A 12 docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(rm -f \"C:/Users/Ilies/AppData/Local/Temp/claude/d--Desktop-DTL-Project-git-projects-ib-welloresto-api/d91b8a4a-f0e8-474d-b87b-5f9cf9fea9f5/scratchpad/audit_part\"*.md *)"
     ],
     "additionalDirectories": [
       "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis",
       "\\tmp\\rbac_lot3_query",
       "D:\\tmp_gobuild",
       "D:\\tmp_gobuild_fix",
-      "d:\\Desktop\\DTL\\Project\\git-projects\\wello-resto-scannorder\\src\\lib\\utils"
+      "d:\\Desktop\\DTL\\Project\\git-projects\\wello-resto-scannorder\\src\\lib\\utils",
+      "C:\\Users\\Ilies\\AppData\\Local\\Temp\\claude\\d--Desktop-DTL-Project-git-projects-ib-welloresto-api\\d91b8a4a-f0e8-474d-b87b-5f9cf9fea9f5\\scratchpad"
     ]
   }
 }

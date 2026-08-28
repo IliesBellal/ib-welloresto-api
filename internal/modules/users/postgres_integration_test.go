@@ -76,8 +76,8 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	// must exist for the scan into plain Go bools to succeed (same as auth's test).
 	var packageIntID int64
 	if err := db.QueryRowContext(ctx, `
-		INSERT INTO packages (package_name, stripe_price_id, allow_waiter_account, allow_delivery_account, kiosks_enabled)
-		VALUES ('ITest Users Package', 'price_itest_users', true, true, true) RETURNING id`).Scan(&packageIntID); err != nil {
+		INSERT INTO packages (package_name, stripe_price_id, kiosks_enabled)
+		VALUES ('ITest Users Package', 'price_itest_users', true) RETURNING id`).Scan(&packageIntID); err != nil {
 		t.Fatalf("seed packages: %v", err)
 	}
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM packages WHERE id = $1`, packageIntID) })

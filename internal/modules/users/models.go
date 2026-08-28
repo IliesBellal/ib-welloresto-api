@@ -55,11 +55,9 @@ type UserLoginRow struct {
 	IsOpen                     bool
 
 	// subscription / package
-	AllowWaiterAccount   bool
-	AllowDeliveryAccount bool
-	ScanNOrderReady      bool
-	StockManagement      int
-	HrManagement         bool
+	ScanNOrderReady bool
+	StockManagement int
+	HrManagement    bool
 
 	// SNO
 	SNOActivated bool
