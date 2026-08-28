@@ -7,10 +7,10 @@ type LoginResponse struct {
 	DeviceCashDesk *LoginDeviceCashDeskResponse `json:"device_cash_desk"`
 	Enabled        string                       `json:"enabled"`
 
-	Session      *LoginSessionResponse      `json:"session,omitempty"`
-	User         *LoginUserResponse         `json:"user,omitempty"`
-	Merchant     *LoginMerchantResponse     `json:"merchant,omitempty"`
-	Access       *LoginAccessResponse       `json:"access,omitempty"`
+	Session  *LoginSessionResponse  `json:"session,omitempty"`
+	User     *LoginUserResponse     `json:"user,omitempty"`
+	Merchant *LoginMerchantResponse `json:"merchant,omitempty"`
+	Access   *LoginAccessResponse   `json:"access,omitempty"`
 	// Permissions is the RBAC lot 9 catalog-key view of the caller's rights on
 	// the current establishment (e.g. "staff.manage"), a sibling of Access
 	// rather than a field inside it: Access.Permissions keeps its historical
@@ -239,7 +239,7 @@ type LoginLegacyFields struct {
 	DeliveryFees                    int                                `json:"delivery_fees"`
 	DeliveryFeesLimit               int                                `json:"delivery_fees_limit"`
 	KitchenShowOnlyPaid             bool                               `json:"kitchen_show_only_paid"`
-	AllowWaiterAccount              bool                               `json:"allow_waiter_account"`
+	AllowWaiterAccount              *bool                              `json:"allow_waiter_account"`
 	PrintCashReport                 bool                               `json:"print_merchant_cash_report"`
 	MerchantAd                      string                             `json:"merchantAd"`
 	MerchantAddress                 string                             `json:"merchant_address"`

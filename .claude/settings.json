@@ -106,7 +106,14 @@
       "Bash(sort -t_ -k1,1n)",
       "Bash(grep -rli \"merchant_parameters\\\\|ALTER TABLE.*merchant\\\\b\\\\|merchant\\\\`\" migrations/done migrations/todo)",
       "Bash(grep -n \"ALTER TABLE \\\\`merchant\\\\`\" -A 6 docs/migration-postgres/wello-resto-mysql-ddl.md)",
-      "Bash(grep -n \"^CREATE TABLE \\\\`orders\\\\`\" docs/migration-postgres/wello-resto-mysql-ddl.md)"
+      "Bash(grep -n \"^CREATE TABLE \\\\`orders\\\\`\" docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(grep -n \"^CREATE TABLE \\\\`users\\\\`\\\\|^CREATE TABLE \\\\`users_rights\\\\`\" docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(grep -rln \"INSERT INTO merchant\\\\b\\\\|INSERT INTO \\\\`merchant\\\\`\" --include=\"*.go\" internal/ cmd/)",
+      "Bash(grep -n \"ALTER TABLE \\\\`users\\\\`\\\\|ALTER TABLE \\\\`users_rights\\\\`\\\\|ALTER TABLE \\\\`employees\\\\`\" -A 8 docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(grep -n \"CONSTRAINT.*employees\\\\|employees.*FOREIGN KEY\\\\|FOREIGN KEY \\(\\\\`user_id\\\\`\\)\" -B2 -A2 docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(xargs grep -ln \"user_id\")",
+      "Bash(grep -n \"ALTER TABLE \\\\`users\\\\`\" -A 5 docs/migration-postgres/wello-resto-mysql-ddl.md)",
+      "Bash(grep -n \"^CREATE TABLE \\\\`subscriptions\\\\`\\\\|^CREATE TABLE \\\\`packages\\\\`\" -A 12 docs/migration-postgres/wello-resto-mysql-ddl.md)"
     ],
     "additionalDirectories": [
       "D:\\Desktop\\DTL\\Project\\git-projects\\ib-welloresto-api\\internal\\infrastructure\\redis",

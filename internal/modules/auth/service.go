@@ -552,7 +552,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		DeliveryFees:                    user.DeliveryFees,
 		DeliveryFeesLimit:               user.DeliveryFeesLimit,
 		KitchenShowOnlyPaid:             user.KitchenShowOnlyPaid,
-		AllowWaiterAccount:              user.AllowWaiterAccount,
+		AllowWaiterAccount:              &user.AllowWaiterAccount,
 		PrintCashReport:                 user.Rights.PrintMerchantCashReport,
 		MerchantAd:                      user.MerchantAddress,
 		MerchantAddress:                 user.MerchantAddress,
