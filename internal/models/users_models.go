@@ -67,7 +67,6 @@ type UserLoginRow struct {
 	IsOpen                     bool
 
 	// subscription / package
-	ScanNOrderReady   bool
 	StockManagement   int
 	HrManagement      bool
 	PlanningEnabled   bool

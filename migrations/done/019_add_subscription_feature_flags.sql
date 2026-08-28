@@ -17,7 +17,7 @@ UPDATE packages
 SET planning_enabled = hr_management,
     haccp_enabled = TRUE,
     stock_enabled = CASE WHEN stock_management > 0 THEN TRUE ELSE FALSE END,
-    scannorder_enabled = scannorder_ready,
+    scannorder_enabled = true,
     bookings_enabled = TRUE;
 
 -- Copy package defaults to the merchant subscriptions. From this point on, subscription values are the effective rights.

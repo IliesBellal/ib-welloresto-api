@@ -2134,7 +2134,6 @@ CREATE TABLE `packages` (
   `trial_period_days` int(11) NOT NULL DEFAULT 0,
   `allow_waiter_account` tinyint(1) NOT NULL DEFAULT 0,
   `allow_delivery_account` tinyint(1) NOT NULL DEFAULT 0,
-  `scannorder_ready` tinyint(1) NOT NULL DEFAULT 1,
   `stock_management` int(11) NOT NULL DEFAULT 0,
   `hr_management` tinyint(1) NOT NULL DEFAULT 0,
   `planning_enabled` tinyint(1) NOT NULL DEFAULT 0,
@@ -2200,7 +2199,6 @@ UPDATE packages
 SET planning_enabled = hr_management,
     haccp_enabled = TRUE,
     stock_enabled = CASE WHEN stock_management > 0 THEN TRUE ELSE FALSE END,
-    scannorder_enabled = scannorder_ready,
     bookings_enabled = TRUE;
 
 -- Copy package defaults to the merchant subscriptions. From this point on, subscription values are the effective rights.

@@ -34,9 +34,6 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62),
 			// pos_covers_count_required (63), waiter_app_can_cash_in (64)
 			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
-			// package (65-76): AllowWaiterAccount..DeliveryEnabled (pre-existing gap found while
-			// wiring role_id/role_system_key: this row was already short one value — the
-			// COALESCE(...) AS delivery_enabled column — before this lot touched the file.
 			true, true, false, 0, false, true, true, true, false, true, true, true,
 			// SNO (77)
 			false,
