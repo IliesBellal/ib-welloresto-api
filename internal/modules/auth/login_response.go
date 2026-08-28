@@ -248,6 +248,7 @@ type LoginLegacyFields struct {
 	IntegrationUberEats             LoginUberEatsIntegrationResponse   `json:"integration_uber_eats"`
 	IntegrationUberDirect           LoginUberDirectIntegrationResponse `json:"integration_uber_direct"`
 	IntegrationDeliveroo            LoginDeliverooIntegrationResponse  `json:"integration_deliveroo"`
+	ScanNOrderReady                 bool                               `json:"scannorder_ready"`
 	ManageOnSite                    bool                               `json:"manage_on_site"`
 	ManageTakeAway                  bool                               `json:"manage_take_away"`
 	ManageDelivery                  bool                               `json:"manage_delivery"`

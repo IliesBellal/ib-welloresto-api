@@ -2640,6 +2640,7 @@ CREATE TABLE packages (
     package_name varchar(50) NOT NULL,
     stripe_price_id varchar(200) NOT NULL,
     trial_period_days integer NOT NULL DEFAULT 0,
+    scannorder_ready boolean NOT NULL DEFAULT true,
     stock_management integer NOT NULL DEFAULT 0,
     hr_management boolean NOT NULL DEFAULT false,
     planning_enabled boolean NOT NULL DEFAULT false,
@@ -2650,6 +2651,7 @@ CREATE TABLE packages (
     kiosks_enabled boolean NOT NULL DEFAULT false,
     PRIMARY KEY (id)
 );
+COMMENT ON COLUMN packages.scannorder_ready IS 'Allow access SNO options in Quick Management (Reception App) and order via SNO';
 COMMENT ON COLUMN packages.kiosks_enabled IS 'Added to MySQL source after the 07/13 DDL dump this migration was audited against — not present in wello-resto-mysql-ddl.md, confirmed by the user as a recent production addition (see 25-tier2-conversion-log.md).';
 
 -- ---------------------------------------------------------------------

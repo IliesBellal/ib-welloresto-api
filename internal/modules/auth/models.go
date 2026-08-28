@@ -238,6 +238,7 @@ type UserLoginRow struct {
 	MobilePaymentEnabled bool
 
 	// Subscription / Package
+	ScanNOrderReady   bool
 	StockManagement   int
 	HrManagement      bool
 	PlanningEnabled   bool

@@ -2151,6 +2151,7 @@ CREATE TABLE `packages` (
   `package_name` varchar(50) NOT NULL,
   `stripe_price_id` varchar(200) NOT NULL,
   `trial_period_days` int(11) NOT NULL DEFAULT 0,
+  `scannorder_ready` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'Allow access SNO options in Quick Management (Reception App) and order via SNO',
   `stock_management` int(11) NOT NULL DEFAULT 0,
   `hr_management` tinyint(1) NOT NULL DEFAULT 0,
   `planning_enabled` tinyint(1) NOT NULL DEFAULT 0,
