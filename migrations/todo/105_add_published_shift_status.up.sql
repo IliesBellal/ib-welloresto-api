@@ -1,0 +1,26 @@
+-- Adds 'published' to the planning_shifts status enum.
+--
+-- planning_shifts.status is backed by a real Postgres enum type
+-- (public.planning_shifts_status_enum — confirmed via staging_schema_dump.sql,
+-- currently 'planned'/'confirmed'/'done'/'cancelled'/'draft'), not a free
+-- varchar. Simplifying the app-level valid set to just draft/published
+-- (internal/modules/planning/shared/helpers.go, IsValidPlanningShiftStatus)
+-- means nothing without also teaching the DB type the new value — otherwise
+-- every INSERT/UPDATE setting status = 'published' fails with "invalid
+-- input value for enum planning_shifts_status_enum".
+--
+-- This lets a manager "publish" individual shifts (visible in the
+-- self-service team-week view) independently of the other shifts in an
+-- otherwise-published week, left in "draft".
+--
+-- Deliberately a single plain statement, no DO $$ ... $$ wrapper and no
+-- other DDL/DML alongside it: Postgres forbids using a brand-new enum value
+-- inside the same transaction that added it ("unsafe use of new value of
+-- enum type"), and ALTER TYPE ... ADD VALUE additionally cannot run inside
+-- a PL/pgSQL block. The backfill that consumes 'published'
+-- (106_backfill_shift_status_to_published.up.sql) is a separate migration
+-- file/transaction for the same reason.
+--
+-- ADD VALUE IF NOT EXISTS is natively idempotent (Postgres 9.6+) — safe to
+-- replay.
+ALTER TYPE public.planning_shifts_status_enum ADD VALUE IF NOT EXISTS 'published';

@@ -46,7 +46,6 @@ type publishedShiftSnapshot struct {
 	ShiftDate     time.Time
 	StartTime     string
 	EndTime       string
-	Title         string
 	PositionLabel string
 }
 
@@ -104,7 +103,7 @@ func resolveNotificationMode(requested *string, hasPreviousSnapshot bool) (strin
 func canonicalShiftKeys(items []publishedShiftSnapshot) []string {
 	keys := make([]string, 0, len(items))
 	for _, item := range items {
-		keys = append(keys, fmt.Sprintf("%s|%s|%s|%s|%s", item.ShiftDate.UTC().Format("2006-01-02"), strings.TrimSpace(item.StartTime), strings.TrimSpace(item.EndTime), strings.TrimSpace(item.Title), strings.TrimSpace(item.PositionLabel)))
+		keys = append(keys, fmt.Sprintf("%s|%s|%s|%s", item.ShiftDate.UTC().Format("2006-01-02"), strings.TrimSpace(item.StartTime), strings.TrimSpace(item.EndTime), strings.TrimSpace(item.PositionLabel)))
 	}
 	sort.Strings(keys)
 	return keys
@@ -254,7 +253,6 @@ func toPlanningCommShifts(items []publishedShiftSnapshot) []planningcommpkg.Shif
 			StartTime:     trimClockSeconds(item.StartTime),
 			EndTime:       trimClockSeconds(item.EndTime),
 			PositionLabel: item.PositionLabel,
-			Title:         item.Title,
 		})
 	}
 	return summaries
@@ -301,13 +299,12 @@ func derefString(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func newPublishedShiftSnapshot(employeeID string, shiftDate time.Time, startTime, endTime, title, positionLabel string) publishedShiftSnapshot {
+func newPublishedShiftSnapshot(employeeID string, shiftDate time.Time, startTime, endTime, positionLabel string) publishedShiftSnapshot {
 	return publishedShiftSnapshot{
 		EmployeeID:    strings.TrimSpace(employeeID),
 		ShiftDate:     shiftDate,
 		StartTime:     strings.TrimSpace(startTime),
 		EndTime:       strings.TrimSpace(endTime),
-		Title:         strings.TrimSpace(title),
 		PositionLabel: strings.TrimSpace(positionLabel),
 	}
 }

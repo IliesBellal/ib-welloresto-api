@@ -43,9 +43,9 @@ func TestResolveNotificationMode_Defaults(t *testing.T) {
 }
 
 func TestEmployeeShiftsChanged(t *testing.T) {
-	previous := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Ouverture", "Service")}
-	currentSame := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Ouverture", "Service")}
-	currentChanged := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "10:00:00", "18:00:00", "Ouverture", "Service")}
+	previous := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Service")}
+	currentSame := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Service")}
+	currentChanged := []publishedShiftSnapshot{newPublishedShiftSnapshot("emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "10:00:00", "18:00:00", "Service")}
 	if employeeShiftsChanged(previous, currentSame) {
 		t.Fatal("expected no diff for identical shifts")
 	}
@@ -76,21 +76,21 @@ func TestPublishPlanningWeek_FirstPublishDefaultsToAll(t *testing.T) {
 		"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
 	))
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, s.title,
+		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time,
 			COALESCE(NULLIF(TRIM(s.position), ''), COALESCE(p.label, '')) AS position_label
 		FROM planning_shifts s
 		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
 		WHERE s.merchant_id = ? AND s.week_id = ? AND s.employee_id IS NOT NULL AND s.enabled = TRUE
 		ORDER BY s.employee_id ASC, s.shift_date ASC, s.start_time ASC, s.created_at ASC
-	`)).WithArgs("merchant_1", "week_1").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}).AddRow(
-		"emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Ouverture", "Service",
+	`)).WithArgs("merchant_1", "week_1").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "position_label"}).AddRow(
+		"emp_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "09:00:00", "17:00:00", "Service",
 	))
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT employee_id, shift_date, start_time, end_time, title, position_label
+		SELECT employee_id, shift_date, start_time, end_time, position_label
 		FROM planning_published_shift_snapshots
 		WHERE merchant_id = ? AND week_id = ?
 		ORDER BY employee_id ASC, shift_date ASC, start_time ASC
-	`)).WithArgs("merchant_1", "week_1").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+	`)).WithArgs("merchant_1", "week_1").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "position_label"}))
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`
 			UPDATE planning_weeks
@@ -98,14 +98,19 @@ func TestPublishPlanningWeek_FirstPublishDefaultsToAll(t *testing.T) {
 			WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 		`)).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "merchant_1", "week_1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`
+			UPDATE planning_shifts
+			SET status = 'published', updated_at = ?
+			WHERE merchant_id = ? AND week_id = ? AND enabled = TRUE AND status <> 'published'
+		`)).WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
 			DELETE FROM planning_published_shift_snapshots
 			WHERE merchant_id = ? AND week_id = ?
 		`)).WithArgs("merchant_1", "week_1").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`
 			INSERT INTO planning_published_shift_snapshots (
-				id, merchant_id, week_id, employee_id, shift_date, start_time, end_time, title, position_label, published_at, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`)).WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", "emp_1", sqlmock.AnyArg(), "09:00:00", "17:00:00", "Ouverture", "Service", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+				id, merchant_id, week_id, employee_id, shift_date, start_time, end_time, position_label, published_at, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`)).WithArgs(sqlmock.AnyArg(), "merchant_1", "week_1", "emp_1", sqlmock.AnyArg(), "09:00:00", "17:00:00", "Service", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery(regexp.QuoteMeta(`
 			SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at
@@ -173,10 +178,11 @@ func TestPublishPlanningWeek_NoneSkipsNotifications(t *testing.T) {
 	mock.ExpectQuery("SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at").WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(
 		"week_1", "merchant_1", nil, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC), "draft", nil, nil, now, now, nil,
 	))
-	mock.ExpectQuery("SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, s.title,").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
-	mock.ExpectQuery("SELECT employee_id, shift_date, start_time, end_time, title, position_label").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "title", "position_label"}))
+	mock.ExpectQuery("SELECT s.employee_id, s.shift_date, s.start_time, s.end_time,").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "position_label"}))
+	mock.ExpectQuery("SELECT employee_id, shift_date, start_time, end_time, position_label").WillReturnRows(sqlmock.NewRows([]string{"employee_id", "shift_date", "start_time", "end_time", "position_label"}))
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE planning_weeks").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE planning_shifts").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("DELETE FROM planning_published_shift_snapshots").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	mock.ExpectQuery("SELECT id, merchant_id, label, start_date, end_date, status, published_at, notes, created_at, updated_at, deleted_at").WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_id", "label", "start_date", "end_date", "status", "published_at", "notes", "created_at", "updated_at", "deleted_at"}).AddRow(

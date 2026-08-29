@@ -1,0 +1,9 @@
+-- Reverts 105_add_published_shift_status.up.sql.
+--
+-- Postgres has no `ALTER TYPE ... DROP VALUE` — removing an enum value
+-- requires rebuilding the type (create a new type without it, cast the
+-- column across, drop the old type), and only if no row still uses it. Not
+-- attempted here: run 106's down first (reverts every 'published' row back
+-- to 'planned'), confirm no row uses 'published' anymore, and drop the
+-- value by hand if truly needed. Left as a no-op so this file exists and
+-- documents the limitation rather than silently doing nothing.

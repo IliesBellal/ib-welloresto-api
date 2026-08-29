@@ -32,7 +32,6 @@ type Employee struct {
 	PositionNote           *string    `json:"position_note,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
-	Role                   string     `json:"role"`
 	ContractTypeCode       string     `json:"contract_type_code"`
 	ContractStartDate      *time.Time `json:"contract_start_date,omitempty"`
 	ContractEndDate        *time.Time `json:"contract_end_date,omitempty"`
@@ -86,7 +85,6 @@ type EmployeeCreateRequest struct {
 	PositionNote           *string    `json:"position_note,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
-	Role                   *string    `json:"role,omitempty"`
 	ContractTypeCode       string     `json:"contract_type_code"`
 	ContractStartDate      *time.Time `json:"contract_start_date,omitempty"`
 	ContractEndDate        *time.Time `json:"contract_end_date,omitempty"`
@@ -117,7 +115,6 @@ type EmployeeUpdateRequest struct {
 	PositionNote           *string    `json:"position_note,omitempty"`
 	Email                  *string    `json:"email,omitempty"`
 	Phone                  *string    `json:"phone,omitempty"`
-	Role                   *string    `json:"role,omitempty"`
 	ContractTypeCode       *string    `json:"contract_type_code,omitempty"`
 	ContractStartDate      *time.Time `json:"contract_start_date,omitempty"`
 	ContractEndDate        *time.Time `json:"contract_end_date,omitempty"`

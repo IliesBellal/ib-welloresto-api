@@ -372,21 +372,21 @@ func TestHandlerListCurrentUserTeamWeekShiftsIncludesPositionColorAndEmployeeNam
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT s.id, s.merchant_id, s.week_id, s.employee_id,
 			NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), '') AS employee_name,
-			s.position_id, s.title, s.shift_date, s.start_time, s.end_time, s.break_minutes,
-			s.position, p.color, s.location, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
+			s.position_id, s.shift_date, s.start_time, s.end_time, s.break_minutes,
+			s.position, p.color, s.notes, s.status, s.created_at, s.updated_at, s.deleted_at
 		FROM planning_shifts s
 		LEFT JOIN employees e ON e.id = s.employee_id AND e.merchant_id = s.merchant_id AND e.enabled = TRUE
 		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
-		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = TRUE
+		WHERE s.merchant_id = ? AND s.week_id = ? AND s.enabled = TRUE AND s.status = 'published'
 		ORDER BY s.shift_date ASC, s.start_time ASC, s.created_at ASC
 	`)).
 		WithArgs("merchant_1", "week_1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "week_id", "employee_id", "employee_name", "position_id", "title", "shift_date", "start_time", "end_time", "break_minutes",
-			"position", "color", "location", "notes", "status", "created_at", "updated_at", "deleted_at",
+			"id", "merchant_id", "week_id", "employee_id", "employee_name", "position_id", "shift_date", "start_time", "end_time", "break_minutes",
+			"position", "color", "notes", "status", "created_at", "updated_at", "deleted_at",
 		}).AddRow(
-			"shift_1", "merchant_1", "week_1", "emp_2", "Alice Martin", "pos_1", "Service", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "10:00:00", "14:00:00", 30,
-			"Serveuse", "#3b82f6", "Salle", "Consignes", "planned", now, now, nil,
+			"shift_1", "merchant_1", "week_1", "emp_2", "Alice Martin", "pos_1", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "10:00:00", "14:00:00", 30,
+			"Serveuse", "#3b82f6", "Consignes", "published", now, now, nil,
 		))
 
 	req := httptest.NewRequest(http.MethodGet, "/planning/me/team-week?week_start=2026-06-01", nil)

@@ -40,7 +40,6 @@ type ShiftSummary struct {
 	StartTime     string
 	EndTime       string
 	PositionLabel string
-	Title         string
 }
 
 type PublishedWeekMessage struct {

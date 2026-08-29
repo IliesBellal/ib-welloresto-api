@@ -295,11 +295,9 @@ func (s *Service) CreateWeekTemplateFromWeek(ctx context.Context, req WeekTempla
 			DayOfWeek:      planningShiftDateToDayOfWeek(sourceShift.ShiftDate.Time()),
 			EmployeeID:     sourceShift.EmployeeID,
 			PositionID:     positionID,
-			Title:          trimOrNil(sourceShift.Title),
 			StartTime:      startTime,
 			EndTime:        endTime,
 			BreakMinutes:   sourceShift.BreakMinutes,
-			Location:       shared.TrimOptionalString(sourceShift.Location),
 			Notes:          shared.TrimOptionalString(sourceShift.Notes),
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -636,26 +634,16 @@ func removeShiftByID(shifts []schedulepkg.PlanningShift, shiftID string) []sched
 }
 
 func (s *Service) createInstantiatedShift(ctx context.Context, merchantID, weekID string, shiftDate time.Time, templateShift WeekTemplateShift, employeeID *string) (*schedulepkg.PlanningShift, error) {
-	title := "Shift"
-	if templateShift.Title != nil {
-		trimmedTitle := strings.TrimSpace(*templateShift.Title)
-		if trimmedTitle != "" {
-			title = trimmedTitle
-		}
-	}
-
 	shift := schedulepkg.PlanningShift{
 		WeekID:       weekID,
 		EmployeeID:   employeeID,
 		PositionID:   templateShift.PositionID,
-		Title:        title,
 		ShiftDate:    models.NewDateOnly(shiftDate),
 		StartTime:    templateShift.StartTime,
 		EndTime:      templateShift.EndTime,
 		BreakMinutes: templateShift.BreakMinutes,
-		Location:     templateShift.Location,
 		Notes:        templateShift.Notes,
-		Status:       "planned",
+		Status:       "draft",
 	}
 
 	createdShift, err := s.weekSource.CreatePlanningShift(ctx, merchantID, shift)

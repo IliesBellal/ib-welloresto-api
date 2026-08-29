@@ -124,9 +124,16 @@ func IsValidPlanningWeekStatus(status string) bool {
 	}
 }
 
+// Statut par shift (distinct du statut de semaine — "draft"/"published"/
+// "locked" sur planning_weeks) : deux valeurs seulement, pour permettre à un
+// manager de ne "valider" que certains shifts d'une semaine par ailleurs
+// publiée, en laissant les autres en brouillon. Un shift "draft" reste
+// invisible de la vue self-service de l'équipe (voir
+// ListPlanningShiftsTeamWeekView) jusqu'à passer "published" — soit
+// manuellement, soit en masse via PublishPlanningWeek.
 func IsValidPlanningShiftStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "draft", "planned", "confirmed", "done", "cancelled":
+	case "draft", "published":
 		return true
 	default:
 		return false

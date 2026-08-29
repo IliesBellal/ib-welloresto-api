@@ -517,7 +517,7 @@ func TestUsersServicePatchMerchantUserMemberCreateAndUpdateFlow(t *testing.T) {
 			if req.HourlyRate == nil || *req.HourlyRate != 1299 {
 				t.Fatalf("hourly_rate not propagated in cents: %#v", req.HourlyRate)
 			}
-			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", Role: "manager", ContractTypeCode: "cdi", HourlyRate: 1299}, nil
+			return &planningemployees.Employee{ID: "emp_1", PositionID: "pos_1", ContractTypeCode: "cdi", HourlyRate: 1299}, nil
 		},
 	}
 
@@ -534,7 +534,6 @@ func TestUsersServicePatchMerchantUserMemberCreateAndUpdateFlow(t *testing.T) {
 	member, err := svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{
 		PositionID:       stringPtr("pos_1"),
 		ContractTypeCode: stringPtr("cdi"),
-		Role:             stringPtr("manager"),
 		HourlyRate:       &hourlyRate,
 	})
 	if err != nil {
@@ -679,7 +678,7 @@ func TestUsersServicePatchMerchantUserMemberDateAbsentNotModified(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectCommit()
 
-	_, err = svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{Role: stringPtr("manager")})
+	_, err = svc.PatchMerchantUserMember(ctx, "user_1", MerchantUserMemberPatchRequest{PositionID: stringPtr("pos_1")})
 	if err != nil {
 		t.Fatalf("PatchMerchantUserMember() error = %v", err)
 	}

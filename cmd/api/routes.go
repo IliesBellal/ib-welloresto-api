@@ -795,124 +795,183 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 
 		r.Get("/", menuH.GetMenu)
 		r.Get("/translation-langs", menuH.GetTranslationLanguages)
-		r.Patch("/translation-langs", menuH.PatchTranslationLanguages)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/translation-langs", menuH.PatchTranslationLanguages)
 
 		r.Get("/products", menuH.GetAllProducts) // used by: back-office
 		r.Get("/products/allergens/poster.pdf", menuH.GetAllergensPosterPDF)
 
 		// --- Import de produits en masse ---
-		// Seule route du bloc /menu à porter un contrôle RBAC : l'import écrit
-		// le catalogue entier d'un coup, il ne peut pas hériter de l'absence
-		// de garde du reste du bloc (cf. docs/audit-import-produits.md §1.7,
-		// écart ouvert sur les routes existantes).
+		// Toutes les routes de modification du menu sont protégées par permission.CatalogManage.
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/import/preview", menuImportH.PreviewImport)
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/import/commit", menuImportH.CommitImport)
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Get("/import/template", menuImportH.DownloadImportTemplate)
-		r.Get("/components", menuH.GetAllComponents) // used by: back-office
 
+		r.Get("/components", menuH.GetAllComponents)            // used by: back-office
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office
+
 		r.Patch("/component/{component_id}/status", menuH.SetComponentStatus)
-		r.Patch("/components/{component_id}", menuH.UpdateComponent)  // used by: back-office
-		r.Delete("/components/{component_id}", menuH.DeleteComponent) // used by: back-office
 
-		r.Patch("/display-orders", menuH.UpdateDisplayOrder) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/components/{component_id}", menuH.UpdateComponent) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/components/{component_id}", menuH.DeleteComponent) // used by: back-office
 
-		r.Patch("/products/categories/{category_id}", menuH.UpdateProductCategory)
-		r.Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
-		r.Put("/products/categories/{category_id}/image", menuH.UploadProductCategoryImage)
-		r.Delete("/products/categories/{category_id}/image", menuH.DeleteProductCategoryImage)
-		r.Patch("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory) // used by: back-office
-		r.Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
-		r.Patch("/products/{product_id}/marketing-category", menuH.AssignProductMarketingCategory)
-		r.Delete("/products/{product_id}/marketing-category", menuH.UnassignProductMarketingCategory)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/display-orders", menuH.UpdateDisplayOrder) // used by: back-office
 
-		r.Post("/products", menuH.CreateProduct) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/categories/{category_id}", menuH.UpdateProductCategory)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/categories/{category_id}/availability", menuH.SetProductCategoryAvailability)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/products/categories/{category_id}/image", menuH.UploadProductCategoryImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/products/categories/{category_id}/image", menuH.DeleteProductCategoryImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/products/categories/{category_id}", menuH.DeleteProductCategory)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/{product_id}/marketing-category", menuH.AssignProductMarketingCategory)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/products/{product_id}/marketing-category", menuH.UnassignProductMarketingCategory)
+
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products", menuH.CreateProduct) // used by: back-office
 		r.Get("/products/{product_id}", menuH.GetProduct)
-		r.Patch("/products/{product_id}", menuH.UpdateProduct)
-		r.Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
-		r.Put("/products/{product_id}/image", menuH.UploadProductImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/{product_id}", menuH.UpdateProduct)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/{product_id}/attributes", menuH.UpdateProductAttributes)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/products/{product_id}/image", menuH.UploadProductImage)
 		r.Patch("/products/{product_id}/status", menuH.SetProductStatus)
-		r.Patch("/products/{product_id}/availability", menuH.SetProductAvailability)
-		r.Delete("/products/{product_id}", menuH.DeleteProduct)
-		r.Put("/products/{product_id}/allergens", menuH.SyncProductAllergens)
-		r.Put("/products/{product_id}/tags", menuH.SyncProductTags)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/{product_id}/availability", menuH.SetProductAvailability) // obsolet ?
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/products/{product_id}", menuH.DeleteProduct)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/products/{product_id}/allergens", menuH.SyncProductAllergens)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/products/{product_id}/tags", menuH.SyncProductTags)
 
 		r.Get("/attributes", menuH.GetAttributes)
 		r.Get("/attributes/{attribute_id}", menuH.GetAttribute) // used by: back-office
-		r.Post("/attributes", menuH.CreateAttribute)            // used by: back-office
-		r.Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
-		r.Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
-		r.Put("/attribute_options/{option_id}/image", menuH.UploadAttributeOptionImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/attributes", menuH.CreateAttribute) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/attributes/{attribute_id}", menuH.UpdateAttribute)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/attributes/{attribute_id}", menuH.DeleteAttribute)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/attribute_options/{option_id}/image", menuH.UploadAttributeOptionImage)
 		r.Get("/units_of_measures", menuH.GetUnitsOfMeasures)
 
 		r.Route("/tags", func(r chi.Router) {
 			r.Get("/", tagsH.ListTags)
-			r.Post("/create", tagsH.CreateTag)
-			r.Patch("/display-order", tagsH.UpdateTagsDisplayOrder)
-			r.Patch("/{tag_id}/bulk_assign", menuH.BulkAssignProductsToTag)
-			r.Patch("/{tag_id}", tagsH.UpdateTag)
-			r.Delete("/{tag_id}", tagsH.DeleteTag)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Post("/create", tagsH.CreateTag)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Patch("/display-order", tagsH.UpdateTagsDisplayOrder)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Patch("/{tag_id}/bulk_assign", menuH.BulkAssignProductsToTag)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Patch("/{tag_id}", tagsH.UpdateTag)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Delete("/{tag_id}", tagsH.DeleteTag)
 		})
 
-		r.Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk", menuH.BulkUpdateProductPrices) // used by: back-office
 
 		// --- Édition de groupe du back-office ---
 		// Déclarées avant /products/{product_id} : chi donne la priorité aux
 		// segments statiques, mais les garder groupées ici évite toute
 		// ambiguïté de lecture avec la route paramétrée.
-		r.Patch("/products/bulk/status", menuH.BulkSetProductsStatus)             // used by: back-office
-		r.Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes)     // used by: back-office
-		r.Post("/products/bulk/delete", menuH.BulkDeleteProducts)                 // used by: back-office
-		r.Patch("/products/bulk/tags", menuH.BulkSetProductsTags)                 // used by: back-office
-		r.Patch("/products/bulk/tva", menuH.BulkSetProductsTva)                   // used by: back-office
-		r.Patch("/products/bulk/availability", menuH.BulkSetProductsAvailability) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/status", menuH.BulkSetProductsStatus) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products/bulk/delete", menuH.BulkDeleteProducts) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/tags", menuH.BulkSetProductsTags) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/tva", menuH.BulkSetProductsTva) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/availability", menuH.BulkSetProductsAvailability) // used by: back-office
 
 		// --- Bulk assign (additive) ---
 		r.Route("/bulk", func(r chi.Router) {
-			r.Post("/allergens/assign", menuH.BulkAssignAllergen)
-			r.Post("/tags/assign", menuH.BulkAssignTag)
-			r.Post("/attributes/assign", menuH.BulkAssignAttribute)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Post("/allergens/assign", menuH.BulkAssignAllergen)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Post("/tags/assign", menuH.BulkAssignTag)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Post("/attributes/assign", menuH.BulkAssignAttribute)
 		})
 
 		// --- Plateformes externes ---
 		r.Get("/deliveroo", menuH.GetDeliverooMenu)
-		r.Patch("/deliveroo/sync", menuH.SyncDeliverooMenu) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/deliveroo/sync", menuH.SyncDeliverooMenu) // used by: back-office
 		r.Get("/uber-eats", menuH.GetUberEatsMenu)
-		r.Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/uber-eats/sync", menuH.SyncUberEatsMenu) // used by: back-office
 
-		r.Post("/products/categories", menuH.CreateProductCategory)                                 // used by: back-office
-		r.Get("/marketing-categories", menuH.GetMarketingCategories)                                // used by: back-office
-		r.Post("/marketing-categories", menuH.CreateMarketingCategory)                              // used by: back-office
-		r.Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder) // used by: back-office
-		r.Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory)               // used by: back-office
-		r.Put("/marketing-categories/{category_id}/image", menuH.UploadMarketingCategoryImage)
-		r.Delete("/marketing-categories/{category_id}/image", menuH.DeleteMarketingCategoryImage)
-		r.Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory)                          // used by: back-office
-		r.Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
-		r.Post("/components", menuH.CreateComponent)                                                            // used by: back-office
-		r.Post("/components/categories", menuH.CreateComponentCategory)                                         // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products/categories", menuH.CreateProductCategory) // used by: back-office
+		r.Get("/marketing-categories", menuH.GetMarketingCategories) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/marketing-categories", menuH.CreateMarketingCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/marketing-categories/display-order", menuH.UpdateMarketingCategoriesDisplayOrder) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/marketing-categories/{category_id}", menuH.UpdateMarketingCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Put("/marketing-categories/{category_id}/image", menuH.UploadMarketingCategoryImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/marketing-categories/{category_id}/image", menuH.DeleteMarketingCategoryImage)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/marketing-categories/{category_id}", menuH.DeleteMarketingCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/marketing-categories/{category_id}/bulk-assign", menuH.BulkAssignProductsToMarketingCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/components", menuH.CreateComponent) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/components/categories", menuH.CreateComponentCategory) // used by: back-office
 		// display-order avant {category_id} : chi priorise le segment statique,
 		// même disposition que /marketing-categories ci-dessus
-		r.Patch("/components/categories/display-order", menuH.UpdateComponentCategoriesDisplayOrder) // used by: back-office
-		r.Patch("/components/categories/{category_id}", menuH.UpdateComponentCategory)               // used by: back-office
-		r.Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory)              // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/components/categories/display-order", menuH.UpdateComponentCategoriesDisplayOrder) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/components/categories/{category_id}", menuH.UpdateComponentCategory) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/components/categories/{category_id}", menuH.DeleteComponentCategory) // used by: back-office
 
 		// --- Discounts/Promotions ---
 		r.Get("/discounts", discountsH.ListActiveDiscounts)
-		r.Get("/discounts/all", discountsH.ListAllDiscounts)            // for back-office
-		r.Post("/discounts", discountsH.CreateDiscount)                 // for back-office
-		r.Get("/discounts/{discount_id}", discountsH.GetDiscount)       // for back-office
-		r.Patch("/discounts/{discount_id}", discountsH.UpdateDiscount)  // for back-office
-		r.Delete("/discounts/{discount_id}", discountsH.DeleteDiscount) // for back-office
+		r.Get("/discounts/all", discountsH.ListAllDiscounts) // for back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/discounts", discountsH.CreateDiscount) // for back-office
+		r.Get("/discounts/{discount_id}", discountsH.GetDiscount) // for back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/discounts/{discount_id}", discountsH.UpdateDiscount) // for back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/discounts/{discount_id}", discountsH.DeleteDiscount) // for back-office
 
 		// --- Availabilities/Schedules ---
 		r.Get("/availabilities", availabilitiesH.GetAvailabilities)
-		r.Post("/availabilities", availabilitiesH.CreateAvailability)
-		r.Patch("/availabilities/{id}", availabilitiesH.UpdateAvailability)
-		r.Delete("/availabilities/{id}", availabilitiesH.DeleteAvailability)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/availabilities", availabilitiesH.CreateAvailability)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/availabilities/{id}", availabilitiesH.UpdateAvailability)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/availabilities/{id}", availabilitiesH.DeleteAvailability)
 		r.Get("/availabilities/check", availabilitiesH.CheckProductAvailability)
 	})
 
@@ -1217,10 +1276,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			// Sous-route paiements (en écriture)
 			r.Route("/{order_id}/payments", func(r chi.Router) {
 				r.Post("/create", ordersLifeCycleH.AddPayment)
-				// Supprimer un paiement enregistré est une CORRECTION au même
-				// titre qu'un remboursement (RBAC lot 8).
-				r.With(middleware.RequirePermission(permission.POSRefund)).
-					Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
+				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
 			})
 		})
 	})

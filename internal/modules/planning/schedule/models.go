@@ -107,13 +107,11 @@ type PlanningShift struct {
 	WeekID       string          `json:"week_id"`
 	EmployeeID   *string         `json:"employee_id"`
 	PositionID   *string         `json:"position_id"`
-	Title        string          `json:"title"`
 	ShiftDate    models.DateOnly `json:"shift_date"`
 	StartTime    string          `json:"start_time"`
 	EndTime      string          `json:"end_time"`
 	BreakMinutes int             `json:"break_minutes"`
 	Position     *string         `json:"position"`
-	Location     *string         `json:"location"`
 	Notes        *string         `json:"notes"`
 	Status       string          `json:"status"`
 	CreatedAt    time.Time       `json:"created_at"`
@@ -132,12 +130,10 @@ type PlanningShiftTeamWeekView struct {
 	PositionID    *string         `json:"position_id"`
 	Position      *string         `json:"position"`
 	PositionColor *string         `json:"position_color"`
-	Title         string          `json:"title"`
 	ShiftDate     models.DateOnly `json:"shift_date"`
 	StartTime     string          `json:"start_time"`
 	EndTime       string          `json:"end_time"`
 	BreakMinutes  int             `json:"break_minutes"`
-	Location      *string         `json:"location"`
 	Notes         *string         `json:"notes"`
 	Status        string          `json:"status"`
 	CreatedAt     time.Time       `json:"created_at"`
@@ -148,13 +144,11 @@ type PlanningShiftTeamWeekView struct {
 type PlanningShiftCreateRequest struct {
 	EmployeeID   *string `json:"employee_id,omitempty"`
 	PositionID   *string `json:"position_id,omitempty"`
-	Title        string  `json:"title"`
 	ShiftDate    string  `json:"shift_date"`
 	StartTime    string  `json:"start_time"`
 	EndTime      string  `json:"end_time"`
 	BreakMinutes *int    `json:"break_minutes,omitempty"`
 	Position     *string `json:"position,omitempty"`
-	Location     *string `json:"location,omitempty"`
 	Notes        *string `json:"notes,omitempty"`
 	Status       *string `json:"status,omitempty"`
 }
@@ -162,13 +156,15 @@ type PlanningShiftCreateRequest struct {
 type PlanningShiftUpdateRequest struct {
 	EmployeeID   NullableStringPatchField `json:"employee_id,omitempty"`
 	PositionID   NullableStringPatchField `json:"position_id,omitempty"`
-	Title        *string                  `json:"title,omitempty"`
 	ShiftDate    *string                  `json:"shift_date,omitempty"`
 	StartTime    *string                  `json:"start_time,omitempty"`
 	EndTime      *string                  `json:"end_time,omitempty"`
 	BreakMinutes *int                     `json:"break_minutes,omitempty"`
 	Position     *string                  `json:"position,omitempty"`
-	Location     *string                  `json:"location,omitempty"`
-	Notes        *string                  `json:"notes,omitempty"`
+	// Tri-state comme EmployeeID/PositionID (pas un simple *string) : sans
+	// ça, un JSON `"notes": null` (l'utilisateur vide la zone de texte) est
+	// indiscernable d'un champ absent au moment de l'unmarshal — la note ne
+	// pouvait jamais être effacée, seulement remplacée par un autre texte.
+	Notes NullableStringPatchField `json:"notes,omitempty"`
 	Status       *string                  `json:"status,omitempty"`
 }

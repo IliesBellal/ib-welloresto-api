@@ -320,7 +320,7 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 	if err != nil {
 		return nil, err
 	}
-	status := "planned"
+	status := "draft"
 	if req.Status != nil && strings.TrimSpace(*req.Status) != "" {
 		status = strings.ToLower(strings.TrimSpace(*req.Status))
 	}
@@ -335,13 +335,11 @@ func (s *Service) CreatePlanningShift(ctx context.Context, weekID string, req Pl
 		WeekID:       weekID,
 		EmployeeID:   normalizedEmployeeID,
 		PositionID:   resolvedPositionID,
-		Title:        strings.TrimSpace(req.Title),
 		ShiftDate:    shiftDateOnly,
 		StartTime:    startTime,
 		EndTime:      endTime,
 		BreakMinutes: breakMinutes,
 		Position:     resolvedPositionLabel,
-		Location:     req.Location,
 		Notes:        req.Notes,
 		Status:       status,
 	}
@@ -368,12 +366,6 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 		return nil, err
 	}
 	previousEmployeeID := normalizeShiftEmployeeID(current.EmployeeID)
-	if req.Title != nil {
-		if strings.TrimSpace(*req.Title) == "" {
-			return nil, models.ErrValidationError
-		}
-		current.Title = strings.TrimSpace(*req.Title)
-	}
 	if req.EmployeeID.Present {
 		normalizedEmployeeID := normalizeShiftEmployeeID(req.EmployeeID.Value)
 		if normalizedEmployeeID == nil {
@@ -416,11 +408,8 @@ func (s *Service) UpdatePlanningShift(ctx context.Context, shiftID string, req P
 	if req.BreakMinutes != nil {
 		current.BreakMinutes = *req.BreakMinutes
 	}
-	if req.Location != nil {
-		current.Location = req.Location
-	}
-	if req.Notes != nil {
-		current.Notes = req.Notes
+	if req.Notes.Present {
+		current.Notes = req.Notes.Value
 	}
 	if req.Status != nil && strings.TrimSpace(*req.Status) != "" {
 		status := strings.ToLower(strings.TrimSpace(*req.Status))

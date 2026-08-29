@@ -13,7 +13,7 @@ import (
 func (r *Repository) ListPlanningShiftsForPublication(ctx context.Context, merchantID, weekID string) ([]publishedShiftSnapshot, error) {
 	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
-		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time, s.title,
+		SELECT s.employee_id, s.shift_date, s.start_time, s.end_time,
 			COALESCE(NULLIF(TRIM(s.position), ''), COALESCE(p.label, '')) AS position_label
 		FROM planning_shifts s
 		LEFT JOIN planning_positions p ON p.id = s.position_id AND p.merchant_id = s.merchant_id AND p.enabled = TRUE
@@ -28,7 +28,7 @@ func (r *Repository) ListPlanningShiftsForPublication(ctx context.Context, merch
 	items := make([]publishedShiftSnapshot, 0)
 	for rows.Next() {
 		var item publishedShiftSnapshot
-		if err := rows.Scan(&item.EmployeeID, &item.ShiftDate, &item.StartTime, &item.EndTime, &item.Title, &item.PositionLabel); err != nil {
+		if err := rows.Scan(&item.EmployeeID, &item.ShiftDate, &item.StartTime, &item.EndTime, &item.PositionLabel); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -39,7 +39,7 @@ func (r *Repository) ListPlanningShiftsForPublication(ctx context.Context, merch
 func (r *Repository) ListPublishedShiftSnapshots(ctx context.Context, merchantID, weekID string) ([]publishedShiftSnapshot, error) {
 	db := dbx.GetDB(ctx, r.db)
 	rows, err := db.QueryContext(ctx, `
-		SELECT employee_id, shift_date, start_time, end_time, title, position_label
+		SELECT employee_id, shift_date, start_time, end_time, position_label
 		FROM planning_published_shift_snapshots
 		WHERE merchant_id = ? AND week_id = ?
 		ORDER BY employee_id ASC, shift_date ASC, start_time ASC
@@ -52,7 +52,7 @@ func (r *Repository) ListPublishedShiftSnapshots(ctx context.Context, merchantID
 	items := make([]publishedShiftSnapshot, 0)
 	for rows.Next() {
 		var item publishedShiftSnapshot
-		if err := rows.Scan(&item.EmployeeID, &item.ShiftDate, &item.StartTime, &item.EndTime, &item.Title, &item.PositionLabel); err != nil {
+		if err := rows.Scan(&item.EmployeeID, &item.ShiftDate, &item.StartTime, &item.EndTime, &item.PositionLabel); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -74,6 +74,18 @@ func (r *Repository) PublishPlanningWeekWithSnapshots(ctx context.Context, merch
 		if affected, _ := res.RowsAffected(); affected == 0 {
 			return sql.ErrNoRows
 		}
+		// Publication en masse : un shift resté "draft" (ou une valeur héritée
+		// d'avant la simplification à deux statuts) passe "published" en même
+		// temps que la semaine — comportement par défaut choisi pour ne pas
+		// casser le flux existant. Un manager qui veut garder certains shifts
+		// en brouillon les repasse manuellement ensuite (PATCH /planning/shifts/{id}).
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE planning_shifts
+			SET status = 'published', updated_at = ?
+			WHERE merchant_id = ? AND week_id = ? AND enabled = TRUE AND status <> 'published'
+		`, publishedAt, merchantID, weekID); err != nil {
+			return err
+		}
 		if _, err := db.ExecContext(txCtx, `
 			DELETE FROM planning_published_shift_snapshots
 			WHERE merchant_id = ? AND week_id = ?
@@ -83,9 +95,9 @@ func (r *Repository) PublishPlanningWeekWithSnapshots(ctx context.Context, merch
 		for _, snapshot := range snapshots {
 			if _, err := db.ExecContext(txCtx, `
 				INSERT INTO planning_published_shift_snapshots (
-					id, merchant_id, week_id, employee_id, shift_date, start_time, end_time, title, position_label, published_at, created_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`, snapshotID(), merchantID, weekID, snapshot.EmployeeID, snapshot.ShiftDate, snapshot.StartTime, snapshot.EndTime, snapshot.Title, snapshot.PositionLabel, publishedAt, publishedAt); err != nil {
+					id, merchant_id, week_id, employee_id, shift_date, start_time, end_time, position_label, published_at, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, snapshotID(), merchantID, weekID, snapshot.EmployeeID, snapshot.ShiftDate, snapshot.StartTime, snapshot.EndTime, snapshot.PositionLabel, publishedAt, publishedAt); err != nil {
 				return err
 			}
 		}

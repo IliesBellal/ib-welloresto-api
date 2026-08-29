@@ -119,7 +119,6 @@ type MerchantUserUnlinkResult struct {
 
 type MerchantUserMember struct {
 	PositionID             string           `json:"position_id"`
-	Role                   string           `json:"role"`
 	ContractTypeCode       string           `json:"contract_type_code"`
 	ContractStartDate      *models.DateOnly `json:"contract_start_date"`
 	ContractEndDate        *models.DateOnly `json:"contract_end_date"`
@@ -139,7 +138,6 @@ type MerchantUserMember struct {
 
 type MerchantUserMemberPatchRequest struct {
 	PositionID             *string                           `json:"position_id,omitempty"`
-	Role                   *string                           `json:"role,omitempty"`
 	ContractTypeCode       *string                           `json:"contract_type_code,omitempty"`
 	ContractStartDate      models.NullableDateOnlyPatchField `json:"contract_start_date,omitempty"`
 	ContractEndDate        models.NullableDateOnlyPatchField `json:"contract_end_date,omitempty"`

@@ -330,11 +330,9 @@ func TestCreateWeekTemplateFromWeekMapsDayAndPreservesEmployees(t *testing.T) {
 				ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)),
 				EmployeeID:   strPtr("emp-1"),
 				PositionID:   strPtr("pos-1"),
-				Title:        "",
 				StartTime:    "09:00:00",
 				EndTime:      "17:00:00",
 				BreakMinutes: 30,
-				Location:     strPtr("Salle"),
 				Notes:        nil,
 			},
 			{
@@ -342,11 +340,9 @@ func TestCreateWeekTemplateFromWeekMapsDayAndPreservesEmployees(t *testing.T) {
 				EmployeeID:   nil,
 				PositionID:   nil,
 				Position:     strPtr("bar"),
-				Title:        "Ouverture",
 				StartTime:    "10:00",
 				EndTime:      "18:00",
 				BreakMinutes: 0,
-				Location:     nil,
 				Notes:        strPtr("Briefing"),
 			},
 		},
@@ -358,10 +354,10 @@ func TestCreateWeekTemplateFromWeekMapsDayAndPreservesEmployees(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), "m-1", "Modele semaine", "Forte affluence", true).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO planning_week_template_shifts").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "emp-1", "pos-1", nil, "09:00", "17:00", 30, "Salle", nil).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "emp-1", "pos-1", nil, "09:00", "17:00", 30, nil, nil).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO planning_week_template_shifts").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 1, nil, "pos-bar", "Ouverture", "10:00", "18:00", 0, nil, "Briefing").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 1, nil, "pos-bar", nil, "10:00", "18:00", 0, nil, "Briefing").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 

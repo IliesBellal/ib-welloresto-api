@@ -563,7 +563,6 @@ func TestWeekTemplatesHTTPContract_PostFromWeekReturnsContractShape(t *testing.T
 				ShiftDate:    models.NewDateOnly(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
 				EmployeeID:   ptrString("emp-1"),
 				PositionID:   ptrString("pos-2"),
-				Title:        "",
 				StartTime:    "09:00:00",
 				EndTime:      "17:00:00",
 				BreakMinutes: 30,

@@ -160,9 +160,6 @@ func (s *Service) UpdateEmployee(ctx context.Context, employeeID string, req Emp
 	if req.Phone != nil {
 		current.Phone = req.Phone
 	}
-	if req.Role != nil {
-		current.Role = strings.ToLower(strings.TrimSpace(*req.Role))
-	}
 	if req.ContractStartDate != nil {
 		current.ContractStartDate = req.ContractStartDate
 	}
@@ -278,7 +275,7 @@ func (s *Service) UnlinkEmployeeUser(ctx context.Context, employeeID string) (*E
 }
 
 func RequireAtLeastOneEmployeeField(req EmployeeUpdateRequest) error {
-	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.PositionID == nil && req.PositionNote == nil && req.Email == nil && req.Phone == nil && req.Role == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
+	if req.UserID == nil && req.FirstName == nil && req.LastName == nil && req.PositionID == nil && req.PositionNote == nil && req.Email == nil && req.Phone == nil && req.ContractTypeCode == nil && req.ContractStartDate == nil && req.ContractEndDate == nil && req.ProbationEndDate == nil && req.LastMedicalCheckupDate == nil && req.ContractHours == nil && req.MaxWeeklyHours == nil && req.RequiredRestDays == nil && req.SundayPremium == nil && req.NightPremium == nil && req.HourlyRate == nil && req.GrossMonthlySalary == nil && req.EmployerChargesPct == nil && req.TransportCost == nil && req.BirthDate == nil && req.Gender == nil && req.Nationality == nil && req.Address == nil && req.HrComment == nil && req.Active == nil {
 		return fmt.Errorf("at least one field must be provided")
 	}
 	return nil

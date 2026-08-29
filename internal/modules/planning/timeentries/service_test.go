@@ -87,8 +87,8 @@ func TestServiceListCurrentUserTeamWeekShiftsPublishedWeekReturnsTeamShifts(t *t
 	}, stubShiftReader{
 		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "published"},
 		teamShifts: []schedulepkg.PlanningShiftTeamWeekView{
-			{ID: "shift_1", WeekID: "week_1", EmployeeID: stringPtr("emp_me"), Title: "Ouverture", StartTime: "09:00:00", EndTime: "12:00:00", Status: "planned"},
-			{ID: "shift_2", WeekID: "week_1", EmployeeID: stringPtr("emp_2"), Title: "Service", StartTime: "12:00:00", EndTime: "16:00:00", Status: "planned"},
+			{ID: "shift_1", WeekID: "week_1", EmployeeID: stringPtr("emp_me"), StartTime: "09:00:00", EndTime: "12:00:00", Status: "planned"},
+			{ID: "shift_2", WeekID: "week_1", EmployeeID: stringPtr("emp_2"), StartTime: "12:00:00", EndTime: "16:00:00", Status: "planned"},
 		},
 	}, nil, nil, stubDayCommentReader{
 		comments: []daycommentspkg.PlanningDayComment{
@@ -123,7 +123,7 @@ func TestServiceListCurrentUserTeamWeekShiftsDraftWeekReturnsEmpty(t *testing.T)
 	}, stubShiftReader{
 		weekByStart: &schedulepkg.PlanningWeek{ID: "week_1", MerchantID: "merchant_1", Status: "draft"},
 		teamShifts: []schedulepkg.PlanningShiftTeamWeekView{
-			{ID: "shift_1", WeekID: "week_1", Title: "Ouverture"},
+			{ID: "shift_1", WeekID: "week_1"},
 		},
 	}, nil, nil, nil)
 
