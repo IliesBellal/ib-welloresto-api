@@ -64,10 +64,10 @@ func SetupTasks(
 	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 
 	// ── Sécurité ─────────────────────────────────────────────────────────────
-	// Chaque nuit à 5h : purge des demandes de réinitialisation de mot de passe.
-	// 5h et non 4h pour ne pas tomber en même temps que la purge upsell le 1er
+	// Chaque nuit à 4h30 : purge des demandes de réinitialisation de mot de passe.
+	// 4h30 et non 4h pour ne pas tomber en même temps que la purge upsell le 1er
 	// du mois — deux DELETE simultanés se disputeraient l'unique connexion DB.
-	add("0 5 * * *", taskManager.CleanupExpiredPasswordResets)
+	add("30 4 * * *", taskManager.CleanupExpiredPasswordResets)
 
 	// ── Logs de requêtes API ─────────────────────────────────────────────────
 	// 1er du mois à 5h : purge des lignes api_request_logs de plus de 30 jours.
