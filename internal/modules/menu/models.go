@@ -229,13 +229,13 @@ type CreateProductPayload struct {
 	// pour les scalaires, association vide pour les listes. L'ensemble est
 	// persisté dans la même transaction que l'INSERT products : un échec sur
 	// une association ne laisse aucun produit partiel en base.
-	BgColor           *string                    `json:"bg_color,omitempty"`
-	ProductionColor   *string                    `json:"production_color,omitempty"`
-	Status            *string                    `json:"status,omitempty"`
-	IsAvailableOnSno  *bool                      `json:"is_available_on_sno,omitempty"`
-	AvailableIn       *bool                      `json:"available_in,omitempty"`
-	AvailableTakeAway *bool                      `json:"available_take_away,omitempty"`
-	AvailableDelivery *bool                      `json:"available_delivery,omitempty"`
+	BgColor           *string                  `json:"bg_color,omitempty"`
+	ProductionColor   *string                  `json:"production_color,omitempty"`
+	Status            *string                  `json:"status,omitempty"`
+	IsAvailableOnSno  *bool                    `json:"is_available_on_sno,omitempty"`
+	AvailableIn       *bool                    `json:"available_in,omitempty"`
+	AvailableTakeAway *bool                    `json:"available_take_away,omitempty"`
+	AvailableDelivery *bool                    `json:"available_delivery,omitempty"`
 	Configuration     []string                 `json:"configuration,omitempty"` // IDs d'attributs configurables
 	Components        []ProductComponentUpdate `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
 	Tags              []string                 `json:"tags,omitempty"`          // IDs de tags
@@ -254,6 +254,15 @@ type ProductComponentUpdate struct {
 	ComponentID string  `json:"component_id"`       // ID du composant
 	Quantity    float64 `json:"quantity"`           // Quantité requise
 	UnitID      string  `json:"unit_of_measure_id"` // ID de l'unité de mesure
+
+	// Disponibilité par canal de cette ligne de composition. nil = comportement
+	// actuel inchangé (colonne à son défaut TRUE) : seul l'import "autre
+	// établissement" les renseigne aujourd'hui, en recopiant ce que la source a
+	// réellement configuré plutôt que d'écraser silencieusement un canal
+	// désactivé.
+	InOrders       *bool `json:"in_orders,omitempty"`
+	TakeAwayOrders *bool `json:"take_away_orders,omitempty"`
+	DeliveryOrders *bool `json:"delivery_orders,omitempty"`
 }
 
 // ProductUpdatePayload correspond aux champs de la table 'products' + associations

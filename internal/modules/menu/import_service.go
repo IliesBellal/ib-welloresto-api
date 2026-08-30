@@ -58,12 +58,22 @@ type ImportService struct {
 	tagCreator importTagCreator
 	changes    *MenuChangeNotifier
 
+	// rights et catalogReader ne servent qu'à la porte "autre établissement"
+	// (PreviewImportFromMerchant, import_merchant_service.go) : aucune des
+	// deux portes fichier/saisie n'a besoin de vérifier un accès cross-marchand
+	// ni de lire le catalogue d'un autre marchand que celui de la session.
+	rights        merchantRightsChecker
+	catalogReader merchantCatalogReader
+
 	previewTTL time.Duration
 }
 
 // NewImportService câble la preview et le commit. reader et writer sont la même
 // instance de MenuRepository en production ; les séparer permet de vérifier en
-// test qu'un lot refusé n'atteint jamais la part qui écrit.
+// test qu'un lot refusé n'atteint jamais la part qui écrit. catalogReader l'est
+// également (elle expose BuildMerchantCanonicalImport en plus de
+// LoadImportPreviewLookups) ; rights est le dépôt auth, dont dépend la seule
+// vérification d'autorisation propre à cette porte.
 //
 // changes est partagé avec MenuService : la fenêtre d'amortissement de
 // `menu_updated` doit être commune aux deux chemins d'écriture, sinon un
@@ -75,15 +85,19 @@ func NewImportService(
 	store importPreviewStore,
 	tagCreator importTagCreator,
 	changes *MenuChangeNotifier,
+	rights merchantRightsChecker,
+	catalogReader merchantCatalogReader,
 ) *ImportService {
 	return &ImportService{
-		reader:     reader,
-		writer:     writer,
-		registry:   registry,
-		store:      store,
-		tagCreator: tagCreator,
-		changes:    changes,
-		previewTTL: models.MenuImportPreviewTTL,
+		reader:        reader,
+		writer:        writer,
+		registry:      registry,
+		store:         store,
+		tagCreator:    tagCreator,
+		changes:       changes,
+		rights:        rights,
+		catalogReader: catalogReader,
+		previewTTL:    models.MenuImportPreviewTTL,
 	}
 }
 

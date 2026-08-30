@@ -13,13 +13,16 @@ import (
 	"welloresto-api/internal/utils/dbutils"
 )
 
-// Tables de correspondance alimentées par l'import (migration 080).
+// Tables de correspondance alimentées par l'import (migration 080, puis 107
+// pour les deux dernières — porte "autre établissement").
 const (
-	importProductsMappingTable         = "import_products_mapping"
-	importCategoriesMappingTable       = "import_categories_mapping"
-	importTagsMappingTable             = "import_tags_mapping"
-	importAttributesMappingTable       = "import_attributes_mapping"
-	importAttributeOptionsMappingTable = "import_attribute_options_mapping"
+	importProductsMappingTable            = "import_products_mapping"
+	importCategoriesMappingTable          = "import_categories_mapping"
+	importTagsMappingTable                = "import_tags_mapping"
+	importAttributesMappingTable          = "import_attributes_mapping"
+	importAttributeOptionsMappingTable    = "import_attribute_options_mapping"
+	importComponentCategoriesMappingTable = "import_component_categories_mapping"
+	importComponentsMappingTable          = "import_components_mapping"
 )
 
 // Actions rapportées pour chaque entité du lot.
@@ -47,10 +50,12 @@ type ImportCommitEntity struct {
 
 // ImportCommitOutcome est le résultat de la matérialisation.
 type ImportCommitOutcome struct {
-	Categories []ImportCommitEntity `json:"categories"`
-	Tags       []ImportCommitEntity `json:"tags"`
-	Attributes []ImportCommitEntity `json:"attributes"`
-	Products   []ImportCommitEntity `json:"products"`
+	Categories          []ImportCommitEntity `json:"categories"`
+	Tags                []ImportCommitEntity `json:"tags"`
+	Attributes          []ImportCommitEntity `json:"attributes"`
+	Products            []ImportCommitEntity `json:"products"`
+	ComponentCategories []ImportCommitEntity `json:"component_categories,omitempty"`
+	Components          []ImportCommitEntity `json:"components,omitempty"`
 
 	OptionsCreated int `json:"-"`
 }
@@ -59,8 +64,11 @@ type ImportCommitOutcome struct {
 // transaction : un produit référence sa catégorie et ses tags par identifiant
 // externe, et ceux-ci n'existent parfois qu'après leur propre insertion.
 type importCommitState struct {
-	merchantCategIDByExternal map[string]string
-	tagIDByExternal           map[string]string
+	merchantCategIDByExternal             map[string]string
+	tagIDByExternal                       map[string]string
+	componentCategoryMerchantIDByExternal map[string]string
+	componentIDByExternal                 map[string]string
+	attributeIDByExternal                 map[string]string
 }
 
 // MaterializeImportTx écrit un lot d'import dans une transaction unique.
@@ -69,8 +77,10 @@ type importCommitState struct {
 // correspondances import_*_mapping. Un lot à moitié écrit laisserait des
 // mappings qui feraient sauter les entités manquantes au ré-import.
 //
-// L'ordre est imposé par les dépendances : catégories et tags d'abord (les
-// produits les référencent), attributs ensuite (indépendants), produits enfin.
+// L'ordre est imposé par les dépendances : catégories produit et tags
+// d'abord (les produits les référencent), puis catégories d'ingrédient et
+// ingrédients (une option d'attribut peut porter un lien vers un ingrédient),
+// puis attributs, produits enfin — seuls à référencer tout le reste.
 //
 // Ne pose ni setMenuUpdated ni invalidation de cache : ils appartiennent à
 // l'appelant, qui les fait une seule fois en fin de lot.
@@ -82,8 +92,11 @@ func (r *MenuRepository) MaterializeImportTx(
 ) (*ImportCommitOutcome, error) {
 	outcome := &ImportCommitOutcome{}
 	state := &importCommitState{
-		merchantCategIDByExternal: make(map[string]string, len(plan.Categories)),
-		tagIDByExternal:           make(map[string]string, len(plan.Tags)),
+		merchantCategIDByExternal:             make(map[string]string, len(plan.Categories)),
+		tagIDByExternal:                       make(map[string]string, len(plan.Tags)),
+		componentCategoryMerchantIDByExternal: make(map[string]string, len(plan.ComponentCategories)),
+		componentIDByExternal:                 make(map[string]string, len(plan.Components)),
+		attributeIDByExternal:                 make(map[string]string, len(plan.Attributes)),
 	}
 
 	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
@@ -93,7 +106,13 @@ func (r *MenuRepository) MaterializeImportTx(
 		if err := r.materializeTagsTx(txCtx, merchantID, plan, state, outcome, tagCreator); err != nil {
 			return err
 		}
-		if err := r.materializeAttributesTx(txCtx, merchantID, plan, outcome); err != nil {
+		if err := r.materializeComponentCategoriesTx(txCtx, merchantID, plan, state, outcome); err != nil {
+			return err
+		}
+		if err := r.materializeComponentsTx(txCtx, merchantID, plan, state, outcome); err != nil {
+			return err
+		}
+		if err := r.materializeAttributesTx(txCtx, merchantID, plan, state, outcome); err != nil {
 			return err
 		}
 		return r.materializeProductsTx(txCtx, merchantID, plan, state, outcome)
@@ -258,13 +277,207 @@ func (r *MenuRepository) materializeTagsTx(
 // importTagDefaultColor reprend le défaut du service tags.
 const importTagDefaultColor = "#FFFFFF"
 
-// materializeAttributesTx crée les groupes d'options non rattachés.
+// materializeComponentCategoriesTx crée les catégories d'ingrédient — porte
+// "autre établissement" uniquement, plan.ComponentCategories est vide pour
+// tout autre provider et la boucle ne produit alors rien.
 //
-// V1a : aucun produit ne les référence. Les exports ne portent pas de lien
-// produit -> option, le rattachement se fait ensuite via la matrice du
-// back-office. insertProductTx ne touche donc jamais
-// product_configurable_attribute, sa garde len(Configuration) > 0 n'étant
-// jamais franchie.
+// Même structure que materializeCategoriesTx : CreateComponentCategory suit
+// le même patron en deux temps (INSERT à ” puis UPDATE merchant_categ_id)
+// que CreateProductCategory, on relit donc de la même façon plutôt que de
+// faire confiance à une valeur qui pourrait être restée vide.
+func (r *MenuRepository) materializeComponentCategoriesTx(
+	ctx context.Context,
+	merchantID string,
+	plan *importer.CommitPlan,
+	state *importCommitState,
+	outcome *ImportCommitOutcome,
+) error {
+	for _, category := range plan.ComponentCategories {
+		switch {
+		case category.AlreadyImported:
+			state.componentCategoryMerchantIDByExternal[category.ExternalID] = category.ReuseMerchantCategID
+			outcome.ComponentCategories = append(outcome.ComponentCategories, ImportCommitEntity{
+				ExternalID: category.ExternalID,
+				WelloID:    strconv.Itoa(category.ReuseCategID),
+				Action:     CommitActionSkipped,
+			})
+			continue
+
+		case category.ReuseMerchantCategID != "":
+			state.componentCategoryMerchantIDByExternal[category.ExternalID] = category.ReuseMerchantCategID
+			if err := r.upsertImportMappingTx(ctx, importComponentCategoriesMappingTable,
+				merchantID, plan.Provider, category.ExternalID, category.ReuseCategID); err != nil {
+				return err
+			}
+			outcome.ComponentCategories = append(outcome.ComponentCategories, ImportCommitEntity{
+				ExternalID: category.ExternalID,
+				WelloID:    strconv.Itoa(category.ReuseCategID),
+				Action:     CommitActionReused,
+			})
+			continue
+		}
+
+		categIDStr, err := r.CreateComponentCategory(ctx, &UpsertComponentCategoryPayload{
+			Name:       category.Name,
+			MerchantID: merchantID,
+		})
+		if err != nil {
+			return fmt.Errorf("import: création de la catégorie d'ingrédient %q: %w", category.Name, err)
+		}
+
+		categID, err := strconv.Atoi(categIDStr)
+		if err != nil {
+			return fmt.Errorf("import: identifiant de catégorie d'ingrédient inattendu %q: %w", categIDStr, err)
+		}
+
+		merchantCategID, err := r.readComponentCategoryMerchantIDTx(ctx, merchantID, categID)
+		if err != nil {
+			return err
+		}
+		if merchantCategID == "" {
+			return fmt.Errorf("import: la catégorie d'ingrédient %q a été créée sans merchant_categ_id", category.Name)
+		}
+
+		state.componentCategoryMerchantIDByExternal[category.ExternalID] = merchantCategID
+		if err := r.upsertImportMappingTx(ctx, importComponentCategoriesMappingTable,
+			merchantID, plan.Provider, category.ExternalID, categID); err != nil {
+			return err
+		}
+		outcome.ComponentCategories = append(outcome.ComponentCategories, ImportCommitEntity{
+			ExternalID: category.ExternalID,
+			WelloID:    categIDStr,
+			Action:     CommitActionCreated,
+		})
+	}
+
+	return nil
+}
+
+func (r *MenuRepository) readComponentCategoryMerchantIDTx(ctx context.Context, merchantID string, categID int) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var merchantCategID string
+	err := db.QueryRowContext(ctx,
+		`SELECT merchant_categ_id FROM component_category WHERE merchant_id = ? AND id = ?`,
+		merchantID, categID,
+	).Scan(&merchantCategID)
+	if err != nil {
+		return "", fmt.Errorf("import: relecture de merchant_categ_id d'ingrédient (id %d): %w", categID, err)
+	}
+	return merchantCategID, nil
+}
+
+// materializeComponentsTx crée les ingrédients — porte "autre établissement"
+// uniquement.
+//
+// Appelle CreateComponent directement plutôt que de passer par un chemin
+// dédié : sa vérification d'unicité de nom (avec confirmation Redis) ne
+// devrait jamais se déclencher ici puisque buildComponents a déjà écarté tout
+// nom qui collisionnait avec l'existant — si elle se déclenche malgré tout
+// (course avec une création concurrente entre la preview et le commit), c'est
+// un cas assez rare pour que faire échouer tout le lot plutôt que d'y répondre
+// silencieusement soit le bon compromis, comme pour toute autre incohérence
+// détectée pendant la transaction.
+func (r *MenuRepository) materializeComponentsTx(
+	ctx context.Context,
+	merchantID string,
+	plan *importer.CommitPlan,
+	state *importCommitState,
+	outcome *ImportCommitOutcome,
+) error {
+	for _, component := range plan.Components {
+		switch {
+		case component.AlreadyImported:
+			state.componentIDByExternal[component.ExternalID] = strconv.Itoa(component.ReuseComponentID)
+			outcome.Components = append(outcome.Components, ImportCommitEntity{
+				ExternalID: component.ExternalID,
+				WelloID:    strconv.Itoa(component.ReuseComponentID),
+				Action:     CommitActionSkipped,
+			})
+			continue
+
+		case component.ReuseComponentID != 0:
+			state.componentIDByExternal[component.ExternalID] = strconv.Itoa(component.ReuseComponentID)
+			if err := r.upsertImportMappingTx(ctx, importComponentsMappingTable,
+				merchantID, plan.Provider, component.ExternalID, component.ReuseComponentID); err != nil {
+				return err
+			}
+			outcome.Components = append(outcome.Components, ImportCommitEntity{
+				ExternalID: component.ExternalID,
+				WelloID:    strconv.Itoa(component.ReuseComponentID),
+				Action:     CommitActionReused,
+			})
+			continue
+		}
+
+		categoryMerchantID, ok := state.componentCategoryMerchantIDByExternal[component.CategoryExternalID]
+		if !ok || categoryMerchantID == "" {
+			return fmt.Errorf("import: catégorie d'ingrédient %q non résolue pour le composant %q",
+				component.CategoryExternalID, component.Name)
+		}
+
+		name := component.Name
+		unitID := component.UnitOfMeasureID
+		price := component.Price
+		payload := &UpdateComponentPayload{
+			Name:             &name,
+			Price:            &price,
+			MerchantID:       merchantID,
+			CategoryID:       &categoryMerchantID,
+			UnitID:           &unitID,
+			ConservationDays: component.ConservationDays,
+			StorageTempMin:   component.StorageTempMin,
+			StorageTempMax:   component.StorageTempMax,
+		}
+		if component.PurchaseUnitOfMeasureID != "" {
+			purchaseUnitID := component.PurchaseUnitOfMeasureID
+			payload.PurchaseUnitID = &purchaseUnitID
+		}
+		if component.PurchaseCost != 0 {
+			cost := component.PurchaseCost
+			payload.PurchaseCost = &cost
+		}
+		if component.PurchaseCostQty != 0 {
+			qty := component.PurchaseCostQty
+			payload.PurchaseCostQty = &qty
+		}
+		if component.ConservationType != "" {
+			conservationType := component.ConservationType
+			payload.ConservationType = &conservationType
+		}
+
+		componentIDStr, err := r.CreateComponent(ctx, payload)
+		if err != nil {
+			return fmt.Errorf("import: création du composant %q: %w", component.Name, err)
+		}
+
+		componentID, err := strconv.Atoi(componentIDStr)
+		if err != nil {
+			return fmt.Errorf("import: identifiant de composant inattendu %q: %w", componentIDStr, err)
+		}
+
+		state.componentIDByExternal[component.ExternalID] = componentIDStr
+		if err := r.upsertImportMappingTx(ctx, importComponentsMappingTable,
+			merchantID, plan.Provider, component.ExternalID, componentID); err != nil {
+			return err
+		}
+		outcome.Components = append(outcome.Components, ImportCommitEntity{
+			ExternalID: component.ExternalID,
+			WelloID:    componentIDStr,
+			Action:     CommitActionCreated,
+		})
+	}
+
+	return nil
+}
+
+// materializeAttributesTx crée les groupes d'options.
+//
+// V1a (fichier/saisie) : aucun produit ne les référence, les exports ne
+// portant pas de lien produit -> option — le rattachement se fait alors via la
+// matrice du back-office. La porte "autre établissement" (V1b) est la première
+// source à fournir ce rattachement, réalisé par materializeProductsTx via
+// state.attributeIDByExternal, alimenté ici.
 //
 // L'attribut est inséré sans ses options, puis les options le sont
 // séparément : c'est ce qui permet de récupérer leurs identifiants pour
@@ -274,6 +487,7 @@ func (r *MenuRepository) materializeAttributesTx(
 	ctx context.Context,
 	merchantID string,
 	plan *importer.CommitPlan,
+	state *importCommitState,
 	outcome *ImportCommitOutcome,
 ) error {
 	for _, attribute := range plan.Attributes {
@@ -298,10 +512,22 @@ func (r *MenuRepository) materializeAttributesTx(
 
 		options := make([]UpdateAttributeOptionPayload, 0, len(attribute.Options))
 		for _, option := range attribute.Options {
-			options = append(options, UpdateAttributeOptionPayload{
+			optionPayload := UpdateAttributeOptionPayload{
 				Title: option.Title,
 				Price: option.ExtraPrice,
-			})
+			}
+			// Lien ingrédient : ComponentExternalID n'est déjà renseigné par
+			// commitPlanner.buildAttributes que pour un composant réellement
+			// matérialisable, resolveComponentID ne peut donc échouer que sur
+			// une incohérence interne au plan.
+			if option.ComponentExternalID != "" {
+				if componentID, ok := state.componentIDByExternal[option.ComponentExternalID]; ok {
+					optionPayload.ComponentID = componentID
+					optionPayload.Quantity = option.Quantity
+					optionPayload.UnitOfMeasureID = option.UnitOfMeasureID
+				}
+			}
+			options = append(options, optionPayload)
 		}
 
 		optionIDs, err := r.insertAttributeOptionsTx(ctx, attributeID, options)
@@ -313,6 +539,7 @@ func (r *MenuRepository) materializeAttributesTx(
 				len(optionIDs), attribute.Name, len(attribute.Options))
 		}
 
+		state.attributeIDByExternal[attribute.ExternalID] = attributeID
 		if err := r.upsertImportMappingTx(ctx, importAttributesMappingTable,
 			merchantID, plan.Provider, attribute.ExternalID, attributeID); err != nil {
 			return err
@@ -367,6 +594,39 @@ func (r *MenuRepository) materializeProductsTx(
 			tagIDs = append(tagIDs, tagID)
 		}
 
+		// Rattachement d'attributs et composition — porte "autre établissement"
+		// uniquement, product.AttributeExternalIDs/Components sont vides pour
+		// toute autre source et les deux boucles ne produisent alors rien :
+		// Configuration/Components restent nil, insertProductTx ne les
+		// synchronise donc pas, comme aujourd'hui pour le fichier et la saisie
+		// manuelle (V1a).
+		attributeIDs := make([]string, 0, len(product.AttributeExternalIDs))
+		for _, externalID := range product.AttributeExternalIDs {
+			if attributeID, ok := state.attributeIDByExternal[externalID]; ok && attributeID != "" {
+				attributeIDs = append(attributeIDs, attributeID)
+			}
+		}
+
+		components := make([]ProductComponentUpdate, 0, len(product.Components))
+		for _, comp := range product.Components {
+			componentID, ok := state.componentIDByExternal[comp.ComponentExternalID]
+			if !ok || componentID == "" {
+				return fmt.Errorf("import: ingrédient %q non résolu pour le produit %q",
+					comp.ComponentExternalID, product.Name)
+			}
+			inOrders := comp.InOrders
+			takeAwayOrders := comp.TakeAwayOrders
+			deliveryOrders := comp.DeliveryOrders
+			components = append(components, ProductComponentUpdate{
+				ComponentID:    componentID,
+				Quantity:       comp.Quantity,
+				UnitID:         comp.UnitOfMeasureID,
+				InOrders:       &inOrders,
+				TakeAwayOrders: &takeAwayOrders,
+				DeliveryOrders: &deliveryOrders,
+			})
+		}
+
 		status := product.Status
 		availableIn := product.AvailableIn
 		availableTakeAway := product.AvailableTakeAway
@@ -388,8 +648,8 @@ func (r *MenuRepository) materializeProductsTx(
 			AvailableTakeAway: &availableTakeAway,
 			AvailableDelivery: &availableDelivery,
 			Tags:              tagIDs,
-			// Configuration volontairement absent : V1a crée les groupes
-			// d'options non rattachés.
+			Configuration:     attributeIDs,
+			Components:        components,
 		}
 
 		productID, err := r.insertProductTx(ctx, payload)

@@ -4391,11 +4391,26 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 		if !menuNumericID(unitID) {
 			unitID = "0"
 		}
+		// nil = comportement historique inchangé : la colonne garde son
+		// défaut TRUE plutôt que de recevoir explicitement TRUE, pour que
+		// cette extension ne change rien pour l'appelant unitaire existant.
+		inOrders := true
+		if comp.InOrders != nil {
+			inOrders = *comp.InOrders
+		}
+		takeAwayOrders := true
+		if comp.TakeAwayOrders != nil {
+			takeAwayOrders = *comp.TakeAwayOrders
+		}
+		deliveryOrders := true
+		if comp.DeliveryOrders != nil {
+			deliveryOrders = *comp.DeliveryOrders
+		}
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO requires
-			 (recipe_id, component_id, quantity, unit_of_measure, enabled)
-			 VALUES (?, ?, ?, ?, TRUE)`,
-			recipeID, componentID, comp.Quantity, unitID,
+			 (recipe_id, component_id, quantity, unit_of_measure, in_orders, take_away_orders, delivery_orders, enabled)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
+			recipeID, componentID, comp.Quantity, unitID, inOrders, takeAwayOrders, deliveryOrders,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert component requirement: %w", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 
 	"welloresto-api/internal/importutil"
 )
@@ -91,24 +92,43 @@ type ExistingAttribute struct {
 	AttributeID string
 }
 
+// ExistingComponentCategory est une categorie d'ingredient active du marchand.
+// MerchantCategID est la valeur par laquelle components.category_id la
+// reference — meme convention que ExistingCategory pour productcateg.
+type ExistingComponentCategory struct {
+	CategID         int
+	MerchantCategID string
+	Name            string
+}
+
+// ExistingComponent est un ingredient actif du marchand.
+type ExistingComponent struct {
+	ComponentID int
+	Name        string
+}
+
 // ImportedEntities est le contenu des tables import_*_mapping pour le couple
 // (marchand, provider) : identifiant externe -> identifiant Wello.
 type ImportedEntities struct {
-	Products   map[string]int
-	Categories map[string]int
-	Tags       map[string]string
-	Attributes map[string]string
+	Products            map[string]int
+	Categories          map[string]int
+	Tags                map[string]string
+	Attributes          map[string]string
+	ComponentCategories map[string]int
+	Components          map[string]int
 }
 
 // PreviewLookups porte tout ce que BuildPreview a besoin de savoir de la base.
 // C'est ce qui garde le cœur pur : la fonction ne lit rien elle-même.
 type PreviewLookups struct {
-	TvaRates           []TvaRateRow
-	ExistingCategories []ExistingCategory
-	ExistingTags       []ExistingTag
-	ExistingProducts   []ExistingProduct
-	ExistingAttributes []ExistingAttribute
-	Imported           ImportedEntities
+	TvaRates                    []TvaRateRow
+	ExistingCategories          []ExistingCategory
+	ExistingTags                []ExistingTag
+	ExistingProducts            []ExistingProduct
+	ExistingAttributes          []ExistingAttribute
+	ExistingComponentCategories []ExistingComponentCategory
+	ExistingComponents          []ExistingComponent
+	Imported                    ImportedEntities
 }
 
 // liveImportedEntities dit, pour chaque entite deja mappee, si l'entite Wello
@@ -119,10 +139,12 @@ type PreviewLookups struct {
 // menu supprime puis reimporte donnait un commit sans effet — tout etait
 // « deja importe », donc ignore, et aucun moyen de revenir en arriere.
 type liveImportedEntities struct {
-	products   map[string]bool
-	categories map[string]bool
-	tags       map[string]bool
-	attributes map[string]bool
+	products            map[string]bool
+	categories          map[string]bool
+	tags                map[string]bool
+	attributes          map[string]bool
+	componentCategories map[string]bool
+	components          map[string]bool
 }
 
 func newLiveImportedEntities(lk PreviewLookups) liveImportedEntities {
@@ -142,12 +164,22 @@ func newLiveImportedEntities(lk PreviewLookups) liveImportedEntities {
 	for _, attribute := range lk.ExistingAttributes {
 		liveAttributes[attribute.AttributeID] = struct{}{}
 	}
+	liveComponentCategories := make(map[int]struct{}, len(lk.ExistingComponentCategories))
+	for _, category := range lk.ExistingComponentCategories {
+		liveComponentCategories[category.CategID] = struct{}{}
+	}
+	liveComponents := make(map[int]struct{}, len(lk.ExistingComponents))
+	for _, component := range lk.ExistingComponents {
+		liveComponents[component.ComponentID] = struct{}{}
+	}
 
 	live := liveImportedEntities{
-		products:   make(map[string]bool, len(lk.Imported.Products)),
-		categories: make(map[string]bool, len(lk.Imported.Categories)),
-		tags:       make(map[string]bool, len(lk.Imported.Tags)),
-		attributes: make(map[string]bool, len(lk.Imported.Attributes)),
+		products:            make(map[string]bool, len(lk.Imported.Products)),
+		categories:          make(map[string]bool, len(lk.Imported.Categories)),
+		tags:                make(map[string]bool, len(lk.Imported.Tags)),
+		attributes:          make(map[string]bool, len(lk.Imported.Attributes)),
+		componentCategories: make(map[string]bool, len(lk.Imported.ComponentCategories)),
+		components:          make(map[string]bool, len(lk.Imported.Components)),
 	}
 	for externalID, welloID := range lk.Imported.Products {
 		_, ok := liveProducts[welloID]
@@ -164,6 +196,14 @@ func newLiveImportedEntities(lk PreviewLookups) liveImportedEntities {
 	for externalID, welloID := range lk.Imported.Attributes {
 		_, ok := liveAttributes[welloID]
 		live.attributes[externalID] = ok
+	}
+	for externalID, welloID := range lk.Imported.ComponentCategories {
+		_, ok := liveComponentCategories[welloID]
+		live.componentCategories[externalID] = ok
+	}
+	for externalID, welloID := range lk.Imported.Components {
+		_, ok := liveComponents[welloID]
+		live.components[externalID] = ok
 	}
 	return live
 }
@@ -187,13 +227,15 @@ type PreviewResult struct {
 	Provider  string `json:"provider"`
 	ExpiresAt string `json:"expires_at"`
 
-	Summary    PreviewSummary     `json:"summary"`
-	TvaRates   []PreviewTvaRate   `json:"tva_rates"`
-	Categories []PreviewCategory  `json:"categories"`
-	Tags       []PreviewTag       `json:"tags"`
-	Products   []PreviewProduct   `json:"products"`
-	Attributes []PreviewAttribute `json:"attributes"`
-	Warnings   []PreviewWarning   `json:"warnings"`
+	Summary             PreviewSummary             `json:"summary"`
+	TvaRates            []PreviewTvaRate           `json:"tva_rates"`
+	Categories          []PreviewCategory          `json:"categories"`
+	Tags                []PreviewTag               `json:"tags"`
+	Products            []PreviewProduct           `json:"products"`
+	Attributes          []PreviewAttribute         `json:"attributes"`
+	ComponentCategories []PreviewComponentCategory `json:"component_categories,omitempty"`
+	Components          []PreviewComponent         `json:"components,omitempty"`
+	Warnings            []PreviewWarning           `json:"warnings"`
 
 	// Decisions est la forme compacte des propositions ci-dessus. Le wizard
 	// la renvoie amendée à la phase de commit ; c'est le contrat machine.
@@ -220,6 +262,17 @@ type PreviewSummary struct {
 	AttributesToCreate        int `json:"attributes_to_create"`
 	AttributesAlreadyImported int `json:"attributes_already_imported"`
 	OptionsToCreate           int `json:"options_to_create"`
+
+	ComponentCategoriesToCreate int `json:"component_categories_to_create"`
+	ComponentCategoriesReused   int `json:"component_categories_reused"`
+	ComponentsToCreate          int `json:"components_to_create"`
+	ComponentsReused            int `json:"components_reused"`
+
+	// ProductsExcluded : ecartes par decision de l'utilisateur (porte "autre
+	// etablissement"), avant tout autre arbitrage. Distinct de
+	// ProductsAlreadyImported, dont le sort est decide par un import
+	// precedent et non par l'utilisateur dans cette preview.
+	ProductsExcluded int `json:"products_excluded"`
 
 	UnresolvedTvaRates int `json:"unresolved_tva_rates"`
 }
@@ -296,6 +349,11 @@ type PreviewProduct struct {
 	MappingStale bool `json:"mapping_stale,omitempty"`
 	// Reimport est l'arbitrage propose pour un produit deja importe.
 	Reimport string `json:"reimport,omitempty"`
+
+	// Excluded refletele decision courante de ImportDecisions.ExcludedProducts
+	// pour ce produit — porte "autre etablissement" uniquement, false partout
+	// ailleurs (aucune autre source ne propose cette case).
+	Excluded bool `json:"excluded,omitempty"`
 }
 
 type PreviewChannels struct {
@@ -331,6 +389,24 @@ type PreviewAttribute struct {
 	MaxOptions  int    `json:"max_options"`
 
 	MappingStale bool `json:"mapping_stale,omitempty"`
+}
+
+type PreviewComponentCategory struct {
+	ExternalID string `json:"external_id"`
+	Name       string `json:"name"`
+	Action     string `json:"action"`
+
+	ExistingCategoryID string `json:"existing_category_id,omitempty"`
+	MappingStale       bool   `json:"mapping_stale,omitempty"`
+}
+
+type PreviewComponent struct {
+	ExternalID string `json:"external_id"`
+	Name       string `json:"name"`
+	Action     string `json:"action"`
+
+	ExistingComponentID string `json:"existing_component_id,omitempty"`
+	MappingStale        bool   `json:"mapping_stale,omitempty"`
 }
 
 type PreviewNameCollision struct {
@@ -448,6 +524,7 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 				TvaMapping:         make(map[TvaRateKey]int),
 				NameCollisions:     make(map[string]NameCollisionResolution),
 				AlreadyImported:    make(map[string]ReimportResolution),
+				ExcludedProducts:   make(map[string]bool),
 			},
 		},
 		tvaSeen: make(map[tvaLookupKey]int),
@@ -456,6 +533,8 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 	b.classifyLabels()
 	b.buildCategories()
 	b.buildTags()
+	b.buildComponentCategories()
+	b.buildComponents()
 	b.buildProducts()
 	b.buildAttributes()
 	b.buildTvaRates()
@@ -603,6 +682,72 @@ func (b *previewBuilder) buildTags() {
 		}
 
 		b.res.Tags = append(b.res.Tags, entry)
+	}
+}
+
+// buildComponentCategories traite les categories d'ingredient de la source
+// (porte "autre etablissement" uniquement — vide ailleurs, la boucle ne
+// produit alors rien). Meme logique que buildCategories : dedup par nom
+// insensible a la casse contre l'existant, aucune contrainte d'unicite en
+// base, aucun arbitrage utilisateur — la source est deja un catalogue
+// coherent, il n'y a rien a classer comme pour les libelles d'un export tiers.
+func (b *previewBuilder) buildComponentCategories() {
+	existing := indexComponentCategoriesByName(b.lk.ExistingComponentCategories)
+
+	for _, category := range b.imp.ComponentCategories {
+		entry := PreviewComponentCategory{
+			ExternalID: category.ExternalID,
+			Name:       category.Name,
+			Action:     ActionCreate,
+		}
+
+		entry.MappingStale = b.live.stale(b.live.componentCategories, category.ExternalID)
+
+		switch {
+		case hasIntMapping(b.lk.Imported.ComponentCategories, category.ExternalID) && !entry.MappingStale:
+			entry.Action = ActionAlreadyImported
+		default:
+			if match, ok := existing[importutil.NormalizeLabel(category.Name)]; ok {
+				entry.Action = ActionReuseExisting
+				entry.ExistingCategoryID = match.MerchantCategID
+				b.res.Summary.ComponentCategoriesReused++
+			} else {
+				b.res.Summary.ComponentCategoriesToCreate++
+			}
+		}
+
+		b.res.ComponentCategories = append(b.res.ComponentCategories, entry)
+	}
+}
+
+// buildComponents traite les ingredients de la source (porte "autre
+// etablissement" uniquement). Meme logique que buildComponentCategories.
+func (b *previewBuilder) buildComponents() {
+	existing := indexComponentsByName(b.lk.ExistingComponents)
+
+	for _, component := range b.imp.Components {
+		entry := PreviewComponent{
+			ExternalID: component.ExternalID,
+			Name:       component.Name,
+			Action:     ActionCreate,
+		}
+
+		entry.MappingStale = b.live.stale(b.live.components, component.ExternalID)
+
+		switch {
+		case hasIntMapping(b.lk.Imported.Components, component.ExternalID) && !entry.MappingStale:
+			entry.Action = ActionAlreadyImported
+		default:
+			if match, ok := existing[importutil.NormalizeLabel(component.Name)]; ok {
+				entry.Action = ActionReuseExisting
+				entry.ExistingComponentID = strconv.Itoa(match.ComponentID)
+				b.res.Summary.ComponentsReused++
+			} else {
+				b.res.Summary.ComponentsToCreate++
+			}
+		}
+
+		b.res.Components = append(b.res.Components, entry)
 	}
 }
 
@@ -881,6 +1026,28 @@ func indexCategoriesByName(categories []ExistingCategory) map[string]ExistingCat
 		// gagne, pour que deux previews successives se rattachent au même.
 		if _, ok := out[key]; !ok {
 			out[key] = category
+		}
+	}
+	return out
+}
+
+func indexComponentCategoriesByName(categories []ExistingComponentCategory) map[string]ExistingComponentCategory {
+	out := make(map[string]ExistingComponentCategory, len(categories))
+	for _, category := range categories {
+		key := importutil.NormalizeLabel(category.Name)
+		if _, ok := out[key]; !ok {
+			out[key] = category
+		}
+	}
+	return out
+}
+
+func indexComponentsByName(components []ExistingComponent) map[string]ExistingComponent {
+	out := make(map[string]ExistingComponent, len(components))
+	for _, component := range components {
+		key := importutil.NormalizeLabel(component.Name)
+		if _, ok := out[key]; !ok {
+			out[key] = component
 		}
 	}
 	return out

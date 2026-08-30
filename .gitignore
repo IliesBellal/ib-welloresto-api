@@ -1,3 +1,4 @@
 internal/notification/service_accounts/*.json
 .vscode/
 api.exe
+.claude

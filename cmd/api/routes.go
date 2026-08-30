@@ -481,9 +481,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	// Import de produits : dépendances propres (lecture seule + registry de
 	// providers + cache), volontairement disjointes de celles de MenuService —
 	// à l'exception de menuChanges, partagé à dessein (voir plus haut).
+	// &authRepo (porte "autre établissement" uniquement) : vérifie que
+	// l'utilisateur a bien des droits actifs sur le marchand source avant toute
+	// lecture cross-marchand — voir menu.ImportService.PreviewImportFromMerchant.
 	menuImportH := menuModule.NewImportHandler(
 		menuModule.NewImportService(
 			menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo, menuChanges,
+			&authRepo, menuRepoLegacy,
 		),
 	)
 	allergensH := allergensModule.NewHandler(allergensService)
@@ -809,6 +813,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			Post("/import/commit", menuImportH.CommitImport)
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Get("/import/template", menuImportH.DownloadImportTemplate)
+		// Porte "autre établissement" : la vérification que l'appelant a
+		// effectivement accès au marchand source (menu.ErrSourceMerchantNotFound)
+		// est un contrôle explicite dans le service, distinct de ce garde de
+		// permission qui ne porte que sur le marchand courant — voir
+		// import_merchant_service.go.
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/import/preview-from-merchant", menuImportH.PreviewImportFromMerchant)
 
 		r.Get("/components", menuH.GetAllComponents)            // used by: back-office
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office

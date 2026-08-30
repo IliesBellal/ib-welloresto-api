@@ -71,7 +71,8 @@ func (s *fakePreviewStore) Delete(_ context.Context, key string) bool {
 // les deux rôles (lecture et écriture), comme en production.
 func newTestImportService(db *sql.DB, store importPreviewStore) *ImportService {
 	repo := NewMenuRepository(db, nil)
-	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil))
+	authRepo := authpkg.NewAuthRepository(db)
+	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil), &authRepo, repo)
 }
 
 // newImportPreviewHandler câble le handler sur une base simulée.
@@ -101,8 +102,8 @@ func newImportPreviewHandler(t *testing.T) (*ImportHandler, *fakePreviewStore, f
 	return NewImportHandler(service), store, cleanup
 }
 
-// expectImportPreviewLookups décrit les neuf lectures de la preview, dans
-// l'ordre où LoadImportPreviewLookups les émet.
+// expectImportPreviewLookups décrit les lectures de la preview, dans l'ordre
+// où LoadImportPreviewLookups les émet.
 func expectImportPreviewLookups(mock sqlmock.Sqlmock) {
 	tvaRates := sqlmock.NewRows([]string{"tva_id", "delivery_type", "tva_rate"})
 	tvaID := 1
@@ -134,11 +135,23 @@ func expectImportPreviewLookups(mock sqlmock.Sqlmock) {
 		WithArgs(testMerchantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
+	mock.ExpectQuery("SELECT id, merchant_categ_id, name").
+		WithArgs(testMerchantID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "merchant_categ_id", "name"}))
+
+	mock.ExpectQuery("SELECT component_id, name").
+		WithArgs(testMerchantID).
+		WillReturnRows(sqlmock.NewRows([]string{"component_id", "name"}))
+
 	for _, table := range []string{"import_products_mapping", "import_categories_mapping"} {
 		mock.ExpectQuery("SELECT external_id, wello_id FROM " + table).
 			WillReturnRows(sqlmock.NewRows([]string{"external_id", "wello_id"}))
 	}
 	for _, table := range []string{"import_tags_mapping", "import_attributes_mapping"} {
+		mock.ExpectQuery("SELECT external_id, wello_id FROM " + table).
+			WillReturnRows(sqlmock.NewRows([]string{"external_id", "wello_id"}))
+	}
+	for _, table := range []string{"import_component_categories_mapping", "import_components_mapping"} {
 		mock.ExpectQuery("SELECT external_id, wello_id FROM " + table).
 			WillReturnRows(sqlmock.NewRows([]string{"external_id", "wello_id"}))
 	}

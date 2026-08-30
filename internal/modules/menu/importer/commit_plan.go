@@ -16,6 +16,13 @@ const (
 	BlockerNameCollisionUnresolved = "product_name_collision_unresolved"
 	BlockerInvalidTvaMapping       = "invalid_tva_mapping"
 	BlockerInvalidCategoryDecision = "invalid_category_decision"
+
+	// BlockerComponentNotUsable : un produit de la porte "autre établissement"
+	// référence un ingrédient qui ne sera pas matérialisable — ne devrait pas
+	// se produire en usage normal, ComponentExternalID venant du même catalogue
+	// source que le produit, mais protège contre un IntermediateImport
+	// incohérent plutôt que d'écrire une ligne requires orpheline.
+	BlockerComponentNotUsable = "product_component_not_usable"
 )
 
 // CommitBlocker est une raison de refuser le lot, rattachée à l'entité fautive.
@@ -31,10 +38,12 @@ type CommitBlocker struct {
 type CommitPlan struct {
 	Provider string
 
-	Categories []PlannedCategory
-	Tags       []PlannedTag
-	Attributes []PlannedAttribute
-	Products   []PlannedProduct
+	Categories          []PlannedCategory
+	Tags                []PlannedTag
+	Attributes          []PlannedAttribute
+	Products            []PlannedProduct
+	ComponentCategories []PlannedComponentCategory
+	Components          []PlannedComponent
 }
 
 // PlannedCategory est une catégorie caisse à matérialiser.
@@ -91,6 +100,63 @@ type PlannedOption struct {
 	ExternalID string
 	Title      string
 	ExtraPrice int
+
+	// ComponentExternalID resolu contre plannedComponents — "" quand l'option
+	// ne porte aucun lien ingredient, ou quand le composant reference n'est
+	// pas materialisable (le lien est alors tu, l'option se cree quand meme :
+	// un supplement sans projection de cout reste utilisable).
+	ComponentExternalID string
+	Quantity            float64
+	UnitOfMeasureID     string
+}
+
+// PlannedComponentCategory est une categorie d'ingredient a materialiser.
+// Meme forme et memes regles que PlannedCategory.
+type PlannedComponentCategory struct {
+	ExternalID string
+	Name       string
+
+	ReuseCategID         int
+	ReuseMerchantCategID string
+
+	AlreadyImported bool
+	RemapExisting   bool
+}
+
+// Usable dit si la categorie sera referencable par un composant.
+func (c PlannedComponentCategory) Usable() bool {
+	return !c.AlreadyImported || c.ReuseMerchantCategID != ""
+}
+
+// PlannedComponent est un ingredient a materialiser.
+type PlannedComponent struct {
+	ExternalID string
+	Name       string
+
+	// CategoryExternalID reference une entree de ComponentCategories — resolue
+	// en merchant_categ_id par la transaction, la categorie pouvant n'exister
+	// qu'apres son insertion (meme mecanique que PlannedProduct.CategoryExternalID).
+	CategoryExternalID string
+
+	UnitOfMeasureID         string
+	PurchaseUnitOfMeasureID string
+	Price                   int
+	PurchaseCost            int
+	PurchaseCostQty         float64
+	ConservationDays        *int
+	ConservationType        string
+	StorageTempMin          *float64
+	StorageTempMax          *float64
+
+	ReuseComponentID int
+
+	AlreadyImported bool
+	RemapExisting   bool
+}
+
+// Usable dit si le composant sera referencable par un produit ou une option.
+func (c PlannedComponent) Usable() bool {
+	return !c.AlreadyImported || c.ReuseComponentID != 0
 }
 
 // PlannedProduct porte des valeurs finales : plus de taux, que des tva_id.
@@ -128,11 +194,32 @@ type PlannedProduct struct {
 	// SkippedByCollision : un produit du marchand porte déjà ce nom et
 	// l'utilisateur a tranché « ignorer ».
 	SkippedByCollision bool
+
+	// ExcludedByUser : décision ImportDecisions.ExcludedProducts — porte
+	// "autre établissement" uniquement. Court-circuite avant tout autre
+	// arbitrage (catégorie, TVA, collision), qui ne sont donc jamais évalués
+	// pour un produit exclu.
+	ExcludedByUser bool
+
+	// Components et AttributeExternalIDs sont résolus contre plannedComponents
+	// / les attributs planifiés — porte "autre établissement" uniquement, vides
+	// ailleurs (aucune autre source ne les fournit).
+	Components           []PlannedProductComponent
+	AttributeExternalIDs []string
+}
+
+// PlannedProductComponent est une ligne de composition résolue, prête à
+// devenir une ligne requires.
+type PlannedProductComponent struct {
+	ComponentExternalID                      string
+	Quantity                                 float64
+	UnitOfMeasureID                          string
+	InOrders, TakeAwayOrders, DeliveryOrders bool
 }
 
 // Materializable dit si l'entité doit réellement être écrite.
 func (p PlannedProduct) Materializable() bool {
-	return !p.AlreadyImported && !p.SkippedByCollision
+	return !p.AlreadyImported && !p.SkippedByCollision && !p.ExcludedByUser
 }
 
 // BuildCommitPlan résout un snapshot et les décisions du wizard en un plan
@@ -164,6 +251,8 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	b.resolveClassification()
 	b.buildCategories()
 	b.buildTags()
+	b.buildComponentCategories()
+	b.buildComponents()
 	b.buildAttributes()
 	b.buildProducts()
 
@@ -190,8 +279,15 @@ type commitPlanner struct {
 
 	// Index sur les entrées du plan, pour que la résolution des produits
 	// puisse vérifier qu'une catégorie citée sera bien référençable.
-	plannedCategories map[string]*PlannedCategory
-	plannedTags       map[string]*PlannedTag
+	plannedCategories          map[string]*PlannedCategory
+	plannedTags                map[string]*PlannedTag
+	plannedComponentCategories map[string]*PlannedComponentCategory
+	plannedComponents          map[string]*PlannedComponent
+	// plannedAttributes n'existe que pour vérifier, côté produit, qu'un
+	// AttributeExternalID cité fait bien partie du lot — contrairement à
+	// plannedCategories/plannedComponents, aucune donnée du plan d'attribut
+	// n'est nécessaire pour résoudre un produit au-delà de cette présence.
+	plannedAttributes map[string]struct{}
 }
 
 func (b *commitPlanner) block(code, ref, message string) {
@@ -359,7 +455,99 @@ func (b *commitPlanner) buildTags() {
 	}
 }
 
+// buildComponentCategories traite les catégories d'ingrédient de la source
+// (porte "autre établissement" uniquement). Même logique que buildCategories,
+// sans classification préalable : ces catégories n'ont pas d'équivalent au
+// double statut catégorie/tag des libellés de fichier.
+func (b *commitPlanner) buildComponentCategories() {
+	byName := indexComponentCategoriesByName(b.lk.ExistingComponentCategories)
+	byID := make(map[int]ExistingComponentCategory, len(b.lk.ExistingComponentCategories))
+	for _, category := range b.lk.ExistingComponentCategories {
+		byID[category.CategID] = category
+	}
+
+	b.plannedComponentCategories = make(map[string]*PlannedComponentCategory)
+
+	for _, category := range b.imp.ComponentCategories {
+		entry := PlannedComponentCategory{ExternalID: category.ExternalID, Name: category.Name}
+
+		if categID, imported := b.lk.Imported.ComponentCategories[category.ExternalID]; imported {
+			if match, alive := byID[categID]; alive {
+				entry.AlreadyImported = true
+				entry.ReuseCategID = match.CategID
+				entry.ReuseMerchantCategID = match.MerchantCategID
+			} else if match, ok := byName[importutil.NormalizeLabel(category.Name)]; ok {
+				entry.ReuseCategID = match.CategID
+				entry.ReuseMerchantCategID = match.MerchantCategID
+				entry.RemapExisting = true
+			} else {
+				entry.RemapExisting = true
+			}
+		} else if match, ok := byName[importutil.NormalizeLabel(category.Name)]; ok {
+			entry.ReuseCategID = match.CategID
+			entry.ReuseMerchantCategID = match.MerchantCategID
+		}
+
+		b.plan.ComponentCategories = append(b.plan.ComponentCategories, entry)
+	}
+
+	for i := range b.plan.ComponentCategories {
+		b.plannedComponentCategories[b.plan.ComponentCategories[i].ExternalID] = &b.plan.ComponentCategories[i]
+	}
+}
+
+// buildComponents traite les ingrédients de la source (porte "autre
+// établissement" uniquement). Même logique que buildComponentCategories.
+func (b *commitPlanner) buildComponents() {
+	byName := indexComponentsByName(b.lk.ExistingComponents)
+	byID := make(map[int]ExistingComponent, len(b.lk.ExistingComponents))
+	for _, component := range b.lk.ExistingComponents {
+		byID[component.ComponentID] = component
+	}
+
+	b.plannedComponents = make(map[string]*PlannedComponent)
+
+	for _, component := range b.imp.Components {
+		entry := PlannedComponent{
+			ExternalID:              component.ExternalID,
+			Name:                    component.Name,
+			CategoryExternalID:      component.CategoryExternalID,
+			UnitOfMeasureID:         component.UnitOfMeasureID,
+			PurchaseUnitOfMeasureID: component.PurchaseUnitOfMeasureID,
+			Price:                   component.Price,
+			PurchaseCost:            component.PurchaseCost,
+			PurchaseCostQty:         component.PurchaseCostQty,
+			ConservationDays:        component.ConservationDays,
+			ConservationType:        component.ConservationType,
+			StorageTempMin:          component.StorageTempMin,
+			StorageTempMax:          component.StorageTempMax,
+		}
+
+		if componentID, imported := b.lk.Imported.Components[component.ExternalID]; imported {
+			if match, alive := byID[componentID]; alive {
+				entry.AlreadyImported = true
+				entry.ReuseComponentID = match.ComponentID
+			} else if match, ok := byName[importutil.NormalizeLabel(component.Name)]; ok {
+				entry.ReuseComponentID = match.ComponentID
+				entry.RemapExisting = true
+			} else {
+				entry.RemapExisting = true
+			}
+		} else if match, ok := byName[importutil.NormalizeLabel(component.Name)]; ok {
+			entry.ReuseComponentID = match.ComponentID
+		}
+
+		b.plan.Components = append(b.plan.Components, entry)
+	}
+
+	for i := range b.plan.Components {
+		b.plannedComponents[b.plan.Components[i].ExternalID] = &b.plan.Components[i]
+	}
+}
+
 func (b *commitPlanner) buildAttributes() {
+	b.plannedAttributes = make(map[string]struct{}, len(b.imp.Attributes))
+
 	for _, attribute := range b.imp.Attributes {
 		entry := PlannedAttribute{
 			ExternalID: attribute.ExternalID,
@@ -378,13 +566,27 @@ func (b *commitPlanner) buildAttributes() {
 				entry.AlreadyImported = true
 			}
 		}
+		b.plannedAttributes[attribute.ExternalID] = struct{}{}
 
 		for _, option := range attribute.Options {
-			entry.Options = append(entry.Options, PlannedOption{
+			planned := PlannedOption{
 				ExternalID: option.ExternalID,
 				Title:      option.Title,
 				ExtraPrice: option.ExtraPrice,
-			})
+			}
+
+			// Lien ingrédient : tu plutôt que bloquant si le composant
+			// référencé n'est pas matérialisable — un supplément sans
+			// projection de coût reste une option valide.
+			if option.ComponentExternalID != "" {
+				if component, known := b.plannedComponents[option.ComponentExternalID]; known && component.Usable() {
+					planned.ComponentExternalID = option.ComponentExternalID
+					planned.Quantity = option.Quantity
+					planned.UnitOfMeasureID = option.UnitOfMeasureID
+				}
+			}
+
+			entry.Options = append(entry.Options, planned)
 		}
 
 		b.plan.Attributes = append(b.plan.Attributes, entry)
@@ -408,6 +610,16 @@ func (b *commitPlanner) buildProducts() {
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu
+		}
+
+		// Exclusion utilisateur (porte "autre établissement") : avant tout
+		// autre arbitrage, y compris le sort d'un produit déjà importé — un
+		// produit exclu ne réclame ni catégorie, ni TVA, ni tranchage de
+		// collision, puisqu'il ne part pas en base.
+		if b.decisions.ExcludedProducts[p.ExternalID] {
+			entry.ExcludedByUser = true
+			b.plan.Products = append(b.plan.Products, entry)
+			continue
 		}
 
 		// Déjà importé : ignoré par défaut, donc rien à lui réclamer — le
@@ -448,8 +660,52 @@ func (b *commitPlanner) buildProducts() {
 		b.checkCategoryUsable(p, &entry)
 		b.assignTags(p, &entry)
 		b.assignChannels(p, &entry)
+		b.assignComponents(p, &entry)
+		b.assignAttributes(p, &entry)
 
 		b.plan.Products = append(b.plan.Products, entry)
+	}
+}
+
+// assignComponents résout la composition du produit contre plannedComponents
+// — porte "autre établissement" uniquement, p.Components est vide pour toute
+// autre source et la boucle ne produit alors rien.
+//
+// Bloquant plutôt que tu, à la différence du lien ingrédient d'une option : une
+// ligne de composition absente changerait silencieusement la recette d'un plat,
+// ce qu'aucune source ne devrait produire puisque ComponentExternalID vient du
+// même catalogue que le produit — un IntermediateImport incohérent est un bug
+// du lecteur canonique, pas une situation à absorber en silence.
+func (b *commitPlanner) assignComponents(p *CanonicalProduct, entry *PlannedProduct) {
+	for _, comp := range p.Components {
+		planned, known := b.plannedComponents[comp.ComponentExternalID]
+		if !known || !planned.Usable() {
+			b.block(BlockerComponentNotUsable, p.ExternalID,
+				fmt.Sprintf("l'ingrédient %q de %q n'a pas pu être résolu", comp.ComponentExternalID, p.Name))
+			continue
+		}
+
+		entry.Components = append(entry.Components, PlannedProductComponent{
+			ComponentExternalID: comp.ComponentExternalID,
+			Quantity:            comp.Quantity,
+			UnitOfMeasureID:     comp.UnitOfMeasureID,
+			InOrders:            comp.InOrders,
+			TakeAwayOrders:      comp.TakeAwayOrders,
+			DeliveryOrders:      comp.DeliveryOrders,
+		})
+	}
+}
+
+// assignAttributes résout le rattachement d'options du produit — porte "autre
+// établissement" uniquement. Tu plutôt que bloquant, à la différence de
+// assignComponents : un groupe d'options est une commodité de commande, pas
+// une donnée de recette, et un rattachement manquant reste un produit
+// vendable, juste sans cette option.
+func (b *commitPlanner) assignAttributes(p *CanonicalProduct, entry *PlannedProduct) {
+	for _, attributeExternalID := range p.AttributeExternalIDs {
+		if _, known := b.plannedAttributes[attributeExternalID]; known {
+			entry.AttributeExternalIDs = append(entry.AttributeExternalIDs, attributeExternalID)
+		}
 	}
 }
 
@@ -551,19 +807,25 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 	sort.Sort(sort.Float64Slice(backfillCandidates))
 
 	channels := []struct {
-		channel   TvaChannel
-		rate      *float64
-		price     *int
-		tvaID     *int
-		available *bool
+		channel     TvaChannel
+		rate        *float64
+		price       *int
+		tvaID       *int
+		available   *bool
+		sourceAvail *bool
 	}{
-		{TvaChannelIn, p.TvaRateIn, &entry.PriceIn, &entry.TvaInID, &entry.AvailableIn},
-		{TvaChannelTakeAway, p.TvaRateTakeAway, &entry.PriceTakeAway, &entry.TvaTakeAwayID, &entry.AvailableTakeAway},
-		{TvaChannelDelivery, p.TvaRateDelivery, &entry.PriceDelivery, &entry.TvaDeliveryID, &entry.AvailableDelivery},
+		{TvaChannelIn, p.TvaRateIn, &entry.PriceIn, &entry.TvaInID, &entry.AvailableIn, p.AvailableIn},
+		{TvaChannelTakeAway, p.TvaRateTakeAway, &entry.PriceTakeAway, &entry.TvaTakeAwayID, &entry.AvailableTakeAway, p.AvailableTakeAway},
+		{TvaChannelDelivery, p.TvaRateDelivery, &entry.PriceDelivery, &entry.TvaDeliveryID, &entry.AvailableDelivery, p.AvailableDelivery},
 	}
 
 	for _, ch := range channels {
+		// nil (fichier, saisie manuelle) : comportement historique, TRUE. La
+		// porte "autre établissement" fournit sourceAvail et fait autorité.
 		*ch.available = true
+		if ch.sourceAvail != nil {
+			*ch.available = *ch.sourceAvail
+		}
 
 		switch {
 		case ch.rate == nil:

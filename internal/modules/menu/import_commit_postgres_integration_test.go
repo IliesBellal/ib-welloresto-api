@@ -112,7 +112,8 @@ func itestImportMerchant(t *testing.T, db *sql.DB, suffix string) (merchantID st
 
 func itestImportService(db *sql.DB, store importPreviewStore) *ImportService {
 	repo := NewMenuRepository(db, nil)
-	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil))
+	authRepo := authpkg.NewAuthRepository(db)
+	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil), &authRepo, repo)
 }
 
 func itestImportContext(merchantID string) context.Context {

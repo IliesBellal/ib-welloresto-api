@@ -43,11 +43,53 @@ type IntermediateImport struct {
 
 	Products []CanonicalProduct
 
-	// Attributes sont les groupes d'options. En V1a ils sont crees non
-	// rattaches (product_id = 0) : les exports ne portent aucun lien
+	// Attributes sont les groupes d'options. En V1a (fichier/saisie) ils sont
+	// crees non rattaches (product_id = 0) : les exports ne portent aucun lien
 	// produit -> option, le rattachement se fait ensuite via la matrice du
-	// back-office.
+	// back-office. La porte "autre etablissement" (V1b) est la premiere source
+	// a fournir CanonicalProduct.AttributeExternalIDs et referme ce manque.
 	Attributes []CanonicalAttribute
+
+	// ComponentCategories et Components n'existent que pour la porte "autre
+	// etablissement" (V1b, cf. import_merchant_repository.go) : aucun format
+	// fichier connu ne porte de composition. Vides pour toute autre source,
+	// ce qui laisse la preview et le commit inchanges sur ce chemin.
+	ComponentCategories []CanonicalComponentCategory
+	Components          []CanonicalComponent
+}
+
+// CanonicalComponentCategory est une categorie d'ingredient (component_category).
+type CanonicalComponentCategory struct {
+	ExternalID string
+	Name       string
+}
+
+// CanonicalComponent est un ingredient (components). UnitOfMeasureID et
+// PurchaseUnitOfMeasureID referencent unit_of_measure, une table globale (pas
+// de merchant_id) : ils passent donc tels quels d'un marchand a l'autre, sans
+// resolution — a la difference de CategoryExternalID, qui doit etre
+// redeclaree cote destination comme toute categorie de cet import.
+type CanonicalComponent struct {
+	ExternalID string
+	Name       string
+
+	// CategoryExternalID reference ComponentCategories.ExternalID. Vide =
+	// aucune categorie (component_category.merchant_categ_id est cependant
+	// requis en base : un composant sans categorie source est un cas que la
+	// porte "autre etablissement" ne devrait pas produire, la source ayant
+	// elle-meme une categorie pour chaque composant actif).
+	CategoryExternalID string
+
+	UnitOfMeasureID         string
+	PurchaseUnitOfMeasureID string
+
+	Price            int // centimes, prix de vente si le composant est facture
+	PurchaseCost     int // centimes
+	PurchaseCostQty  float64
+	ConservationDays *int
+	ConservationType string
+	StorageTempMin   *float64
+	StorageTempMax   *float64
 }
 
 // CanonicalCategory est une categorie caisse (productcateg) designee
@@ -104,6 +146,36 @@ type CanonicalProduct struct {
 	// service...). Elles sont importees quand meme, en statut
 	// removed_from_menu.
 	AllPricesZero bool
+
+	// Components et AttributeExternalIDs n'existent que pour la porte "autre
+	// etablissement" (V1b) : composition (recettes) et rattachement d'options,
+	// que ni le fichier ni la saisie manuelle ne portent. Vides ailleurs.
+	Components           []CanonicalProductComponent
+	AttributeExternalIDs []string
+
+	// AvailableIn/TakeAway/Delivery : nil = comportement historique inchangé
+	// (le commit pose TRUE sur les trois canaux, seule valeur qu'un fichier ou
+	// une saisie manuelle puisse vouloir — aucun des deux n'expose ces trois
+	// cases). La porte "autre etablissement" les renseigne en recopiant ce que
+	// la source a reellement configure.
+	AvailableIn       *bool
+	AvailableTakeAway *bool
+	AvailableDelivery *bool
+}
+
+// CanonicalProductComponent est une ligne de composition (requires) : quelle
+// quantite d'un ingredient entre dans un produit.
+type CanonicalProductComponent struct {
+	ComponentExternalID string // reference IntermediateImport.Components.ExternalID
+	Quantity            float64
+	UnitOfMeasureID     string // unit_of_measure, table globale — passe tel quel
+
+	// Disponibilite de cette ligne de composition par canal. Le chemin
+	// unitaire (SyncProductComponents) ne les ecrit pas aujourd'hui — la
+	// colonne garde son defaut TRUE — mais la porte "autre etablissement"
+	// copie ce que la source a reellement configure plutot que d'ecraser
+	// silencieusement un canal desactive.
+	InOrders, TakeAwayOrders, DeliveryOrders bool
 }
 
 // CanonicalAttribute est un groupe d'options.
@@ -126,6 +198,14 @@ type CanonicalOption struct {
 	ExternalID string
 	Title      string
 	ExtraPrice int // centimes
+
+	// ComponentExternalID est le lien ingredient (projection de cout) porte
+	// par configurable_attribute_options.component_id. "" = aucun lien —
+	// c'est ce que toute source autre que "autre etablissement" produit
+	// aujourd'hui, aucun format fichier ne l'exprimant.
+	ComponentExternalID string
+	Quantity            float64
+	UnitOfMeasureID     string
 }
 
 // applyDefaults pose la configuration d'un groupe d'options que les exports ne
@@ -286,4 +366,13 @@ type ImportDecisions struct {
 	// produits — categories, tags et groupes d'options dont le mapping est
 	// perime sont recrees d'office, personne ne voulant arbitrer un contenant.
 	AlreadyImported map[string]ReimportResolution `json:"already_imported"`
+
+	// ExcludedProducts ecarte un produit du catalogue source avant tout autre
+	// arbitrage (categorie, TVA, collision) — c'est la case a decocher de la
+	// porte "autre etablissement" (V1b), seule facon proposee de choisir un
+	// sous-ensemble du catalogue plutot que la sequence complete. Distinct
+	// d'AlreadyImported, qui tranche le sort d'un produit qu'un import
+	// precedent a deja cree : un produit exclu ici ne l'a jamais ete par
+	// aucun import, il ne l'est simplement pas par celui-ci.
+	ExcludedProducts map[string]bool `json:"excluded_products"`
 }

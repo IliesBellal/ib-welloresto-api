@@ -780,6 +780,31 @@ func (r *AuthRepository) CheckPINConflict(ctx context.Context, merchantID, pinHa
 	return err == nil, err
 }
 
+// HasRightsOnMerchant verifie qu'un utilisateur a un acces actif au marchand
+// donne, independamment du marchand courant de sa session — c'est le controle
+// d'autorisation de l'import cross-marchand (menu.ImportService.PreviewImportFromMerchant) :
+// merchantID y arrive comme un champ du corps de requete, donc non fiable par
+// defaut, alors que userID vient du token deja verifie par le middleware d'auth.
+//
+// Mêmes filtres que GetUserByToken (enabled, login_enabled) : GetMerchants,
+// utilisee pour le selecteur d'etablissement du back-office, les omet
+// volontairement et ne convient donc pas ici — un acces revoque y apparaitrait
+// encore, ce qui autoriserait une lecture cross-marchand qui ne devrait plus
+// l'etre.
+func (r *AuthRepository) HasRightsOnMerchant(ctx context.Context, userID, merchantID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var exists int
+	err := db.QueryRowContext(ctx,
+		`SELECT 1 FROM users_rights
+		 WHERE user_id = ? AND merchant_id = ? AND enabled = TRUE AND login_enabled = TRUE
+		 LIMIT 1`,
+		userID, merchantID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]MerchantRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 	query := fmt.Sprintf(`

@@ -51,6 +51,18 @@ func (r *MenuRepository) LoadImportPreviewLookups(ctx context.Context, merchantI
 	}
 	lookups.ExistingAttributes = attributes
 
+	componentCategories, err := r.loadImportExistingComponentCategories(ctx, merchantID)
+	if err != nil {
+		return lookups, err
+	}
+	lookups.ExistingComponentCategories = componentCategories
+
+	components, err := r.loadImportExistingComponents(ctx, merchantID)
+	if err != nil {
+		return lookups, err
+	}
+	lookups.ExistingComponents = components
+
 	imported, err := r.loadImportedEntities(ctx, merchantID, provider)
 	if err != nil {
 		return lookups, err
@@ -224,7 +236,64 @@ func (r *MenuRepository) loadImportExistingAttributes(ctx context.Context, merch
 	return out, rows.Err()
 }
 
-// loadImportedEntities lit les quatre tables de mapping utiles à la preview.
+// loadImportExistingComponentCategories lit les catégories d'ingrédient actives
+// du marchand. Même convention que loadImportExistingCategories : merchant_categ_id
+// est renvoyé en plus de la PK, c'est lui que components.category_id référence.
+func (r *MenuRepository) loadImportExistingComponentCategories(ctx context.Context, merchantID string) ([]importer.ExistingComponentCategory, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, merchant_categ_id, name
+		 FROM component_category
+		 WHERE merchant_id = ? AND enabled = TRUE
+		 ORDER BY id ASC`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load component categories for import preview: %w", err)
+	}
+	defer rows.Close()
+
+	var out []importer.ExistingComponentCategory
+	for rows.Next() {
+		var category importer.ExistingComponentCategory
+		if err := rows.Scan(&category.CategID, &category.MerchantCategID, &category.Name); err != nil {
+			return nil, fmt.Errorf("failed to scan component category: %w", err)
+		}
+		out = append(out, category)
+	}
+	return out, rows.Err()
+}
+
+// loadImportExistingComponents lit les ingrédients actifs du marchand, pour la
+// détection de doublon par nom (même rôle que loadImportExistingProducts).
+func (r *MenuRepository) loadImportExistingComponents(ctx context.Context, merchantID string) ([]importer.ExistingComponent, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT component_id, name
+		 FROM components
+		 WHERE merchant_id = ? AND enabled = TRUE
+		 ORDER BY component_id ASC`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load components for import preview: %w", err)
+	}
+	defer rows.Close()
+
+	var out []importer.ExistingComponent
+	for rows.Next() {
+		var component importer.ExistingComponent
+		if err := rows.Scan(&component.ComponentID, &component.Name); err != nil {
+			return nil, fmt.Errorf("failed to scan component: %w", err)
+		}
+		out = append(out, component)
+	}
+	return out, rows.Err()
+}
+
+// loadImportedEntities lit les tables de mapping utiles à la preview.
 //
 // Aucun filtre sur enabled, volontairement : c'est la sémantique retenue à la
 // création des tables (migration 080). Un mapping désactivé continue de
@@ -235,10 +304,12 @@ func (r *MenuRepository) loadImportExistingAttributes(ctx context.Context, merch
 // travers leur groupe, dont le sort décide du leur.
 func (r *MenuRepository) loadImportedEntities(ctx context.Context, merchantID, provider string) (importer.ImportedEntities, error) {
 	imported := importer.ImportedEntities{
-		Products:   make(map[string]int),
-		Categories: make(map[string]int),
-		Tags:       make(map[string]string),
-		Attributes: make(map[string]string),
+		Products:            make(map[string]int),
+		Categories:          make(map[string]int),
+		Tags:                make(map[string]string),
+		Attributes:          make(map[string]string),
+		ComponentCategories: make(map[string]int),
+		Components:          make(map[string]int),
 	}
 
 	if err := r.scanIntMapping(ctx, "import_products_mapping", merchantID, provider, imported.Products); err != nil {
@@ -251,6 +322,12 @@ func (r *MenuRepository) loadImportedEntities(ctx context.Context, merchantID, p
 		return imported, err
 	}
 	if err := r.scanStringMapping(ctx, "import_attributes_mapping", merchantID, provider, imported.Attributes); err != nil {
+		return imported, err
+	}
+	if err := r.scanIntMapping(ctx, "import_component_categories_mapping", merchantID, provider, imported.ComponentCategories); err != nil {
+		return imported, err
+	}
+	if err := r.scanIntMapping(ctx, "import_components_mapping", merchantID, provider, imported.Components); err != nil {
 		return imported, err
 	}
 
