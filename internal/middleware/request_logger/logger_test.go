@@ -24,20 +24,21 @@ func TestFlush_Postgres_RebindsPlaceholders(t *testing.T) {
 	userID := int64(1)
 
 	mock.ExpectExec(`INSERT INTO api_request_logs`).
-		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4", int64(42)).
+		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), []byte(`{"resp":true}`), 200, "1.2.3.4", int64(42)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	l := &Logger{db: mockDB, log: zap.NewNop()}
 	l.flush([]LogEntry{
 		{
-			UserID:     &userID,
-			MerchantID: &merchantID,
-			Method:     "GET",
-			URL:        "/url",
-			Payload:    []byte(`{"ok":true}`),
-			StatusCode: 200,
-			IP:         "1.2.3.4",
-			DurationMs: 42,
+			UserID:          &userID,
+			MerchantID:      &merchantID,
+			Method:          "GET",
+			URL:             "/url",
+			Payload:         []byte(`{"ok":true}`),
+			ResponsePayload: []byte(`{"resp":true}`),
+			StatusCode:      200,
+			IP:              "1.2.3.4",
+			DurationMs:      42,
 		},
 	})
 
@@ -61,21 +62,22 @@ func TestFlush_MySQL_KeepsQuestionMarkPlaceholders(t *testing.T) {
 	merchantID := "m1"
 	userID := int64(1)
 
-	mock.ExpectExec(`VALUES \(\?, \?, \?, \?, \?, \?, \?, \?\)`).
-		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), 200, "1.2.3.4", int64(42)).
+	mock.ExpectExec(`VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?\)`).
+		WithArgs(userID, merchantID, "GET", "/url", []byte(`{"ok":true}`), []byte(`{"resp":true}`), 200, "1.2.3.4", int64(42)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	l := &Logger{db: mockDB, log: zap.NewNop()}
 	l.flush([]LogEntry{
 		{
-			UserID:     &userID,
-			MerchantID: &merchantID,
-			Method:     "GET",
-			URL:        "/url",
-			Payload:    []byte(`{"ok":true}`),
-			StatusCode: 200,
-			IP:         "1.2.3.4",
-			DurationMs: 42,
+			UserID:          &userID,
+			MerchantID:      &merchantID,
+			Method:          "GET",
+			URL:             "/url",
+			Payload:         []byte(`{"ok":true}`),
+			ResponsePayload: []byte(`{"resp":true}`),
+			StatusCode:      200,
+			IP:              "1.2.3.4",
+			DurationMs:      42,
 		},
 	})
 

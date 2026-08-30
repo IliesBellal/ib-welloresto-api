@@ -34,24 +34,28 @@ func TestLogger_Flush_Postgres(t *testing.T) {
 
 	l.flush([]LogEntry{
 		{
-			UserID:     &userID,
-			MerchantID: &merchantID,
-			Method:     "GET",
-			URL:        "/test/postgres-rebind",
-			Payload:    []byte(`{"ok":true}`),
-			StatusCode: 200,
-			IP:         ip,
+			UserID:          &userID,
+			MerchantID:      &merchantID,
+			Method:          "GET",
+			URL:             "/test/postgres-rebind",
+			Payload:         []byte(`{"ok":true}`),
+			ResponsePayload: []byte(`{"non_json_body_bytes":12}`),
+			StatusCode:      200,
+			IP:              ip,
 		},
 	})
 
-	var gotMerchantID string
+	var gotMerchantID, gotResponsePayload string
 	err := db.QueryRowContext(ctx,
-		`SELECT merchant_id FROM api_request_logs WHERE ip = $1`, ip,
-	).Scan(&gotMerchantID)
+		`SELECT merchant_id, response_payload FROM api_request_logs WHERE ip = $1`, ip,
+	).Scan(&gotMerchantID, &gotResponsePayload)
 	if err != nil {
 		t.Fatalf("flush() did not insert the expected row (placeholder rebind or type mismatch likely broken): %v", err)
 	}
 	if gotMerchantID != merchantID {
 		t.Fatalf("merchant_id = %q, want %q", gotMerchantID, merchantID)
+	}
+	if gotResponsePayload != `{"non_json_body_bytes":12}` {
+		t.Fatalf("response_payload = %q, want %q", gotResponsePayload, `{"non_json_body_bytes":12}`)
 	}
 }

@@ -69,6 +69,14 @@ func SetupTasks(
 	// du mois — deux DELETE simultanés se disputeraient l'unique connexion DB.
 	add("0 5 * * *", taskManager.CleanupExpiredPasswordResets)
 
+	// ── Logs de requêtes API ─────────────────────────────────────────────────
+	// 1er du mois à 5h : purge des lignes api_request_logs de plus de 30 jours.
+	// Coïncide avec CleanupExpiredPasswordResets ce jour-là, mais la connexion
+	// active est désormais Postgres sur Render (pool de 15, pas 1 comme sur
+	// l'ancien MySQL Hostinger) : les deux DELETE peuvent tourner en parallèle
+	// sans se disputer une connexion unique.
+	add("0 5 1 * *", taskManager.CleanupOldRequestLogs)
+
 	// Démarrage du Cron en arrière-plan
 	c.Start()
 	log.Info("✅ Système CRON démarré (toutes tâches actives, protégées par SkipIfStillRunning + Recover)")
