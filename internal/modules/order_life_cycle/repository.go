@@ -1865,7 +1865,7 @@ func (r *OrdersLifeCycleRepository) ComputeEstimatedReady(ctx context.Context, m
 	}
 
 	t := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
-	return t.Format("2006-01-02 15:04:05"), nil
+	return t.Format(time.RFC3339), nil
 }
 
 // setOrderDefaults applique les règles métier par défaut (équivalent du bloc PHP)
