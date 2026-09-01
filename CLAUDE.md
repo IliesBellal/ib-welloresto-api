@@ -23,9 +23,9 @@ go test ./internal/...
 
 ## Architecture
 
-This is a **Go REST API** for a multi-tenant restaurant management platform. Entry point: [cmd/api/main.go](cmd/api/main.go) — loads config from env, initializes MySQL and Zap logger, then calls `SetupRoutes()`.
+This is a **Go REST API** for a multi-tenant restaurant management platform. Entry point: [cmd/api/main.go](cmd/api/main.go) — loads config from env, initializes the database and Zap logger, then calls `SetupRoutes()`.
 
-**Stack:** Chi router, MySQL (`database/sql`, no ORM), Redis, WebSockets (gorilla), Stripe, Uber Eats/Deliveroo integrations, Cloudflare R2 storage, Brevo (email/SMS), FCM push notifications.
+**Stack:** Chi router, PostgreSQL (`database/sql`, no ORM), Redis, WebSockets (gorilla), Stripe, Uber Eats/Deliveroo integrations, Cloudflare R2 storage, Brevo (email/SMS), FCM push notifications.
 
 ### Layer pattern
 
@@ -55,7 +55,7 @@ Files within a module: `handler.go`, `service.go`, `repository.go`, `models.go`.
 
 ### Database
 
-MySQL via `database/sql`. Connection is intentionally capped at **1 open + 1 idle connection** with a 3-minute lifetime (Hostinger hosting constraint) — see [internal/database/mysql.go](internal/database/mysql.go). No ORM; queries are written by hand in repository files. Soft deletes use `enabled = 0`.
+**PostgreSQL is the only database engine in production** (confirmed 2026-09-01) — the MySQL → Postgres migration documented under [docs/migration-postgres/](docs/migration-postgres/) is complete; MySQL is no longer live anywhere. Connection pool: **15 max open, 4 idle, 5-minute lifetime** — see [internal/database/postgres.go](internal/database/postgres.go) (the old "1 open + 1 idle, 3-minute lifetime" figure was a MySQL/Hostinger-specific constraint, now dead code — see [internal/database/mysql.go](internal/database/mysql.go)). The codebase still carries a `DB_DIALECT` switch (`internal/database/dbx`, `dbx.ActiveDialect()`) and MySQL-flavored code paths/env vars (`MYSQL_URL`) from the migration itself, and `migrations/` still contains historical MySQL-era files (`migrations/done/`) alongside the current Postgres migrations (`migrations/todo/`, syntax like `DROP COLUMN IF EXISTS`, `to_regclass` guards) — but do not write new MySQL-specific code, and never assume MySQL is a live target when reasoning about schema changes or deployment order. Queries are written by hand in repository files, no ORM. Soft deletes use `enabled = false`.
 
 ### Auth & permissions
 
@@ -80,7 +80,7 @@ Every authenticated request is scoped to a merchant via the auth token. Reposito
 ### Environment variables
 
 Required at runtime (no `.env` in repo):
-- `MYSQL_URL` — MySQL connection string
+- `POSTGRES_URL` — Postgres connection string (the live one — set `DB_DIALECT=postgres`; `MYSQL_URL` still exists as a legacy/dialect-switch fallback in code but has no live target)
 - `GOOGLE_API_KEY` — required (validated at startup)
 - `R2_PRIVATE_BUCKET` — required (validated at startup)
 - `PORT` — defaults to `8080`

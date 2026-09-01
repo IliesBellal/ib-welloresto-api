@@ -14,7 +14,11 @@ import (
 //
 // pos.access and pos.discount.apply are gone from the catalog entirely (RBAC
 // lot 8, 2026-08-27 — see docs/decisions.md): neither ever guarded a route,
-// AccessWaiter's fallback below is retired along with the key it served.
+// and AccessWaiter (the field that used to back pos.access here) is gone
+// from UserRowRights entirely, along with AccessDelivery, CanExportReports,
+// CanExportFinancials and CanExportCustomers (dead-rights cleanup,
+// 2026-08-27 — see docs/decisions.md) — none of the five ever had a fallback
+// entry in this map, so removing them changes nothing here.
 var legacyPermissionFallback = map[permission.Key]func(UserRowRights) bool{
 	permission.POSStatusManage:      func(r UserRowRights) bool { return r.AccessReception },
 	permission.POSCashDrawerOpen:    func(r UserRowRights) bool { return r.OpenCashDrawer },

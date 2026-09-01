@@ -7,8 +7,6 @@ import (
 
 type MerchantUserPermissions struct {
 	AccessReception         bool `json:"access_reception"`
-	AccessDelivery          bool `json:"access_delivery"`
-	AccessWaiter            bool `json:"access_waiter"`
 	PrintMerchantCashReport bool `json:"print_merchant_cash_report"`
 	OpenCashDrawer          bool `json:"open_cash_drawer"`
 	ManageMenu              bool `json:"manage_menu"`
@@ -17,11 +15,8 @@ type MerchantUserPermissions struct {
 	ManageSettings          bool `json:"manage_settings"`
 	ManageHACCP             bool `json:"manage_haccp"`
 	ViewReports             bool `json:"view_reports"`
-	ExportReports           bool `json:"export_reports"`
 	ViewFinancials          bool `json:"view_financials"`
-	ExportFinancials        bool `json:"export_financials"`
 	ManageCustomers         bool `json:"manage_customers"`
-	ExportCustomers         bool `json:"export_customers"`
 }
 
 type MerchantUserRights struct {
@@ -164,8 +159,6 @@ func (req MerchantUserRightsUpsertRequest) Normalize(defaults MerchantUserRights
 		Admin: req.Admin || defaults.Admin,
 		Permissions: MerchantUserPermissions{
 			AccessReception:         req.Permissions.AccessReception,
-			AccessDelivery:          req.Permissions.AccessDelivery,
-			AccessWaiter:            req.Permissions.AccessWaiter,
 			PrintMerchantCashReport: req.Permissions.PrintMerchantCashReport,
 			OpenCashDrawer:          req.Permissions.OpenCashDrawer,
 			ManageMenu:              req.Permissions.ManageMenu,
@@ -174,11 +167,8 @@ func (req MerchantUserRightsUpsertRequest) Normalize(defaults MerchantUserRights
 			ManageSettings:          req.Permissions.ManageSettings,
 			ManageHACCP:             req.Permissions.ManageHACCP,
 			ViewReports:             req.Permissions.ViewReports,
-			ExportReports:           req.Permissions.ExportReports,
 			ViewFinancials:          req.Permissions.ViewFinancials,
-			ExportFinancials:        req.Permissions.ExportFinancials,
 			ManageCustomers:         req.Permissions.ManageCustomers,
-			ExportCustomers:         req.Permissions.ExportCustomers,
 		},
 		LoginEnabled: req.LoginEnabled,
 	}

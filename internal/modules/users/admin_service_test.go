@@ -45,10 +45,10 @@ func TestUsersHandlerListMerchantUsers(t *testing.T) {
 		WithArgs("merchant_1", "%jo%", "%jo%", "%jo%", "%jo%", true, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
-			"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
+			"access_reception", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "view_financials", "manage_customers", "employee_id", "employee_name",
 		}).AddRow(
 			"user_1", "John", "Doe", "john@example.com", "+33123456789", "https://cdn/avatar.png", createdAt, lastLoginAt, true, true, 12, true,
-			true, false, false, true, true, true, true, true, false, false, true, false, false, false, false, false, "emp_1", "John Doe",
+			true, true, true, true, true, true, false, false, true, false, false, "emp_1", "John Doe",
 		))
 
 	req := httptest.NewRequest(http.MethodGet, "/users?search=jo&active=true&linked_employee=true&page=1&page_size=20", nil)
@@ -141,8 +141,8 @@ func TestUsersServiceForceResetPassword(t *testing.T) {
 			merchant_id,`)).
 		WithArgs("merchant_1", "user_9").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
-		}).AddRow(77, "merchant_1", "user_9", false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "view_financials", "manage_customers",
+		}).AddRow(77, "merchant_1", "user_9", false, true, false, false, false, false, false, false, false, false, false, false, false))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT token
@@ -210,7 +210,7 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE users_rights
 		SET admin = ?,`)).
-		WithArgs(true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, "merchant_1", "user_4").
+		WithArgs(true, false, false, false, false, true, true, false, false, false, false, false, false, "merchant_1", "user_4").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
@@ -225,8 +225,8 @@ func TestUsersHandlerUpdateMerchantUserRights(t *testing.T) {
 			merchant_id,`)).
 		WithArgs("merchant_1", "user_4").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
-		}).AddRow(11, "merchant_1", "user_4", true, true, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false))
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "view_financials", "manage_customers",
+		}).AddRow(11, "merchant_1", "user_4", true, true, false, false, false, false, true, true, false, false, false, false, false))
 
 	req := httptest.NewRequest(http.MethodPut, "/users/user_4/rights", bytes.NewReader(body))
 	req = req.WithContext(middleware.WithUser(req.Context(), &auth.UserLoginRow{UserID: "admin_1", MerchantID: "merchant_1"}))
@@ -269,8 +269,8 @@ func TestUsersServiceUnlinkMerchantUserLooksUpTokenBeforeDisabling(t *testing.T)
 			merchant_id,`)).
 		WithArgs("merchant_1", "user_4").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers",
-		}).AddRow(11, "merchant_1", "user_4", false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+			"id", "merchant_id", "user_id", "admin", "login_enabled", "access_reception", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "view_financials", "manage_customers",
+		}).AddRow(11, "merchant_1", "user_4", false, true, true, false, false, false, false, false, false, false, false, false, false))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT token
@@ -786,13 +786,13 @@ func merchantUserDetailRows(userID, firstName, lastName string) *sqlmock.Rows {
 	now := time.Now().UTC()
 	return sqlmock.NewRows([]string{
 		"user_id", "first_name", "last_name", "email", "tel", "profile_picture", "created_at", "last_login_at", "enabled", "login_enabled", "rights_id", "admin",
-		"access_reception", "access_delivery", "access_waiter", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "export_reports", "view_financials", "export_financials", "manage_customers", "export_customers", "employee_id", "employee_name",
+		"access_reception", "print_cash_report", "open_cash_drawer", "manage_menu", "manage_plannings", "manage_users", "manage_settings", "manage_haccp", "view_reports", "view_financials", "manage_customers", "employee_id", "employee_name",
 		// RBAC lot 9: role_id/name/system_key, left null here — none of the
 		// callers of this fixture exercise the role-assignment path.
 		"role_id", "role_name", "role_system_key",
 	}).AddRow(
 		userID, firstName, lastName, "john@example.com", "+33000000000", nil, now, now, true, true, int64(1), false,
-		false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, nil, nil,
+		false, false, false, false, false, false, false, false, false, false, false, nil, nil,
 		nil, nil, nil,
 	)
 }

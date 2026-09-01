@@ -62,7 +62,7 @@ func TestHas_HistoricalMode_AdminOnlyKeysNeedAdmin(t *testing.T) {
 	for _, key := range adminOnlyKeys {
 		t.Run(string(key)+"/non-admin denied", func(t *testing.T) {
 			user := &UserLoginRow{Rights: UserRowRights{
-				AccessWaiter: true, AccessReception: true, OpenCashDrawer: true,
+				AccessReception: true, OpenCashDrawer: true,
 				CanManageMenu: true, CanManageHACCP: true, CanManageCustomers: true,
 				CanManageUsers: true, CanManagePlannings: true, CanViewReports: true,
 				CanViewFinancials: true, CanManageSettings: true,
@@ -102,7 +102,7 @@ func TestHas_RoleMode_IgnoresBooleansEvenWhenTheyContradict(t *testing.T) {
 		Permissions: []string{string(permission.POSTicketReopen)},
 		// Every boolean says "grant everything" — role mode must ignore all of it.
 		Rights: UserRowRights{
-			Admin: true, AccessWaiter: true, AccessReception: true, OpenCashDrawer: true,
+			Admin: true, AccessReception: true, OpenCashDrawer: true,
 			CanManageMenu: true, CanManageHACCP: true, CanManageCustomers: true,
 			CanManageUsers: true, CanManagePlannings: true, CanViewReports: true,
 			CanViewFinancials: true, CanManageSettings: true,

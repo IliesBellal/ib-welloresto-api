@@ -24,8 +24,6 @@ type UserLoginRow struct {
 	// rights
 	RightsToken             string
 	AccessReception         bool
-	AccessDelivery          bool
-	AccessWaiter            bool
 	PrintMerchantCashReport bool
 	OpenCashDrawer          bool
 	MerchantID              string

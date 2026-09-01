@@ -110,8 +110,6 @@ type LoginAccessResponse struct {
 
 type LoginAccessAppsResponse struct {
 	Reception bool `json:"reception"`
-	Delivery  bool `json:"delivery"`
-	Waiter    bool `json:"waiter"`
 }
 
 type LoginAccessPermissionsResponse struct {
@@ -123,11 +121,8 @@ type LoginAccessPermissionsResponse struct {
 	ManageSettings          bool `json:"manage_settings"`
 	ManageHACCP             bool `json:"manage_haccp"`
 	ViewReports             bool `json:"view_reports"`
-	ExportReports           bool `json:"export_reports"`
 	ViewFinancials          bool `json:"view_financials"`
-	ExportFinancials        bool `json:"export_financials"`
 	ManageCustomers         bool `json:"manage_customers"`
-	ExportCustomers         bool `json:"export_customers"`
 }
 
 type LoginCapabilitiesResponse struct {
@@ -169,11 +164,8 @@ type LoginCapabilityActionsResponse struct {
 	ManageSettings          bool `json:"manage_settings"`
 	ManageHACCP             bool `json:"manage_haccp"`
 	ViewReports             bool `json:"view_reports"`
-	ExportReports           bool `json:"export_reports"`
 	ViewFinancials          bool `json:"view_financials"`
-	ExportFinancials        bool `json:"export_financials"`
 	ManageCustomers         bool `json:"manage_customers"`
-	ExportCustomers         bool `json:"export_customers"`
 }
 
 type LoginCapabilityIntegrationsResponse struct {

@@ -127,8 +127,6 @@ type UserRowRights struct {
 
 	// Accès aux modules
 	AccessReception bool
-	AccessDelivery  bool
-	AccessWaiter    bool
 
 	// Gestion & Rapports
 	PrintMerchantCashReport bool
@@ -140,14 +138,11 @@ type UserRowRights struct {
 	CanManageHACCP          bool
 
 	// Reports & Financials
-	CanViewReports      bool
-	CanExportReports    bool
-	CanViewFinancials   bool
-	CanExportFinancials bool
+	CanViewReports    bool
+	CanViewFinancials bool
 
 	// Customers
 	CanManageCustomers bool
-	CanExportCustomers bool
 
 	// Admin
 	Admin bool
@@ -283,16 +278,6 @@ func (u *UserLoginRow) HasAccessReception() bool {
 	return u.Rights.Admin || u.Rights.AccessReception
 }
 
-// HasAccessDelivery vérifie si l'utilisateur a accès à la livraison
-func (u *UserLoginRow) HasAccessDelivery() bool {
-	return u.Rights.Admin || u.Rights.AccessDelivery
-}
-
-// HasAccessWaiter vérifie si l'utilisateur a accès au module serveur
-func (u *UserLoginRow) HasAccessWaiter() bool {
-	return u.Rights.Admin || u.Rights.AccessWaiter
-}
-
 // CanPrintCashReport vérifie si l'utilisateur peut imprimer les rapports de caisse
 func (u *UserLoginRow) CanPrintCashReport() bool {
 	return u.Rights.Admin || u.Rights.PrintMerchantCashReport
@@ -344,34 +329,14 @@ func (u *UserLoginRow) HasReportsViewAccess() bool {
 	return u.Has(permission.ReportsSalesRead)
 }
 
-// HasReportsExportAccess vérifie si l'utilisateur peut exporter les rapports.
-// Pas de permission.Key dédiée à "export" dans le catalogue (15 droits, lot
-// 1/2) : reste sur la colonne booléenne historique, y compris pour un
-// utilisateur avec role_id — un rôle personnalisé non-admin ne peut donc pas
-// encore restreindre spécifiquement l'export des rapports. Idem pour
-// HasFinancialsExportAccess/HasCustomerExportAccess/CanPrintCashReport.
-func (u *UserLoginRow) HasReportsExportAccess() bool {
-	return u.Rights.Admin || u.Rights.CanExportReports
-}
-
 // HasFinancialsViewAccess vérifie si l'utilisateur peut consulter les données financières
 func (u *UserLoginRow) HasFinancialsViewAccess() bool {
 	return u.Has(permission.ReportsFinancialRead)
 }
 
-// HasFinancialsExportAccess vérifie si l'utilisateur peut exporter les données financières
-func (u *UserLoginRow) HasFinancialsExportAccess() bool {
-	return u.Rights.Admin || u.Rights.CanExportFinancials
-}
-
 // HasCustomerManagementAccess vérifie si l'utilisateur peut gérer les clients
 func (u *UserLoginRow) HasCustomerManagementAccess() bool {
 	return u.Has(permission.CustomersManage)
-}
-
-// HasCustomerExportAccess vérifie si l'utilisateur peut exporter les clients
-func (u *UserLoginRow) HasCustomerExportAccess() bool {
-	return u.Rights.Admin || u.Rights.CanExportCustomers
 }
 
 type VerifyOTPRequestPayload struct {

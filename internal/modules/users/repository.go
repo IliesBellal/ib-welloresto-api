@@ -190,8 +190,6 @@ SELECT
 
     ur.token AS rights_token,
     ur.access_wrreception,
-    ur.access_wrdelivery,
-    ur.access_wrwaiter,
     ur.print_merchant_cash_report,
     ur.open_cash_drawer,
     ur.merchant_id,
@@ -264,7 +262,7 @@ LIMIT 1;
 		&data.Enabled, &data.ProfilePicture,
 		&data.ReceptionDeviceToken, &data.WaiterDeviceToken, &data.DeliveryDeviceToken,
 
-		&data.RightsToken, &data.AccessReception, &data.AccessDelivery, &data.AccessWaiter,
+		&data.RightsToken, &data.AccessReception,
 		&data.PrintMerchantCashReport, &data.OpenCashDrawer, &data.MerchantID,
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,

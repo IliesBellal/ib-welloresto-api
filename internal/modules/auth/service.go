@@ -422,16 +422,13 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 		Admin: user.HasAdminRole(),
 		Apps: LoginAccessAppsResponse{
 			Reception: user.Rights.AccessReception,
-			Delivery:  user.Rights.AccessDelivery,
-			Waiter:    user.Rights.AccessWaiter,
 		},
-		// RBAC lot 6 (§0) : 9 des 13 champs viennent désormais de Has() (route
-		// automatiquement vers le rôle assigné quand role_id est renseigné,
-		// sinon retombe sur la colonne booléenne historique — voir
-		// UserLoginRow.HasMenuAccess et consorts). Les 4 restants
-		// (PrintMerchantCashReport, ExportReports, ExportFinancials,
-		// ExportCustomers) n'ont pas d'équivalent dans le catalogue de 15
-		// droits et restent lus directement sur la colonne historique.
+		// RBAC lot 6 (§0) : la plupart de ces champs viennent désormais de
+		// Has() (route automatiquement vers le rôle assigné quand role_id est
+		// renseigné, sinon retombe sur la colonne booléenne historique — voir
+		// UserLoginRow.HasMenuAccess et consorts). PrintMerchantCashReport
+		// n'a pas d'équivalent dans le catalogue et reste lu directement sur
+		// la colonne historique.
 		Permissions: LoginAccessPermissionsResponse{
 			PrintMerchantCashReport: user.Rights.PrintMerchantCashReport,
 			OpenCashDrawer:          user.CanOpenCashDrawer(),
@@ -441,11 +438,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			ManageSettings:          user.HasSettingsAccess(),
 			ManageHACCP:             user.HasHACCPAccess(),
 			ViewReports:             user.HasReportsViewAccess(),
-			ExportReports:           user.Rights.CanExportReports,
 			ViewFinancials:          user.HasFinancialsViewAccess(),
-			ExportFinancials:        user.Rights.CanExportFinancials,
 			ManageCustomers:         user.HasCustomerManagementAccess(),
-			ExportCustomers:         user.Rights.CanExportCustomers,
 		},
 	}
 
@@ -459,9 +453,9 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Bookings:   user.BookingsEnabled,
 			Kiosks:     user.KiosksEnabled,
 			Delivery:   user.DeliveryEnabled,
-			Reports:    user.HasReportsViewAccess() || user.HasReportsExportAccess(),
-			Financials: user.HasFinancialsViewAccess() || user.HasFinancialsExportAccess(),
-			Customers:  user.HasCustomerManagementAccess() || user.HasCustomerExportAccess(),
+			Reports:    user.HasReportsViewAccess(),
+			Financials: user.HasFinancialsViewAccess(),
+			Customers:  user.HasCustomerManagementAccess(),
 			Stock:      user.StockEnabled,
 			HR:         user.HrManagement,
 			ScanNOrder: user.ScanNOrderEnabled,
@@ -480,11 +474,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			ManageSettings:          user.HasSettingsAccess(),
 			ManageHACCP:             user.HasHACCPAccess() && user.HACCPEnabled,
 			ViewReports:             user.HasReportsViewAccess(),
-			ExportReports:           user.HasReportsExportAccess(),
 			ViewFinancials:          user.HasFinancialsViewAccess(),
-			ExportFinancials:        user.HasFinancialsExportAccess(),
 			ManageCustomers:         user.HasCustomerManagementAccess(),
-			ExportCustomers:         user.HasCustomerExportAccess(),
 		},
 		Integrations: LoginCapabilityIntegrationsResponse{
 			UberEats:   user.UEStoreID.Valid && user.UEStoreID.String != "",

@@ -1,5 +1,75 @@
 # Decisions
 
+### Droits legacy morts — nettoyage `access_delivery`/`access_waiter`/`export_reports`/`export_financials`/`export_customers` (2026-09-01)
+
+- **Contexte** : à côté du catalogue RBAC (`permission.Key` / table `permissions`),
+  le système historique de droits booléens (`UserRowRights` / colonnes
+  `users_rights`) porte 17 champs. Une revue de recensement (agent de
+  recherche en lecture seule, croisant l'API Go, le schéma MySQL/Postgres et
+  `wello-back-office`) a montré que 5 d'entre eux ne gardent plus rien nulle
+  part : ni une route API, ni une décision d'affichage côté back-office.
+
+- **Les 5 droits retirés** :
+  - `access_wrdelivery` / `access_wrwaiter` — alimentaient uniquement
+    `LoginAccessResponse.Apps.Delivery/Waiter`, un mécanisme distinct du RBAC
+    (pas de `permission.Key` associée ; le fallback RBAC de
+    `access_wrwaiter` vers `pos.access` avait déjà disparu à la suppression
+    de `pos.access` — lot 8). Confirmé mort côté `wello-back-office` (aucune
+    décision de gating ne les lit) et quasi mort côté Flutter
+    (`wello_resto_flutter` : un seul accesseur, déjà marqué `@Deprecated`,
+    lui-même non appelé). `access_wrreception` n'est **pas** touchée : elle
+    reste le fallback legacy de `pos.status.manage` et garde
+    `PATCH /pos/status` pour un compte sans `role_id`.
+  - `export_reports` / `export_financials` / `export_customers` — n'ont
+    jamais eu de `permission.Key` dédiée (marquées « deliberately absent »
+    dans `internal/modules/auth/permissions.go` depuis le lot 1/2 : lire un
+    rapport et l'exporter n'ont jamais été deux droits distincts).
+    Round-trippées jusqu'ici dans la réponse de login et l'éditeur de droits
+    back-office (`RightsTab`), mais cet éditeur a déjà été remplacé par un
+    sélecteur de rôle (`AccessTab.tsx`) — plus aucune UI ne les lit ni ne les
+    coche.
+
+- **Retiré de l'API Go** : les 5 champs de `UserRowRights`
+  (`internal/modules/auth/models.go`), leurs méthodes `Has*` dérivées
+  (`HasAccessDelivery`, `HasAccessWaiter`, `HasReportsExportAccess`,
+  `HasFinancialsExportAccess`, `HasCustomerExportAccess`), leur lecture/
+  écriture SQL (`internal/modules/auth/repository.go` ×3 requêtes,
+  `internal/modules/users/{repository,admin_repository}.go`), leur
+  restitution dans la réponse de login
+  (`internal/modules/auth/login_response.go` :
+  `LoginAccessAppsResponse.Delivery/Waiter`,
+  `LoginAccessPermissionsResponse`/`LoginCapabilityActionsResponse`
+  `.ExportReports/ExportFinancials/ExportCustomers`), et le DTO d'admin
+  (`internal/modules/users/admin_models.go`,
+  `MerchantUserPermissions`). `Capabilities.Modules.Reports/Financials/
+  Customers` simplifiés en conséquence (ne dépendaient plus que du droit de
+  lecture, plus du droit d'export disparu).
+
+- **Migration** (`migrations/todo/110_drop_dead_legacy_rights_columns`) :
+  `DROP COLUMN` Postgres sur `users_rights` pour les 5 colonnes, gardée par
+  `to_regclass`/`IF EXISTS` (même convention que la migration 104).
+  `docs/migration-postgres/04-schema-postgres-target.sql` mis à jour en
+  miroir. Pas de traduction MySQL séparée : le schéma cible de ce dépôt est
+  Postgres (voir les migrations 094+ sous `migrations/todo/`) — MySQL est
+  l'état de départ historique, pas une cible à maintenir en parallèle.
+
+- **Retiré de `wello-back-office`** : `MerchantUserPermissions`
+  (`src/types/adminUsers.ts`), `AuthCapabilities.apps`/`.actions` et le
+  fallback `allow_delivery_account`/`allow_waiter_account`
+  (`src/types/auth.ts`), les fixtures (`src/services/mocks/teamMocks.ts`,
+  `src/services/authService.ts`) et le payload figé de liaison d'un
+  utilisateur existant (`src/components/team/CreateMemberSheet.tsx`).
+  `access_reception` conservée partout (toujours vivante côté API).
+  `npx tsc --noEmit` et `npx eslint` passent sans erreur sur ce dépôt après
+  coup.
+
+- **Hors périmètre, non tranché ici** : `access_wrreception` /
+  `access_wrdelivery` / `access_wrwaiter` alimentent aussi
+  `LoginAccessResponse.Apps`, un mécanisme distinct du RBAC potentiellement
+  consommé par d'autres apps clientes (Kiosk, ScanNOrder) non auditées dans
+  cette passe — seul `wello_resto_flutter` a été vérifié pour `access_wrdelivery`/
+  `access_wrwaiter` (mort ou quasi mort, voir ci-dessus).
+
 ### RBAC lot 10 — 5 nouvelles clés (bookings/platforms/kiosk/analytics/plan de salle) + backfill des descriptions (2026-08-28)
 
 - **Contexte** : plusieurs surfaces back-office restaient accessibles à tout
