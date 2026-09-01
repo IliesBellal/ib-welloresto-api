@@ -25,7 +25,9 @@ type profileScanner interface {
 }
 
 const selectProfileCols = `
-	SELECT production_profile_id, merchant_id, name, split_by_source, display_only_paid_orders, created_at, updated_at
+	SELECT production_profile_id, merchant_id, name, split_by_source, display_only_paid_orders,
+	       load_slot_interval_minutes, load_slot_duration_hours, load_max_capacity_count,
+	       created_at, updated_at
 	FROM production_profiles`
 
 func scanProfile(s profileScanner) (ProductionProfileEntry, error) {
@@ -33,6 +35,7 @@ func scanProfile(s profileScanner) (ProductionProfileEntry, error) {
 	err := s.Scan(
 		&p.ID, &p.MerchantID, &p.Name,
 		&p.SplitBySource, &p.DisplayOnlyPaidOrders,
+		&p.LoadSlotIntervalMinutes, &p.LoadSlotDurationHours, &p.LoadMaxCapacityCount,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	return p, err
@@ -136,8 +139,8 @@ func (r *Repository) GetProfile(ctx context.Context, merchantID, profileID strin
 }
 
 // CreateProfile inserts a new production profile and returns the created
-// entry. SplitBySource/DisplayOnlyPaidOrders fall back to their column
-// defaults (true/false) when omitted from the request.
+// entry. SplitBySource/DisplayOnlyPaidOrders/load fields fall back to their
+// column defaults (true/false/15/4/15) when omitted from the request.
 func (r *Repository) CreateProfile(ctx context.Context, merchantID, profileID string, req *CreateProductionProfileRequest) (*ProductionProfileEntry, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -150,11 +153,26 @@ func (r *Repository) CreateProfile(ctx context.Context, merchantID, profileID st
 	if req.DisplayOnlyPaidOrders != nil {
 		displayOnlyPaidOrders = *req.DisplayOnlyPaidOrders
 	}
+	loadSlotIntervalMinutes := 15
+	if req.LoadSlotIntervalMinutes != nil {
+		loadSlotIntervalMinutes = *req.LoadSlotIntervalMinutes
+	}
+	loadSlotDurationHours := 4
+	if req.LoadSlotDurationHours != nil {
+		loadSlotDurationHours = *req.LoadSlotDurationHours
+	}
+	loadMaxCapacityCount := 15
+	if req.LoadMaxCapacityCount != nil {
+		loadMaxCapacityCount = *req.LoadMaxCapacityCount
+	}
 
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO production_profiles (production_profile_id, merchant_id, name, split_by_source, display_only_paid_orders)
-		 VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO production_profiles (
+			production_profile_id, merchant_id, name, split_by_source, display_only_paid_orders,
+			load_slot_interval_minutes, load_slot_duration_hours, load_max_capacity_count
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		profileID, merchantID, req.Name, splitBySource, displayOnlyPaidOrders,
+		loadSlotIntervalMinutes, loadSlotDurationHours, loadMaxCapacityCount,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -200,6 +218,18 @@ func (r *Repository) UpdateProfile(ctx context.Context, merchantID, profileID st
 	if req.DisplayOnlyPaidOrders != nil {
 		updates = append(updates, "display_only_paid_orders = ?")
 		args = append(args, *req.DisplayOnlyPaidOrders)
+	}
+	if req.LoadSlotIntervalMinutes != nil {
+		updates = append(updates, "load_slot_interval_minutes = ?")
+		args = append(args, *req.LoadSlotIntervalMinutes)
+	}
+	if req.LoadSlotDurationHours != nil {
+		updates = append(updates, "load_slot_duration_hours = ?")
+		args = append(args, *req.LoadSlotDurationHours)
+	}
+	if req.LoadMaxCapacityCount != nil {
+		updates = append(updates, "load_max_capacity_count = ?")
+		args = append(args, *req.LoadMaxCapacityCount)
 	}
 
 	if len(updates) > 0 {
