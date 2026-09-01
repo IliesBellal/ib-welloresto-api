@@ -1168,6 +1168,12 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		}
 		if est != "" {
 			estimatedReady = est
+			// Valeur auto-calculée (temps cuisine seul) : ne peut pas représenter
+			// un choix de créneau client/staff, même si le payload demandait
+			// is_scheduled=true — sinon resolveIsScheduled (plus bas) ne verrait
+			// plus une valeur vide et laisserait scheduled=true persister avec une
+			// date qui n'est pas une heure de livraison.
+			req.Order.IsScheduled = false
 		}
 	}
 	req.Order.EstimatedReady = estimatedReady
@@ -1615,6 +1621,9 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		}
 		if est != "" {
 			estimatedReady = est
+			// Voir le même garde-fou dans CreateOrder : une valeur auto-calculée
+			// ne peut pas représenter un choix de créneau client/staff.
+			req.Order.IsScheduled = false
 		}
 	}
 	req.Order.EstimatedReady = estimatedReady
@@ -1796,16 +1805,18 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
+	productionReadyAt := resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds)
+	deliveryArrivalAt := resolveDeliveryArrivalAt(req.Order.OrderType, estimatedReady, isScheduled, deliveryTravelSeconds)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
-		                   dateCall, last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, use_customer_temporary_address,
+		                   last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, production_ready_at, delivery_arrival_at, use_customer_temporary_address,
 		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, isScheduled,
-		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds,
+		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds, productionReadyAt, deliveryArrivalAt,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
 	)
 	if err != nil {
@@ -1989,6 +2000,51 @@ func (r *OrdersLifeCycleRepository) resolveDeliveryTravelSeconds(ctx context.Con
 	return &seconds
 }
 
+// resolveProductionReadyAt calcule la deadline cuisine, renseignée pour
+// toute commande (livraison ou non) : estimated_ready est la date de
+// livraison promise (heure choisie par le client/staff, livreur à la porte)
+// pour une commande programmée, donc la deadline cuisine réelle est plus tôt
+// de la durée du trajet ; pour une commande non programmée, estimated_ready
+// EST déjà la deadline cuisine (ComputeEstimatedReady ne calcule que le temps
+// de prépa, sans trajet) — aucun ajustement à faire. Repli sur estimated_ready
+// tel quel si programmée mais trajet pas encore connu (commande non-livrée,
+// ou adresse sans moyenne merchant disponible) : c'est la meilleure valeur
+// disponible, jamais nil tant qu'une date existe.
+func resolveProductionReadyAt(estimatedReady interface{}, scheduled bool, travelSeconds *int) interface{} {
+	t, ok := estimatedReady.(time.Time)
+	if !ok {
+		return nil
+	}
+	if scheduled && travelSeconds != nil {
+		return t.Add(-time.Duration(*travelSeconds) * time.Second)
+	}
+	return t
+}
+
+// resolveDeliveryArrivalAt calcule l'heure d'arrivée livreur estimée,
+// uniquement pour les commandes livraison (nil sinon — un NULL qui signifie
+// "pas de livraison", pas une donnée manquante). Pour une commande
+// programmée, estimated_ready EST par définition cette heure (le client/staff
+// l'a choisie comme heure de livraison). Pour une commande non programmée,
+// c'est estimated_ready (temps cuisine auto-calculé) + le trajet ; nil si le
+// trajet n'est pas encore connu (rien de fiable à afficher).
+func resolveDeliveryArrivalAt(orderType string, estimatedReady interface{}, scheduled bool, travelSeconds *int) interface{} {
+	if orderType != models.OrderTypeDelivery {
+		return nil
+	}
+	t, ok := estimatedReady.(time.Time)
+	if !ok {
+		return nil
+	}
+	if scheduled {
+		return t
+	}
+	if travelSeconds == nil {
+		return nil
+	}
+	return t.Add(time.Duration(*travelSeconds) * time.Second)
+}
+
 // IsCashRegisterRequiredForOrdering checks merchant parameter cash_register_required_for_ordering == 1
 func (r *OrdersLifeCycleRepository) IsCashRegisterRequiredForOrdering(ctx context.Context, merchantID string) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -2078,6 +2134,8 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
+	productionReadyAt := resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds)
+	deliveryArrivalAt := resolveDeliveryArrivalAt(req.Order.OrderType, estimatedReady, isScheduled, deliveryTravelSeconds)
 
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	_, err = db.ExecContext(ctx, `
@@ -2095,6 +2153,8 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 				scheduled = ?,
 				estimated_ready = ?,
 				delivery_travel_seconds = ?,
+				production_ready_at = ?,
+				delivery_arrival_at = ?,
 				places_settings = ?,
 				customer_id = ?
 			WHERE order_id = ?`,
@@ -2107,6 +2167,8 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 		isScheduled,
 		estimatedReady,
 		deliveryTravelSeconds,
+		productionReadyAt,
+		deliveryArrivalAt,
 		req.Order.PlacesSettings,
 		customerID,
 		req.Order.OrderID,

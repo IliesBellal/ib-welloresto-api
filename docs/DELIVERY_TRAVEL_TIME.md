@@ -3,14 +3,15 @@
 Document vivant : implémentation, process d'utilisation, et **journal des décisions** tenu au fil de
 l'eau (y compris les décisions annulées et pourquoi). Mis à jour à chaque étape livrée.
 
-- **Démarré le** : 2026-08-28
+- **Démarré le** : 2026-08-28 — **étape 2 le 2026-08-29** (deux heures dérivées : deadline production
+  vs arrivée livreur)
 - **Périmètre** : API Go (`ib-welloresto-api`), POS Flutter (`wello_resto_flutter`), ScanNOrder React
-  (`wello-resto-scannorder`)
-- **État** : ✅ code livré dans les 3 dépôts — **migration 102 pas encore appliquée**, **aucune
+  (`wello-resto-scannorder`), **wello-back-office** (depuis l'étape 2, retrait de `dateCall`)
+- **État** : ✅ code livré dans les 4 dépôts — **migrations 102 et 103 pas encore appliquées**, **aucune
   vérification d'exécution réelle** (pas de DB de dev connectée dans cette session) — voir [§5](#5-vérifications-effectuées)
-- **Reste à faire avant production** : appliquer `migrations/todo/102_delivery_travel_seconds.up.sql`,
-  QA manuelle sur les 3 apps (voir [§6](#6-avancement)), laisser tourner le cron une fois pour
-  vérifier le premier calcul de moyenne
+- **Reste à faire avant production** : appliquer `migrations/todo/102_delivery_travel_seconds.up.sql`
+  **et** `103_production_ready_delivery_arrival.up.sql`, QA manuelle sur les 3 apps (voir [§6](#6-avancement)),
+  laisser tourner le cron une fois pour vérifier le premier calcul de moyenne
 
 ---
 
@@ -98,6 +99,103 @@ dans un commentaire SQL libre.
 **Pourquoi** : la recherche préalable a confirmé une incohérence dans le repo (`preparation_time` en
 minutes vs `distribution_time` en secondes, distingués seulement par commentaire). Autant ne pas
 reproduire l'ambiguïté sur les nouvelles colonnes, sans toucher aux anciennes (hors périmètre).
+
+---
+
+## Étape 2 (2026-08-29) — deux heures dérivées : deadline production vs arrivée livreur
+
+L'implémentation de l'étape 1 soustrayait toujours `estimated_ready - delivery_travel_seconds` pour
+la deadline production, **quel que soit** l'état `scheduled`. Faux pour une commande non programmée :
+`estimated_ready` y est déjà auto-calculé par la cuisine (`ComputeEstimatedReady`, temps de prépa
+seul) — soustraire le trajet une deuxième fois avançait la deadline au lieu de calculer l'heure
+d'arrivée livreur. Sémantique corrigée, demandée et validée par l'utilisateur :
+
+- **Commande programmée** (`scheduled=true`) : `estimated_ready` = heure choisie par le client/staff
+  = heure à laquelle le livreur est à la porte. Deadline production = `estimated_ready - delivery_travel_seconds`.
+- **Commande non programmée** (`scheduled=false`) : `estimated_ready` = heure de fin cuisine
+  auto-calculée. Heure d'arrivée livreur estimée = `estimated_ready + delivery_travel_seconds`.
+
+### D7 — Deux colonnes à sens fixe, pas une colonne à double sens
+**Décision initiale envisagée** : une seule colonne `production_or_delivery_estimate`, dont le sens
+dépendrait de `scheduled`.
+**Écartée à la relecture du plan**, sur question directe de l'utilisateur ("est-ce que ce ne serait
+pas plus pertinent et plus simple en deux colonnes ?") : une colonne à double sens reproduit
+exactement le problème qu'on corrige sur `estimated_ready` (une valeur, deux significations selon le
+contexte) — mauvais pour la propreté (tribal knowledge requise pour lire la base en SQL direct),
+l'entretien (la règle `scheduled ? - : +` devrait être réappliquée par chaque consommateur : Go, Dart,
+futur reporting), et l'évolutivité (une requête analytique sur "heure de livraison" deviendrait un
+`CASE WHEN scheduled...` au lieu d'un `SELECT` simple).
+**Retenu** : `orders.production_ready_at` (deadline cuisine, renseignée pour **toute** commande) et
+`orders.delivery_arrival_at` (heure d'arrivée livreur, `NULL` pour le non-livraison — un `NULL` qui a
+un sens, pas une donnée manquante), chacune à sens unique, toujours correctement remplie côté backend
+(`resolveProductionReadyAt`/`resolveDeliveryArrivalAt`, [order_life_cycle/repository.go](../internal/modules/order_life_cycle/repository.go)).
+Pas de backfill : aucune commande réelle n'a encore `delivery_travel_seconds` (migration 102 pas
+appliquée), rien à recalculer rétroactivement.
+
+### D8 — Correction d'un bug latent : `scheduled` pouvait mentir sur la nature de `estimated_ready`
+**Découverte** : `ComputeEstimatedReady` (fallback auto-calculé, temps de prépa seul) est appliqué
+**avant** que `resolveIsScheduled` ne s'exécute (`repository.go` `CreateOrder`/`UpdateOrder`). Si un
+client envoyait `is_scheduled=true` avec `estimated_ready` vide, le fallback remplissait la valeur, et
+`resolveIsScheduled` ne voyait plus une valeur vide — `scheduled=true` persistait avec une date qui
+n'était pourtant pas un choix client, contredisant l'intention déjà documentée dans le code
+(commentaire de `resolveIsScheduled`, non appliqué dans ce cas précis).
+**Pourquoi ça devait être corrigé ici** : D7 dépend entièrement de la fiabilité de `scheduled` pour
+choisir la bonne direction (+/-). Un `scheduled` menteur aurait fait calculer `production_ready_at`/
+`delivery_arrival_at` dans le mauvais sens pour ce cas précis.
+**Correction** : aux deux points d'appel de `ComputeEstimatedReady`, dès que le fallback est
+effectivement appliqué, `req.Order.IsScheduled` est forcé à `false` à cet endroit — la seule source
+fiable pour savoir "cette valeur n'a pas été fournie par le client".
+
+### D9 — `dateCall` n'était pas mort, contrairement à la demande initiale
+**Hypothèse de départ (utilisateur)** : `dateCall` inutilisé, à remplacer par le nouveau champ.
+**Recherche** : lu dans 3 endroits de wello-back-office (`analyticsService.ts`, `customersService.ts`,
+**`DashboardOrderHistory.tsx`** — écran routé/vivant), toujours en fallback `callHour || creation_date`.
+Dans les faits `dateCall` valait quasi toujours `creation_date` (écrit à `UTC_TIMESTAMP()` à la
+création, jamais une valeur distincte) — un fallback qui ne se déclenchait presque jamais, mais bien
+réel.
+**Décision, confirmée par l'utilisateur** : supprimer `dateCall` quand même (migration 103), et migrer
+les 3 lectures back-office vers `creation_date` seul — changement mécanique et sûr vu l'équivalence de
+fait constatée.
+
+### D10 — Correction ScanNOrder : `estimated_ready` non-programmé redevient temps cuisine seul
+**Constat** : l'étape 1 calculait `estimated_ready = now + prépa + trajet` pour une commande livraison
+"Standard" (non programmée) — cohérent avec l'ancien comportement (une seule heure, combinée), plus
+avec la sémantique de l'étape 2 (non-programmé ⇒ `estimated_ready` = temps cuisine auto, sans trajet).
+**Correction** : `CheckoutFlow.tsx` `handleConfirm`, cas DELIVERY non programmé, `estimated_ready =
+now + prépa` (le trajet n'y est plus ajouté). `delivery_travel_seconds` continue d'être envoyé
+séparément pour que le backend calcule `delivery_arrival_at = estimated_ready + trajet`.
+**Ce qui ne change pas** : l'affichage client (en-tête catalogue, option "Standard" au checkout)
+continue de combiner prépa+trajet pour l'estimation montrée — seule la valeur envoyée comme
+`estimated_ready` au backend change.
+
+### D11 — Plus de recalcul client des deadlines : `OrderDto` lit directement le backend
+**Décision** : `ProductionController.effectiveProductionDeadline` (étape 1, toujours
+`estimated_ready - travel`, faux pour le cas non-programmé et une règle métier dupliquée côté client)
+est retiré. `OrderDto` gagne les champs directs `productionReadyAt`/`deliveryArrivalAt` (miroir des
+colonnes backend, déjà correctement calculées) et un seul getter `kitchenReadyAt =>
+productionReadyAt ?? estimatedReady` (repli pour les commandes antérieures à la migration).
+**Pourquoi** : la règle `scheduled ? - : +` ne doit vivre qu'à un seul endroit (le backend) — la
+dupliquer côté Dart aurait recréé exactement le problème identifié en D7 pour la base de données, côté
+code cette fois.
+**Effet de bord découvert en implémentant** : un troisième appelant de l'ancienne méthode existait,
+non repéré pendant la planification — [production_load_slots.dart](../lib/ui/widgets/production/sidebar/production_load_slots.dart),
+l'indicateur de charge de production utilisé à la fois sur l'écran PRODUCTION et sur "commandes en
+cours" (`combineAllProfiles`). Migré vers `order.kitchenReadyAt` comme les autres, confirmant au
+passage que ce widget est bien partagé entre les deux écrans visés par D12.
+
+### D12 — Affichage des deux heures, labellisées
+- **Écran production** ([production_order_header_values.dart](../lib/ui/views/production/order/production_order_header_values.dart)) :
+  le badge d'urgence (`WelloLiveOrderAgeBadge`) reçoit désormais `order.kitchenReadyAt` au lieu de
+  `order.estimatedReady` brut — corrige aussi sa coloration, qui utilisait la mauvaise heure pour une
+  commande programmée. Ligne secondaire ajoutée (icône livreur + heure, `DateHelper.formatProductionScheduleDateTime`),
+  visible seulement quand `deliveryArrivalAt` est connu.
+- **Écran « En cours »** ([order_cell.dart](../lib/ui/widgets/home/order_list/order_cell.dart), confirmé
+  par l'utilisateur comme l'écran visé — l'équivalent back-office existe dans le code mais n'est relié
+  à aucune route) : badge sur `order.deliveryArrivalAt ?? order.kitchenReadyAt` (ETA côté client :
+  arrivée livreur pour une livraison, sinon deadline cuisine — exactement ce que représentait
+  `estimated_ready` avant sa spécialisation). Nouveau libellé `"Cuisine HH:mm · Livraison HH:mm"`
+  quand les deux heures sont connues, prioritaire sur l'ancien libellé de créneau programmé (plus
+  informatif dans tous les cas).
 
 ---
 
@@ -206,6 +304,10 @@ de dev connectée, pas de serveur API lancé, pas d'app Flutter ni de dev server
 | `wello_resto_flutter` | `dart analyze` sur les 9 fichiers Dart touchés | ✅ *No issues found!* |
 | `wello-resto-scannorder` | `npx tsc --noEmit` | ✅ exit 0, aucune erreur |
 | `wello-resto-scannorder` | `npx eslint` sur les 5 fichiers touchés | ✅ exit 0 |
+| `ib-welloresto-api` (étape 2) | `go build ./...` + `go vet` + `go test` (mêmes packages) + `gofmt -l` | ✅ (mêmes 2 warnings préexistants, toujours sans rapport) |
+| `wello-back-office` (étape 2) | `npx tsc --noEmit` après retrait de `callHour` | ✅ exit 0 |
+| `wello_resto_flutter` (étape 2) | `dart analyze` ciblé (9 fichiers) puis `dart analyze` **projet entier** | ✅ 0 erreur ; 140 infos préexistantes sans rapport (avoid_print, deprecated_member_use, etc. — vérifié qu'aucune ne cite les fichiers/champs touchés) |
+| `wello-resto-scannorder` (étape 2) | `npx tsc --noEmit` + `npx eslint` sur `CheckoutFlow.tsx` | ✅ exit 0 |
 
 **Non vérifié — à faire avant mise en production** :
 - Application réelle de la migration 102 (MySQL de dev/staging).
@@ -226,15 +328,23 @@ de dev connectée, pas de serveur API lancé, pas d'app Flutter ni de dev server
 | Backend : schéma + persistance + lecture + fallback + cron + exposition ScanNOrder | ✅ codé, non vérifié en exécution |
 | POS Flutter : capture Google Maps existant, propagation, écran production | ✅ codé, `dart analyze` propre |
 | ScanNOrder : réutilisation OSRM existant, payload, affichages | ✅ codé, `tsc`/`eslint` propres |
-| Migration appliquée (dev/staging/prod) | ❌ pas fait |
+| Migration appliquée (dev/staging/prod) | ❌ pas fait (102 **et** 103) |
 | QA manuelle (3 apps) | ❌ pas fait |
 | Vérification du premier calcul de moyenne par le cron | ❌ pas fait |
+| Étape 2 : `production_ready_at`/`delivery_arrival_at` (backend + persistance + lecture) | ✅ codé, non vérifié en exécution |
+| Étape 2 : fix `resolveIsScheduled`/`ComputeEstimatedReady` | ✅ codé |
+| Étape 2 : retrait `dateCall`/`callHour` (backend + wello-back-office) | ✅ codé, `tsc` propre |
+| Étape 2 : correction ScanNOrder (`estimated_ready` non-programmé) | ✅ codé |
+| Étape 2 : `OrderDto.kitchenReadyAt`/`deliveryArrivalAt`, écrans production + « En cours » | ✅ codé, `dart analyze` propre |
 
 ---
 
 ## 7. Références
 
-- Plan initial validé par l'utilisateur : `C:\Users\Ilies\.claude\plans\magical-strolling-puddle.md`
+- Plan initial validé par l'utilisateur (étape 1) et plan de l'étape 2 : `C:\Users\Ilies\.claude\plans\magical-strolling-puddle.md`
+  (le fichier est réutilisé d'une étape à l'autre — son contenu reflète l'étape la plus récente, pas
+  un historique)
 - Patron de cron répliqué : [internal/tasks/distribution.go](../internal/tasks/distribution.go)
 - Passthrough Google Maps existant (non modifié) : [internal/modules/googlemaps/](../internal/modules/googlemaps/)
 - Hook OSRM existant (non modifié, réutilisé) : `wello-resto-scannorder/src/hooks/useOsrmRoute.ts`
+- Migration 103 : [migrations/todo/103_production_ready_delivery_arrival.up.sql](../migrations/todo/103_production_ready_delivery_arrival.up.sql)

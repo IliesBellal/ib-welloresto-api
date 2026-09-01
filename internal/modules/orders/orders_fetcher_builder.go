@@ -614,7 +614,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		o.brand, o.merchant_id, o.brand_status, o.brand_order_id, o.brand_order_num,
 		o.estimated_ready, o.delivery_travel_seconds, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
-		o.isPaid, o.isDistributed, o.dateCall,
+		o.isPaid, o.isDistributed, o.production_ready_at, o.delivery_arrival_at,
 		o.merchant_approval, o.delivery_fees, o.last_update,
 		o.fulfillment_type,
 		CASE WHEN o.use_customer_temporary_address THEN 1 ELSE 0 END AS use_customer_temporary_address,
@@ -658,13 +658,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
-				meansOfPayment, monnaie, cutleryNotes, dateCall,
+				meansOfPayment, monnaie, cutleryNotes,
 				fulfillmentType, pagerNumber, merchantApproval, userID, customerBrand, merchantID sql.NullString
 
 			var customerLat, customerLng, customerTemporaryLat,
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
-			var lastUpdate, creationDate, estimatedReady sql.NullTime
+			var lastUpdate, creationDate, estimatedReady, productionReadyAt, deliveryArrivalAt sql.NullTime
 			var scheduled, isPaid, isDistributed, cashRegisterClosed, advertisingConsent sql.NullBool
 
 			var cName, cLastName, cFirstName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
@@ -678,7 +678,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&brand, &merchantID, &brandStatus, &brandOrderID, &brandOrderNum,
 				&estimatedReady, &deliveryTravelSeconds, &meansOfPayment, &price, &TVA, &HT,
 				&monnaie, &cutleryNotes,
-				&isPaid, &isDistributed, &dateCall,
+				&isPaid, &isDistributed, &productionReadyAt, &deliveryArrivalAt,
 				&merchantApproval, &deliveryFees, &lastUpdate,
 				&fulfillmentType, &useCustomerTemporaryAddress,
 				&creationDate, &placesSettings, &pagerNumber,
@@ -717,12 +717,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.IsPaid = isPaid.Bool
 			ord.IsDistributed = isDistributed.Bool
 			ord.IsSNO = userID.String == "SCANNORDER"
-			ord.CallHour = helpers.NullStringToPtr(dateCall)
 			ord.EstimatedReady = helpers.NullTimeToNullUnixInt(estimatedReady)
 			if deliveryTravelSeconds.Valid {
 				seconds := int(deliveryTravelSeconds.Int64)
 				ord.DeliveryTravelSeconds = &seconds
 			}
+			ord.ProductionReadyAt = helpers.NullTimeToNullUnixInt(productionReadyAt)
+			ord.DeliveryArrivalAt = helpers.NullTimeToNullUnixInt(deliveryArrivalAt)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
 			ord.CreationDate = helpers.NullTimePtr(creationDate).UTC().Unix()
