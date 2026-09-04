@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/redis"
@@ -342,7 +343,9 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	// Helpers pour les pointeurs
 	cashRegisterID := models.BrandDeliveroo
 	createdBy := models.DeliverooWebhookUserID
-	brandStatus := ord.Status
+	// brand_status s'écrit toujours en majuscules (B3) : Deliveroo est le seul
+	// provider à envoyer ses statuts en minuscules ("placed", "accepted"...).
+	brandStatus := strings.ToUpper(ord.Status)
 	fulfillmentType := models.FulfillmentTypeRestaurant
 
 	var parentOrderID *string

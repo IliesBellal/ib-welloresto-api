@@ -40,6 +40,13 @@ type OrderItemInsert struct {
 	Comment         *string
 	CreatedBy       string
 	IsUpsell        bool // true when this line was added from an upsell suggestion
+
+	// CostPriceUnit/CostPriceReason snapshot the frozen unit cost-of-goods at
+	// write time (see internal/modules/order_life_cycle.resolveOrderItemCost).
+	// CostPriceUnit is nil whenever it can't be trusted — CostPriceReason then
+	// explains why (costing.ReasonNoRecipe / costing.ReasonIncompleteRecipe).
+	CostPriceUnit   *int
+	CostPriceReason *string
 }
 
 type ExtraInsert struct {
@@ -197,6 +204,11 @@ type Customer struct {
 	AdvertisingConsent                 *bool    `json:"advertising_consent"`
 	CustomerBrand                      *string  `json:"customer_brand"`
 	CustomerDeliveryNotes              *string  `json:"customer_delivery_notes"`
+	// AcquisitionSource (A6b) : canal d'acquisition, capté uniquement à la
+	// création de la fiche — laisser nil sur une mise à jour d'un client
+	// existant (voir CustomersRepository.UpdateOrCreateCustomer, qui n'écrit
+	// ce champ que dans sa branche INSERT).
+	AcquisitionSource *string `json:"acquisition_source,omitempty"`
 }
 
 type Order struct {

@@ -327,10 +327,10 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	// --- annulation / divers ---
-	if err := repo.DenyOrderLocal(ctx, orderID, "1", "test deny"); err != nil {
+	if err := repo.DenyOrderLocal(ctx, orderID, "1", "test deny", createdBy); err != nil {
 		t.Fatalf("DenyOrderLocal: %v", err)
 	}
-	if err := repo.DeleteOrderLocal(ctx, orderID, "1", "test delete"); err != nil {
+	if err := repo.DeleteOrderLocal(ctx, orderID, "1", "test delete", createdBy); err != nil {
 		t.Fatalf("DeleteOrderLocal: %v", err)
 	}
 	if err := repo.DisablePayments(ctx, orderID); err != nil {

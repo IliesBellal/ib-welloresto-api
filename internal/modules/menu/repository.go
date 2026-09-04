@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"welloresto-api/internal/costing"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
@@ -2102,9 +2103,10 @@ func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string
 
 				// Calculer purchase_price_per_unit = purchase_price / purchase_price_quantity
 				var purchasePricePerUnit *float64
-				if purchasePrice != nil && purchasePriceQty != nil && *purchasePriceQty > 0 {
-					ppu := float64(*purchasePrice) / *purchasePriceQty
-					purchasePricePerUnit = &ppu
+				if purchasePrice != nil && purchasePriceQty != nil {
+					if ppu, ok := costing.PricePerUnit(*purchasePrice, *purchasePriceQty); ok {
+						purchasePricePerUnit = &ppu
+					}
 				}
 
 				purchaseUomID := ""

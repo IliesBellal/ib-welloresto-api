@@ -60,6 +60,7 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 		"customer_temporary_floor_number":       true,
 		"customer_temporary_additional_address": true,
 		"advertising_consent":                   true,
+		"acquisition_source":                    true,
 	}
 
 	// -------------------------------------------------------
@@ -72,6 +73,12 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 
 		// pour chaque champ autorisé → ajouter au SET si != nil
 		for col := range allowed {
+			if col == "acquisition_source" {
+				// A6b : capté uniquement à la création, jamais réécrit sur un
+				// client existant — exclu structurellement de l'UPDATE, pas
+				// seulement laissé nil côté appelant.
+				continue
+			}
 			v := extractFieldValue(c, col)
 			if v != nil {
 				setParts = append(setParts, col+" = ?")
@@ -150,6 +157,12 @@ func extractFieldValue(c *models.Customer, field string) interface{} {
 	case "customer_brand":
 		if c.CustomerBrand != nil && *c.CustomerBrand != "" {
 			return helpers.Ucfirst(*c.CustomerBrand)
+		}
+		return nil
+
+	case "acquisition_source":
+		if c.AcquisitionSource != nil && *c.AcquisitionSource != "" {
+			return *c.AcquisitionSource
 		}
 		return nil
 

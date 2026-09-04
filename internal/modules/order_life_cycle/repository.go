@@ -665,7 +665,7 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 	return &info, nil
 }
 
-func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment string) error {
+func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment, userID string) error {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -676,9 +676,10 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
             merchant_approval = 'DENIED',
             state = 'CLOSED',
             deletion_reason_id = ?,
-            deletion_comment = ?
+            deletion_comment = ?,
+            cancelled_by_type = ?
         WHERE order_id = ?`,
-		deletionReasonID, comment, orderID,
+		deletionReasonID, comment, classifyCancelledByType(userID), orderID,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -770,7 +771,7 @@ func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID 
 	return count > 0, nil
 }
 
-func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string) error {
+func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, userID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	// 1) Get metadata
@@ -810,9 +811,10 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
             delivered_on = `+dbx.UTCNow()+`,
 			previous_hash = ?,
 			hash = ?,
-			signature = ?
+			signature = ?,
+			cancelled_by_type = ?
         WHERE order_id = ?`,
-		reasonID, comment, prevHash, newHash, signature, orderID,
+		reasonID, comment, prevHash, newHash, signature, classifyCancelledByType(userID), orderID,
 	)
 
 	return err
@@ -1337,6 +1339,14 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 		cust.AdvertisingConsent = req.Order.Customer.AdvertisingConsent
 	}
 
+	// A6b : acquisition_source n'est capté qu'à la création — seulement
+	// lorsque CustomerID est absent, ce qui fait passer UpdateOrCreateCustomer
+	// dans sa branche INSERT (elle exclut de toute façon cette colonne de sa
+	// branche UPDATE, en ceinture et bretelles).
+	if cust.CustomerID == nil {
+		cust.AcquisitionSource = resolveOrderSource(req.Order.Brand, req.Order.CreatedBy)
+	}
+
 	newIDStr, err := r.custoRepo.UpdateOrCreateCustomer(ctx, cust)
 	if err != nil {
 		log.Error("Failed to create - update customer - " + err.Error())
@@ -1439,8 +1449,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	// dans aucun dialecte — les deux chemins (item existant / nouveau) sont
 	// donc séparés côté PG, à comportement identique.
 	upsertItemQuery := `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
 			-- Remet isDistributed et le statut de production à zéro seulement si la
 			-- quantité distribuée ne correspond plus à la nouvelle quantité commandée
@@ -1449,32 +1459,36 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			isDistributed = CASE WHEN distributed_quantity = VALUES(quantity) THEN isDistributed ELSE 0 END,
 			production_status = CASE WHEN distributed_quantity = VALUES(quantity) THEN production_status ELSE 'CREATION' END,
 			production_status_done_quantity = CASE WHEN distributed_quantity = VALUES(quantity) THEN production_status_done_quantity ELSE 0 END,
-			quantity      = VALUES(quantity),
-			base_price    = VALUES(base_price),
-			price         = VALUES(price),
-			discount_id   = VALUES(discount_id),
-			delay_id      = VALUES(delay_id),
-			is_upsell     = VALUES(is_upsell),
-			ordered_on    = VALUES(ordered_on)`
+			quantity        = VALUES(quantity),
+			base_price      = VALUES(base_price),
+			price           = VALUES(price),
+			discount_id     = VALUES(discount_id),
+			delay_id        = VALUES(delay_id),
+			is_upsell       = VALUES(is_upsell),
+			cost_price_unit   = VALUES(cost_price_unit),
+			cost_price_reason = VALUES(cost_price_reason),
+			ordered_on      = VALUES(ordered_on)`
 	insertItemQuery := `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
 	if dbx.ActiveDialect() == dbx.Postgres {
 		upsertItemQuery = `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, ordered_on)
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
 		OVERRIDING SYSTEM VALUE
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 		ON CONFLICT (order_item_id, order_id, product_id) DO UPDATE SET
 			isDistributed = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.isDistributed ELSE FALSE END,
 			production_status = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.production_status ELSE 'CREATION' END,
 			production_status_done_quantity = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.production_status_done_quantity ELSE 0 END,
-			quantity      = EXCLUDED.quantity,
-			base_price    = EXCLUDED.base_price,
-			price         = EXCLUDED.price,
-			discount_id   = EXCLUDED.discount_id,
-			delay_id      = EXCLUDED.delay_id,
-			is_upsell     = EXCLUDED.is_upsell,
-			ordered_on    = EXCLUDED.ordered_on`
+			quantity        = EXCLUDED.quantity,
+			base_price      = EXCLUDED.base_price,
+			price           = EXCLUDED.price,
+			discount_id     = EXCLUDED.discount_id,
+			delay_id        = EXCLUDED.delay_id,
+			is_upsell       = EXCLUDED.is_upsell,
+			cost_price_unit   = EXCLUDED.cost_price_unit,
+			cost_price_reason = EXCLUDED.cost_price_reason,
+			ordered_on      = EXCLUDED.ordered_on`
 	}
 
 	for i := range req.Order.Products {
@@ -1487,12 +1501,18 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			finalPrice = *p.DiscountedPrice
 		}
 
+		// Recalculé à chaque écriture de la ligne (insert ou upsert), comme
+		// price/base_price : la commande reste ouverte tant qu'elle n'est pas
+		// payée/fermée, donc une modification de quantité/produit ici est
+		// encore "la vente" au sens du lot B2, pas une réécriture a posteriori.
+		costPriceUnit, costPriceReason := r.resolveOrderItemCost(ctx, req.MerchantID, p.ProductID, selectedOptionsOf(p.Config))
+
 		if p.OrderItemID == nil {
 			// Nouveau produit : insertion simple, ID auto-généré récupéré
 			// (RETURNING côté PG, LastInsertId côté MySQL).
 			newID, err := db.InsertReturningID(ctx, insertItemQuery, "order_item_id",
 				req.Order.OrderID, p.ProductID, req.MerchantID,
-				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell)
+				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason)
 			if err != nil {
 				return fmt.Errorf("product insert failed (product_id=%s): %w", p.ProductID, err)
 			}
@@ -1503,7 +1523,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		} else {
 			if _, err := db.ExecContext(ctx, upsertItemQuery,
 				p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell); err != nil {
+				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason); err != nil {
 				return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 			}
 		}
@@ -1807,18 +1827,19 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
 	productionReadyAt := resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds)
 	deliveryArrivalAt := resolveDeliveryArrivalAt(req.Order.OrderType, estimatedReady, isScheduled, deliveryTravelSeconds)
+	orderSource := resolveOrderSource(req.Order.Brand, req.Order.CreatedBy)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, production_ready_at, delivery_arrival_at, use_customer_temporary_address,
-		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid, brand_store_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid, brand_store_id, order_source)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, isScheduled,
 		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds, productionReadyAt, deliveryArrivalAt,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
-		req.Order.BrandStoreID,
+		req.Order.BrandStoreID, orderSource,
 	)
 	if err != nil {
 		return "no_order_created", err
@@ -2197,8 +2218,13 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
 func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *models.RequestObject) ([]models.UsedItem, error) {
+	// Coûts résolus pour toutes les lignes en un seul aller-retour batché
+	// plutôt qu'un par ligne (~2 requêtes par ligne sinon) : voir
+	// docs/decisions.md, impact mesuré sur staging.
+	costResults := r.resolveOrderItemCostsForOrder(ctx, req.MerchantID, req.Order.Products)
+
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
-	for _, p := range req.Order.Products {
+	for i, p := range req.Order.Products {
 		if p.Quantity == 0 {
 			continue
 		}
@@ -2208,6 +2234,8 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 		if p.DiscountedPrice != nil {
 			finalPrice = *p.DiscountedPrice
 		}
+
+		costPriceUnit, costPriceReason := costResults[i].costPriceUnit, costResults[i].costPriceReason
 
 		item := &models.OrderItemInsert{
 			OrderID:         *req.Order.OrderID,
@@ -2221,6 +2249,8 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 			DelayID:         p.DelayID,
 			CreatedBy:       *req.Order.CreatedBy,
 			IsUpsell:        p.IsUpsell,
+			CostPriceUnit:   costPriceUnit,
+			CostPriceReason: costPriceReason,
 		}
 		if p.Comment != nil && p.Comment.Content != "" {
 			item.Comment = &p.Comment.Content
@@ -2241,9 +2271,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbx.GetDB(ctx, r.database)
 
 	lastID, err := db.InsertReturningID(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell)
-		VALUES (?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?)
-		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell, cost_price_unit, cost_price_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?)
+		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell, item.CostPriceUnit, item.CostPriceReason)
 	if err != nil {
 		return 0, err
 	}

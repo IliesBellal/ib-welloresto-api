@@ -99,6 +99,247 @@
   dans `docs/RBAC_REPLI_HISTORIQUE.md` (0 ligne `role_id IS NULL` active,
   production comprise), non atteinte, non traitée ici.
 
+### PROMPT 07 lot 1 — instrumentation du chemin d'écriture : coût figé, source, annulation, casse (2026-09-04)
+
+- **Contexte** : première vague de `ROADMAP-analytics.md` (doc non présent
+  dans le dépôt — même situation que `docs/analytics/DROITS.md` pour le
+  chantier RBAC : les figures citées par le brief ont toutes été vérifiées
+  contre staging et se sont révélées exactes, donc pas de blocage sur son
+  absence). Périmètre : migration additive unique
+  (`migrations/todo/114_write_path_instrumentation.up/down.sql`), code
+  d'écriture sur branche dédiée `feature/write-path-instrumentation-lot1`,
+  audit TVA (`docs/TVA_MARKETPLACE_AUDIT.md`). Aucune touche à la couche
+  analytique, à la logique fiscale ni au RBAC.
+- **Recherche préalable** : 4 agents Explore en parallèle (chemin d'écriture
+  `orderitems`/calcul de coût existant, recensement exhaustif des 16 chemins
+  d'annulation, schéma `orders`/`customer` et usages de `brand_status`,
+  payloads webhook Uber Eats/Deliveroo pour la TVA) + vérification directe
+  contre `RENDER_STAGING_DATABASE_URL` à chaque étape (schéma réel,
+  distribution des données, simulation SQL des règles de rétro-remplissage
+  avant de les figer dans la migration).
+
+#### B2 — coût de revient figé sur `orderitems`
+
+- **Colonnes** : `cost_price_unit integer` (coût **unitaire**, pas coût de
+  ligne — se multiplie trivialement par `quantity` à la lecture, comme
+  `price`/`base_price` déjà stockés en unitaire ; un coût de ligne
+  pré-multiplié aurait dû être recalculé à chaque changement de quantité) et
+  `cost_price_reason varchar(20)` (`NO_RECIPE` | `INCOMPLETE_RECIPE`,
+  `CHECK` constraint). Centimes entiers, jamais de flottant — `orders.monnaie`
+  documenté comme contre-exemple (colonne `real`, jamais lue côté Go après
+  scan, dérive silencieuse potentielle).
+- **Distinction NO_RECIPE / INCOMPLETE_RECIPE** obtenue sans colonne
+  supplémentaire : `cost_price_unit` NULL + `cost_price_reason` NULL = ligne
+  antérieure à ce lot (jamais évaluée) ; NULL + `NO_RECIPE`/`INCOMPLETE_RECIPE`
+  = évaluée après déploiement, cas normal vs défaut de paramétrage.
+- **Calcul** : `internal/costing` (nouveau package, pur, sans accès DB) —
+  `UnitCost`/`ConvertedQuantity`/`PricePerUnit`. La logique existante
+  (`menu.GetAllProducts`) était dupliquée 3 fois et divergeait sur la
+  convention `unit_of_measure_convert` : `menu.GetAllProducts` interroge
+  `(id_from=unité requise, id_to=unité composant)` et divise,
+  `stocks.ConsumeOrderStock` interroge la paire inverse et multiplie — les
+  deux sont justes (vérifié sur staging : chaque paire existe en double sens,
+  ratios bien réciproques), mais ne doivent pas être mélangées. `internal/costing`
+  fixe la convention de `menu.GetAllProducts` (division) et corrige un vrai
+  bug de cette dernière au passage : `COALESCE(conv.ratio, 1)` suppose
+  silencieusement une conversion 1:1 quand aucune ligne de conversion
+  n'existe pour des unités différentes — remplacé par un échec explicite
+  (`ok=false` → `INCOMPLETE_RECIPE`), conforme à la règle NULL≠0 du lot.
+  `requires.consumable_id` (17/2246 lignes actives sur staging) n'est pas
+  résolu par ce lot (le brief ne mentionne que `components.purchase_price`) :
+  traité comme incomplet plutôt qu'ignoré silencieusement.
+- **Factorisation partielle, assumée** : `menu.GetAllComponents` et
+  `stocks.GetComponentsList` (duplications triviales à une ligne,
+  `purchase_price / purchase_price_quantity`) migrées vers
+  `costing.PricePerUnit`. Le calcul complet de `menu.GetAllProducts`
+  (agrégation multi-composants, affichage admin uniquement, jamais sur le
+  chemin d'écriture) n'a **pas** été réécrit pour réutiliser `internal/costing`
+  — risque de régression sur l'éditeur de menu hors scope de ce lot pour un
+  gain nul sur l'objectif B2. Signalé comme nettoyage candidat pour un lot
+  séparé plutôt que fait à la sauvette ici.
+- **Options** : `configurable_attribute_options.component_id/quantity/unit_of_measure`
+  existaient déjà (migration 079, jamais branchés sur un calcul de coût).
+  Le coût d'une option sélectionnée est résolu avec le même
+  `costing.UnitCost` et additionné au coût unitaire de la ligne — pas de
+  nouvelle colonne. Convention alignée sur `extra_price` (déjà multiplié par
+  `oi.quantity` dans les recalculs de CA existants) : le coût d'une option
+  est résolu **par unité de produit**, pas par ligne.
+- **Performance, mesurée avant/après correctif** : la résolution initiale
+  (une par ligne de commande) coûtait ~2 allers-retours SQL par ligne
+  (recherche de recette + jointure requires/components/conversion),
+  mesuré à ~46 ms/ligne depuis la machine de dev vers Postgres staging —
+  chiffre dominé par la latence réseau dev→Render (confirmé : une simple
+  requête déjà sur le chemin critique, `GetNextOrderNum`, coûte ~21 ms dans
+  les mêmes conditions), donc surestime largement l'impact réel
+  service→DB colocalisés en production. Corrigé quand même, par principe
+  (le nombre d'allers-retours, lui, était réel et proportionnel au nombre de
+  lignes) : `insertOrderItems` (chemin `CreateOrder`) résout désormais tout
+  le panier en un lot (`resolveOrderItemCostsForOrder` — 2 requêtes IN(...)
+  au total, quelle que soit la taille du panier) au lieu d'une résolution
+  par ligne. Mesuré après correctif : ~44 ms pour un panier de 5 lignes
+  (contre ~230 ms estimés sans le lot), soit le coût figé de 2
+  allers-retours au lieu de 2×N. `UpdateOrder` (édition d'une commande
+  ouverte) garde la résolution ligne par ligne — édite typiquement 1-2
+  lignes à la fois, pas tout un panier neuf ; changement jugé disproportionné
+  pour ce lot, à reconsidérer si `UpdateOrder` s'avère un jour appelé avec
+  beaucoup de lignes modifiées simultanément. Pas de cache Redis posé : le
+  vrai problème était le nombre d'allers-retours (résolu par le batch), pas
+  le coût de calcul lui-même.
+- **Choke points touchés** : `InsertOrderItem`/`insertOrderItems` (repository.go,
+  chemin `CreateOrder` — POS, kiosk, ScanNOrder, webhooks Uber Eats/Deliveroo,
+  tous convergent ici) et les deux variantes de `UpdateOrder` (insert de
+  nouvelle ligne + upsert MySQL/Postgres — les deux tenues synchronisées en
+  nombre de placeholders, le chemin MySQL étant mort en production mais
+  toujours compilé/lié au même jeu de paramètres).
+
+#### A6 — `orders.order_source`
+
+- **Colonne** : `varchar(30)` + `CHECK IN ('WELLO_RESTO_POS','KIOSK',
+  'SCANNORDER','UBER_EATS','DELIVEROO')`. Aucune colonne existante ne porte
+  déjà cette info — confirmé par grep et par deux docs internes
+  (`docs/ARCHITECTURE_API.md` §7.3, `docs/KIOSK_DECISIONS.md`) qui proposaient
+  déjà ce champ sans jamais l'implémenter (dette technique signalée, jamais
+  traitée avant ce lot).
+- **Dérivation** (`internal/modules/order_life_cycle/source.go`,
+  `resolveOrderSource`, mêmes règles dans la migration pour le
+  rétro-remplissage) : `brand=UBER_EATS/DELIVEROO` → valeur directe (created_by
+  ne dit rien du canal pour ces deux, seulement de la commande d'origine du
+  webhook) ; `brand=WELLO_RESTO` + `created_by='KIOSK'` → `KIOSK` ;
+  `created_by IN ('SCANNORDER','-1')` → `SCANNORDER` (`-1` = marqueur legacy,
+  déjà traité comme équivalent ailleurs dans `pos/accounting`) ; `created_by`
+  numérique ou `user-<uuid>` → `WELLO_RESTO_POS`. Piège trouvé et corrigé en
+  cours de route : `upsertCustomer` s'exécute **avant** `setOrderDefaults`
+  dans `CreateOrder`, donc `brand` peut encore valoir `""` au moment de
+  dériver l'`acquisition_source` du client — `resolveOrderSource` traite `""`
+  comme `WELLO_RESTO` pour rester correct indépendamment de l'ordre d'appel.
+- **Rétro-remplissage** : vérifié sur staging avant d'écrire la migration —
+  33858/33862 commandes (99,99 %) couvertes sans ambiguïté ; le reste (3
+  lignes) porte un `created_by` contredisant `brand` (anomalie de données
+  historique, ex. `brand=WELLO_RESTO` avec `created_by=WEBHOOK_UBER_EATS`) →
+  laissé `NULL`.
+
+#### A6b — `customer.acquisition_source`
+
+- **Colonne** : `varchar(30)`, pas de `CHECK` (vocabulaire ouvert, le brief
+  ne fixe pas de liste fermée contrairement à A6). Distincte de
+  `customer_brand` existant (marque propriétaire de la fiche, pas canal
+  d'acquisition — confusion explicitement signalée par le brief).
+- **Non rétro-remplie**, par construction. Protection en ceinture et
+  bretelles : `CustomersRepository.UpdateOrCreateCustomer` exclut désormais
+  `acquisition_source` de sa branche UPDATE (pas seulement laissée `nil` côté
+  appelant) — impossible d'écraser la valeur captée à la création d'un client
+  existant, même par erreur d'appel future.
+
+#### C2 — `orders.cancelled_by_type`
+
+- **Recensement exhaustif** : 16 chemins identifiés (voir l'agent de
+  recherche dédié), convergeant tous vers 2 points de choke
+  (`DenyOrderLocal`, `DeleteOrderLocal`) + 1 chemin direct hors
+  `order_life_cycle` (webhook Uber Eats `orders_repo.go:CancelOrder`, bypass
+  complet). `cancelled_by_type` dérivé de l'acteur déjà porté par
+  `DenyOrderRequest.UserID`/`DenyOrderInput.UserID` (jusque-là utilisé
+  seulement pour les notifications/clé Redis, jamais persisté) :
+  `SYSTEM`/`WEBHOOK_STRIPE` → SYSTEM, `WEBHOOK_DELIVEROO`/`WEBHOOK_UBER_EATS`
+  → PLATFORM, `SNO_CUSTOMER`/`KIOSK` → CUSTOMER, tout le reste (par
+  construction : un vrai `user_id` authentifié) → STAFF. Uber Eats webhook
+  direct : `PLATFORM` codé en dur (aucun acteur du tout dans ce payload).
+  **Hors périmètre, assumé** : `terminalizeDeliveryStop` (échecs de livraison
+  `DELIVERY_FAILED`/`DELIVERY_CANCELED`) — statuts distincts de
+  DENIED/CANCELED, une livraison ratée peut être retentée, pas clairement
+  une « annulation » au sens C2 ; laissé de côté plutôt que deviné.
+- **Rétro-remplissage**, vérifié sur staging avant migration (2225 commandes
+  annulées/refusées au total) : `brand=DELIVEROO` → `PLATFORM` systématique
+  (aucun chemin d'annulation staff n'existe pour Deliveroo dans ce dépôt,
+  contrairement à Uber Eats — vérifié par grep exhaustif). `brand=UBER_EATS` :
+  signal décisif = `deletion_reason_id`, pas `created_by` (qui ne porte que
+  l'identité du webhook créateur, jamais celle de qui annule) — reason `39`/`41`
+  (catalogue `uber_eats_webhook`/`uber_eats_api`) → PLATFORM, reason dans le
+  catalogue `uber_eats_cancel`/`uber_eats_deny` (12-26, 28-34 — raison Uber
+  choisie par un staff pour propager l'annulation via l'API) → STAFF.
+  `brand=WELLO_RESTO` : `created_by='KIOSK'` ou reason
+  `KIOSK_CUSTOMER_CANCELLED`/`SNO_CUSTOMER_CANCELLED` → CUSTOMER (**bug
+  préexistant découvert en vérifiant les données** : `orders.deletion_reason_id`
+  est `varchar(11)`, ces deux sentinelles Go, plus longues, sont tronquées
+  silencieusement à l'écriture — `KIOSK_CUSTO`/`SNO_CUSTOME` sur staging ;
+  migration adaptée pour matcher les deux formes, bug lui-même **non
+  corrigé** ici, hors périmètre de ce lot, signalé pour un lot séparé) ;
+  reason `42`/`43` (expiration automatique d'approbation/paiement) → SYSTEM ;
+  `created_by` réel (numérique ou `user-...`) + reason du catalogue générique
+  `order` (motifs 1-8) → STAFF. Couverture finale : STAFF 1270, SYSTEM 485,
+  PLATFORM 145, CUSTOMER 27, **NULL 298 (13,4 %, laissé tel quel plutôt que
+  deviné** — essentiellement des lignes sans `deletion_reason_id` exploitable,
+  legacy d'avant l'usage systématique de ce champ).
+- **Artefact de données trouvé en vérifiant, corrigé dans la migration
+  seulement** : des lignes historiques portent `deletion_reason_id` avec des
+  guillemets littéraux dans la valeur (`"'3'"` au lieu de `"3"`, ~212 lignes)
+  — `trim(both '''' from ...)` ajouté à toutes les comparaisons du
+  rétro-remplissage pour les récupérer plutôt que les laisser tomber en NULL.
+
+#### B3 — normalisation `brand_status`
+
+- **Cause racine trouvée** : Deliveroo est le seul provider à écrire en
+  minuscules, et à **deux** endroits, pas un seul — `buildOrderRequestObject`
+  (`internal/webhook/deliveroo_orders/service.go`, passthrough
+  `brandStatus := ord.Status` à la **création** de commande, jamais vu par
+  l'audit initial du brief) et `Repository.UpdateOrderRejected`/
+  `UpdateOrderAccepted`/`UpdateOrderConfirmed` (mises à jour de statut,
+  littéraux `'scheduled'`/`'accepted'`/`'confirmed'` + la comparaison CASE
+  elle-même). Les deux corrigés pour écrire/comparer en majuscules.
+  Uber Eats et WELLO_RESTO écrivaient déjà en majuscules partout — aucun
+  autre chemin d'écriture touché.
+- **Backfill** : `UPDATE orders SET brand_status = upper(brand_status) WHERE
+  brand_status <> upper(brand_status)` — 36 lignes sur staging (accepted:14
+  canceled:11 rejected:10 placed:1, toutes `brand=DELIVEROO`), exactement le
+  chiffre cité par le brief pour le périmètre total.
+- **Pas de nouveau code de comparaison à corriger** : tous les filtres
+  existants (`pos/accounting`, `pos/reports`, `stats`, `tasks/orders.go`,
+  `tasks/payments.go`, `orders/repository.go`) comparent déjà en majuscules
+  nu, sans `upper()` — corrects par construction une fois qu'aucun code
+  n'écrit plus en minuscules. `analytics/scope.go` avait déjà un `upper()`
+  défensif (chantier RBAC/analytics antérieur) — laissé tel quel, inoffensif.
+
+#### B1 — audit TVA marketplace
+
+- Constat détaillé : `docs/TVA_MARKETPLACE_AUDIT.md`. Résumé : aucun champ
+  taxe dans les deux payloads webhook, `ht`/`tva` à 0 par construction (codé
+  en dur côté Deliveroo, jamais assigné côté Uber Eats). Le recalcul depuis
+  les lignes existe déjà et couvre les deux marketplaces, mais uniquement
+  côté `internal/modules/analytics` (`pos/reports` les exclut explicitement) —
+  et sa fiabilité pour ces deux marques dépend d'un mapping `tva_categories`
+  qui diffère à l'auto-création de produit (Uber Eats en affecte une par
+  défaut, Deliveroo non — risque de perte silencieuse de lignes côté
+  Deliveroo, non quantifié). Aucun correctif posé, conformément au brief.
+
+#### Validation
+
+- **Corrections incidentes, hors périmètre du lot mais nécessaires pour
+  vérifier le reste** : `send_invoice_email_test.go` (signature
+  `customers.NewCustomersService` désynchronisée d'un chantier antérieur,
+  bloquait la compilation de tout le paquet `order_life_cycle`, y compris ses
+  tests d'intégration) — un seul argument `nil` ajouté, aucune logique
+  touchée.
+- **Migration 114 appliquée sur staging** (additive, idempotente) pour
+  valider réellement le lot plutôt que sur la seule lecture du code — voir
+  chiffres de rétro-remplissage ci-dessus, tous mesurés après application
+  réelle, pas simulés.
+- Nouveau test d'intégration Postgres
+  (`cost_postgres_integration_test.go`, tag `postgres_integration`) contre
+  staging : coût figé après modification de `components.purchase_price`
+  (le test central du lot), `NO_RECIPE` ≠ `INCOMPLETE_RECIPE`, coût d'option
+  inclus, résolution batchée strictement identique à la résolution ligne par
+  ligne sur un panier mélangeant les 4 cas + un même produit sur deux lignes.
+- `go build ./...`, `go vet ./...` (mêmes avertissements pré-existants,
+  sans rapport, vérifiés sur l'arbre propre) et `go test ./...` diffés
+  avant/après ce lot sur l'arbre entier : **zéro régression** — les 4
+  échecs pré-existants (`planning/employees`, `planning/leave`,
+  `planning/swaps`, `internal/modules/ubereats`) sont strictement identiques
+  avant et après, et ce lot en corrige un cinquième
+  (`order_life_cycle [build failed]`) au passage.
+- **Suite** : nettoyage candidat signalé (factorisation complète de
+  `menu.GetAllProducts`), bug de troncature `deletion_reason_id` signalé
+  (non corrigé), correctif TVA marketplace éventuel — tous explicitement
+  hors périmètre de ce lot, non planifiés ici.
+
 ### RBAC lot 11, Phase 6 — runbook de déploiement production (2026-09-03)
 
 - **Livrable** : `docs/RBAC_DEPLOIEMENT_PROD.md`. Couvre en une fois les lots

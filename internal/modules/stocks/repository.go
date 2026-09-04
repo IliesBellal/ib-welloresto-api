@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"welloresto-api/internal/costing"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -537,8 +538,10 @@ func (r *StocksRepository) GetComponentsList(ctx context.Context, merchantID str
 
 		item.Unit = models.StockComponentListUnit{UnitID: unitID, UnitName: unitName, UnitShortName: unitShortName}
 		item.PurchasingPrice = 0
-		if purchasePrice.Valid && purchasePriceQuantity.Valid && purchasePriceQuantity.Float64 > 0 {
-			item.PurchasingPrice = helpers.RoundToNearestInt(float64(purchasePrice.Int64) / purchasePriceQuantity.Float64)
+		if purchasePrice.Valid && purchasePriceQuantity.Valid {
+			if ppu, ok := costing.PricePerUnit(int(purchasePrice.Int64), purchasePriceQuantity.Float64); ok {
+				item.PurchasingPrice = helpers.RoundToNearestInt(ppu)
+			}
 		}
 
 		components = append(components, item)

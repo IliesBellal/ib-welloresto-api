@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -246,11 +247,14 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 func (r *Repository) UpdateOrderRejected(ctx context.Context, brandOrderID string, status string) error {
 	db := dbx.GetDB(ctx, r.database)
 
+	// brand_status s'écrit toujours en majuscules (B3) : Deliveroo envoie ses
+	// statuts en minuscules ("rejected", "canceled"), seul provider de ce
+	// dépôt à le faire.
 	query := `
 		UPDATE orders
 		SET brand_status = ?, state = 'CLOSED', merchant_approval = 'DENIED'
 		WHERE brand_order_id = ?`
-	_, err := db.ExecContext(ctx, query, status, brandOrderID)
+	_, err := db.ExecContext(ctx, query, strings.ToUpper(status), brandOrderID)
 	return err
 }
 
@@ -286,13 +290,13 @@ func (r *Repository) UpdateOrderAccepted(ctx context.Context, brandOrderID strin
 		// Logique PHP: case WHEN brand_status = 'scheduled' then 'accepted' else 'scheduled' end
 		query = `
 			UPDATE orders
-			SET brand_status = CASE WHEN brand_status = 'scheduled' THEN 'accepted' ELSE 'scheduled' END,
+			SET brand_status = CASE WHEN brand_status = 'SCHEDULED' THEN 'ACCEPTED' ELSE 'SCHEDULED' END,
 			    merchant_approval = 'ACCEPTED'
 			WHERE brand_order_id = ?`
 	} else {
 		query = `
 			UPDATE orders
-			SET brand_status = 'accepted', merchant_approval = 'ACCEPTED'
+			SET brand_status = 'ACCEPTED', merchant_approval = 'ACCEPTED'
 			WHERE brand_order_id = ?`
 	}
 	_, err := db.ExecContext(ctx, query, brandOrderID)
@@ -306,7 +310,7 @@ func (r *Repository) UpdateOrderConfirmed(ctx context.Context, brandOrderID stri
 
 	query := `
 		UPDATE orders
-		SET brand_status = 'confirmed', merchant_approval = 'ACCEPTED'
+		SET brand_status = 'CONFIRMED', merchant_approval = 'ACCEPTED'
 		WHERE brand_order_id = ?`
 	_, err := db.ExecContext(ctx, query, brandOrderID)
 	return err

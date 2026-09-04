@@ -167,6 +167,7 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 		in.OrderID,
 		in.DeletionReasonID,
 		in.DeletionComment,
+		in.UserID,
 	); err != nil {
 		return err
 	}
@@ -794,6 +795,7 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 		OrderID,
 		in.DeletionReasonID,
 		in.DeletionComment,
+		in.UserID,
 	)
 	if err != nil {
 		return err

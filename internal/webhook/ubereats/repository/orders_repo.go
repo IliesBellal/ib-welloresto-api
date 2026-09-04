@@ -43,11 +43,15 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 	// Guard against a late/duplicate webhook overwriting an order already
 	// finalized (delivered, denied, etc.) - mirrors the internal OrderStillOpen
 	// check used by DenyOrder/DeleteOrder.
+	// cancelled_by_type hardcoded to PLATFORM: this handler is the direct
+	// webhook write path (bypasses order_life_cycle.DeleteOrderLocal
+	// entirely), unconditionally triggered by Uber Eats itself.
 	_, err := db.ExecContext(ctx, `
 		UPDATE orders
 		SET brand_status = 'CANCELED',
 		    deletion_reason_id = '39',
-		    state = 'CLOSED'
+		    state = 'CLOSED',
+		    cancelled_by_type = 'PLATFORM'
 		WHERE brand_order_id = ? AND state = 'OPEN'
 	`, brandOrderID)
 	if err != nil {
