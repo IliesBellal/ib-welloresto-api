@@ -56,7 +56,7 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 
 	repo := NewRepository(db)
 
-	ue, err := repo.GetUberEatsIntegration(ctx, merchantID)
+	ue, err := repo.GetUberEatsIntegration(ctx, merchantID, "")
 	if err != nil {
 		t.Fatalf("GetUberEatsIntegration failed against postgres: %v", err)
 	}
@@ -70,10 +70,10 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 	newCommission := 18
 	newAutoAccept := false
 	newPrep := 25
-	if err := repo.UpdateUberEatsSettings(ctx, merchantID, &newCommission, &newAutoAccept, &newPrep); err != nil {
+	if err := repo.UpdateUberEatsSettings(ctx, merchantID, "", &newCommission, &newAutoAccept, &newPrep); err != nil {
 		t.Fatalf("UpdateUberEatsSettings failed against postgres: %v", err)
 	}
-	ue, err = repo.GetUberEatsIntegration(ctx, merchantID)
+	ue, err = repo.GetUberEatsIntegration(ctx, merchantID, "")
 	if err != nil {
 		t.Fatalf("GetUberEatsIntegration (after update) failed: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 		VALUES ($1, 'loc-1', 'brand-1', true, false, 10)`, merchantID); err != nil {
 		t.Fatalf("seed integration_deliveroo: %v", err)
 	}
-	dl, err := repo.GetDeliverooIntegration(ctx, merchantID)
+	dl, err := repo.GetDeliverooIntegration(ctx, merchantID, "")
 	if err != nil {
 		t.Fatalf("GetDeliverooIntegration failed against postgres: %v", err)
 	}
@@ -96,13 +96,13 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 	}
 
 	dlCommission := 20
-	if err := repo.UpdateDeliverooSettings(ctx, merchantID, &dlCommission, nil, nil); err != nil {
+	if err := repo.UpdateDeliverooSettings(ctx, merchantID, "", &dlCommission, nil, nil); err != nil {
 		t.Fatalf("UpdateDeliverooSettings failed against postgres: %v", err)
 	}
-	if err := repo.DisableDeliveroo(ctx, merchantID); err != nil {
+	if err := repo.DisableDeliveroo(ctx, merchantID, ""); err != nil {
 		t.Fatalf("DisableDeliveroo failed against postgres: %v", err)
 	}
-	dl, err = repo.GetDeliverooIntegration(ctx, merchantID)
+	dl, err = repo.GetDeliverooIntegration(ctx, merchantID, "")
 	if err != nil {
 		t.Fatalf("GetDeliverooIntegration (after disable) failed: %v", err)
 	}

@@ -47,21 +47,12 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"strconv"
 
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/database"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/modules/roles"
 )
-
-// merchantRef carries both representations of a merchant id this script
-// needs: the integer form to match merchant.id (an integer PK), and the
-// string form used everywhere else (roles.merchant_id, users_rights.merchant_id, ...).
-type merchantRef struct {
-	intID int64
-	strID string
-}
 
 func main() {
 	cfg := config.Load()
@@ -81,50 +72,28 @@ func main() {
 	ctx := context.Background()
 	rolesRepo := roles.NewRepository(db)
 
-	merchants, err := listMerchants(ctx, db)
+	// ReconcileSystemRoles is the shared implementation with the
+	// ReconcileSystemRolePermissions cron task (internal/tasks/rbac.go) — see
+	// its doc comment. This CLI stays the manual, supervised entry point:
+	// unlike the cron task, a per-merchant failure here is fatal, so a bad run
+	// is never silently half-applied without an operator noticing.
+	results, err := rolesRepo.ReconcileSystemRoles(ctx)
 	if err != nil {
-		log.Fatalf("list merchants: %v", err)
+		log.Fatalf("reconcile system roles: %v", err)
 	}
 
-	for _, merchant := range merchants {
-		adminRoleID, _, err := rolesRepo.EnsureSystemRoles(ctx, merchant.strID)
-		if err != nil {
-			log.Fatalf("ensure system roles for merchant %s: %v", merchant.strID, err)
+	failed := 0
+	for _, res := range results {
+		if res.Err != nil {
+			failed++
+			log.Printf("merchant %s: FAILED: %v", res.MerchantID, res.Err)
+			continue
 		}
-
-		if err := setDefaultRoleIfUnset(ctx, db, merchant.intID, adminRoleID); err != nil {
-			log.Fatalf("set default_role_id for merchant %s: %v", merchant.strID, err)
-		}
-
-		log.Printf("merchant %s: system roles ensured, default_role_id -> admin (%s)", merchant.strID, adminRoleID)
+		log.Printf("merchant %s: system roles ensured, default_role_id -> admin (%s)", res.MerchantID, res.AdminRoleID)
 	}
 
-	log.Printf("done: %d merchant(s) processed", len(merchants))
-}
-
-func listMerchants(ctx context.Context, db *sql.DB) ([]merchantRef, error) {
-	d := dbx.GetDB(ctx, db)
-	rows, err := d.QueryContext(ctx, `SELECT id FROM merchant ORDER BY id`)
-	if err != nil {
-		return nil, err
+	log.Printf("done: %d merchant(s) processed, %d failed", len(results), failed)
+	if failed > 0 {
+		log.Fatalf("%d merchant(s) failed reconciliation — see errors above", failed)
 	}
-	defer rows.Close()
-
-	var merchants []merchantRef
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		merchants = append(merchants, merchantRef{intID: id, strID: strconv.FormatInt(id, 10)})
-	}
-	return merchants, rows.Err()
-}
-
-func setDefaultRoleIfUnset(ctx context.Context, db *sql.DB, merchantIntID int64, staffRoleID string) error {
-	d := dbx.GetDB(ctx, db)
-	_, err := d.ExecContext(ctx, `
-		UPDATE merchant SET default_role_id = ? WHERE id = ? AND default_role_id IS NULL
-	`, staffRoleID, merchantIntID)
-	return err
 }

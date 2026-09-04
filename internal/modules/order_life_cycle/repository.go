@@ -1811,13 +1811,14 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
 		                   last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, production_ready_at, delivery_arrival_at, use_customer_temporary_address,
-		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid, brand_store_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, isScheduled,
 		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds, productionReadyAt, deliveryArrivalAt,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
+		req.Order.BrandStoreID,
 	)
 	if err != nil {
 		return "no_order_created", err

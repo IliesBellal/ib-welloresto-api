@@ -23,11 +23,19 @@ func main() {
 
 	// DB (MySQL par défaut, Postgres si DB_DIALECT=postgres — migration en cours)
 	var db *sql.DB
+	var analyticsDB *sql.DB
 	var err error
 	if dbx.ActiveDialect() == dbx.Postgres {
 		db, err = database.NewPostgres(cfg.Database)
 		if err != nil {
 			zlog.Fatal("Failed to connect to Postgres", zap.Error(err))
+		}
+		// Pool séparé, plafonné, pour internal/modules/analytics : une requête
+		// analytique ne doit jamais pouvoir affamer le pool POS (voir
+		// database.NewAnalyticsPostgres).
+		analyticsDB, err = database.NewAnalyticsPostgres(cfg.Database)
+		if err != nil {
+			zlog.Fatal("Failed to connect to analytics Postgres pool", zap.Error(err))
 		}
 	} else {
 		db, err = database.NewMySQL(cfg.Database)
@@ -36,9 +44,12 @@ func main() {
 		}
 	}
 	defer db.Close()
+	if analyticsDB != nil {
+		defer analyticsDB.Close()
+	}
 
 	// Router
-	r := SetupRoutes(zlog, db, cfg)
+	r := SetupRoutes(zlog, db, analyticsDB, cfg)
 
 	zlog.Info("Server running", zap.String("port", cfg.App.Port))
 	log.Fatal(http.ListenAndServe(":"+cfg.App.Port, r))

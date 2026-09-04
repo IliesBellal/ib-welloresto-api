@@ -64,9 +64,14 @@ func routePattern(r *http.Request) string {
 // (logique AND sur plusieurs prédicats combinables via AnyOf/AllOf) à
 // RequirePermission(key permission.Key) — une seule clé du catalogue. Aucune
 // route réelle ne combinait plusieurs prédicats au moment de la bascule (voir
-// le résumé de livraison du lot), donc rien ne s'est perdu ; IsAdmin, qui
-// n'est pas un droit du catalogue mais « détient tous les droits », a sa
-// propre garde : RequireAdmin.
+// le résumé de livraison du lot), donc rien ne s'est perdu.
+//
+// RBAC lot 11, phase 4 : RequireAdmin (une garde distincte, « détient tous
+// les droits » plutôt qu'une permission.Key du catalogue) a été retirée — ses
+// deux derniers consommateurs (POST /users/{id}/force-reset-password, DELETE
+// /users/{id}/merchant-link) sont passés sous RequirePermission(permission.StaffManage),
+// comme les autres routes de gestion d'équipe juste au-dessus dans routes.go.
+// Voir docs/decisions.md.
 func RequirePermission(key permission.Key) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,42 +92,6 @@ func RequirePermission(key permission.Key) func(http.Handler) http.Handler {
 
 			granted := user.Has(key)
 			observeDecision(r, user, key, granted)
-
-			if !granted {
-				renderError(w, r, "access_denied", http.StatusForbidden)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// adminObservationKey is the conventional permission_key recorded for
-// RequireAdmin decisions — see rbacobserve's package doc comment.
-const adminObservationKey permission.Key = "__admin__"
-
-// RequireAdmin restreint une route aux comptes administrateur. Distinct de
-// RequirePermission à dessein : IsAdmin correspond à « détient tous les
-// droits », pas à une permission.Key particulière du catalogue.
-func RequireAdmin() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodOptions {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			user := GetUser(r)
-			if user == nil {
-				SetCORSHeaders(w, r)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"error":"unauthorized"}`))
-				return
-			}
-
-			granted := IsAdmin(user)
-			observeDecision(r, user, adminObservationKey, granted)
 
 			if !granted {
 				renderError(w, r, "access_denied", http.StatusForbidden)

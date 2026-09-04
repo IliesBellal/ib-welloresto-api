@@ -7,8 +7,10 @@ import (
 )
 
 // TestRBACCoverage checks that cmd/api/routes.go still declares the
-// RequirePermission/RequireAdmin guards RBAC lot 2 put in place, by scanning
-// the file's source text rather than building the live router.
+// RequirePermission guards RBAC lot 2 put in place (RBAC lot 11, phase 4:
+// the last two RequireAdmin guards were migrated to
+// RequirePermission(permission.StaffManage) — RequireAdmin no longer exists),
+// by scanning the file's source text rather than building the live router.
 //
 // Why static text scanning and not a live chi.Mux crawl: SetupRoutes wires
 // ~40 real repositories/services directly against a *sql.DB and *config.AppConfig
@@ -94,10 +96,10 @@ var guardedRoutePatterns = []guardedRoutePattern{
 		`RequirePermission\(permission\.StaffManage\)\)\.Put\(\s*"/\{id\}/rights"\s*,\s*usersH\.UpdateMerchantUserRights\)`),
 	guard("PATCH", "/users/{id}/member", "permission.StaffManage",
 		`RequirePermission\(permission\.StaffManage\)\)\.Patch\(\s*"/\{id\}/member"\s*,\s*usersH\.PatchMerchantUserMember\)`),
-	guard("POST", "/users/{id}/force-reset-password", "RequireAdmin",
-		`RequireAdmin\(\)\)\.Post\(\s*"/\{id\}/force-reset-password"\s*,\s*usersH\.ForceResetPassword\)`),
-	guard("DELETE", "/users/{id}/merchant-link", "RequireAdmin",
-		`RequireAdmin\(\)\)\.Delete\(\s*"/\{id\}/merchant-link"\s*,\s*usersH\.UnlinkMerchantUser\)`),
+	guard("POST", "/users/{id}/force-reset-password", "permission.StaffManage",
+		`RequirePermission\(permission\.StaffManage\)\)\.Post\(\s*"/\{id\}/force-reset-password"\s*,\s*usersH\.ForceResetPassword\)`),
+	guard("DELETE", "/users/{id}/merchant-link", "permission.StaffManage",
+		`RequirePermission\(permission\.StaffManage\)\)\.Delete\(\s*"/\{id\}/merchant-link"\s*,\s*usersH\.UnlinkMerchantUser\)`),
 	guard("POST", "/pos/link-user", "permission.StaffManage",
 		`RequirePermission\(permission\.StaffManage\)\)\.Post\(\s*"/link-user"\s*,\s*posH\.LinkUser\)`),
 	guard("PATCH", "/pos/status", "permission.POSStatusManage",
@@ -124,8 +126,12 @@ var guardedRoutePatterns = []guardedRoutePattern{
 		`RequirePermission\(permission\.POSTicketReopen\)\)\.\s*Patch\(\s*"/\{order_id\}/reopen"\s*,\s*ordersLifeCycleH\.ReopenClosedOrder\)`),
 	guard("POST", "/orders/{order_id}/refund", "permission.POSRefund",
 		`RequirePermission\(permission\.POSRefund\)\)\.\s*Post\(\s*"/\{order_id\}/refund"\s*,\s*ordersLifeCycleH\.HandleRefund\)`),
-	guard("DELETE", "/orders/{order_id}/payments/{payment_id}", "permission.POSRefund",
-		`RequirePermission\(permission\.POSRefund\)\)\.\s*Delete\(\s*"/\{payment_id\}"\s*,\s*ordersLifeCycleH\.DeletePayment\)`),
+	// DeletePayment is deliberately NOT in this list (was briefly guarded by
+	// permission.POSRefund, then reverted): it cancels a recorded SALE, not
+	// a REFUND, and routes.go now carries an explicit comment that any
+	// staff member must be able to undo a mis-keyed payment without a
+	// separate permission — see the comment above r.Delete("/{payment_id}",
+	// ordersLifeCycleH.DeletePayment) in routes.go.
 	guard("PUT", "/stocks/components/{component_id}", "permission.InventoryManage",
 		`RequirePermission\(permission\.InventoryManage\)\)\.\s*Put\(\s*"/components/\{component_id\}"\s*,\s*stocksH\.RecordComponentMovement\)`),
 	guard("PUT", "/haccp/settings", "permission.HACCPManage",

@@ -629,7 +629,7 @@ func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, 
 				log.Warn("[WARN] UberEats client not initialized, skipping status sync for UberEats")
 				return
 			}
-			if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, productID, available); err != nil {
+			if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
 				log.Warn("[WARN] Uber status sync failed: " + err.Error())
 			}
 		}()
@@ -640,7 +640,7 @@ func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, 
 				log.Warn("[WARN] Deliveroo client not initialized, skipping status sync for Deliveroo")
 				return
 			}
-			if err := s.deliveroo.ToggleItemAvailability(taskCtx, merchantID, productID, available); err != nil {
+			if err := s.deliveroo.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
 				log.Warn("[WARN] Deliveroo status sync failed: " + err.Error())
 			}
 		}()
@@ -895,18 +895,25 @@ func (s *MenuService) UpdateDisplayOrder(ctx context.Context, token string, payl
 	return nil
 }
 
-// GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo
-func (s *MenuService) GetDeliverooMenu(ctx context.Context, token string) (map[string]interface{}, error) {
+// GetDeliverooMenu récupère le menu du restaurant depuis l'API Deliveroo.
+// locationID vide cible le compte "principal" du marchand (comportement
+// historique, identique pour un marchand mono-compte) ; locationID renseigné
+// cible ce compte précis.
+func (s *MenuService) GetDeliverooMenu(ctx context.Context, token, locationID string) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.deliveroo.GetMenu(ctx, user.MerchantID)
+	return s.deliveroo.GetMenu(ctx, user.MerchantID, locationID)
 }
 
-// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo
-func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token string) error {
+// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo.
+// locationID vide cible le compte "principal" du marchand (comportement
+// historique, identique pour un marchand mono-compte) ; locationID renseigné
+// cible ce compte précis - c'est ce qui permet de choisir quel compte
+// Deliveroo synchroniser.
+func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token, locationID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -922,21 +929,27 @@ func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token string) error
 		return fmt.Errorf("menu sync deliveroo: mapping failed: %w", err)
 	}
 
-	return s.deliveroo.SyncMenu(ctx, user.MerchantID, deliverooMenu)
+	return s.deliveroo.SyncMenu(ctx, user.MerchantID, locationID, deliverooMenu)
 }
 
-// GetUberEatsMenu récupère le menu du restaurant depuis l'API Uber Eats
-func (s *MenuService) GetUberEatsMenu(ctx context.Context, token string) (map[string]interface{}, error) {
+// GetUberEatsMenu récupère le menu du restaurant depuis l'API Uber Eats.
+// storeID vide cible le compte "principal" du marchand (comportement
+// historique, identique pour un marchand mono-compte) ; storeID renseigné
+// cible ce compte précis.
+func (s *MenuService) GetUberEatsMenu(ctx context.Context, token, storeID string) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.uber.GetMenu(ctx, user.MerchantID)
+	return s.uber.GetMenu(ctx, user.MerchantID, storeID)
 }
 
-// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats
-func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token string) error {
+// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats. storeID
+// vide cible le compte "principal" du marchand (comportement historique,
+// identique pour un marchand mono-compte) ; storeID renseigné cible ce compte
+// précis - c'est ce qui permet de choisir quel compte Uber Eats synchroniser.
+func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token, storeID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
@@ -952,7 +965,7 @@ func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token string) error 
 		return fmt.Errorf("menu sync ubereats: mapping failed: %w", err)
 	}
 
-	return s.uber.SyncMenu(ctx, user.MerchantID, uberMenu)
+	return s.uber.SyncMenu(ctx, user.MerchantID, storeID, uberMenu)
 }
 
 func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int) (*string, error) {

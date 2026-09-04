@@ -119,7 +119,7 @@ func TestDeliverooRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected itest-brand-1, got %q", brandID)
 	}
 
-	if err := repo.UpdateMerchantBrandID(ctx, merchantID, "itest-brand-2"); err != nil {
+	if err := repo.UpdateMerchantBrandID(ctx, merchantID, "itest-loc-1", "itest-brand-2"); err != nil {
 		t.Fatalf("UpdateMerchantBrandID failed against postgres: %v", err)
 	}
 	brandID, err = repo.GetBrandIDByMerchant(ctx, merchantID)

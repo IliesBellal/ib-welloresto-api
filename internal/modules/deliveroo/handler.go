@@ -29,7 +29,7 @@ func (h *DeliverooHandler) SyncSiteBrandID(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 
 	// Appel au service que nous avons défini précédemment
-	brandID, err := h.service.ValidateAndSyncBrandID(ctx, merchantID)
+	brandID, err := h.service.ValidateAndSyncBrandID(ctx, merchantID, "")
 	if err != nil {
 		// Log l'erreur détaillée en interne
 		log.Printf("Error syncing brand ID for merchant %s: %v", merchantID, err)

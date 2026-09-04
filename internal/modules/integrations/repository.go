@@ -23,10 +23,21 @@ func NewRepository(db *sql.DB) *Repository {
 
 // GetUberEatsIntegration returns the Uber Eats integration row plus live KPIs.
 // Returns (nil, nil) when the merchant has no Uber Eats integration configured.
-func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID string) (*UberEatsIntegration, error) {
+// storeID vide résout sur le compte "principal" du marchand (ORDER BY
+// store_id, comportement historique identique pour un marchand mono-compte) ;
+// storeID renseigné cible ce compte précis, y compris pour les KPIs (revenue/
+// orders_count/synced_items sont alors scopés à ce seul compte).
+func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID, storeID string) (*UberEatsIntegration, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `
+	storeFilter := ""
+	orderBy := "ORDER BY iue.store_id LIMIT 1"
+	if storeID != "" {
+		storeFilter = " AND store_id = ?"
+		orderBy = "AND iue.store_id = ? LIMIT 1"
+	}
+
+	q := `
 		SELECT
 			iue.enabled,
 			iue.commission_rate,
@@ -34,10 +45,11 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 			COALESCE(iue.estimated_preparation_time, '0') AS preparation_time_minutes,
 			iue.closed_until,
 			iue.last_sync,
+			iue.store_id,
 			(
 				SELECT COUNT(*)
 				FROM   integration_uber_eats_products_mapping
-				WHERE  merchant_id = ?
+				WHERE  merchant_id = ?` + storeFilter + `
 			) AS synced_items,
 			(
 				SELECT COALESCE(SUM(price), 0)
@@ -45,7 +57,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 				WHERE  merchant_id = ?
 				  AND  brand       = 'UBER_EATS'
 				  AND  isPaid      = true
-				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
+				  AND  brand_status NOT IN ` + kpiExcludedStatuses + storeFilter + `
 			) AS revenue,
 			(
 				SELECT COUNT(*)
@@ -53,11 +65,28 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 				WHERE  merchant_id = ?
 				  AND  brand       = 'UBER_EATS'
 				  AND  isPaid      = true
-				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
+				  AND  brand_status NOT IN ` + kpiExcludedStatuses + storeFilter + `
 			) AS orders_count
 		FROM   integration_uber_eats iue
 		WHERE  iue.merchant_id = ?
-		LIMIT  1`
+		` + orderBy
+
+	args := []interface{}{merchantID}
+	if storeID != "" {
+		args = append(args, storeID)
+	}
+	args = append(args, merchantID)
+	if storeID != "" {
+		args = append(args, storeID)
+	}
+	args = append(args, merchantID)
+	if storeID != "" {
+		args = append(args, storeID)
+	}
+	args = append(args, merchantID)
+	if storeID != "" {
+		args = append(args, storeID)
+	}
 
 	var (
 		enabled                bool
@@ -66,18 +95,14 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 		preparationTimeMinutes int
 		closedUntil            sql.NullTime
 		lastSync               sql.NullTime
+		resolvedStoreID        string
 		syncedItems            int
 		revenue                int
 		ordersCount            int
 	)
 
-	err := db.QueryRowContext(ctx, q,
-		merchantID, // synced_items subquery
-		merchantID, // revenue subquery
-		merchantID, // orders_count subquery
-		merchantID, // WHERE clause
-	).Scan(
-		&enabled, &commissionRate, &autoAccept, &preparationTimeMinutes, &closedUntil, &lastSync,
+	err := db.QueryRowContext(ctx, q, args...).Scan(
+		&enabled, &commissionRate, &autoAccept, &preparationTimeMinutes, &closedUntil, &lastSync, &resolvedStoreID,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -94,6 +119,7 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 
 	result := &UberEatsIntegration{
 		Platform:               "uber_eats",
+		StoreID:                resolvedStoreID,
 		Active:                 enabled,
 		CommissionRate:         commissionRate,
 		AutoAcceptOrders:       autoAccept,
@@ -117,22 +143,69 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID stri
 	return result, nil
 }
 
-// GetDeliverooIntegration returns the Deliveroo integration row plus live KPIs.
-// Returns (nil, nil) when the merchant has no Deliveroo integration configured.
-func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID string) (*DeliverooIntegration, error) {
+// ListUberEatsAccounts liste tous les comptes Uber Eats d'un marchand pour le
+// sélecteur de compte (back-office / POS).
+func (r *Repository) ListUberEatsAccounts(ctx context.Context, merchantID string) ([]AccountSummary, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	const q = `
+		SELECT store_id, enabled
+		FROM   integration_uber_eats
+		WHERE  merchant_id = ?
+		ORDER BY store_id`
+
+	rows, err := db.QueryContext(ctx, q, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []AccountSummary
+	for rows.Next() {
+		var acc AccountSummary
+		if err := rows.Scan(&acc.AccountID, &acc.Enabled); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, acc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range accounts {
+		accounts[i].IsPrimary = i == 0
+	}
+	return accounts, nil
+}
+
+// GetDeliverooIntegration returns the Deliveroo integration row plus live KPIs.
+// Returns (nil, nil) when the merchant has no Deliveroo integration configured.
+// locationID vide résout sur le compte "principal" du marchand (ORDER BY
+// location_id, comportement historique identique pour un marchand
+// mono-compte) ; locationID renseigné cible ce compte précis, y compris pour
+// les KPIs (revenue/orders_count/synced_items sont alors scopés à ce seul
+// compte).
+func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID, locationID string) (*DeliverooIntegration, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	locationFilter := ""
+	orderBy := "ORDER BY ind.location_id LIMIT 1"
+	if locationID != "" {
+		locationFilter = " AND location_id = ?"
+		orderBy = "AND ind.location_id = ? LIMIT 1"
+	}
+
+	q := `
 		SELECT
 			ind.enabled,
 			ind.commission_rate,
 			ind.auto_accept_orders,
 			COALESCE(ind.preparation_time_minutes, 0) AS preparation_time_minutes,
 			ind.last_sync,
+			ind.location_id,
 			(
 				SELECT COUNT(*)
 				FROM   integration_deliveroo_products_mapping
-				WHERE  merchant_id = ?
+				WHERE  merchant_id = ?` + locationFilter + `
 			) AS synced_items,
 			(
 				SELECT COALESCE(SUM(price), 0)
@@ -140,7 +213,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 				WHERE  merchant_id = ?
 				  AND  brand       = 'DELIVEROO'
 				  AND  isPaid      = true
-				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
+				  AND  brand_status NOT IN ` + kpiExcludedStatuses + locationFilter + `
 			) AS revenue,
 			(
 				SELECT COUNT(*)
@@ -148,11 +221,28 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 				WHERE  merchant_id = ?
 				  AND  brand       = 'DELIVEROO'
 				  AND  isPaid      = true
-				  AND  brand_status NOT IN ` + kpiExcludedStatuses + `
+				  AND  brand_status NOT IN ` + kpiExcludedStatuses + locationFilter + `
 			) AS orders_count
 		FROM   integration_deliveroo ind
 		WHERE  ind.merchant_id = ?
-		LIMIT  1`
+		` + orderBy
+
+	args := []interface{}{merchantID}
+	if locationID != "" {
+		args = append(args, locationID)
+	}
+	args = append(args, merchantID)
+	if locationID != "" {
+		args = append(args, locationID)
+	}
+	args = append(args, merchantID)
+	if locationID != "" {
+		args = append(args, locationID)
+	}
+	args = append(args, merchantID)
+	if locationID != "" {
+		args = append(args, locationID)
+	}
 
 	var (
 		active                 bool
@@ -160,18 +250,14 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 		autoAccept             bool
 		preparationTimeMinutes int
 		lastSync               sql.NullTime
+		resolvedLocationID     string
 		syncedItems            int
 		revenue                int
 		ordersCount            int
 	)
 
-	err := db.QueryRowContext(ctx, q,
-		merchantID, // synced_items subquery
-		merchantID, // revenue subquery
-		merchantID, // orders_count subquery
-		merchantID, // WHERE clause
-	).Scan(
-		&active, &commissionRate, &autoAccept, &preparationTimeMinutes, &lastSync,
+	err := db.QueryRowContext(ctx, q, args...).Scan(
+		&active, &commissionRate, &autoAccept, &preparationTimeMinutes, &lastSync, &resolvedLocationID,
 		&syncedItems, &revenue, &ordersCount,
 	)
 	if err == sql.ErrNoRows {
@@ -188,6 +274,7 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 
 	result := &DeliverooIntegration{
 		Platform:               "deliveroo",
+		LocationID:             resolvedLocationID,
 		Active:                 active,
 		CommissionRate:         commissionRate,
 		AutoAcceptOrders:       autoAccept,
@@ -205,6 +292,40 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID str
 	}
 
 	return result, nil
+}
+
+// ListDeliverooAccounts liste tous les comptes Deliveroo d'un marchand pour le
+// sélecteur de compte (back-office / POS).
+func (r *Repository) ListDeliverooAccounts(ctx context.Context, merchantID string) ([]AccountSummary, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	const q = `
+		SELECT location_id, enabled
+		FROM   integration_deliveroo
+		WHERE  merchant_id = ?
+		ORDER BY location_id`
+
+	rows, err := db.QueryContext(ctx, q, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []AccountSummary
+	for rows.Next() {
+		var acc AccountSummary
+		if err := rows.Scan(&acc.AccountID, &acc.Enabled); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, acc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range accounts {
+		accounts[i].IsPrimary = i == 0
+	}
+	return accounts, nil
 }
 
 // GetScanNOrderIntegration returns the ScanNOrder integration row plus live KPIs.
@@ -406,8 +527,11 @@ func (r *Repository) UpdateScanNOrderImageURL(ctx context.Context, merchantID, c
 	return err
 }
 
-// UpdateUberEatsSettings updates editable settings for the Uber Eats integration.
-func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
+// UpdateUberEatsSettings updates editable settings for the Uber Eats
+// integration. storeID vide cible tous les comptes du marchand (comportement
+// historique, correct pour un marchand mono-compte) ; storeID renseigné ne
+// cible que ce compte précis.
+func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID, storeID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	setClauses := []string{}
@@ -437,23 +561,37 @@ func (r *Repository) UpdateUberEatsSettings(ctx context.Context, merchantID stri
 
 	q := "UPDATE integration_uber_eats SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
 	args = append(args, merchantID)
+	if storeID != "" {
+		q += " AND store_id = ?"
+		args = append(args, storeID)
+	}
 
 	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
-// DisableUberEats sets is_active = 0 for the Uber Eats integration.
-func (r *Repository) DisableUberEats(ctx context.Context, merchantID string) error {
+// DisableUberEats disables the Uber Eats integration. storeID vide désactive
+// tous les comptes du marchand (comportement historique) ; storeID renseigné
+// ne désactive que ce compte précis.
+func (r *Repository) DisableUberEats(ctx context.Context, merchantID, storeID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `UPDATE integration_uber_eats SET is_active = 0 WHERE merchant_id = ?`
+	q := `UPDATE integration_uber_eats SET enabled = false WHERE merchant_id = ?`
+	args := []interface{}{merchantID}
+	if storeID != "" {
+		q += ` AND store_id = ?`
+		args = append(args, storeID)
+	}
 
-	_, err := db.ExecContext(ctx, q, merchantID)
+	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
-// UpdateDeliverooSettings updates editable settings for the Deliveroo integration.
-func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
+// UpdateDeliverooSettings updates editable settings for the Deliveroo
+// integration. locationID vide cible tous les comptes du marchand
+// (comportement historique, correct pour un marchand mono-compte) ;
+// locationID renseigné ne cible que ce compte précis.
+func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID, locationID string, commissionRate *int, autoAccept *bool, preparationTimeMinutes *int) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	setClauses := []string{}
@@ -478,18 +616,29 @@ func (r *Repository) UpdateDeliverooSettings(ctx context.Context, merchantID str
 
 	q := "UPDATE integration_deliveroo SET " + strings.Join(setClauses, ", ") + " WHERE merchant_id = ?"
 	args = append(args, merchantID)
+	if locationID != "" {
+		q += " AND location_id = ?"
+		args = append(args, locationID)
+	}
 
 	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 
-// DisableDeliveroo sets enabled = 0 for the Deliveroo integration.
-func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID string) error {
+// DisableDeliveroo sets enabled = false for the Deliveroo integration.
+// locationID vide désactive tous les comptes du marchand (comportement
+// historique) ; locationID renseigné ne désactive que ce compte précis.
+func (r *Repository) DisableDeliveroo(ctx context.Context, merchantID, locationID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `UPDATE integration_deliveroo SET enabled = false WHERE merchant_id = ?`
+	q := `UPDATE integration_deliveroo SET enabled = false WHERE merchant_id = ?`
+	args := []interface{}{merchantID}
+	if locationID != "" {
+		q += ` AND location_id = ?`
+		args = append(args, locationID)
+	}
 
-	_, err := db.ExecContext(ctx, q, merchantID)
+	_, err := db.ExecContext(ctx, q, args...)
 	return err
 }
 

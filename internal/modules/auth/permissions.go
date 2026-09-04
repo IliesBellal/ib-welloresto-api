@@ -39,16 +39,28 @@ var legacyPermissionFallback = map[permission.Key]func(UserRowRights) bool{
 //   - RoleID nil     -> l'utilisateur n'a pas encore de rôle, on retombe sur
 //     les colonnes booléennes historiques (comportement identique à
 //     aujourd'hui) ;
-//   - RoleID non nil -> les droits viennent du rôle, les booléens sont
-//     ignorés — même s'ils contredisent le rôle.
+//   - RoleID non nil -> les droits viennent uniquement des permissions du
+//     rôle (Permissions, chargées par attachRolePermissions) — les booléens
+//     sont ignorés, même s'ils contredisent le rôle.
 //
 // Cette bascule est par utilisateur, ce qui permet de migrer un établissement
 // à la fois et de revenir en arrière en remettant role_id à NULL.
+//
+// RBAC lot 11, phase 3 : le court-circuit "system_key == admin renvoie
+// toujours true, sans consulter Permissions" a été retiré. Le rôle admin est
+// désormais un rôle comme les autres — il n'a d'autorité que par les lignes
+// qu'il porte réellement dans role_permissions. Ce retrait n'est sûr que
+// parce que la phase 2 garantit (invariant testé + réconciliation
+// automatique, voir TestSystemAdminRolesContainFullCatalog_Postgres et
+// internal/tasks/rbac.go) que le rôle admin de chaque établissement porte
+// l'intégralité du catalogue — sans quoi ce changement aurait pu priver
+// silencieusement des comptes admin de droits qu'ils avaient jusque-là par le
+// court-circuit. permission.SystemKeyAdmin garde un seul rôle après ce
+// retrait : marquer le rôle comme non supprimable et non modifiable
+// (models.ErrRoleImmutable, garde G4) — voir HasAdminRole, qui reste, elle,
+// un usage d'affichage légitime de system_key.
 func (u *UserLoginRow) Has(key permission.Key) bool {
 	if u.RoleID != nil {
-		if u.RoleSystemKey != nil && *u.RoleSystemKey == permission.SystemKeyAdmin {
-			return true
-		}
 		for _, granted := range u.Permissions {
 			if granted == string(key) {
 				return true
@@ -72,13 +84,18 @@ func (u *UserLoginRow) Has(key permission.Key) bool {
 // method for callers (RBAC lot 9: the login response's `admin` flag and
 // GET /me/permissions's `is_admin`) that need it outside Has itself.
 //
-// Deliberately distinct from IsAdmin() (models.go), which is the legacy
-// Rights.Admin column alone, consulted by middleware.RequireAdmin() for an
-// unrelated, non-catalog authorization decision — do not merge the two.
 // Rights.Admin frequently stays true in production regardless of the
 // assigned role (historical seeding), so a caller that wants "is this user's
-// *role* admin" must use this method, not IsAdmin(), or it will report admin
-// for merchant staff whose role_id points at a non-admin role.
+// *role* admin" must use this method and not read Rights.Admin directly, or
+// it will report admin for merchant staff whose role_id points at a
+// non-admin role.
+//
+// RBAC lot 11, phase 4: the former UserLoginRow.IsAdmin() method — the raw
+// Rights.Admin column alone, consulted by middleware.RequireAdmin() for an
+// unrelated, non-catalog authorization decision — has been removed along
+// with RequireAdmin itself. HasAdminRole is display-only (login's `admin`
+// flag, GET /me/permissions's `is_admin`) and was never the authorization
+// path; it is unaffected by that removal.
 func (u *UserLoginRow) HasAdminRole() bool {
 	if u.RoleID != nil {
 		return u.RoleSystemKey != nil && *u.RoleSystemKey == permission.SystemKeyAdmin

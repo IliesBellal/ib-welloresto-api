@@ -51,7 +51,14 @@ func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID s
 	return &MerchantID, nil
 }
 
-// GetStoreData récupère les infos du magasin
+// GetStoreData récupère les infos du magasin "principal" du marchand.
+//
+// Un marchand peut avoir plusieurs comptes Uber Eats (migration 111, PK
+// composite (merchant_id, store_id)) : ORDER BY store_id rend le choix
+// déterministe plutôt que de dépendre de l'ordre de retour de Postgres. Pour un
+// marchand mono-compte (le cas de tous les marchands aujourd'hui), c'est
+// rigoureusement le même comportement qu'avant. Un appelant qui connaît le
+// compte exact doit utiliser GetStoreDataByStoreID.
 func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*Store, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -61,7 +68,9 @@ func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*
 			  iue.auto_accept_orders
        FROM integration_uber_eats iue
        INNER JOIN merchant m ON %s = iue.merchant_id
-       WHERE iue.merchant_id = ?`, ueMerchantJoinCast())
+       WHERE iue.merchant_id = ?
+       ORDER BY iue.store_id
+       LIMIT 1`, ueMerchantJoinCast())
 
 	var store Store
 
@@ -82,6 +91,112 @@ func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*
 		return nil, err
 	}
 
+	return &store, nil
+}
+
+// GetStoreDataByStoreID récupère un compte Uber Eats précis d'un marchand.
+// storeID est validé comme appartenant à merchantID (défense en profondeur :
+// un utilisateur authentifié pour un marchand ne doit jamais pouvoir lire/agir
+// sur le compte Uber Eats d'un autre marchand via un store_id arbitraire).
+func (r *UberRepository) GetStoreDataByStoreID(ctx context.Context, merchantID, storeID string) (*Store, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+       SELECT iue.merchant_id, iue.store_id, m.timezone,
+              iue.estimated_preparation_time, iue.last_estimated_preparation_time,
+			  iue.auto_accept_orders
+       FROM integration_uber_eats iue
+       INNER JOIN merchant m ON %s = iue.merchant_id
+       WHERE iue.merchant_id = ? AND iue.store_id = ?`, ueMerchantJoinCast())
+
+	var store Store
+	err := db.QueryRowContext(ctx, query, merchantID, storeID).Scan(
+		&store.MerchantID,
+		&store.StoreID,
+		&store.Timezone,
+		&store.EstimatedPreparationTime,
+		&store.LastEstimatedPreparationTime,
+		&store.AutoAcceptOrders,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &store, nil
+}
+
+// GetAccountsByMerchant liste tous les comptes Uber Eats d'un marchand
+// (1 aujourd'hui pour tous les marchands, potentiellement plusieurs depuis la
+// migration 111).
+func (r *UberRepository) GetAccountsByMerchant(ctx context.Context, merchantID string) ([]Store, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+       SELECT iue.merchant_id, iue.store_id, m.timezone,
+              iue.estimated_preparation_time, iue.last_estimated_preparation_time,
+			  iue.auto_accept_orders
+       FROM integration_uber_eats iue
+       INNER JOIN merchant m ON %s = iue.merchant_id
+       WHERE iue.merchant_id = ?
+       ORDER BY iue.store_id`, ueMerchantJoinCast())
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stores []Store
+	for rows.Next() {
+		var store Store
+		if err := rows.Scan(
+			&store.MerchantID,
+			&store.StoreID,
+			&store.Timezone,
+			&store.EstimatedPreparationTime,
+			&store.LastEstimatedPreparationTime,
+			&store.AutoAcceptOrders,
+		); err != nil {
+			return nil, err
+		}
+		stores = append(stores, store)
+	}
+	return stores, rows.Err()
+}
+
+// GetStoreByStoreIDOnly récupère un compte Uber Eats par store_id seul, sans
+// connaître le merchant_id à l'avance. Utilisé par le chemin webhook : Uber
+// Eats notifie une commande avec le store_id, jamais le merchant_id WelloResto.
+// store_id est unique (index idx_integration_uber_eats_store_id, migration
+// 111), donc sans ambiguïté même pour un marchand multi-comptes.
+func (r *UberRepository) GetStoreByStoreIDOnly(ctx context.Context, storeID string) (*Store, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+       SELECT iue.merchant_id, iue.store_id, m.timezone,
+              iue.estimated_preparation_time, iue.last_estimated_preparation_time,
+			  iue.auto_accept_orders
+       FROM integration_uber_eats iue
+       INNER JOIN merchant m ON %s = iue.merchant_id
+       WHERE iue.store_id = ?`, ueMerchantJoinCast())
+
+	var store Store
+	err := db.QueryRowContext(ctx, query, storeID).Scan(
+		&store.MerchantID,
+		&store.StoreID,
+		&store.Timezone,
+		&store.EstimatedPreparationTime,
+		&store.LastEstimatedPreparationTime,
+		&store.AutoAcceptOrders,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
 	return &store, nil
 }
 
@@ -147,46 +262,70 @@ func (r *UberRepository) EnableIntegration(ctx context.Context, merchantID, stor
 			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date
 		)
 		VALUES (?, ?, ?, ?, true, '', ` + dbx.UTCNow() + `)
-		ON CONFLICT (merchant_id) DO UPDATE SET
-			store_id = EXCLUDED.store_id,
+		ON CONFLICT (merchant_id, store_id) DO UPDATE SET
 			bearer_token = EXCLUDED.bearer_token,
 			refresh_token = EXCLUDED.refresh_token,
 			enabled = true`
+		// ON CONFLICT cible desormais la PK composite (merchant_id, store_id)
+		// posee par la migration 111 : reconnecter le MEME compte (meme
+		// store_id) le met a jour, connecter un DEUXIEME compte (store_id
+		// different) insere une nouvelle ligne au lieu d'ecraser la premiere.
+		// store_id n'a plus besoin d'etre dans le SET puisqu'il fait partie de
+		// la cle de conflit (donc deja egal a EXCLUDED.store_id).
 	}
 
 	_, err := db.ExecContext(ctx, query, merchantID, storeID, accessToken, refreshToken)
 	return err
 }
 
-// DisableIntegration désactive l'intégration
-func (r *UberRepository) DisableIntegration(ctx context.Context, merchantID string) error {
+// DisableIntegration désactive l'intégration. storeID vide désactive tous les
+// comptes du marchand (comportement historique, correct pour un marchand
+// mono-compte) ; storeID renseigné ne désactive que ce compte précis.
+func (r *UberRepository) DisableIntegration(ctx context.Context, merchantID, storeID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	query := `UPDATE integration_uber_eats SET enabled = 0, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+	enabledFalse := "0"
 	if dbx.ActiveDialect() == dbx.Postgres {
-		query = `UPDATE integration_uber_eats SET enabled = false, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+		enabledFalse = "false"
 	}
 
-	_, err := db.ExecContext(ctx, query, merchantID)
+	query := `UPDATE integration_uber_eats SET enabled = ` + enabledFalse + `, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
+	args := []interface{}{merchantID}
+	if storeID != "" {
+		query += ` AND store_id = ?`
+		args = append(args, storeID)
+	}
+
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
-// GetOrderMetadata récupère les IDs pour la requête
+// GetOrderMetadata récupère les IDs pour la requête. StoreID identifie le
+// compte Uber Eats exact d'où vient la commande (colonne orders.brand_store_id,
+// migration 111) : indispensable pour AcceptOrder dès qu'un marchand a
+// plusieurs comptes, GetStoreData(merchantID) seul ne suffit plus à choisir
+// le bon.
 func (r *UberRepository) GetOrderMetadata(ctx context.Context, localOrderID string) (*UberOrderMetadata, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-       SELECT o.brand_order_id, o.creation_date
+       SELECT o.brand_order_id, o.creation_date, o.brand_store_id
        FROM orders o
-       INNER JOIN integration_uber_eats iue on iue.merchant_id = o.merchant_id
+       INNER JOIN integration_uber_eats iue
+           on iue.merchant_id = o.merchant_id
+           AND (o.brand_store_id IS NULL OR iue.store_id = o.brand_store_id)
        WHERE o.order_id = ?`
 
 	var meta UberOrderMetadata
+	var storeID sql.NullString
 
-	err := db.QueryRowContext(ctx, query, localOrderID).Scan(&meta.BrandOrderID, &meta.CreationDate)
+	err := db.QueryRowContext(ctx, query, localOrderID).Scan(&meta.BrandOrderID, &meta.CreationDate, &storeID)
 
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve uber order id: %v", err)
+	}
+	if storeID.Valid {
+		meta.StoreID = storeID.String
 	}
 	return &meta, nil
 }
@@ -353,8 +492,11 @@ func (r *UberRepository) UpdateBusyModeData(ctx context.Context, storeID string,
 	return err
 }
 
-// UpdatePreparationTime met à jour le temps de préparation estimé
-func (r *UberRepository) UpdatePreparationTime(ctx context.Context, merchantID string, timeVal int, isAuto bool) error {
+// UpdatePreparationTime met à jour le temps de préparation estimé. storeID
+// vide s'applique à tous les comptes du marchand (comportement historique,
+// correct pour un marchand mono-compte) ; storeID renseigné ne cible que ce
+// compte précis.
+func (r *UberRepository) UpdatePreparationTime(ctx context.Context, merchantID, storeID string, timeVal int, isAuto bool) error {
 	db := dbx.GetDB(ctx, r.database)
 	// Logique PHP :
 	// estimated_preparation_time = case when :auto = 'TRUE' then estimated_preparation_time else :time end
@@ -369,8 +511,13 @@ func (r *UberRepository) UpdatePreparationTime(ctx context.Context, merchantID s
 		SET estimated_preparation_time = CASE WHEN ? = true THEN estimated_preparation_time ELSE ? END,
 		    last_estimated_preparation_time = ?
 		WHERE merchant_id = ?`
+	args := []interface{}{isAuto, timeStr, timeStr, merchantID}
+	if storeID != "" {
+		query += ` AND store_id = ?`
+		args = append(args, storeID)
+	}
 
-	_, err := db.ExecContext(ctx, query, isAuto, timeStr, timeStr, merchantID)
+	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -383,8 +530,11 @@ func (r *UberRepository) UpdateStoreClosure(ctx context.Context, storeID string,
 	return err
 }
 
-// GetStoreInfoForMenu récupère ID, BasicAuth et Timezone (utilisé pour toggle item)
-func (r *UberRepository) GetStoreInfoForMenu(ctx context.Context, merchantID string) (*Store, error) {
+// GetStoreInfoForMenu récupère ID, BasicAuth et Timezone (utilisé pour toggle item).
+// storeID vide retombe sur le compte "principal" du marchand (ORDER BY
+// store_id, comportement historique identique pour un marchand mono-compte) ;
+// storeID renseigné cible ce compte précis.
+func (r *UberRepository) GetStoreInfoForMenu(ctx context.Context, merchantID, storeID string) (*Store, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	// Similaire à GetStoreData mais s'assure que le token n'est pas null
@@ -393,9 +543,16 @@ func (r *UberRepository) GetStoreInfoForMenu(ctx context.Context, merchantID str
 		FROM integration_uber_eats iue
 		INNER JOIN merchant m on %s = iue.merchant_id
 		WHERE iue.merchant_id = ? AND iue.bearer_token IS NOT NULL`, ueMerchantJoinCast())
+	args := []interface{}{merchantID}
+	if storeID != "" {
+		query += ` AND iue.store_id = ?`
+		args = append(args, storeID)
+	} else {
+		query += ` ORDER BY iue.store_id LIMIT 1`
+	}
 
 	var store Store
 	// On ignore les champs non demandés dans le Scan
-	err := db.QueryRowContext(ctx, query, merchantID).Scan(&store.MerchantID, &store.StoreID, &store.Timezone, &store.BearerToken)
+	err := db.QueryRowContext(ctx, query, args...).Scan(&store.MerchantID, &store.StoreID, &store.Timezone, &store.BearerToken)
 	return &store, err
 }

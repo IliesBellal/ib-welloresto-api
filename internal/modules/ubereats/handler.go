@@ -48,11 +48,14 @@ func (h *UberHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, callbackURL+"?success=uber_connected", http.StatusTemporaryRedirect)
 }
 
-// Disconnect coupe la liaison
+// Disconnect coupe la liaison. store_id optionnel en query string : absent,
+// déconnecte tous les comptes du marchand (comportement historique) ; fourni,
+// ne déconnecte que ce compte précis.
 func (h *UberHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	storeID := r.URL.Query().Get("store_id")
 
-	if err := h.svc.Disconnect(r.Context(), user.MerchantID); err != nil {
+	if err := h.svc.Disconnect(r.Context(), user.MerchantID, storeID); err != nil {
 		models.SendErrorJSON(w, "uber", "disconnect", err)
 		return
 	}

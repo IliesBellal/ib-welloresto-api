@@ -268,11 +268,6 @@ type UserLoginRow struct {
 // Ces méthodes centralisent la logique de vérification des droits
 // ============================================================
 
-// IsAdmin vérifie si l'utilisateur est administrateur
-func (u *UserLoginRow) IsAdmin() bool {
-	return u.Rights.Admin
-}
-
 // HasAccessReception vérifie si l'utilisateur a accès à la réception
 func (u *UserLoginRow) HasAccessReception() bool {
 	return u.Rights.Admin || u.Rights.AccessReception

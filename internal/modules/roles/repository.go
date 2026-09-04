@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -259,6 +260,138 @@ func loadGrantedPermissionKeys(ctx context.Context, db *dbx.DB, roleID string) (
 		granted[permission.Key(key)] = true
 	}
 	return granted, rows.Err()
+}
+
+// IncompleteAdminRole is one system_key='admin' role that does not carry
+// every non-deprecated catalog permission — the invariant RBAC lot 11's
+// "admin is an ordinary role" design depends on (see docs/decisions.md).
+// A non-empty result from FindIncompleteAdminRoles means some catalog
+// permission was added without EnsureSystemRoles ever reconciling this
+// merchant's admin role against it.
+type IncompleteAdminRole struct {
+	RoleID     string
+	MerchantID string
+	Missing    []permission.Key
+}
+
+// FindIncompleteAdminRoles scans every system_key='admin' role currently in
+// the database and reports the ones missing at least one non-deprecated
+// catalog permission. Used both by the CI invariant test
+// (TestSystemAdminRolesContainFullCatalog_Postgres) and as a diagnostic ahead
+// of retiring UserLoginRow.Has()'s system_key short-circuit — that retirement
+// is only safe once this returns an empty slice for every environment that
+// matters (see docs/decisions.md, RBAC lot 11).
+func (r *Repository) FindIncompleteAdminRoles(ctx context.Context) ([]IncompleteAdminRole, error) {
+	db := dbx.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `
+		SELECT r.id, r.merchant_id, p.key
+		FROM roles r
+		CROSS JOIN permissions p
+		WHERE r.system_key = ?
+		AND p.deprecated_at IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM role_permissions rp
+			WHERE rp.role_id = r.id AND rp.permission_key = p.key
+		)
+		ORDER BY r.merchant_id, p.key
+	`, SystemKeyAdmin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byRole := make(map[string]*IncompleteAdminRole)
+	order := make([]string, 0)
+	for rows.Next() {
+		var roleID, merchantID, key string
+		if err := rows.Scan(&roleID, &merchantID, &key); err != nil {
+			return nil, err
+		}
+		entry, ok := byRole[roleID]
+		if !ok {
+			entry = &IncompleteAdminRole{RoleID: roleID, MerchantID: merchantID}
+			byRole[roleID] = entry
+			order = append(order, roleID)
+		}
+		entry.Missing = append(entry.Missing, permission.Key(key))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]IncompleteAdminRole, 0, len(order))
+	for _, roleID := range order {
+		result = append(result, *byRole[roleID])
+	}
+	return result, nil
+}
+
+// MerchantRoleReconciliation is the per-merchant outcome of
+// ReconcileSystemRoles. Err is set only for the merchants where reconciling
+// failed — one merchant's failure never aborts the run for the others, so an
+// unattended caller (the ReconcileSystemRolePermissions cron task) can log
+// each failure and move on rather than leaving every other merchant
+// unreconciled because of one bad row.
+type MerchantRoleReconciliation struct {
+	MerchantID  string
+	AdminRoleID string
+	Err         error
+}
+
+// ReconcileSystemRoles is the shared implementation behind both
+// cmd/seed_system_roles (manual, supervised run) and the
+// ReconcileSystemRolePermissions cron task (automatic, unattended): for every
+// merchant, ensure its system roles exist and that "admin" carries the full
+// catalog (EnsureSystemRoles), then point merchant.default_role_id at "admin"
+// wherever it is still NULL. Idempotent and additive only — see
+// EnsureSystemRoles' doc comment for what it never touches.
+//
+// Introduced so a catalog migration never again depends on someone
+// remembering to run the CLI by hand (see docs/decisions.md, RBAC lot 10:
+// migration 103 added 5 keys and the manual backfill step was never run,
+// leaving 29 of 30 staging admin roles incomplete for over a week).
+func (r *Repository) ReconcileSystemRoles(ctx context.Context) ([]MerchantRoleReconciliation, error) {
+	db := dbx.GetDB(ctx, r.db)
+	rows, err := db.QueryContext(ctx, `SELECT id FROM merchant ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list merchants: %w", err)
+	}
+	var merchantIntIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan merchant id: %w", err)
+		}
+		merchantIntIDs = append(merchantIntIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	results := make([]MerchantRoleReconciliation, 0, len(merchantIntIDs))
+	for _, intID := range merchantIntIDs {
+		merchantID := strconv.FormatInt(intID, 10)
+		result := MerchantRoleReconciliation{MerchantID: merchantID}
+
+		adminRoleID, _, err := r.EnsureSystemRoles(ctx, merchantID)
+		if err != nil {
+			result.Err = fmt.Errorf("ensure system roles: %w", err)
+			results = append(results, result)
+			continue
+		}
+		result.AdminRoleID = adminRoleID
+
+		if _, err := db.ExecContext(ctx, `
+			UPDATE merchant SET default_role_id = ? WHERE id = ? AND default_role_id IS NULL
+		`, adminRoleID, intID); err != nil {
+			result.Err = fmt.Errorf("set default_role_id: %w", err)
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 // merchantJoinCast returns the SQL fragment used to compare merchant.id

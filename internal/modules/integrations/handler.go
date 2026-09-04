@@ -22,11 +22,15 @@ func NewHandler(svc *Service, r2Client *r2.Client) *Handler {
 	return &Handler{svc: svc, r2Client: r2Client}
 }
 
-// GetUberEats handles GET /integrations/uber-eats
+// GetUberEats handles GET /integrations/uber-eats. store_id optionnel en
+// query string cible un compte précis ; absent, retourne le compte
+// "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte).
 func (h *Handler) GetUberEats(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	storeID := r.URL.Query().Get("store_id")
 
-	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID)
+	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID, storeID)
 	if err != nil {
 		models.SendErrorJSON(w, "integrations", "get_uber_eats", err)
 		return
@@ -39,11 +43,30 @@ func (h *Handler) GetUberEats(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "integrations", "get_uber_eats", IntegrationData{Integration: integration})
 }
 
-// GetDeliveroo handles GET /integrations/deliveroo
-func (h *Handler) GetDeliveroo(w http.ResponseWriter, r *http.Request) {
+// ListUberEatsAccounts handles GET /integrations/uber-eats/accounts. Alimente
+// le sélecteur de compte back-office / POS ; toujours une liste, y compris
+// pour un marchand mono-compte (1 seule entrée alors).
+func (h *Handler) ListUberEatsAccounts(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 
-	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID)
+	accounts, err := h.svc.ListUberEatsAccounts(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "list_uber_eats_accounts", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "list_uber_eats_accounts", map[string]interface{}{"accounts": accounts})
+}
+
+// GetDeliveroo handles GET /integrations/deliveroo. location_id optionnel en
+// query string cible un compte précis ; absent, retourne le compte
+// "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte).
+func (h *Handler) GetDeliveroo(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	locationID := r.URL.Query().Get("location_id")
+
+	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID, locationID)
 	if err != nil {
 		models.SendErrorJSON(w, "integrations", "get_deliveroo", err)
 		return
@@ -54,6 +77,21 @@ func (h *Handler) GetDeliveroo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "integrations", "get_deliveroo", IntegrationData{Integration: integration})
+}
+
+// ListDeliverooAccounts handles GET /integrations/deliveroo/accounts. Alimente
+// le sélecteur de compte back-office / POS ; toujours une liste, y compris
+// pour un marchand mono-compte (1 seule entrée alors).
+func (h *Handler) ListDeliverooAccounts(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	accounts, err := h.svc.ListDeliverooAccounts(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "list_deliveroo_accounts", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "integrations", "list_deliveroo_accounts", map[string]interface{}{"accounts": accounts})
 }
 
 // GetScanNOrder handles GET /integrations/scannorder
@@ -154,9 +192,13 @@ func (h *Handler) uploadScanNOrderImage(w http.ResponseWriter, r *http.Request, 
 	})
 }
 
-// UpdateUberEats handles PATCH /integrations/uber-eats
+// UpdateUberEats handles PATCH /integrations/uber-eats. store_id optionnel en
+// query string cible un compte précis ; absent, cible le compte "principal"
+// du marchand (comportement historique, identique pour un marchand
+// mono-compte).
 func (h *Handler) UpdateUberEats(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	storeID := r.URL.Query().Get("store_id")
 
 	var req UpdateIntegrationRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -164,12 +206,12 @@ func (h *Handler) UpdateUberEats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdateUberEatsSettings(r.Context(), user.MerchantID, &req); err != nil {
+	if err := h.svc.UpdateUberEatsSettings(r.Context(), user.MerchantID, storeID, &req); err != nil {
 		models.SendErrorJSON(w, "integrations", "update_uber_eats", err)
 		return
 	}
 
-	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID)
+	integration, err := h.svc.GetUberEats(r.Context(), user.MerchantID, storeID)
 	if err != nil {
 		models.SendErrorJSON(w, "integrations", "update_uber_eats", err)
 		return
@@ -178,11 +220,14 @@ func (h *Handler) UpdateUberEats(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "integrations", "update_uber_eats", IntegrationData{Integration: integration})
 }
 
-// DisableUberEats handles PATCH /integrations/uber-eats/disable
+// DisableUberEats handles PATCH /integrations/uber-eats/disable. store_id
+// optionnel en query string cible un compte précis ; absent, désactive tous
+// les comptes du marchand (comportement historique).
 func (h *Handler) DisableUberEats(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	storeID := r.URL.Query().Get("store_id")
 
-	if err := h.svc.DisableUberEats(r.Context(), user.MerchantID); err != nil {
+	if err := h.svc.DisableUberEats(r.Context(), user.MerchantID, storeID); err != nil {
 		models.SendErrorJSON(w, "integrations", "disable_uber_eats", err)
 		return
 	}
@@ -190,9 +235,13 @@ func (h *Handler) DisableUberEats(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "integrations", "disable_uber_eats", map[string]string{"status": "success"})
 }
 
-// UpdateDeliveroo handles PATCH /integrations/deliveroo
+// UpdateDeliveroo handles PATCH /integrations/deliveroo. location_id
+// optionnel en query string cible un compte précis ; absent, cible le compte
+// "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte).
 func (h *Handler) UpdateDeliveroo(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	locationID := r.URL.Query().Get("location_id")
 
 	var req UpdateIntegrationRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -200,12 +249,12 @@ func (h *Handler) UpdateDeliveroo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UpdateDeliverooSettings(r.Context(), user.MerchantID, &req); err != nil {
+	if err := h.svc.UpdateDeliverooSettings(r.Context(), user.MerchantID, locationID, &req); err != nil {
 		models.SendErrorJSON(w, "integrations", "update_deliveroo", err)
 		return
 	}
 
-	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID)
+	integration, err := h.svc.GetDeliveroo(r.Context(), user.MerchantID, locationID)
 	if err != nil {
 		models.SendErrorJSON(w, "integrations", "update_deliveroo", err)
 		return
@@ -285,11 +334,14 @@ func (h *Handler) SetWaitTimeGlobal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DisableDeliveroo handles PATCH /integrations/deliveroo/disable
+// DisableDeliveroo handles PATCH /integrations/deliveroo/disable. location_id
+// optionnel en query string cible un compte précis ; absent, désactive tous
+// les comptes du marchand (comportement historique).
 func (h *Handler) DisableDeliveroo(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
+	locationID := r.URL.Query().Get("location_id")
 
-	if err := h.svc.DisableDeliveroo(r.Context(), user.MerchantID); err != nil {
+	if err := h.svc.DisableDeliveroo(r.Context(), user.MerchantID, locationID); err != nil {
 		models.SendErrorJSON(w, "integrations", "disable_deliveroo", err)
 		return
 	}

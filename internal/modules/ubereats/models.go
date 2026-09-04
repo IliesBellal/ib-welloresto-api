@@ -37,6 +37,10 @@ type UberToken struct {
 type UberOrderMetadata struct {
 	BrandOrderID string    `db:"brand_order_id"`
 	CreationDate time.Time `db:"creation_date"`
+	// StoreID identifie le compte Uber Eats exact d'où vient la commande
+	// (orders.brand_store_id, migration 111). Vide pour une commande
+	// antérieure à la migration sans brand_store_id résolu.
+	StoreID string `db:"brand_store_id"`
 }
 
 // Structures pour les payloads JSON de l'API Uber

@@ -91,19 +91,18 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 		}
 	}
 
-	// 2. Fallback DB : Récupérer le store et le token
-	merchantID, err := s.repo.GetMerchantIDFromStoreID(ctx, storeID)
+	// 2. Fallback DB : Récupérer directement le compte par store_id. store_id
+	// est l'identifiant unique de routage envoyé par Uber Eats à chaque
+	// webhook (index idx_integration_uber_eats_store_id, migration 111) : un
+	// lookup en deux temps (merchant_id puis GetStoreData(merchantID)) serait
+	// ambigu dès qu'un marchand a plusieurs comptes, GetStoreData ne filtrant
+	// pas par store_id.
+	store, err := s.repo.GetStoreByStoreIDOnly(ctx, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("store error: %v", err)
 	}
-	if merchantID == nil {
+	if store == nil {
 		return nil, fmt.Errorf("No store %s", storeID)
-	}
-
-	// 3. Récupérer le store
-	store, err := s.repo.GetStoreData(ctx, *merchantID)
-	if err != nil {
-		return nil, fmt.Errorf("store error: %v", err)
 	}
 
 	// ==========================================
@@ -115,6 +114,18 @@ func (s *UberEatsService) GetByStoreID(ctx context.Context, storeID string) (*St
 	}
 
 	return store, nil
+}
+
+// resolveStore récupère le compte Uber Eats à utiliser pour une action.
+// storeID vide résout sur le compte "principal" du marchand (GetStoreData,
+// comportement historique - identique pour un marchand mono-compte) ; storeID
+// renseigné résout sur ce compte précis (GetStoreDataByStoreID, validé comme
+// appartenant à merchantID).
+func (s *UberEatsService) resolveStore(ctx context.Context, merchantID, storeID string) (*Store, error) {
+	if storeID == "" {
+		return s.repo.GetStoreData(ctx, merchantID)
+	}
+	return s.repo.GetStoreDataByStoreID(ctx, merchantID, storeID)
 }
 
 // GenerateAuthURL crée le lien vers lequel le front-end doit rediriger le client
@@ -170,9 +181,16 @@ func (s *UberEatsService) HandleCallback(ctx context.Context, code, state, redir
 	return nil
 }
 
-// Disconnect supprime l'intégration
-func (s *UberEatsService) Disconnect(ctx context.Context, merchantID string) error {
-	return s.repo.DisableIntegration(ctx, merchantID)
+// Disconnect supprime l'intégration. storeID vide déconnecte tous les comptes
+// du marchand (comportement historique) ; storeID renseigné ne déconnecte que
+// ce compte précis.
+func (s *UberEatsService) Disconnect(ctx context.Context, merchantID, storeID string) error {
+	return s.repo.DisableIntegration(ctx, merchantID, storeID)
+}
+
+// ListAccounts liste tous les comptes Uber Eats d'un marchand.
+func (s *UberEatsService) ListAccounts(ctx context.Context, merchantID string) ([]Store, error) {
+	return s.repo.GetAccountsByMerchant(ctx, merchantID)
 }
 
 // AcceptOrder réplique setUberEatsOrderAccepted de manière optimisée pour éviter les Deadlocks
@@ -198,16 +216,25 @@ func (s *UberEatsService) AcceptOrder(ctx context.Context, merchantID, orderID s
 	// Cela garantit que la connexion est relâchée AVANT l'appel API
 	err = func() error {
 
-		// 2.a Récupérer le store
-		store, err = s.repo.GetStoreData(ctx, merchantID)
-		if err != nil {
-			return fmt.Errorf("store error: %v", err)
-		}
-
-		// 2.b Récupérer les métadonnées de la commande
+		// 2.a Récupérer les métadonnées de la commande (avant le store : c'est
+		// orderMeta.StoreID qui identifie SANS AMBIGUÏTÉ le compte Uber Eats
+		// concerné pour un marchand qui en a plusieurs).
 		orderMeta, err = s.repo.GetOrderMetadata(ctx, orderID)
 		if err != nil {
 			return fmt.Errorf("metadata error: %v", err)
+		}
+
+		// 2.b Récupérer le store exact de la commande. Fallback sur
+		// GetStoreData(merchantID) (compte "principal") si orderMeta.StoreID
+		// est vide - uniquement le cas d'une commande antérieure à la
+		// migration 111 sans store_id résolu.
+		if orderMeta.StoreID != "" {
+			store, err = s.repo.GetStoreDataByStoreID(ctx, merchantID, orderMeta.StoreID)
+		} else {
+			store, err = s.repo.GetStoreData(ctx, merchantID)
+		}
+		if err != nil {
+			return fmt.Errorf("store error: %v", err)
 		}
 
 		// 2.c Calculer le temps auto si nécessaire
@@ -522,15 +549,18 @@ func (s *UberEatsService) ShareDriverLocation(ctx context.Context, merchantID, b
 	return s.client.IngestLiveLocation(ctx, token, store.StoreID, brandOrderID, lat, lng, time.Now().UnixMilli())
 }
 
-// UpdateBusyModeTime active le mode occupé (délai supplémentaire)
-func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID string, delayMinutes int, untilMinutes int) error {
+// UpdateBusyModeTime active le mode occupé (délai supplémentaire). storeID
+// vide cible le compte "principal" du marchand (comportement historique,
+// identique pour un marchand mono-compte) ; storeID renseigné cible ce compte
+// précis.
+func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID, storeID string, delayMinutes int, untilMinutes int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	store, err := s.repo.GetStoreData(ctx, merchantID)
+	store, err := s.resolveStore(ctx, merchantID, storeID)
 	if err != nil {
 		return err
 	}
@@ -569,19 +599,22 @@ func (s *UberEatsService) UpdateBusyModeTime(ctx context.Context, merchantID str
 	return nil
 }
 
-// UpdateReadyForPickupTime met à jour le temps de préparation standard
-func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchantID string, timeVal int, isAuto bool) error {
+// UpdateReadyForPickupTime met à jour le temps de préparation standard.
+// storeID vide cible tous les comptes du marchand (comportement historique,
+// identique pour un marchand mono-compte) ; storeID renseigné ne cible que ce
+// compte précis.
+func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchantID, storeID string, timeVal int, isAuto bool) error {
 
 	// Si AUTO, on met juste à jour la BDD (selon ton code PHP)
 	if isAuto {
-		if err := s.repo.UpdatePreparationTime(ctx, merchantID, timeVal, true); err != nil {
+		if err := s.repo.UpdatePreparationTime(ctx, merchantID, storeID, timeVal, true); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	// Sinon, appel API
-	store, err := s.repo.GetStoreData(ctx, merchantID)
+	store, err := s.resolveStore(ctx, merchantID, storeID)
 	if err != nil {
 		return err
 	}
@@ -596,18 +629,22 @@ func (s *UberEatsService) UpdateReadyForPickupTime(ctx context.Context, merchant
 		return err
 	}
 
-	// Update DB (isAuto = false)
-	if err := s.repo.UpdatePreparationTime(ctx, merchantID, timeVal, false); err != nil {
+	// Update DB (isAuto = false) - scopé au compte qu'on vient de mettre à
+	// jour côté Uber (store.StoreID), pas au storeID demandé (potentiellement
+	// vide si l'appelant visait le compte principal).
+	if err := s.repo.UpdatePreparationTime(ctx, merchantID, store.StoreID, timeVal, false); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// CloseStoreTemporary ferme le magasin temporairement
-func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID string, delayMinutes int) error {
+// CloseStoreTemporary ferme le magasin temporairement. storeID vide cible le
+// compte "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte) ; storeID renseigné cible ce compte précis.
+func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID, storeID string, delayMinutes int) error {
 
-	store, err := s.repo.GetStoreData(ctx, merchantID)
+	store, err := s.resolveStore(ctx, merchantID, storeID)
 	if err != nil {
 		return err
 	}
@@ -639,10 +676,12 @@ func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID st
 	return nil
 }
 
-// ToggleItemAvailability active ou désactive un produit
-func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID, itemID string, available bool) error {
+// ToggleItemAvailability active ou désactive un produit. storeID vide cible le
+// compte "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte) ; storeID renseigné cible ce compte précis.
+func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID, storeID, itemID string, available bool) error {
 	// Récup Store ID, BasicAuth et Timezone
-	store, err := s.repo.GetStoreInfoForMenu(ctx, merchantID)
+	store, err := s.repo.GetStoreInfoForMenu(ctx, merchantID, storeID)
 	if err != nil {
 		return err
 	}
@@ -691,9 +730,11 @@ func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID
 	return nil
 }
 
-// GetMenu wrapper simple
-func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[string]interface{}, error) {
-	store, err := s.repo.GetStoreData(ctx, merchantID)
+// GetMenu wrapper simple. storeID vide cible le compte "principal" du
+// marchand (comportement historique, identique pour un marchand mono-compte) ;
+// storeID renseigné cible ce compte précis.
+func (s *UberEatsService) GetMenu(ctx context.Context, merchantID, storeID string) (map[string]interface{}, error) {
+	store, err := s.resolveStore(ctx, merchantID, storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -705,9 +746,12 @@ func (s *UberEatsService) GetMenu(ctx context.Context, merchantID string) (map[s
 	return s.client.GetMenu(store.StoreID, token)
 }
 
-// SyncMenu pousse un menu interne vers l'API Uber Eats
-func (s *UberEatsService) SyncMenu(ctx context.Context, merchantID string, menu interface{}) error {
-	store, err := s.repo.GetStoreData(ctx, merchantID)
+// SyncMenu pousse un menu interne vers l'API Uber Eats. storeID vide cible le
+// compte "principal" du marchand (comportement historique, identique pour un
+// marchand mono-compte) ; storeID renseigné cible ce compte précis - c'est ce
+// qui permet de choisir quel compte Uber Eats synchroniser.
+func (s *UberEatsService) SyncMenu(ctx context.Context, merchantID, storeID string, menu interface{}) error {
+	store, err := s.resolveStore(ctx, merchantID, storeID)
 	if err != nil {
 		return err
 	}

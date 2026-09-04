@@ -1,4 +1,256 @@
-# Decisions
+### RBAC lot 11, Phase 6 — runbook de déploiement production (2026-09-03)
+
+- **Livrable** : `docs/RBAC_DEPLOIEMENT_PROD.md`. Couvre en une fois les lots
+  1 à 11 (production n'a jamais reçu la moindre migration ni ligne de code
+  RBAC) — pas seulement le travail de ce chantier. Étend
+  `docs/RBAC_BASCULE.md` (qui s'arrêtait à la migration 099) aux migrations
+  103 (lot 10) et 110 (nettoyage colonnes mortes), et au code des phases 2-4
+  de ce lot.
+- **Principe expansion/déploiement/contraction appliqué en 3 vagues** :
+  A (schéma additif seul — 094, 095, 096, 097, 098, 099, 100, 103 —
+  inoffensif car le code de production actuel ne connaît aucune de ces
+  tables), B (déploiement de code + `cmd/seed_system_roles` +
+  `cmd/assign_admin_role` + migration 110, dans cet ordre précis), C (retrait
+  du repli historique + migration 113 — non planifiés ici, bloqués sur
+  l'invariant "0 lien sans role_id en production").
+- **Point clé identifié en écrivant ce runbook** : le déploiement de code de
+  la vague B, à lui seul, est un no-op comportemental strict pour la
+  production — `Has()` ne consulte `Permissions`/le rôle que si
+  `role_id != nil`, et personne n'en a un avant que `cmd/assign_admin_role`
+  ne tourne. Le vrai point de bascule est cette commande, pas le déploiement.
+- **Numérotation de migrations signalée** : collision de numéro entre
+  `103_permission_catalog_lot10` (RBAC) et `103_production_ready_delivery_arrival`
+  (chantier temps de livraison, sans rapport) — le runbook les distingue
+  explicitement par nom de fichier complet pour éviter toute ambiguïté à
+  l'exécution.
+- **Migration 110 (colonnes legacy déjà vivantes en production)
+  explicitement isolée de la vague A** : contrairement aux autres migrations
+  additives, elle touche des colonnes que le code de production lit
+  aujourd'hui — placée en vague B, après confirmation du nouveau déploiement,
+  jamais avant ni en même temps.
+- **Suite** : chantier RBAC lot 11 terminé (phases 1 à 6). Restent, hors
+  périmètre et non planifiés : le rollout réel en production (dépend d'une
+  décision de planification, pas de ce chantier), et la vague C.
+
+### RBAC lot 11, Phase 5 — le repli historique documenté, `reports.sales.read` vérifiée (2026-09-03)
+
+- **Contexte** : phase purement documentaire, aucun changement de code — le
+  brief est explicite : cette branche fait tourner la production aujourd'hui
+  (migrations RBAC jamais appliquées là-bas, voir `docs/RBAC_BASCULE.md`) et
+  ne doit pas être retirée par ce chantier.
+- **Livrable** : `docs/RBAC_REPLI_HISTORIQUE.md` — tableau exhaustif des 18
+  clés du catalogue avec/sans entrée dans `legacyPermissionFallback` (10
+  avec, 8 sans), ce qui se passe pour une clé sans repli (accessible au seul
+  `Rights.Admin`, jamais par défaut), et la condition exacte de retrait
+  (`SELECT COUNT(*) FROM users_rights WHERE enabled = TRUE AND role_id IS NULL`
+  doit renvoyer 0 **en production comprise**, pas seulement en staging).
+- **`reports.sales.read` vérifiée** (risque de mise en production signalé par
+  le brief — c'est la clé qui garde les nouveaux endpoints analytiques) : a
+  bien un repli, `CanViewReports`. Confirmé par lecture directe de
+  `internal/modules/auth/permissions.go` — aucun 403 générique à craindre en
+  production sur ce point.
+- **Point signalé, non tranché ici (hors périmètre)** : les 5 clés du lot 10
+  (`bookings.manage`, `platforms.manage`, `kiosk.manage`, `pos.analytics`,
+  `seating_plan.manage`) n'ont pas de repli — avant ce lot, leurs routes
+  n'avaient aucune garde RBAC (accessibles à tout compte authentifié). En
+  production, où `role_id` reste NULL, l'absence de repli les a donc fait
+  retomber de facto à « admin historique uniquement » — un resserrement réel,
+  pas qu'une formalisation. Documenté dans `docs/RBAC_REPLI_HISTORIQUE.md`
+  pour que ce soit un choix explicite si quelqu'un le remarque, pas une
+  redécouverte surprise.
+- **Suite** : phase 6 (runbook production, `docs/RBAC_DEPLOIEMENT_PROD.md`) —
+  non commencée ici, checkpoint volontaire.
+
+### RBAC lot 11, Phase 4 — décommissionnement de `is_admin` (`RequireAdmin` retirée, `users_rights.admin` en sursis) (2026-09-03)
+
+- **Contexte** : suite de la phase 3. Deux routes restaient gardées par
+  `middleware.RequireAdmin()` (« détient tous les droits », hors catalogue) au
+  lieu d'une `permission.Key` — un chemin d'autorisation parallèle à `Has()`,
+  distinct de tout ce que les phases 1-3 ont changé. Le recensement de la
+  phase 1 avait déjà noté que le troisième candidat pressenti,
+  `POST /users/{id}/merchant-link`, était en réalité déjà sous
+  `staff.manage` : seuls deux consommateurs réels restaient.
+- **Consommateurs déplacés** (`cmd/api/routes.go:625-626`) :
+  `POST /users/{id}/force-reset-password` et
+  `DELETE /users/{id}/merchant-link` passent de `RequireAdmin()` à
+  `RequirePermission(permission.StaffManage)` — même droit que toutes les
+  autres routes de gestion d'équipe juste au-dessus dans le même bloc
+  (`GET/POST /users/`, `PUT /{id}/role`, etc.). Pas d'autre candidat trouvé
+  (grep exhaustif `RequireAdmin\(\)` sur tout le dépôt : seuls ces deux appels
+  et un snippet synthétique dans `routes_rbac_ratchet_test.go`, qui teste la
+  logique générique du scanner et ne référence aucune route réelle).
+- **`RequireAdmin` et `IsAdmin` retirés entièrement**, plus aucun appelant
+  après le déplacement ci-dessus :
+  - `middleware.RequireAdmin()` et `adminObservationKey`
+    (`internal/middleware/require_permission.go`).
+  - `middleware.IsAdmin()` et le fichier qui ne contenait qu'elle,
+    `internal/middleware/permissions.go` (supprimé — plus rien à y garder une
+    fois la fonction retirée).
+  - `UserLoginRow.IsAdmin()` (`internal/modules/auth/models.go`) — l'unique
+    appelant était `middleware.IsAdmin()`.
+  - `HasAdminRole()` (affichage, `access.admin`/`is_admin`) **non touchée** —
+    usage légitime distinct, voir le recensement de la phase 1.
+- **Tests** : `internal/middleware/require_permission_test.go`,
+  `TestRequirePermission_ForceResetPasswordAndMerchantLinkDelete_MovedOffRequireAdmin`
+  — requête HTTP réelle à travers le routeur chi pour les deux routes
+  déplacées, refusée (403) sans `staff.manage`, acceptée (200) avec, même
+  gabarit que les tests `RequirePermission(permission.POSStatusManage)`
+  existants. `cmd/api/routes_rbac_coverage_test.go` mis à jour (les deux
+  patterns statiques attendent désormais `RequirePermission(permission.StaffManage)`
+  au lieu de `RequireAdmin`).
+- **Documentation tenue à jour** : `docs/RBAC_ROUTES.md` (les deux lignes +
+  note d'en-tête — plus aucune route ne devrait porter `RequireAdmin`),
+  `internal/middleware/rbacobserve/observer.go` (note historique sur
+  l'observation `"__admin__"`, qui n'a plus de producteur).
+- **`users_rights.admin` (la colonne) — en sursis, pas retirée** : à ne pas
+  confondre avec le rôle admin (`roles.system_key = 'admin'`), qui portent le
+  même mot pour deux choses sans rapport (c'est précisément la confusion que
+  ce chantier corrige). Elle reste lue par le repli historique volontairement
+  conservé en phase 5
+  (`internal/modules/auth/permissions.go`, `Has()` branche `RoleID == nil` :
+  `if u.Rights.Admin { return true }`), par `HasAdminRole()` (même branche,
+  affichage), par `HasAccessReception()`/`CanPrintCashReport()` (affichage,
+  capacités du login) et par le champ déprécié `LoginLegacyFields.Admin`. La
+  migration de suppression est **préparée mais non appliquée** :
+  `migrations/todo/113_drop_users_rights_admin_column.{up,down}.sql`. Elle ne
+  pourra être jouée qu'une fois qu'aucun de ces lecteurs n'existe plus dans le
+  code déployé — condition non remplie par ce chantier (phase 5 la garde
+  intacte), voir `docs/RBAC_DEPLOIEMENT_PROD.md` (phase 6) pour l'ordre exact.
+  **`docs/migration-postgres/04-schema-postgres-target.sql` volontairement
+  PAS mis à jour** (contrairement à la migration 110) : cette colonne reste
+  un besoin réel du code aujourd'hui, la retirer du schéma cible maintenant
+  suggérerait à tort qu'elle est déjà obsolète.
+- **Statut d'exécution** : `go build ./...` et
+  `go build -tags postgres_integration ./...` passent. `go test
+  ./internal/permission/... ./internal/modules/auth/...
+  ./internal/modules/users/... ./internal/modules/roles/...
+  ./internal/tasks/... ./internal/middleware/... ./cmd/api/...` passent.
+- **Suite** : phase 5 (documenter précisément le repli historique — quelles
+  clés en ont un, `reports.sales.read` en particulier) et phase 6 (runbook
+  production) — non commencées ici, checkpoint volontaire.
+
+### RBAC lot 11, Phase 3 — retrait du court-circuit `system_key` dans `Has()` (2026-09-03)
+
+- **Contexte** : suite immédiate de la phase 2 ci-dessous, une fois son
+  prérequis vérifié (0/30 rôle admin incomplet en staging). Le rôle
+  Administrateur devient un rôle comme les autres : `UserLoginRow.Has()`
+  n'accorde plus jamais un droit par la seule lecture de
+  `RoleSystemKey == "admin"` — uniquement par une ligne réelle dans
+  `Permissions` (elle-même chargée depuis `role_permissions`).
+- **Changement** : la branche court-circuit
+  (`internal/modules/auth/permissions.go`, ex-lignes 49-51) supprimée. `Has()`
+  en mode rôle (`RoleID != nil`) ne fait plus qu'une seule chose : chercher la
+  clé dans `Permissions`. Le repli historique (`RoleID == nil` →
+  `Rights.Admin` puis `legacyPermissionFallback`) est **inchangé** — hors
+  périmètre de ce lot (phase 5).
+- **Tests** (`internal/modules/auth/permissions_test.go`) :
+  - `TestHas_RoleMode_AdminSystemKeyDeniedWithoutExplicitGrant` — la preuve
+    directe que le court-circuit est parti : un rôle `system_key=admin`
+    auquel il manque une clé se voit refuser exactement cette clé (et
+    seulement celle-là — les autres restent accordées).
+  - `TestHas_RoleMode_AdminSystemKeyGrantedByExplicitPermissions` remplace
+    l'ancien `TestHas_RoleMode_SystemKeyAdminGrantsEverything`, qui testait
+    littéralement le court-circuit retiré (`Permissions: nil` suffisait) — un
+    rôle admin complet accorde toujours tout, mais par appartenance
+    explicite, plus par `system_key` seul.
+  - Vérifié qu'aucun autre test du dépôt ne construisait un `UserLoginRow`
+    avec `RoleSystemKey` en s'appuyant sur le court-circuit (grep exhaustif
+    `RoleSystemKey:\s*&` — seuls `permissions_test.go` et
+    `roles/service_test.go` construisent ce champ ; ce dernier ne l'utilise
+    que pour des rôles `staff`, jamais `admin`).
+- **`permission.SystemKeyAdmin` garde un seul rôle après ce retrait** :
+  identifier *lequel* rôle marquer non supprimable / non modifiable
+  (`models.ErrRoleImmutable`, garde G4). Vérifié déjà en place et suffisant
+  sans changement : `UpdateRole` (rename), `ReplacePermissions` (édition des
+  droits) et `ArchiveRole` (suppression) testent chacun
+  `role.SystemKey != nil && *role.SystemKey == permission.SystemKeyAdmin` et
+  renvoient `ErrRoleImmutable` (`internal/modules/roles/service.go:225,287,396`).
+  `HasAdminRole()` (affichage `access.admin`/`is_admin`) reste également
+  inchangée — c'est un usage d'affichage légitime de `system_key`, distinct de
+  l'autorisation retirée ici (voir le recensement de la phase 1).
+- **Statut d'exécution** : `go build ./...` passe. `go test
+  ./internal/modules/auth/...` passe (12 tests, dont les 2 nouveaux/modifiés
+  ci-dessus). `go test ./...` sur l'ensemble du dépôt : seuls des échecs
+  **pré-existants et sans rapport** (constatés avant toute modification de ce
+  lot, aucun des fichiers en cause n'étant touché) —
+  `internal/modules/order_life_cycle` (échec de compilation, signature
+  `customers.NewCustomersService` désynchronisée par le chantier `audit` en
+  cours ailleurs dans l'arbre de travail), `internal/modules/planning/{employees,leave,swaps}`
+  et `internal/modules/ubereats` (fixtures de mocks désynchronisées, sans
+  rapport avec RBAC). Grep exhaustif confirmant qu'aucun autre package ne
+  construit un `UserLoginRow{RoleSystemKey: ...}` ayant pu dépendre du
+  court-circuit retiré.
+- **Suite** : phase 4 (déplacer les deux consommateurs de
+  `middleware.RequireAdmin()` — `POST /users/{id}/force-reset-password` et
+  `DELETE /users/{id}/merchant-link` — vers une permission du catalogue,
+  probablement `staff.manage`) — non commencée ici, checkpoint volontaire.
+
+### RBAC lot 11, Phase 2 — invariant « rôle admin = catalogue complet », réconciliation automatisée (2026-09-03)
+
+- **Contexte** : chantier « le rôle administrateur devient un rôle comme les
+  autres » (retrait du court-circuit `RoleSystemKey == SystemKeyAdmin` dans
+  `UserLoginRow.Has()`, `internal/modules/auth/permissions.go:49-51`). Ce
+  court-circuit masque une dérive réelle : le recensement (phase 1 du
+  chantier) a vérifié en base staging que **29 des 30 rôles admin étaient
+  incomplets**, chacun manquant exactement les 5 clés du lot 10
+  (`pos.analytics`, `bookings.manage`, `platforms.manage`, `kiosk.manage`,
+  `seating_plan.manage`) — `go run ./cmd/seed_system_roles` n'avait jamais été
+  relancé après la migration 103, alors que l'entrée du lot 10 ci-dessous le
+  prescrivait. Retirer le court-circuit avant de combler ce trou aurait
+  déconnecté ces 29 établissements de leurs propres droits admin. Cette entrée
+  ne touche **pas** encore à `Has()` — uniquement le prérequis (phase 2 du
+  chantier) : garantir l'invariant, l'automatiser, le vérifier.
+- **Invariant testé** (`internal/modules/roles/postgres_integration_test.go`,
+  `TestSystemAdminRolesContainFullCatalog_Postgres`) : scanne tous les rôles
+  `system_key='admin'` de la base pointée par `POSTGRES_URL` et échoue si l'un
+  d'eux ne porte pas l'intégralité des permissions non dépréciées du
+  catalogue — même convention que `TestNoCrossTenantRoleAssignment`
+  (exécutable contre dev, CI, ou un environnement réel en surchargeant
+  `POSTGRES_URL`). Repose sur une nouvelle méthode,
+  `Repository.FindIncompleteAdminRoles`. Un second test,
+  `TestReconcileSystemRoles_BackfillsIncompleteAdminRole_Postgres`, reproduit
+  la dérive constatée (supprime une permission d'un rôle admin fraîchement
+  créé) et vérifie que la réconciliation la rattrape. Aucun pipeline CI
+  (GitHub Actions ou autre) n'existe dans ce dépôt pour l'exécuter
+  automatiquement — ces tests suivent la convention `-tags
+  postgres_integration` déjà en place, seul mécanisme de gate d'intégration
+  du projet à ce jour.
+- **Réconciliation automatisée** : la logique de `cmd/seed_system_roles`
+  (lister les établissements, `EnsureSystemRoles`, pointer
+  `default_role_id`) déplacée dans `Repository.ReconcileSystemRoles`
+  (`internal/modules/roles/repository.go`) — implémentation unique partagée
+  par la CLI et une nouvelle tâche cron,
+  `TasksManager.ReconcileSystemRolePermissions`
+  (`internal/tasks/rbac.go`), enregistrée `@hourly` dans `cmd/api/tasks.go`.
+  Un ajout au catalogue ne dépend plus d'une commande lancée à la main.
+  Différence avec la CLI : une erreur sur un établissement n'interrompt plus
+  le traitement des autres (`[]MerchantRoleReconciliation`, erreur par
+  établissement) — adapté à une tâche de fond non supervisée ; la CLI, elle,
+  garde un exit code non-zéro si un établissement échoue, pour qu'un run
+  manuel supervisé ne passe pas inaperçu.
+- **Création d'établissement déjà correcte** : `POSService.CreateMerchant`
+  (`internal/modules/pos/create_service.go:52`) appelle déjà
+  `EnsureSystemRoles` de façon inconditionnelle, dans la même transaction —
+  vérifié, aucun changement nécessaire.
+- **Staging réconcilié** (2026-09-03, `go run ./cmd/seed_system_roles` contre
+  `RENDER_STAGING_DATABASE_URL`) : 30/30 établissements traités, 0 échec.
+  Vérifié avant/après par requête directe et par
+  `TestSystemAdminRolesContainFullCatalog_Postgres` exécuté contre staging :
+  29 rôles incomplets → 0.
+- **Statut d'exécution** : `go build ./...` et
+  `go build -tags postgres_integration ./...` passent. `go vet -tags
+  postgres_integration ./internal/modules/roles/... ./internal/tasks/...
+  ./cmd/seed_system_roles/... ./cmd/api/...` ne signale que l'avertissement
+  préexistant `auth/handler.go` (copie de `sync.Mutex` via
+  `singleflight.Group`, sans rapport avec ce lot — voir lot 9). `go test
+  ./internal/permission/... ./internal/modules/auth/...
+  ./internal/modules/users/... ./internal/modules/roles/...
+  ./internal/tasks/... ./cmd/api/...` passent. Tests d'intégration Postgres
+  (`-tags postgres_integration`) exécutés contre staging, décrits ci-dessus.
+- **Suite** : phase 3 du chantier (retrait du court-circuit dans `Has()`,
+  avec test dédié « un rôle admin amputé d'une permission se voit refuser
+  cette permission ») — non commencée ici, checkpoint volontaire avant d'y
+  toucher.
 
 ### Droits legacy morts — nettoyage `access_delivery`/`access_waiter`/`export_reports`/`export_financials`/`export_customers` (2026-09-01)
 

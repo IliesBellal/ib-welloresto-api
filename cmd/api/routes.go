@@ -34,6 +34,7 @@ import (
 
 	// ---- MODULES ----
 	allergensModule "welloresto-api/internal/modules/allergens"
+	analyticsModule "welloresto-api/internal/modules/analytics"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
 	bookingcommModule "welloresto-api/internal/modules/bookingcomm"
@@ -88,7 +89,7 @@ import (
 	webhookuberservice "welloresto-api/internal/webhook/ubereats/service"
 )
 
-func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
+func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *config.AppConfig) *chi.Mux {
 
 	r := chi.NewRouter()
 
@@ -219,6 +220,16 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 	// ---- STATS ----
 	statsRepo := statsModule.NewStatsRepository(selectedDB)
 	statsService := statsModule.NewStatsService(statsRepo)
+
+	// ---- ANALYTICS (docs/analytics, wello-back-office repo) ----
+	// Runs against analyticsDB, the dedicated low-priority pool (nil when
+	// DB_DIALECT isn't postgres — MySQL never gets this module, dead path).
+	var analyticsH *analyticsModule.Handler
+	if analyticsDB != nil {
+		analyticsRepo := analyticsModule.NewRepository(analyticsDB)
+		analyticsService := analyticsModule.NewService(analyticsRepo, redisClient)
+		analyticsH = analyticsModule.NewHandler(analyticsService)
+	}
 
 	// ---- Allergens (repo construit tôt : requis par Menu pour l'affiche PDF des allergènes) ----
 	allergensRepo := allergensModule.NewRepository(selectedDB)
@@ -611,8 +622,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/member", usersH.GetMerchantUserMember)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Patch("/{id}/member", usersH.PatchMerchantUserMember)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/role", rolesH.SetUserRole)
-		r.With(middleware.RequireAdmin()).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
-		r.With(middleware.RequireAdmin()).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
 
 		r.Get("/{user_id}/location", usersH.GetUserLocation)
 		r.Patch("/location", usersH.SetUserLocation)
@@ -664,6 +675,25 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 		r.With(middleware.RequirePermission(permission.POSAnalytics)).
 			Get("/upsell", statsH.GetUpsellStats)
 	})
+
+	// --- ANALYTICS (docs/analytics, wello-back-office repo, PROMPT 03) ---
+	// Guarded by reports.sales.read, not pos.analytics: TVA/payments data
+	// under this same key is already served by /pos/reports/{tva,payments} —
+	// gating the analytics tabs by a different key would be a second door to
+	// the same numbers, i.e. an effective bypass of the existing right. See
+	// docs/analytics/DROITS.md, wello-back-office repo, §6.2/6.3.
+	// pos.analytics remains the front-end page-level gate only.
+	if analyticsH != nil {
+		r.Route("/analytics", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
+
+			r.Post("/revenue", analyticsH.GetRevenue)
+			r.Post("/orders", analyticsH.GetOrders)
+			r.Post("/payments", analyticsH.GetPayments)
+			r.Post("/vat", analyticsH.GetVAT)
+		})
+	}
 
 	// --- POS ---
 	r.Route("/pos", func(r chi.Router) {
@@ -1287,6 +1317,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			// Sous-route paiements (en écriture)
 			r.Route("/{order_id}/payments", func(r chi.Router) {
 				r.Post("/create", ordersLifeCycleH.AddPayment)
+				// Supprimer un paiement enregistré n'EST PAS bloqué, car est une opération qui peut être
+				// une correction d'une erreur de manipulation faite par un serveur. Elle doit être accessible par n'importe
+				// qui car elle annule un SALE et ne créé pas de REFUND. Pas de nécessité de restreindre avec un droit.
 				r.Delete("/{payment_id}", ordersLifeCycleH.DeletePayment)
 			})
 		})
@@ -1490,7 +1523,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, cfg *config.AppConfig) *ch
 			r.Use(authMiddleware)
 
 			r.Get("/uber-eats", integrationsHandler.GetUberEats)
+			r.Get("/uber-eats/accounts", integrationsHandler.ListUberEatsAccounts)
 			r.Get("/deliveroo", integrationsHandler.GetDeliveroo)
+			r.Get("/deliveroo/accounts", integrationsHandler.ListDeliverooAccounts)
 			r.Get("/scannorder", integrationsHandler.GetScanNOrder)
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)

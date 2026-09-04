@@ -197,6 +197,73 @@ passage que ce widget est bien partagé entre les deux écrans visés par D12.
   quand les deux heures sont connues, prioritaire sur l'ancien libellé de créneau programmé (plus
   informatif dans tous les cas).
 
+### D13 — La deadline cuisine manquait encore en heure d'horloge sur l'écran production
+**Question posée par l'utilisateur après livraison de D12** : "est-ce clair pour la cuisine de savoir
+à quelle heure sortir quelle commande ?"
+**Constat, honnête** : non, pas totalement. La carte ne montrait aucune heure d'horloge pour la
+deadline cuisine elle-même — seulement le badge `WelloLiveOrderAgeBadge` (temps écoulé + couleur
+d'urgence, jamais une heure absolue). La seule heure en clair était "🛵 HH:mm" (arrivée livreur,
+ajoutée en D12) — une heure **plus tardive** que la vraie deadline cuisine pour une commande
+programmée, avec un vrai risque de lecture erronée ("j'ai jusque-là") sous pression.
+**Correction** : ligne "🍳 HH:mm" ajoutée à côté de "🛵 HH:mm" dans
+[production_order_header_values.dart](../lib/ui/views/production/order/production_order_header_values.dart),
+sur `order.kitchenReadyAt` (déjà utilisé pour la couleur du badge, maintenant aussi affiché en clair).
+Les deux lignes partagent un composant `_TimeLine` (icône + heure locale) pour rester visuellement
+cohérentes ; la ligne cuisine est en gras (`FontWeight.w700`) — c'est l'info la plus actionnable pour
+ce poste, le badge élapsé reste utile en complément pour repérer une commande qui traîne, pas à sa
+place.
+
+### D14 — Les deux heures remontées en haut de la carte, à la place de l'heure programmée
+**Demande utilisateur** : en haut de la carte, `ScheduleTimerInfo` n'affichait (uniquement pour les
+commandes programmées) que l'heure programmée elle-même — qui est la date de livraison, pas la date
+de production, le même problème de fond que D7/D13 mais au sommet de la carte cette fois, l'endroit le
+plus visible. Demande : y remplacer cet affichage par l'heure de production (à gauche), et l'heure
+d'arrivée livreur si pertinent (à droite, même ligne).
+**Décision** : nouveau widget [ProductionTimingRow](../lib/ui/views/production/order/production_timing_row.dart),
+affiché dès que `order.kitchenReadyAt` existe (donc pour **toute** commande, programmée ou non — pas
+seulement les programmées comme l'ancien `ScheduleTimerInfo`), avec le même style visuel (icône 24px,
+texte 20px, `AppColor.secondaryColor`) puisqu'il reprend le même emplacement bien visible.
+`MainAxisAlignment.spaceBetween` pousse l'heure de livraison à l'extrémité droite de la carte quand
+elle existe.
+**`ScheduleTimerInfo` non touché** : toujours utilisé tel quel par [schedule_order_card.dart](../lib/ui/widgets/production/schedule_control/schedule_order_card.dart)
+(bannière des commandes programmées à venir) — un contexte différent où "l'heure programmée" est
+justement l'info recherchée (un aperçu de ce qui arrive), pas une carte de production active.
+**Conséquence** : les lignes "🍳"/"🛵" ajoutées en D13 dans `ProductionOrderHeaderValues` (bas de
+carte) sont retirées — désormais dupliquées avec `ProductionTimingRow` en haut de carte. Cette zone ne
+garde que le badge de temps écoulé (`WelloLiveOrderAgeBadge`), dont la couleur d'urgence continue de
+dépendre de `order.kitchenReadyAt`.
+
+### D15 — Plus de mot "Demain" dans le formatage : débordement de carte
+**Constat utilisateur** : sur `ProductionTimingRow` (D14), quand la deadline cuisine **et** l'heure de
+livraison tombent toutes les deux "demain", les deux blocs affichaient "Demain - HH:mm" côte à côte —
+assez long pour faire déborder la carte.
+**Décision** : [DateHelper.formatProductionScheduleDateTime](../lib/helpers/date_helper.dart) (partagée
+avec `ScheduleTimerInfo`/la bannière programmée, seul autre appelant) n'a plus que deux cas au lieu de
+trois : aujourd'hui → `"HH:mm"` seul ; tout le reste (demain compris) → `"dd/MM - HH:mm"`. Le mot
+"Demain" et le format `"Lun 16 sept - HH:mm"` (jour de semaine + mois en toutes lettres) disparaissent
+au profit d'une date chiffrée courte, sans ambiguïté quel que soit le jour, et systématiquement plus
+courte que les deux formes qu'elle remplace.
+
+### D16 — Toujours trop large : date affichée une seule fois pour toute la ligne
+**Constat utilisateur** : même raccourci en `dd/MM`, `ProductionTimingRow` restait trop large — la date
+était répétée sous les deux heures alors qu'elles appartiennent à la même commande et tombent quasi
+toujours le même jour (livraison peu après la cuisine).
+**Décision** (deux options proposées avec aperçu ASCII, celle-ci retenue par l'utilisateur) : la date
+n'apparaît plus qu'une fois pour toute la ligne — calculée une seule fois à partir de l'heure cuisine
+(`DateHelper.formatDateLabelIfNotToday`, nouvelle fonction extraite de
+`formatProductionScheduleDateTime`, qui la réutilise) — suivie des deux heures seules (`HH:mm`, sans
+date propre) sous chaque icône. `ScheduleTimerInfo`/la bannière programmée continue d'utiliser
+`formatProductionScheduleDateTime` (comportement inchangé, une seule heure par carte là-bas).
+**Police/placement, sur demande explicite de conseil** : icônes 24px→18px, heures 20px→16px (trop
+grandes à deux blocs sur une ligne) ; deadline cuisine en gras (`w700`, l'info la plus actionnable),
+livraison en poids normal ; date partagée en 12px atténué (repère secondaire, pas l'info principale),
+placée avant l'icône 🍳 plutôt que sur sa propre ligne pour garder l'effet "coup d'œil" sur une seule
+ligne.
+**Simplification assumée** : la date partagée est calculée sur l'heure cuisine, pas sur chaque heure
+individuellement. Si l'arrivée livreur tombe rarement sur un autre jour que la cuisine (commande passée
+juste avant minuit), elle s'affiche quand même sans sa propre date — imprécision mineure et rare,
+jugée acceptable plutôt que de complexifier le composant pour un cas limite.
+
 ---
 
 ## 3. Architecture

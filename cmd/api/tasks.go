@@ -63,6 +63,15 @@ func SetupTasks(
 	// 1er du mois à 4h : purge des anciennes suggestions
 	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 
+	// ── RBAC ─────────────────────────────────────────────────────────────────
+	// Réconcilie le rôle admin de chaque établissement avec le catalogue de
+	// permissions — un ajout au catalogue n'a plus besoin d'un lancement manuel
+	// de cmd/seed_system_roles (voir docs/decisions.md, RBAC lot 10 : la
+	// dépendance manuelle avait laissé 29/30 rôles admin de staging incomplets
+	// plus d'une semaine). Idempotent, cadence horaire comme les autres tâches
+	// de fond de ce poids.
+	add("@hourly", taskManager.ReconcileSystemRolePermissions)
+
 	// ── Sécurité ─────────────────────────────────────────────────────────────
 	// Chaque nuit à 4h30 : purge des demandes de réinitialisation de mot de passe.
 	// 4h30 et non 4h pour ne pas tomber en même temps que la purge upsell le 1er

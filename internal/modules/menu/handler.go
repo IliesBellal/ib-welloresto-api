@@ -1760,7 +1760,9 @@ func (h *MenuHandler) GetDeliverooMenu(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	menu, err := h.service.GetDeliverooMenu(ctx, token)
+	locationID := r.URL.Query().Get("location_id")
+
+	menu, err := h.service.GetDeliverooMenu(ctx, token, locationID)
 	if err != nil {
 		log.Error("[ERROR] GetDeliverooMenu error " + err.Error())
 		models.SendErrorJSON(w, "menu", "get_deliveroo_menu", err)
@@ -1770,7 +1772,10 @@ func (h *MenuHandler) GetDeliverooMenu(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get_deliveroo_menu", menu)
 }
 
-// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo
+// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo.
+// location_id optionnel en query string choisit le compte Deliveroo à
+// synchroniser ; absent, synchronise le compte "principal" du marchand
+// (comportement historique, identique pour un marchand mono-compte).
 func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -1780,8 +1785,9 @@ func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) 
 
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
+	locationID := r.URL.Query().Get("location_id")
 
-	if err := h.service.SyncDeliverooMenu(ctx, token); err != nil {
+	if err := h.service.SyncDeliverooMenu(ctx, token, locationID); err != nil {
 		log.Error("[ERROR] SyncDeliverooMenu error " + err.Error())
 		models.SendErrorJSON(w, "menu", "sync_deliveroo_menu", err)
 		return
@@ -1801,7 +1807,9 @@ func (h *MenuHandler) GetUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	menu, err := h.service.GetUberEatsMenu(ctx, token)
+	storeID := r.URL.Query().Get("store_id")
+
+	menu, err := h.service.GetUberEatsMenu(ctx, token, storeID)
 	if err != nil {
 		log.Error("[ERROR] GetUberEatsMenu error " + err.Error())
 		models.SendErrorJSON(w, "menu", "get_ubereats_menu", err)
@@ -1811,7 +1819,10 @@ func (h *MenuHandler) GetUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get_ubereats_menu", menu)
 }
 
-// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats
+// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats. store_id
+// optionnel en query string choisit le compte Uber Eats à synchroniser ;
+// absent, synchronise le compte "principal" du marchand (comportement
+// historique, identique pour un marchand mono-compte).
 func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -1821,8 +1832,9 @@ func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
+	storeID := r.URL.Query().Get("store_id")
 
-	if err := h.service.SyncUberEatsMenu(ctx, token); err != nil {
+	if err := h.service.SyncUberEatsMenu(ctx, token, storeID); err != nil {
 		log.Error("[ERROR] SyncUberEatsMenu error " + err.Error())
 		models.SendErrorJSON(w, "menu", "sync_ubereats_menu", err)
 		return

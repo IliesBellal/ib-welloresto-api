@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/timeutil"
 )
 
 // StatsRepository handles data access for stats module
@@ -41,12 +42,8 @@ func (r *StatsRepository) GetMerchantTimezone(ctx context.Context, merchantID st
 // GetRevenue retrieves revenue data for specified date range (accounting for merchant timezone)
 func (r *StatsRepository) GetRevenue(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) (today, yesterday, weekCurrent, weekPrevious, monthCurrent, monthPrevious int64, err error) {
 	// Today
-	startToday := time.Date(dateInMerchantTz.Year(), dateInMerchantTz.Month(), dateInMerchantTz.Day(), 0, 0, 0, 0, merchantTz)
-	endToday := startToday.Add(24 * time.Hour)
-
-	// Convert to UTC for database query
-	startTodayUTC := startToday.UTC()
-	endTodayUTC := endToday.UTC()
+	startTodayUTC, endTodayUTC := timeutil.LocalDayBounds(dateInMerchantTz, merchantTz)
+	startToday := startTodayUTC.In(merchantTz)
 
 	today, err = r.getRevenueForPeriod(ctx, merchantID, startTodayUTC, endTodayUTC)
 	if err != nil {
@@ -169,17 +166,16 @@ func (r *StatsRepository) ListRevenueHTByLocalDay(ctx context.Context, merchantI
 // GetOrderCount retrieves order count for today and yesterday (accounting for merchant timezone)
 func (r *StatsRepository) GetOrderCount(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) (today, yesterday int, err error) {
 	// Today
-	startToday := time.Date(dateInMerchantTz.Year(), dateInMerchantTz.Month(), dateInMerchantTz.Day(), 0, 0, 0, 0, merchantTz)
-	endToday := startToday.Add(24 * time.Hour)
+	startTodayUTC, endTodayUTC := timeutil.LocalDayBounds(dateInMerchantTz, merchantTz)
 
-	today, err = r.getOrderCountForPeriod(ctx, merchantID, startToday.UTC(), endToday.UTC())
+	today, err = r.getOrderCountForPeriod(ctx, merchantID, startTodayUTC, endTodayUTC)
 	if err != nil {
 		return 0, 0, err
 	}
 
 	// Yesterday
-	startYesterday := startToday.Add(-24 * time.Hour)
-	yesterday, err = r.getOrderCountForPeriod(ctx, merchantID, startYesterday.UTC(), startToday.UTC())
+	startYesterdayUTC := startTodayUTC.Add(-24 * time.Hour)
+	yesterday, err = r.getOrderCountForPeriod(ctx, merchantID, startYesterdayUTC, startTodayUTC)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -203,17 +199,16 @@ func (r *StatsRepository) getOrderCountForPeriod(ctx context.Context, merchantID
 // GetAverageBasket retrieves average basket size for today and yesterday (accounting for merchant timezone)
 func (r *StatsRepository) GetAverageBasket(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) (today, yesterday int64, err error) {
 	// Today
-	startToday := time.Date(dateInMerchantTz.Year(), dateInMerchantTz.Month(), dateInMerchantTz.Day(), 0, 0, 0, 0, merchantTz)
-	endToday := startToday.Add(24 * time.Hour)
+	startTodayUTC, endTodayUTC := timeutil.LocalDayBounds(dateInMerchantTz, merchantTz)
 
-	today, err = r.getAverageBasketForPeriod(ctx, merchantID, startToday.UTC(), endToday.UTC())
+	today, err = r.getAverageBasketForPeriod(ctx, merchantID, startTodayUTC, endTodayUTC)
 	if err != nil {
 		return 0, 0, err
 	}
 
 	// Yesterday
-	startYesterday := startToday.Add(-24 * time.Hour)
-	yesterday, err = r.getAverageBasketForPeriod(ctx, merchantID, startYesterday.UTC(), startToday.UTC())
+	startYesterdayUTC := startTodayUTC.Add(-24 * time.Hour)
+	yesterday, err = r.getAverageBasketForPeriod(ctx, merchantID, startYesterdayUTC, startTodayUTC)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -237,12 +232,7 @@ func (r *StatsRepository) getAverageBasketForPeriod(ctx context.Context, merchan
 // GetHourlyData retrieves hourly breakdown of orders for today (accounting for merchant timezone)
 // Returns two separate datasets: revenue and order counts
 func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, merchantTz *time.Location, dateInMerchantTz time.Time) (hourlyRevenue, hourlyOrders []map[string]interface{}, err error) {
-	startDay := time.Date(dateInMerchantTz.Year(), dateInMerchantTz.Month(), dateInMerchantTz.Day(), 0, 0, 0, 0, merchantTz)
-	endDay := startDay.Add(24 * time.Hour)
-
-	// Convert to UTC for database query
-	startDayUTC := startDay.UTC()
-	endDayUTC := endDay.UTC()
+	startDayUTC, endDayUTC := timeutil.LocalDayBounds(dateInMerchantTz, merchantTz)
 
 	// Same CONVERT_TZ translation as ListRevenueHTByLocalDay: cast the offset
 	// to INTERVAL so AT TIME ZONE adds it with the expected (ISO) sign.
@@ -476,17 +466,12 @@ func getWeekStart(dateInTz time.Time, tz *time.Location) time.Time {
 	return time.Date(dateInTz.Year(), dateInTz.Month(), dateInTz.Day()-daysToMonday, 0, 0, 0, 0, tz)
 }
 
-// getTZOffset converts a time.Location to UTC offset format (+HH:MM or -HH:MM)
-// Required for MySQL CONVERT_TZ function
+// GetTZOffset converts a time.Location to UTC offset format (+HH:MM or -HH:MM).
+// Thin alias kept for existing callers (planning/performance, this module's
+// own tests) — the implementation now lives in internal/timeutil so
+// internal/modules/analytics can use it without importing stats.
 func GetTZOffset(tz *time.Location, t time.Time) string {
-	_, offset := t.In(tz).Zone()
-	hours := offset / 3600
-	minutes := (offset % 3600) / 60
-
-	if offset >= 0 {
-		return fmt.Sprintf("+%02d:%02d", hours, minutes)
-	}
-	return fmt.Sprintf("%03d:%02d", hours, minutes)
+	return timeutil.TZOffset(tz, t)
 }
 
 func buildOrdersAggregateQuery(selectExpr, merchantID string, startTimeUTC, endTimeUTC time.Time) (string, []interface{}) {

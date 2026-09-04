@@ -1,0 +1,14 @@
+-- Enables pg_stat_statements — PROMPT 04 (docs/analytics/, wello-back-office
+-- repo) annex item, prepared but NOT applied here.
+--
+-- Verified read-only against staging (2026-09-03): pg_available_extensions
+-- lists pg_stat_statements as installable (default_version 1.12,
+-- installed_version NULL — not yet installed). The connecting role
+-- (welloresto_api) is not superuser (rolsuper=false) but does have
+-- rolcreatedb=true. Whether the extension will actually activate depends on
+-- shared_preload_libraries, which is NOT verifiable from this role
+-- ("permission denied to examine shared_preload_libraries", Render's own
+-- permission model for managed Postgres) — do not assume this migration
+-- will succeed unattended; the first real CREATE EXTENSION attempt is the
+-- actual test, not this file.
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

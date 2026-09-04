@@ -71,12 +71,24 @@ func NewService(
 	}
 }
 
-func (s *Service) GetUberEats(ctx context.Context, merchantID string) (*UberEatsIntegration, error) {
-	return s.repo.GetUberEatsIntegration(ctx, merchantID)
+func (s *Service) GetUberEats(ctx context.Context, merchantID, storeID string) (*UberEatsIntegration, error) {
+	return s.repo.GetUberEatsIntegration(ctx, merchantID, storeID)
 }
 
-func (s *Service) GetDeliveroo(ctx context.Context, merchantID string) (*DeliverooIntegration, error) {
-	return s.repo.GetDeliverooIntegration(ctx, merchantID)
+func (s *Service) GetDeliveroo(ctx context.Context, merchantID, locationID string) (*DeliverooIntegration, error) {
+	return s.repo.GetDeliverooIntegration(ctx, merchantID, locationID)
+}
+
+// ListUberEatsAccounts liste tous les comptes Uber Eats du marchand, pour le
+// sélecteur de compte (back-office / POS).
+func (s *Service) ListUberEatsAccounts(ctx context.Context, merchantID string) ([]AccountSummary, error) {
+	return s.repo.ListUberEatsAccounts(ctx, merchantID)
+}
+
+// ListDeliverooAccounts liste tous les comptes Deliveroo du marchand, pour le
+// sélecteur de compte (back-office / POS).
+func (s *Service) ListDeliverooAccounts(ctx context.Context, merchantID string) ([]AccountSummary, error) {
+	return s.repo.ListDeliverooAccounts(ctx, merchantID)
 }
 
 func (s *Service) GetScanNOrder(ctx context.Context, merchantID string) (*ScanNOrderIntegration, error) {
@@ -111,31 +123,41 @@ func (s *Service) UpdateScanNOrderImageURL(ctx context.Context, merchantID, colu
 	return s.repo.UpdateScanNOrderImageURL(ctx, merchantID, column, publicURL)
 }
 
-func (s *Service) UpdateUberEatsSettings(ctx context.Context, merchantID string, req *UpdateIntegrationRequest) error {
+// UpdateUberEatsSettings met à jour la configuration du compte Uber Eats.
+// storeID vide cible le compte "principal" du marchand pour l'appel API
+// (comportement historique, identique pour un marchand mono-compte) et tous
+// ses comptes pour la persistance en base ; storeID renseigné cible ce compte
+// précis pour les deux.
+func (s *Service) UpdateUberEatsSettings(ctx context.Context, merchantID, storeID string, req *UpdateIntegrationRequest) error {
 	if req.PreparationTimeMinutes != nil {
 		if *req.PreparationTimeMinutes <= 0 {
 			return fmt.Errorf("preparation_time_minutes must be greater than 0")
 		}
 
-		if err := s.uberService.UpdateReadyForPickupTime(ctx, merchantID, *req.PreparationTimeMinutes, false); err != nil {
+		if err := s.uberService.UpdateReadyForPickupTime(ctx, merchantID, storeID, *req.PreparationTimeMinutes, false); err != nil {
 			return fmt.Errorf("failed to update uber eats preparation time: %w", err)
 		}
 	}
 
-	return s.repo.UpdateUberEatsSettings(ctx, merchantID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
+	return s.repo.UpdateUberEatsSettings(ctx, merchantID, storeID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
 }
 
-func (s *Service) DisableUberEats(ctx context.Context, merchantID string) error {
-	return s.repo.DisableUberEats(ctx, merchantID)
+func (s *Service) DisableUberEats(ctx context.Context, merchantID, storeID string) error {
+	return s.repo.DisableUberEats(ctx, merchantID, storeID)
 }
 
-func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID string, req *UpdateIntegrationRequest) error {
+// UpdateDeliverooSettings met à jour la configuration du compte Deliveroo.
+// locationID vide cible le compte "principal" du marchand pour l'appel API
+// (comportement historique, identique pour un marchand mono-compte) et tous
+// ses comptes pour la persistance en base ; locationID renseigné cible ce
+// compte précis pour les deux.
+func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID, locationID string, req *UpdateIntegrationRequest) error {
 	if req.PreparationTimeMinutes != nil {
 		if *req.PreparationTimeMinutes <= 0 {
 			return fmt.Errorf("preparation_time_minutes must be greater than 0")
 		}
 
-		if err := s.deliverooService.UpdatePreparationTime(ctx, merchantID, *req.PreparationTimeMinutes); err != nil {
+		if err := s.deliverooService.UpdatePreparationTime(ctx, merchantID, locationID, *req.PreparationTimeMinutes); err != nil {
 			logger.FromContext(ctx).Error("failed to update deliveroo preparation time for merchant",
 				zap.String("merchant_id", merchantID),
 				zap.Int("preparation_time_minutes", *req.PreparationTimeMinutes),
@@ -144,11 +166,11 @@ func (s *Service) UpdateDeliverooSettings(ctx context.Context, merchantID string
 		}
 	}
 
-	return s.repo.UpdateDeliverooSettings(ctx, merchantID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
+	return s.repo.UpdateDeliverooSettings(ctx, merchantID, locationID, req.CommissionRate, req.AutoAcceptOrders, req.PreparationTimeMinutes)
 }
 
-func (s *Service) DisableDeliveroo(ctx context.Context, merchantID string) error {
-	return s.repo.DisableDeliveroo(ctx, merchantID)
+func (s *Service) DisableDeliveroo(ctx context.Context, merchantID, locationID string) error {
+	return s.repo.DisableDeliveroo(ctx, merchantID, locationID)
 }
 
 func (s *Service) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
@@ -181,7 +203,8 @@ func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID str
 
 		switch name {
 		case "uber_eats":
-			if err := s.uberService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
+			storeID := accountIDForPlatform(req.AffectedAccounts, name)
+			if err := s.uberService.CloseStoreTemporary(ctx, merchantID, storeID, req.DurationMinutes); err != nil {
 				log.Error("failed to close uber eats temporarily for merchant",
 					zap.String("merchant_id", merchantID),
 					zap.Int("duration_minutes", req.DurationMinutes),
@@ -190,7 +213,8 @@ func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID str
 				//return time.Time{}, nil, fmt.Errorf("failed to close uber eats temporarily: %w", err)
 			}
 		case "deliveroo":
-			if err := s.deliverooService.CloseStoreTemporary(ctx, merchantID, req.DurationMinutes); err != nil {
+			locationID := accountIDForPlatform(req.AffectedAccounts, name)
+			if err := s.deliverooService.CloseStoreTemporary(ctx, merchantID, locationID, req.DurationMinutes); err != nil {
 				log.Error("failed to close deliveroo temporarily for merchant",
 					zap.String("merchant_id", merchantID),
 					zap.Int("duration_minutes", req.DurationMinutes),
@@ -277,7 +301,8 @@ func (s *Service) SetWaitTimeIntegrations(ctx context.Context, merchantID string
 
 		switch name {
 		case "uber_eats":
-			if err := s.uberService.UpdateBusyModeTime(ctx, merchantID, req.WaitTimeMinutes, windowMinutes); err != nil {
+			storeID := accountIDForPlatform(req.AffectedAccounts, name)
+			if err := s.uberService.UpdateBusyModeTime(ctx, merchantID, storeID, req.WaitTimeMinutes, windowMinutes); err != nil {
 				log.Error("failed to set uber eats wait time for merchant",
 					zap.String("merchant_id", merchantID),
 					zap.Int("wait_time_minutes", req.WaitTimeMinutes),
@@ -344,6 +369,21 @@ func normalizeIntegrationName(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	name = strings.ReplaceAll(name, "-", "_")
 	return name
+}
+
+// accountIDForPlatform cherche, dans la liste multi-comptes optionnelle d'une
+// requête CloseTemporaryIntegrations/SetWaitTime, le compte explicitement visé
+// pour une plateforme donnée. Retourne "" si absent : l'appelant applique
+// alors l'action au compte "principal" du marchand (comportement historique,
+// identique pour un marchand mono-compte - c'est ce qui garde le POS Flutter
+// actuel compatible tel quel).
+func accountIDForPlatform(accounts []AffectedAccount, platform string) string {
+	for _, acc := range accounts {
+		if normalizeIntegrationName(acc.Platform) == platform {
+			return acc.AccountID
+		}
+	}
+	return ""
 }
 
 // ─── Stripe Connect ───────────────────────────────────────────────────────────

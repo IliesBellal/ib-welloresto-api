@@ -6,8 +6,11 @@ Généré depuis `cmd/api/routes.go` au moment de la bascule `RequirePermission(
 - **Auth** : `aucune` (publique), `authMiddleware` (jeton utilisateur), `KioskAuth` (device kiosk,
   distinct — voir `internal/middleware/kiosk_auth.go`), ou un rate-limit (`httprate`, sans jeton).
 - **Droit requis** : la `permission.Key` posée par `middleware.RequirePermission(...)`,
-  `RequireAdmin` (détient tous les droits — hors catalogue, voir le résumé de livraison),
-  ou **`aucun`** — authentifiée mais sans garde RBAC.
+  ou **`aucun`** — authentifiée mais sans garde RBAC. `RequireAdmin` (détient tous les droits —
+  hors catalogue) a existé jusqu'à RBAC lot 11 phase 4 ; ses deux derniers consommateurs
+  (`/users/{id}/force-reset-password`, `DELETE /users/{id}/merchant-link`) sont passés sous
+  `staff.manage` et `RequireAdmin` a été retirée du code — plus aucune ligne de ce tableau ne
+  devrait porter cette valeur.
 
 Les lignes **`authMiddleware` / `aucun`** sont la liste de ce qui reste à trancher : ni un bug ni
 un oubli de cette bascule (le principe directeur du lot 2 est de ne changer aucune décision
@@ -79,8 +82,8 @@ reste à concevoir.
 | PUT | `/users/{id}/rights` | authMiddleware | `staff.manage` |
 | GET | `/users/{id}/member` | authMiddleware | `staff.manage` |
 | PATCH | `/users/{id}/member` | authMiddleware | `staff.manage` |
-| POST | `/users/{id}/force-reset-password` | authMiddleware | `RequireAdmin` |
-| DELETE | `/users/{id}/merchant-link` | authMiddleware | `RequireAdmin` |
+| POST | `/users/{id}/force-reset-password` | authMiddleware | `staff.manage` (RBAC lot 11 phase 4 — était `RequireAdmin`, retirée) |
+| DELETE | `/users/{id}/merchant-link` | authMiddleware | `staff.manage` (RBAC lot 11 phase 4 — était `RequireAdmin`, retirée) |
 | GET | `/users/{user_id}/location` | authMiddleware | aucun |
 | PATCH | `/users/location` | authMiddleware | aucun |
 | PATCH | `/users/reset-password` | authMiddleware | aucun |

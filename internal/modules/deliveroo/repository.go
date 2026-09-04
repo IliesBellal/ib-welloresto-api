@@ -187,11 +187,23 @@ func (r *DeliverooRepository) MarkOrderCanceledLocal(ctx context.Context, orderI
 	return err
 }
 
-// GetBrandIDByMerchant récupère le brand_id Deliveroo associé à un merchant
+// Account représente un compte Deliveroo (une ligne integration_deliveroo).
+type Account struct {
+	MerchantID string
+	LocationID string
+	BrandID    string
+}
+
+// GetBrandIDByMerchant récupère le brand_id du compte Deliveroo "principal" du
+// marchand. ORDER BY location_id rend le choix déterministe plutôt que de
+// dépendre de l'ordre de retour de Postgres ; pour un marchand mono-compte
+// (le cas de tous les marchands aujourd'hui), c'est rigoureusement le même
+// comportement qu'avant. Un appelant qui connaît le compte exact doit utiliser
+// GetAccountByLocationID.
 func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchantID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? LIMIT 1`
+	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? ORDER BY id.location_id LIMIT 1`
 
 	var brandID sql.NullString
 	if err := db.QueryRowContext(ctx, q, merchantID).Scan(&brandID); err != nil {
@@ -203,21 +215,24 @@ func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchant
 	return brandID.String, nil
 }
 
-// UpdateMerchantBrandID met à jour le brand_id Deliveroo pour un restaurant donné
-func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchantID string, brandID string) error {
+// UpdateMerchantBrandID met à jour le brand_id Deliveroo pour un compte
+// donné. locationID identifie le compte précis : sans lui, la mise à jour
+// toucherait tous les comptes Deliveroo du marchand.
+func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchantID, locationID, brandID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `UPDATE integration_deliveroo SET brand_id = ? WHERE merchant_id = ?`
+	const q = `UPDATE integration_deliveroo SET brand_id = ? WHERE merchant_id = ? AND location_id = ?`
 
-	_, err := db.ExecContext(ctx, q, brandID, merchantID)
+	_, err := db.ExecContext(ctx, q, brandID, merchantID, locationID)
 	return err
 }
 
-// GetSiteIDByMerchant récupère le site_id (unique par site) stocké en base
+// GetSiteIDByMerchant récupère le location_id du compte Deliveroo "principal"
+// du marchand. Voir GetBrandIDByMerchant pour la sémantique de "principal".
 func (r *DeliverooRepository) GetSiteIDByMerchant(ctx context.Context, merchantID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? LIMIT 1`
+	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY location_id LIMIT 1`
 
 	var siteID sql.NullString
 	if err := db.QueryRowContext(ctx, q, merchantID).Scan(&siteID); err != nil {
@@ -227,4 +242,83 @@ func (r *DeliverooRepository) GetSiteIDByMerchant(ctx context.Context, merchantI
 		return "", fmt.Errorf("deliveroo_site_id not set for merchant %s", merchantID)
 	}
 	return siteID.String, nil
+}
+
+// GetAccountByLocationID récupère un compte Deliveroo précis d'un marchand.
+// locationID est validé comme appartenant à merchantID (défense en
+// profondeur : un utilisateur authentifié pour un marchand ne doit jamais
+// pouvoir lire/agir sur le compte Deliveroo d'un autre marchand via un
+// location_id arbitraire).
+func (r *DeliverooRepository) GetAccountByLocationID(ctx context.Context, merchantID, locationID string) (*Account, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	const q = `SELECT merchant_id, location_id, brand_id FROM integration_deliveroo WHERE merchant_id = ? AND location_id = ?`
+
+	var acc Account
+	if err := db.QueryRowContext(ctx, q, merchantID, locationID).Scan(&acc.MerchantID, &acc.LocationID, &acc.BrandID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &acc, nil
+}
+
+// GetAccountsByMerchant liste tous les comptes Deliveroo d'un marchand
+// (1 aujourd'hui pour tous les marchands, potentiellement plusieurs depuis la
+// migration 111).
+func (r *DeliverooRepository) GetAccountsByMerchant(ctx context.Context, merchantID string) ([]Account, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	const q = `SELECT merchant_id, location_id, brand_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY location_id`
+
+	rows, err := db.QueryContext(ctx, q, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []Account
+	for rows.Next() {
+		var acc Account
+		if err := rows.Scan(&acc.MerchantID, &acc.LocationID, &acc.BrandID); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, acc)
+	}
+	return accounts, rows.Err()
+}
+
+// resolveAccount détermine le compte Deliveroo à utiliser pour une action.
+// locationID vide résout sur le compte "principal" du marchand (comportement
+// historique) ; locationID renseigné résout sur ce compte précis.
+//
+// Contrairement à GetBrandIDByMerchant, un brand_id manquant n'est PAS une
+// erreur ici : l'appelant (UpdatePreparationTime) sait se "self-heal" en le
+// redérivant depuis site_id via ValidateAndSyncBrandID. Ne pas court-circuiter
+// ce cas sur une erreur précoce.
+func (r *DeliverooRepository) resolveAccount(ctx context.Context, merchantID, locationID string) (*Account, error) {
+	if locationID != "" {
+		acc, err := r.GetAccountByLocationID(ctx, merchantID, locationID)
+		if err != nil {
+			return nil, err
+		}
+		if acc == nil {
+			return nil, fmt.Errorf("deliveroo: no account %s for merchant %s", locationID, merchantID)
+		}
+		return acc, nil
+	}
+
+	siteID, err := r.GetSiteIDByMerchant(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	brandID, err := r.GetBrandIDByMerchant(ctx, merchantID)
+	if err != nil {
+		if !strings.Contains(err.Error(), "brand_id not configured") {
+			return nil, err
+		}
+		brandID = "" // laisse l'appelant décider (self-heal ou erreur)
+	}
+	return &Account{MerchantID: merchantID, LocationID: siteID, BrandID: brandID}, nil
 }

@@ -43,6 +43,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	req := MapUberOrderToRequest(ctx, order, store.MerchantID)
 	req.Order.Products = products
 	req.MerchantID = store.MerchantID
+	req.Order.BrandStoreID = &store.StoreID
 	createdBy := models.UberEatsWebhookUserID
 	req.Order.CreatedBy = &createdBy
 

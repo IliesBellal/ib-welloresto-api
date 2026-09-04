@@ -11,16 +11,14 @@
 // observation that never influences the request/response is not worth
 // reimplementing that machinery for.
 //
-// Convention — RequireAdmin observations: RequireAdmin gates on IsAdmin
-// (« détient tous les droits »), not on a catalog permission.Key, so it has
-// no real permission_key to record. It still observes, using the literal
-// string "__admin__" as Observation.PermissionKey (see
-// internal/middleware/require_permission.go's adminObservationKey) — these
-// are exactly the routes a future lot may want to loosen from "admin only"
-// to a specific permission, so they need to show up in the same traffic data
-// as everything else instead of being invisible to it. access_observation
-// has no FK on permission_key (see migrations/done/098_access_observation.up.sql),
-// so "__admin__" needs no catalog entry.
+// Historical note (RBAC lot 11, phase 4): RequireAdmin, a separate gate on
+// IsAdmin ("détient tous les droits") rather than a catalog permission.Key,
+// used to record its decisions here under the literal permission_key
+// "__admin__" — exactly the kind of route a future lot might loosen from
+// "admin only" to a specific permission, so it needed to show up in the same
+// traffic data as everything else. RequireAdmin has since been removed
+// entirely (its last two routes moved to RequirePermission(permission.StaffManage)
+// — see docs/decisions.md); nothing observes under "__admin__" anymore.
 package rbacobserve
 
 import (

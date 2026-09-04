@@ -80,9 +80,9 @@ func TestHas_HistoricalMode_AdminOnlyKeysNeedAdmin(t *testing.T) {
 	}
 }
 
-// TestHas_HistoricalMode_AdminShortCircuitsEverything mirrors what
-// middleware.IsAdmin/user.IsAdmin already assume everywhere else: an admin
-// with every boolean false must still pass every permission check.
+// TestHas_HistoricalMode_AdminShortCircuitsEverything: in the historical
+// (RoleID == nil) world, an admin with every other boolean false must still
+// pass every permission check.
 func TestHas_HistoricalMode_AdminShortCircuitsEverything(t *testing.T) {
 	user := &UserLoginRow{Rights: UserRowRights{Admin: true}}
 	for _, key := range permission.All {
@@ -122,23 +122,68 @@ func TestHas_RoleMode_IgnoresBooleansEvenWhenTheyContradict(t *testing.T) {
 	}
 }
 
-// TestHas_RoleMode_SystemKeyAdminGrantsEverything covers the other half of
-// the role-mode exclusivity: system_key = 'admin' grants every key, including
-// one absent from Permissions — the role's booleans-of-role (its actual
-// role_permissions rows) are irrelevant once the role itself is the admin
-// system role.
-func TestHas_RoleMode_SystemKeyAdminGrantsEverything(t *testing.T) {
+// TestHas_RoleMode_AdminSystemKeyGrantedByExplicitPermissions is the RBAC
+// lot 11 phase 3 replacement for the short-circuit this used to test: an
+// admin-system-key role only grants what it actually carries in Permissions.
+// A *complete* admin role (every catalog key present — the invariant phase 2
+// now guarantees, see TestSystemAdminRolesContainFullCatalog_Postgres) still
+// grants everything, but by explicit membership, not by system_key alone.
+func TestHas_RoleMode_AdminSystemKeyGrantedByExplicitPermissions(t *testing.T) {
 	roleID := "role-admin-1"
 	systemKey := permission.SystemKeyAdmin
+	perms := make([]string, len(permission.All))
+	for i, key := range permission.All {
+		perms[i] = string(key)
+	}
 	user := &UserLoginRow{
 		RoleID:        &roleID,
 		RoleSystemKey: &systemKey,
-		Permissions:   nil, // deliberately empty: system_key alone must be enough
+		Permissions:   perms,
 	}
 
 	for _, key := range permission.All {
 		if !user.Has(key) {
-			t.Fatalf("Has(%s) = false for system_key=admin with empty Permissions, want true", key)
+			t.Fatalf("Has(%s) = false for a complete admin role (key present in Permissions), want true", key)
+		}
+	}
+}
+
+// TestHas_RoleMode_AdminSystemKeyDeniedWithoutExplicitGrant is the direct
+// proof the system_key short-circuit is gone: an admin-system-key role
+// missing one catalog key from Permissions is denied that key, exactly like
+// any other role would be. This is the scenario phase 2's invariant exists to
+// prevent in production (a catalog migration landing without every admin
+// role being reconciled against it) — here it is proven at the Has() level,
+// not just guarded against upstream.
+func TestHas_RoleMode_AdminSystemKeyDeniedWithoutExplicitGrant(t *testing.T) {
+	roleID := "role-admin-1"
+	systemKey := permission.SystemKeyAdmin
+	missing := permission.All[0]
+
+	var perms []string
+	for _, key := range permission.All {
+		if key == missing {
+			continue
+		}
+		perms = append(perms, string(key))
+	}
+
+	user := &UserLoginRow{
+		RoleID:        &roleID,
+		RoleSystemKey: &systemKey,
+		Permissions:   perms,
+	}
+
+	if user.Has(missing) {
+		t.Fatalf("Has(%s) = true for an admin role missing this exact key from Permissions, want false — the system_key short-circuit must be gone", missing)
+	}
+	// Every other key must still be granted — this is not a blanket denial.
+	for _, key := range permission.All {
+		if key == missing {
+			continue
+		}
+		if !user.Has(key) {
+			t.Fatalf("Has(%s) = false, want true: this key is present in Permissions and should be unaffected by the missing one", key)
 		}
 	}
 }

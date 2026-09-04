@@ -255,6 +255,94 @@ func TestNoCrossTenantRoleAssignment(t *testing.T) {
 	}
 }
 
+// TestSystemAdminRolesContainFullCatalog_Postgres is the RBAC lot 11
+// invariant that UserLoginRow.Has()'s system_key short-circuit
+// (internal/modules/auth/permissions.go) depends on for its own eventual
+// removal: every system_key='admin' role must carry every non-deprecated
+// catalog permission. Like TestNoCrossTenantRoleAssignment, this runs against
+// whatever database this suite is pointed at (dev, CI, or — by overriding
+// POSTGRES_URL for a one-off manual run — a real environment snapshot) and
+// must always find zero incomplete admin roles.
+//
+// This exact invariant was violated in staging for over a week after RBAC
+// lot 10 (migration 103) added 5 catalog keys without a repeat
+// `go run ./cmd/seed_system_roles` — 29 of 30 admin roles were missing
+// pos.analytics/bookings.manage/platforms.manage/kiosk.manage/
+// seating_plan.manage (see docs/decisions.md). This test is what should have
+// caught that, and ReconcileSystemRolePermissions (internal/tasks/rbac.go) is
+// what now prevents it recurring without manual intervention.
+func TestSystemAdminRolesContainFullCatalog_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	repo := NewRepository(db)
+
+	incomplete, err := repo.FindIncompleteAdminRoles(ctx)
+	if err != nil {
+		t.Fatalf("FindIncompleteAdminRoles: %v", err)
+	}
+	if len(incomplete) != 0 {
+		t.Fatalf("found %d incomplete admin role(s) — a catalog permission was added without EnsureSystemRoles ever reconciling these merchants' admin role against it: %+v", len(incomplete), incomplete)
+	}
+}
+
+// TestReconcileSystemRoles_BackfillsIncompleteAdminRole_Postgres reproduces
+// the exact staging gap described above at the repository level: an admin
+// role missing a catalog permission it should have, then asserts
+// ReconcileSystemRoles (the shared implementation behind cmd/seed_system_roles
+// and the cron task) backfills it without being told which merchant or which
+// key is missing.
+func TestReconcileSystemRoles_BackfillsIncompleteAdminRole_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	repo := NewRepository(db)
+
+	_, merchantID := seedRolesTestMerchant(t, db, "reconcile-1")
+
+	adminID, _, err := repo.EnsureSystemRoles(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("EnsureSystemRoles: %v", err)
+	}
+
+	missingKey := permission.All[0]
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM role_permissions WHERE role_id = $1 AND permission_key = $2
+	`, adminID, string(missingKey)); err != nil {
+		t.Fatalf("simulate missing grant: %v", err)
+	}
+
+	incomplete, err := repo.FindIncompleteAdminRoles(ctx)
+	if err != nil {
+		t.Fatalf("FindIncompleteAdminRoles (before reconcile): %v", err)
+	}
+	found := false
+	for _, r := range incomplete {
+		if r.RoleID == adminID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected role %s to be reported incomplete before reconciling, got: %+v", adminID, incomplete)
+	}
+
+	results, err := repo.ReconcileSystemRoles(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileSystemRoles: %v", err)
+	}
+	for _, res := range results {
+		if res.MerchantID == merchantID && res.Err != nil {
+			t.Fatalf("ReconcileSystemRoles failed for merchant %s: %v", merchantID, res.Err)
+		}
+	}
+
+	perms, err := repo.GetRolePermissions(ctx, adminID)
+	if err != nil {
+		t.Fatalf("GetRolePermissions: %v", err)
+	}
+	if len(perms) != len(permission.All) {
+		t.Fatalf("expected admin role to carry all %d permissions after reconciling, got %d: %+v", len(permission.All), len(perms), perms)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RBAC lot 6 — role administration API, exercised through the Service layer
 // against real Postgres (dialect-correctness of the optimistic-locking CAS,

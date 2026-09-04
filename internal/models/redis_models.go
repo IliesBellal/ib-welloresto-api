@@ -109,4 +109,21 @@ const (
 	// même ordre de grandeur de travail qu'un import de menu).
 	CustomerImportPreviewPrefix = "customer:import:preview:"
 	CustomerImportPreviewTTL    = 30 * time.Minute
+
+	// Préfixe des clés de cache pour les endpoints analytiques directs
+	// (internal/modules/analytics) — un préfixe par onglet (ex: "revenue"),
+	// la clé complète inclut ensuite le périmètre d'établissements, la
+	// fenêtre et les filtres (voir analytics.CacheKey) pour qu'une requête ne
+	// puisse jamais lire le résultat mis en cache d'une autre.
+	//
+	// TTL de 5 minutes, comme OrdersCacheTTL : ni un temps réel POS (ces
+	// écrans sont un tableau de bord, pas la prise de commande), ni un cache
+	// long qui laisserait un utilisateur changer d'onglet puis revenir sur
+	// des chiffres visiblement périmés. Choisi pour absorber le
+	// va-et-en-onglets d'une même session d'analyse sans multiplier les
+	// requêtes contre le pool analytique plafonné à 2 connexions
+	// (database.AnalyticsMaxOpenConns) — pas pour économiser un
+	// rafraîchissement métier.
+	AnalyticsCachePrefix = "analytics:"
+	AnalyticsCacheTTL    = 5 * time.Minute
 )

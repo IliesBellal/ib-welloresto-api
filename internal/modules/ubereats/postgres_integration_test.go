@@ -67,7 +67,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 	if store.EstimatedPreparationTime != 30 {
 		t.Fatalf("expected default prep time 30 (varchar scanné en int), got %d", store.EstimatedPreparationTime)
 	}
-	menuStore, err := repo.GetStoreInfoForMenu(ctx, merchantID)
+	menuStore, err := repo.GetStoreInfoForMenu(ctx, merchantID, "")
 	if err != nil || menuStore.BearerToken != "bearer-tok" {
 		t.Fatalf("GetStoreInfoForMenu = (%+v, %v)", menuStore, err)
 	}
@@ -174,7 +174,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 	if err := repo.UpdateBusyModeData(ctx, storeID, delayUntil, 30); err != nil {
 		t.Fatalf("UpdateBusyModeData failed against postgres: %v", err)
 	}
-	if err := repo.UpdatePreparationTime(ctx, merchantID, 25, false); err != nil {
+	if err := repo.UpdatePreparationTime(ctx, merchantID, "", 25, false); err != nil {
 		t.Fatalf("UpdatePreparationTime (manual) failed against postgres: %v", err)
 	}
 	var prepStr, lastPrepStr string
@@ -185,7 +185,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected prep 25/25, got %s/%s", prepStr, lastPrepStr)
 	}
 	// isAuto=true : estimated_preparation_time conservé, last_* mis à jour
-	if err := repo.UpdatePreparationTime(ctx, merchantID, 40, true); err != nil {
+	if err := repo.UpdatePreparationTime(ctx, merchantID, "", 40, true); err != nil {
 		t.Fatalf("UpdatePreparationTime (auto) failed against postgres: %v", err)
 	}
 	if err := db.QueryRowContext(ctx, `SELECT estimated_preparation_time, last_estimated_preparation_time FROM integration_uber_eats WHERE merchant_id = $1`, merchantID).Scan(&prepStr, &lastPrepStr); err != nil {
@@ -206,7 +206,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 	if err := repo.EnableIntegration(ctx, merchantID, storeID, "at", "rt"); err == nil {
 		t.Fatal("expected EnableIntegration to fail (columns missing in both dialects)")
 	}
-	if err := repo.DisableIntegration(ctx, merchantID); err == nil {
+	if err := repo.DisableIntegration(ctx, merchantID, ""); err == nil {
 		t.Fatal("expected DisableIntegration to fail (columns missing in both dialects)")
 	}
 }

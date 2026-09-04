@@ -10,9 +10,21 @@ type IntegrationKPIs struct {
 	AvgBasket int `json:"avg_basket"`
 }
 
+// AccountSummary is one entry of the account selector for a multi-account
+// platform (GET /integrations/uber-eats/accounts, /integrations/deliveroo/accounts).
+// AccountID is the store_id (Uber Eats) or location_id (Deliveroo).
+type AccountSummary struct {
+	AccountID string `json:"account_id"`
+	Enabled   bool   `json:"enabled"`
+	IsPrimary bool   `json:"is_primary"`
+}
+
 // UberEatsIntegration is the response payload for GET /integrations/uber-eats.
 type UberEatsIntegration struct {
-	Platform               string          `json:"platform"`
+	Platform string `json:"platform"`
+	// StoreID est le compte Uber Eats effectivement retourné (le "principal"
+	// si aucun store_id n'était demandé, sinon celui demandé).
+	StoreID                string          `json:"store_id,omitempty"`
 	Active                 bool            `json:"active"`
 	CommissionRate         int             `json:"commission_rate"`
 	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
@@ -25,7 +37,10 @@ type UberEatsIntegration struct {
 
 // DeliverooIntegration is the response payload for GET /integrations/deliveroo.
 type DeliverooIntegration struct {
-	Platform               string          `json:"platform"`
+	Platform string `json:"platform"`
+	// LocationID est le compte Deliveroo effectivement retourné (le
+	// "principal" si aucun location_id n'était demandé, sinon celui demandé).
+	LocationID             string          `json:"location_id,omitempty"`
 	Active                 bool            `json:"active"`
 	CommissionRate         int             `json:"commission_rate"`
 	AutoAcceptOrders       bool            `json:"auto_accept_orders"`
@@ -97,10 +112,27 @@ type UpdateIntegrationRequest struct {
 	PreparationTimeMinutes *int  `json:"preparation_time_minutes,omitempty"`
 }
 
+// AffectedAccount identifies one specific provider account (store_id for
+// uber_eats, location_id for deliveroo) within a multi-account action. See
+// CloseTemporaryIntegrationsRequest / SetWaitTimeRequest.
+type AffectedAccount struct {
+	Platform  string `json:"platform"`
+	AccountID string `json:"account_id"`
+}
+
 // CloseTemporaryIntegrationsRequest is the body for PATCH /integrations/global/close-temporary.
+//
+// AffectedAccounts est l'extension multi-comptes : pour une plateforme donnée,
+// l'entrée AffectedAccounts correspondante (par Platform) prévaut sur
+// AffectedIntegrations et cible ce compte précis. Une plateforme listée dans
+// AffectedIntegrations mais absente de AffectedAccounts cible son compte
+// "principal" (comportement historique, identique pour un marchand
+// mono-compte) - c'est ce qui garde le POS Flutter actuel compatible sans
+// modification tant qu'un marchand n'a qu'un compte par plateforme.
 type CloseTemporaryIntegrationsRequest struct {
-	DurationMinutes      int      `json:"duration_minutes"`
-	AffectedIntegrations []string `json:"affected_integrations"`
+	DurationMinutes      int               `json:"duration_minutes"`
+	AffectedIntegrations []string          `json:"affected_integrations"`
+	AffectedAccounts     []AffectedAccount `json:"affected_accounts,omitempty"`
 }
 
 // CloseTemporaryIntegrationsResponse is the response for temporary global closure.
@@ -118,6 +150,10 @@ type CloseTemporaryIntegrationsResponse struct {
 type SetWaitTimeRequest struct {
 	WaitTimeMinutes      int      `json:"wait_time_minutes"`
 	AffectedIntegrations []string `json:"affected_integrations"`
+
+	// AffectedAccounts : voir CloseTemporaryIntegrationsRequest.AffectedAccounts,
+	// même sémantique (compte précis par plateforme, sinon compte "principal").
+	AffectedAccounts []AffectedAccount `json:"affected_accounts,omitempty"`
 
 	// DurationMinutes : durée pendant laquelle le supplément s'applique avant
 	// de s'effacer seul. Optionnel — le POS n'envoie que le supplément, d'où le

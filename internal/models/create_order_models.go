@@ -15,6 +15,12 @@ type OrderRequest struct {
 	Brand                       string                `json:"brand,omitempty"`
 	BrandOrderID                *string               `json:"brand_order_id,omitempty"`
 	BrandOrderNum               *string               `json:"brand_order_num,omitempty"`
+	// BrandStoreID : compte d'origine de la commande pour un marchand
+	// multi-comptes (migration 111) - store_id côté Uber Eats, location_id
+	// côté Deliveroo. Un seul champ car Brand désambiguïse déjà lequel des
+	// deux ça représente. Renseigné par les webhooks providers ; nil pour
+	// toute commande WELLO_RESTO/SCANNORDER.
+	BrandStoreID                *string               `json:"brand_store_id,omitempty"`
 	ParentOrderID               *string               `json:"parent_order_id,omitempty"`
 	OrderNum                    *string               `json:"order_num,omitempty"`
 	CashRegisterId              *string               `json:"cash_register_id,omitempty"`
