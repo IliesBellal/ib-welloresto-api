@@ -198,7 +198,13 @@ type lineCostResult struct {
 //
 // The returned slice is aligned index-for-index with products (same product
 // appearing on two lines with different options resolves independently).
-func (r *OrdersLifeCycleRepository) resolveOrderItemCostsForOrder(ctx context.Context, merchantID string, products []models.OrderProductPayload) []lineCostResult {
+//
+// Also returns the raw optionCosts map (PROMPT 11, §3): insertExtrasWithoutsConfigs
+// freezes order_item_configuration.cost_price_unit from the exact same
+// per-option resolution used here to roll options into orderitems.cost_price_unit
+// — returning it lets the caller reuse it instead of re-querying
+// configurable_attribute_options a second time for the same order.
+func (r *OrdersLifeCycleRepository) resolveOrderItemCostsForOrder(ctx context.Context, merchantID string, products []models.OrderProductPayload) ([]lineCostResult, map[string]optionCostEntry) {
 	results := make([]lineCostResult, len(products))
 
 	productIDs := make([]string, 0, len(products))
@@ -243,7 +249,7 @@ func (r *OrdersLifeCycleRepository) resolveOrderItemCostsForOrder(ctx context.Co
 		results[i] = lineCostResult{costPriceUnit: &cost}
 	}
 
-	return results
+	return results, optionCosts
 }
 
 // resolveRecipeCostsBatch resolves the base recipe cost for every product in
@@ -460,6 +466,112 @@ func (r *OrdersLifeCycleRepository) resolveOptionCostsBatch(ctx context.Context,
 	}
 
 	return results
+}
+
+// extraCostEntry is one components.component_id's resolved cost per single
+// unit of that component (costing.PricePerUnit). Unlike configurable options,
+// extra has no unit_of_measure of its own — extra.quantity directly counts
+// units of the linked component's own purchase_price_quantity, no conversion
+// step needed (extra.component_id is NOT NULL, so there is no "no ingredient
+// linked" case here: ok=false always means the component's purchase price
+// isn't usable).
+type extraCostEntry struct {
+	costPerUnitCents float64
+	ok               bool
+}
+
+// resolveExtraCostsBatch resolves, for every components.component_id in
+// componentIDs, the cost of one unit of that component — the per-row total is
+// extra.quantity * this value, computed by the caller (freezeExtraCost).
+// Same batching shape as resolveOptionCostsBatch, simpler: a direct
+// components lookup, no requires/unit_of_measure_convert join needed.
+func (r *OrdersLifeCycleRepository) resolveExtraCostsBatch(ctx context.Context, merchantID string, componentIDs []string) map[string]extraCostEntry {
+	results := make(map[string]extraCostEntry)
+	uniqueComponentIDs := dedupeStrings(componentIDs)
+	if len(uniqueComponentIDs) == 0 {
+		return results
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	placeholders := make([]string, len(uniqueComponentIDs))
+	args := make([]interface{}, 0, len(uniqueComponentIDs)+1)
+	args = append(args, merchantID)
+	for i, id := range uniqueComponentIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT component_id, purchase_price, purchase_price_quantity
+		FROM components
+		WHERE merchant_id = ? AND component_id IN (`+strings.Join(placeholders, ",")+`)
+	`, args...)
+	if err != nil {
+		log.Warn("resolveExtraCostsBatch: query failed", zap.Error(err))
+		for _, id := range uniqueComponentIDs {
+			results[id] = extraCostEntry{ok: false}
+		}
+		return results
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var componentID string
+		var purchasePrice int
+		var purchasePriceQty float64
+		if err := rows.Scan(&componentID, &purchasePrice, &purchasePriceQty); err != nil {
+			log.Warn("resolveExtraCostsBatch: scan failed", zap.Error(err))
+			continue
+		}
+		perUnit, ok := costing.PricePerUnit(purchasePrice, purchasePriceQty)
+		results[componentID] = extraCostEntry{costPerUnitCents: perUnit, ok: ok}
+	}
+	if err := rows.Err(); err != nil {
+		log.Warn("resolveExtraCostsBatch: rows iteration failed", zap.Error(err))
+	}
+	// A componentID absent from the results (e.g. a stale/orphaned reference
+	// not actually in `components`) is handled by the caller the same way as
+	// ok=false: freezeExtraCost's map lookup returns the zero value (found=false).
+
+	return results
+}
+
+// freezeOptionCost computes the frozen cost_price_unit/cost_price_reason
+// (PROMPT 11, §3) for one order_item_configuration row from a batch of
+// resolveOptionCostsBatch results — shared by the CreateOrder and UpdateOrder
+// write paths so the per-row freeze rule lives in exactly one place. quantity
+// is order_item_configuration.quantity (how many of this option were selected
+// on this line).
+func freezeOptionCost(optionCosts map[string]optionCostEntry, optionID string, quantity int) (costPriceUnit *int, costPriceReason *string) {
+	entry, found := optionCosts[optionID]
+	if !found || !entry.ok {
+		return nil, helpers.StringPtr(costing.ReasonIncompleteRecipe)
+	}
+	if entry.costCents == 0 {
+		// The only way resolveOptionCostsBatch produces ok=true with
+		// costCents==0 is "no component linked to this option"
+		// (costing.PricePerUnit already rejects price<=0, so a linked+priced
+		// option can never resolve to exactly 0) — a deliberate, known
+		// absence, not a defect.
+		return nil, helpers.StringPtr(costing.ReasonNoRecipe)
+	}
+	cost := costing.RoundToCents(entry.costCents * float64(quantity))
+	return &cost, nil
+}
+
+// freezeExtraCost computes the frozen cost_price_unit/cost_price_reason for
+// one extra row from a batch of resolveExtraCostsBatch results. quantity is
+// extra.quantity (defaults to 1; the current write path never sets it
+// explicitly — see migration 116).
+func freezeExtraCost(extraCosts map[string]extraCostEntry, componentID string, quantity int) (costPriceUnit *int, costPriceReason *string) {
+	entry, found := extraCosts[componentID]
+	if !found || !entry.ok {
+		return nil, helpers.StringPtr(costing.ReasonIncompleteRecipe)
+	}
+	cost := costing.RoundToCents(entry.costPerUnitCents * float64(quantity))
+	return &cost, nil
 }
 
 func dedupeStrings(in []string) []string {

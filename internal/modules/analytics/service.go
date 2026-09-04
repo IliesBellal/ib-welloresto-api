@@ -623,6 +623,210 @@ func apportionVATByChannel(shares []VATChannelShare, totalHTCents int64) []VATCh
 	return result
 }
 
+// GetCancellations is the Annulations tab's aggregate entry point (POST
+// /analytics/cancellations, permission.ReportsSalesRead) — same scope/
+// period/cache shape as GetPayments/GetVAT. Never the nominative breakdown;
+// that is GetCancellationsByStaff below, behind a different permission.
+func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest) (*CancellationsResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	accessible, err := ResolveAccessibleMerchants(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	merchantIDs, err := ValidateRequestedMerchants(req.MerchantIDs, accessible)
+	if err != nil {
+		return nil, err
+	}
+
+	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	dateTo, err := time.Parse("2006-01-02", req.DateTo)
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	if dateTo.Before(dateFrom) {
+		return nil, ErrInvalidRequest
+	}
+
+	if s.redis != nil {
+		cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, GroupByNone, false)
+		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
+			var resp CancellationsResponse
+			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+				return &resp, nil
+			}
+		}
+	}
+
+	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	if err != nil {
+		return nil, fmt.Errorf("load merchant timezone: %w", err)
+	}
+	tz, err := time.LoadLocation(tzString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid merchant timezone %q: %w", tzString, err)
+	}
+
+	currentStartUTC, currentEndUTC := timeutil.LocalDayRangeBounds(dateFrom, dateTo, tz)
+
+	periodDays := dateTo.Sub(dateFrom).Hours()/24 + 1
+	prevTo := dateFrom.AddDate(0, 0, -1)
+	prevFrom := prevTo.AddDate(0, 0, -int(periodDays)+1)
+	prevStartUTC, prevEndUTC := timeutil.LocalDayRangeBounds(prevFrom, prevTo, tz)
+
+	lyFrom := dateFrom.AddDate(-1, 0, 0)
+	lyTo := dateTo.AddDate(-1, 0, 0)
+	lyStartUTC, lyEndUTC := timeutil.LocalDayRangeBounds(lyFrom, lyTo, tz)
+
+	started := time.Now()
+
+	currentPeriod, err := s.cancellationsPeriodTotals(ctx, merchantIDs, req.DateFrom, req.DateTo, currentStartUTC, currentEndUTC)
+	if err != nil {
+		return nil, err
+	}
+	previousPeriod, err := s.cancellationsPeriodTotals(ctx, merchantIDs, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"), prevStartUTC, prevEndUTC)
+	if err != nil {
+		return nil, err
+	}
+	previousYear, err := s.cancellationsPeriodTotals(ctx, merchantIDs, lyFrom.Format("2006-01-02"), lyTo.Format("2006-01-02"), lyStartUTC, lyEndUTC)
+	if err != nil {
+		return nil, err
+	}
+
+	byReason, err := s.repo.GetCancellationsByReason(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	if err != nil {
+		return nil, err
+	}
+	byAuthorType, err := s.repo.GetCancellationsByAuthorType(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	if err != nil {
+		return nil, err
+	}
+	byChannel, err := s.repo.GetCancellationsByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &CancellationsResponse{
+		Scope:          RevenueScope{MerchantIDs: merchantIDs, GroupBy: GroupByNone},
+		CurrentPeriod:  currentPeriod,
+		PreviousPeriod: previousPeriod,
+		PreviousYear:   previousYear,
+		ByReason:       byReason,
+		ByAuthorType:   byAuthorType,
+		ByChannel:      byChannel,
+	}
+
+	s.logInstrumentation(ctx, "cancellations", merchantIDs, int(periodDays), len(byReason)+len(byAuthorType)+len(byChannel), time.Since(started))
+
+	if s.redis != nil {
+		if encoded, err := json.Marshal(resp); err == nil {
+			cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, GroupByNone, false)
+			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
+		}
+	}
+
+	return resp, nil
+}
+
+// cancellationsPeriodTotals loads one period's CancellationsPeriodTotals —
+// factored out of GetCancellations since it runs three times (current,
+// previous, previous year), the same shape as every other tab's per-period
+// loop in this file.
+func (s *Service) cancellationsPeriodTotals(ctx context.Context, merchantIDs []string, from, to string, startUTC, endUTC time.Time) (CancellationsPeriodTotals, error) {
+	ordersCreated, err := s.repo.GetOrdersCreatedCount(ctx, merchantIDs, startUTC, endUTC)
+	if err != nil {
+		return CancellationsPeriodTotals{}, err
+	}
+	totals, err := s.repo.GetCancellationsTotals(ctx, merchantIDs, startUTC, endUTC)
+	if err != nil {
+		return CancellationsPeriodTotals{}, err
+	}
+	return CancellationsPeriodTotals{
+		From:                   from,
+		To:                     to,
+		TotalOrdersCreated:     ordersCreated,
+		CancelledCount:         totals.CancelledCount,
+		CancelledAmountCents:   totals.CancelledAmountCents,
+		InternalCancelledCount: totals.InternalCancelledCount,
+		PlatformCancelledCount: totals.PlatformCancelledCount,
+		UnknownCancelledCount:  totals.UnknownCancelledCount,
+	}, nil
+}
+
+// GetCancellationsByStaff is the nominative ranking's entry point (POST
+// /analytics/cancellations/by-staff, permission.ReportsStaffPerformanceRead
+// — see routes.go for why this needs its own route rather than living under
+// /analytics's shared reports.sales.read group). No cache: the repository
+// query itself already runs against the fusible-protected low-priority pool
+// like every other query here, and this response is small (one row per
+// server with any cancellation, PROD scope tops out at a handful — see
+// cancellations.go's staffCancellationMinOrders doc comment) — not worth a
+// second cache key namespace for a response this cheap.
+func (s *Service) GetCancellationsByStaff(ctx context.Context, req CancellationsByStaffRequest) (*CancellationsByStaffResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+
+	accessible, err := ResolveAccessibleMerchants(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	merchantIDs, err := ValidateRequestedMerchants(req.MerchantIDs, accessible)
+	if err != nil {
+		return nil, err
+	}
+
+	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	dateTo, err := time.Parse("2006-01-02", req.DateTo)
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	if dateTo.Before(dateFrom) {
+		return nil, ErrInvalidRequest
+	}
+
+	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	if err != nil {
+		return nil, fmt.Errorf("load merchant timezone: %w", err)
+	}
+	tz, err := time.LoadLocation(tzString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid merchant timezone %q: %w", tzString, err)
+	}
+
+	startUTC, endUTC := timeutil.LocalDayRangeBounds(dateFrom, dateTo, tz)
+	periodDays := dateTo.Sub(dateFrom).Hours()/24 + 1
+
+	started := time.Now()
+
+	staff, err := s.repo.GetCancellationsByStaff(ctx, merchantIDs, startUTC, endUTC)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &CancellationsByStaffResponse{
+		Scope:            RevenueScope{MerchantIDs: merchantIDs, GroupBy: GroupByNone},
+		From:             req.DateFrom,
+		To:               req.DateTo,
+		MinOrdersForRate: staffCancellationMinOrders,
+		Staff:            staff,
+	}
+
+	s.logInstrumentation(ctx, "cancellations_by_staff", merchantIDs, int(periodDays), len(staff), time.Since(started))
+
+	return resp, nil
+}
+
 // logInstrumentation is the measurement PROMPT 03 §1.6 asks every analytics
 // query to record, until it justifies the decision to pre-aggregate:
 // endpoint, size of the merchant scope, window width, rows rendered,

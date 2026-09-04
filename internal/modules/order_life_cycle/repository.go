@@ -1210,7 +1210,7 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	}
 	req.Order.OrderID = &orderID
 
-	usedItems, err := r.insertOrderItems(ctx, req)
+	usedItems, optionCosts, err := r.insertOrderItems(ctx, req)
 	if err != nil {
 		log.Error("insertOrderItems failure" + err.Error())
 		return nil, err
@@ -1222,7 +1222,7 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		return nil, err // Gérer l'erreur proprement
 	}
 
-	if err := r.insertExtrasWithoutsConfigs(ctx, req, usedItems); err != nil {
+	if err := r.insertExtrasWithoutsConfigs(ctx, req, usedItems, optionCosts); err != nil {
 		//tx.Rollback()
 		log.Error("insertExtrasWithoutsConfigs failure " + err.Error())
 		return nil, err
@@ -1571,9 +1571,20 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		// On accumule TOUTES les valeurs dans des slices plates :
 		// chaque groupe de N valeurs correspond à une ligne INSERT.
 
-		// Extras (suppléments payants)
-		for _, e := range p.Extra {
-			extrasArgs = append(extrasArgs, p.OrderItemID, req.Order.OrderID, e.ComponentID, p.ProductID, req.MerchantID, e.Price)
+		// Extras (suppléments payants) — coûts résolus par ligne (pas de batch
+		// pleine commande ici : UpdateOrder édite typiquement 1-2 lignes à la
+		// fois, même asymmetrie que resolveOrderItemCost ci-dessus). Quantité
+		// toujours 1 : voir insertExtrasWithoutsConfigs pour pourquoi.
+		if len(p.Extra) > 0 {
+			extraComponentIDs := make([]string, 0, len(p.Extra))
+			for _, e := range p.Extra {
+				extraComponentIDs = append(extraComponentIDs, e.ComponentID)
+			}
+			extraCosts := r.resolveExtraCostsBatch(ctx, req.MerchantID, extraComponentIDs)
+			for _, e := range p.Extra {
+				costPriceUnit, costPriceReason := freezeExtraCost(extraCosts, e.ComponentID, 1)
+				extrasArgs = append(extrasArgs, p.OrderItemID, req.Order.OrderID, e.ComponentID, p.ProductID, req.MerchantID, e.Price, costPriceUnit, costPriceReason)
+			}
 		}
 
 		// Withouts (exclusions d'ingrédients)
@@ -1581,11 +1592,20 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			withoutsArgs = append(withoutsArgs, p.OrderItemID, req.Order.OrderID, w.ComponentID, p.ProductID, req.MerchantID)
 		}
 
-		// Configurations (options de personnalisation)
+		// Configurations (options de personnalisation) — coûts résolus par
+		// ligne, même raison que pour les extras ci-dessus.
 		if p.Config != nil {
+			var configOptionIDs []string
 			for _, attr := range p.Config.Attributes {
 				for _, opt := range attr.Options {
-					configsArgs = append(configsArgs, p.OrderItemID, attr.ID, opt.ID, opt.Quantity)
+					configOptionIDs = append(configOptionIDs, opt.ID)
+				}
+			}
+			lineOptionCosts := r.resolveOptionCostsBatch(ctx, req.MerchantID, configOptionIDs)
+			for _, attr := range p.Config.Attributes {
+				for _, opt := range attr.Options {
+					costPriceUnit, costPriceReason := freezeOptionCost(lineOptionCosts, opt.ID, opt.Quantity)
+					configsArgs = append(configsArgs, p.OrderItemID, attr.ID, opt.ID, opt.Quantity, costPriceUnit, costPriceReason)
 				}
 			}
 		}
@@ -1603,8 +1623,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 
 	if len(extrasArgs) > 0 {
 		if err := r.bulkInsert(ctx,
-			"INSERT INTO extra (order_item_id, order_id, component_id, product_id, merchant_id, price) VALUES",
-			6, extrasArgs); err != nil {
+			"INSERT INTO extra (order_item_id, order_id, component_id, product_id, merchant_id, price, cost_price_unit, cost_price_reason) VALUES",
+			8, extrasArgs); err != nil {
 			return fmt.Errorf("bulk insert extras failed: %w", err)
 		}
 	}
@@ -1617,8 +1637,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	}
 	if len(configsArgs) > 0 {
 		if err := r.bulkInsert(ctx,
-			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES",
-			4, configsArgs); err != nil {
+			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason) VALUES",
+			6, configsArgs); err != nil {
 			return fmt.Errorf("bulk insert configs failed: %w", err)
 		}
 	}
@@ -2217,11 +2237,14 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 }
 
 // insertOrderItems inserts each orderitem and returns list of UsedItem (order_item_id + qty)
-func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *models.RequestObject) ([]models.UsedItem, error) {
+// insertOrderItems also returns the batched optionCosts map (PROMPT 11, §3):
+// insertExtrasWithoutsConfigs reuses it to freeze order_item_configuration
+// rows without re-querying configurable_attribute_options a second time.
+func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *models.RequestObject) ([]models.UsedItem, map[string]optionCostEntry, error) {
 	// Coûts résolus pour toutes les lignes en un seul aller-retour batché
 	// plutôt qu'un par ligne (~2 requêtes par ligne sinon) : voir
 	// docs/decisions.md, impact mesuré sur staging.
-	costResults := r.resolveOrderItemCostsForOrder(ctx, req.MerchantID, req.Order.Products)
+	costResults, optionCosts := r.resolveOrderItemCostsForOrder(ctx, req.MerchantID, req.Order.Products)
 
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for i, p := range req.Order.Products {
@@ -2258,12 +2281,12 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 		oid, err := r.InsertOrderItem(ctx, item)
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		used = append(used, models.UsedItem{OrderItemID: strconv.FormatInt(oid, 10), Quantity: p.Quantity})
 	}
-	return used, nil
+	return used, optionCosts, nil
 }
 
 // InsertOrderItem inserts a single orderitem and returns its id
@@ -2289,12 +2312,27 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
-func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Context, req *models.RequestObject, items []models.UsedItem) error {
+//
+// optionCosts is the batch already resolved by insertOrderItems (PROMPT 11,
+// §3) — reused here to freeze order_item_configuration.cost_price_unit
+// without a second configurable_attribute_options query for the same order.
+// extras have no such existing batch (extras never rolled into
+// orderitems.cost_price_unit — only options do, per lot 1), so their
+// components are resolved once here via resolveExtraCostsBatch.
+func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Context, req *models.RequestObject, items []models.UsedItem, optionCosts map[string]optionCostEntry) error {
 	// Build maps from product iteration to order_item ids; we used ordering to match the order of products to items
 	// Simpler approach: while inserting items we could have returned corresponding mapping; for now assume order preserved.
 	extras := []models.ExtraInsert{}
 	withouts := []models.WithoutInsert{}
 	configs := []models.ConfigInsert{}
+
+	var allExtraComponentIDs []string
+	for _, p := range req.Order.Products {
+		for _, e := range p.Extra {
+			allExtraComponentIDs = append(allExtraComponentIDs, e.ComponentID)
+		}
+	}
+	extraCosts := r.resolveExtraCostsBatch(ctx, req.MerchantID, allExtraComponentIDs)
 
 	itemIdx := 0
 	for _, p := range req.Order.Products {
@@ -2305,15 +2343,21 @@ func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Cont
 			return fmt.Errorf("internal mapping error: items length mismatch")
 		}
 		oid := items[itemIdx].OrderItemID
-		// extras
+		// extras — quantity is always 1: extra.quantity has no column in the
+		// incoming payload (models.OrderExtraPayload carries only
+		// ComponentID/Price) and this write path never sets it explicitly,
+		// relying on the DB default (see migration 116).
 		for _, e := range p.Extra {
+			costPriceUnit, costPriceReason := freezeExtraCost(extraCosts, e.ComponentID, 1)
 			extras = append(extras, models.ExtraInsert{
-				OrderID:     items[itemIdx].OrderItemID, // in DB extra has order_id and order_item_id; we'll provide both
-				OrderItemID: oid,
-				ComponentID: e.ComponentID,
-				ProductID:   p.ProductID,
-				MerchantID:  req.MerchantID,
-				Price:       e.Price,
+				OrderID:         items[itemIdx].OrderItemID, // in DB extra has order_id and order_item_id; we'll provide both
+				OrderItemID:     oid,
+				ComponentID:     e.ComponentID,
+				ProductID:       p.ProductID,
+				MerchantID:      req.MerchantID,
+				Price:           e.Price,
+				CostPriceUnit:   costPriceUnit,
+				CostPriceReason: costPriceReason,
 			})
 		}
 		// withouts
@@ -2330,11 +2374,14 @@ func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Cont
 		if p.Config != nil {
 			for _, attr := range p.Config.Attributes {
 				for _, opt := range attr.Options {
+					costPriceUnit, costPriceReason := freezeOptionCost(optionCosts, opt.ID, opt.Quantity)
 					configs = append(configs, models.ConfigInsert{
-						OrderItemID: oid,
-						AttributeID: attr.ID,
-						OptionID:    opt.ID,
-						Quantity:    opt.Quantity,
+						OrderItemID:     oid,
+						AttributeID:     attr.ID,
+						OptionID:        opt.ID,
+						Quantity:        opt.Quantity,
+						CostPriceUnit:   costPriceUnit,
+						CostPriceReason: costPriceReason,
 					})
 				}
 			}
@@ -2367,12 +2414,12 @@ func (r *OrdersLifeCycleRepository) BulkInsertExtras(ctx context.Context, list [
 		return nil
 	}
 	parts := make([]string, 0, len(list))
-	args := make([]interface{}, 0, len(list)*6)
+	args := make([]interface{}, 0, len(list)*8)
 	for _, e := range list {
-		parts = append(parts, "(?, ?, ?, ?, ?, ?)")
-		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID, e.Price)
+		parts = append(parts, "(?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, e.OrderID, e.OrderItemID, e.ComponentID, e.ProductID, e.MerchantID, e.Price, e.CostPriceUnit, e.CostPriceReason)
 	}
-	query := "INSERT INTO extra (order_id, order_item_id, component_id, product_id, merchant_id, price) VALUES " + strings.Join(parts, ",")
+	query := "INSERT INTO extra (order_id, order_item_id, component_id, product_id, merchant_id, price, cost_price_unit, cost_price_reason) VALUES " + strings.Join(parts, ",")
 	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }
@@ -2401,12 +2448,12 @@ func (r *OrdersLifeCycleRepository) BulkInsertConfigs(ctx context.Context, list 
 		return nil
 	}
 	parts := make([]string, 0, len(list))
-	args := make([]interface{}, 0, len(list)*4)
+	args := make([]interface{}, 0, len(list)*6)
 	for _, c := range list {
-		parts = append(parts, "(?, ?, ?, ?)")
-		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity)
+		parts = append(parts, "(?, ?, ?, ?, ?, ?)")
+		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity, c.CostPriceUnit, c.CostPriceReason)
 	}
-	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity) VALUES " + strings.Join(parts, ",")
+	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason) VALUES " + strings.Join(parts, ",")
 	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }

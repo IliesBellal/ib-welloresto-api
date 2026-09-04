@@ -80,13 +80,19 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if err := repo.CancelOrder(ctx, brandOrderID); err != nil {
 		t.Fatalf("CancelOrder failed against postgres: %v", err)
 	}
-	var deletionReasonID string
-	if err := db.QueryRowContext(ctx, `SELECT brand_status, deletion_reason_id FROM orders WHERE order_id = $1`, orderID).
-		Scan(&brandStatus, &deletionReasonID); err != nil {
+	var deletionReasonID, cancelledByType string
+	if err := db.QueryRowContext(ctx, `SELECT brand_status, deletion_reason_id, cancelled_by_type FROM orders WHERE order_id = $1`, orderID).
+		Scan(&brandStatus, &deletionReasonID, &cancelledByType); err != nil {
 		t.Fatalf("read back order after CancelOrder: %v", err)
 	}
 	if brandStatus != "CANCELED" || deletionReasonID != "39" {
 		t.Fatalf("unexpected order state after CancelOrder: status=%q reason=%q", brandStatus, deletionReasonID)
+	}
+	// PROMPT 11, §2: this handler is a direct webhook write path bypassing
+	// order_life_cycle.DeleteOrderLocal entirely, unconditionally triggered by
+	// Uber Eats itself — always PLATFORM.
+	if cancelledByType != "PLATFORM" {
+		t.Fatalf("expected cancelled_by_type=PLATFORM after CancelOrder, got %q", cancelledByType)
 	}
 	var paymentEnabled bool
 	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, orderID).Scan(&paymentEnabled); err != nil {

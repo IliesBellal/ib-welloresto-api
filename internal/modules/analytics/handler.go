@@ -110,6 +110,57 @@ func (h *Handler) GetVAT(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "analytics", "get_vat", resp)
 }
 
+// GetCancellations POST /analytics/cancellations — the Annulations tab's
+// aggregate view (permission.ReportsSalesRead, see routes.go).
+func (h *Handler) GetCancellations(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "analytics", "get_cancellations", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CancellationsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "analytics", "get_cancellations", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	resp, err := h.service.GetCancellations(r.Context(), req)
+	if err != nil {
+		writeError(w, "get_cancellations", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "analytics", "get_cancellations", resp)
+}
+
+// GetCancellationsByStaff POST /analytics/cancellations/by-staff — the
+// Annulations tab's nominative per-server ranking
+// (permission.ReportsStaffPerformanceRead, a different, more sensitive key
+// than every other analytics route — see routes.go). A 403 here must hide
+// the block on the frontend, never break the rest of the tab (PROMPT 10 §2).
+func (h *Handler) GetCancellationsByStaff(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "analytics", "get_cancellations_by_staff", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req CancellationsByStaffRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "analytics", "get_cancellations_by_staff", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	resp, err := h.service.GetCancellationsByStaff(r.Context(), req)
+	if err != nil {
+		writeError(w, "get_cancellations_by_staff", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "analytics", "get_cancellations_by_staff", resp)
+}
+
 // writeError maps this package's sentinel errors to the HTTP status the
 // contract promises the frontend — in particular, ErrMerchantNotAccessible
 // must always reach the client as 403, never as a silently narrowed

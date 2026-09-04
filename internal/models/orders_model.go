@@ -56,6 +56,13 @@ type ExtraInsert struct {
 	ProductID   string
 	MerchantID  string
 	Price       int
+
+	// CostPriceUnit/CostPriceReason snapshot the frozen cost of this
+	// supplement at write time (PROMPT 11, §3 — see
+	// internal/modules/order_life_cycle.freezeExtraCost). CostPriceUnit is
+	// nil whenever it can't be trusted — CostPriceReason then explains why.
+	CostPriceUnit   *int
+	CostPriceReason *string
 }
 type WithoutInsert struct {
 	OrderID     string
@@ -69,6 +76,13 @@ type ConfigInsert struct {
 	AttributeID string
 	OptionID    string
 	Quantity    int
+
+	// CostPriceUnit/CostPriceReason snapshot the frozen cost of this selected
+	// option at write time (PROMPT 11, §3 — see
+	// internal/modules/order_life_cycle.freezeOptionCost). CostPriceUnit is
+	// nil whenever it can't be trusted — CostPriceReason then explains why.
+	CostPriceUnit   *int
+	CostPriceReason *string
 }
 
 type OrderComment struct {

@@ -210,3 +210,99 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 		t.Fatal("expected DisableIntegration to fail (columns missing in both dialects)")
 	}
 }
+
+// TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres verifies
+// PROMPT 11 §2's fix to the two reconciliation write paths
+// (SyncOrderState/HandleOrderNotFound, both called from RecoverOrderState
+// after a failed outbound Uber Eats API call — see service.go): they must set
+// cancelled_by_type=PLATFORM when nothing has classified the cancellation
+// yet, but never overwrite a STAFF classification already written
+// synchronously by order_life_cycle.DenyOrderLocal/DeleteOrderLocal before
+// the outbound API call that triggered this reconciliation.
+func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const merchantID = "itest-ue-cbt-m1"
+	cleanup := func() { _, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID) }
+	cleanup()
+	t.Cleanup(cleanup)
+
+	repo := NewUberEatsRepository(db)
+
+	seedOrder := func(t *testing.T, brandOrderID string, orderNum int, initialCancelledByType *string) int64 {
+		t.Helper()
+		var orderID int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand, brand_order_id, brand_status, state, price, TVA, HT, created_by, cancelled_by_type)
+			VALUES ($1, $2, 'UBER_EATS', $3, 'PENDING', 'OPEN', 1000, 0, 1000, 'UBER_EATS', $4)
+			RETURNING order_id`, merchantID, orderNum, brandOrderID, initialCancelledByType).Scan(&orderID); err != nil {
+			t.Fatalf("seed order: %v", err)
+		}
+		return orderID
+	}
+	readCancelledByType := func(t *testing.T, orderID int64) string {
+		t.Helper()
+		var v string
+		if err := db.QueryRowContext(ctx, `SELECT cancelled_by_type FROM orders WHERE order_id = $1`, orderID).Scan(&v); err != nil {
+			t.Fatalf("read back cancelled_by_type: %v", err)
+		}
+		return v
+	}
+
+	t.Run("SyncOrderState DENIED, previously unset -> PLATFORM", func(t *testing.T) {
+		orderID := seedOrder(t, "itest-ue-cbt-denied", 1, nil)
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-denied", "DENIED", "CLOSED", "DENIED", sql.NullInt64{Int64: 40, Valid: true}); err != nil {
+			t.Fatalf("SyncOrderState: %v", err)
+		}
+		if got := readCancelledByType(t, orderID); got != "PLATFORM" {
+			t.Fatalf("expected cancelled_by_type=PLATFORM, got %q", got)
+		}
+	})
+
+	t.Run("SyncOrderState CANCELED, already STAFF -> preserved", func(t *testing.T) {
+		staff := "STAFF"
+		orderID := seedOrder(t, "itest-ue-cbt-canceled-staff", 2, &staff)
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-canceled-staff", "CANCELED", "CLOSED", "ACCEPTED", sql.NullInt64{Int64: 39, Valid: true}); err != nil {
+			t.Fatalf("SyncOrderState: %v", err)
+		}
+		if got := readCancelledByType(t, orderID); got != "STAFF" {
+			t.Fatalf("SyncOrderState must not overwrite an already-set cancelled_by_type — got %q, want STAFF (preserved)", got)
+		}
+	})
+
+	t.Run("SyncOrderState COMPLETED does not classify a cancellation", func(t *testing.T) {
+		orderID := seedOrder(t, "itest-ue-cbt-completed", 3, nil)
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-completed", "COMPLETED", "CLOSED", "ACCEPTED", sql.NullInt64{}); err != nil {
+			t.Fatalf("SyncOrderState: %v", err)
+		}
+		var got sql.NullString
+		if err := db.QueryRowContext(ctx, `SELECT cancelled_by_type FROM orders WHERE order_id = $1`, orderID).Scan(&got); err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if got.Valid {
+			t.Fatalf("a COMPLETED order is not a cancellation, expected cancelled_by_type still NULL, got %q", got.String)
+		}
+	})
+
+	t.Run("HandleOrderNotFound, previously unset -> PLATFORM", func(t *testing.T) {
+		orderID := seedOrder(t, "itest-ue-cbt-notfound", 4, nil)
+		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound"); err != nil {
+			t.Fatalf("HandleOrderNotFound: %v", err)
+		}
+		if got := readCancelledByType(t, orderID); got != "PLATFORM" {
+			t.Fatalf("expected cancelled_by_type=PLATFORM, got %q", got)
+		}
+	})
+
+	t.Run("HandleOrderNotFound, already STAFF -> preserved", func(t *testing.T) {
+		staff := "STAFF"
+		orderID := seedOrder(t, "itest-ue-cbt-notfound-staff", 5, &staff)
+		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound-staff"); err != nil {
+			t.Fatalf("HandleOrderNotFound: %v", err)
+		}
+		if got := readCancelledByType(t, orderID); got != "STAFF" {
+			t.Fatalf("HandleOrderNotFound must not overwrite an already-set cancelled_by_type — got %q, want STAFF (preserved)", got)
+		}
+	})
+}

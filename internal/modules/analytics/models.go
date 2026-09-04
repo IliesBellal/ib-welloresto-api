@@ -192,26 +192,38 @@ type VATRequest struct {
 // every channel). The frontend must label this distinction — see
 // VATAnalyticsTab.tsx.
 //
+// PROMPT 09 lot 3 (C5): this endpoint now includes delivery fee VAT
+// (orders.delivery_fees, via tva_id=-1 — see GetVATTotals' doc comment,
+// repository.go), because a restaurateur checking VAT collected expects to
+// see it. Before this change, delivery fees were absent from this endpoint
+// entirely; pos/reports already included them (its own tva_id=-1 UNION ALL
+// branch), which was previously the single component pulling pos/reports'
+// total UP rather than down.
+//
 // The gap with pos/reports/tva is fully named and, for merchant 212 (PROD's
 // largest) over a 12-month window (verified read-only against staging,
-// 2026-09-03), fully chiffré to the cent:
-//   - non-WELLO_RESTO orders (Uber Eats/Deliveroo), excluded by pos/reports
-//   - ScanNOrder orders (created_by IN ('-1','SCANNORDER')), excluded by
-//     pos/reports, within WELLO_RESTO
-//   - orders.delivery_fees: never in this endpoint's TTC/HT at all (see
-//     GetVATTotals' doc comment) but added by pos/reports via its own
-//     tva_id=-1 UNION — this pulls pos/reports' total UP, so it narrows the
-//     analytics-vs-pos/reports gap rather than widening it, unlike the two
-//     filters above
-//   - state='DONE' vs pos/reports' state='CLOSED'-only filter (0 on this
-//     merchant/window)
-//   - tva.show_in_report=false lines within pos/reports' own WELLO_RESTO/
-//     CLOSED/non-ScanNOrder scope (0 on this merchant/window — the only
-//     show_in_report=false category, tva_id=-1, is reached exclusively
-//     through the delivery_fees line above)
+// 2026-09-04), fully chiffré to the cent:
+//   - non-WELLO_RESTO orders (Uber Eats/Deliveroo) — product lines AND their
+//     own delivery fees, both excluded by pos/reports
+//   - ScanNOrder orders (created_by IN ('-1','SCANNORDER')) within
+//     WELLO_RESTO — product lines AND their own delivery fees, both
+//     excluded by pos/reports
+//   - state='DONE' vs pos/reports' state='CLOSED'-only filter, within
+//     WELLO_RESTO/non-ScanNOrder — product lines AND delivery fees (0 on
+//     this merchant/window)
+//   - tva.show_in_report=false product lines within pos/reports' own
+//     WELLO_RESTO/CLOSED/non-ScanNOrder scope (0 on this merchant/window —
+//     the only show_in_report=false category, tva_id=-1, never reaches this
+//     branch: it has no orderitems rows, only the delivery-fee branch below)
 //
-// (excluded by pos/reports) - (delivery_fees, added by pos/reports) exactly
-// equals the analytics-minus-pos/reports TTC delta — no residual.
+// delivery_fees WITHIN pos/reports' own WELLO_RESTO/CLOSED/non-ScanNOrder
+// scope is deliberately NOT a separate line in this reconciliation anymore:
+// both endpoints now include it (verified: 108,000 cents / 360 orders on
+// this merchant/window, identical on both sides), so it nets to zero rather
+// than needing to be named. The four buckets above sum exactly to the
+// analytics-minus-pos/reports TTC delta — no residual, verified by
+// recomputing both totals independently rather than assumed from the
+// buckets alone.
 type VATResponse struct {
 	Scope          RevenueScope      `json:"scope"`
 	CurrentPeriod  VATPeriodTotals   `json:"current_period"`
@@ -230,9 +242,11 @@ type VATPeriodTotals struct {
 }
 
 // VATRateTotal.Rate is tva_categories.tva_rate as stored (20, 10, 5.5, ...).
-// Includes tva_id=-1 (delivery fees, 20%) even though it's disabled/hidden
-// from pos/reports (enabled=false, show_in_report=false) — see GetVATTotals'
-// doc comment (repository.go) for the decision and its reasoning.
+// A delivery fee (tva_id=-1's rate, currently 20%) lands in the same row as
+// any product line taxed at that same rate — grouped by rate value, not by
+// tva_id — even though tva_id=-1 itself is enabled=false/show_in_report=false
+// in the referential; see GetVATTotals' doc comment (repository.go) for why
+// that category is joined unconditionally on both flags anyway.
 //
 // The sum of BaseHTCents (and, since VATCents = TTC-HT and TTC is always
 // exact, the sum of VATCents too) across every row here is GUARANTEED to
@@ -258,4 +272,184 @@ type VATChannelTotal struct {
 	BaseHTCents   int64  `json:"base_ht_cents"`
 	VATCents      int64  `json:"vat_cents"`
 	TotalTTCCents int64  `json:"total_ttc_cents"`
+}
+
+// ---- Annulations (POST /analytics/cancellations, POST /analytics/cancellations/by-staff) ----
+//
+// Two endpoints, not one — PROMPT 10 §2: middleware.RequirePermission takes
+// exactly one permission.Key (DROITS.md §3.1/§6.1, wello-back-office repo),
+// and this tab mixes two different sensitivities: aggregate volume/rate/
+// reasons (reports.sales.read, same key as the other 4 tabs) and a nominative
+// per-server ranking (reports.staff_performance.read — new, is_sensitive,
+// see migrations/todo/115_permission_reports_staff_performance_read.up.sql).
+// A single endpoint could not carry both guards at once; splitting the
+// route was the only option, not a preference.
+
+// CancellationsRequest mirrors PaymentsRequest/VATRequest's shape — no
+// GroupBy (this tab has no merchant breakdown), no IncludeHT (nothing here
+// needs the HT recompute).
+type CancellationsRequest struct {
+	DateFrom    string   `json:"date_from"`
+	DateTo      string   `json:"date_to"`
+	MerchantIDs []string `json:"merchant_ids,omitempty"`
+}
+
+// CancellationsResponse is the aggregate view: volume, rate, amount, reasons,
+// channels, author typology. Never the per-server ranking — that is
+// CancellationsByStaffResponse, served by a separate, more tightly
+// permissioned endpoint (see this file's "Annulations" section header).
+//
+// None of this response's breakdowns (ByReason/ByAuthorType/ByChannel) need
+// apportion.go's largest-remainder apportionment the way VATRateTotal/
+// VATChannelTotal do: those exist because HT is DERIVED from TTC via a
+// per-line division by a tax rate, so per-group rounding can drift from the
+// period total. Every number here — order counts, orders.price cents — is a
+// direct, un-derived COUNT/SUM, so a GROUP BY's parts sum to the ungrouped
+// total exactly, by ordinary arithmetic, with no separate reconciliation
+// step required. PROMPT 10 §3's "toutes les ventilations somment exactement
+// à leur total" holds here for free.
+type CancellationsResponse struct {
+	Scope          RevenueScope                  `json:"scope"`
+	CurrentPeriod  CancellationsPeriodTotals     `json:"current_period"`
+	PreviousPeriod CancellationsPeriodTotals     `json:"previous_period"`
+	PreviousYear   CancellationsPeriodTotals     `json:"previous_year"`
+	ByReason       []CancellationReasonTotal     `json:"by_reason"`
+	ByAuthorType   []CancellationAuthorTypeTotal `json:"by_author_type"`
+	ByChannel      []CancellationChannelTotal    `json:"by_channel"`
+}
+
+// CancellationsPeriodTotals. TotalOrdersCreated is the cancellation rate's
+// denominator — see AnalyticsAllOrdersCreatedScope's doc comment (scope.go)
+// for why "every order created in the period," not "cancelled ÷ valid," is
+// the definition this tab commits to. The backend deliberately never emits a
+// pre-divided rate field: CancelledCount / TotalOrdersCreated is the whole
+// computation, and shipping only the two integers means there is no
+// separately-rounded percentage to keep consistent with anything else — the
+// same reasoning OrdersPeriodTotals already applies by never emitting an
+// average that isn't reconstructable from its parts.
+//
+// InternalCancelledCount (STAFF+CUSTOMER+SYSTEM) and PlatformCancelledCount
+// (PLATFORM) are PROMPT 10 §3's central cut: a Uber Eats/Deliveroo-initiated
+// cancellation says nothing about this establishment's own operations, and
+// blending it into one rate makes the number unreadable as an operational
+// signal. UnknownCancelledCount (cancelled_by_type IS NULL, ~7-9% of
+// CANCELED orders on PROD as of 2026-09-04 — see cancellations.go's
+// GetCancellationsTotals doc comment for the verified figure) is exposed
+// explicitly rather than folded into either bucket — never a silent
+// exclusion, same rule VATResponse/RevenueDayPoint already apply to their
+// own "doesn't fit a known bucket" rows. The three always sum to
+// CancelledCount exactly (a three-way COUNT FILTER partition of the same
+// rows, not an apportionment).
+type CancellationsPeriodTotals struct {
+	From               string `json:"from"`
+	To                 string `json:"to"`
+	TotalOrdersCreated int64  `json:"total_orders_created"`
+	CancelledCount     int64  `json:"cancelled_count"`
+	// CancelledAmountCents sums orders.price on the cancelled orders in this
+	// period — see cancellations.go's GetCancellationsTotals doc comment for
+	// why this number is shown (distribution checked against staging, not
+	// mostly-zero carts) with the caveat the frontend must carry: it is the
+	// ticket price recorded on the order at cancellation time, not a
+	// verified "money that would otherwise have been collected" figure.
+	CancelledAmountCents   int64 `json:"cancelled_amount_cents"`
+	InternalCancelledCount int64 `json:"internal_cancelled_count"`
+	PlatformCancelledCount int64 `json:"platform_cancelled_count"`
+	UnknownCancelledCount  int64 `json:"unknown_cancelled_count"`
+}
+
+// CancellationReasonTotal.ReasonID is an identifier, never a label — PROMPT
+// 10 §5's audit finding on the maquette (English slugs filtered against
+// French labels, so the filter structurally never matched) applies equally
+// to "filter on a label that can be renamed": a renamed motif must not
+// mutate past analytics. ReasonID is one of:
+//   - the numeric deletion_reasons.deletion_reason_id as a string, when
+//     orders.deletion_reason_id matched a real catalog row;
+//   - "uncatalogued:<raw value>" when deletion_reason_id carries a value
+//     that doesn't match any catalog row — e.g. a varchar(11)-truncated
+//     code like "KIOSM_CUSTO" (see cancellations.go's GetCancellationsByReason
+//     doc comment) or a stray quoted literal ("'3'") from a second, distinct
+//     write-path bug found while building this tab;
+//   - "none" when deletion_reason_id is NULL or blank.
+//
+// Never dropped silently — the last two cases are PROMPT 10 §3's "jamais
+// être exclues en silence" rule, applied to reasons the way the brief
+// already applies it to cancelled_by_type.
+type CancellationReasonTotal struct {
+	ReasonID string `json:"reason_id"`
+	Label    string `json:"label"`
+	Count    int64  `json:"count"`
+}
+
+// CancellationAuthorTypeTotal.AuthorType is one of the raw orders.
+// cancelled_by_type values (STAFF, CUSTOMER, SYSTEM, PLATFORM) or
+// CancellationAuthorUnknown for NULL — see cancellations.go.
+type CancellationAuthorTypeTotal struct {
+	AuthorType  string `json:"author_type"`
+	Count       int64  `json:"count"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+// CancellationChannelTotal reuses channelCaseExpr (channels.go), the same
+// channel derivation every other tab in this package uses.
+type CancellationChannelTotal struct {
+	Channel     string `json:"channel"`
+	Count       int64  `json:"count"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+// ---- Annulations — bloc nominatif (POST /analytics/cancellations/by-staff) ----
+
+// CancellationsByStaffRequest mirrors CancellationsRequest.
+type CancellationsByStaffRequest struct {
+	DateFrom    string   `json:"date_from"`
+	DateTo      string   `json:"date_to"`
+	MerchantIDs []string `json:"merchant_ids,omitempty"`
+}
+
+// CancellationsByStaffResponse carries no period comparison (previous
+// period/year) — a nominative ranking is read as "who, this period," not as
+// a trend the way the aggregate KPIs are; adding two more rankings the
+// frontend almost certainly wouldn't render was not worth the extra queries
+// against a fusible-protected pool.
+//
+// MinOrdersForRate is served in the contract, not hardcoded on the frontend,
+// so the threshold can change here without a client redeploy — same reason
+// RevenueRequest.IncludeHT is a request-visible flag rather than a bare
+// server constant.
+type CancellationsByStaffResponse struct {
+	Scope            RevenueScope           `json:"scope"`
+	From             string                 `json:"from"`
+	To               string                 `json:"to"`
+	MinOrdersForRate int64                  `json:"min_orders_for_rate"`
+	Staff            []StaffCancellationRow `json:"staff"`
+}
+
+// StaffCancellationRow.OrdersCreated is the "effectif" PROMPT 10 §4 requires
+// before a rate is meaningful — every order UserID created in the period
+// (any brand_status/state), not just their cancellations. RateAvailable is
+// false whenever OrdersCreated < MinOrdersForRate: the frontend must then
+// render CancelledCount and OrdersCreated as raw numbers ("4 annulations sur
+// 62 commandes"), never a computed percentage — mirrors
+// OrdersPeriodTotals.CoversDataAvailable's nilable-gate pattern already in
+// this package (service.go's coversCoverageThreshold), applied here to
+// protect a named person from a ratio computed on a handful of orders
+// (PROMPT 10 §4: "un taux d'annulation calculé sur 3 commandes n'est pas un
+// indicateur, c'est du bruit — et présenté dans un classement nominatif,
+// c'est un bruit qui désigne quelqu'un").
+//
+// UserID is CancellationUnattributedUserID for the one synthetic row that
+// carries every STAFF-type cancellation whose orders.created_by does not
+// match a real users.user_id (~11% of STAFF cancellations on PROD as of
+// 2026-09-04 — see cancellations.go's GetCancellationsByStaff doc comment).
+// That row always has OrdersCreated 0 and RateAvailable false — there is no
+// effectif to divide by for an unidentified author — and exists so
+// SUM(CancelledCount) across this endpoint reconciles exactly to the
+// aggregate endpoint's ByAuthorType STAFF row (PROMPT 10 §6's cross-endpoint
+// coherence check), instead of quietly dropping the unattributable share.
+type StaffCancellationRow struct {
+	UserID         string `json:"user_id"`
+	Name           string `json:"name"`
+	OrdersCreated  int64  `json:"orders_created"`
+	CancelledCount int64  `json:"cancelled_count"`
+	RateAvailable  bool   `json:"rate_available"`
 }

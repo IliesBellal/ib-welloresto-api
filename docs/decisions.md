@@ -1,3 +1,320 @@
+### PROMPT 11 — solder l'instrumentation du chemin d'écriture (2026-09-04)
+
+- **Contexte** : suite du lot 1 (`feature/write-path-instrumentation-lot1`) et
+  de l'onglet Annulations (PROMPT 10). Branche dédiée
+  `feature/write-path-instrumentation-lot2`. Quatre chantiers : collision de
+  numéro de migration, vérification du chemin d'écriture de
+  `cancelled_by_type`, coût figé pour les options/suppléments, fiabilisation
+  de `deletion_reason_id`. Aucune touche au frontend, à la couche analytique
+  ni à la logique fiscale ; aucune suppression de colonne ; aucun
+  rétro-remplissage de coût.
+
+#### Découverte préalable : le lot 1 n'était pas perdu, seulement jamais committé
+
+- `git stash list` portait `stash@{1}` : *"On feature/write-path-instrumentation-lot1:
+  Lot1 write-path-instrumentation WIP (uncommitted)"*. La branche elle-même
+  ne portait aucun commit propre (même HEAD que `staging`). Le stash contenait
+  l'implémentation complète du lot 1 (migration, `internal/costing`,
+  `order_life_cycle/{cost,cancellation,source}.go`, test d'intégration coût,
+  audit TVA, câblage repository/service) — vérifiée contre
+  `RENDER_STAGING_DATABASE_URL` : la migration 114 avait bien été appliquée
+  pour de vrai (colonnes réelles, chiffres de rétro-remplissage strictement
+  identiques à ceux du brief). Verdict pour le §2 du prompt : le chemin
+  d'écriture existe et est correct, il n'était simplement pas en ligne —
+  construit, validé sur staging, puis la branche abandonnée en cours de route
+  au lieu d'être committée et fusionnée (hypothèse 1 du prompt, avec plus de
+  nuance que « personne n'a écrit le code »). Restauré sur la nouvelle branche
+  via `git stash apply` (stash conservé, pas `pop`, jusqu'à confirmation) —
+  résolution manuelle de `docs/decisions.md` et
+  `send_invoice_email_test.go`, tous deux modifiés en parallèle côté
+  Annulations avec exactement le même correctif (vérifié par diff, pas de
+  vrai conflit).
+
+#### §1 — Collision de numéro de migration
+
+- Renommage : `114_permission_reports_staff_performance_read` (jamais
+  appliquée, encore non trackée par git) → **115** (`114_write_path_instrumentation`
+  du lot 1, déjà appliquée sur staging, garde son numéro). Références mises à
+  jour (`keys_gen.go`, `analytics/models.go`, `docs/decisions.md`).
+- **Trois autres collisions préexistantes trouvées** en vérifiant
+  l'intégralité de `migrations/todo` et `migrations/done` (regroupement par
+  numéro + slug distinct, pas juste par numéro — up/down partagent
+  légitimement le même numéro) : `103_permission_catalog_lot10` vs
+  `103_production_ready_delivery_arrival` (`todo/`, toutes deux déjà
+  appliquées — RBAC lot 10 et les colonnes de livraison sont des
+  fonctionnalités vivantes) ; `024_add_planning_weeks_published_at` vs
+  `024_add_users_last_login_at` et `033`/`062` de même (`done/`, archive
+  MySQL gelée). Aucune renommée : toutes déjà appliquées, renommer
+  réécrirait une histoire déjà déployée pour aucun bénéfice. Devenues
+  l'allowlist documentée du test de garde ci-dessous.
+- **Test de garde** : `migrations/migrations_numbering_test.go`
+  (`TestNoDuplicateMigrationNumbers`, package `migrations` — même patron que
+  `keys_gen_test.go`/`routes_rbac_permission_coverage_test.go`). Scanne
+  `migrations/todo` et `migrations/done` séparément, groupe par numéro,
+  échoue si plus d'un slug distinct partage un numéro, avec l'allowlist des 4
+  collisions historiques ci-dessus. Vérifié qu'il détecte réellement une
+  collision (retrait temporaire de `103` de l'allowlist → échec confirmé,
+  restauré).
+
+#### §2 — `orders.cancelled_by_type`
+
+- Chemin d'écriture restauré (lot 1, stash) : `classifyCancelledByType`
+  (`order_life_cycle/cancellation.go`) câblé sur `DenyOrderLocal`/
+  `DeleteOrderLocal` (signature `userID` ajoutée) et le webhook direct Uber
+  Eats `orders_repo.go:CancelOrder`.
+- **Trois trous supplémentaires trouvés** en grep-ant tout `state = 'CLOSED'`
+  du dépôt (le recensement du lot 1 — 16 chemins → 2 chokepoints + 1 bypass —
+  n'était pas exhaustif) et corrigés :
+  - `deliveroo_orders/repository.go:UpdateOrderRejected` — webhook de rejet
+    Deliveroo, jamais touché par cancelled_by_type.
+  - `ubereats/repository.go:SyncOrderState` (transition DENIED/CANCELED
+    seulement, DELIVERY_FAILED exclu — même frontière que le lot 1) et
+    `HandleOrderNotFound` (404 Uber) — les deux chemins de réconciliation
+    appelés par `RecoverOrderState` après l'échec d'un appel API sortant
+    (Deny/Cancel/SetReady/Accept).
+  - Les trois utilisent une garde `cancelled_by_type IS NULL` plutôt qu'une
+    écriture inconditionnelle : `SetOrderDenied`/`DeleteOrder`
+    (order_life_cycle) écrivent `DenyOrderLocal`/`DeleteOrderLocal` (STAFF) de
+    façon **synchrone**, avant de déclencher l'appel API externe de façon
+    asynchrone — si celui-ci échoue et déclenche une réconciliation, elle ne
+    doit pas écraser l'attribution STAFF déjà posée. Découverte notable en
+    creusant ce point : **un chemin d'annulation staff pour Deliveroo existe
+    bel et bien** dans ce dépôt (`order_life_cycle/service.go` →
+    `deliverooSvc.DenyOrder`), contrairement à ce que le rétro-remplissage de
+    la migration 114 supposait (« aucun chemin d'annulation staff n'existe
+    pour Deliveroo ») — non corrigé rétroactivement (aucun rétro-remplissage
+    dans ce lot), signalé pour référence future.
+- **Bug préexistant trouvé en testant, sans rapport avec cancelled_by_type
+  mais sur la même fonction** : `SyncOrderState` ne fonctionnait jamais sur
+  Postgres dès que `reasonID.Valid` (cas DENIED/CANCELED précisément) — pgx
+  ne sait pas encoder un `sql.NullInt64` dans une colonne `varchar`
+  (`deletion_reason_id`), erreur avalée silencieusement par l'appelant
+  (`RecoverOrderState` ignore l'erreur de `FinishOrderIfDoesNotExist`). Trouvé
+  par le nouveau test d'intégration (l'ancien n'exerçait jamais ce chemin
+  qu'avec `reasonID` vide). Corrigé au même endroit : conversion explicite en
+  chaîne avant l'appel, signature publique inchangée.
+- Tests : `cancellation_test.go` (table-driven, tous les sentinels de
+  `classifyCancelledByType`) ; `cancellation_postgres_integration_test.go`
+  (`DenyOrderLocal`/`DeleteOrderLocal`, staging réel, chaque sentinel →
+  valeur attendue) ; assertions ajoutées aux tests d'intégration existants de
+  `webhook/ubereats/repository`, `modules/ubereats` (nouveau test dédié
+  couvrant aussi le cas « déjà classé, ne pas écraser ») et
+  `webhook/deliveroo_orders`.
+
+#### §3 — Coût figé des options et des suppléments
+
+- Migration 116 ajoute `cost_price_unit integer`/`cost_price_reason
+  varchar(20)` à `order_item_configuration` et `extra`, même vocabulaire
+  `CHECK` que le lot 1 (`NO_RECIPE`/`INCOMPLETE_RECIPE`, constantes
+  `costing.Reason*` réutilisées telles quelles). Aucun rétro-remplissage.
+- **Découverte staging avant d'écrire le code** :
+  `configurable_attribute_options.component_id` est **100 % NULL**
+  (3140/3140) — la liaison option→ingrédient (migration 079) n'a jamais été
+  utilisée depuis l'admin marchand. Conséquence assumée, pas un bug : tant
+  qu'aucune option n'est liée, toute ligne `order_item_configuration` gèle
+  `NULL`/`NO_RECIPE` — reflet correct de l'état réel, pas un défaut de
+  résolution. `extra.component_id` est `NOT NULL` (toujours un ingrédient
+  réel) et n'a pas de colonne `unit_of_measure` propre : `extra.quantity`
+  (défaut 1, jamais fixé explicitement par le chemin d'écriture actuel)
+  compte directement des unités de `purchase_price_quantity` du composant, pas
+  de conversion nécessaire.
+- **Options** : `resolveOptionCostsBatch` (lot 1, déjà batché par commande)
+  réutilisé tel quel — le seul cas `ok=true, costCents=0` qu'il produit est
+  « aucun composant lié » (`costing.PricePerUnit` rejette déjà tout prix
+  ≤ 0), donc directement interprétable comme `NO_RECIPE` sans ambiguïté.
+- **Suppléments** : nouveau `resolveExtraCostsBatch` (`cost.go`), même patron
+  de batching, plus simple (pas de conversion d'unité).
+- **Pas de requête dupliquée** : `resolveOrderItemCostsForOrder` (chemin
+  `CreateOrder`) retourne désormais aussi la map `optionCosts` déjà calculée,
+  réutilisée pour geler `order_item_configuration` sans reformuler la requête
+  `configurable_attribute_options`. Une seule requête neuve ajoutée par
+  commande (le batch extras). `UpdateOrder` résout par ligne (même asymétrie
+  que le lot 1 pour `orderitems` — peu de lignes éditées à la fois).
+- Tests : `cost_options_extras_postgres_integration_test.go` — coût figé
+  d'une option liée et d'un supplément, non affecté par un changement
+  ultérieur de `components.purchase_price` (le test central de ce lot) ;
+  composant sans prix → `NULL`/`INCOMPLETE_RECIPE`, jamais `0` ; option non
+  liée → `NULL`/`NO_RECIPE`, jamais `0`.
+- Mesuré sur staging (méthodologie du lot 1, latence dev→Render dominante) :
+  la requête neuve (`resolveExtraCostsBatch`) coûte ~25,6 ms en moyenne sur 10
+  essais, contre ~26,5 ms pour un aller-retour trivial (`SELECT 1`) — confirme
+  qu'elle ajoute exactement un aller-retour réseau, rien de plus, cohérent
+  avec le ~21 ms/aller-retour mesuré par le lot 1. `CreateOrder` passe donc
+  d'environ ~44 ms (lot 1, panier de 5 lignes) à environ ~70 ms dans ces
+  mêmes conditions dev→Render — sur-estime largement l'impact réel en
+  production (service et DB colocalisés), même réserve que le lot 1.
+
+#### §4 — `deletion_reason_id`
+
+- **Guillemets parasites : déjà mort dans le chemin d'écriture actuel**,
+  vérifié contre les données et pas seulement en lisant le code. 212 lignes
+  historiques (sept. 2025–févr. 2026, concentrées sur un compte staff) portent
+  des guillemets littéraux ; **zéro** ligne après le 2026-02-18, y compris des
+  annulations récentes du même compte staff, n'en porte. Aucune logique de
+  concaténation de guillemets trouvée dans le chemin Go actuel
+  (`handler.go` → `service.go` → `DenyOrderLocal`/`DeleteOrderLocal` passe
+  `req.DeletionReasonID` tel quel en paramètre lié). Commit exact du correctif
+  non retrouvé (recherché dans l'historique `wello_resto_flutter` autour de
+  la date, sans résultat concluant) mais la donnée est concluante : rien à
+  corriger côté code d'écriture pour ce point précis.
+- **Ce qui est encore vivant et cassé** : `varchar(11)` était trop étroit
+  pour les constantes de ce dépôt lui-même (`KIOSK_CUSTOMER_CANCELLED` = 24
+  caractères, `SNO_CUSTOMER_CANCELLED` = 23). Confirmé par sonde directe
+  contre staging (table temporaire) qu'une écriture paramétrée normale
+  **échoue** sur `varchar(11)` en cas de dépassement (`value too long`), sans
+  troncature silencieuse — pourtant des lignes tronquées récentes
+  (`KIOSK_CUSTO`, jusqu'au 2026-07-23) existent en base. Mécanisme exact non
+  élucidé (aucun trigger/règle sur `orders`, aucune troncature côté Go
+  trouvée) — vraisemblablement un chemin d'écriture hors de ce dépôt.
+  Corrigé quand même à la source la plus sûre : migration 116 élargit
+  `orders.deletion_reason_id` à `varchar(32)` (marge au-dessus des 24
+  caractères actuels).
+- Migration 117 (**écrite, non appliquée**, conformément à la consigne) :
+  nettoie les 212 lignes à guillemets (`trim(both '''' from ...)`, même
+  motif que le rétro-remplissage du lot 1).
+
+#### Validation
+
+- `go build ./...`, `go vet ./...` : mêmes avertissements préexistants, sans
+  rapport (ubereats/client code inatteignable, verrou copié dans
+  auth/handler.go).
+- `go test ./...` sur l'arbre entier : mêmes 4 échecs préexistants que ceux
+  déjà catalogués par le lot 1 (`planning/employees`, `planning/leave`,
+  `planning/swaps`, `internal/modules/ubereats`) — zéro régression neuve.
+- Suite `postgres_integration` complète sur les paquets touchés : verte, à
+  une exception préexistante et hors périmètre — `orders.brand_store_id`
+  (ajoutée par la migration 111, déjà committée, jamais appliquée sur cette
+  instance staging) fait échouer les trois tests qui touchent
+  `GetOrderMetadata`/`CreateOrder` côté Uber Eats/order_life_cycle ; non
+  appliquée ici (hors périmètre de ce lot), signalé pour qui gère le
+  déploiement staging.
+- Un défaut de fixture de test préexistant trouvé et corrigé en cours de
+  validation (hors périmètre mais nécessaire pour obtenir un run vert) :
+  `webhook/deliveroo_orders/postgres_integration_test.go` seedait/attendait
+  encore `brand_status` en minuscules pour `UpdateOrderAccepted`/
+  `UpdateOrderConfirmed`, jamais mis à jour quand le lot 1 a normalisé
+  l'écriture/la comparaison en majuscules (B3) — fixture corrigée, aucune
+  logique applicative touchée.
+- Migrations 115 et 116 appliquées sur staging pour de vrai (additives,
+  idempotentes) — chiffres ci-dessus mesurés après application réelle.
+  Migration 117 volontairement non appliquée.
+
+### PROMPT 10 — onglet Annulations : périmètre, deux endpoints, `reports.staff_performance.read` (2026-09-04)
+
+- **Livrable** : `internal/modules/analytics/{scope,cancellations,models,service,handler}.go`,
+  migration `115_permission_reports_staff_performance_read` (renumérotée
+  depuis 114 par PROMPT 11 — collision avec `114_write_path_instrumentation`
+  du lot 1, resté non fusionné/non numéroté au moment où ce lot a pris le
+  numéro ; voir l'entrée PROMPT 11 plus bas), constante
+  `permission.ReportsStaffPerformanceRead`, câblage `cmd/api/routes.go`,
+  tests unitaires + `TestCancellations_Postgres` (lecture seule, staging).
+  `POST /analytics/revenue|orders|payments|vat` non touchés.
+- **Périmètre d'annulation retenu : `brand_status = 'CANCELED'` seul**, pas
+  `CANCELED+DENIED+DELETED` (1 738 lignes, périmètre PROD, tout historique —
+  le chiffre cité par le prompt). Sous `CANCELED` seul : 1 461 lignes sur le
+  même tout-historique PROD (248 `DENIED` + 29 `DELETED` exclus). Tracé dans
+  le code qui
+  écrit chaque statut (`internal/modules/order_life_cycle/repository.go`,
+  `internal/modules/ubereats/repository.go`, `internal/modules/deliveroo/
+  repository.go`) : `DENIED` est un refus **à la prise**, jamais après
+  acceptation (`cancelled_by_type` y est exclusivement `SYSTEM`/`PLATFORM`,
+  jamais `STAFF`/`CUSTOMER` — vérifié sur staging) ; `DELETED` est du code
+  mort côté écriture (`git log --all -S "brand_status='DELETED'"` : aucun
+  résultat, sur aucune branche) — plus aucune ligne depuis le 2024-10-26,
+  `DeleteOrderLocal` écrit désormais `CANCELED`. Documenté en tête de
+  `scope.go` (`AnalyticsCancellationsScope`), sans filtre `state` (les
+  chemins d'écriture plateforme ne touchent jamais `orders.state`).
+- **Dénominateur du taux retenu : annulées ÷ toutes commandes créées** (pas
+  ÷ annulées+valides — `AnalyticsOrdersScope` exclut déjà les annulations par
+  construction, ce qui aurait obligé à redéfinir "valide" ad hoc rien que
+  pour ce ratio). `AnalyticsAllOrdersCreatedScope` (scope.go) est la seule
+  définition. Le backend n'émet jamais de taux pré-divisé — seuls
+  `cancelled_count`/`total_orders_created` sont renvoyés, le front calcule
+  l'affichage, comme `OrdersPeriodTotals` le fait déjà pour les couverts.
+- **Deux endpoints, une seule clé nouvelle** : `POST /analytics/cancellations`
+  reste sous `reports.sales.read` (même groupe `r.Use` que les 4 autres
+  onglets) ; `POST /analytics/cancellations/by-staff` est déclaré **hors** de
+  ce groupe, avec son propre `r.Use(RequirePermission(ReportsStaffPerformanceRead))`
+  — `RequirePermission` ne prend qu'une seule clé (RBAC lot 2), empiler les
+  deux aurait exigé les deux droits à la fois pour la même route.
+- **`reports.staff_performance.read` (migration 115, sort_order 135,
+  `is_sensitive=true`)** : recette DROITS.md §5.3 suivie à la lettre —
+  constante + `All` dans `keys_gen.go`, câblée sur `/by-staff`,
+  `TestAllMatchesMigrationCatalog`/`TestRBACPermissionCoverage`/
+  `TestRBACRatchet` verts. **Pas d'entrée `legacyPermissionFallback`**
+  (deliberate, comme les 5 clés du lot 10) : en production (`role_id` encore
+  NULL partout), cette route retombe de facto à `Rights.Admin` seul tant que
+  `cmd/seed_system_roles` + l'attribution de rôles n'ont pas tourné —
+  documenté ici pour ne pas être une redécouverte surprise (même remarque
+  que RBAC lot 11 Phase 5 pour lot 10).
+  **Reste à faire, hors périmètre lecture seule de ce lot** : déployer la
+  migration 115 puis lancer `cmd/seed_system_roles` sur staging pour que le
+  rôle Administrateur porte la nouvelle clé (non fait ici — aucune écriture
+  sur staging n'a été autorisée pour ce prompt).
+- **`cancelled_by_type` : chaîne d'écriture introuvable dans ce dépôt.**
+  Vérifié : `git log --all -S "cancelled_by_type"` → zéro résultat, sur
+  toutes les branches, tout l'historique. Pourtant la colonne est réelle,
+  vivante, et croît en continu jusqu'aux commandes les plus récentes
+  (couverture ~0% mi-2025 → ~100% depuis fin 2025, aucun trigger ni fonction
+  Postgres ne la référence). Le code qui l'alimente n'est dans aucun dépôt
+  local accessible. Fiable pour construire dessus (donnée vivante, pas un
+  backfill figé) mais à signaler à qui maintient l'écriture réelle.
+  **Résolu par PROMPT 11** (voir plus bas) : `git log --all -S` ne pouvait pas
+  le trouver car `--all` ne couvre pas `refs/stash` — le code existait déjà,
+  complet et validé sur staging par le lot 1, mais était resté dans une stash
+  jamais poppée ni committée sur `feature/write-path-instrumentation-lot1`.
+- **Deux bugs qualité découverts sur `orders.deletion_reason_id`**, tous deux
+  gérés en le traitant comme un **identifiant potentiellement sale**, jamais
+  en supposant une jointure propre vers `deletion_reasons` (entier) :
+  guillemets parasites stockés dans la valeur elle-même (ex. la chaîne
+  littérale `'3'`, apostrophes comprises) et troncature (`varchar(11)`, un
+  code observé coupé net à 11 octets, ex. `KIOSK_CUSTO`). `GetCancellationsByReason`
+  (cancellations.go) trim les guillemets avant jointure et route tout ce qui
+  ne matche aucune ligne du référentiel vers un bucket `uncatalogued:<brut>`
+  explicite plutôt que de le faire disparaître silencieusement — même
+  principe que le bucket `UNKNOWN` de `cancelled_by_type`.
+- **Motifs dérivés des commandes réellement annulées, jamais du référentiel
+  `deletion_reasons` énuméré à part** : `deletion_reasons` est global et
+  partagé avec les réservations/livraisons (DROITS.md/PERIMETRE.md) ; en
+  groupant `GetCancellationsByReason` depuis `orders` puis en joignant VERS
+  le référentiel, un motif de réservation ne peut structurellement jamais
+  apparaître dans cet onglet — pas besoin d'une liste blanche
+  `deletion_reason_object`.
+- **Bloc nominatif** : seuil d'effectif = **30 commandes créées sur la
+  période** avant d'afficher un taux (comptes bruts sinon, toujours visibles).
+  Vérifié sur staging (PROD, 12 mois) : seulement 7 couples
+  (établissement, serveur) portent la moindre annulation `STAFF`, la plupart
+  des établissements tournant sur un compte POS partagé plutôt qu'un compte
+  par salarié (`Users` par établissement très faible, PERIMETRE.md). Les
+  annulations `STAFF` non rattachables à un `users.user_id` réel (~11 % sur
+  le périmètre PROD complet, 12 mois ; 0 sur le seul merchant 212) forment une ligne
+  synthétique `unattributed` plutôt que de disparaître — condition posée par
+  le prompt §6 : la somme des `cancelled_count` du endpoint nominatif doit
+  égaler exactement le sous-total `STAFF` de l'agrégat, vérifié sur staging.
+- **Vérifié en lecture seule contre staging, merchant 212, 12 mois
+  (2025-09-04→2026-09-04)** : `cancelled_count=830`, `total_orders_created=
+  10 474` (taux 7,92 %), `cancelled_amount_cents=1 567 382`. Motifs/canaux/
+  typologies d'auteur somment chacun exactement à 830. Endpoint nominatif :
+  `Σcancelled_count=775` = sous-total `STAFF` de l'agrégat (775), et 100 %
+  des annulations `STAFF` de ce merchant sont rattachables à un utilisateur
+  réel (2 comptes : `226`→774, `2`→1). `unknown_cancelled_count=2/830`
+  (0,24 %) et `with_reason=825/830` (99,4 %) — très en-dessous du chiffre
+  « 13,4 % de NULL » cité par le prompt : recalculé sous ce périmètre
+  (`CANCELED` seul, pas `CANCELED+DENIED+DELETED`), pas repris tel quel.
+  Établissement à zéro annulation sur la période (merchant 225, 3 mois) :
+  zéros propres, aucune erreur.
+- **Verdict coût des options (vérification préalable du prompt)** :
+  `orderitems.cost_price_unit`/`cost_price_reason` existent (le snapshot
+  produit du lot 1 est bien posé), mais `extra` (table des options/suppléments
+  vendus) **n'a aucune colonne de coût** — ni `cost_price_unit` ni
+  équivalent, seulement `component_id` pointant vers `components.purchase_price`
+  (prix d'achat **courant**, pas un instantané à la vente). Comme
+  `cancelled_by_type`, ni l'une ni l'autre de ces deux colonnes de coût
+  n'a de migration ni de code d'écriture dans ce dépôt (même vérification
+  `git log --all -S`, zéro résultat) — posées hors bande, comme `cancelled_by_type`.
+  Le coût des options reste donc un chantier séparé et n'a pas été codé ici,
+  conformément à la consigne du prompt.
+
 ### PROMPT 08 lot 2 — RBAC : retrait des deux derniers lecteurs directs de `Rights.Admin` (2026-09-04)
 
 - **Contexte** : ferme le chantier ouvert par le prompt 05. Sur les dix

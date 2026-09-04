@@ -131,6 +131,40 @@ const htLineJoins = `
 	) e ON e.order_item_id = oi.order_item_id
 `
 
+// deliveryFeeHTExpr/deliveryFeeJoins are the VAT tab's second line source —
+// orders.delivery_fees, a flat order-level TTC fee that never appears in
+// orderitems (htLineExpr/htLineJoins above never reach it). Same CASE shape
+// as htLineExpr, applied to the fee instead of a product line, using
+// tva_id=-1's own tva_rate rather than a hardcoded 20% so this keeps working
+// if that rate is ever edited.
+//
+// tva_id=-1 is enabled=false, show_in_report=false (P18, verified against
+// staging) — deliberately joined unconditionally on both flags anyway, for
+// two independent reasons: (1) htLineJoins above already joins
+// tva_categories unconditionally on enabled/show_in_report for product
+// lines, so this stays consistent with that; (2) pos/reports.GetTVAReportData
+// (internal/modules/pos/reports/repository.go) does the same for its own
+// delivery-fee UNION ALL branch — matching it here means the two endpoints'
+// delivery-fee handling stays explicable against each other, not a second,
+// diverging way of interpreting the same disabled-but-live category.
+const deliveryFeeHTExpr = `
+	CASE
+		WHEN tva_fees.tva_rate = 0 THEN o.delivery_fees
+		ELSE o.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)
+	END
+`
+
+const deliveryFeeJoins = `
+	FROM orders o
+	INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
+`
+
+// deliveryFeeFilter excludes zero-fee orders from the UNION ALL branch — a
+// 0 fee contributes 0 to every aggregate either way, so this only keeps the
+// branch's row count proportional to orders that actually paid a delivery
+// fee, not every order in scope.
+const deliveryFeeFilter = " AND o.delivery_fees > 0"
+
 // GetRevenueTotalsHT recomputes HT line-by-line from orders×orderitems×
 // products×tva_categories. It CANNOT come from orders.ht/orders.tva: 100% of
 // Uber Eats and Deliveroo orders have ht=0 there (PERIMETRE.md §1.5,
@@ -590,42 +624,43 @@ type VATTotals struct {
 // GetVATTotals reuses htLineExpr/htLineJoins (the same 4-table join
 // GetRevenueTotalsHT uses) — TTC and HT come from the same line scan so
 // TotalVATCents (service-computed as TTC-HT) never drifts from a
-// separately-rounded VAT sum.
+// separately-rounded VAT sum. UNION ALL'd with the delivery-fee branch
+// (deliveryFeeHTExpr/deliveryFeeJoins — see their doc comment) so the total
+// includes delivery fee VAT: a restaurateur checking VAT collected expects
+// to see it (decision recorded in docs/decisions.md, PROMPT 09 lot 3, C5).
 //
-// tva_id=-1 (delivery fees, 20%, enabled=false, show_in_report=false — P18):
-// the join here is unconditional on tva_categories.enabled/show_in_report,
-// so a product line whose tva_delivery_id/tva_take_away_id/tva_in_id points
-// at tva_id=-1 WOULD be counted — deliberately, since this endpoint answers
-// "how much VAT did this establishment's sales carry," not the fiscal
-// question pos/reports (its own pre-existing scope, not touched here)
-// answers. Verified against staging (merchant 212, PROD's largest, 12-month
-// window, 2026-09-03): 0 orderitem lines actually reach tva_id=-1 through
-// that join — no product on this merchant is configured with it.
-//
-// What this endpoint does NOT do, and pos/reports does: sum
-// orders.delivery_fees. That column is a flat order-level fee, entirely
-// separate from orderitems — htLineJoins/htLineExpr never reference it, so
-// it is absent from TTC/HT/VAT here regardless of tva_id=-1's status.
-// pos/reports adds it back via its own UNION ALL branch (joined
-// unconditionally to tva_id=-1, same reasoning as above) — GetTVAReportData,
-// internal/modules/pos/reports/repository.go. Confirmed on staging: merchant
-// 212's WELLO_RESTO/CLOSED/non-ScanNOrder delivery_fees for the same window
-// sum to 108,600 cents across 362 orders — this is a real, named component
-// of the analytics-vs-pos/reports gap (see VATResponse's doc comment), not
-// folded into this endpoint's total. Whether the analytics VAT tab should
-// start counting delivery fees is an open product question, not decided by
-// this comment — flagging it here so the gap is a documented gap, not a
-// silent one.
+// Before this change this endpoint never read orders.delivery_fees at all —
+// pos/reports did (its own UNION ALL branch, GetTVAReportData,
+// internal/modules/pos/reports/repository.go), which was the single named
+// component of the analytics-vs-pos/reports gap that pulled pos/reports'
+// total UP rather than down (VATResponse's doc comment has the full,
+// updated reconciliation). Verified read-only against staging (merchant
+// 212, 12-month window, 2026-09-03): including this branch does not change
+// the "0 orderitem lines reach tva_id=-1" fact from before this change —
+// delivery fees still never appear in orderitems, they arrive exclusively
+// through this second branch, on orders.delivery_fees.
 func (r *Repository) GetVATTotals(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (VATTotals, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
 	query := strings.TrimSpace(`
-		SELECT COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity), 0) AS ttc_cents,
-			`+roundToIntExpr("COALESCE(SUM("+htLineExpr+"), 0)")+` AS ht_cents
-	`) + "\n" + htLineJoins + "\nWHERE " + where
+		SELECT COALESCE(SUM(ttc_cents), 0) AS ttc_cents,
+			`+roundToIntExpr("COALESCE(SUM(ht_raw), 0)")+` AS ht_cents
+		FROM (
+			SELECT (oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
+	`
+
+	allArgs := append(append([]interface{}{}, args...), args...)
 
 	var totals VATTotals
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		return tx.QueryRowContext(ctx, query, args...).Scan(&totals.TotalTTCCents, &totals.TotalHTCents)
+		return tx.QueryRowContext(ctx, query, allArgs...).Scan(&totals.TotalTTCCents, &totals.TotalHTCents)
 	})
 	if err != nil {
 		return VATTotals{}, fmt.Errorf("get vat totals: %w", err)
@@ -644,21 +679,37 @@ type VATRateShare struct {
 	HTRaw    float64
 }
 
-// GetVATByRate groups the same line scan by tva_categories.tva_rate.
+// GetVATByRate groups the same line scan by tva_categories.tva_rate,
+// UNION ALL'd with the delivery-fee branch (see GetVATTotals) so a period
+// with delivery fees gets a tva_id=-1 rate row (or is folded into an
+// existing row at the same rate — grouped by rate value, not by
+// tva_categories.tva_id, so a delivery fee at 20% lands in the same bucket
+// as a product line taxed at 20%, which is the correct fiscal grouping: the
+// tab groups "how much was taxed at this rate," not "which category".
 func (r *Repository) GetVATByRate(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]VATRateShare, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
 	query := strings.TrimSpace(`
-		SELECT tva.tva_rate AS rate,
-			COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity), 0) AS ttc_cents,
-			COALESCE(SUM(`+htLineExpr+`), 0) AS ht_raw
-	`) + "\n" + htLineJoins + "\nWHERE " + where + `
-		GROUP BY tva.tva_rate
-		ORDER BY tva.tva_rate
+		SELECT rate, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
+		FROM (
+			SELECT tva.tva_rate AS rate,
+				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT tva_fees.tva_rate AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
+		GROUP BY rate
+		ORDER BY rate
 	`
+
+	allArgs := append(append([]interface{}{}, args...), args...)
 
 	var result []VATRateShare
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		rows, err := tx.QueryContext(ctx, query, args...)
+		rows, err := tx.QueryContext(ctx, query, allArgs...)
 		if err != nil {
 			return err
 		}
@@ -689,21 +740,34 @@ type VATChannelShare struct {
 
 // GetVATByChannel groups the same line scan by channelCaseExpr — the join
 // keys the channel off orders (aliased `o` in htLineJoins), consistent with
-// every other by-channel query in this package.
+// every other by-channel query in this package. UNION ALL'd with the
+// delivery-fee branch (see GetVATTotals); channelCaseExpr only references
+// o.brand/o.order_type, so it applies unchanged to the delivery-fee branch's
+// plain `orders o` (no orderitems join needed there).
 func (r *Repository) GetVATByChannel(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]VATChannelShare, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
 	query := strings.TrimSpace(`
-		SELECT `+channelCaseExpr+` AS channel,
-			COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity), 0) AS ttc_cents,
-			COALESCE(SUM(`+htLineExpr+`), 0) AS ht_raw
-	`) + "\n" + htLineJoins + "\nWHERE " + where + `
+		SELECT channel, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
+		FROM (
+			SELECT `+channelCaseExpr+` AS channel,
+				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT ` + channelCaseExpr + ` AS channel, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
 		GROUP BY channel
 		ORDER BY channel
 	`
 
+	allArgs := append(append([]interface{}{}, args...), args...)
+
 	var result []VATChannelShare
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		rows, err := tx.QueryContext(ctx, query, args...)
+		rows, err := tx.QueryContext(ctx, query, allArgs...)
 		if err != nil {
 			return err
 		}

@@ -33,11 +33,17 @@ const (
 	StaffScheduleManage  Key = "staff.schedule.manage"
 	ReportsSalesRead     Key = "reports.sales.read"
 	ReportsFinancialRead Key = "reports.financial.read"
-	SettingsManage       Key = "settings.manage"
-	BookingsManage       Key = "bookings.manage"
-	PlatformsManage      Key = "platforms.manage"
-	KioskManage          Key = "kiosk.manage"
-	SeatingPlanManage    Key = "seating_plan.manage"
+	// ReportsStaffPerformanceRead guards the only data on the Analyse page
+	// that identifies a physical employee and evaluates their performance
+	// (per-server cancellation and upsell rankings) — is_sensitive=true, see
+	// migrations/todo/115_permission_reports_staff_performance_read.up.sql
+	// and docs/analytics/DROITS.md §6 (wello-back-office repo).
+	ReportsStaffPerformanceRead Key = "reports.staff_performance.read"
+	SettingsManage              Key = "settings.manage"
+	BookingsManage              Key = "bookings.manage"
+	PlatformsManage             Key = "platforms.manage"
+	KioskManage                 Key = "kiosk.manage"
+	SeatingPlanManage           Key = "seating_plan.manage"
 )
 
 // All lists every permission key declared above, in catalog (sort_order) order.
@@ -55,6 +61,7 @@ var All = []Key{
 	StaffScheduleManage,
 	ReportsSalesRead,
 	ReportsFinancialRead,
+	ReportsStaffPerformanceRead,
 	SettingsManage,
 	BookingsManage,
 	PlatformsManage,

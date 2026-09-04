@@ -692,6 +692,23 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/orders", analyticsH.GetOrders)
 			r.Post("/payments", analyticsH.GetPayments)
 			r.Post("/vat", analyticsH.GetVAT)
+			r.Post("/cancellations", analyticsH.GetCancellations)
+		})
+
+		// PROMPT 10 (Annulations tab): the nominative per-server ranking sits
+		// outside the /analytics group above on purpose. RequirePermission
+		// takes exactly one permission.Key — stacking a second r.Use inside
+		// the same group would require BOTH reports.sales.read AND
+		// reports.staff_performance.read for this one route, when the intent
+		// is reports.staff_performance.read alone (see docs/analytics/DROITS.md
+		// §6, wello-back-office repo, and permission.ReportsStaffPerformanceRead's
+		// doc comment). A 403 here must hide the block on the frontend, never
+		// break the rest of the Annulations tab.
+		r.Route("/analytics/cancellations", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
+
+			r.Post("/by-staff", analyticsH.GetCancellationsByStaff)
 		})
 	}
 

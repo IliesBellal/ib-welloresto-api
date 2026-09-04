@@ -418,15 +418,41 @@ func (r *UberRepository) SetOrderStatusReady(ctx context.Context, orderID string
 func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	// Mise à jour principale Orders
+	// cancelled_by_type (PROMPT 11, §2) : ce chemin de réconciliation est
+	// appelé après l'échec d'un appel API Uber (Deny/Cancel/SetReady/Accept —
+	// voir service.go RecoverOrderState). Dans le cas Deny/Cancel, l'ordre
+	// d'exécution place toujours DenyOrderLocal/DeleteOrderLocal AVANT cet
+	// appel API (order_life_cycle/service.go SetOrderDenied/DeleteOrder) :
+	// cancelled_by_type porte alors déjà l'acteur réel (STAFF), qu'il ne faut
+	// pas écraser. `cancelled_by_type IS NULL` protège exactement ce cas —
+	// PLATFORM n'est posé que quand rien n'a encore classé l'annulation
+	// (reconciliation déclenchée par SetOrderReady/AcceptOrder, où Uber a
+	// fermé la commande de son propre chef, découvert incidemment). DENIED/
+	// CANCELED seuls comptent comme annulation ici ; DELIVERY_FAILED (déjà
+	// hors périmètre C2, voir lot 1) et les statuts non-terminaux (ACCEPTED,
+	// COMPLETED, EN_ROUTE_TO_DROPOFF) sont laissés intacts.
 	query := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status = ?, state = ?, merchant_approval = ?, deletion_reason_id = ?,
+		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND ? IN ('DENIED', 'CANCELED') THEN 'PLATFORM' ELSE cancelled_by_type END,
 		    delivered_on = CASE WHEN ? = 'COMPLETED' THEN %[1]s ELSE delivered_on END,
 		    last_update = %[1]s
 		WHERE brand_order_id = ?`, dbx.UTCNow())
 
-	_, err := db.ExecContext(ctx, query, status, state, approval, reasonID, status, uberOrderID)
+	// deletion_reason_id is varchar, not integer: pgx's stdlib driver can't
+	// encode a sql.NullInt64 directly into a text-typed column ("cannot find
+	// encode plan") — a pre-existing bug on Postgres found while adding the
+	// cancelled_by_type guard above (this call was previously only ever
+	// exercised with reasonID.Valid=false in tests, never a real value).
+	// MySQL coerces the int implicitly, which is presumably why this went
+	// unnoticed. Converted explicitly here rather than changing this
+	// function's public signature.
+	var reasonIDArg interface{}
+	if reasonID.Valid {
+		reasonIDArg = strconv.FormatInt(reasonID.Int64, 10)
+	}
+
+	_, err := db.ExecContext(ctx, query, status, state, approval, reasonIDArg, status, status, uberOrderID)
 	if err != nil {
 		return err
 	}
@@ -470,10 +496,16 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
+	// cancelled_by_type : même garde `IS NULL` que SyncOrderState (voir son
+	// commentaire) — n'attribue PLATFORM que si rien n'a déjà classé cette
+	// annulation (pas d'écrasement d'un DenyOrderLocal/DeleteOrderLocal
+	// STAFF déjà exécuté avant l'appel API qui a mené ici). Seule la branche
+	// CANCELED (READY_FOR_HANDOFF -> CLOSED n'est pas une annulation) compte.
 	query := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'CLOSED' ELSE 'CANCELED' END,
 		    state = 'CLOSED',
+		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND brand_status <> 'READY_FOR_HANDOFF' THEN 'PLATFORM' ELSE cancelled_by_type END,
 		    last_update = %s
 		WHERE brand_order_id = ?`, dbx.UTCNow())
 	_, err := db.ExecContext(ctx, query, uberOrderID)

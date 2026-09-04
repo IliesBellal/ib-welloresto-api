@@ -238,7 +238,7 @@ func TestOrderLifeCycleRepository_CostFreeze_Postgres(t *testing.T) {
 			}},
 		}, // OK + option, 5000
 	}
-	batched := repo.resolveOrderItemCostsForOrder(ctx, merchantID, products)
+	batched, _ := repo.resolveOrderItemCostsForOrder(ctx, merchantID, products)
 	if len(batched) != len(products) {
 		t.Fatalf("expected %d batched results, got %d", len(products), len(batched))
 	}

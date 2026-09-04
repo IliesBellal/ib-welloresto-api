@@ -1,0 +1,6 @@
+-- Reverts 117_cleanup_deletion_reason_id_quotes.up.sql.
+--
+-- No-op by design: the up migration strips stray literal quotes from
+-- deletion_reason_id (e.g. "'3'" -> "3"). There is no way to tell, after the
+-- fact, which rows used to carry the quote artifact and restoring it would
+-- be reintroducing a known data-quality bug, not a meaningful "undo".

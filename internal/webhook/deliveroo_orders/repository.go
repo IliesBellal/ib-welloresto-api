@@ -250,9 +250,19 @@ func (r *Repository) UpdateOrderRejected(ctx context.Context, brandOrderID strin
 	// brand_status s'écrit toujours en majuscules (B3) : Deliveroo envoie ses
 	// statuts en minuscules ("rejected", "canceled"), seul provider de ce
 	// dépôt à le faire.
+	// cancelled_by_type (PROMPT 11, §2) : ce handler est le webhook confirmant
+	// un rejet — déclenché soit par Deliveroo de son propre chef, soit en
+	// confirmation d'un rejet initié par un staff via order_life_cycle.
+	// SetOrderDenied (qui appelle DenyOrderLocal, STAFF, de façon synchrone,
+	// AVANT de déclencher deliverooSvc.DenyOrder de façon asynchrone — un
+	// chemin d'annulation staff pour Deliveroo existe bel et bien dans ce
+	// dépôt, contrairement à ce que le rétro-remplissage de la migration 114
+	// supposait). `cancelled_by_type IS NULL` protège ce cas : PLATFORM
+	// n'est posé que si rien ne l'a déjà classé.
 	query := `
 		UPDATE orders
-		SET brand_status = ?, state = 'CLOSED', merchant_approval = 'DENIED'
+		SET brand_status = ?, state = 'CLOSED', merchant_approval = 'DENIED',
+		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL THEN 'PLATFORM' ELSE cancelled_by_type END
 		WHERE brand_order_id = ?`
 	_, err := db.ExecContext(ctx, query, strings.ToUpper(status), brandOrderID)
 	return err

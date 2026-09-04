@@ -64,6 +64,97 @@ func AnalyticsOrdersScope(merchantIDs []string, startUTC, endUTC time.Time) (str
 	return strings.TrimSpace(analyticsOrdersScopeWhere), []interface{}{merchantIDs, startUTC, endUTC}
 }
 
+// analyticsCancellationsScopeWhere is the ONE definition of "cancellation"
+// for the Annulations tab (PROMPT 10) — the complement of
+// analyticsOrdersScopeWhere above, living under the same regime: a private
+// constant, reachable only through AnalyticsCancellationsScope, which forces
+// every caller to also supply the merchant scope and period bounds.
+//
+// upper(o.brand_status) = 'CANCELED' only — NOT DENIED, NOT DELETED. Traced
+// against the code that writes each value (2026-09-04):
+//
+//   - CANCELED is written both when staff cancel an order already accepted
+//     into the flow (OrdersLifeCycleRepository.DeleteOrderLocal,
+//     internal/modules/order_life_cycle/repository.go) and when a
+//     marketplace cancels an accepted order from its side
+//     (UberRepository.SetOrderStatusCanceled, DeliverooRepository.
+//     MarkOrderCanceledLocal) — an order that existed, was accepted, and was
+//     later called off. This is what "annulation" means in this tab.
+//   - DENIED is written by OrdersLifeCycleRepository.DenyOrderLocal and
+//     UberRepository.SetOrderStatusDenied — a refusal AT INTAKE, before the
+//     order ever entered production (merchant_approval is set to 'DENIED'
+//     alongside it). Verified on staging (PROD scope): DENIED orders carry
+//     cancelled_by_type SYSTEM or PLATFORM only, never STAFF or CUSTOMER —
+//     consistent with "the kitchen never touched this," which is a
+//     different metric (a refusal rate) from a cancellation rate. Excluded.
+//   - DELETED is dead code on the write side: no query anywhere in this
+//     repository's history (`git log --all -S "brand_status = 'DELETED'"`,
+//     `-S "brand_status='DELETED'"`) ever sets it. Every current cancel path
+//     writes CANCELED instead (DeleteOrderLocal's name is the tell — it
+//     used to presumably write DELETED, now writes CANCELED). Confirmed on
+//     staging: every DELETED row's creation_date and last_update predates
+//     2024-10-26 — a pure historical artifact from a superseded code path,
+//     with 0 rows since. Excluded: counting it would double a status the
+//     product no longer produces, for a metric that is exactly 0 going
+//     forward.
+//
+// No `state` filter, unlike analyticsOrdersScopeWhere: the marketplace
+// cancel paths above (SetOrderStatusCanceled, MarkOrderCanceledLocal) never
+// touch orders.state, so a canceled order's state is whatever it was before
+// cancellation, not reliably 'CLOSED'/'DONE'. Constraining on state would
+// silently drop cancellations under an assumption the write path does not
+// guarantee (verified empirically CLOSED/DONE-only on PROD today, but nothing
+// enforces that going forward — this scope must stay correct on its own
+// terms, not on today's incidental distribution).
+//
+// upper(...), same reasoning as analyticsOrdersScopeWhere: brand_status
+// carries lowercase rows on PROD (PERIMETRE.md §1).
+const analyticsCancellationsScopeWhere = `
+	o.merchant_id = ANY(?)
+	AND o.creation_date >= ?
+	AND o.creation_date < ?
+	AND upper(o.brand_status) = 'CANCELED'
+`
+
+// AnalyticsCancellationsScope returns the WHERE fragment and args for the
+// canonical "cancellation" scope, applied to alias `o` (orders) — the
+// Annulations tab's counterpart to AnalyticsOrdersScope. Same calling
+// convention: merchantIDs is always the caller's resolved/validated
+// accessible scope, bounds are always [start, end).
+func AnalyticsCancellationsScope(merchantIDs []string, startUTC, endUTC time.Time) (string, []interface{}) {
+	return strings.TrimSpace(analyticsCancellationsScopeWhere), []interface{}{merchantIDs, startUTC, endUTC}
+}
+
+// analyticsAllOrdersCreatedScopeWhere is the cancellation rate's denominator:
+// every order created in the period, regardless of brand_status or state.
+// This is a deliberate choice between two defensible definitions (PROMPT 10
+// §3): "cancelled ÷ (cancelled + valid)" restricts the denominator to orders
+// that reached a final, countable fate under AnalyticsOrdersScope — but that
+// scope already EXCLUDES cancellations by construction (analyticsOrdersScopeWhere
+// excludes brand_status CANCELED/DELETED), so "valid" would have to be
+// redefined ad hoc just for this ratio, and a DENIED or still-open order
+// would fall into neither bucket, silently shrinking the denominator.
+// "cancelled ÷ every order created" has none of that: it is the ordinary
+// meaning of a cancellation rate (of everything this establishment tried to
+// sell in the period, how much fell through), every order in scope lands on
+// exactly one side of the ratio, and it needs no second, narrower scope
+// definition to exist. CancellationsPeriodTotals names the field
+// TotalOrdersCreated (not TotalOrders or TotalValidOrders) specifically so
+// the contract itself states the denominator — see its doc comment.
+const analyticsAllOrdersCreatedScopeWhere = `
+	o.merchant_id = ANY(?)
+	AND o.creation_date >= ?
+	AND o.creation_date < ?
+`
+
+// AnalyticsAllOrdersCreatedScope returns the WHERE fragment and args for
+// "every order created in the period" — see analyticsAllOrdersCreatedScopeWhere's
+// doc comment for why this, and not AnalyticsOrdersScope, is the
+// cancellation rate's denominator.
+func AnalyticsAllOrdersCreatedScope(merchantIDs []string, startUTC, endUTC time.Time) (string, []interface{}) {
+	return strings.TrimSpace(analyticsAllOrdersCreatedScopeWhere), []interface{}{merchantIDs, startUTC, endUTC}
+}
+
 // ResolveAccessibleMerchants returns the establishments this request is
 // allowed to read. The token carries exactly one MerchantID (see
 // docs/analytics/DROITS.md, wello-back-office repo, §2) — a user covering
