@@ -17,6 +17,12 @@ un oubli de cette bascule (le principe directeur du lot 2 est de ne changer aucu
 d'autorisation existante), mais l'état réel du dépôt, rendu visible plutôt qu'enfoui dans le
 routeur.
 
+RBAC lot 12 a retiré `UserLoginRow.HasAccessReception()` (plus aucun appelant) et décommissionné
+`CanPrintCashReport()` (son unique site d'appel, la capability `print_merchant_cash_report` du
+login, renvoie désormais `true` sans condition) — voir `docs/RBAC_REPLI_HISTORIQUE.md` et
+`docs/decisions.md`. Aucune des deux ne gardait de route : ce tableau n'a aucune ligne à modifier
+pour ce lot.
+
 RBAC lot 2.5 a retiré la garde de vérification email/téléphone (`IsEmailVerified`/
 `IsTelVerified`, factorisées dans `forbiddenCode`) — ce n'était pas un droit RBAC mais un état
 d'établissement détourné en décision d'autorisation. Voir

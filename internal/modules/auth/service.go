@@ -466,8 +466,16 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Delivery: user.ManageDelivery,
 		},
 		Actions: LoginCapabilityActionsResponse{
-			OpenCashDrawer:          user.CanOpenCashDrawer(),
-			PrintMerchantCashReport: user.CanPrintCashReport(),
+			OpenCashDrawer: user.CanOpenCashDrawer(),
+			// RBAC lot 12 : CanPrintCashReport() (Rights.Admin ||
+			// Rights.PrintMerchantCashReport) est décommissionnée — ce qu'elle
+			// gardait est ouvert à tous pour l'instant. Le champ JSON reste
+			// émis (wello_resto_flutter et wello-back-office le parsent tous
+			// les deux, même si aucun des deux ne s'en sert encore pour
+			// gater une action — cf. docs/decisions.md) avec une valeur
+			// constante en attendant la mise à jour de ces clients, plutôt
+			// que d'être retiré du contrat de login.
+			PrintMerchantCashReport: true,
 			ManageMenu:              user.HasMenuAccess(),
 			ManagePlannings:         user.HasPlanningAccess() && user.PlanningEnabled,
 			ManageUsers:             user.HasUserManagementAccess(),

@@ -129,7 +129,11 @@ func testMerchantHeader() *accounting.MerchantHeader {
 // SendInvoiceByEmail sont câblées (les autres champs restent nil, car non sollicités ici).
 func newTestService(db *sql.DB, orderFetcher *fakeOrderFetcher, audit *fakeAuditService, mailerSvc *fakeMailerService) *OrdersLifeCycleService {
 	customersRepo := customers.NewCustomerRepository(db)
-	customersService := customers.NewCustomersService(customersRepo)
+	// nil audit.AuditService: this test only exercises SendInvoiceByEmail,
+	// which never reaches customersService's audit-logged paths (pre-existing
+	// build break fixed incidentally — NewCustomersService gained this param
+	// after this file was last touched, unrelated to this lot).
+	customersService := customers.NewCustomersService(customersRepo, nil)
 	ordersLifeCycleRepo := NewOrdersLifeCycleRepository(db, customersRepo)
 
 	return &OrdersLifeCycleService{

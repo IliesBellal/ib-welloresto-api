@@ -12,9 +12,11 @@
 --     been applied there (see docs/RBAC_BASCULE.md).
 --   - UserLoginRow.HasAdminRole()'s RoleID == nil branch (display: login's
 --     `admin` flag, GET /me/permissions's `is_admin`).
---   - UserLoginRow.HasAccessReception() / CanPrintCashReport() (display,
---     login capabilities).
 --   - LoginLegacyFields.Admin (deprecated compatibility payload).
+-- RBAC lot 12 removed the other two readers that used to be listed here,
+-- UserLoginRow.HasAccessReception() and CanPrintCashReport() (both read
+-- Rights.Admin directly, display-only) — see docs/decisions.md. They are no
+-- longer a blocker for this migration; the two above still are.
 -- This migration can only run after a version of the API that drops every
 -- one of those readers has been deployed everywhere that matters —
 -- production included. See docs/RBAC_DEPLOIEMENT_PROD.md for the ordered

@@ -268,16 +268,6 @@ type UserLoginRow struct {
 // Ces méthodes centralisent la logique de vérification des droits
 // ============================================================
 
-// HasAccessReception vérifie si l'utilisateur a accès à la réception
-func (u *UserLoginRow) HasAccessReception() bool {
-	return u.Rights.Admin || u.Rights.AccessReception
-}
-
-// CanPrintCashReport vérifie si l'utilisateur peut imprimer les rapports de caisse
-func (u *UserLoginRow) CanPrintCashReport() bool {
-	return u.Rights.Admin || u.Rights.PrintMerchantCashReport
-}
-
 // CanOpenCashDrawer vérifie si l'utilisateur peut ouvrir le tiroir-caisse
 func (u *UserLoginRow) CanOpenCashDrawer() bool {
 	return u.Has(permission.POSCashDrawerOpen)

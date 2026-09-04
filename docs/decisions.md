@@ -1,3 +1,104 @@
+### PROMPT 08 lot 2 — RBAC : retrait des deux derniers lecteurs directs de `Rights.Admin` (2026-09-04)
+
+- **Contexte** : ferme le chantier ouvert par le prompt 05. Sur les dix
+  méthodes sœurs de `UserLoginRow` (`HasMenuAccess`, `HasSettingsAccess`,
+  etc.), deux n'avaient jamais été migrées vers `Has()`/le catalogue RBAC et
+  lisaient encore `Rights.Admin` en direct : `HasAccessReception()` et
+  `CanPrintCashReport()` (`internal/modules/auth/models.go`). Décisions
+  reçues telles quelles (pas de nouvelle analyse d'opportunité) : la première
+  est supprimée, la seconde décommissionnée. Branche dédiée
+  `feature/rbac-lot12-decommission-legacy-checks`, partie de `staging`.
+- **Recensement, avant toute suppression** : grep exhaustif des deux noms de
+  méthode sur tout le dépôt Go.
+  - `HasAccessReception()` : **zéro appelant**, nulle part — ni route, ni
+    champ de réponse. Confirmé mort avant même ce lot (un contrôle d'accès
+    retiré ailleurs dans une bascule antérieure, sans que la méthode
+    elle-même ait jamais été nettoyée). Suppression pure, aucun contrat à
+    préserver.
+  - `CanPrintCashReport()` : **un seul appelant**,
+    `internal/modules/auth/service.go` (avant ce lot, ligne 470),
+    alimentant `capabilities.actions.print_merchant_cash_report` dans la
+    réponse de login (`LoginCapabilityActionsResponse`) — un usage
+    d'**affichage** (capability envoyée au client), jamais une décision
+    d'autorisation : aucune route ne l'appelait. Deux autres champs voisins
+    portent presque le même nom JSON mais sont indépendants et non
+    touchés : `access.permissions.print_merchant_cash_report`
+    (`LoginAccessPermissionsResponse`, lit `Rights.PrintMerchantCashReport`
+    brut, sans `Admin`, commentaire déjà explicite en place depuis RBAC lot
+    6) et `legacy.print_cash_report` (`LoginLegacyFields`, payload déprécié,
+    même lecture brute).
+- **Vérification client, avant de toucher au contrat de login** : recherche
+  dédiée dans les 4 dépôts front (`wello_resto_flutter`, `wello-kiosk`,
+  `wello-resto-scannorder`, `wello-back-office`) pour
+  `print_merchant_cash_report`. Résultat : **`wello_resto_flutter`**
+  (`AuthCapabilityActionsResponse`/`AuthCapabilityActionsDto`, y compris un
+  getter deprecated qui pointe explicitement vers
+  `capabilities.actions.printMerchantCashReport`) et **`wello-back-office`**
+  (`AuthCapabilities.actions.print_merchant_cash_report` dans
+  `src/types/auth.ts`) parsent et stockent ce champ ; aucun des deux ne s'en
+  sert pour gater une action UI à ce jour (recherché explicitly, rien
+  trouvé), mais **le champ est bien consommé** (parsé/stocké) — condition
+  suffisante pour ne pas le retirer du contrat. `wello-kiosk` et
+  `wello-resto-scannorder` : aucune référence, pas concernés. Un homonyme
+  sans rapport existe côté back-office (`MerchantUserPermissions.print_merchant_cash_report`,
+  l'endpoint admin `/users/{id}/rights` de gestion des droits employé — un
+  contrat différent, non touché par ce lot).
+- **Appliqué** :
+  - `HasAccessReception()` supprimée (`internal/modules/auth/models.go`).
+  - `CanPrintCashReport()` supprimée également (le corps aurait été
+    `return true`, aucun intérêt à garder un wrapper) ; son unique site
+    d'appel remplacé par la constante `true` directement, avec commentaire
+    renvoyant à cette entrée — exactement la remédiation « valeur constante
+    en attendant la mise à jour du client » demandée par le brief plutôt que
+    de supprimer le champ JSON. `access.permissions.*` et `legacy.*` restent
+    des lectures brutes de `Rights.PrintMerchantCashReport`, inchangées.
+  - Repli `pos.status.manage` (`legacyPermissionFallback[permission.POSStatusManage]`,
+    `internal/modules/auth/permissions.go:23`, backé par la colonne
+    `users_rights.access_wrreception` via le champ Go `AccessReception`)
+    vérifié **toujours présent et intact** — fichier non touché par ce lot,
+    confirmé par `git diff` vide sur `permissions.go` et par les tests
+    `TestRequirePermission_POSStatusManage_*`
+    (`internal/middleware/require_permission_test.go`), qui passent tels
+    quels. Ce repli est un champ Go différent (`AccessReception`, lu par
+    `legacyPermissionFallback`) de la méthode supprimée
+    (`HasAccessReception()`, qui lisait `Rights.Admin || Rights.AccessReception`
+    puis n'était appelée nulle part) — deux choses distinctes qui partagent
+    la même colonne source, pas la même fonction.
+- **Non touché, comme demandé** : `users_rights.admin` (la colonne) reste en
+  base, toujours lue par le repli `Has()` (`RoleID == nil`) et par
+  `HasAdminRole()` — ce sont eux qui font tourner la production tant que
+  `role_id` y est `NULL` partout (voir `docs/RBAC_REPLI_HISTORIQUE.md`).
+  Migration `113_drop_users_rights_admin_column` reste préparée, **non
+  appliquée**. Son commentaire d'en-tête mis à jour : elle listait
+  `HasAccessReception()`/`CanPrintCashReport()` comme deux des quatre
+  lecteurs bloquants — n'en reste que deux (`HasAdminRole()`'s branche
+  `RoleID == nil`, `LoginLegacyFields.Admin`), ce lot en a fermé deux sur
+  quatre, pas la totalité.
+- **Documentation** : `docs/RBAC_REPLI_HISTORIQUE.md` (nouvelle section
+  « RBAC lot 12 ») et `docs/RBAC_ROUTES.md` (note dans l'en-tête) mis à jour.
+  **Le tableau des 18 clés du catalogue et le compte « 10 avec repli / 8 sans »
+  ne changent pas** : les deux méthodes retirées n'étaient ni des clés
+  `permission.Key` ni des entrées de `legacyPermissionFallback` — deux
+  méthodes autonomes hors du système `Has()`/repli, question posée
+  explicitement par le brief et tranchée par la négative.
+- **Tests** : nouveau
+  `TestBuildLoginResponse_PrintMerchantCashReport_AlwaysTrue`
+  (`internal/modules/auth/login_response_test.go`, 4 sous-cas croisant
+  `Admin`/`PrintMerchantCashReport`) — confirme la capability toujours à
+  `true` et, dans le même test, que `access.permissions.print_merchant_cash_report`
+  continue de refléter le droit réel de l'utilisateur (non affecté). Suite
+  complète `go build ./...`/`go test ./...` : aucune régression — les 4
+  échecs pré-existants sans rapport (`planning/employees`, `planning/leave`,
+  `planning/swaps`, `internal/modules/ubereats`) inchangés ; un cinquième,
+  déjà rencontré et corrigé sur le lot « instrumentation du chemin
+  d'écriture » (signature `customers.NewCustomersService` désynchronisée,
+  bloquait la compilation des tests d'`order_life_cycle`), corrigé ici aussi
+  à l'identique puisque cette branche part aussi de `staging`.
+- **Suite** : rien de planifié par ce lot — la condition de retrait du
+  repli historique et de la colonne `users_rights.admin` reste celle décrite
+  dans `docs/RBAC_REPLI_HISTORIQUE.md` (0 ligne `role_id IS NULL` active,
+  production comprise), non atteinte, non traitée ici.
+
 ### RBAC lot 11, Phase 6 — runbook de déploiement production (2026-09-03)
 
 - **Livrable** : `docs/RBAC_DEPLOIEMENT_PROD.md`. Couvre en une fois les lots

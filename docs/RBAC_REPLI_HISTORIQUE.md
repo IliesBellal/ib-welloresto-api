@@ -134,3 +134,22 @@ retirés dans cet ordre : code d'abord (un déploiement qui ne lit plus jamais
 la colonne), puis seulement la migration de suppression — jamais l'inverse
 (principe expansion / déploiement / contraction, voir
 `docs/RBAC_DEPLOIEMENT_PROD.md`).
+
+## RBAC lot 12 — `HasAccessReception()` / `CanPrintCashReport()` retirées
+
+Ce lot a fermé les deux derniers lecteurs directs de `Rights.Admin` qui
+n'étaient **ni** la branche `Has()` documentée ci-dessus **ni**
+`HasAdminRole()` : `UserLoginRow.HasAccessReception()` (supprimée, plus aucun
+appelant en Go) et `CanPrintCashReport()` (décommissionnée — son unique
+site d'appel, la capability `capabilities.actions.print_merchant_cash_report`
+du login, renvoie désormais `true` sans condition). Migration 113 mise à
+jour en conséquence — voir `docs/decisions.md`.
+
+**Le tableau des 18 clés et le compte « 10 avec repli / 8 sans » ci-dessus ne
+changent pas.** Ces deux méthodes n'étaient pas des clés du catalogue
+`permission.Key` ni des entrées de `legacyPermissionFallback` — deux
+méthodes autonomes sur `UserLoginRow`, en dehors du système `Has()`/repli
+entièrement. Leur retrait ne touche ni la table de repli, ni aucune route
+gardée par une `permission.Key` (aucune des deux ne gardait de route :
+`HasAccessReception()` n'avait déjà plus d'appelant, `CanPrintCashReport()`
+n'alimentait qu'un champ d'affichage).
