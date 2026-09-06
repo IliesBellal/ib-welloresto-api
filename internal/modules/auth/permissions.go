@@ -102,3 +102,28 @@ func (u *UserLoginRow) HasAdminRole() bool {
 	}
 	return u.Rights.Admin
 }
+
+// LegacyFallback exposes legacyPermissionFallback read-only, for a caller
+// that needs to replicate Has()'s role_id-nil branch for an establishment
+// OTHER than the token's own — PROMPT 23's cross-establishment permission
+// check (internal/modules/analytics.Repository.HasForMerchant), which needs
+// the exact same historical-world rule Has() applies, evaluated against a
+// different users_rights row than the one on the current token.
+//
+// Deliberately an accessor, not a copy of the map: PROMPT 23 explicitly
+// forbids touching the historical RBAC fallback, and a hand-copied second
+// map would be exactly the kind of two-implementations-of-one-rule setup
+// that silently drifts apart over time. Reusing legacyPermissionFallback
+// itself makes that drift structurally impossible instead of merely
+// tested-against.
+//
+// Returns (false, false) when key has no fallback entry — the same "clé sans
+// fallback + pas de rôle = refusé" outcome Has() reaches by falling through
+// its map lookup.
+func LegacyFallback(key permission.Key, rights UserRowRights) (granted bool, hasEntry bool) {
+	fallback, ok := legacyPermissionFallback[key]
+	if !ok {
+		return false, false
+	}
+	return fallback(rights), true
+}

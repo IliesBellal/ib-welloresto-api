@@ -2,6 +2,7 @@ package discounts
 
 import (
 	"context"
+	"strconv"
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
@@ -35,14 +36,22 @@ func (s *Service) GetAllDiscounts(ctx context.Context, token string) ([]Discount
 	return s.repo.GetAllDiscounts(ctx, user.MerchantID)
 }
 
-// GetDiscountByID retrieves a discount by ID
+// GetDiscountByID retrieves a discount by its integer ID (received from the
+// client as a string — the wire format was never changed, see docs/decisions.md
+// PROMPT 21: only the value moved from a "discount-<uuid>" string to the
+// decimal text of an integer, no frontend needed updating for this).
 func (s *Service) GetDiscountByID(ctx context.Context, token string, discountID string) (*Discount, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.repo.GetDiscountByID(ctx, user.MerchantID, discountID)
+	discountIDNew, err := strconv.Atoi(discountID)
+	if err != nil {
+		return nil, ErrInvalidDiscountID
+	}
+
+	return s.repo.GetDiscountByID(ctx, user.MerchantID, discountIDNew)
 }
 
 // CreateDiscount creates a new discount
@@ -69,7 +78,12 @@ func (s *Service) UpdateDiscount(ctx context.Context, token string, discountID s
 		return nil, err
 	}
 
-	return s.repo.UpdateDiscount(ctx, user.MerchantID, discountID, req)
+	discountIDNew, err := strconv.Atoi(discountID)
+	if err != nil {
+		return nil, ErrInvalidDiscountID
+	}
+
+	return s.repo.UpdateDiscount(ctx, user.MerchantID, discountIDNew, req)
 }
 
 // DeleteDiscount deletes a discount (soft delete)
@@ -79,5 +93,10 @@ func (s *Service) DeleteDiscount(ctx context.Context, token string, discountID s
 		return err
 	}
 
-	return s.repo.DeleteDiscount(ctx, user.MerchantID, discountID)
+	discountIDNew, err := strconv.Atoi(discountID)
+	if err != nil {
+		return ErrInvalidDiscountID
+	}
+
+	return s.repo.DeleteDiscount(ctx, user.MerchantID, discountIDNew)
 }

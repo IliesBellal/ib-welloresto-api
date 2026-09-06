@@ -36,13 +36,20 @@ func NewPostgres(dsn config.DatabaseConfig) (*sql.DB, error) {
 // "Fusible" section, for the full derivation): the Render Basic instance has
 // 256MB RAM, 64MB of which is shared_buffers. Worst case is
 // work_mem × sort/hash nodes per query × concurrent analytics connections.
-// With AnalyticsWorkMemMB=16 and a conservative 4 memory-consuming nodes per
-// query (GROUP BY + ORDER BY + a join hash + a window/aggregate), 2 analytics
-// connections cap contribution at 16×4×2 = 128MB, +64MB shared_buffers =
-// 192MB, leaving 64MB for OS + per-backend overhead + the POS pool's own
-// (much smaller, default work_mem) usage. Raising this above 2 requires
-// re-deriving the budget, not just bumping the constant.
-const AnalyticsMaxOpenConns = 2
+//
+// PROMPT 24 Phase 5 re-derives this budget for the multi-establishment
+// selector (up to a few concurrent comparing users, no code-enforced cap on
+// establishment count — see ValidateRequestedMerchants's doc comment): raised
+// from 2 to 4 connections, AnalyticsWorkMemMB dropped from 16 to 8 in the same
+// commit so the worst-case contribution stays IDENTICAL — 4×4×8 = 128MB,
+// same as the old 2×4×16 = 128MB — +64MB shared_buffers = 192MB, the same
+// 192MB the instance has run on since this fusible was first sized. This is
+// twice the concurrent analytics connections for the same memory ceiling, not
+// a memory increase. Raising AnalyticsMaxOpenConns again requires re-deriving
+// this budget, not just bumping the constant — and per-query work_mem cannot
+// be dropped further without re-measuring for disk spill first (see
+// AnalyticsWorkMemMB's doc comment).
+const AnalyticsMaxOpenConns = 4
 
 // AnalyticsStatementTimeoutMS is applied as `SET LOCAL statement_timeout` on
 // every analytics transaction (internal/modules/analytics), never globally —
@@ -56,8 +63,19 @@ const AnalyticsStatementTimeoutMS = 4000
 // transaction. PERIMETRE.md §2.3 measured a ×1.24 gain and the elimination of
 // disk spill at 64MB on an isolated query — that number is a test-bench
 // result, not a production budget: see AnalyticsMaxOpenConns's comment for
-// why 16MB is the value actually deployed here.
-const AnalyticsWorkMemMB = 16
+// the budget math that actually sizes this constant.
+//
+// PROMPT 24 Phase 5 dropped this from 16 to 8 (see AnalyticsMaxOpenConns's
+// doc comment for why, in the same commit that doubled the connection count).
+// Re-measured against staging on Options/Produits — the two heaviest queries
+// in this package (widest GROUP BY, largest joins) — via
+// EXPLAIN (ANALYZE, BUFFERS) with work_mem set to 8MB in the same session:
+// no "temp read"/"temp written" line on either plan at realistic staging data
+// volumes (see docs/decisions.md, this repo, PROMPT 24 Phase 5, for the exact
+// queries and numbers). If a future query DOES spill at 8MB, that is a real
+// arbitrage between connection count and per-query memory — not a threshold
+// to quietly raise back without re-deriving AnalyticsMaxOpenConns's budget.
+const AnalyticsWorkMemMB = 8
 
 // NewAnalyticsPostgres opens the dedicated low-priority pool used only by
 // internal/modules/analytics. Reads ANALYTICS_DATABASE_URL (falling back to

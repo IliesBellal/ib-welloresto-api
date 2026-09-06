@@ -1,23 +1,14 @@
+// Package analytics — ResolveAccessibleMerchants and HasForMerchant now
+// require a database (PROMPT 23: the accessible scope is resolved from
+// users_rights/roles/role_permissions, not the token alone) — their tests
+// moved to scope_postgres_integration_test.go. This file keeps the pure,
+// DB-free ValidateRequestedMerchants tests.
 package analytics
 
 import (
-	"context"
 	"errors"
 	"testing"
-
-	"welloresto-api/internal/modules/auth"
 )
-
-func TestResolveAccessibleMerchants_ReturnsExactlyTheTokenMerchant(t *testing.T) {
-	user := &auth.UserLoginRow{MerchantID: "212"}
-	got, err := ResolveAccessibleMerchants(context.Background(), user)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 1 || got[0] != "212" {
-		t.Fatalf("expected exactly [\"212\"], got %+v", got)
-	}
-}
 
 func TestValidateRequestedMerchants_EmptyRequestUsesFullAccessibleScope(t *testing.T) {
 	accessible := []string{"212"}

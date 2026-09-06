@@ -9,6 +9,8 @@ import (
 
 	"welloresto-api/internal/database"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/permission"
 )
 
 // Repository runs every analytics query against the dedicated low-priority
@@ -64,6 +66,213 @@ func (r *Repository) GetMerchantTimezone(ctx context.Context, merchantID string)
 		return "", fmt.Errorf("get merchant timezone: %w", err)
 	}
 	return timezone, nil
+}
+
+// ResolveAccessibleMerchants returns every establishment where user holds
+// permission.POSAnalytics via an active users_rights link — the accessible
+// scope for the whole multi-establishment analytics page (PROMPT 23). This
+// supersedes the PROMPT 03 version of this function (a bare
+// []string{user.MerchantID}, guarded by a doc comment forbidding exactly
+// this query as "a scope-widening regression") — that guard held only until
+// multi-establishment access became an explicit product decision (PROMPT
+// 23's "Décisions arrêtées" table: "la permission définit elle-même la
+// portée"), which it now is.
+//
+// ONE query, not one per users_rights link — PROMPT 23 §1's explicit
+// requirement, and not optional: this runs on every analytics request,
+// against an instance sized at 0.1 vCPU and shared with the POS.
+//
+// Resolves both RBAC worlds with the SAME query, matching UserLoginRow.Has
+// (auth/permissions.go) exactly for each link it scans:
+//   - role_id IS NOT NULL: the link's role must carry permission.POSAnalytics
+//     in role_permissions. No system_key='admin' special-case — RBAC lot 11
+//     removed that short-circuit from Has() itself, so an admin role only
+//     grants this because seed_system_roles / the full-catalog invariant
+//     (TestSystemAdminRolesContainFullCatalog_Postgres) guarantees it
+//     actually carries every catalog key, pos.analytics included.
+//   - role_id IS NULL: the historical world. pos.analytics has no entry in
+//     auth.legacyPermissionFallback — Has()'s only fallback for a key absent
+//     from that map is Rights.Admin. So a role_id-nil link is accessible
+//     here iff users_rights.admin = true, exactly mirroring Has().
+//
+// Excludes user_id = '' EXPLICITLY ("AND ur.user_id <> ''"), not just
+// incidentally via "WHERE ur.user_id = $1": staging carries 4 users_rights
+// rows sharing user_id = '' across 4 unrelated establishments (173, 2, 2,
+// 203 — orphaned rows with no matching `users` row, see
+// docs/analytics/DROITS.md §1.1/§2.1, wello-back-office repo). The one
+// scenario where that would matter — a UserLoginRow whose own UserID is
+// itself "" — is exactly what this guard makes structurally impossible:
+// "ur.user_id <> ''" rejects every one of those 4 rows regardless of what
+// userID holds, so an empty UserID can never merge 4 unrelated
+// establishments' access into one caller's scope. See
+// postgres_integration_scope_test.go for the test that proves it.
+//
+// Only "enabled AND login_enabled" links count: a disabled or
+// login-disabled link must not widen what an active session can read, even
+// though it can no longer be used to authenticate on its own.
+//
+// Does NOT special-case the token's own merchant being absent from the
+// result: if that link itself doesn't carry pos.analytics, the caller would
+// not see the Analyse page at all (pos.analytics also gates the frontend
+// menu entry — DROITS.md §6.2), so an accessible scope that excludes it is
+// the correct, fail-closed answer, not a bug. ValidateRequestedMerchants
+// then rejects any merchant_id outside this (possibly empty) result with a
+// 403, never a silent narrowing.
+func (r *Repository) ResolveAccessibleMerchants(ctx context.Context, user *auth.UserLoginRow) ([]string, error) {
+	if user == nil || strings.TrimSpace(user.UserID) == "" {
+		return nil, nil
+	}
+
+	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, `
+		SELECT DISTINCT ur.merchant_id
+		FROM users_rights ur
+		LEFT JOIN role_permissions rp
+			ON rp.role_id = ur.role_id AND rp.permission_key = ?
+		WHERE ur.user_id = ?
+		  AND ur.user_id <> ''
+		  AND ur.enabled = TRUE
+		  AND ur.login_enabled = TRUE
+		  AND (
+		    (ur.role_id IS NOT NULL AND rp.role_id IS NOT NULL)
+		    OR (ur.role_id IS NULL AND ur.admin = TRUE)
+		  )
+	`, string(permission.POSAnalytics), user.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve accessible merchants: %w", err)
+	}
+	defer rows.Close()
+
+	var merchantIDs []string
+	for rows.Next() {
+		var merchantID string
+		if err := rows.Scan(&merchantID); err != nil {
+			return nil, fmt.Errorf("scan accessible merchant: %w", err)
+		}
+		merchantIDs = append(merchantIDs, merchantID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accessible merchants: %w", err)
+	}
+	return merchantIDs, nil
+}
+
+// GetMerchantNames resolves display names for a set of merchant IDs — used
+// only to label a scope already resolved by ResolveAccessibleMerchants
+// (PROMPT 24 Phase 1), never to determine access itself. Returns an entry per
+// row actually found; a merchantID with no matching `merchant` row (should
+// not happen for an ID that just came out of users_rights, but this is a
+// display path, not a security check) is silently omitted rather than erroring.
+func (r *Repository) GetMerchantNames(ctx context.Context, merchantIDs []string) ([]AccessibleMerchant, error) {
+	if len(merchantIDs) == 0 {
+		return nil, nil
+	}
+
+	// merchant.id is an integer identity while merchantIDs is carried as
+	// strings everywhere in Go (see auth.authMerchantJoinCast's doc comment,
+	// 12-merchant-id-unification.md) — this package already assumes the
+	// Postgres-only dialect elsewhere (the `= ANY(?)` array form throughout
+	// scope.go), so CAST(... AS TEXT) is written directly, no dialect switch.
+	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, `
+		SELECT id, fullName
+		FROM merchant
+		WHERE CAST(id AS TEXT) = ANY(?)
+		ORDER BY fullName
+	`, merchantIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get merchant names: %w", err)
+	}
+	defer rows.Close()
+
+	var merchants []AccessibleMerchant
+	for rows.Next() {
+		var m AccessibleMerchant
+		if err := rows.Scan(&m.MerchantID, &m.Name); err != nil {
+			return nil, fmt.Errorf("scan merchant name: %w", err)
+		}
+		merchants = append(merchants, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate merchant names: %w", err)
+	}
+	return merchants, nil
+}
+
+// HasForMerchant reports whether a user holds permission key on a SPECIFIC
+// establishment — the cross-establishment counterpart to UserLoginRow.Has,
+// which only ever answers for the token's own merchant (its own doc comment:
+// "sur son établissement courant"). PROMPT 23 needs this to gate the merged
+// nominative blocks (per-server rankings): merging them across establishments
+// is only safe when the caller holds the block's permission on EVERY
+// selected establishment, not just the one they are logged into.
+//
+// MUST return the exact same verdict as user.Has(key) when merchantID equals
+// user's own token merchant — see the postgres integration test
+// TestHasForMerchant_AgreesWithHasOnTokenMerchant, which exists specifically
+// because PROMPT 23 flags that two independent implementations of the same
+// rule eventually diverge, and a test is how that gets caught instead of
+// discovered in production.
+//
+// One query: looks up the (user_id, merchant_id) users_rights link
+// (enabled AND login_enabled — an inactive link grants nothing, same rule
+// ResolveAccessibleMerchants applies) and, in the same round trip, whether
+// its role (if any) carries key. Then in Go:
+//   - role_id IS NOT NULL: the joined role_permissions match decides it,
+//     no system_key short-circuit — identical reasoning to
+//     ResolveAccessibleMerchants above.
+//   - role_id IS NULL: Rights.Admin short-circuits to true, else
+//     auth.LegacyFallback(key, rights) — the exact historical-world rule
+//     Has() applies, reused via that accessor rather than reimplemented, so
+//     there is nothing here to keep in sync by hand. This package never
+//     touches auth.legacyPermissionFallback itself (PROMPT 23's explicit
+//     instruction).
+//   - no matching active link at all: false, never an error — "not linked
+//     there" and "linked but lacking the permission" are the same
+//     caller-facing answer.
+func (r *Repository) HasForMerchant(ctx context.Context, userID, merchantID string, key permission.Key) (bool, error) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(merchantID) == "" {
+		return false, nil
+	}
+
+	var roleID sql.NullString
+	var roleGranted bool
+	var rights auth.UserRowRights
+	err := dbx.GetDB(ctx, r.db).QueryRowContext(ctx, `
+		SELECT ur.role_id,
+		       (ur.role_id IS NOT NULL AND rp.role_id IS NOT NULL),
+		       ur.admin,
+		       ur.access_wrreception, ur.print_merchant_cash_report, ur.open_cash_drawer,
+		       ur.manage_menu, ur.manage_plannings, ur.manage_users, ur.manage_settings, ur.manage_haccp,
+		       ur.view_reports, ur.view_financials, ur.manage_customers
+		FROM users_rights ur
+		LEFT JOIN role_permissions rp
+			ON rp.role_id = ur.role_id AND rp.permission_key = ?
+		WHERE ur.user_id = ?
+		  AND ur.user_id <> ''
+		  AND ur.merchant_id = ?
+		  AND ur.enabled = TRUE
+		  AND ur.login_enabled = TRUE
+		LIMIT 1
+	`, string(key), userID, merchantID).Scan(
+		&roleID, &roleGranted, &rights.Admin,
+		&rights.AccessReception, &rights.PrintMerchantCashReport, &rights.OpenCashDrawer,
+		&rights.CanManageMenu, &rights.CanManagePlannings, &rights.CanManageUsers, &rights.CanManageSettings, &rights.CanManageHACCP,
+		&rights.CanViewReports, &rights.CanViewFinancials, &rights.CanManageCustomers,
+	)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("has for merchant: %w", err)
+	}
+
+	if roleID.Valid {
+		return roleGranted, nil
+	}
+	if rights.Admin {
+		return true, nil
+	}
+	granted, _ := auth.LegacyFallback(key, rights)
+	return granted, nil
 }
 
 // RevenueTotals is the TTC/HT/order-count total for one period.
@@ -482,6 +691,51 @@ func (r *Repository) GetOrdersByChannel(ctx context.Context, merchantIDs []strin
 	return result, nil
 }
 
+// GetOrdersByMerchant returns order counts and TTC totals grouped by
+// merchant_id — PROMPT 23 Phase 3: group_by=merchant was accepted by
+// OrdersRequest and echoed back in Scope.GroupBy since PROMPT 03 (the same
+// contract as GetRevenueByMerchant's), but nothing ever computed this
+// breakdown — a dead parameter, worse than an absent one, since a caller had
+// no way to tell "ignored" from "there happened to be nothing to break
+// down". Mirrors GetRevenueByMerchant exactly: COUNT/SUM on integer columns,
+// grouped by merchant_id, so — unlike a derived HT figure — group totals
+// summed back together always equal the ungrouped total exactly, no
+// apportionment needed.
+func (r *Repository) GetOrdersByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]OrdersMerchantTotal, error) {
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT o.merchant_id,
+			COUNT(*) AS order_count,
+			COALESCE(SUM(o.price), 0) AS ttc_cents
+		FROM orders o
+	`) + "\nWHERE " + where + `
+		GROUP BY o.merchant_id
+		ORDER BY o.merchant_id
+	`
+
+	result := make([]OrdersMerchantTotal, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row OrdersMerchantTotal
+			if err := rows.Scan(&row.MerchantID, &row.OrderCount, &row.TotalTTCCents); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get orders by merchant: %w", err)
+	}
+	return result, nil
+}
+
 // ---- Règlements (POST /analytics/payments) ----
 
 // paymentsScopeJoin is shared by every payments query: payments joined to
@@ -610,6 +864,46 @@ func (r *Repository) GetPaymentsByMethod(ctx context.Context, merchantIDs []stri
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get payments by method: %w", err)
+	}
+	return result, nil
+}
+
+// GetPaymentsByMerchant returns amount/count totals grouped by merchant_id —
+// PROMPT 24 Phase 2. Mirrors GetRevenueByMerchant/GetOrdersByMerchant
+// exactly: COUNT/SUM on integer columns, so rows sum back to the ungrouped
+// total exactly, no apportionment needed.
+func (r *Repository) GetPaymentsByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]PaymentsMerchantTotal, error) {
+	where, args := paymentsScopeJoin(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT o.merchant_id,
+			COALESCE(SUM(p.amount), 0) AS amount_cents,
+			COUNT(*) AS payment_count
+		FROM payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+	`) + "\nWHERE " + where + `
+		GROUP BY o.merchant_id
+		ORDER BY o.merchant_id
+	`
+
+	result := make([]PaymentsMerchantTotal, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row PaymentsMerchantTotal
+			if err := rows.Scan(&row.MerchantID, &row.TotalAmountCents, &row.PaymentCount); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get payments by merchant: %w", err)
 	}
 	return result, nil
 }
@@ -784,6 +1078,179 @@ func (r *Repository) GetVATByChannel(ctx context.Context, merchantIDs []string, 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get vat by channel: %w", err)
+	}
+	return result, nil
+}
+
+// ---- TVA — group_by=merchant (PROMPT 24 Phase 2) ----
+//
+// The three functions below mirror GetVATTotals/GetVATByRate/GetVATByChannel
+// exactly, adding o.merchant_id to the SELECT list and GROUP BY — same
+// UNION ALL of htLineJoins (product lines) and deliveryFeeJoins (delivery
+// fees), both aliasing orders as `o`. Only Repository.GetVATTotalsByMerchant's
+// TotalHTCents is rounded in SQL (roundToIntExpr, one ROUND per
+// establishment); GetVATByRateByMerchant/GetVATByChannelByMerchant return the
+// raw (unrounded) per-establishment HT shares, exactly like their
+// non-grouped counterparts, so service.go can apportion each establishment's
+// shares against THAT establishment's own rounded total (see
+// buildVATByMerchant) — never against the combined scope's total, which
+// would leave an establishment's own parts not summing to its own total.
+
+// VATMerchantTotals is GetVATTotalsByMerchant's raw per-establishment row.
+type VATMerchantTotals struct {
+	MerchantID    string
+	TotalTTCCents int64
+	TotalHTCents  int64
+}
+
+func (r *Repository) GetVATTotalsByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]VATMerchantTotals, error) {
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT merchant_id,
+			COALESCE(SUM(ttc_cents), 0) AS ttc_cents,
+			`+roundToIntExpr("COALESCE(SUM(ht_raw), 0)")+` AS ht_cents
+		FROM (
+			SELECT o.merchant_id AS merchant_id,
+				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT o.merchant_id AS merchant_id, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
+		GROUP BY merchant_id
+		ORDER BY merchant_id
+	`
+
+	allArgs := append(append([]interface{}{}, args...), args...)
+
+	result := make([]VATMerchantTotals, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, allArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row VATMerchantTotals
+			if err := rows.Scan(&row.MerchantID, &row.TotalTTCCents, &row.TotalHTCents); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get vat totals by merchant: %w", err)
+	}
+	return result, nil
+}
+
+// VATRateShareByMerchant is GetVATByRateByMerchant's raw row — see
+// VATRateShare's doc comment for why HTRaw stays unrounded here.
+type VATRateShareByMerchant struct {
+	MerchantID string
+	Rate       float64
+	TTCCents   int64
+	HTRaw      float64
+}
+
+func (r *Repository) GetVATByRateByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]VATRateShareByMerchant, error) {
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT merchant_id, rate, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
+		FROM (
+			SELECT o.merchant_id AS merchant_id, tva.tva_rate AS rate,
+				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT o.merchant_id AS merchant_id, tva_fees.tva_rate AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
+		GROUP BY merchant_id, rate
+		ORDER BY merchant_id, rate
+	`
+
+	allArgs := append(append([]interface{}{}, args...), args...)
+
+	var result []VATRateShareByMerchant
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, allArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row VATRateShareByMerchant
+			if err := rows.Scan(&row.MerchantID, &row.Rate, &row.TTCCents, &row.HTRaw); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get vat by rate by merchant: %w", err)
+	}
+	return result, nil
+}
+
+// VATChannelShareByMerchant is GetVATByChannelByMerchant's raw row — see
+// VATChannelShare's doc comment for why HTRaw stays unrounded here.
+type VATChannelShareByMerchant struct {
+	MerchantID string
+	Channel    string
+	TTCCents   int64
+	HTRaw      float64
+}
+
+func (r *Repository) GetVATByChannelByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]VATChannelShareByMerchant, error) {
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT merchant_id, channel, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
+		FROM (
+			SELECT o.merchant_id AS merchant_id, `+channelCaseExpr+` AS channel,
+				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + where + `
+			UNION ALL
+			SELECT o.merchant_id AS merchant_id, ` + channelCaseExpr + ` AS channel, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + where + deliveryFeeFilter + `
+		) lines
+		GROUP BY merchant_id, channel
+		ORDER BY merchant_id, channel
+	`
+
+	allArgs := append(append([]interface{}{}, args...), args...)
+
+	var result []VATChannelShareByMerchant
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, allArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row VATChannelShareByMerchant
+			if err := rows.Scan(&row.MerchantID, &row.Channel, &row.TTCCents, &row.HTRaw); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get vat by channel by merchant: %w", err)
 	}
 	return result, nil
 }

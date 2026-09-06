@@ -11,4 +11,5 @@ var (
 	ErrDiscountNotFound     = errors.New("discount not found")
 	ErrAccessDenied         = errors.New("access denied")
 	ErrInvalidOrderType     = errors.New("invalid order type")
+	ErrInvalidDiscountID    = errors.New("invalid discount id")
 )

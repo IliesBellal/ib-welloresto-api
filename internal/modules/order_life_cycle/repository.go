@@ -1528,6 +1528,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			}
 		}
 
+		r.upsertOrderItemDiscountRedemption(ctx, *req.Order.OrderID, *p.OrderItemID, req.MerchantID, p.DiscountID, p.Price, finalPrice)
+
 		// ── C. Nettoyage des sous-éléments de cet item ───────────────────────────
 		// On supprime systématiquement extras / withouts / configs ET le commentaire
 		// produit avant de les réinsérer selon l'état exact du payload.
@@ -2308,7 +2310,52 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 		log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *item.OrderItemID), zap.Error(err))
 	}
 
+	r.upsertOrderItemDiscountRedemption(ctx, item.OrderID, *item.OrderItemID, item.MerchantID, item.DiscountID, item.BasePrice, item.Price)
+
 	return lastID, nil
+}
+
+// upsertOrderItemDiscountRedemption tient discount_redemptions à jour pour UNE
+// ligne de commande (PROMPT 21 Phase 3 — table de liaison commande×remise).
+// Non bloquant : une erreur ici ne doit jamais faire échouer l'écriture de la
+// ligne de commande elle-même, seulement être loguée.
+//
+// Efface la ligne de liaison (le cas échéant) si la remise a été retirée ou
+// si le prix n'est finalement plus remisé (édition d'une commande ouverte) ;
+// sinon upsert avec is_reconstructed=false — y compris pour "graduer" une
+// ligne reconstituée rétroactivement (migration 119) si une commande fermée
+// est rouverte puis réellement réécrite par ce chemin.
+func (r *OrdersLifeCycleRepository) upsertOrderItemDiscountRedemption(ctx context.Context, orderID, orderItemID, merchantID string, discountID *string, basePrice, price int) {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	if discountID == nil || basePrice == price {
+		if _, err := db.ExecContext(ctx, `
+			DELETE FROM discount_redemptions WHERE order_item_id = ? AND scope = 'PRODUCT_LINE'
+		`, orderItemID); err != nil {
+			log.Warn("discount_redemptions delete failed", zap.String("order_item_id", orderItemID), zap.Error(err))
+		}
+		return
+	}
+
+	discountIDNew, err := strconv.Atoi(*discountID)
+	if err != nil {
+		// Non convertible en entier : orderitems.discount_id est une colonne
+		// integer — un "discount-<uuid>" (Sprint 2) n'y a structurellement
+		// jamais pu être écrit (PROMPT 21 Phase 1), rien à faire ici.
+		return
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO discount_redemptions (scope, discount_id, order_id, order_item_id, merchant_id, amount_applied_cents, is_reconstructed)
+		VALUES ('PRODUCT_LINE', ?, ?, ?, ?, ?, false)
+		ON CONFLICT (order_item_id) WHERE scope = 'PRODUCT_LINE' DO UPDATE SET
+			discount_id = EXCLUDED.discount_id,
+			amount_applied_cents = EXCLUDED.amount_applied_cents,
+			is_reconstructed = false
+	`, discountIDNew, orderID, orderItemID, merchantID, basePrice-price); err != nil {
+		log.Warn("discount_redemptions upsert failed", zap.String("order_item_id", orderItemID), zap.Error(err))
+	}
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations

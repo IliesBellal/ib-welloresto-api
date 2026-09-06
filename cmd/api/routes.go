@@ -684,6 +684,17 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// docs/analytics/DROITS.md, wello-back-office repo, §6.2/6.3.
 	// pos.analytics remains the front-end page-level gate only.
 	if analyticsH != nil {
+		// PROMPT 24 Phase 1: the accessible-establishments list is gated by
+		// pos.analytics itself, not reports.sales.read like the rest of this
+		// group below — it names exactly the scope pos.analytics grants
+		// (Repository.ResolveAccessibleMerchants), not a sales figure.
+		r.Route("/analytics/merchants", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(middleware.RequirePermission(permission.POSAnalytics))
+
+			r.Get("/", analyticsH.GetAccessibleMerchants)
+		})
+
 		r.Route("/analytics", func(r chi.Router) {
 			r.Use(authMiddleware)
 			r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
@@ -693,6 +704,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/payments", analyticsH.GetPayments)
 			r.Post("/vat", analyticsH.GetVAT)
 			r.Post("/cancellations", analyticsH.GetCancellations)
+			r.Post("/products", analyticsH.GetProducts)
+			r.Post("/options", analyticsH.GetOptions)
+			r.Post("/clients", analyticsH.GetClients)
+			r.Post("/upsell", analyticsH.GetUpsell)
+			r.Post("/discounts", analyticsH.GetDiscounts)
 		})
 
 		// PROMPT 10 (Annulations tab): the nominative per-server ranking sits
@@ -709,6 +725,31 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
 
 			r.Post("/by-staff", analyticsH.GetCancellationsByStaff)
+		})
+
+		// PROMPT 18 (Clients tab): same split as Annulations above — the
+		// nominative Top Clients ranking (name, valeur vie, dernière visite,
+		// panier moyen) needs permission.CustomersManage, already the existing
+		// key for the customers module's own CRUD/import routes and is_sensitive
+		// in the catalog, not a new key. A 403 here must hide the block on the
+		// frontend, never break the rest of the Clients tab.
+		r.Route("/analytics/clients", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(middleware.RequirePermission(permission.CustomersManage))
+
+			r.Post("/top", analyticsH.GetClientsTop)
+		})
+
+		// PROMPT 19 (Vente additionnelle tab): same split as Annulations/
+		// Clients above — the nominative per-server ranking (CA upsell par
+		// serveur) needs reports.staff_performance.read, not
+		// reports.sales.read. A 403 here must hide the block on the
+		// frontend, never break the rest of the tab.
+		r.Route("/analytics/upsell", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
+
+			r.Post("/by-staff", analyticsH.GetUpsellByStaff)
 		})
 	}
 

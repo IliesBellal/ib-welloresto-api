@@ -1,3 +1,936 @@
+### PROMPT 24 Phase 5 — Pool analytique : 2→4 connexions, work_mem 16→8 Mo (2026-09-06)
+
+- **`internal/database/postgres.go`** : `AnalyticsMaxOpenConns` 2→4,
+  `AnalyticsWorkMemMB` 16→8, dans le même commit — le calcul du prompt tient
+  exactement : 4 connexions × ~4 nœuds de tri × 8 Mo = 128 Mo, + 64 Mo de
+  `shared_buffers` = 192 Mo, **identique** au budget actuel (2×4×16 = 128 Mo
+  + 64 Mo = 192 Mo). Deux fois plus de connexions concurrentes pour le même
+  plafond mémoire, pas une hausse de mémoire.
+- **Mesure du spill, pas supposée** : un test Go temporaire (supprimé après
+  usage, jamais commité) réutilise verbatim les fonctions de construction de
+  requête déjà en production (`AnalyticsOrdersScope`, `htLineJoins`/
+  `htLineExpr`, `optionsCombinedCTE`, `productsSortColumn`/
+  `optionsSortColumn`) — pas de SQL retranscrit à la main, donc le plan
+  mesuré est provablement la même requête que la production exécute. Exécuté
+  avec les VRAIES constantes post-Phase-5 (`SET LOCAL work_mem = '8MB'`,
+  `statement_timeout = 4000`, via `Repository.runTx`), contre le staging
+  Render, sur l'établissement le plus lourd **réellement présent sur
+  staging** (vérifié par requête, pas supposé depuis PROD) :
+  établissement 212, 34 440 lignes `orderitems` — coïncidence avec le
+  "merchant 212" cité comme le plus gros de PROD dans les commentaires du
+  code, pas une hypothèse reprise sans vérifier. Fenêtre all-time
+  (2000-01-01 → aujourd'hui), taille de page élargie à 200 (au-delà du
+  défaut 50) pour forcer le pire cas.
+  - **Options (`GetOptionsPage`)** : 1089 ms, aucun spill — chaque `Sort
+    Method` est `quicksort`, chaque `HashAggregate`/`Hash` a `Batches: 1`,
+    pic mémoire mesuré ~1,9 Mo (`Memory Usage`), très en dessous de 8 Mo.
+  - **Produits (`GetProductsPage`)** : 1474 ms, aucun spill — même profil,
+    pic mémoire ~3,3 Mo.
+  - Aucune ligne `external merge` / `temp read` / `temp written` /
+    `Disk:` dans les deux plans complets (`EXPLAIN (ANALYZE, BUFFERS)`).
+  - **Conclusion : pas de débordement disque à 8 Mo**, sur les deux
+    requêtes les plus lourdes du paquet, à la volumétrie réelle la plus
+    haute présente sur staging. Aucun arbitrage à faire pour l'instant — si
+    une requête future spillait à 8 Mo, ce serait un vrai arbitrage
+    connexions/mémoire à trancher, pas un seuil à relever en silence (les
+    deux constantes portent maintenant ce rappel dans leur commentaire).
+- **Durées à 1, 2, 3 établissements** (même mesure temporaire, requêtes
+  contre les 3 établissements staging les plus lourds — 212, 223, 2 —
+  fenêtre 12 mois, mesurées au niveau requête/DB, pas bout-en-bout HTTP :
+  `cmd/analytics_bench` existe déjà pour ça mais exige des jetons bearer par
+  établissement indisponibles dans cet environnement ; le coût dominant est
+  la requête DB, pas le HTTP par-dessus) :
+  | Établissements | Options | Produits | CA (totaux) |
+  |---|---|---|---|
+  | 1 | 715 ms | 955 ms | 172 ms |
+  | 2 | 601 ms | 1005 ms | 179 ms |
+  | 3 | 695 ms | 927 ms | 198 ms |
+
+  Options et Produits restent globalement plats (dominés par le volume de
+  l'établissement le plus lourd du trio, pas par leur nombre — la variance
+  observée est du bruit de mesure sur du staging partagé, pas une tendance).
+  Le CA croît légèrement et régulièrement (172→198 ms), cohérent avec un
+  `COUNT`/`SUM` dont le coût suit le volume de lignes scannées. Aucune des
+  trois n'approche le fusible de 4000 ms.
+- **`cmd/analytics_bench/main.go` corrigé en passant** : `explainSpill`
+  utilisait un `work_mem` codé en dur à `16MB` — un vrai bug fonctionnel une
+  fois Phase 5 déployée (l'outil aurait mesuré le spill sous le MAUVAIS
+  `work_mem`, pas celui réellement en production). Lit maintenant
+  `database.AnalyticsWorkMemMB`/`AnalyticsMaxOpenConns` directement, plus
+  aucune figure recopiée à la main dans ce fichier.
+- **Vérifié** : `go build ./...`, suite `postgres_integration` complète du
+  paquet analytics contre staging (aucune régression — le paquet ne dépend
+  pas de la valeur exacte des constantes, seulement `Repository.runTx` qui
+  les applique déjà par construction), suite unitaire, aucun fichier de
+  mesure temporaire laissé dans le dépôt.
+
+### PROMPT 24 Phase 4 — Graphiques à N séries (wello-back-office, front seul) (2026-09-06)
+
+- **`src/utils/merchantColors.ts`** : `merchantColor(merchantId)`, même
+  contrat que `channels.ts`'s `channelColor` — fonction pure, dérivée de
+  l'identifiant, jamais du rang dans le tableau affiché. Hash de chaîne
+  (djb2-like) plutôt qu'un modulo sur l'entier brut : des `merchant_id`
+  séquentiels ("212"/"213") tomberaient sinon trop souvent sur des couleurs
+  adjacentes de la palette.
+- **Palette délibérément disjointe de `CHANNEL_COLORS`** : violet/pink/
+  indigo/fuchsia/rose/purple contre le bleu/vert/ambre/cyan/teal des
+  canaux — deux échelles catégorielles distinctes, vérifié à l'œil (aucun
+  chevauchement de teinte) plutôt que réutiliser/éclaircir la palette
+  existante.
+- **`EstablishmentComparisonChart.tsx`** (composant partagé, un seul
+  endroit pour la logique couleur/légende) : un graphique à barres
+  horizontales, une barre par établissement — pas un graphique multi-lignes,
+  parce que `by_merchant` sur les 5 onglets comparables est un total par
+  établissement sur la période, pas une série temporelle par établissement
+  (contrairement au `by_channel_ttc_cents` journalier de CA/Commandes). Une
+  ligne aurait supposé une donnée qui n'existe pas côté backend. Légende
+  toujours rendue (`Legend payload={...}`, pas la légende par défaut de
+  Recharts qui ne sait pas construire une entrée par `Cell` sur un seul
+  `dataKey`).
+- **Remplace les tableaux simples posés en Phase 3** sur les 5 onglets
+  comparables (CA, Commandes, Règlements, TVA, Annulations) — même
+  composant partagé partout, seuls la valeur et son formatage changent par
+  onglet.
+- **Vérifié, précisément sur le point que le prompt signale comme piège
+  classique** : test interactif (mêmes conditions que la Phase 3 — session
+  factice, hôte API réel bloqué) avec 5 établissements sélectionnés, lecture
+  directe des couleurs SVG (légende + barres) avant/après désélection du
+  PREMIER établissement de la liste. Résultat : chaque établissement restant
+  garde exactement sa couleur (`COLOR STABILITY CHECK: PASS`, comparaison
+  automatisée des couleurs par nom d'établissement avant/après) — la
+  désélection ne décale aucune couleur, contrairement à ce qu'un
+  index-dans-le-tableau-affiché aurait produit. Capture d'écran à 5 séries :
+  cinq barres et cinq entrées de légende toutes visuellement distinctes,
+  lisibles, sans chevauchement avec la palette canaux visible sur le même
+  écran (graphique "Évolution CA" juste en dessous). Fixtures de mock
+  repassées à leur état d'origine (1 établissement, `scope` non dynamique)
+  après vérification.
+- **`tsc --noEmit`, `vite build`, ESLint** : propres (mêmes warnings
+  `exhaustive-deps` pré-existants qu'aux phases précédentes, aucune erreur).
+
+### PROMPT 24 Phase 3 — Le sélecteur (wello-back-office, front seul) (2026-09-06)
+
+- **Nouveau composant `EstablishmentFilter.tsx`**, global, à côté du filtre de
+  période dans `DashboardAnalysis.tsx` — pas le pattern par-onglet de
+  `ChannelFilter` (PROMPT 18) : la portée établissements est commune à toute
+  la page, comme la période, donc l'état vit dans `DashboardAnalysis`, pas
+  dans chaque onglet. Chips (`SelectableChip`, déjà utilisé pour tags/
+  allergènes) + `ToggleGroup` (cumulé/comparé) pour le mode.
+- **Rendu conditionnel** : la carte "Établissements" (et le rappel de portée
+  dans chaque onglet) ne s'affiche que si `accessibleMerchants.length > 1` —
+  un compte à un seul établissement n'a rien à filtrer ni à comparer, la
+  carte serait un rappel d'une évidence sur chaque onglet.
+- **Sélection par défaut** : l'établissement du token
+  (`authData.session.merchant_id`, déjà utilisé par `Header.tsx`), avec repli
+  sur le premier de la liste si absent — décision du prompt appliquée
+  littéralement.
+- **Bascule automatique en comparé** : passer de 1 à 2 établissements
+  sélectionnés bascule `comparisonMode` sur `'compare'`
+  (`handleMerchantSelectionChange` dans `DashboardAnalysis.tsx`) — la
+  bascule ne se redéclenche qu'au FRANCHISSEMENT du seuil (1→2), pas à
+  chaque changement, pour que revenir de 3 à 2 établissements ne réinitialise
+  pas un choix "cumulé" déjà fait par l'utilisateur. Le sélecteur de mode
+  est désactivé (`disabled`, jamais masqué) sous 2 établissements sélectionnés.
+- **`ScopeSummary`/`AggregationNotice`** (`ScopeNotice.tsx`, partagé) :
+  chaque onglet affiche les établissements réellement renvoyés par
+  `scope.merchant_ids` (jamais ceux demandés), et les 5 onglets non
+  comparables (Produits, Options, Clients, Remises, Vente additionnelle)
+  affichent un bandeau explicite en mode comparé à 2+ établissements — "cet
+  onglet agrège", jamais un mode qui semble actif sans effet visible.
+- **`merchant_ids` maintenant envoyé partout**, pas seulement sur les 5
+  onglets comparables : `analyticsService.ts` ne l'envoyait auparavant sur
+  AUCUN appel réel (vérifié au prompt 23 — seul `scope` en lecture existait
+  dans les types TS). Les 5 onglets non comparables et les 3 blocs
+  nominatifs (`getClientsTop`, `getUpsellByStaff`,
+  `getCancellationsByStaff`) le reçoivent aussi désormais — un bloc nominatif
+  doit continuer à se masquer sur 403 quand le droit manque sur un seul des
+  établissements sélectionnés (déjà géré côté serveur par
+  `requireKeyOnAllMerchants`, PROMPT 23 Phase 2 ; ce lot fait juste en sorte
+  que la sélection réelle de l'utilisateur atteigne enfin ces 3 endpoints).
+- **Phase 4 non anticipée délibérément** : les 5 onglets comparables
+  affichent un tableau simple "par établissement" (nom, total, compte) sous
+  les graphiques existants quand `group_by=merchant`, pas encore les
+  graphiques à N séries avec couleurs stables — c'est explicitement Phase 4
+  ("les graphiques à N séries"), une phase séparée dans le prompt.
+- **Vérifié en conditions quasi réelles** : `tsc --noEmit` et `vite build`
+  propres ; ESLint ne remonte que des warnings `exhaustive-deps` de la même
+  nature que ceux déjà présents ailleurs dans ce fichier (aucune erreur).
+  Vérification interactive : serveur de dev Vite lancé avec
+  `VITE_USE_MOCK=true`, session `localStorage.authData` factice
+  (`access.admin=true`) pour passer `ProtectedRoute` sans backend réel, hôte
+  API réel (`welloresto-api-staging.onrender.com`) bloqué via interception
+  réseau Playwright pour éviter qu'un 401 sur un appel non mocké
+  (`/me/permissions`, hors `withMock`) ne vide la session factice
+  (`clearAuthAndRedirect`). Avec 2 établissements mockés temporairement :
+  carte "Établissements" visible avec ses 2 chips, sélection du second
+  bascule le mode sur "Comparé" (confirmé), désélection revenant à 1 désactive
+  le bouton "Cumulé" (confirmé), le bandeau d'agrégation apparaît sur l'onglet
+  Produits en mode comparé (confirmé, capture d'écran). Fixture mock repassée
+  à 1 établissement après vérification — aucun changement de test laissé en
+  place.
+
+### PROMPT 24 Phase 2 — `group_by` sur Règlements, TVA, Annulations (2026-09-05)
+
+- **Règlements** : `PaymentsRequest.GroupBy` + `PaymentsResponse.ByMerchant`
+  ([]`PaymentsMerchantTotal`), même schéma que CA/Commandes —
+  `Repository.GetPaymentsByMerchant` fait un simple `GROUP BY o.merchant_id`
+  sur `paymentsScopeJoin` (même filtre `payments.enabled = TRUE`, mêmes
+  jointures que `GetPaymentsTotals`). Aucun apportionnement requis (SUM/COUNT
+  directs, pas de figure dérivée).
+- **Annulations** : `GroupBy` ajouté à `CancellationsRequest`
+  uniquement (l'endpoint d'agrégats) — le classement nominatif par serveur
+  (`/cancellations/by-staff`) reste fusionné quel que soit le mode, décision
+  explicite du prompt, non touché par ce lot. Deux nouvelles requêtes
+  groupées par `merchant_id` (`GetOrdersCreatedCountByMerchant` — dénominateur
+  du taux, `GetCancellationsTotalsByMerchant`), fusionnées côté service
+  (`Service.cancellationsByMerchant`) puisqu'elles portent sur deux scopes SQL
+  différents (tout ce qui a été créé vs. seulement ce qui a été annulé) —
+  un établissement avec commandes mais 0 annulation doit apparaître avec
+  `CancelledCount: 0`, pas disparaître d'une jointure interne.
+- **TVA — le point d'attention du prompt.** `apportionVATByRate`/
+  `apportionVATByChannel` (le "plus fort reste" du PROMPT 06 §1) tournent
+  maintenant **une fois par établissement** en mode comparé
+  (`Service.buildVATByMerchant`), chacune contre le `TotalHTCents` **propre à
+  cet établissement** (`Repository.GetVATTotalsByMerchant`, une ROUND()
+  indépendante par établissement) — jamais contre le total combiné du
+  périmètre. Trois nouvelles requêtes groupées par `merchant_id` en plus de
+  `rate`/`channel` (`GetVATTotalsByMerchant`, `GetVATByRateByMerchant`,
+  `GetVATByChannelByMerchant`), même UNION ALL produit×frais de livraison que
+  les versions non groupées.
+- **Vérifié, précisément sur ce point** :
+  `TestGetVAT_GroupByMerchant_PartsSumToOwnTotal_Postgres` construit 2
+  établissements à des totaux HT délibérément différents (1000 exact vs. un
+  mélange 20%/10% avec reste réel) et vérifie que le `by_rate`/`by_channel`
+  de **chacun** somme exactement à **son propre** `TotalHTCents`/
+  `TotalVATCents` — pas au total combiné. `apportionCents` force sa sortie à
+  sommer exactement à la valeur qu'on lui passe : ce test aurait donc échoué
+  immédiatement si l'implémentation avait apportionné contre le total combiné
+  au lieu du total par établissement (l'établissement à une seule part se
+  serait vu attribuer 100% du total combiné au lieu de son propre total).
+- **Limite connue, non cachée** : `VATMerchantTotal.TotalHTCents` est
+  arrondi indépendamment par établissement (une `ROUND()` par groupe), alors
+  que le total combiné du scope est arrondi une seule fois sur la somme brute
+  — un écart de ±1 centime entre `Σ(TotalHTCents par établissement)` et le
+  total cumulé non groupé est mathématiquement possible (le problème classique
+  `round(a)+round(b) ≠ round(a+b)`), même si le jeu de test actuel ne
+  l'exhibe pas. `TotalTTCCents`, lui, reste une somme entière exacte (jamais
+  dérivée), donc la réconciliation TTC "somme des séries comparées = total
+  cumulé" tient toujours au centime près — c'est HT/VAT spécifiquement, déjà
+  une figure dérivée avant ce lot, qui hérite de cette limite d'arrondi
+  indépendant. Pas un choix caché : signalé ici pour arbitrage si un client
+  fait un jour ce rapprochement au centime.
+- Reconciliation en plus pour les 4 autres tabs comparables :
+  `TestGetPaymentsByMerchant_Postgres`/`TestGetCancellationsByMerchant_Postgres`
+  (parts = total non groupé, exact), plus les tests bout-en-bout déjà
+  existants pour CA/Commandes (`TestGetOrders_GroupByMerchant_EndToEnd`)
+  étendus au même schéma pour Règlements et Annulations
+  (`TestGetPayments_GroupByMerchant_EndToEnd`,
+  `TestGetCancellations_GroupByMerchant_EndToEnd`), y compris le rejet d'un
+  `group_by` invalide (`ErrInvalidRequest`).
+- **Vérifié** : `go build ./...`, suite unitaire du package, suite complète
+  `postgres_integration` du package contre le staging Render (58 tests, tous
+  verts).
+
+### PROMPT 24 Phase 1 — Endpoint des établissements accessibles (2026-09-05)
+
+- **Pas de doublon de `ResolveAccessibleMerchants`.** Aucun endpoint
+  n'exposait déjà la liste nommée avant ce lot — vérifié dans `handler.go` et
+  `cmd/api/routes.go` (aucune route "merchants"/"establishments"). Le seul
+  candidat proche, `auth.AuthRepository.GetMerchants` (alimente le sélecteur
+  d'établissement au login), a une portée différente et plus large : aucun
+  filtre `pos.analytics`, aucun filtre `enabled`/`login_enabled`. Le réutiliser
+  aurait fuité des établissements hors du périmètre analytics — écarté.
+- **Nouveau : `GET /analytics/merchants`**, gardé par `permission.POSAnalytics`
+  (pas `reports.sales.read` comme le reste du groupe `/analytics` — cet
+  endpoint EST la donnée du gate pos.analytics, pas un chiffre de vente).
+  `Service.GetAccessibleMerchants` appelle `ResolveAccessibleMerchants` (la
+  même fonction que chaque onglet, aucune seconde implémentation de la règle
+  de portée) puis `Repository.GetMerchantNames` pour les libellés. Une scope
+  vide renvoie `{"merchants": []}`, jamais une erreur.
+- `Repository.GetMerchantNames` doit caster `merchant.id` (entier) en texte
+  pour le comparer au tableau `merchantIDs` (`CAST(id AS TEXT) = ANY(?)`) —
+  même contrainte que `auth.authMerchantJoinCast()`, ce package étant déjà
+  Postgres-only (le `= ANY(?)` de `scope.go` le suppose partout).
+- **Vérifié** : `go build ./...`, `go vet ./internal/modules/analytics/...`,
+  suite unitaire du package, suite `postgres_integration` complète du package
+  contre le staging Render (`RENDER_STAGING_DATABASE_URL`) — nouveau test
+  `TestGetAccessibleMerchants_Postgres` inclus (établissement avec
+  `pos.analytics` → visible et nommé ; établissement avec
+  `reports.sales.read` seul mais pas `pos.analytics` → exclu ; établissement
+  sans lien du tout → exclu ; utilisateur sans aucun accès → liste vide, pas
+  d'erreur). `go test ./internal/...` fait apparaître 3 échecs pré-existants
+  et sans rapport (`planning/leave`, `planning/swaps`, `ubereats`) — non
+  causés par ce lot.
+
+### PROMPT 23 lot 2 — Contrat, cache, performance (Phase 3+4+5) (2026-09-05)
+
+- **Phase 3 — le paramètre de requête `merchant_ids` était déjà sur les 10
+  endpoints** avant ce lot (`ResolveAccessibleMerchants`/
+  `ValidateRequestedMerchants` déjà branchés partout, 403 strict déjà en
+  place) — rien à ajouter ici, seulement à re-vérifier après l'élargissement
+  de portée de la Phase 1 (fait : les tests postgres_integration du lot 1
+  couvrent déjà cette validation contre le nouveau périmètre).
+
+- **`group_by` : état réel, pas supposé.** Vérifié endpoint par endpoint —
+  seuls **2 des 10** endpoints portent ce champ au contrat
+  (`RevenueRequest`/`OrdersRequest`, hérité de PROMPT 03) ; les 8 autres
+  (Règlements, TVA, Annulations, Produits, Options, Clients, Vente
+  additionnelle, Remises) n'en ont jamais eu. **Sur les 2 qui l'ont, un seul
+  fonctionnait réellement** : `GetOrders` acceptait `group_by=merchant`,
+  l'échait dans `Scope.GroupBy`, l'incluait même dans la clé de cache — sans
+  jamais rien calculer (`OrdersResponse` n'avait pas de champ `ByMerchant` du
+  tout). Un paramètre mort, pire qu'absent : un appelant ne pouvait pas
+  distinguer "ignoré" de "rien à ventiler".
+
+  **Corrigé** : `Repository.GetOrdersByMerchant` (nouveau, même gabarit que
+  `GetRevenueByMerchant` — `GROUP BY o.merchant_id` sur des `COUNT`/`SUM`
+  entiers, donc les lignes somment exactement au total ungroupé, aucune
+  apportion nécessaire, contrairement à un HT dérivé) + `OrdersResponse.
+  ByMerchant` + validation stricte de `group_by` dans `GetOrders` (valeur
+  invalide → 400, comme `GetRevenue`). **Aucun test n'existait pour
+  `GetRevenueByMerchant` ni pour cette validation avant ce lot** — c'est
+  précisément comme ce défaut d'`GetOrders` est passé inaperçu si longtemps ;
+  3 tests postgres_integration nouveaux couvrent maintenant les deux
+  endpoints, avec la vérification de réconciliation exacte
+  (`sum(by_merchant) == total ungroupé`).
+
+  **Décision de périmètre, assumée plutôt que silencieuse** : je n'ai PAS
+  étendu `group_by` aux 8 autres endpoints dans ce lot. Le brief demande de
+  "vérifier" l'implémentation, pas de la généraliser ; Règlements/TVA/
+  Annulations partagent la forme "une série de KPI période" de CA/Commandes
+  et s'y prêteraient (TVA demanderait de réutiliser `apportionCents` pour
+  HT/TVA par établissement, exactement comme `by_rate`/`by_channel` le font
+  déjà — travail cadré mais non trivial) ; Produits/Options/Clients/Vente
+  additionnelle/Remises sont des tables paginées ou des classements, pas des
+  séries — "comparé vs cumulé" n'y a pas le même sens évident et
+  demanderait une décision produit propre (pagination par établissement ?
+  tableaux séparés ?) hors du périmètre "backend seul, socle" de ce lot.
+  Recommandation posée mais non implémentée : étendre en priorité à
+  Règlements/TVA/Annulations si l'usage réel le demande.
+
+- **Phase 4 — le cache était déjà correct.** Les 5 fonctions de clé
+  (`buildCacheKey`, `buildProductsCacheKey`, `buildOptionsCacheKey`,
+  `buildClientsCacheKey`, `buildDiscountsCacheKey`) triaient déjà
+  `merchantIDs` avant hachage — aucune n'avait de test le prouvant. 5 tests
+  unitaires ajoutés (`cache_test.go`), un par fonction : `[212,228]` et
+  `[228,212]` produisent la même clé, `[212]` et `[212,228]` des clés
+  différentes.
+
+- **Phase 5 — mesure directe des requêtes (pas HTTP), via le pool analytics
+  réel** (`database.NewAnalyticsPostgres`, mêmes réglages fusible que la
+  prod : `statement_timeout=4000ms`, `work_mem=16MB` en `SET LOCAL`),
+  contre staging, protocole 5 exécutions/1re jetée/médiane, répété deux fois.
+  Bundle mesuré = exactement les 8 requêtes que `GetRevenue` exécute pour
+  CA/12 mois/`include_ht=true` (3 périodes × TTC+HT, + timeline + by_channel)
+  — une première version du script ne mesurait qu'une période et
+  sous-comptait le coût réel d'un facteur ~3, corrigée avant de conclure.
+
+  | Établissements | Médiane bundle (ms) | Requête la plus lente (ms) |
+  |--:|--:|--:|
+  | 1 (212 seul) | ~2 500–3 200 | ~800–900 |
+  | 5 (top 5 volume, dont 212) | ~4 300–4 500 | ~1 400 |
+  | 10 (top 10 volume, dont 212) | ~6 000–6 400 (pic isolé 8 200) | ~2 200 |
+  | 20 (30 établissements staging, 20 pris, dont 212 + 19 quasi vides) | ~5 800–6 300 | ~2 700 |
+
+  **Aucune exécution n'a déclenché le `statement_timeout`**, mais la requête
+  la plus lente est passée de 800ms (1 étab.) à 2 700ms (20 étab.) — 68% du
+  budget de 4000ms sur une seule requête, en ne comptant qu'**un seul**
+  établissement réellement volumineux (212, ~9 600 commandes/an) parmi les
+  20 : staging n'a qu'un seul établissement à ce volume, donc ce chiffre est
+  un **plancher**, pas un plafond — un groupe réel avec plusieurs
+  établissements aussi actifs que 212 sélectionnés ensemble dépasserait
+  vraisemblablement le fusible avant 20. La latence bout-en-bout (4,3–6,4s
+  dès 5 établissements) est de toute façon déjà dégradée pour un affichage
+  interactif, indépendamment du fusible.
+
+  **Plafond recommandé : 5 établissements** pour la requête la plus lourde
+  (CA, 12 mois, `include_ht=true`) — marge confortable sur le fusible
+  (~1,4s max par requête) tout en restant utile pour un comparatif réel.
+  **Non appliqué en code dans ce lot** (le brief demande une recommandation,
+  pas une garde technique — décision produit/frontend, hors périmètre
+  "backend seul" de PROMPT 23). Si l'usage réel pousse au-delà de 5-10
+  établissements réguliers, c'est un argument direct pour la
+  pré-aggrégation déjà anticipée par `logInstrumentation`
+  (`analytics_query`) plutôt que pour desserrer le fusible ou le pool à 2
+  connexions.
+
+- **Vérifié** : `go build ./...` propre, suites unitaires (`analytics`,
+  `auth`, `permission`, `cmd/api`) et `postgres_integration` du paquet
+  `analytics` (32s, tout vert) contre staging. Script de mesure Phase 5
+  jetable (staging uniquement, jamais commité) — supprimé après usage.
+
+### PROMPT 23 lot 1 — Socle multi-établissements : périmètre + vérification croisée (Phase 1+2) (2026-09-05)
+
+- **Étape intermédiaire, validée avec l'utilisateur avant de poursuivre** :
+  Phases 1 et 2 seules (résolution du périmètre + `Has(clé, merchant_id)`),
+  Phases 3-5 (contrat sur les 10 endpoints, cache, mesures perf/plafond)
+  restent à faire dans un lot suivant.
+
+- **`ResolveAccessibleMerchants` change de nature, pas seulement de contenu** :
+  passe d'une fonction pure (`internal/modules/analytics/scope.go`,
+  `[]string{user.MerchantID}`, gardée par un commentaire interdisant
+  explicitement d'en faire une requête) à une méthode de `Repository`
+  (`repository.go`) — la portée réelle est maintenant "tout établissement où
+  `users_rights` (actif : `enabled AND login_enabled`) donne `pos.analytics`
+  à cet utilisateur", en **une seule requête** (`LEFT JOIN role_permissions`,
+  pas de boucle par lien). L'ancien garde-fou est explicitement caduc : la
+  décision produit qu'il anticipait ("multi-établissement = mécanisme
+  séparé, pas encore décidé") est maintenant prise par PROMPT 23 lui-même.
+
+- **Piège user_id vide neutralisé structurellement, pas par convention** :
+  `AND ur.user_id <> ''` dans le WHERE rend impossible de fusionner les 4
+  lignes `user_id=''` de staging avec le périmètre de quiconque, y compris
+  dans le cas dégénéré où `userID` sondé vaudrait lui-même `""` — testé
+  explicitement (`TestResolveAccessibleMerchants_Postgres`, avec 4
+  établissements orphelins créés pour l'occasion) plutôt que supposé sûr par
+  construction de la requête appelante.
+
+- **Les deux mondes RBAC, dans la même requête** : `role_id` renseigné →
+  jointure vers `role_permissions` (aucun court-circuit `system_key=admin`,
+  cohérent avec le retrait de ce court-circuit dans `Has()` au lot 11) ;
+  `role_id` NULL → repli sur `users_rights.admin` seul, puisque
+  `pos.analytics` n'a **aucune** entrée dans `legacyPermissionFallback`.
+  Testé séparément (`TestResolveAccessibleMerchants_BothRBACWorlds`) contre
+  staging.
+
+- **Établissement du token absent du résultat : décision assumée, pas un
+  bug** — si le lien courant ne porte pas `pos.analytics`, l'utilisateur ne
+  verrait de toute façon pas l'onglet Analyse côté front (même droit qui
+  gate le menu). `ValidateRequestedMerchants` (inchangé) rejette alors tout
+  `merchant_id` demandé avec un 403, jamais un filtrage silencieux.
+
+- **`Has(clé, merchant_id)` construit sans toucher au repli historique** :
+  `Repository.HasForMerchant` (nouvelle méthode) réplique `Has()` pour un
+  établissement quelconque — une seule requête (role_id + jointure
+  `role_permissions` en une fois), `Rights.Admin` sinon
+  `auth.LegacyFallback(clé, rights)`, un nouvel accesseur exporté (purement
+  additif) sur `legacyPermissionFallback` : réutilise la même map plutôt que
+  d'en dupliquer le contenu, pour qu'il n'y ait rien à garder synchronisé à
+  la main. `internal/modules/auth/permissions.go` n'est autrement pas
+  modifié.
+
+- **Test de non-divergence, exigé par le brief, vérifié contre staging** :
+  `TestHasForMerchant_AgreesWithHasOnTokenMerchant` construit un
+  `UserLoginRow` à la main et compare `user.Has(clé)` à
+  `repo.HasForMerchant(...)` sur le **même** établissement, dans les deux
+  mondes RBAC (rôle porteur/non-porteur, `admin=true`, `admin=false` avec et
+  sans entrée de repli) — les deux implémentations concordent aujourd'hui.
+
+- **Appliqué aux 3 blocs nominatifs** (Annulations/staff, Vente
+  additionnelle/staff, Top clients) : `Service.requireKeyOnAllMerchants`
+  vérifie `reports.staff_performance.read` (ou `customers.manage` pour Top
+  clients) sur **chaque** `merchant_id` de la portée validée, avant de
+  construire la réponse — sinon `ErrNominativeAccessDenied` → 403
+  (`nominative_access_denied`, distinct de `merchant_not_accessible`).
+  Aucun classement partiellement amputé.
+
+- **Vérifié contre staging (lecture seule)** : les 4 nouveaux tests
+  (`scope_postgres_integration_test.go`) passent, ainsi que la suite
+  `postgres_integration` complète du paquet `analytics` (34,5 s, aucune
+  régression). `go build ./...` et les suites unitaires (`analytics`,
+  `auth`, `permission`, `middleware`, `cmd/api`) sont vertes. Deux paquets
+  non touchés par ce lot (`roles`, `planning/employees`) ont des tests déjà
+  en échec sur cette copie de travail avant toute modification de ce
+  lot — confirmé en relançant ces mêmes suites sans aucun changement
+  d'environnement (`go test ./internal/modules/roles/...` seul reste vert ;
+  l'échec n'apparaît qu'en combinant `-tags postgres_integration` avec
+  `DB_DIALECT=postgres` exporté pour TOUT le paquet, y compris ses tests
+  `sqlmock`, qui supposent `?` non traduit — artefact de la commande de test
+  choisie pour vérifier ce lot, pas une régression qu'il introduit).
+  `TestSystemAdminRolesContainFullCatalog_Postgres` échoue par ailleurs pour
+  une raison réelle mais préexistante et documentée (DROITS.md §5.2) :
+  `cmd/seed_system_roles` n'a jamais été relancé depuis l'ajout de
+  `reports.staff_performance.read` (PROMPT 10) — sans effet sur ce lot
+  (aucun rôle admin ne perd `pos.analytics`, déjà backfillé pour lot 10).
+
+### PROMPT 22 — Onglet Remises (2026-09-05)
+
+- **Contexte** : la maquette de cet onglet décrivait un produit qui n'existe
+  pas (`discount_type`, section remises panier) — corrigé plutôt que reproduit,
+  sur la base du modèle figé par PROMPT 21 (`discount_redemptions`). Un seul
+  endpoint (`POST /analytics/discounts`, `reports.sales.read`) : aucune donnée
+  nominative dans cet onglet.
+
+- **Groupement par `discount_id` (integer, `discounts.discount_id_new`),
+  jamais par libellé** : `internal/modules/analytics/discounts.go` grouoe
+  `GetDiscountsPage` sur `dr.discount_id` seul — un renommage ne fragmente ni
+  ne fusionne jamais l'historique d'une remise. `discounts` est LEFT JOIN
+  (jamais INNER) pour le libellé : une remise supprimée (`enabled=false`)
+  garde ses lignes historiques visibles, avec `is_deleted=true`.
+
+- **Aucune section remises panier** : `applyCartDiscount` n'existe nulle part
+  (confirmé par PROMPT 21) — pas une section vide (qui laisserait croire à
+  zéro), rien du tout.
+
+- **Dénominateur du taux de remise moyen, tranché explicitement** :
+  `total_discounted_cents / reference_revenue_ttc_cents`, où le second est le
+  CA TTC de **toute** la période (commandes remisées ou non), filtré par
+  canal — pas le CA des seules commandes remisées (l'autre choix également
+  défendable). Motif : répond à "quelle part de ce qui a été encaissé a été
+  remisée", directement comparable à la tuile CA des autres onglets. Le champ
+  `reference_revenue_ttc_cents` est toujours renvoyé à côté, jamais un taux nu.
+
+- **Seuil de matérialité réutilisé verbatim** : `discountsMinOrdersForRate =
+  staffCancellationMinOrders` (30, cancellations.go) gate `DiscountRatePercent`
+  ET `OrdersWithDiscountRatePercent` sur `DiscountedOrdersCount` — en dessous,
+  les deux sont absents (jamais 0), mais les volumes bruts et le volume de
+  référence restent toujours affichés (`discounted_orders_count`,
+  `total_orders_count`, `reference_revenue_ttc_cents`).
+
+- **Impact sur la marge, au contrat, à `null` en pratique** : `DiscountsMarginCoverage`
+  reprend le contrat `ProductsCostCoverage` à l'identique (même seuil de
+  couverture 20%, `coversCoverageThreshold`), restreint aux redemptions
+  `scope=PRODUCT_LINE` jointes à `orderitems.cost_price_unit` — une remise
+  `CART` ne peut être rattachée à aucune ligne costée, donc exclue du
+  numérateur ET du dénominateur (jamais un faux zéro). `cost_price_unit` étant
+  `null` sur la quasi-totalité des lignes (PROMPT 07 lot 1), l'écran affiche
+  "non disponible", jamais un montant.
+
+- **Plancher vs mesure complète, porté par `is_reconstructed` dans le
+  contrat lui-même, pas en note de page** : chaque période distingue
+  `reconstructed_amount_cents`/`measured_amount_cents` (et leurs comptes de
+  redemptions). `MeasurementCompleteFrom` (nouveau, `GetDiscountsMeasurementCompleteFrom`)
+  expose la date de bascule réelle — `MIN(created_at)` parmi les lignes
+  `is_reconstructed=false`, **non bornée à la période demandée** (fait global
+  sur l'établissement, pas une fenêtre de rapport) — `nil` tant qu'aucune
+  écriture en direct n'existe. Le frontend affiche un bandeau "Montant
+  plancher, pas un total" tant qu'une part de la période est reconstituée,
+  avec la date de bascule ou l'absence totale de mesure directe selon le cas
+  — jamais une mention en pied de page.
+
+- **Vérification en lecture seule, staging, merchant 212, 12 mois
+  (2025-09-05 → 2026-09-05, transaction READ ONLY)** : montant total remisé
+  110 840 centimes, intégralement reconstitué (367 redemptions, 0 mesuré en
+  direct) — la répartition par remise (une seule remise réelle sur ce
+  périmètre, "2 pizzas pour 12€") somme exactement au total. 186 commandes
+  remisées sur 9 619 (1,93 %), CA de référence 16 016 930 centimes, taux de
+  remise moyen 0,69 %. Marge : couverture 0 % (`cost_price_unit` jamais
+  renseigné sur ces lignes), donc "non disponible" comme attendu. **Fait
+  notable, vérifié à l'échelle globale (tous établissements)** : les 545
+  lignes de `discount_redemptions` sont *toutes* `is_reconstructed=true` —
+  aucune écriture en direct n'a encore eu lieu nulle part
+  (`upsertOrderItemDiscountRedemption`, câblé par PROMPT 21, n'a pas encore
+  tourné une seule fois en conditions réelles) : `MeasurementCompleteFrom` est
+  `nil` partout aujourd'hui, pas seulement sur le merchant 212. Test
+  d'accuracy dédié (`discounts_postgres_integration_test.go`, jeu de données
+  synthétique) rejoué avec succès contre staging : somme exacte, répartition
+  qui somme au total, `COUNT(DISTINCT order_id)` correct, partition par canal
+  qui somme au total, et une remise supprimée d'une commande simulée
+  "rouverte" (ligne `discount_redemptions` supprimée manuellement) disparaît
+  bien immédiatement de tous les agrégats — cet onglet n'a aucune logique
+  d'exclusion propre, il lit `discount_redemptions` tel quel.
+
+- **Frontend** (`wello-back-office`) : `DiscountsAnalyticsTab.tsx` remplace le
+  mock `renderDiscountsTab`/`getDiscountsAnalytics` synchrone dans
+  `DashboardAnalysis.tsx` (filtre type de remise/`MultiFilter` retiré avec
+  lui — n'existe plus). Réutilise `ChannelFilter` (prompt 18) et le gabarit
+  pagination/tri serveur de Produits/Options. `analyticsService.ts` porte les
+  nouveaux types `Discounts*`/`DiscountRow` et `getDiscountsAnalytics`/
+  `exportDiscountsCSV` (reconstruit côté client à partir des données déjà
+  chargées, même limite que Annulations/Clients — aucun endpoint CSV backend
+  n'existe). Vérifié en navigateur réel (Playwright headless, mode mock local
+  `--mode smoketest`, session injectée via `localStorage.authData` pour
+  contourner l'auth réelle indisponible en local) : rendu correct du bandeau
+  plancher, des 4 tuiles, du tableau trié/paginé et de l'interaction de tri —
+  aucune erreur console hors l'échec CORS déjà pré-existant de la
+  revalidation `/me/permissions` en environnement local (non lié à ce lot).
+
+- **Hors périmètre, comme demandé** : le modèle de remises (figé par PROMPT
+  21) n'a pas été touché ; aucune fonctionnalité de remise panier construite.
+
+### PROMPT 21 — Assainir le modèle de remises, Phases 1-3+5 (2026-09-05)
+
+- **Contexte** : `discounts.discount_id` (varchar) et `orderitems.discount_id`
+  (integer) ne peuvent structurellement pas se référencer par jointure directe
+  depuis toujours (rapport 57) ; le brief demandait un plan validé avant tout
+  code, puis expansion/déploiement/contraction, aucune suppression de colonne
+  jouée. Recon + plan complet présentés et validés en chat avant implémentation
+  (pas de rapport séparé dans `docs/` — recon + plan tiennent dans cette
+  entrée, conformément au format `decisions.md`).
+
+- **La prémisse « aucun front ne manipule discount_id » était fausse, corrigée
+  avant d'agir** : vérifié dans le code que `wello-back-office` (CRUD promotions,
+  `GET/PATCH/DELETE /menu/discounts/{discount_id}`) et le POS `wello_resto_flutter`
+  (`product_payload.dart` renvoie `discount_id` au serveur) font transiter cette
+  valeur en lecture-écriture — jamais générée ni interprétée côté client
+  (`discounts/service.go:60` écrase toujours l'ID côté serveur), donc sans
+  rupture fonctionnelle, mais la décision de garder le **type JSON** `discount_id`
+  en `string` (désormais le texte décimal d'un entier, plus un
+  `discount-<uuid>`) plutôt que de basculer en `number` a permis d'éviter toute
+  coordination de déploiement avec ces deux fronts — aucun n'a été touché.
+
+- **Chiffrage réel (staging, `RENDER_STAGING_DATABASE_URL`)**, tous les
+  chiffres cités par le brief confirmés à l'identique : 19 remises (9 au
+  format numérique legacy actif, 10 `discount-<uuid>` toutes "Happy Hour"
+  merchant 2, **0 ligne orderitems** pour ces 10 — jamais utilisables via la
+  colonne integer) ; 4 609 `orderitems.discount_id` non nuls dont **17
+  orphelines** (5 valeurs : 81/83/84/89/90, remises supprimées) ; **545**
+  lignes `base_price ≠ price`, **100% avec un `discount_id` qui matche encore
+  une remise réelle** (aucun recoupement avec les 17 orphelines) ;
+  `orders.cart_discount_amount > 0` : **0 ligne**, confirmé jamais alimentée.
+  `applyCartDiscount` (citée par un commentaire de `create_order_models.go`)
+  **n'existe nulle part** — pas un bug de synchronisation, une fonctionnalité
+  jamais construite.
+
+- **Phase 2 (clé entière)** : `discounts.discount_id_new integer` attribué
+  sans réécrire `orderitems.discount_id` — les 9 remises legacy gardent leur
+  valeur numérique actuelle telle quelle (4 592 lignes orderitems valides
+  inchangées bit à bit, vérifié), les 10 `discount-<uuid>` reçoivent des
+  valeurs neuves après le plus grand entier déjà en circulation (calculé
+  dynamiquement en SQL — la migration tourne aussi en prod, dont les valeurs
+  réelles diffèrent). `discounts.legacy_discount_id` conserve l'ancien varchar,
+  jamais supprimée. Élargi au passage à `discounts_products`/`discounts_schedules`/
+  `discounts_products_options` (pas demandées nommément par le brief, mais
+  même situation structurelle — cette dernière a une colonne `varchar(20)`,
+  trop courte pour un futur `discount-<uuid>` de 45 caractères) : les trois
+  reçoivent enfin de vraies contraintes `FOREIGN KEY` (aucune des trois n'en
+  avait jamais eu, le mismatch de type l'en empêchait). Pas de FK sur
+  `orderitems.discount_id` : les 17 orphelines la feraient échouer, laissées
+  telles quelles comme acté. Bascule de la `PRIMARY KEY` elle-même différée à
+  un lot de contraction futur. Migrations
+  [`118_discounts_integer_key_expansion`](../migrations/todo/118_discounts_integer_key_expansion.up.sql)
+  appliquées et vérifiées sur staging (idempotence testée par double
+  application de la partie backfill).
+
+- **Phase 3 (table de liaison)** : `discount_redemptions` (créée à vide par
+  `041_cart_discounts`, jamais câblée — rapport 57) étendue plutôt que
+  remplacée — `scope` (`PRODUCT_LINE`/`CART`, distinct de
+  `discounts.discount_scope` qui décrit la configuration, pas une utilisation
+  précise), `order_item_id` nullable, `customer_id` retypé `varchar→integer`
+  (corrige le deuxième mismatch noté rapport 57), `is_reconstructed`.
+  L'ancienne `UNIQUE(discount_id, order_id)` était fausse pour une remise
+  ligne (la même remise peut s'appliquer à 2 lignes de la même commande) :
+  remplacée par deux index uniques partiels, un par portée. Montant figé à
+  l'application (pas un pourcentage recalculable) — même raisonnement déjà
+  posé pour le coût de revient (PROMPT 07) : un prix qui change plus tard ne
+  doit pas faire bouger un montant déjà accordé. Écriture en direct câblée
+  dans `order_life_cycle.upsertOrderItemDiscountRedemption` (appelée par
+  `InsertOrderItem` et par la boucle de `UpdateOrder`) : supprime la ligne de
+  liaison si la remise est retirée d'une commande encore ouverte (cas cité par
+  le brief comme le plus facile à manquer), upsert sinon — y compris pour
+  "graduer" `is_reconstructed=false` si une commande fermée est rouverte puis
+  réellement réécrite.
+
+- **Phase 4 (cart_discount_amount) différée, pas juste laissée de côté** :
+  vérifié qu'aucun code n'applique jamais une remise panier (`applyCartDiscount`
+  n'existe pas) — maintenir la colonne "juste après chaque application"
+  suppose une application qui n'existe pas. Décidé avec l'utilisateur :
+  ce lot prépare seulement le modèle (`discount_redemptions` scope=CART prêt),
+  le calcul/validation d'un code promo panier est un chantier produit à part,
+  hors périmètre de cet assainissement.
+
+- **Phase 5 (reprise de l'historique)** : les 545 lignes `base_price ≠ price`
+  reconstituées dans `discount_redemptions` (`amount_applied_cents = base_price
+  - price`, `scope='PRODUCT_LINE'` sans ambiguïté possible — `ORDER_TOTAL`
+  n'existe que depuis Sprint 2 et `cart_discount_amount` n'a jamais été
+  alimenté), marquées `is_reconstructed=true`. `customer_id` laissé `NULL` :
+  `orderitems` ne porte pas cette information, une jointure via
+  `orders.customer_id` serait une déduction de plus n'apportant rien à
+  l'objectif. Migration
+  [`119_discount_redemptions_historical_backfill`](../migrations/todo/119_discount_redemptions_historical_backfill.up.sql),
+  idempotente (`ON CONFLICT DO NOTHING`, testé par double application),
+  appliquée sur staging : 545/545 lignes, montant total vérifié égal à la
+  somme réelle `base_price - price` du jeu de données source.
+
+- **Ce qui reste à faire** (hors périmètre explicite de ce lot) :
+  `cart_discount_id`/`cart_discount_code` — migration de suppression préparée
+  ([`120_drop_cart_discount_legacy_columns`](../migrations/todo/120_drop_cart_discount_legacy_columns.up.sql)),
+  **non jouée**. La simplification des jointures `orders/orders_fetcher_builder.go`
+  et `orders/repository.go` (`CAST(oi.discount_id AS TEXT)` devenu inutile, un
+  join direct `int = int` suffit désormais) n'a pas été faite dans ce lot —
+  fonctionnellement toujours correcte telle quelle, cleanup sûr et non urgent
+  à faire plus tard. `docs/migration-postgres/04-schema-postgres-target.sql`
+  pas mis à jour dans ce lot (même pattern que les migrations 108-117 :
+  reconciliation périodique en bloc, pas systématique migration par migration
+  — voir rapport 63) : à faire lors du prochain passage de reconciliation.
+  Bascule de la `PRIMARY KEY` de `discounts` vers `discount_id_new` : lot de
+  contraction futur, une fois `legacy_discount_id`/`discount_id` confirmés
+  plus lus nulle part.
+
+### PROMPT 20 — Diagnostic vente additionnelle, Phase 1 (2026-09-05)
+
+- **Contexte** : le prompt partait de trois hypothèses (moteur qui ne
+  produit rien, suggestions non affichées, `is_upsell` non écrit) et
+  demandait un diagnostic chiffré avant tout correctif. Rapport complet :
+  [docs/audits/2026-09-05-upsell-diagnostic-prompt20.md](audits/2026-09-05-upsell-diagnostic-prompt20.md).
+
+- **Cause dominante du faible volume, vérifiée en base (staging)** :
+  `enable_upsell` n'est activé que sur **2 établissements sur 30**
+  (`merchant_parameters`). Des établissements avec un volume de commandes
+  bien supérieur à celui des 2 établissements actifs (617, 348, 189
+  commandes clôturées/90j) ont **zéro** ligne `upsell_suggestions` —
+  `generateUpsellSafe` retourne avant même de tenter une persistance
+  quand le flag est faux. Constat produit (rollout pilote non généralisé
+  ou oubli d'activation ?), pas un bug.
+
+- **Même activé, le moteur "intelligent" ne se déclenche presque jamais** :
+  312 des 313 lignes générées sont `source=featured_fallback` (dernier
+  recours statique), 1 seule est `pattern`, aucune n'est `llm`. Le seuil
+  de co-occurrence (`upsellMinCoOccur=5`/90j) semble structurellement dur
+  à atteindre pour un volume de restaurant indépendant, y compris à 2000+
+  commandes/trimestre — remonté comme arbitrage produit, seuil non
+  modifié de ma propre initiative (consigne explicite du prompt).
+
+- **`accepted_items` fonctionne mais n'a été exercé qu'une fois** dans
+  toute l'histoire de la base (2026-07-02, le jour même de l'audit qui
+  avait trouvé ScanNOrder non câblé) — mesure différente de
+  `orderitems.is_upsell` (corrélation passive produit-dans-commande vs
+  preuve d'interaction UI), les deux ne se corroborent pas mutuellement.
+
+- **Surprise principale** : deux des trois correctifs attendus en Phase 2
+  étaient déjà faits, sans trace documentée. `wello-resto-scannorder`
+  envoie déjà `is_upsell` (`payload.ts:55`, `UpsellPopup.tsx:133`) dans le
+  HEAD committé actuel — vérifié par lecture directe + `git show HEAD`,
+  contredisant la prémisse du prompt ("aucune occurrence dans le dépôt").
+  Aucun code touché pour ce point. Seul correctif appliqué : commentaire
+  périmé de `stats/service.go:106` ("jusqu'à ce que l'app Flutter écrive
+  is_upsell") corrigé pour pointer vers ce diagnostic plutôt que
+  réaffirmer une cause qui ne tient plus depuis juin.
+
+- **Traçabilité du build client (1.3)** : aucun mécanisme serveur ne
+  persiste la version applicative réellement en usage par établissement.
+  `app_version`/`app_version_merchant` ne servent qu'au contrôle de mise à
+  jour (jamais d'écriture du côté serveur) et semblent à l'abandon (dernière
+  version connue : avril 2025, alors que le client envoie déjà la version
+  100 aujourd'hui). Piste la plus légère identifiée : `api_request_logs`
+  capture déjà le corps de `/app/version/check` (`payload` jsonb), mais
+  `merchant_id` y est vide sur cette route — recommandation remontée, pas
+  implémentée (changement de logging sur route d'auth partagée, à valider).
+
+- **Aucune donnée de production directe** : diagnostic mené contre
+  `RENDER_STAGING_DATABASE_URL` (pas d'accès prod local,
+  [[reference_staging_db_access]]). Les chiffres collent presque
+  exactement à ceux cités par le prompt pour la production (287/26/1 vs
+  284/258+26/1 avec dérive expliquée par le temps écoulé) — à confirmer
+  par le lecteur avant de traiter ces chiffres comme définitifs pour la
+  vraie prod.
+
+### PROMPT 18 — onglet Clients (2026-09-05)
+
+- **Contexte** : huitième onglet analytics branché en SQL direct. Deux
+  routes, deux permissions, même découpage que l'onglet Annulations
+  (PROMPT 10) : agrégats (nouveaux clients, taux de récurrence, segments,
+  fréquence, panier par segment — `permission.ReportsSalesRead`, même porte
+  que les 7 autres onglets) et classement nominatif Top Clients (nom, valeur
+  vie, dernière visite, panier moyen — `permission.CustomersManage`, déjà
+  existante, `is_sensitive`, aucune clé créée). Backend :
+  `internal/modules/analytics/{clients,channels,models,service,handler}.go`,
+  routes `POST /analytics/clients` et `POST /analytics/clients/top`
+  (`cmd/api/routes.go`). Frontend : `ClientsAnalyticsTab.tsx`
+  (wello-back-office), remplace `renderClientsTab`/`getCustomersAnalytics`
+  de `DashboardAnalysis.tsx`.
+
+- **Le filtre par canal, vérifié avant d'être copié** : le prompt affirme que
+  ce filtre « existe déjà pour Produits » et demande de réutiliser le même
+  mécanisme. Vérifié dans le code (`products.go`) : **faux** — Produits
+  filtre par catégorie, jamais par canal ; le canal n'a jamais existé
+  ailleurs dans ce paquet que comme dimension d'affichage
+  (`channelCaseExpr`, utilisé uniquement en `GROUP BY` par les tabs
+  CA/Commandes/TVA/Annulations), jamais en `WHERE`. Le prompt anticipait
+  cette possibilité (« s'il n'est pas encore factorisé, factorise-le à cette
+  occasion ») : `ChannelFilter` (`channels.go`) est donc le premier filtre
+  d'entrée par canal de ce paquet, construit sur `channelCaseExpr` existant
+  et le même référentiel `Channels`/`channels.ts` — disponible pour tout
+  futur onglet qui en aurait besoin. Côté front, même constat :
+  `ChannelFilter.tsx` (composant générique coché/décoché) existait déjà mais
+  n'était câblé nulle part — c'est ici sa première utilisation réelle.
+
+- **Les trois pièges de calcul (§3 du prompt)**, chacun avec sa propre
+  vérification :
+  - `customer.customer_nb_orders`/`customer_total_spent`/`last_order_date`
+    ne sont jamais lus — `GetCustomersLifetimeStats` recalcule tout depuis
+    `orders`. Le test d'intégration seed délibérément ces trois colonnes
+    avec des valeurs fausses pour prouver que la requête les ignore.
+  - « Nouveau client » = première commande **de tous les temps** tombant
+    dans la fenêtre — jamais un `MIN(creation_date)` borné à la période.
+    Toute agrégation par client (`first_order_date`, `last_order_date`,
+    `lifetime_orders`, `lifetime_value_cents`) porte sur tout l'historique,
+    de `customersEpoch` (2000-01-01) jusqu'à `periodEnd` (jamais l'horloge
+    système) — un rapport sur une période passée reste reproductible.
+  - `customer.creation_date` (date d'import) n'est utilisée nulle part.
+
+- **Définitions retenues** (une ligne de justification chacune, servies
+  dans le contrat lui-même — `ClientsResponse.Definitions` — pas seulement
+  documentées ici) :
+  - **Récurrence** : part des clients actifs sur la période (≥1 commande
+    dans la fenêtre) ayant ≥2 commandes au total depuis toujours. Lecture
+    "de mes clients servis cette période, combien sont des clients
+    fidélisés", plus actionnable que "sur toute mon histoire, quelle part a
+    commandé ≥2 fois".
+  - **Segments** (nouveau/récurrent/fidèle/inactif/dormant, ordre de
+    priorité strict) : nouveau (1er ordre jamais placé dans la fenêtre) >
+    fidèle (actif + ≥5 commandes à vie) > récurrent (actif, <5 commandes à
+    vie) > inactif (dernière commande à plus de 180 jours de la fin de
+    période) > dormant (ni actif, ni assez ancien). Le bucket "dormant"
+    n'existe QUE si la fenêtre demandée est plus courte que 180 jours — sur
+    12 mois il est structurellement toujours à 0 (vérifié sur staging : 0).
+  - **Fréquence d'achat** : commandes de la période ÷ clients actifs sur la
+    période — pas l'intervalle moyen entre deux commandes (rejeté : la
+    majorité des clients n'ont qu'une seule commande sur la période, un
+    intervalle moyen serait indéfini pour eux et biaiserait la métrique).
+  - **Inactivité** : dernière commande à plus de 180 jours, calculé à la
+    date de FIN de période (pas à la date du jour) — un rapport sur une
+    période passée reste reproductible s'il est rejoué plus tard.
+  - **Seuil de matérialité** : 30 clients identifiés actifs sur la période,
+    réutilisé **littéralement** (`minCustomersForRate =
+    staffCancellationMinOrders`) depuis Annulations (PROMPT 10) plutôt
+    qu'un nouveau chiffre — sous ce seuil, `RecurringRate` est `nil` et
+    `SegmentRatesAvailable` est `false` ; le nombre absolu et le volume de
+    référence (`IdentifiedCustomersInPeriod`) restent toujours affichés.
+
+- **Le bug de la maquette corrigé** : `analyticsData.clients.top_clients`
+  n'existait dans aucun mock (tableau mort depuis toujours) ; la ligne
+  dépliée lisait `client.lifetime_value`/`client.last_visit`, deux clés
+  jamais produites ; `analyticsData.clients.loyalty_score` était lu avec un
+  fallback `|| 72` qui masquait silencieusement son absence permanente ;
+  `analyticsService.exportClientsCSV` était appelé sans jamais être défini.
+  Les quatre corrigés : `ClientsAnalyticsResponse`/`ClientsTopResponse`
+  produisent réellement chaque champ consommé, `exportClientsCSV` existe
+  (même patron que `exportCancellationsCSV`, CSV reconstruit côté client à
+  partir des deux réponses déjà chargées).
+
+- **Vérifié en lecture seule contre staging** (merchant 212, 12 mois,
+  `POSTGRES_URL`=`RENDER_STAGING_DATABASE_URL`, `DB_DIALECT=postgres`, outil
+  jetable supprimé après usage) :
+  - couverture globale 45,51% (4 378/9 620) ; **Wello Resto seul : 12,30%**
+    (735/5 977, proche du 86% non-identifié cité par le prompt) contre
+    **marketplaces : 100,00%** (3 643/3 643) — les deux sommes reconstituent
+    exactement le total non filtré (4 378 et 9 620), le filtre canal
+    partitionne bien sans recouvrement ni perte ;
+  - nouveaux clients recalculés à la main (requête SQL indépendante,
+    n'appelant aucune fonction du dépôt) : 3 115, identique au chiffre
+    produit par `GetCustomersLifetimeStats` ;
+  - valeur vie du client le plus rentable (`customer_id=781`, 198 160
+    centimes / 40 commandes) et d'un client médian (`customer_id=7240`,
+    1 919 centimes / 1 commande) : les deux concordent au centime avec un
+    `SUM(price)`/`COUNT(*)` indépendant sur `orders` ;
+  - un `merchant_id` inexistant renvoie des zéros propres (`0` client,
+    `0`/`0` couverture), aucune erreur ;
+  - segments sur cette fenêtre : nouveau 3 115, fidèle 76, récurrent 150,
+    inactif 1 010, dormant 0 (attendu, fenêtre > 180 jours) — taux de
+    récurrence 523/3 341 = 15,65%.
+
+- **Test d'intégration** :
+  `internal/modules/analytics/clients_postgres_integration_test.go`
+  (`-tags postgres_integration`), même patron que les 7 autres onglets —
+  seed délibérément les compteurs `customer` avec des valeurs fausses,
+  6 profils clients couvrant les 5 segments + une commande annulée (exclue)
+  + une commande sans client (comptée en couverture, jamais en profil) +
+  un canal marketplace pour vérifier la partition par canal. Exécuté avec
+  succès contre staging (`go test -tags postgres_integration
+  ./internal/modules/analytics/... -run TestClients_Postgres`), ainsi que
+  la suite complète des 7 autres tabs (aucune régression). Tests unitaires
+  (`clients_test.go`) : `ChannelFilter`, précédence des 5 segments (dont la
+  découverte que "dormant" est inatteignable sur une fenêtre ≥180 jours),
+  `AvgBasketTTCCents` jamais une division par zéro.
+
+### PROMPT 16 — onglet Produits (2026-09-05)
+
+- **Contexte** : sixième onglet analytics branché en SQL direct (après CA,
+  Commandes, Règlements, TVA, Annulations). Contrat complet dès maintenant —
+  coût et marge inclus — mais leur valeur reste `null` tant que les prix
+  d'achat des composants ne sont pas saisis (règle posée au lot 1, PROMPT 07 :
+  `orderitems.cost_price_unit`/`cost_price_reason`, jamais un `0` silencieux).
+  Backend : `internal/modules/analytics/{models,products,service,handler}.go`,
+  route `POST /analytics/products` (`permission.ReportsSalesRead`, même porte
+  que les 5 autres onglets). Frontend : `ProductsAnalyticsTab.tsx` (wello-back-office),
+  remplace le mock `renderProductsTab`/`getProductsAnalytics` de
+  `DashboardAnalysis.tsx`.
+
+- **Défauts de la maquette corrigés** (docs/analytics/AUDIT.md, wello-back-office,
+  Onglet 3 + I9) : tableau tronqué à 10 lignes en dur avec tri client → vraie
+  pagination serveur (`page`/`page_size`, `COUNT(*) OVER()` dans la même passe
+  que l'agrégation, jamais une deuxième requête juste pour compter) et tri
+  résolu en SQL (`sort_by` ∈ quantity/revenue_ttc/margin, whitelist jamais
+  interpolée dans `ORDER BY`) ; liste de catégories codée en dur
+  (`entrees/plats/desserts/boissons`) → lue depuis `productcateg`
+  (`GetProductCategories`), incluse dans la réponse (`available_categories`),
+  jamais une deuxième requête frontend séparée.
+
+- **Le piège de l'agrégation partielle (§ du prompt)** : ne jamais diviser un
+  CA complet par un coût partiel. Appliqué à deux niveaux — par produit,
+  `MarginCents`/`MarginPercent` sont dérivés UNIQUEMENT de
+  `CostKnownRevenueTTCCents` (le sous-ensemble des lignes à coût connu), jamais
+  de `RevenueTTCCents` (le total du produit) ; en agrégat,
+  `ProductsCostCoverage` réutilise **littéralement**
+  `coversCoverageThreshold` (20%, déjà adopté pour
+  `OrdersPeriodTotals.CoversDataAvailable`) — sous ce seuil de couverture,
+  aucune marge agrégée n'est renvoyée, seulement `revenue_ttc_cents_covered`/
+  `revenue_ttc_cents_total`/`coverage_ratio`, pour que le front puisse encore
+  dire « marge connue sur X% du CA » plutôt que de n'afficher rien du tout.
+
+- **Performance (§4)** : la requête de l'audit (« M2 — Mix produits + HT +
+  suppléments ») mesurait 1 347 ms pour 120 433 lignes lues / 1 239 rendues —
+  cinq parcours séquentiels. `GetProductsPage` lit `orderitems` une seule fois
+  (un CTE agrège tout, `COUNT(*) OVER()` fournit le total de pagination dans
+  la même passe) ; `GetProductsScopeTotals` est une deuxième passe, non
+  groupée, pour les tuiles KPI et la couverture agrégée ;
+  `GetProductsPreviousRevenue` est borné aux `product_id` de la page courante
+  (jamais tout le catalogue). Mesuré en lecture (aucune écriture) contre
+  staging, merchant 212, fenêtre 12 mois : `GetProductsPage` ~700-900 ms,
+  `GetProductsScopeTotals` ~500 ms-1,3 s — sous les 4 s du fusible
+  (`AnalyticsStatementTimeoutMS`), migration 087 (index `idx_orders_merchant_creation`,
+  `idx_orderitems_order_id`, `idx_extra_order_item_id`) déjà en place.
+
+- **Découverte en vérifiant le § « les deux onglets doivent raconter la même
+  histoire »** : sur staging, merchant 212, 12 mois, la somme du CA TTC par
+  produit (`orderitems`) et le total de l'onglet CA (`orders.price`) NE
+  reconcilient PAS sur le périmètre complet (187 311,98 € vs 159 875,40 €,
+  écart de 27 436,58 €). Tracé précisément :
+  - **WELLO_RESTO seul reconcilie quasi exactement** (écart résiduel de
+    -1 176,40 €, expliqué à moins de 21 € près par `orders.delivery_fees`
+    (1 197,00 €) — un écart structurel déjà documenté ailleurs (VATResponse,
+    même fichier) : les frais de livraison n'apparaissent jamais dans
+    `orderitems`, uniquement sur `orders.delivery_fees`.
+  - **L'anomalie réelle est Uber Eats** : la somme `orderitems` dépasse
+    `orders.price` de **59%** sur ce périmètre (92 055,59 € vs 57 959,36 €,
+    3 079 commandes) — un écart massif, pas un artefact d'arrondi.
+  - **Deliveroo** est sous-évalué d'environ moitié (5 174,10 € vs
+    10 657,35 €) ; en partie des lignes à prix négatif trouvées sur quelques
+    commandes (9 lignes, -508,60 € au total sur toute la fenêtre) mais cela
+    n'explique qu'une fraction de l'écart — la cause complète n'a pas été
+    creusée davantage (chemin d'écriture Deliveroo hors périmètre de ce
+    prompt).
+  - **Décision (validée avec l'utilisateur, 2026-09-05)** : ne pas retarder
+    la livraison de l'onglet pour investiguer/corriger le chemin d'écriture
+    Uber Eats/Deliveroo — explicitement hors périmètre de ce prompt (« Ne
+    touche pas... au chemin d'écriture »). L'onglet est livré tel quel, avec
+    la formule du prompt (`oi.price + extra` par ligne, seule façon
+    d'obtenir un CA PAR PRODUIT — `orders.price` est un scalaire par
+    commande, structurellement non décomposable). Le désaccord CA
+    tab/Produits tab pour les commandes marketplace est un **fait sur les
+    données découvert par ce travail**, pas une régression introduite par
+    lui (vérifié : la somme indépendante recalculée directement en SQL
+    concorde au centime avec `GetProductsScopeTotals`). À traiter comme un
+    chantier de fiabilisation du chemin d'écriture Uber Eats/Deliveroo
+    séparé, pas comme un défaut de l'onglet Produits.
+
+- **Vérifié en lecture seule contre staging** (merchant 212, 12 mois,
+  `POSTGRES_URL`=`RENDER_STAGING_DATABASE_URL`, `DB_DIALECT=postgres`) :
+  quantité/CA recalculés indépendamment en SQL brut concordent au centime
+  avec `GetProductsScopeTotals` ; aucune ligne `orderitems.merchant_id` ne
+  diffère de `orders.merchant_id` sur le périmètre (écarte une fuite
+  cross-merchant via la jointure sur `order_id`) ; sur cette fenêtre,
+  0 ligne `NO_RECIPE`/`INCOMPLETE_RECIPE` — la couverture de coût mesurée
+  est 0% (tous les `cost_price_unit` sont NULL, cohérent avec « 85% des
+  lignes NULL sur l'historique » cité par le prompt, ici 100% sur ce
+  périmètre précis faute de recettes chiffrées pour ce marchand).
+
+- **Test d'intégration** :
+  `internal/modules/analytics/products_postgres_integration_test.go`
+  (`-tags postgres_integration`), même patron que les 5 autres onglets —
+  seed direct de `cost_price_unit`/`cost_price_reason` (pas de recette
+  seedée : ce endpoint ne fait que lire ces deux colonnes, leur calcul est
+  testé ailleurs, `order_life_cycle/cost_postgres_integration_test.go`).
+  Couvre : NULL jamais 0 (produit NO_RECIPE/INCOMPLETE_RECIPE), garde
+  d'agrégation partielle par produit, seuil de matérialité agrégé via le
+  filtre catégorie, pagination + tri serveur (NULLS LAST sur marge),
+  évolution nil quand pas de vente période précédente, période vide sans
+  erreur. Exécuté avec succès contre staging (`go test -tags
+  postgres_integration ./internal/modules/analytics/... -run
+  TestProducts_Postgres`), ainsi que la suite complète des 5 autres tabs
+  (aucune régression).
+
 ### PROMPT 11 — solder l'instrumentation du chemin d'écriture (2026-09-04)
 
 - **Contexte** : suite du lot 1 (`feature/write-path-instrumentation-lot1`) et

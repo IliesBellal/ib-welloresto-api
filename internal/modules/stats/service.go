@@ -103,7 +103,9 @@ func (s *StatsService) GetDashboardSummary(ctx context.Context, token string) (*
 }
 
 // GetUpsellStats returns upsell impact stats and the by-server ranking for the given local day range.
-// NOTE: until the Flutter app (Sprint 2) writes orderitems.is_upsell, this will return zeros — expected.
+// NOTE: orderitems.is_upsell is written by all three ordering channels (POS, Kiosk, ScanNOrder) as of
+// 2026-09 — zeros here reflect real usage volume (upsell enabled for very few merchants, see
+// docs/audits/2026-09-05-upsell-diagnostic-prompt20.md), not a missing write path.
 func (s *StatsService) GetUpsellStats(ctx context.Context, token string, fromLocalDay, toLocalDay time.Time) (*UpsellStatsResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

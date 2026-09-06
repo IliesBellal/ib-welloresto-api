@@ -54,3 +54,40 @@ const channelCaseExpr = `
 		ELSE 'unknown'
 	END
 `
+
+// ChannelFilter validates the caller's requested channels against the 8
+// canonical Channels keys, defaulting to all of them when empty — same
+// validate-or-reject shape as optionTypesFilter (options.go): an unknown
+// value is a 400, never a silent drop.
+//
+// PROMPT 18 (Clients tab) is this package's first channel INPUT filter —
+// channelCaseExpr existed only as an output/grouping dimension before (every
+// ByChannel query in this package groups by it, none filter by it). This
+// reuses that exact derivation as a WHERE predicate (`(channelCaseExpr) =
+// ANY(?)`) instead of inventing a second one, and the same Channels
+// referential wello-back-office's channels.ts already mirrors — so any tab
+// after this one that needs a channel filter reuses ChannelFilter directly
+// rather than writing a third variant.
+func ChannelFilter(requested []string) ([]string, bool) {
+	if len(requested) == 0 {
+		return append([]string(nil), Channels...), true
+	}
+	valid := make(map[string]bool, len(Channels))
+	for _, c := range Channels {
+		valid[c] = true
+	}
+	seen := make(map[string]bool, len(requested))
+	for _, c := range requested {
+		if !valid[c] {
+			return nil, false
+		}
+		seen[c] = true
+	}
+	out := make([]string, 0, len(seen))
+	for _, c := range Channels {
+		if seen[c] {
+			out = append(out, c)
+		}
+	}
+	return out, true
+}

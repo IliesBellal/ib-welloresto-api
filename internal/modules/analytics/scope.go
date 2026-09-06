@@ -5,11 +5,8 @@
 package analytics
 
 import (
-	"context"
 	"strings"
 	"time"
-
-	"welloresto-api/internal/modules/auth"
 )
 
 // analyticsOrdersScopeWhere is the ONE definition of "revenue" for every
@@ -155,21 +152,18 @@ func AnalyticsAllOrdersCreatedScope(merchantIDs []string, startUTC, endUTC time.
 	return strings.TrimSpace(analyticsAllOrdersCreatedScopeWhere), []interface{}{merchantIDs, startUTC, endUTC}
 }
 
-// ResolveAccessibleMerchants returns the establishments this request is
-// allowed to read. The token carries exactly one MerchantID (see
-// docs/analytics/DROITS.md, wello-back-office repo, §2) — a user covering
-// several establishments holds one token per establishment, never a token
-// that spans several. This function returns exactly that one establishment.
-//
-// Do NOT change this to `SELECT merchant_id FROM users_rights WHERE user_id
-// = ?`: it is trivial to write and would silently open every establishment
-// the underlying user account is linked to, under a token issued for one of
-// them — a scope-widening regression, not a feature. Multi-establishment
-// access requires an explicit mechanism (a selector, a group token) that
-// does not exist yet and is a separate product decision.
-func ResolveAccessibleMerchants(ctx context.Context, user *auth.UserLoginRow) ([]string, error) {
-	return []string{user.MerchantID}, nil
-}
+// ResolveAccessibleMerchants used to live here as a bare
+// []string{user.MerchantID} (PROMPT 03), on the theory that the token
+// carries exactly one MerchantID (docs/analytics/DROITS.md, wello-back-office
+// repo, §2) and multi-establishment access was a separate, not-yet-made
+// product decision. PROMPT 23 makes that decision — "la permission définit
+// elle-même la portée" — and moves the function to
+// Repository.ResolveAccessibleMerchants (repository.go), since resolving the
+// real scope now means a query (every establishment where the user holds
+// permission.POSAnalytics via an active users_rights link), not a pure
+// function of the token alone. See that method's doc comment for the full
+// reasoning, including why the old guard against widening this no longer
+// applies.
 
 // ErrMerchantNotAccessible is returned by ValidateRequestedMerchants when the
 // client asked for an establishment outside its resolved scope. Handlers

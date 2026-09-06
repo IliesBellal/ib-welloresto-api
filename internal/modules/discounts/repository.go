@@ -3,6 +3,7 @@ package discounts
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 
 	now := time.Now().UTC()
 	rows, err := db.QueryContext(ctx, `
-		SELECT d.discount_id, d.merchant_id, d.discount_name, d.discount_desc,
+		SELECT d.discount_id_new, d.merchant_id, d.discount_name, d.discount_desc,
 		       d.prefered_order, d.discount_code, d.discount_order_type,
 		       d.discount_value, d.discount_unit, d.valid_from, d.valid_to,
 		       d.min_order_value, d.min_order_unit, d.max_discount_value,
@@ -43,13 +44,15 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 	defer rows.Close()
 
 	discounts := make([]Discount, 0)
+	discountIDsNew := make([]int, 0)
 	for rows.Next() {
 		var d Discount
+		var discountIDNew int
 		var orderType sql.NullString
 		var validTo sql.NullTime
 
 		if err := rows.Scan(
-			&d.DiscountID, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
+			&discountIDNew, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
 			&d.PreferredOrder, &d.DiscountCode, &orderType,
 			&d.DiscountValue, &d.DiscountUnit, &d.ValidFrom, &validTo,
 			&d.MinOrderValue, &d.MinOrderUnit, &d.MaxDiscountValue,
@@ -60,6 +63,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 			return nil, err
 		}
 
+		d.DiscountID = strconv.Itoa(discountIDNew)
 		if orderType.Valid {
 			ot := OrderType(orderType.String)
 			d.OrderType = &ot
@@ -69,6 +73,7 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 		}
 
 		discounts = append(discounts, d)
+		discountIDsNew = append(discountIDsNew, discountIDNew)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -78,10 +83,10 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 
 	// Load products and schedules AFTER closing rows to avoid deadlock
 	for i := range discounts {
-		if products, err := r.getDiscountProducts(ctx, discounts[i].DiscountID); err == nil {
+		if products, err := r.getDiscountProducts(ctx, discountIDsNew[i]); err == nil {
 			discounts[i].Products = products
 		}
-		if schedules, err := r.getDiscountSchedules(ctx, discounts[i].DiscountID); err == nil {
+		if schedules, err := r.getDiscountSchedules(ctx, discountIDsNew[i]); err == nil {
 			discounts[i].Schedules = schedules
 		}
 	}
@@ -95,7 +100,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 	log := logger.FromContext(ctx)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT d.discount_id, d.merchant_id, d.discount_name, d.discount_desc,
+		SELECT d.discount_id_new, d.merchant_id, d.discount_name, d.discount_desc,
 		       d.prefered_order, d.discount_code, d.discount_order_type,
 		       d.discount_value, d.discount_unit, d.valid_from, d.valid_to,
 		       d.min_order_value, d.min_order_unit, d.max_discount_value,
@@ -112,13 +117,15 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 	defer rows.Close()
 
 	discounts := make([]Discount, 0)
+	discountIDsNew := make([]int, 0)
 	for rows.Next() {
 		var d Discount
+		var discountIDNew int
 		var orderType sql.NullString
 		var validTo sql.NullTime
 
 		if err := rows.Scan(
-			&d.DiscountID, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
+			&discountIDNew, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
 			&d.PreferredOrder, &d.DiscountCode, &orderType,
 			&d.DiscountValue, &d.DiscountUnit, &d.ValidFrom, &validTo,
 			&d.MinOrderValue, &d.MinOrderUnit, &d.MaxDiscountValue,
@@ -129,6 +136,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 			return nil, err
 		}
 
+		d.DiscountID = strconv.Itoa(discountIDNew)
 		if orderType.Valid {
 			ot := OrderType(orderType.String)
 			d.OrderType = &ot
@@ -138,6 +146,7 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 		}
 
 		discounts = append(discounts, d)
+		discountIDsNew = append(discountIDsNew, discountIDNew)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -147,10 +156,10 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 
 	// Load products and schedules AFTER closing rows to avoid deadlock
 	for i := range discounts {
-		if products, err := r.getDiscountProducts(ctx, discounts[i].DiscountID); err == nil {
+		if products, err := r.getDiscountProducts(ctx, discountIDsNew[i]); err == nil {
 			discounts[i].Products = products
 		}
-		if schedules, err := r.getDiscountSchedules(ctx, discounts[i].DiscountID); err == nil {
+		if schedules, err := r.getDiscountSchedules(ctx, discountIDsNew[i]); err == nil {
 			discounts[i].Schedules = schedules
 		}
 	}
@@ -158,26 +167,27 @@ func (r *Repository) GetAllDiscounts(ctx context.Context, merchantID string) ([]
 	return discounts, nil
 }
 
-// GetDiscountByID retrieves a single discount by ID
-func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, discountID string) (*Discount, error) {
+// GetDiscountByID retrieves a single discount by its integer ID (discount_id_new)
+func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, discountIDNew int) (*Discount, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	var d Discount
+	var scannedID int
 	var orderType sql.NullString
 	var validTo sql.NullTime
 
 	err := db.QueryRowContext(ctx, `
-		SELECT d.discount_id, d.merchant_id, d.discount_name, d.discount_desc,
+		SELECT d.discount_id_new, d.merchant_id, d.discount_name, d.discount_desc,
 		       d.prefered_order, d.discount_code, d.discount_order_type,
 		       d.discount_value, d.discount_unit, d.valid_from, d.valid_to,
 		       d.min_order_value, d.min_order_unit, d.max_discount_value,
 		       d.max_discount_unit, d.discounted_quantity, d.is_cumulative,
 		       d.is_time_limited, d.available, d.enabled, d.creation_date
 		FROM discounts d
-		WHERE d.discount_id = ? AND d.merchant_id = ? AND d.enabled = true
-	`, discountID, merchantID).Scan(
-		&d.DiscountID, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
+		WHERE d.discount_id_new = ? AND d.merchant_id = ? AND d.enabled = true
+	`, discountIDNew, merchantID).Scan(
+		&scannedID, &d.MerchantID, &d.DiscountName, &d.DiscountDesc,
 		&d.PreferredOrder, &d.DiscountCode, &orderType,
 		&d.DiscountValue, &d.DiscountUnit, &d.ValidFrom, &validTo,
 		&d.MinOrderValue, &d.MinOrderUnit, &d.MaxDiscountValue,
@@ -192,6 +202,7 @@ func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, dis
 		return nil, err
 	}
 
+	d.DiscountID = strconv.Itoa(scannedID)
 	if orderType.Valid {
 		ot := OrderType(orderType.String)
 		d.OrderType = &ot
@@ -201,10 +212,10 @@ func (r *Repository) GetDiscountByID(ctx context.Context, merchantID string, dis
 	}
 
 	// Load products and schedules
-	if products, err := r.getDiscountProducts(ctx, d.DiscountID); err == nil {
+	if products, err := r.getDiscountProducts(ctx, scannedID); err == nil {
 		d.Products = products
 	}
-	if schedules, err := r.getDiscountSchedules(ctx, d.DiscountID); err == nil {
+	if schedules, err := r.getDiscountSchedules(ctx, scannedID); err == nil {
 		d.Schedules = schedules
 	}
 
@@ -226,8 +237,12 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		minOrderValue = *req.MinOrderValue
 	}
 
-	// Insert discount
-	_, err := db.ExecContext(ctx, `
+	// Insert discount. discount_id_new is not listed: it gets its value from
+	// the column DEFAULT (nextval on discounts_discount_id_new_seq, set up by
+	// migration 118) — req.DiscountID (varchar) remains the legacy/transition
+	// identifier, still the physical PRIMARY KEY until a future contraction lot.
+	var discountIDNew int
+	err := db.QueryRowContext(ctx, `
 		INSERT INTO discounts (
 			discount_id, merchant_id, discount_name, discount_desc, prefered_order,
 			discount_code, discount_order_type, discount_value, discount_unit,
@@ -235,13 +250,14 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 			max_discount_value, max_discount_unit, discounted_quantity,
 			is_cumulative, is_time_limited, available, enabled, creation_date
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING discount_id_new
 	`,
 		req.DiscountID, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
 		req.ValidFrom, req.ValidTo, minOrderValue, req.MinOrderUnit,
 		req.MaxDiscountValue, req.MaxDiscountUnit, req.DiscountedQuantity,
 		req.IsCumulative, req.IsTimeLimited, req.Available, true, time.Now().UTC(),
-	)
+	).Scan(&discountIDNew)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -250,9 +266,9 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	// Insert products
 	for _, p := range req.Products {
 		_, err := db.ExecContext(ctx, `
-			INSERT INTO discounts_products (discount_id, product_id, new_price, enabled)
-			VALUES (?, ?, ?, true)
-		`, req.DiscountID, p.ProductID, p.NewPrice)
+			INSERT INTO discounts_products (discount_id, discount_id_new, product_id, new_price, enabled)
+			VALUES (?, ?, ?, ?, true)
+		`, req.DiscountID, discountIDNew, p.ProductID, p.NewPrice)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -266,9 +282,9 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		availableToStr := s.AvailableTo.Format("15:04:05")
 
 		_, err := db.ExecContext(ctx, `
-			INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-			VALUES (?, ?, ?, ?, true)
-		`, req.DiscountID, s.DayOfWeek, availableFromStr, availableToStr)
+			INSERT INTO discounts_schedules (discount_id, discount_id_new, day_of_week, available_from, available_to, enabled)
+			VALUES (?, ?, ?, ?, ?, true)
+		`, req.DiscountID, discountIDNew, s.DayOfWeek, availableFromStr, availableToStr)
 		if err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -276,11 +292,11 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 	}
 
 	// Fetch and return the created discount
-	return r.GetDiscountByID(ctx, merchantID, req.DiscountID)
+	return r.GetDiscountByID(ctx, merchantID, discountIDNew)
 }
 
-// UpdateDiscount updates an existing discount
-func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, discountID string, req *UpdateDiscountRequest) (*Discount, error) {
+// UpdateDiscount updates an existing discount, identified by its integer ID (discount_id_new)
+func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, discountIDNew int, req *UpdateDiscountRequest) (*Discount, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -359,8 +375,8 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 
 	// Execute update if there are updates
 	if len(updates) > 0 {
-		args = append(args, discountID, merchantID)
-		updateSQL := "UPDATE discounts SET " + strings.Join(updates, ", ") + " WHERE discount_id = ? AND merchant_id = ? AND enabled = true"
+		args = append(args, discountIDNew, merchantID)
+		updateSQL := "UPDATE discounts SET " + strings.Join(updates, ", ") + " WHERE discount_id_new = ? AND merchant_id = ? AND enabled = true"
 		if _, err := db.ExecContext(ctx, updateSQL, args...); err != nil {
 			log.Error(err.Error())
 			return nil, err
@@ -370,16 +386,18 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 	// Update products if provided
 	if len(req.Products) > 0 {
 		// Delete existing products
-		if _, err := db.ExecContext(ctx, "DELETE FROM discounts_products WHERE discount_id = ?", discountID); err != nil {
+		if _, err := db.ExecContext(ctx, "DELETE FROM discounts_products WHERE discount_id_new = ?", discountIDNew); err != nil {
 			log.Error(err.Error())
 			return nil, err
 		}
-		// Insert new products
+		// Insert new products. discount_id (varchar) is still NOT NULL on
+		// discounts_products — pulled from discounts via subquery rather than
+		// requiring a round trip here.
 		for _, p := range req.Products {
 			_, err := db.ExecContext(ctx, `
-				INSERT INTO discounts_products (discount_id, product_id, new_price, enabled)
-				VALUES (?, ?, ?, true)
-			`, discountID, p.ProductID, p.NewPrice)
+				INSERT INTO discounts_products (discount_id, discount_id_new, product_id, new_price, enabled)
+				SELECT d.discount_id, ?, ?, ?, true FROM discounts d WHERE d.discount_id_new = ?
+			`, discountIDNew, p.ProductID, p.NewPrice, discountIDNew)
 			if err != nil {
 				log.Error(err.Error())
 				return nil, err
@@ -390,7 +408,7 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 	// Update schedules if provided
 	if len(req.Schedules) > 0 {
 		// Delete existing schedules
-		if _, err := db.ExecContext(ctx, "DELETE FROM discounts_schedules WHERE discount_id = ?", discountID); err != nil {
+		if _, err := db.ExecContext(ctx, "DELETE FROM discounts_schedules WHERE discount_id_new = ?", discountIDNew); err != nil {
 			log.Error(err.Error())
 			return nil, err
 		}
@@ -403,9 +421,9 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 			availableToStr := s.AvailableTo.Format("15:04:05")
 
 			_, err := db.ExecContext(ctx, `
-				INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-				VALUES (?, ?, ?, ?, true)
-			`, discountID, s.DayOfWeek, availableFromStr, availableToStr)
+				INSERT INTO discounts_schedules (discount_id, discount_id_new, day_of_week, available_from, available_to, enabled)
+				SELECT d.discount_id, ?, ?, ?, ?, true FROM discounts d WHERE d.discount_id_new = ?
+			`, discountIDNew, s.DayOfWeek, availableFromStr, availableToStr, discountIDNew)
 			if err != nil {
 				log.Error(err.Error())
 				return nil, err
@@ -413,11 +431,11 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 		}
 	}
 
-	return r.GetDiscountByID(ctx, merchantID, discountID)
+	return r.GetDiscountByID(ctx, merchantID, discountIDNew)
 }
 
-// DeleteDiscount performs a soft delete on a discount
-func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, discountID string) error {
+// DeleteDiscount performs a soft delete on a discount, identified by its integer ID (discount_id_new)
+func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, discountIDNew int) error {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -427,8 +445,8 @@ func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, disc
 	// report 1 without this guard) — scoping the match to still-enabled rows keeps
 	// the not-found semantics identical on both.
 	result, err := db.ExecContext(ctx, `
-		UPDATE discounts SET enabled = false WHERE discount_id = ? AND merchant_id = ? AND enabled = true
-	`, discountID, merchantID)
+		UPDATE discounts SET enabled = false WHERE discount_id_new = ? AND merchant_id = ? AND enabled = true
+	`, discountIDNew, merchantID)
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -448,16 +466,14 @@ func (r *Repository) DeleteDiscount(ctx context.Context, merchantID string, disc
 
 // Helper functions
 
-func (r *Repository) getDiscountProducts(ctx context.Context, discountID string) ([]DiscountProduct, error) {
+func (r *Repository) getDiscountProducts(ctx context.Context, discountIDNew int) ([]DiscountProduct, error) {
 	db := dbx.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
 
-	log.Debug("Executing getDiscountProducts with discountID: " + discountID)
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, discount_id, product_id, new_price, enabled
+		SELECT id, discount_id_new, product_id, new_price, enabled
 		FROM discounts_products
-		WHERE discount_id = ? AND enabled = true
-	`, discountID)
+		WHERE discount_id_new = ? AND enabled = true
+	`, discountIDNew)
 	if err != nil {
 		return nil, err
 	}
@@ -466,23 +482,25 @@ func (r *Repository) getDiscountProducts(ctx context.Context, discountID string)
 	var products []DiscountProduct
 	for rows.Next() {
 		var p DiscountProduct
-		if err := rows.Scan(&p.ID, &p.DiscountID, &p.ProductID, &p.NewPrice, &p.Enabled); err != nil {
+		var discID int
+		if err := rows.Scan(&p.ID, &discID, &p.ProductID, &p.NewPrice, &p.Enabled); err != nil {
 			return nil, err
 		}
+		p.DiscountID = strconv.Itoa(discID)
 		products = append(products, p)
 	}
 
 	return products, rows.Err()
 }
 
-func (r *Repository) getDiscountSchedules(ctx context.Context, discountID string) ([]DiscountSchedule, error) {
+func (r *Repository) getDiscountSchedules(ctx context.Context, discountIDNew int) ([]DiscountSchedule, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT schedule_id, discount_id, day_of_week, available_from, available_to, enabled
+		SELECT schedule_id, discount_id_new, day_of_week, available_from, available_to, enabled
 		FROM discounts_schedules
-		WHERE discount_id = ? AND enabled = true
-	`, discountID)
+		WHERE discount_id_new = ? AND enabled = true
+	`, discountIDNew)
 	if err != nil {
 		return nil, err
 	}
@@ -491,11 +509,13 @@ func (r *Repository) getDiscountSchedules(ctx context.Context, discountID string
 	var schedules []DiscountSchedule
 	for rows.Next() {
 		var s DiscountSchedule
+		var discID int
 		var availableFrom, availableTo string // Read TIME columns as strings
 
-		if err := rows.Scan(&s.ScheduleID, &s.DiscountID, &s.DayOfWeek, &availableFrom, &availableTo, &s.Enabled); err != nil {
+		if err := rows.Scan(&s.ScheduleID, &discID, &s.DayOfWeek, &availableFrom, &availableTo, &s.Enabled); err != nil {
 			return nil, err
 		}
+		s.DiscountID = strconv.Itoa(discID)
 
 		// Parse TIME strings to TimeOfDay (format: "HH:MM:SS")
 		if t, err := time.Parse("15:04:05", availableFrom); err == nil {

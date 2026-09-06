@@ -118,6 +118,104 @@ func (r *Repository) GetCancellationsTotals(ctx context.Context, merchantIDs []s
 	return totals, nil
 }
 
+// ---- Annulations — group_by=merchant (PROMPT 24 Phase 2) ----
+//
+// Only the aggregate endpoint gets grouping — the nominative by-staff
+// ranking stays merged regardless of mode (PROMPT 24's explicit decision).
+// Both queries below mirror GetOrdersCreatedCount/GetCancellationsTotals,
+// adding merchant_id to the SELECT/GROUP BY — every column is a direct
+// COUNT/SUM, so no apportionment is needed (same reasoning as
+// CancellationsResponse's doc comment).
+
+// OrdersCreatedMerchantCount is GetOrdersCreatedCountByMerchant's raw row.
+type OrdersCreatedMerchantCount struct {
+	MerchantID string
+	Count      int64
+}
+
+func (r *Repository) GetOrdersCreatedCountByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]OrdersCreatedMerchantCount, error) {
+	where, args := AnalyticsAllOrdersCreatedScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT o.merchant_id, COUNT(*)
+		FROM orders o
+	`) + "\nWHERE " + where + `
+		GROUP BY o.merchant_id
+		ORDER BY o.merchant_id
+	`
+
+	result := make([]OrdersCreatedMerchantCount, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row OrdersCreatedMerchantCount
+			if err := rows.Scan(&row.MerchantID, &row.Count); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get orders created count by merchant: %w", err)
+	}
+	return result, nil
+}
+
+// CancellationsMerchantTotals is GetCancellationsTotalsByMerchant's raw row —
+// CancellationsTotals grouped by merchant_id.
+type CancellationsMerchantTotals struct {
+	MerchantID string
+	CancellationsTotals
+}
+
+func (r *Repository) GetCancellationsTotalsByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationsMerchantTotals, error) {
+	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	query := strings.TrimSpace(`
+		SELECT o.merchant_id,
+			COUNT(*) AS cancelled_count,
+			COALESCE(SUM(o.price), 0) AS amount_cents,
+			COUNT(*) FILTER (WHERE o.cancelled_by_type IN ('STAFF', 'CUSTOMER', 'SYSTEM')) AS internal_count,
+			COUNT(*) FILTER (WHERE o.cancelled_by_type = 'PLATFORM') AS platform_count,
+			COUNT(*) FILTER (WHERE o.cancelled_by_type IS NULL) AS unknown_count,
+			COUNT(*) FILTER (WHERE o.cancelled_by_type = 'STAFF') AS staff_count
+		FROM orders o
+	`) + "\nWHERE " + where + `
+		GROUP BY o.merchant_id
+		ORDER BY o.merchant_id
+	`
+
+	result := make([]CancellationsMerchantTotals, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row CancellationsMerchantTotals
+			if err := rows.Scan(
+				&row.MerchantID, &row.CancelledCount, &row.CancelledAmountCents,
+				&row.InternalCancelledCount, &row.PlatformCancelledCount,
+				&row.UnknownCancelledCount, &row.StaffCancelledCount,
+			); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get cancellations totals by merchant: %w", err)
+	}
+	return result, nil
+}
+
 // reasonSubquerySelect strips the two orders.deletion_reason_id data-quality
 // bugs found while building this tab, verified against staging
 // (2026-09-04):

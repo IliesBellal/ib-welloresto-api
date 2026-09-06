@@ -4,6 +4,7 @@ package discounts
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -63,6 +64,23 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 		t.Fatalf("unexpected created discount: %+v", created)
 	}
 
+	// PROMPT 21 : le DiscountID retourné est désormais la représentation
+	// décimale de discount_id_new (colonne integer), plus jamais l'ancien
+	// varchar passé en entrée — même si l'appelant fournit encore un
+	// discount_id "legacy" à la création (transition), il n'a plus aucune
+	// influence sur l'identifiant réellement retourné et utilisé ensuite.
+	discountIDNew, err := strconv.Atoi(created.DiscountID)
+	if err != nil {
+		t.Fatalf("expected created.DiscountID to be the decimal text of discount_id_new, got %q: %v", created.DiscountID, err)
+	}
+	if created.DiscountID == discountID {
+		t.Fatalf("expected created.DiscountID to differ from the legacy varchar discount_id %q, got the same value", discountID)
+	}
+	if created.Products[0].DiscountID != created.DiscountID || created.Schedules[0].DiscountID != created.DiscountID {
+		t.Fatalf("expected child products/schedules to carry the same discount_id_new as the parent, got products=%q schedules=%q parent=%q",
+			created.Products[0].DiscountID, created.Schedules[0].DiscountID, created.DiscountID)
+	}
+
 	// GetActiveDiscounts: enabled = true AND available = true AND valid window (dbx rebind + boolean literals).
 	active, err := repo.GetActiveDiscounts(ctx, merchantID)
 	if err != nil {
@@ -70,7 +88,7 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 	}
 	found := false
 	for _, d := range active {
-		if d.DiscountID == discountID {
+		if d.DiscountID == created.DiscountID {
 			found = true
 		}
 	}
@@ -86,7 +104,7 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected 1 discount from GetAllDiscounts, got %d", len(all))
 	}
 
-	fetched, err := repo.GetDiscountByID(ctx, merchantID, discountID)
+	fetched, err := repo.GetDiscountByID(ctx, merchantID, discountIDNew)
 	if err != nil {
 		t.Fatalf("GetDiscountByID failed against postgres: %v", err)
 	}
@@ -96,7 +114,7 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 
 	// UpdateDiscount: dynamic SET clause + schedule replacement (TIME column format fix).
 	newName := "ITest Discount Renamed"
-	updated, err := repo.UpdateDiscount(ctx, merchantID, discountID, &UpdateDiscountRequest{
+	updated, err := repo.UpdateDiscount(ctx, merchantID, discountIDNew, &UpdateDiscountRequest{
 		DiscountName: &newName,
 		Schedules: []CreateScheduleRequest{
 			{DayOfWeek: 2, AvailableFrom: mustParseHM(t, "10:00"), AvailableTo: mustParseHM(t, "20:00")},
@@ -111,15 +129,18 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 	if len(updated.Schedules) != 1 || updated.Schedules[0].DayOfWeek != 2 {
 		t.Fatalf("expected schedule replaced with day_of_week 2, got %+v", updated.Schedules)
 	}
+	if updated.Schedules[0].DiscountID != created.DiscountID {
+		t.Fatalf("expected replaced schedule to still carry discount_id_new %q, got %q", created.DiscountID, updated.Schedules[0].DiscountID)
+	}
 
 	// DeleteDiscount: soft delete (enabled = false), then not found by ID or list.
-	if err := repo.DeleteDiscount(ctx, merchantID, discountID); err != nil {
+	if err := repo.DeleteDiscount(ctx, merchantID, discountIDNew); err != nil {
 		t.Fatalf("DeleteDiscount failed against postgres: %v", err)
 	}
-	if _, err := repo.GetDiscountByID(ctx, merchantID, discountID); err != ErrDiscountNotFound {
+	if _, err := repo.GetDiscountByID(ctx, merchantID, discountIDNew); err != ErrDiscountNotFound {
 		t.Fatalf("expected ErrDiscountNotFound after delete, got %v", err)
 	}
-	if err := repo.DeleteDiscount(ctx, merchantID, discountID); err != ErrDiscountNotFound {
+	if err := repo.DeleteDiscount(ctx, merchantID, discountIDNew); err != ErrDiscountNotFound {
 		t.Fatalf("expected ErrDiscountNotFound deleting already-deleted discount, got %v", err)
 	}
 }

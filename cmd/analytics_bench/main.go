@@ -16,9 +16,12 @@
 //	            (direct DB, read-only) and --base-url for the load (HTTP).
 //	fusible     spot-checks: does a 12-month include_ht=true CA query approach
 //	            the 4s statement_timeout? Does the heaviest HT query spill to
-//	            disk under 16MB work_mem (EXPLAIN ANALYZE, direct DB, read
-//	            only)? What happens when 3 uncached requests hit the 2-connection
-//	            analytics pool at once?
+//	            disk under database.AnalyticsWorkMemMB's work_mem (EXPLAIN
+//	            ANALYZE, direct DB, read only)? What happens when 3 uncached
+//	            requests hit the database.AnalyticsMaxOpenConns-connection
+//	            analytics pool at once? (Both read the real deployed constants
+//	            since PROMPT 24 Phase 5 — never hardcode the old 16MB/2 figures
+//	            here again.)
 //
 // Run this at 3h-5h — pos-impact and fusible both load the database and must
 // never run during service.
@@ -39,6 +42,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"welloresto-api/internal/database"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -578,13 +583,13 @@ func runFusible(w io.Writer, baseURL string, merchants []string, tokens map[stri
 	}
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "## 2. Spill disque (work_mem 16MB) — EXPLAIN ANALYZE sur la requête HT la plus lourde")
+	fmt.Fprintf(w, "## 2. Spill disque (work_mem %dMB) — EXPLAIN ANALYZE sur la requête HT la plus lourde\n", database.AnalyticsWorkMemMB)
 	fmt.Fprintln(w, "Nécessite une connexion directe en lecture seule (READ ONLY) — pas de mesure de temps fiable depuis cet environnement,")
 	fmt.Fprintln(w, "seule la présence d'un spill (`Sort Method: external merge` / `temp_written_blocks` dans le plan) est pertinente à relever ici.")
 	explainSpill(ctx, w, db, merchants[0])
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "## 3. Trois requêtes analytiques non-cachées simultanées (AnalyticsMaxOpenConns=2)")
+	fmt.Fprintf(w, "## 3. Trois requêtes analytiques non-cachées simultanées (AnalyticsMaxOpenConns=%d)\n", database.AnalyticsMaxOpenConns)
 	runConcurrencyCheck(ctx, w, client, tokens, merchants)
 }
 
@@ -595,7 +600,10 @@ func explainSpill(ctx context.Context, w io.Writer, db *sql.DB, merchantID strin
 		return
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL work_mem = '16MB'"); err != nil {
+	// PROMPT 24 Phase 5: reads the real deployed constant rather than a
+	// hardcoded value — this tool's own spill check must test the work_mem
+	// actually in production, not a stale figure from before that phase.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL work_mem = '%dMB'", database.AnalyticsWorkMemMB)); err != nil {
 		fmt.Fprintf(w, "- erreur SET LOCAL work_mem: %v\n", err)
 		return
 	}
@@ -636,7 +644,7 @@ func explainSpill(ctx context.Context, w io.Writer, db *sql.DB, merchantID strin
 	}
 	fmt.Fprintln(w, "```")
 	if spillFound {
-		fmt.Fprintln(w, "- ⚠ SPILL DISQUE DÉTECTÉ à 16MB work_mem.")
+		fmt.Fprintf(w, "- ⚠ SPILL DISQUE DÉTECTÉ à %dMB work_mem.\n", database.AnalyticsWorkMemMB)
 	} else {
 		fmt.Fprintln(w, "- Pas de spill détecté dans ce plan (à confirmer sur un établissement/fenêtre plus lourds si besoin).")
 	}
