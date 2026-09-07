@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -37,6 +38,8 @@ func main() {
 		if err != nil {
 			zlog.Fatal("Failed to connect to analytics Postgres pool", zap.Error(err))
 		}
+		// Avertissement seul (jamais Fatal) — voir internal/database/schemamigrations.go.
+		database.WarnUnrecordedMigrations(context.Background(), db, zlog, "migrations/todo")
 	} else {
 		db, err = database.NewMySQL(cfg.Database)
 		if err != nil {

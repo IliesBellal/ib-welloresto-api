@@ -302,6 +302,154 @@ func (r *Repository) GetRevenueTotalsTTC(ctx context.Context, merchantIDs []stri
 	return totals, nil
 }
 
+// GetRevenueTotalsThreePeriods replaces GetRevenueTotalsTTC's own
+// current/previous/previous-year triplet (three round trips) with one query
+// using FILTER (WHERE ...) per window — and, when includeHT is true,
+// GetRevenueTotalsHT's own triplet on top of that (six round trips total) —
+// PROMPT 25 Phase 3's fusion for the CA tab, the single most expensive tab in
+// this module (the 4-table HT join lives here).
+//
+// TTC and order count ALWAYS come straight from `orders` (o.price, COUNT(*))
+// — never from summing orderitems lines, even in the same query as the HT
+// join: orders.price includes delivery fees, orderitems does not (see
+// deliveryFeeHTExpr's doc comment above — unlike the VAT tab, Revenue has no
+// UNION ALL branch adding them back), so a line-summed TTC would silently
+// understate revenue for any order carrying a delivery fee. That is why,
+// when includeHT is true, this is built as two CTEs rather than one flat
+// join: scoped_orders (one row per order — TTC/count read from here, at the
+// correct granularity) LEFT JOINed to order_ht (one row per order, HT
+// pre-summed across that order's own lines) — never orders joined directly
+// to orderitems, which would make a flat SUM(o.price)/COUNT(*) count once
+// per line instead of once per order.
+//
+// order_ht sums the per-line HT expression's raw (unrounded) value per order
+// first; the outer SELECT then sums those per-order sums per period (via
+// FILTER) and rounds exactly once at the very end (roundToIntExpr) — SUM is
+// associative, so summing per-order-then-across-orders equals summing every
+// line directly, the same "sum first, round once" GetRevenueTotalsHT already
+// does. This changes no number, only how many round trips produce it — see
+// TestGetRevenueTotalsThreePeriods_Postgres, which checks this against three
+// independent GetRevenueTotalsTTC/GetRevenueTotalsHT calls on the same
+// windows.
+//
+// The per-line HT join here cannot reuse the htLineExpr/htLineJoins
+// constants verbatim: those hardcode alias `o` for `orders`, and this query
+// needs orders under alias `so` (scoped_orders) instead, since `o` is not in
+// scope inside order_ht. The CASE logic itself is unchanged, alias aside.
+func (r *Repository) GetRevenueTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow, includeHT bool) (currentTotals, previousTotals, previousYearTotals RevenueTotals, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+
+	var query string
+	var args []interface{}
+
+	if includeHT {
+		// Outer SELECT reads through scoped_orders' alias "so", not "o" —
+		// see periodFilterPredicate's doc comment for why alias is a
+		// parameter.
+		currentExpr, currentFilterArgs := periodFilterPredicate(current, "so")
+		previousExpr, previousFilterArgs := periodFilterPredicate(previous, "so")
+		previousYearExpr, previousYearFilterArgs := periodFilterPredicate(previousYear, "so")
+		query = strings.TrimSpace(`
+			WITH scoped_orders AS (
+				SELECT o.order_id, o.price, o.creation_date, o.order_type
+				FROM orders o
+				WHERE `+scopeWhere+`
+			),
+			order_ht AS (
+				SELECT oi.order_id,
+					SUM(
+						CASE
+							WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
+							ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+						END
+					) AS ht_raw
+				FROM orderitems oi
+				INNER JOIN scoped_orders so ON so.order_id = oi.order_id
+				INNER JOIN products p ON p.product_id = oi.product_id
+				INNER JOIN tva_categories tva ON tva.tva_id = (
+					CASE
+						WHEN so.order_type = 'DELIVERY' THEN p.tva_delivery_id
+						WHEN so.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
+						ELSE p.tva_in_id
+					END
+				)
+				LEFT JOIN (
+					SELECT order_item_id, SUM(extra.price) AS extra_price
+					FROM extra
+					GROUP BY order_item_id
+				) e ON e.order_item_id = oi.order_item_id
+				GROUP BY oi.order_id
+			)
+			SELECT
+				COALESCE(SUM(so.price) FILTER (WHERE `+currentExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+currentExpr+`),
+				`+roundToIntExpr("COALESCE(SUM(oh.ht_raw) FILTER (WHERE "+currentExpr+"), 0)")+`,
+				COALESCE(SUM(so.price) FILTER (WHERE `+previousExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+previousExpr+`),
+				`+roundToIntExpr("COALESCE(SUM(oh.ht_raw) FILTER (WHERE "+previousExpr+"), 0)")+`,
+				COALESCE(SUM(so.price) FILTER (WHERE `+previousYearExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+previousYearExpr+`),
+				`+roundToIntExpr("COALESCE(SUM(oh.ht_raw) FILTER (WHERE "+previousYearExpr+"), 0)")+`
+			FROM scoped_orders so
+			LEFT JOIN order_ht oh ON oh.order_id = so.order_id
+		`)
+
+		args = append(args, scopeArgs...)
+		args = append(args, currentFilterArgs...)  // current TTC FILTER
+		args = append(args, currentFilterArgs...)  // current count FILTER
+		args = append(args, currentFilterArgs...)  // current HT FILTER
+		args = append(args, previousFilterArgs...) // previous TTC FILTER
+		args = append(args, previousFilterArgs...) // previous count FILTER
+		args = append(args, previousFilterArgs...) // previous HT FILTER
+		args = append(args, previousYearFilterArgs...) // previous-year TTC FILTER
+		args = append(args, previousYearFilterArgs...) // previous-year count FILTER
+		args = append(args, previousYearFilterArgs...) // previous-year HT FILTER
+	} else {
+		currentExpr, currentFilterArgs := periodFilterPredicate(current, "o")
+		previousExpr, previousFilterArgs := periodFilterPredicate(previous, "o")
+		previousYearExpr, previousYearFilterArgs := periodFilterPredicate(previousYear, "o")
+
+		query = strings.TrimSpace(`
+			SELECT
+				COALESCE(SUM(o.price) FILTER (WHERE `+currentExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+currentExpr+`),
+				COALESCE(SUM(o.price) FILTER (WHERE `+previousExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+previousExpr+`),
+				COALESCE(SUM(o.price) FILTER (WHERE `+previousYearExpr+`), 0),
+				COUNT(*) FILTER (WHERE `+previousYearExpr+`)
+			FROM orders o
+		`) + "\nWHERE " + scopeWhere
+
+		args = append(args, currentFilterArgs...)  // current TTC FILTER
+		args = append(args, currentFilterArgs...)  // current count FILTER
+		args = append(args, previousFilterArgs...) // previous TTC FILTER
+		args = append(args, previousFilterArgs...) // previous count FILTER
+		args = append(args, previousYearFilterArgs...) // previous-year TTC FILTER
+		args = append(args, previousYearFilterArgs...) // previous-year count FILTER
+		args = append(args, scopeArgs...)
+	}
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		if includeHT {
+			return tx.QueryRowContext(ctx, query, args...).Scan(
+				&currentTotals.TotalTTCCents, &currentTotals.OrderCount, &currentTotals.TotalHTCents,
+				&previousTotals.TotalTTCCents, &previousTotals.OrderCount, &previousTotals.TotalHTCents,
+				&previousYearTotals.TotalTTCCents, &previousYearTotals.OrderCount, &previousYearTotals.TotalHTCents,
+			)
+		}
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.TotalTTCCents, &currentTotals.OrderCount,
+			&previousTotals.TotalTTCCents, &previousTotals.OrderCount,
+			&previousYearTotals.TotalTTCCents, &previousYearTotals.OrderCount,
+		)
+	})
+	if err != nil {
+		return RevenueTotals{}, RevenueTotals{}, RevenueTotals{}, fmt.Errorf("get revenue totals three periods: %w", err)
+	}
+	return currentTotals, previousTotals, previousYearTotals, nil
+}
+
 // roundToIntExpr wraps a fractional SQL expression so ROUND() accepts it:
 // Postgres's two-argument ROUND only accepts numeric, and tva_rate (real)
 // forces float arithmetic without an explicit cast. Same fragment as
@@ -600,6 +748,68 @@ func (r *Repository) GetOrdersTotals(ctx context.Context, merchantIDs []string, 
 	return totals, nil
 }
 
+// ordersTotalsSelectFragment returns GetOrdersTotals' 5-aggregate SELECT
+// fragment for one window (and its args, in the exact order the fragment's
+// placeholders appear) — the shared piece GetOrdersTotalsThreePeriods
+// concatenates once per window. exprArgs is repeated once per FILTER
+// occurrence (5: the fragment's `expr` appears 5 times), never re-derived —
+// the same discipline periodFilterPredicate's own doc comment asks for.
+func ordersTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COUNT(*) FILTER (WHERE ` + expr + `),
+		COALESCE(SUM(o.price) FILTER (WHERE ` + expr + `), 0),
+		COALESCE(SUM(CASE WHEN o.places_settings > 0 THEN o.places_settings ELSE 0 END) FILTER (WHERE ` + expr + `), 0),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND o.places_settings > 0),
+		COALESCE(SUM(CASE WHEN o.places_settings > 0 THEN o.price ELSE 0 END) FILTER (WHERE ` + expr + `), 0)
+	`)
+	var args []interface{}
+	for i := 0; i < 5; i++ {
+		args = append(args, exprArgs...)
+	}
+	return fragment, args
+}
+
+// GetOrdersTotalsThreePeriods replaces three GetOrdersTotals calls
+// (current/previous/previous-year) with one — PROMPT 25 Phase 3. Same table,
+// same 5 aggregates, no join to merge across granularities (unlike Revenue's
+// HT), so this is a direct application of ordersTotalsSelectFragment per
+// window over AnalyticsOrdersScopeMultiPeriod's single OR-of-windows scan.
+func (r *Repository) GetOrdersTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals OrdersTotals, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+
+	currentFragment, currentArgs := ordersTotalsSelectFragment(current)
+	previousFragment, previousArgs := ordersTotalsSelectFragment(previous)
+	previousYearFragment, previousYearArgs := ordersTotalsSelectFragment(previousYear)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`,
+			`+previousYearFragment+`
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, previousYearArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.OrderCount, &currentTotals.TotalTTCCents, &currentTotals.TotalCovers, &currentTotals.OrdersWithCovers, &currentTotals.TTCCentsOfOrdersWithCovers,
+			&previousTotals.OrderCount, &previousTotals.TotalTTCCents, &previousTotals.TotalCovers, &previousTotals.OrdersWithCovers, &previousTotals.TTCCentsOfOrdersWithCovers,
+			&previousYearTotals.OrderCount, &previousYearTotals.TotalTTCCents, &previousYearTotals.TotalCovers, &previousYearTotals.OrdersWithCovers, &previousYearTotals.TTCCentsOfOrdersWithCovers,
+		)
+	})
+	if err != nil {
+		return OrdersTotals{}, OrdersTotals{}, OrdersTotals{}, fmt.Errorf("get orders totals three periods: %w", err)
+	}
+	return currentTotals, previousTotals, previousYearTotals, nil
+}
+
 // GetOrdersTimeline mirrors GetRevenueTimeline (same tzName contract — see
 // its doc comment for why a bare offset string must never be passed here)
 // but counts orders instead of summing TTC.
@@ -750,6 +960,13 @@ func paymentsScopeJoin(merchantIDs []string, startUTC, endUTC time.Time) (string
 	return where + "\n\t\tAND p.enabled = TRUE", args
 }
 
+// paymentsScopeJoinMultiPeriod is paymentsScopeJoin's multi-window sibling —
+// see AnalyticsOrdersScopeMultiPeriod's doc comment (scope.go).
+func paymentsScopeJoinMultiPeriod(merchantIDs []string, windows []PeriodWindow) (string, []interface{}) {
+	where, args := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	return where + "\n\t\tAND p.enabled = TRUE", args
+}
+
 type PaymentsTotals struct {
 	TotalAmountCents int64
 	PaymentCount     int64
@@ -771,6 +988,58 @@ func (r *Repository) GetPaymentsTotals(ctx context.Context, merchantIDs []string
 		return PaymentsTotals{}, fmt.Errorf("get payments totals: %w", err)
 	}
 	return totals, nil
+}
+
+// paymentsTotalsSelectFragment mirrors ordersTotalsSelectFragment's shape for
+// GetPaymentsTotals' 2 aggregates.
+func paymentsTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COALESCE(SUM(p.amount) FILTER (WHERE ` + expr + `), 0),
+		COUNT(*) FILTER (WHERE ` + expr + `)
+	`)
+	var args []interface{}
+	args = append(args, exprArgs...)
+	args = append(args, exprArgs...)
+	return fragment, args
+}
+
+// GetPaymentsTotalsThreePeriods replaces three GetPaymentsTotals calls
+// (current/previous/previous-year) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetPaymentsTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals PaymentsTotals, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := paymentsScopeJoinMultiPeriod(merchantIDs, windows)
+
+	currentFragment, currentArgs := paymentsTotalsSelectFragment(current)
+	previousFragment, previousArgs := paymentsTotalsSelectFragment(previous)
+	previousYearFragment, previousYearArgs := paymentsTotalsSelectFragment(previousYear)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`,
+			`+previousYearFragment+`
+		FROM payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, previousYearArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.TotalAmountCents, &currentTotals.PaymentCount,
+			&previousTotals.TotalAmountCents, &previousTotals.PaymentCount,
+			&previousYearTotals.TotalAmountCents, &previousYearTotals.PaymentCount,
+		)
+	})
+	if err != nil {
+		return PaymentsTotals{}, PaymentsTotals{}, PaymentsTotals{}, fmt.Errorf("get payments totals three periods: %w", err)
+	}
+	return currentTotals, previousTotals, previousYearTotals, nil
 }
 
 // GetPaymentsTimeline buckets by the order's local creation day (o.creation_date),
@@ -960,6 +1229,79 @@ func (r *Repository) GetVATTotals(ctx context.Context, merchantIDs []string, sta
 		return VATTotals{}, fmt.Errorf("get vat totals: %w", err)
 	}
 	return totals, nil
+}
+
+// vatTotalsSelectFragment returns one window's contribution to
+// GetVATTotalsThreePeriods' outer SELECT — TTC and HT (rounded once, same
+// "sum first, round once" rule as GetVATTotals itself) FILTERed on the
+// derived table's own creation_date column (carried through both UNION ALL
+// branches — see GetVATTotalsThreePeriods' doc comment), referenced via its
+// alias "lines", matching the bare (unprefixed) column names the rest of
+// GetVATTotals' outer SELECT already uses for ttc_cents/ht_raw.
+func vatTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "lines")
+	fragment := strings.TrimSpace(`
+		COALESCE(SUM(ttc_cents) FILTER (WHERE ` + expr + `), 0),
+		` + roundToIntExpr("COALESCE(SUM(ht_raw) FILTER (WHERE "+expr+"), 0)") + `
+	`)
+	var args []interface{}
+	args = append(args, exprArgs...) // TTC FILTER
+	args = append(args, exprArgs...) // HT FILTER
+	return fragment, args
+}
+
+// GetVATTotalsThreePeriods replaces three GetVATTotals calls
+// (current/previous/previous-year) with one — PROMPT 25 Phase 3. Both UNION
+// ALL branches (product lines, delivery fees — see GetVATTotals' doc
+// comment) now also select o.creation_date, so the outer SELECT can FILTER
+// each window against it; each branch's own WHERE becomes the multi-window
+// OR scope (AnalyticsOrdersScopeMultiPeriod), applied once per branch exactly
+// like GetVATTotals already applies the single-window scope twice (allArgs).
+func (r *Repository) GetVATTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals VATTotals, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+
+	currentFragment, currentArgs := vatTotalsSelectFragment(current)
+	previousFragment, previousArgs := vatTotalsSelectFragment(previous)
+	previousYearFragment, previousYearArgs := vatTotalsSelectFragment(previousYear)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`,
+			`+previousYearFragment+`
+		FROM (
+			SELECT (oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
+				`+htLineExpr+` AS ht_raw,
+				o.creation_date AS creation_date
+	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
+			WHERE ` + scopeWhere + `
+			UNION ALL
+			SELECT o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw,
+				o.creation_date AS creation_date
+	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
+			WHERE ` + scopeWhere + deliveryFeeFilter + `
+		) lines
+	`
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, previousYearArgs...)
+	args = append(args, scopeArgs...) // branch 1 WHERE
+	args = append(args, scopeArgs...) // branch 2 WHERE
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.TotalTTCCents, &currentTotals.TotalHTCents,
+			&previousTotals.TotalTTCCents, &previousTotals.TotalHTCents,
+			&previousYearTotals.TotalTTCCents, &previousYearTotals.TotalHTCents,
+		)
+	})
+	if err != nil {
+		return VATTotals{}, VATTotals{}, VATTotals{}, fmt.Errorf("get vat totals three periods: %w", err)
+	}
+	return currentTotals, previousTotals, previousYearTotals, nil
 }
 
 // VATRateShare is GetVATByRate's raw row: HTRaw is the group's unrounded HT

@@ -1,3 +1,349 @@
+### PROMPT 25 Phase 3/4 — Les 7 autres fusions retenues (2026-09-07)
+
+Suite du point de passage sur l'onglet CA. Même méthode partout : requête
+fusionnée en repository.go/cancellations.go/upsell.go/products.go/
+discounts.go, câblée dans service.go, vérifiée en lecture seule contre
+staging (établissement 212, ancien chemin vs nouveau) avant d'écrire le test
+permanent.
+
+- **Commandes** (`GetOrdersTotalsThreePeriods`) : 3→1, mêmes 5 agrégats
+  (dont les couverts, `FILTER` imbriqué `fenêtre AND places_settings>0`), pas
+  de jointure. Nouveau motif réutilisé pour toutes les fusions simples de ce
+  lot : `xxxSelectFragment(w PeriodWindow)` retourne le fragment SQL d'une
+  fenêtre et ses arguments dans l'ordre textuel exact — un seul endroit où
+  compter "combien de fois `expr` apparaît = combien de fois `exprArgs` est
+  répété", plutôt que de recompter à la main à chaque fusion.
+- **Règlements** (`GetPaymentsTotalsThreePeriods`) : 3→1, `payments ⋈ orders`,
+  `payments.enabled = TRUE` inchangé.
+- **TVA** (`GetVATTotalsThreePeriods`) : 3→1. Les deux branches `UNION ALL`
+  (lignes produit + frais de livraison) exposent maintenant `creation_date`
+  pour que l'agrégat externe puisse la `FILTER`er — seule vraie modification
+  structurelle de cette fusion, le reste reprend `GetVATTotals` à l'identique.
+- **Annulations** : `GetOrdersCreatedCountThreePeriods` +
+  `GetCancellationsTotalsThreePeriods` remplacent les 6 requêtes de
+  `cancellationsPeriodTotals` (2 requêtes × 3 périodes) par 2 requêtes au
+  total — pas 1, parce que ce sont deux scopes différents
+  (`AnalyticsAllOrdersCreatedScope` vs `AnalyticsCancellationsScope`, voir
+  scope.go) qui ne partagent pas de FROM commun.
+- **Upsell** : la fusion la plus rentable après CA. `GetUpsellTotals` et
+  `GetOrdersWithUpsellCount` lisaient déjà la même jointure lourde
+  (`orderitems⋈orders⋈products⋈tva_categories`, `is_upsell=true`) pour deux
+  agrégats différents — `GetUpsellTotalsWithOrdersTwoPeriods` les fusionne
+  ET les étend sur 2 périodes en une seule requête (4→1, jointure lourde
+  comprise). `GetUpsellOrdersTotalTwoPeriods` fusionne séparément le
+  dénominateur (requête `orders` seule, scope différent) sur 2 périodes
+  (2→1). Total : 6→2.
+- **Produits** (`GetProductsScopeTotalsTwoPeriods`) : 2→1, 7 agrégats,
+  jointure `htLineJoins` inchangée.
+- **Remises** : `GetDiscountsScopeTotalsTwoPeriods` (2→1, `discount_redemptions
+  ⋈ orders`) + `GetDiscountsOrdersTotalsTwoPeriods` (2→1, `orders` seule) —
+  4→2, même logique de séparation qu'Annulations (deux scopes distincts).
+- **Options — fusion écartée**, contrairement au tableau de la Phase 2.
+  Trouvé en l'implémentant, pas avant : `GetOptionsScopeTotals` lit
+  `optionsCombinedCTE`, une CTE à 5 étages (`scoped_orders`→`scoped_items`→
+  `scoped_configs`/`scoped_withouts` matérialisés→`combined`) spécifiquement
+  réglée (mesure PROMPT 17 §4 : 2041 ms non-matérialisé vs 438 ms matérialisé,
+  seule mesure de durée qui existe réellement dans ce module). La fusionner
+  sur 2 périodes aurait exigé de faire remonter `creation_date` à travers les
+  5 étages pour un seul gain (2 requêtes → 1) sur une requête déjà optimisée
+  — le rapport gain/lisibilité/risque ne tient pas, contrairement aux 7
+  fusions ci-dessus. Conforme à la Phase 2 : "une requête illisible coûte
+  cher en maintenance", "il n'est pas demandé de tout fusionner". Le code
+  actuel (`GetOptionsScopeTotals`, 2 requêtes current/previous) reste
+  inchangé.
+- **Vérifié contre staging, en lecture seule** (établissement 212, ancien
+  chemin vs nouveau) pour les 10 requêtes fusionnées ci-dessus (7 onglets,
+  Upsell comptant double) : **résultats identiques dans tous les cas**,
+  script jetable (`cmd/analytics_verify_tmp`) supprimé après usage.
+- **Tests permanents** (5 nouveaux fichiers `*_multi_period_postgres_integration_test.go`,
+  un par groupe d'onglets) : établissement/données dédiés par test, borne
+  `[start, end)` vérifiée à l'identique de l'onglet CA, comparaison au
+  chemin non fusionné ET à des valeurs attendues codées en dur. **Non
+  exécutés dans cet environnement** (pas de Docker) — `go build`/`go vet
+  -tags postgres_integration` passent, à faire tourner contre le Postgres 16
+  de dev local avant merge.
+- **`service.go`** : les 7 onglets câblés sur leurs requêtes fusionnées ;
+  `cancellationsPeriodTotals`/`upsellPeriodTotals`/`discountsPeriodTotals`
+  (les helpers qui tournaient une fois par période) remplacés par leurs
+  pendants `...ThreePeriods`/`...TwoPeriods` qui tournent une fois pour
+  toutes les périodes.
+- **Exécuté** : `go build ./...`, `go vet ./internal/modules/analytics/...`,
+  `go vet -tags postgres_integration ./internal/modules/analytics/...`,
+  `go test -count=1 ./internal/modules/analytics/...` — tous verts. Rien
+  touché hors `internal/modules/analytics/`. Pas de mesure de durée
+  (`analytics_bench --mode=grid` avant/après reste à lancer par le porteur
+  du produit, hors de cet environnement).
+- **Bilan des requêtes par onglet, comptage seul (pas de durée)** :
+
+  | Onglet | Avant | Après | Requêtes économisées |
+  |---|---:|---:|---:|
+  | CA | 10 | 5 | -5 |
+  | Commandes | 7 | 5 | -2 |
+  | Règlements | 7 | 5 | -2 |
+  | TVA | 7 | 5 | -2 |
+  | Annulations (agrégat) | 11 | 7 | -4 |
+  | Options | 9 | 9 | 0 (écartée) |
+  | Clients (agrégat) | 4 | 4* | 0 (déjà minimal, cache Phase 0 sur la duplication inter-endpoint) |
+  | Upsell (agrégat) | 10 | 6 | -4 |
+  | Remises | 9 | 7 | -2 |
+  | Produits | 7 | 6 | -1 |
+
+  \* Clients/Annulations/Upsell/Clients-top/Cancellations-by-staff/
+  Upsell-by-staff bénéficient en plus du cache Phase 0 (scope+fuseau, et pour
+  Clients/Upsell la déduplication `GetCustomersLifetimeStats`/
+  `GetUpsellInstrumentationActive`), non reflété dans ce tableau qui ne
+  compte que les requêtes SQL déclenchées par l'endpoint lui-même.
+
+### PROMPT 25 Phase 3/4 — Fusion de l'onglet CA : six requêtes de totaux → une (2026-09-07)
+
+- **`PeriodWindow` + trois `*ScopeMultiPeriod`** (`scope.go`) : primitive
+  partagée pour toutes les fusions à venir de ce lot. `periodFilterPredicate`
+  construit `alias.creation_date >= ? AND alias.creation_date < ?` (alias
+  paramétrable — nécessaire pour `GetRevenueTotalsThreePeriods`, dont la
+  requête interne lit `creation_date` via un alias différent selon la CTE) ;
+  `multiPeriodOrWhere` assemble N fenêtres en `(f1) OR (f2) OR (f3)` —
+  **délibérément un OR de petites plages, jamais une plage unique couvrant
+  leur union** : l'écart entre la période précédente et l'année passée peut
+  couvrir près d'un an, et scanner cet écart aurait annulé le bénéfice de la
+  fusion. `AnalyticsOrdersScopeMultiPeriod`/`AnalyticsCancellationsScopeMultiPeriod`/
+  `AnalyticsAllOrdersCreatedScopeMultiPeriod` sont les pendants multi-fenêtres
+  des trois portées existantes (`scope.go`) — les deux dernières ne sont pas
+  encore utilisées (préparées pour la fusion Annulations à suivre).
+- **`GetRevenueTotalsThreePeriods`** (`repository.go`) remplace les 3 appels
+  `GetRevenueTotalsTTC` + 3 appels `GetRevenueTotalsHT` (6 requêtes) par une
+  seule. Point de correction important trouvé en écrivant la requête, pas
+  après : TTC **doit** rester `SUM(orders.price)` — jamais une somme des
+  lignes `orderitems` recalculée dans la même requête que le HT — parce que
+  `orders.price` inclut les frais de livraison et `orderitems` non (même
+  écart que celui documenté pour la TVA, `deliveryFeeHTExpr`). Une jointure
+  plate `orders ⋈ orderitems` aurait aussi compté TTC/nombre de commandes une
+  fois par ligne au lieu d'une fois par commande. D'où la structure à deux
+  CTE : `scoped_orders` (une ligne par commande — TTC/nombre lus à la bonne
+  granularité) `LEFT JOIN order_ht` (une ligne par commande, HT pré-sommé sur
+  ses propres lignes) — jamais une jointure directe. `order_ht` somme la
+  valeur brute (non arrondie) par commande, l'agrégat externe re-somme par
+  fenêtre puis arrondit une seule fois (`roundToIntExpr`) — somme associative,
+  donc rigoureusement le même calcul que l'ancien "somme d'abord, arrondi
+  une fois", juste en un aller-retour au lieu de trois. `includeHT=false`
+  garde le chemin `orders` seul, sans jointure (3 requêtes → 1, jamais la
+  jointure lourde).
+- **Vérifié contre staging, en lecture seule, avant d'écrire le test
+  permanent** : script Go jetable (`cmd/analytics_verify_tmp`, supprimé après
+  usage, jamais commité — même discipline que la vérification du spill
+  Phase 5/PROMPT 24) comparant l'ancien chemin (6 appels) au nouveau (1 appel)
+  sur l'établissement 212, quatre scénarios (`include_ht` vrai/faux ×
+  fenêtres ordinaires/fenêtres à cheval sur la bascule d'heure d'été du
+  2026-03-29) — **résultats identiques au centime et à la commande près dans
+  les quatre cas**.
+- **Test permanent** :
+  `revenue_multi_period_postgres_integration_test.go`
+  (`TestGetRevenueTotalsThreePeriods_Postgres`) — établissement/produit/TVA
+  dédiés, une commande par fenêtre (courante/précédente/année passée), plus
+  deux commandes aux bornes exactes de la fenêtre courante (une pile à `End`,
+  qui doit être exclue — intervalle semi-ouvert — une pile à `Start`, qui doit
+  être incluse) pour verrouiller la sémantique `[start, end)` après la fusion
+  OR, plus une fenêtre à cheval sur le 2026-03-29/30 (même date que le bug de
+  timeline déjà rencontré une fois dans ce paquet). Compare le chemin fusionné
+  à l'ancien chemin (doit être rigoureusement égal) ET à des valeurs
+  attendues codées en dur (pour ne pas valider un bug présent identiquement
+  des deux côtés). **Non exécuté dans cet environnement** (pas de Docker
+  disponible ici) — `go build`/`go vet` passent avec `-tags
+  postgres_integration`, à faire tourner contre le Postgres 16 de dev local
+  (`docker-compose.postgres.yml`) avant merge.
+- **`GetRevenue`** (`service.go`) : les 6 appels remplacés par un seul appel à
+  `GetRevenueTotalsThreePeriods`.
+- **Exécuté** : `go build ./...`, `go vet ./internal/modules/analytics/...`
+  et `go vet -tags postgres_integration ./internal/modules/analytics/...`,
+  `go test ./internal/modules/analytics/...` — tous verts. Pas de mesure de
+  durée (voir Phase 0/Phase 1 : `analytics_bench --mode=grid` avant/après,
+  hors de cet environnement).
+- **Point de passage** : les 7 autres fusions retenues en Phase 2
+  (Commandes, Règlements, TVA, Annulations, Upsell, Produits/Options/Remises)
+  suivent le même motif (`PeriodWindow` + `*ScopeMultiPeriod` déjà posés pour
+  Annulations) — à enchaîner sans check-in intermédiaire une fois ce point de
+  passage validé, comme convenu.
+
+### PROMPT 25 Phase 0 — Cache du périmètre et du fuseau (2026-09-06)
+
+- **Constat de la Phase 1 (inventaire)** : sur les ~93 requêtes déclenchées par
+  un chargement des 10 onglets, 26 (28%) étaient `ResolveAccessibleMerchants`
+  (14 appels — 13 onglets + le sélecteur `/analytics/merchants`) et
+  `GetMerchantTimezone` (13 appels) — systématiques, même sur un hit du cache
+  de réponse complète existant (`s.redis`, `AnalyticsCacheTTL`), puisque le
+  périmètre doit être connu avant de pouvoir construire la clé de ce
+  cache-là. Aucune des deux ne touche de SQL financier — pas de test de
+  non-régression sur des montants nécessaire, pas de bascule d'heure d'été à
+  vérifier.
+- **`resolveAccessibleMerchants`** (`service.go`) : cache Redis par token brut
+  (`models.AnalyticsCachePrefix + "scope:" + token`), TTL
+  `accessibleMerchantsCacheTTL = models.UserCacheTTL` — **littéralement la
+  même constante**, pas une valeur dupliquée, pour qu'un futur changement du
+  TTL de `UserLoginRow` (`internal/modules/auth`) ne puisse pas être oublié
+  ici. Remplace les 14 appels directs à
+  `Repository.ResolveAccessibleMerchants`.
+  - **Précaution sécurité, vérifiée avant d'écrire le code** :
+    `auth.AuthService.InvalidateUserCache` existe mais n'est appelé nulle
+    part dans le dépôt (`grep` exhaustif, 2026-09-06) — un retrait de droit
+    aujourd'hui ne s'appuie déjà que sur l'expiration passive à 60 minutes de
+    `UserCacheTTL`, rien ne pousse d'invalidation immédiate. Ce cache-ci ne
+    fait donc que **s'aligner** sur la fraîcheur réelle déjà en vigueur, il ne
+    la dégrade pas. `internal/modules/auth` reste hors du périmètre de ce
+    lot — pas de câblage d'invalidation ajouté ici. Si
+    `InvalidateUserCache` est un jour effectivement appelé (un autre lot), il
+    suffira d'y ajouter la suppression de `accessibleMerchantsCacheKey(token)`
+    — même famille de clé, même token.
+- **`getMerchantTimezone`** (`service.go`) : cache Redis par `merchant_id`,
+  TTL 24h (`merchantTimezoneCacheTTL`) — pas une donnée de sécurité, pas de
+  couplage d'invalidation requis. Remplace les 13 appels directs à
+  `Repository.GetMerchantTimezone`.
+- **Les deux doublons inter-endpoints écartés en Phase 2** (fusion refusée
+  car les deux endpoints de chaque paire sont derrière des permissions
+  différentes) se résolvent par le même mécanisme, sans toucher au contrat :
+  - `getCustomersLifetimeStatsCached` : `GetClients` et `GetClientsTop`
+    appellent `Repository.GetCustomersLifetimeStats` (le scan le plus lourd
+    de l'onglet Clients, non borné par période) avec des paramètres
+    identiques lors d'un même chargement d'onglet — cache Redis 5 minutes
+    (`AnalyticsCacheTTL`, le TTL déjà en usage pour les réponses complètes).
+  - `getUpsellInstrumentationActiveCached` : même traitement pour
+    `Repository.GetUpsellInstrumentationActive`, appelée par `GetUpsell` et
+    `GetUpsellByStaff`.
+- **Tests** (`cache_test.go`) : propriété tri-indépendant/périmètre-sensible
+  pour les deux nouveaux constructeurs de clé (même forme que les 5 existants
+  déjà couverts), plus `TestAccessibleMerchantsCacheTTL_MatchesUserCacheTTL`
+  qui verrouille l'égalité littérale des deux constantes — c'est ce test qui
+  détecterait une régression future remplaçant la référence par une valeur
+  dupliquée à la main. Pas de test comportemental Redis (hit/miss réel) :
+  `Service.redis` est un `*redisclient.Client` concret, pas une interface —
+  même limite que le reste du fichier, où seuls les constructeurs de clé
+  purs sont testés (voir les 5 tests déjà présents dans `cache_test.go`).
+- **Exécuté** : `go build ./...`, `go vet ./internal/modules/analytics/...`,
+  `go test ./internal/modules/analytics/...` — tous verts. Pas de mesure de
+  durée (voir la Phase 1 : `analytics_bench --mode=grid` sera lancé
+  avant/après par le porteur du produit, pas depuis cet environnement).
+- **Suite** : fusion de l'onglet CA (6 requêtes de totaux → 1) avec son test
+  de non-régression, point de passage, puis les 7 autres fusions retenues en
+  Phase 2 sans check-in intermédiaire si le motif tient.
+
+### PROMPT 26 Phase 3/4 — Rattrapage et garde-fou anti-redérive (2026-09-07)
+
+- **Phase 3 — `cmd/backfill_customer_stats`** : recalcule les 3 colonnes depuis `orders` sous la
+  définition de Phase 1, et stamp `orders.customer_stats_counted_at` sur chaque commande actuellement
+  qualifiante (posé si absent, levé sinon) — sans cette étape, le marqueur d'idempotence de Phase 2
+  resterait NULL sur tout l'historique et une annulation/réouverture future d'une commande antérieure au
+  rattrapage ne déclencherait aucun retrait (`ReverseOrderFromCustomerStats` est un no-op si le marqueur
+  n'est pas posé).
+  - Idempotent et par lots (500 clients/lot, une petite transaction par client — jamais un verrou long
+    sur `customer`), reprenable via `--start-after=<customer_id>`. Mode simulation par défaut
+    (`--dry-run` implicite, `--apply` pour écrire), suivant l'instruction du prompt de toujours lancer la
+    simulation d'abord.
+  - Pas de flags de calibrage supplémentaires (taille de lot, pause) : l'utilisateur a précisé que le run
+    de production se ferait de nuit sans activité, donc pas de contention à ménager — la seule
+    justification restante pour le lot de 500 est d'éviter une transaction unique sur 26 000 lignes,
+    pas la concurrence.
+- **Simulation sur staging (26 224 clients)** : 6458 clients corrigés (24,6 %) — cohérent avec l'ordre de
+  grandeur du 29 % cité pour PROD (périmètre différent, donc pourcentage non identique attendu).
+  Somme des écarts absolus : 3171 commandes, 59 962,92 € de `customer_total_spent`. Exécuté en 13 s en
+  dry-run.
+- **Apply exécuté sur staging** (mutation additive/idempotente, staging est prévu pour ça — voir
+  [[reference_staging_db_access]]) : mêmes chiffres (6458 changés), **11 min 52 s** pour 26 224 clients
+  avec l'écriture réelle (transaction courte par client, aller-retour réseau vers Render). Un second
+  passage en dry-run juste après confirme `changed=0` sur les 26 224 — le recalcul est stable, la
+  correction ne se redéfait pas elle-même.
+- **Commande et créneau pour la production** : même commande, `--apply` sans `--start-after` pour un
+  premier passage complet. Durée attendue à l'échelle de la volumétrie PROD (26 224 sur staging → 12 min) :
+  à budgéter par prudence sur tout le créneau creux 3h-5h documenté dans CLAUDE.md, PROD ayant plus de
+  clients et d'historique de commandes que staging. Si interrompu, relancer avec
+  `--start-after=<dernier customer_id affiché>` plutôt que reprendre à zéro.
+- **Phase 4 — `TasksManager.ReconcileCustomerStats`** (`internal/tasks/customer_stats.go`), cron quotidien
+  `30 3 * * *` (`cmd/api/tasks.go`, entre `RecomputeUpsellPatterns` à 3h et `CleanupExpiredPasswordResets`
+  à 4h30) :
+  - Échantillon de 500 clients (`CustomersRepository.SampleCustomerStatsDrift`, `ORDER BY random()`),
+    comparés à un recalcul live sous la même définition canonique — jamais de correction depuis ce cron,
+    seulement une détection (le rattrapage reste un geste délibéré, `cmd/backfill_customer_stats`).
+  - **Trace exploitable** (migration `122_customer_stats_reconciliation_runs`) : une ligne par exécution
+    (taille d'échantillon, mismatches, ratio, écarts max, seuil, alerte, durée) — l'infra cron de ce dépôt
+    n'a aucun journal d'exécution propre (CLAUDE.md), donc sans cette table la tâche serait aussi
+    invisible que les autres.
+  - Seuil d'alerte : 1 % du échantillon. Choix délibérément strict — juste après Phase 3 la dérive réelle
+    est nulle, donc tout écart non-bruit mérite un log niveau Error. Aucun canal d'alerte externe
+    (Slack/pager) n'existe dans ce dépôt pour une tâche de fond : le log Error + la ligne persistée sont
+    le plafond honnête de ce que cette tâche peut faire seule.
+- **Vérifié** : `go build ./...` propre sur les paquets modifiés, `go vet` propre sur
+  `customers`/`order_life_cycle`/`tasks`/`cmd/backfill_customer_stats` (un vet pré-existant sans rapport
+  dans `cmd/api/routes.go`, module `auth`, n'est pas de ce lot). Nouveau test
+  `TestStatsReconciliation_Postgres` (client sain non signalé, client à dérive simulée détecté avec
+  l'écart exact, ligne persistée relue) et migration 122 appliquée sur staging — tous verts.
+
+### PROMPT 26 Phase 1/2 — Réparer les compteurs client : diagnostic et écriture (2026-09-06)
+
+- **Un seul écrivain, deux points d'appel** : `CustomersRepository.UpdateLoyaltyFromOrder`
+  ([repository.go:1454](../internal/modules/customers/repository.go#L1454)) est le seul code qui touche
+  `customer_nb_orders`/`customer_total_spent`/`last_order_date`, appelé uniquement depuis `SetDelivered`
+  et `SetDeliveredExternal` (`order_life_cycle/service.go`) — donc déjà un point de passage unique pour
+  tous les canaux de clôture (POS, ScanNOrder, kiosk via `delivery_sessions`, Uber Eats). L'hypothèse
+  « seul le POS est instrumenté » est fausse.
+- **4 causes confirmées, vérifiées contre le code et contre staging (26 224 clients,
+  `RENDER_STAGING_DATABASE_URL`)** :
+  1. **Annulation après clôture jamais décrémentée** (dominante) — `DeleteOrderLocal`
+     ([repository.go:774](../internal/modules/order_life_cycle/repository.go#L774)) écrit
+     `state='CLOSED', brand_status='CANCELED'` sans aucune garde sur l'état courant ; `SetOrderDeleted`
+     n'appelle jamais `OrderStillOpen` avant `DeleteOrder`. Preuve staging : 394 commandes
+     CANCELED/DELETED avec `delivered_on` renseigné, et sur le périmètre strict WELLO_RESTO-only,
+     3323 clients sur-comptés contre 351 sous-comptés — signature d'un défaut de décrémentation.
+  2. **Réouverture + reclôture double-compte** — `ReopenClosedOrder` remet `state='OPEN'` sans condition ;
+     `ProcessOrderLoyalty` n'a aucune garde d'idempotence sur le crédit brut, contrairement à la
+     progression fidélité juste en dessous (`customer_loyalty_progress_order`). Preuve staging :
+     62 réouvertures dans `audit_logs`, 39 commandes closes plus d'une fois. Même mécanisme pour
+     `SetDeliveredExternal`, qui ne vérifie délibérément pas `OrderStillOpen` (webhook de confirmation
+     de livraison pouvant arriver après une clôture manuelle).
+  3. **Filtre de marque trop strict** — `qGetOrder` filtrait `AND o.brand = 'WELLO_RESTO'` : une commande
+     Uber Eats/Deliveroo clôturée ne comptait jamais, même avec un `customer_id`. 4036 clients (15,4 %)
+     ont au moins une commande qualifiante hors WELLO_RESTO sur staging.
+  4. **Échec silencieux** — `ProcessOrderLoyalty` logue l'erreur d'`UpdateLoyaltyFromOrder` mais retourne
+     toujours `nil` (priorité assumée : le cycle de vie de la commande prime sur la fidélité). Explique
+     plausiblement le résidu de sous-comptage. Non modifié dans ce lot — le contrôle périodique (Phase 4)
+     couvrira ce résidu quelle que soit son origine exacte.
+- **Définition retenue, validée par l'utilisateur** : reprise du périmètre canonique déjà en place côté
+  analytics (`AnalyticsOrdersScope`, `internal/modules/analytics/scope.go`) — compte toute commande
+  `state IN ('CLOSED','DONE')` et `upper(brand_status) NOT IN ('DELETED','CANCELED')`, **tous canaux
+  confondus** (changement de comportement assumé : ~15 % des clients verront leur `customer_nb_orders`
+  augmenter dès le rattrapage). DENIED exclu de fait (jamais CLOSED/DONE). Montant = `o.price`, comme
+  partout ailleurs. `last_order_date` = `o.creation_date` de la commande (comme
+  `analytics.GetCustomersLifetimeStats`), plus jamais `now()` au moment de la clôture.
+- **Mécanisme retenu : un marqueur d'idempotence sur `orders`**, pas un simple re-scope des requêtes
+  existantes. Migration additive `121_customer_stats_counted_marker` ajoute
+  `orders.customer_stats_counted_at timestamptz` (NULL = ne contribue à aucun compteur actuellement).
+  `CustomersRepository.ApplyOrderToCustomerStats`/`ReverseOrderFromCustomerStats`
+  ([repository.go:1381](../internal/modules/customers/repository.go#L1381)) sont deux requêtes atomiques
+  (CTE `UPDATE ... RETURNING` + `UPDATE ... FROM`) : le crédit/retrait et la pose/levée du marqueur se
+  font en un seul aller-retour, sans fenêtre lecture-puis-écriture. `last_order_date` n'est jamais
+  décrémenté par arithmétique côté retrait : recalculé par `MAX(creation_date)` sur les commandes encore
+  marquées comptées, pour réapparaître correctement sur la commande précédente si la plus récente est
+  annulée. Postgres uniquement (`dbx.ActiveDialect() != Postgres` → no-op), conforme à CLAUDE.md
+  (MySQL n'est plus une cible live, pas de nouvelle logique MySQL).
+- **Câblage des 3 points d'écriture** :
+  - `UpdateLoyaltyFromOrder` : `qGetOrder` ne filtre plus par marque (compteurs cross-canal) ; le filtre
+    `brand == 'WELLO_RESTO'` est réappliqué juste avant la boucle des programmes de fidélité, qui reste
+    inchangée (question de périmètre produit distincte, hors sujet de ce lot).
+  - `DeleteOrderLocal` : appelle `ReverseOrderFromCustomerStats` après le passage en CANCELED — couvre
+    aussi les annulations marketplace initiées par un staff (`UberEatsService.CancelOrder`/
+    `DeliverooService.CancelOrder` sont uniquement appelées en aval de `DeleteOrder`, jamais comme point
+    d'entrée indépendant — vérifié par recherche exhaustive des appelants).
+  - `ReopenClosedOrder` (repository) : appelle `ReverseOrderFromCustomerStats` avant de remettre
+    `state='OPEN'`, pour que la reclôture recrédite proprement avec un prix éventuellement corrigé.
+  - Chemins volontairement non touchés : le webhook Uber Eats `event_order_canceled.go` (`CancelOrder`,
+    `WHERE state = 'OPEN'`) ne peut jamais annuler une commande déjà comptée ; le webhook Deliveroo
+    `UpdateOrderRejected` (DENIED, refus à l'intake) n'atteint jamais un état compté.
+- **Vérifié** : `go build ./...`, suite `postgres_integration` de `customers` et `order_life_cycle`
+  contre staging — `TestCustomersRepository_Postgres` (idempotence étendue aux compteurs, pas seulement
+  à la progression fidélité) et le nouveau `TestCustomerStats_Postgres` (cross-canal, double-clôture,
+  annulation après livraison avec recalcul de `last_order_date`, réouverture + correction de prix) tous
+  verts. Un échec préexistant sans rapport (`TestOrderLifeCycleRepository_Postgres`, colonne
+  `brand_store_id` de la migration 111 non appliquée sur staging) n'est pas de ce lot.
+- **Reste à faire** : Phase 3 (script de rattrapage, idempotent, par lots, mode simulation d'abord) et
+  Phase 4 (contrôle périodique anti-redérive) — séquencées avec check-in utilisateur entre chaque, comme
+  demandé.
+
 ### PROMPT 24 Phase 5 — Pool analytique : 2→4 connexions, work_mem 16→8 Mo (2026-09-06)
 
 - **`internal/database/postgres.go`** : `AnalyticsMaxOpenConns` 2→4,

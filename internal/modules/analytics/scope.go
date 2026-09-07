@@ -152,6 +152,100 @@ func AnalyticsAllOrdersCreatedScope(merchantIDs []string, startUTC, endUTC time.
 	return strings.TrimSpace(analyticsAllOrdersCreatedScopeWhere), []interface{}{merchantIDs, startUTC, endUTC}
 }
 
+// PeriodWindow is a half-open UTC date range [Start, End) — one of the
+// current/previous/previous-year (or current/previous) windows every tab in
+// this package computes in Go before querying. Shared by every "N periods in
+// one query" repository method PROMPT 25 Phase 3 introduces: each such
+// method takes 2-3 of these and returns one aggregate row per window, via
+// FILTER (WHERE ...) over a single scan, instead of running the same query N
+// times.
+type PeriodWindow struct {
+	Start, End time.Time
+}
+
+// periodFilterPredicate returns the boolean expression (and its two args) for
+// one window's FILTER (WHERE ...) clause on an aggregate, against
+// alias.creation_date. Reused verbatim both inside the scope's WHERE (via
+// AnalyticsOrdersScopeMultiPeriod/AnalyticsCancellationsScopeMultiPeriod/
+// AnalyticsAllOrdersCreatedScopeMultiPeriod below, always against alias "o",
+// so a row can only be scanned if it falls in at least one window) and again
+// inside each aggregate's own FILTER (so that aggregate only counts rows from
+// its own window) — the two must always be built from the same PeriodWindow
+// value, never two independently-typed bounds for what is conceptually one
+// window, which is exactly the class of bug ("a window boundary shifted by
+// one merge, silently") this package's non-regression tests exist to catch.
+// alias is a parameter (not hardcoded "o") because a query built from a CTE
+// — GetRevenueTotalsThreePeriods' includeHT branch, repository.go — reads
+// creation_date through a different alias in its outer SELECT than in the
+// CTE's own WHERE; alias is always a fixed Go string literal at the call
+// site, never request-derived, so this never becomes an injection surface.
+func periodFilterPredicate(w PeriodWindow, alias string) (string, []interface{}) {
+	return alias + ".creation_date >= ? AND " + alias + ".creation_date < ?", []interface{}{w.Start, w.End}
+}
+
+// multiPeriodOrWhere joins N windows' own predicates (against alias "o" —
+// every *ScopeMultiPeriod function below builds a WHERE clause for a query
+// whose FROM is `orders o`) with OR, parenthesized as one group — the shared
+// shape behind every *ScopeMultiPeriod function below. Deliberately an OR of
+// N small ranges, never a single range spanning their union: for a "current +
+// previous + previous year" triplet, the gap between the previous period and
+// the previous year's window can span most of a year, and scanning that whole
+// gap would erase a merge's benefit. An OR of small ranges on (merchant_id,
+// creation_date) lets the planner satisfy each branch as its own index range
+// scan, combined via BitmapOr, instead of one wide sequential range.
+func multiPeriodOrWhere(windows []PeriodWindow) (string, []interface{}) {
+	parts := make([]string, len(windows))
+	var args []interface{}
+	for i, w := range windows {
+		expr, wargs := periodFilterPredicate(w, "o")
+		parts[i] = "(" + expr + ")"
+		args = append(args, wargs...)
+	}
+	return "(" + strings.Join(parts, " OR ") + ")", args
+}
+
+// AnalyticsOrdersScopeMultiPeriod is AnalyticsOrdersScope's multi-window
+// sibling — same scope (state/brand_status), but the single [start, end)
+// bound becomes multiPeriodOrWhere's OR of every window's own bound. See that
+// function's doc comment for why, and AnalyticsOrdersScope's for why every
+// other condition here must stay byte-for-byte identical to it.
+func AnalyticsOrdersScopeMultiPeriod(merchantIDs []string, windows []PeriodWindow) (string, []interface{}) {
+	orWhere, orArgs := multiPeriodOrWhere(windows)
+	where := `
+		o.merchant_id = ANY(?)
+		AND ` + orWhere + `
+		AND o.state IN ('CLOSED', 'DONE')
+		AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED')
+	`
+	args := append([]interface{}{merchantIDs}, orArgs...)
+	return strings.TrimSpace(where), args
+}
+
+// AnalyticsCancellationsScopeMultiPeriod is AnalyticsCancellationsScope's
+// multi-window sibling — see AnalyticsOrdersScopeMultiPeriod's doc comment.
+func AnalyticsCancellationsScopeMultiPeriod(merchantIDs []string, windows []PeriodWindow) (string, []interface{}) {
+	orWhere, orArgs := multiPeriodOrWhere(windows)
+	where := `
+		o.merchant_id = ANY(?)
+		AND ` + orWhere + `
+		AND upper(o.brand_status) = 'CANCELED'
+	`
+	args := append([]interface{}{merchantIDs}, orArgs...)
+	return strings.TrimSpace(where), args
+}
+
+// AnalyticsAllOrdersCreatedScopeMultiPeriod is AnalyticsAllOrdersCreatedScope's
+// multi-window sibling — see AnalyticsOrdersScopeMultiPeriod's doc comment.
+func AnalyticsAllOrdersCreatedScopeMultiPeriod(merchantIDs []string, windows []PeriodWindow) (string, []interface{}) {
+	orWhere, orArgs := multiPeriodOrWhere(windows)
+	where := `
+		o.merchant_id = ANY(?)
+		AND ` + orWhere + `
+	`
+	args := append([]interface{}{merchantIDs}, orArgs...)
+	return strings.TrimSpace(where), args
+}
+
 // ResolveAccessibleMerchants used to live here as a bare
 // []string{user.MerchantID} (PROMPT 03), on the theory that the token
 // carries exactly one MerchantID (docs/analytics/DROITS.md, wello-back-office

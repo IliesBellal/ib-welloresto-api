@@ -70,13 +70,25 @@ func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merch
 
 	// ---- 2. Update
 	_, err := db.ExecContext(ctx, `
-		UPDATE orders 
+		UPDATE orders
 		SET state = 'OPEN'
 		WHERE order_id = ? AND merchant_id = ?
 	`, orderID, merchantID)
 	if err != nil {
 		log.Error(err.Error())
 		return fmt.Errorf("reopen update failed: %w", err)
+	}
+
+	// Une commande réouverte pour correction (prix, produits...) sort du
+	// périmètre "comptée" tant qu'elle n'est pas reclôturée : sans ce retrait,
+	// une reclôture avec un prix corrigé ne ferait qu'ajouter le nouveau
+	// montant sans jamais retirer l'ancien (PROMPT 26 Phase 1 — double
+	// comptage confirmé sur staging via audit_logs : 62 réouvertures, 39
+	// commandes closes plus d'une fois). La reclôture recrédite proprement
+	// via ApplyOrderToCustomerStats. No-op si la commande n'était pas comptée.
+	if err := r.custoRepo.ReverseOrderFromCustomerStats(ctx, orderID); err != nil {
+		log.Error(err.Error())
+		return fmt.Errorf("reverse customer stats on reopen failed: %w", err)
 	}
 	return nil
 }
@@ -816,8 +828,15 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
         WHERE order_id = ?`,
 		reasonID, comment, prevHash, newHash, signature, classifyCancelledByType(userID), orderID,
 	)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Une commande annulée après avoir déjà été comptée (livrée, puis annulée
+	// a posteriori — le cas le plus fréquemment oublié, PROMPT 26 Phase 1) ne
+	// doit plus contribuer aux compteurs client. No-op si la commande n'était
+	// pas comptée (annulée avant clôture, ou déjà annulée).
+	return r.custoRepo.ReverseOrderFromCustomerStats(ctx, orderID)
 }
 
 // GetOrderPaymentBalance retourne le prix de la commande et le total encaisse

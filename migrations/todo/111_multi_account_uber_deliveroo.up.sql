@@ -33,21 +33,55 @@
 -- unique_mapping sur (merchant_id, item_id)) ni au code Go qui s'appuie dessus
 -- (ON CONFLICT / ON DUPLICATE KEY). Les rendre uniques par compte est un chantier
 -- séparé, hors scope ici.
+--
+-- ATTENTION - CE FICHIER NE DOIT PAS ÊTRE EXÉCUTÉ DANS UNE TRANSACTION.
+-- Réécrit le 2026-09-07 (PROMPT 27 Phase 1) : le fichier original créait tous
+-- ses index sans CONCURRENTLY, dont idx_orders_brand_store_id sur orders — la
+-- table la plus chaude, celle-là même que 087_analytics_indexes.up.sql a été
+-- écrite pour protéger d'un verrou SHARE en plein service
+-- (docs/migration-postgres/67-migration-status-audit.md §3.2 ligne 10). Tous
+-- les CREATE INDEX ci-dessous sont maintenant CONCURRENTLY, y compris sur les
+-- tables de mapping (pas aussi chaudes qu'orders, mais rien ne coûte à les
+-- traiter pareil). Les ALTER TABLE ... DROP/ADD PRIMARY KEY restent des
+-- opérations classiques (hors CONCURRENTLY, impossible pour une PK) : sans
+-- risque ici, integration_uber_eats/integration_deliveroo sont de petites
+-- tables (6 et 3 lignes sur staging le 2026-09-07 — la volumétrie
+-- de production reste à mesurer séparément). CREATE INDEX CONCURRENTLY est
+-- refusé par PostgreSQL à l'intérieur d'un bloc transactionnel : jouer ce
+-- fichier instruction par instruction, hors BEGIN/COMMIT, comme
+-- 087_analytics_indexes.up.sql. Si une création échoue en cours de route,
+-- l'index reste "invalid" : le supprimer (.down.sql) et rejouer, ne jamais en
+-- laisser un invalide en place.
+--
+-- PRÉ-REQUIS BLOQUANT, à exécuter et à faire renvoyer 0 ligne avant de jouer
+-- quoi que ce soit ci-dessous — un merchant_id en doublon ferait échouer la
+-- nouvelle clé primaire (ADD PRIMARY KEY) :
+--
+--   SELECT merchant_id, count(*) FROM integration_uber_eats
+--   GROUP BY merchant_id HAVING count(*) > 1;
+--   SELECT merchant_id, count(*) FROM integration_deliveroo
+--   GROUP BY merchant_id HAVING count(*) > 1;
+--
+-- (Confirmé 0 ligne pour les deux sur staging le 2026-09-07 — à revérifier
+-- explicitement contre production, ne pas supposer que l'absence de doublon
+-- sur staging s'y reproduit.)
 
 -- ---------------------------------------------------------------------------
 -- 1. integration_uber_eats / integration_deliveroo : clé composite par compte
 -- ---------------------------------------------------------------------------
--- Sans risque de collision : une seule ligne par merchant_id existe aujourd'hui
--- (c'était la PK), donc (merchant_id, store_id) / (merchant_id, location_id) est
--- garanti unique au moment de cette migration.
+-- Sans risque de collision une fois le pré-requis ci-dessus vérifié : la PK
+-- actuelle garantit qu'une seule ligne par merchant_id existe, donc
+-- (merchant_id, store_id) / (merchant_id, location_id) est unique dès que
+-- ce pré-requis est confirmé.
 ALTER TABLE integration_uber_eats DROP CONSTRAINT integration_uber_eats_pkey;
 ALTER TABLE integration_uber_eats ADD PRIMARY KEY (merchant_id, store_id);
-CREATE INDEX IF NOT EXISTS idx_integration_uber_eats_store_id
-    ON integration_uber_eats (store_id);
 
 ALTER TABLE integration_deliveroo DROP CONSTRAINT integration_deliveroo_pkey;
 ALTER TABLE integration_deliveroo ADD PRIMARY KEY (merchant_id, location_id);
-CREATE INDEX IF NOT EXISTS idx_integration_deliveroo_location_id
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_integration_uber_eats_store_id
+    ON integration_uber_eats (store_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_integration_deliveroo_location_id
     ON integration_deliveroo (location_id);
 
 -- ---------------------------------------------------------------------------
@@ -80,13 +114,13 @@ SET store_id = iue.store_id
 FROM integration_uber_eats iue
 WHERE iue.merchant_id = m.merchant_id AND m.store_id IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_iue_products_mapping_store_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_iue_products_mapping_store_id
     ON integration_uber_eats_products_mapping (merchant_id, store_id);
-CREATE INDEX IF NOT EXISTS idx_iue_options_mapping_store_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_iue_options_mapping_store_id
     ON integration_uber_eats_options_mapping (merchant_id, store_id);
-CREATE INDEX IF NOT EXISTS idx_iue_attributes_mapping_store_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_iue_attributes_mapping_store_id
     ON integration_uber_eats_attributes_mapping (merchant_id, store_id);
-CREATE INDEX IF NOT EXISTS idx_iue_components_mapping_store_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_iue_components_mapping_store_id
     ON integration_uber_eats_components_mapping (merchant_id, store_id);
 
 COMMENT ON COLUMN integration_uber_eats_products_mapping.store_id IS 'Compte Uber Eats propriétaire du mapping (integration_uber_eats.store_id). NULL seulement pour une ligne orpheline (marchand sans intégration en base au moment de la migration 111).';
@@ -122,13 +156,13 @@ SET location_id = idr.location_id
 FROM integration_deliveroo idr
 WHERE idr.merchant_id = m.merchant_id AND m.location_id IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_idr_products_mapping_location_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idr_products_mapping_location_id
     ON integration_deliveroo_products_mapping (merchant_id, location_id);
-CREATE INDEX IF NOT EXISTS idx_idr_options_mapping_location_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idr_options_mapping_location_id
     ON integration_deliveroo_options_mapping (merchant_id, location_id);
-CREATE INDEX IF NOT EXISTS idx_idr_attributes_mapping_location_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idr_attributes_mapping_location_id
     ON integration_deliveroo_attributes_mapping (merchant_id, location_id);
-CREATE INDEX IF NOT EXISTS idx_idr_components_mapping_location_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idr_components_mapping_location_id
     ON integration_deliveroo_components_mapping (merchant_id, location_id);
 
 COMMENT ON COLUMN integration_deliveroo_products_mapping.location_id IS 'Compte Deliveroo propriétaire du mapping (integration_deliveroo.location_id). NULL seulement pour une ligne orpheline (marchand sans intégration en base au moment de la migration 111).';
@@ -159,7 +193,11 @@ SET brand_store_id = idr.location_id
 FROM integration_deliveroo idr
 WHERE o.brand = 'DELIVEROO' AND o.merchant_id = idr.merchant_id AND o.brand_store_id IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_orders_brand_store_id
+-- La table la plus chaude du schéma : CONCURRENTLY non négociable ici (voir
+-- l'avertissement en tête de fichier).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_orders_brand_store_id
     ON orders (merchant_id, brand, brand_store_id);
 
 COMMENT ON COLUMN orders.brand_store_id IS 'Compte d''origine de la commande chez le provider (integration_uber_eats.store_id quand brand = ''UBER_EATS'', integration_deliveroo.location_id quand brand = ''DELIVEROO''). NULL pour WELLO_RESTO/SCANNORDER et pour les commandes antérieures à la migration 111 sans intégration retrouvée.';
+
+ANALYZE orders;

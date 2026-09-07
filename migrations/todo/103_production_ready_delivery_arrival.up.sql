@@ -17,9 +17,16 @@
 -- Calculées à l'écriture (resolveProductionReadyAt / resolveDeliveryArrivalAt,
 -- internal/modules/order_life_cycle/repository.go), comme estimated_ready et
 -- delivery_travel_seconds.
+--
+-- PostgreSQL migration (réécrite le 2026-09-07, PROMPT 27 Phase 1) : seule
+-- syntaxe MySQL non convertie du fichier original, la clause AFTER (Postgres
+-- n'ordonne pas les colonnes à la demande) — supprimée, sans autre
+-- changement. Le schéma obtenu correspond à ce qui est réellement sur
+-- staging (docs/migration-postgres/67-migration-status-audit.md §1.2) :
+-- timestamp without time zone, nullable, pas de défaut.
 ALTER TABLE orders
-  ADD COLUMN production_ready_at TIMESTAMP NULL DEFAULT NULL AFTER delivery_travel_seconds,
-  ADD COLUMN delivery_arrival_at TIMESTAMP NULL DEFAULT NULL AFTER production_ready_at;
+  ADD COLUMN IF NOT EXISTS production_ready_at timestamp,
+  ADD COLUMN IF NOT EXISTS delivery_arrival_at timestamp;
 
 -- dateCall : confirmé non mort (contrairement à la demande initiale) mais
 -- sans réelle utilité propre — toujours écrit à UTC_TIMESTAMP() à la création

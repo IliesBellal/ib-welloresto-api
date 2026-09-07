@@ -121,6 +121,65 @@ func (r *Repository) GetProductsScopeTotals(ctx context.Context, merchantIDs []s
 	return totals, nil
 }
 
+// productsScopeTotalsSelectFragment returns one window's contribution
+// (quantity/TTC/HT plus the cost-known subset) to
+// GetProductsScopeTotalsTwoPeriods' SELECT list — same 7 aggregates as
+// GetProductsScopeTotals, FILTERed per window.
+func productsScopeTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COALESCE(SUM(oi.quantity) FILTER (WHERE ` + expr + `), 0),
+		COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) FILTER (WHERE ` + expr + `), 0),
+		` + roundToIntExpr("COALESCE(SUM("+htLineExpr+") FILTER (WHERE "+expr+"), 0)") + `,
+		COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) FILTER (WHERE ` + expr + ` AND oi.cost_price_unit IS NOT NULL), 0),
+		COALESCE(SUM(oi.cost_price_unit * oi.quantity) FILTER (WHERE ` + expr + ` AND oi.cost_price_unit IS NOT NULL), 0),
+		COALESCE(SUM(oi.quantity) FILTER (WHERE ` + expr + ` AND oi.cost_price_unit IS NULL AND oi.cost_price_reason = 'NO_RECIPE'), 0),
+		COALESCE(SUM(oi.quantity) FILTER (WHERE ` + expr + ` AND oi.cost_price_unit IS NULL AND oi.cost_price_reason = 'INCOMPLETE_RECIPE'), 0)
+	`)
+	var args []interface{}
+	for i := 0; i < 7; i++ {
+		args = append(args, exprArgs...)
+	}
+	return fragment, args
+}
+
+// GetProductsScopeTotalsTwoPeriods replaces two GetProductsScopeTotals calls
+// (current/previous) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetProductsScopeTotalsTwoPeriods(ctx context.Context, merchantIDs []string, categoryID string, current, previous PeriodWindow) (currentTotals, previousTotals ProductsScopeTotals, err error) {
+	windows := []PeriodWindow{current, previous}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	categoryFilter, scopeArgs := productsCategoryFilter(categoryID, scopeArgs)
+
+	currentFragment, currentArgs := productsScopeTotalsSelectFragment(current)
+	previousFragment, previousArgs := productsScopeTotalsSelectFragment(previous)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`
+	`) + "\n" + htLineJoins + "\nWHERE " + scopeWhere + categoryFilter
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.QuantitySold, &currentTotals.RevenueTTCCents, &currentTotals.RevenueHTCents,
+			&currentTotals.CostKnownRevenueTTCCents, &currentTotals.CostPriceCents,
+			&currentTotals.NoRecipeQuantity, &currentTotals.IncompleteRecipeQuantity,
+			&previousTotals.QuantitySold, &previousTotals.RevenueTTCCents, &previousTotals.RevenueHTCents,
+			&previousTotals.CostKnownRevenueTTCCents, &previousTotals.CostPriceCents,
+			&previousTotals.NoRecipeQuantity, &previousTotals.IncompleteRecipeQuantity,
+		)
+	})
+	if err != nil {
+		return ProductsScopeTotals{}, ProductsScopeTotals{}, fmt.Errorf("get products scope totals two periods: %w", err)
+	}
+	return currentTotals, previousTotals, nil
+}
+
 // ProductAggRow is GetProductsPage's raw row — CostPriceCents is nullable
 // (NULL when no line for this product carried a known cost_price_unit),
 // mapped to ProductRow's nil-means-unknown fields in service.go, never a

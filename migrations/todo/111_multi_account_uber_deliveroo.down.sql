@@ -4,20 +4,24 @@
 -- plus d'un compte Uber Eats ou Deliveroo au moment du rollback (violation
 -- d'unicité) : à n'utiliser qu'en rollback immédiat, avant toute création
 -- effective d'un deuxième compte.
+--
+-- CONCURRENTLY requis aussi côté suppression, symétriquement au .up.sql
+-- (réécrit le 2026-09-07, PROMPT 27 Phase 1) : hors transaction, instruction
+-- par instruction.
 
 -- ---------------------------------------------------------------------------
 -- 4. orders
 -- ---------------------------------------------------------------------------
-DROP INDEX IF EXISTS idx_orders_brand_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_orders_brand_store_id;
 ALTER TABLE orders DROP COLUMN IF EXISTS brand_store_id;
 
 -- ---------------------------------------------------------------------------
 -- 3. Mappings menu Deliveroo
 -- ---------------------------------------------------------------------------
-DROP INDEX IF EXISTS idx_idr_components_mapping_location_id;
-DROP INDEX IF EXISTS idx_idr_attributes_mapping_location_id;
-DROP INDEX IF EXISTS idx_idr_options_mapping_location_id;
-DROP INDEX IF EXISTS idx_idr_products_mapping_location_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_idr_components_mapping_location_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_idr_attributes_mapping_location_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_idr_options_mapping_location_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_idr_products_mapping_location_id;
 
 ALTER TABLE integration_deliveroo_components_mapping DROP COLUMN IF EXISTS location_id;
 ALTER TABLE integration_deliveroo_attributes_mapping DROP COLUMN IF EXISTS location_id;
@@ -27,10 +31,10 @@ ALTER TABLE integration_deliveroo_products_mapping DROP COLUMN IF EXISTS locatio
 -- ---------------------------------------------------------------------------
 -- 2. Mappings menu Uber Eats
 -- ---------------------------------------------------------------------------
-DROP INDEX IF EXISTS idx_iue_components_mapping_store_id;
-DROP INDEX IF EXISTS idx_iue_attributes_mapping_store_id;
-DROP INDEX IF EXISTS idx_iue_options_mapping_store_id;
-DROP INDEX IF EXISTS idx_iue_products_mapping_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_iue_components_mapping_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_iue_attributes_mapping_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_iue_options_mapping_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_iue_products_mapping_store_id;
 
 ALTER TABLE integration_uber_eats_components_mapping DROP COLUMN IF EXISTS store_id;
 ALTER TABLE integration_uber_eats_attributes_mapping DROP COLUMN IF EXISTS store_id;
@@ -40,10 +44,10 @@ ALTER TABLE integration_uber_eats_products_mapping DROP COLUMN IF EXISTS store_i
 -- ---------------------------------------------------------------------------
 -- 1. integration_uber_eats / integration_deliveroo
 -- ---------------------------------------------------------------------------
-DROP INDEX IF EXISTS idx_integration_deliveroo_location_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_integration_deliveroo_location_id;
 ALTER TABLE integration_deliveroo DROP CONSTRAINT integration_deliveroo_pkey;
 ALTER TABLE integration_deliveroo ADD PRIMARY KEY (merchant_id);
 
-DROP INDEX IF EXISTS idx_integration_uber_eats_store_id;
+DROP INDEX CONCURRENTLY IF EXISTS idx_integration_uber_eats_store_id;
 ALTER TABLE integration_uber_eats DROP CONSTRAINT integration_uber_eats_pkey;
 ALTER TABLE integration_uber_eats ADD PRIMARY KEY (merchant_id);

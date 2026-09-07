@@ -1,5 +1,12 @@
 -- PROMPT 21 — Assainir le modèle de remises, Phase 2+3 (expansion).
 --
+-- ATTENTION - la section 3 (discount_redemptions) contient un CREATE UNIQUE
+-- INDEX CONCURRENTLY sur orderitems (réécrit le 2026-09-07, PROMPT 27 Phase
+-- 1 — voir le commentaire à cet endroit précis) : cette instruction et la
+-- suivante doivent être jouées hors bloc transactionnel. Le reste de ce
+-- fichier peut suivre la convention habituelle du projet (instruction par
+-- instruction, cf. docs/RBAC_DEPLOIEMENT_PROD.md).
+--
 -- Additif uniquement, aucune colonne supprimée (voir 119_drop_cart_discount_
 -- legacy_columns pour les DROP préparés, non joués par ce lot). Trois volets :
 --
@@ -179,7 +186,32 @@ ALTER TABLE discount_redemptions
 -- — order_item_id alone has no unique constraint to reference yet, even
 -- though it's already unique in practice (GENERATED ALWAYS AS IDENTITY).
 -- Made explicit here so the FK below has something to point at.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_orderitems_order_item_id ON orderitems (order_item_id);
+--
+-- CONCURRENTLY + ATTACH (réécrit le 2026-09-07, PROMPT 27 Phase 1) : le
+-- fichier original créait cet index unique sans CONCURRENTLY sur orderitems
+-- — une des quatre tables les plus chaudes du schéma (celles protégées par
+-- CONCURRENTLY dans 087_analytics_indexes.up.sql), 77 454 lignes sur staging
+-- au 2026-09-07, potentiellement bien plus en production. CREATE INDEX
+-- CONCURRENTLY est refusé dans un bloc transactionnel : cette instruction et
+-- la suivante (ADD CONSTRAINT ... UNIQUE USING INDEX, qui attache l'index
+-- déjà construit sans le reconstruire ni revalider un verrou long) doivent
+-- être jouées hors BEGIN/COMMIT, avant de poursuivre le reste de ce fichier.
+-- Si la création échoue en cours de route, l'index reste "invalid" : le
+-- supprimer et rejouer, ne jamais en laisser un invalide en place.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_orderitems_order_item_id ON orderitems (order_item_id);
+
+-- ALTER TABLE ... ADD CONSTRAINT n'a pas d'équivalent IF NOT EXISTS en
+-- Postgres : gardé par un DO $$ pour rester rejouable comme le reste de ce
+-- fichier (CREATE INDEX ... IF NOT EXISTS, ON CONFLICT DO NOTHING) — sans
+-- ça, relancer ce fichier après un premier passage réussi échouerait ici.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_orderitems_order_item_id'
+    ) THEN
+        ALTER TABLE orderitems ADD CONSTRAINT uq_orderitems_order_item_id UNIQUE USING INDEX uq_orderitems_order_item_id;
+    END IF;
+END $$;
 ALTER TABLE discount_redemptions
     ADD CONSTRAINT fk_discount_redemptions_order_item_id
     FOREIGN KEY (order_item_id) REFERENCES orderitems (order_item_id);

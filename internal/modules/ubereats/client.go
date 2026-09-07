@@ -59,7 +59,7 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 	data.Set("client_secret", c.config.ClientSecret)
 	data.Set("client_id", c.config.ClientID)
 	data.Set("grant_type", "client_credentials")
-	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write eats.store.orders.restaurantdelivery.status eats.byoc.position")
+	data.Set("scope", "eats.order eats.report eats.store eats.store.orders.cancel eats.store.orders.read eats.store.status.read eats.store.status.write eats.store.orders.restaurantdelivery.status") //eats.byoc.position retiré en attendant l'ajout du scope par Uber
 
 	resp, err := c.client.PostForm(c.config.TokenURL, data)
 	if err != nil {

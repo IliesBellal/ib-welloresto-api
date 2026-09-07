@@ -120,6 +120,90 @@ func (r *Repository) GetOrdersWithUpsellCount(ctx context.Context, merchantIDs, 
 	return count, nil
 }
 
+// upsellLinesWhereClauseMultiPeriod mirrors upsellLinesWhereClause but takes
+// an OR of N windows (multiPeriodOrWhere, scope.go) instead of a single
+// [start, end) bound — see AnalyticsOrdersScopeMultiPeriod's doc comment for
+// why an OR of small ranges, never one range spanning their union. Every
+// other condition stays byte-for-byte identical to upsellLinesWhereClause,
+// including its deliberate divergence from AnalyticsOrdersScope (no
+// upper(o.brand_status) — see that constant's doc comment).
+func upsellLinesWhereClauseMultiPeriod(merchantIDs []string, windows []PeriodWindow) (string, []interface{}) {
+	orWhere, orArgs := multiPeriodOrWhere(windows)
+	where := `
+		WHERE oi.is_upsell = true
+		AND o.merchant_id = ANY(?)
+		AND ` + orWhere + `
+		AND o.state IN ('CLOSED', 'DONE')
+		AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+	`
+	args := append([]interface{}{merchantIDs}, orArgs...)
+	return strings.TrimSpace(where), args
+}
+
+// UpsellTotalsWithOrders bundles UpsellTotals with the distinct-order count
+// GetOrdersWithUpsellCount computes separately today — GetUpsellTotals and
+// GetOrdersWithUpsellCount read the exact same join/scope
+// (upsellLinesFromJoins/upsellLinesWhereClause), differing only in which
+// aggregate they compute, so PROMPT 25 Phase 3 merges them into one scan
+// rather than two.
+type UpsellTotalsWithOrders struct {
+	UpsellTotals
+	OrdersWithUpsellCount int64
+}
+
+// upsellTotalsWithOrdersSelectFragment returns one window's contribution
+// (lines, HT, distinct orders) to GetUpsellTotalsWithOrdersTwoPeriods'
+// SELECT list.
+func upsellTotalsWithOrdersSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COUNT(*) FILTER (WHERE ` + expr + `),
+		` + roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+") FILTER (WHERE "+expr+"), 0)") + `,
+		COUNT(DISTINCT o.order_id) FILTER (WHERE ` + expr + `)
+	`)
+	var args []interface{}
+	args = append(args, exprArgs...) // lines count FILTER
+	args = append(args, exprArgs...) // HT sum FILTER
+	args = append(args, exprArgs...) // distinct orders FILTER
+	return fragment, args
+}
+
+// GetUpsellTotalsWithOrdersTwoPeriods replaces GetUpsellTotals+
+// GetOrdersWithUpsellCount's own current/previous pairs (four round trips,
+// all against the same heavy join) with one query — PROMPT 25 Phase 3, the
+// single most expensive merge in this tab.
+func (r *Repository) GetUpsellTotalsWithOrdersTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentTotals, previousTotals UpsellTotalsWithOrders, err error) {
+	windows := []PeriodWindow{current, previous}
+	scopeWhere, scopeArgs := upsellLinesWhereClauseMultiPeriod(merchantIDs, windows)
+
+	currentFragment, currentArgs := upsellTotalsWithOrdersSelectFragment(current)
+	previousFragment, previousArgs := upsellTotalsWithOrdersSelectFragment(previous)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`
+	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
+		scopeWhere + ` AND (` + channelCaseExpr + `) = ANY(?)`
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, scopeArgs...)
+	args = append(args, channels)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.UpsellLines, &currentTotals.UpsellRevenueHTCents, &currentTotals.OrdersWithUpsellCount,
+			&previousTotals.UpsellLines, &previousTotals.UpsellRevenueHTCents, &previousTotals.OrdersWithUpsellCount,
+		)
+	})
+	if err != nil {
+		return UpsellTotalsWithOrders{}, UpsellTotalsWithOrders{}, fmt.Errorf("get upsell totals with orders two periods: %w", err)
+	}
+	return currentTotals, previousTotals, nil
+}
+
 // GetUpsellOrdersTotal is the tab's rate denominator: every order in this
 // package's canonical AnalyticsOrdersScope, restricted to the requested
 // channel filter — the same scope/channel combination clients.go's
@@ -141,6 +225,37 @@ func (r *Repository) GetUpsellOrdersTotal(ctx context.Context, merchantIDs, chan
 		return 0, fmt.Errorf("get upsell orders total: %w", err)
 	}
 	return count, nil
+}
+
+// GetUpsellOrdersTotalTwoPeriods replaces two GetUpsellOrdersTotal calls
+// (current/previous) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetUpsellOrdersTotalTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentCount, previousCount int64, err error) {
+	windows := []PeriodWindow{current, previous}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+
+	currentExpr, currentArgs := periodFilterPredicate(current, "o")
+	previousExpr, previousArgs := periodFilterPredicate(previous, "o")
+
+	query := strings.TrimSpace(`
+		SELECT
+			COUNT(*) FILTER (WHERE `+currentExpr+`),
+			COUNT(*) FILTER (WHERE `+previousExpr+`)
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere + ` AND (` + channelCaseExpr + `) = ANY(?)`
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, scopeArgs...)
+	args = append(args, channels)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(&currentCount, &previousCount)
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("get upsell orders total two periods: %w", err)
+	}
+	return currentCount, previousCount, nil
 }
 
 // GetUpsellByStaff mirrors stats.StatsRepository.ListUpsellByServer — same

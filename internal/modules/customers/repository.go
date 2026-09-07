@@ -1362,52 +1362,255 @@ func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID str
 	return err
 }
 
+// ApplyOrderToCustomerStats crédite une commande sur les compteurs à vie de
+// son client (customer_nb_orders, customer_total_spent, last_order_date),
+// exactement une fois par commande — quel que soit le nombre de fois où une
+// action de clôture est rejouée (SetDeliveredExternal ne vérifie pas
+// OrderStillOpen par conception, un ReopenClosedOrder suivi d'une reclôture,
+// deux clôtures concurrentes de la même commande). orders.customer_stats_
+// counted_at est la source de vérité unique de "cette commande est déjà
+// comptée" : posé dans la même instruction que le crédit, dans un seul
+// aller-retour, donc sans fenêtre de lecture-puis-écriture applicative.
+//
+// Portée cross-canal (WELLO_RESTO, UBER_EATS, DELIVEROO) — voir PROMPT 26
+// Phase 1 (docs/decisions.md) : contrairement à la logique de fidélité plus
+// bas dans UpdateLoyaltyFromOrder, ces compteurs ne sont plus scopés
+// WELLO_RESTO uniquement.
+//
+// No-op si order_id est inconnu, sans client rattaché, ou déjà compté.
+func (r *CustomersRepository) ApplyOrderToCustomerStats(ctx context.Context, orderID string) error {
+	if dbx.ActiveDialect() != dbx.Postgres {
+		// MySQL n'est plus une cible live (CLAUDE.md) ; pas de nouvelle
+		// logique MySQL pour ce marqueur d'idempotence.
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		WITH marked AS (
+			UPDATE orders
+			SET customer_stats_counted_at = now()
+			WHERE order_id = ?
+			  AND customer_id IS NOT NULL
+			  AND customer_stats_counted_at IS NULL
+			RETURNING customer_id, price, creation_date
+		)
+		UPDATE customer c
+		SET customer_nb_orders = c.customer_nb_orders + 1,
+			customer_total_spent = c.customer_total_spent + marked.price,
+			last_order_date = GREATEST(COALESCE(c.last_order_date, marked.creation_date), marked.creation_date),
+			loyalty_reminder_count = 0
+		FROM marked
+		WHERE c.customer_id = marked.customer_id
+	`, orderID)
+	return err
+}
+
+// ReverseOrderFromCustomerStats retire une commande des compteurs à vie de
+// son client — symétrique d'ApplyOrderToCustomerStats. Appelée quand une
+// commande déjà comptée quitte cet état : annulation après clôture
+// (DeleteOrderLocal) ou réouverture pour correction (ReopenClosedOrder,
+// avant une reclôture qui recréditera avec le prix corrigé).
+//
+// last_order_date est recalculé par MAX() sur les commandes encore comptées
+// du client (customer_stats_counted_at IS NOT NULL), jamais décrémenté par
+// arithmétique : annuler la commande la plus récente d'un client doit faire
+// réapparaître la date de la commande précédente, pas laisser une date
+// obsolète ou la mettre à NULL à tort.
+//
+// No-op si order_id n'est pas actuellement compté (déjà annulé/réouvert, ou
+// jamais compté).
+func (r *CustomersRepository) ReverseOrderFromCustomerStats(ctx context.Context, orderID string) error {
+	if dbx.ActiveDialect() != dbx.Postgres {
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		WITH unmarked AS (
+			UPDATE orders
+			SET customer_stats_counted_at = NULL
+			WHERE order_id = ?
+			  AND customer_stats_counted_at IS NOT NULL
+			RETURNING customer_id, price
+		)
+		UPDATE customer c
+		SET customer_nb_orders = GREATEST(c.customer_nb_orders - 1, 0),
+			customer_total_spent = GREATEST(c.customer_total_spent - unmarked.price, 0),
+			last_order_date = (
+				SELECT MAX(o2.creation_date)
+				FROM orders o2
+				WHERE o2.customer_id = c.customer_id
+				  AND o2.customer_stats_counted_at IS NOT NULL
+				  AND o2.order_id != ?
+			)
+		FROM unmarked
+		WHERE c.customer_id = unmarked.customer_id
+	`, orderID, orderID)
+	return err
+}
+
+// StatsReconciliationSample is one run's result for the PROMPT 26 Phase 4
+// anti-redrift check: a random sample of customers, each compared against a
+// live recompute under the same canonical scope as ApplyOrderToCustomerStats
+// (state IN ('CLOSED','DONE'), brand_status not deleted/canceled,
+// cross-channel) and cmd/backfill_customer_stats.
+type StatsReconciliationSample struct {
+	SampleSize          int
+	Mismatches          int
+	MaxNbOrdersDiff      int64
+	MaxTotalSpentDiffAbs int64 // centimes
+}
+
+// SampleCustomerStatsDrift picks up to sampleSize random customers — or,
+// when customerIDs is non-empty, exactly that set (a test's own fixtures,
+// deterministically — random sampling over a real customer table has no
+// reliable way to hit specific rows) — and compares their cached
+// customer_nb_orders/customer_total_spent/last_order_date against a fresh
+// recompute from orders. Read-only — this is a detector, not a corrector;
+// cmd/backfill_customer_stats is the corrector.
+//
+// ORDER BY random() over the whole table is acceptable at this sample size
+// (a few hundred rows) and this cadence (daily) — no attempt to weight
+// towards recently-active customers, since the point is catching redrift
+// anywhere in the base, not just on today's traffic.
+func (r *CustomersRepository) SampleCustomerStatsDrift(ctx context.Context, sampleSize int, customerIDs []string) (StatsReconciliationSample, error) {
+	if dbx.ActiveDialect() != dbx.Postgres {
+		return StatsReconciliationSample{}, nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+
+	sampleWhere := "TRUE"
+	args := []interface{}{}
+	if len(customerIDs) > 0 {
+		sampleWhere = "customer_id = ANY(?)"
+		args = append(args, customerIDs)
+	}
+	args = append(args, sampleSize)
+
+	rows, err := db.QueryContext(ctx, `
+		WITH sample AS (
+			SELECT customer_id, customer_nb_orders, customer_total_spent, last_order_date
+			FROM customer
+			WHERE `+sampleWhere+`
+			ORDER BY random()
+			LIMIT ?
+		),
+		recomputed AS (
+			SELECT o.customer_id,
+				COUNT(*) AS nb_orders,
+				COALESCE(SUM(o.price), 0) AS total_spent,
+				MAX(o.creation_date) AS last_order_date
+			FROM orders o
+			WHERE o.customer_id IN (SELECT customer_id FROM sample)
+			  AND o.state IN ('CLOSED', 'DONE')
+			  AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED')
+			GROUP BY o.customer_id
+		)
+		SELECT s.customer_nb_orders, s.customer_total_spent, s.last_order_date,
+			COALESCE(r.nb_orders, 0), COALESCE(r.total_spent, 0), r.last_order_date
+		FROM sample s
+		LEFT JOIN recomputed r ON r.customer_id = s.customer_id
+	`, args...)
+	if err != nil {
+		return StatsReconciliationSample{}, err
+	}
+	defer rows.Close()
+
+	var result StatsReconciliationSample
+	for rows.Next() {
+		var storedNb, recomputedNb int64
+		var storedSpent, recomputedSpent int64
+		var storedLast, recomputedLast sql.NullTime
+		if err := rows.Scan(&storedNb, &storedSpent, &storedLast, &recomputedNb, &recomputedSpent, &recomputedLast); err != nil {
+			return StatsReconciliationSample{}, err
+		}
+		result.SampleSize++
+
+		nbDiff := storedNb - recomputedNb
+		if nbDiff < 0 {
+			nbDiff = -nbDiff
+		}
+		spentDiff := storedSpent - recomputedSpent
+		if spentDiff < 0 {
+			spentDiff = -spentDiff
+		}
+		lastMismatch := storedLast.Valid != recomputedLast.Valid ||
+			(storedLast.Valid && recomputedLast.Valid && !storedLast.Time.Equal(recomputedLast.Time))
+
+		if nbDiff != 0 || spentDiff != 0 || lastMismatch {
+			result.Mismatches++
+		}
+		if nbDiff > result.MaxNbOrdersDiff {
+			result.MaxNbOrdersDiff = nbDiff
+		}
+		if spentDiff > result.MaxTotalSpentDiffAbs {
+			result.MaxTotalSpentDiffAbs = spentDiff
+		}
+	}
+	return result, rows.Err()
+}
+
+// RecordStatsReconciliationRun persists one Phase 4 run — the only durable
+// trace of this cron task's execution (CLAUDE.md: the cron infrastructure
+// keeps no execution log of its own). See migration
+// 122_customer_stats_reconciliation_runs.
+func (r *CustomersRepository) RecordStatsReconciliationRun(ctx context.Context, sample StatsReconciliationSample, thresholdRatio float64, alertTriggered bool, durationMs int64) error {
+	if dbx.ActiveDialect() != dbx.Postgres {
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+
+	ratio := 0.0
+	if sample.SampleSize > 0 {
+		ratio = float64(sample.Mismatches) / float64(sample.SampleSize)
+	}
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO customer_stats_reconciliation_runs
+			(sample_size, mismatches, mismatch_ratio, max_nb_orders_diff, max_total_spent_diff_cents, alert_threshold_ratio, alert_triggered, duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, sample.SampleSize, sample.Mismatches, ratio, sample.MaxNbOrdersDiff, sample.MaxTotalSpentDiffAbs, thresholdRatio, alertTriggered, durationMs)
+	return err
+}
+
 // Internal struct pour récupérer les données du programme de fidélité
 func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderID string) error {
 	log := logger.FromContext(ctx)
 	db := dbx.GetDB(ctx, r.database)
 
-	// 1. Récupérer les infos de la commande
+	// 1. Récupérer les infos de la commande. Plus de filtre de marque ici
+	// (PROMPT 26 Phase 1) : une commande Uber Eats/Deliveroo doit compter
+	// dans les statistiques du client comme une commande directe. Le filtre
+	// de marque est réappliqué plus bas, juste avant la logique fidélité,
+	// qui reste WELLO_RESTO uniquement (hors périmètre de ce lot).
 	const qGetOrder = `
-		SELECT o.customer_id, o.merchant_id, o.price, o.order_type
+		SELECT o.customer_id, o.merchant_id, o.price, o.order_type, o.brand
 		FROM orders o
-		WHERE o.order_id = ? AND o.brand = 'WELLO_RESTO'
+		WHERE o.order_id = ?
 	`
-	var customerID, merchantID, orderType string
+	var customerID, merchantID, orderType, brand string
 	var price int
 
-	err := db.QueryRowContext(ctx, qGetOrder, orderID).Scan(&customerID, &merchantID, &price, &orderType)
+	err := db.QueryRowContext(ctx, qGetOrder, orderID).Scan(&customerID, &merchantID, &price, &orderType, &brand)
 	if err == sql.ErrNoRows || customerID == "" {
-		// Pas de commande trouvée, pas WELLO_RESTO, ou pas de client rattaché -> On s'arrête avec succès
+		// Pas de commande trouvée, ou pas de client rattaché -> On s'arrête avec succès
 		return nil
 	} else if err != nil {
 		return err
 	}
 
 	// 2. Mise à jour des stats globales du client (uniquement après validation
-	// de la commande) — UPDATE...JOIN MySQL vs UPDATE...FROM Postgres.
-	qUpdateStats := fmt.Sprintf(`
-		UPDATE customer c
-		INNER JOIN orders o ON o.customer_id = c.customer_id
-		SET c.customer_nb_orders = c.customer_nb_orders + 1,
-			c.customer_total_spent = c.customer_total_spent + o.price,
-			c.last_order_date = %s,
-			c.loyalty_reminder_count = 0
-		WHERE o.order_id = ?
-	`, dbx.UTCNow())
-	if dbx.ActiveDialect() == dbx.Postgres {
-		qUpdateStats = `
-		UPDATE customer c
-		SET customer_nb_orders = c.customer_nb_orders + 1,
-			customer_total_spent = c.customer_total_spent + o.price,
-			last_order_date = now(),
-			loyalty_reminder_count = 0
-		FROM orders o
-		WHERE o.customer_id = c.customer_id
-		  AND o.order_id = ?`
-	}
-	if _, err := db.ExecContext(ctx, qUpdateStats, orderID); err != nil {
+	// de la commande), idempotente et cross-canal — voir ApplyOrderToCustomerStats.
+	if err := r.ApplyOrderToCustomerStats(ctx, orderID); err != nil {
 		return err
+	}
+
+	// La logique de fidélité (paliers, récompenses) reste scopée WELLO_RESTO
+	// uniquement, comportement inchangé par PROMPT 26 — question de périmètre
+	// produit distincte de la correction des compteurs.
+	if brand != "WELLO_RESTO" {
+		return nil
 	}
 
 	// 3. Récupérer les programmes actifs du marchand

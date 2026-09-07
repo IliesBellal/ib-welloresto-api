@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/permission"
 	"welloresto-api/internal/timeutil"
 )
@@ -67,6 +68,187 @@ func NewService(repo *Repository, redis *redisclient.Client) *Service {
 	return &Service{repo: repo, redis: redis}
 }
 
+// ---- PROMPT 25 Phase 0: hot, low-volatility caches ----
+//
+// The Phase 1 inventory found 26 of ~93 queries across a full 10-tab load
+// (28%) were ResolveAccessibleMerchants/GetMerchantTimezone alone — 13 of
+// each, one pair per request-handling method in this file, run
+// unconditionally even when the full-response cache below hits (the response
+// cache key can only be built once the scope is known, so it is checked
+// AFTER these two, not before). Both answer near-static questions (a
+// merchant's IANA timezone essentially never changes; a user's accessible
+// scope only changes when a role/right is edited) against tables no request
+// in this package ever writes to — caching them touches no financial SQL, no
+// rounding, no period boundary, so none of Phase 4's non-regression
+// machinery applies here. GetCustomersLifetimeStats/
+// GetUpsellInstrumentationActive get the same treatment below for the same
+// reason: each is called twice per page load (once per frontend request) for
+// the Clients/Vente additionnelle tabs' aggregate+nominative endpoint pair,
+// which cannot be merged into one endpoint (different permissions — see
+// GetClientsTop/GetUpsellByStaff's own doc comments) but can still avoid
+// running the query itself twice.
+
+// accessibleMerchantsCacheTTL MUST stay equal to auth.UserLoginRow's own
+// cache TTL (models.UserCacheTTL, internal/modules/auth/service.go), never a
+// separate, longer value — sharing the literal constant, not just its
+// current numeric value, so the two can never drift apart by editing one and
+// forgetting the other. ResolveAccessibleMerchants answers a security
+// question ("which establishments can this token see"), so a right revoked
+// from a user must not stay live in this cache any longer than it stays live
+// on the rest of the app.
+//
+// auth.AuthService.InvalidateUserCache exists but is not called from
+// anywhere in this codebase today (verified 2026-09-06, grepped whole repo):
+// a permission edit already relies solely on UserCacheTTL's passive 60-minute
+// expiry, nothing pushes an early invalidation. So there is no active
+// invalidation path to hook this cache into yet, and none is added here —
+// internal/modules/auth is out of this lot's scope. Sharing the same TTL
+// constant is what keeps this cache exactly as fresh as the one it mirrors,
+// never staler, matching today's actual security posture rather than
+// improving on it. If InvalidateUserCache is ever wired up (a separate,
+// out-of-scope lot), delete accessibleMerchantsCacheKey(token) at the same
+// call site — same key family, same token, trivial to add then.
+const accessibleMerchantsCacheTTL = models.UserCacheTTL
+
+// merchantTimezoneCacheTTL is not a security boundary the way
+// accessibleMerchantsCacheTTL is — a stale timezone read for up to a day
+// means a report's local-day bucketing could momentarily lag a same-day
+// timezone edit, never a wrong access decision — so a long, simple TTL is
+// enough on its own, no invalidation coupling required.
+const merchantTimezoneCacheTTL = 24 * time.Hour
+
+func accessibleMerchantsCacheKey(token string) string {
+	return models.AnalyticsCachePrefix + "scope:" + token
+}
+
+// resolveAccessibleMerchants wraps Repository.ResolveAccessibleMerchants with
+// the per-token cache described above. Every one of this package's 13
+// request-handling methods calls this exactly once, so this was the single
+// most repeated query in the module. Keyed by the raw token — the same
+// convention models.UserCachePrefix+token already uses for the user cache
+// itself — so scope is never inherited across tokens/sessions.
+func (s *Service) resolveAccessibleMerchants(ctx context.Context, user *auth.UserLoginRow) ([]string, error) {
+	if s.redis == nil || user == nil || strings.TrimSpace(user.Token) == "" {
+		return s.repo.ResolveAccessibleMerchants(ctx, user)
+	}
+
+	cacheKey := accessibleMerchantsCacheKey(user.Token)
+	if cached, ok := s.redis.Get(ctx, cacheKey); ok {
+		var merchantIDs []string
+		if err := json.Unmarshal([]byte(cached), &merchantIDs); err == nil {
+			return merchantIDs, nil
+		}
+	}
+
+	merchantIDs, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	if encoded, err := json.Marshal(merchantIDs); err == nil {
+		s.redis.Set(ctx, cacheKey, string(encoded), accessibleMerchantsCacheTTL)
+	}
+	return merchantIDs, nil
+}
+
+// getMerchantTimezone wraps Repository.GetMerchantTimezone with
+// merchantTimezoneCacheTTL — see that constant's doc comment for why no
+// invalidation coupling is needed here, unlike resolveAccessibleMerchants.
+func (s *Service) getMerchantTimezone(ctx context.Context, merchantID string) (string, error) {
+	if s.redis == nil {
+		return s.repo.GetMerchantTimezone(ctx, merchantID)
+	}
+
+	cacheKey := models.AnalyticsCachePrefix + "merchant_tz:" + merchantID
+	if cached, ok := s.redis.Get(ctx, cacheKey); ok && cached != "" {
+		return cached, nil
+	}
+
+	tz, err := s.repo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+	s.redis.Set(ctx, cacheKey, tz, merchantTimezoneCacheTTL)
+	return tz, nil
+}
+
+// customersLifetimeStatsCacheKey mirrors buildClientsCacheKey's shape (this
+// file, Clients section).
+func customersLifetimeStatsCacheKey(merchantIDs, channels []string, startUTC, endUTC time.Time) string {
+	sorted := append([]string(nil), merchantIDs...)
+	sort.Strings(sorted)
+	sortedChannels := append([]string(nil), channels...)
+	sort.Strings(sortedChannels)
+	raw := strings.Join(sorted, ",") + "|" + strings.Join(sortedChannels, ",") + "|" +
+		startUTC.Format(time.RFC3339) + "|" + endUTC.Format(time.RFC3339)
+	sum := sha256.Sum256([]byte(raw))
+	return models.AnalyticsCachePrefix + "customers_lifetime:" + hex.EncodeToString(sum[:])
+}
+
+// getCustomersLifetimeStatsCached wraps Repository.GetCustomersLifetimeStats
+// with the package's ordinary AnalyticsCacheTTL — GetClients and
+// GetClientsTop call this with identical parameters when a caller loads the
+// Clients tab (two separate frontend requests — see this file's Phase 0 doc
+// comment above), re-running the tab's single heaviest query (a full,
+// period-unbounded scan of the establishment's order history) twice for
+// nothing. Not merged into one endpoint: GetClientsTop sits behind
+// permission.CustomersManage, a different, more sensitive gate than
+// GetClients' reports.sales.read, so serving it from the aggregate endpoint
+// would leak nominative data past that gate — caching keeps the HTTP
+// contract untouched.
+func (s *Service) getCustomersLifetimeStatsCached(ctx context.Context, merchantIDs, channels []string, startUTC, endUTC time.Time) ([]CustomerLifetimeRow, error) {
+	if s.redis == nil {
+		return s.repo.GetCustomersLifetimeStats(ctx, merchantIDs, channels, startUTC, endUTC)
+	}
+
+	cacheKey := customersLifetimeStatsCacheKey(merchantIDs, channels, startUTC, endUTC)
+	if cached, ok := s.redis.Get(ctx, cacheKey); ok {
+		var rows []CustomerLifetimeRow
+		if err := json.Unmarshal([]byte(cached), &rows); err == nil {
+			return rows, nil
+		}
+	}
+
+	rows, err := s.repo.GetCustomersLifetimeStats(ctx, merchantIDs, channels, startUTC, endUTC)
+	if err != nil {
+		return nil, err
+	}
+	if encoded, err := json.Marshal(rows); err == nil {
+		s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
+	}
+	return rows, nil
+}
+
+func upsellInstrumentationActiveCacheKey(merchantIDs []string) string {
+	sorted := append([]string(nil), merchantIDs...)
+	sort.Strings(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, ",")))
+	return models.AnalyticsCachePrefix + "upsell_active:" + hex.EncodeToString(sum[:])
+}
+
+// getUpsellInstrumentationActiveCached wraps
+// Repository.GetUpsellInstrumentationActive with the package's ordinary
+// AnalyticsCacheTTL — GetUpsell and GetUpsellByStaff call this with the same
+// merchantIDs when a caller loads the Vente additionnelle tab (two separate
+// frontend requests, same split as Clients above), re-running the same
+// EXISTS probe twice for nothing.
+func (s *Service) getUpsellInstrumentationActiveCached(ctx context.Context, merchantIDs []string) (bool, error) {
+	if s.redis == nil {
+		return s.repo.GetUpsellInstrumentationActive(ctx, merchantIDs)
+	}
+
+	cacheKey := upsellInstrumentationActiveCacheKey(merchantIDs)
+	if cached, ok := s.redis.Get(ctx, cacheKey); ok {
+		return cached == "true", nil
+	}
+
+	active, err := s.repo.GetUpsellInstrumentationActive(ctx, merchantIDs)
+	if err != nil {
+		return false, err
+	}
+	s.redis.Set(ctx, cacheKey, fmt.Sprint(active), models.AnalyticsCacheTTL)
+	return active, nil
+}
+
 // GetAccessibleMerchants powers the multi-establishment selector (PROMPT 24
 // Phase 1/3): resolves the caller's accessible scope exactly like every other
 // tab (ResolveAccessibleMerchants), then labels it with names. No request
@@ -78,7 +260,7 @@ func (s *Service) GetAccessibleMerchants(ctx context.Context) (*AccessibleMercha
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +285,7 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +334,7 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 	// establishment in this system has its own row, but the accessible scope
 	// is always exactly one today, so there is no cross-establishment
 	// ambiguity to resolve here yet.
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -174,15 +356,16 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetRevenueTotalsTTC(ctx, merchantIDs, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	prevTotals, err := s.repo.GetRevenueTotalsTTC(ctx, merchantIDs, prevStartUTC, prevEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	lyTotals, err := s.repo.GetRevenueTotalsTTC(ctx, merchantIDs, lyStartUTC, lyEndUTC)
+	// PROMPT 25 Phase 3: current/previous/previous-year, and (when requested)
+	// TTC+HT together, in one query instead of six — see
+	// GetRevenueTotalsThreePeriods' doc comment for why TTC/count still come
+	// from `orders` alone even when the HT join runs in the same query.
+	currentTotals, prevTotals, lyTotals, err := s.repo.GetRevenueTotalsThreePeriods(ctx, merchantIDs,
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
+		includeHT,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -201,21 +384,10 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 	}
 
 	if includeHT {
-		if htCents, err := s.repo.GetRevenueTotalsHT(ctx, merchantIDs, currentStartUTC, currentEndUTC); err == nil {
-			currentPeriod.TotalHTCents = &htCents
-		} else {
-			return nil, err
-		}
-		if htCents, err := s.repo.GetRevenueTotalsHT(ctx, merchantIDs, prevStartUTC, prevEndUTC); err == nil {
-			previousPeriod.TotalHTCents = &htCents
-		} else {
-			return nil, err
-		}
-		if htCents, err := s.repo.GetRevenueTotalsHT(ctx, merchantIDs, lyStartUTC, lyEndUTC); err == nil {
-			previousYear.TotalHTCents = &htCents
-		} else {
-			return nil, err
-		}
+		currentHT, prevHT, lyHT := currentTotals.TotalHTCents, prevTotals.TotalHTCents, lyTotals.TotalHTCents
+		currentPeriod.TotalHTCents = &currentHT
+		previousPeriod.TotalHTCents = &prevHT
+		previousYear.TotalHTCents = &lyHT
 	}
 
 	timeline, err := s.repo.GetRevenueTimeline(ctx, merchantIDs, tzString, currentStartUTC, currentEndUTC)
@@ -267,7 +439,7 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +478,7 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -328,15 +500,14 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetOrdersTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	prevTotals, err := s.repo.GetOrdersTotals(ctx, merchantIDs, prevStartUTC, prevEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	lyTotals, err := s.repo.GetOrdersTotals(ctx, merchantIDs, lyStartUTC, lyEndUTC)
+	// PROMPT 25 Phase 3: current/previous/previous-year in one query instead
+	// of three — same table, no join, direct application of FILTER per
+	// window over AnalyticsOrdersScopeMultiPeriod.
+	currentTotals, prevTotals, lyTotals, err := s.repo.GetOrdersTotalsThreePeriods(ctx, merchantIDs,
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +598,7 @@ func (s *Service) GetPayments(ctx context.Context, req PaymentsRequest) (*Paymen
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +637,7 @@ func (s *Service) GetPayments(ctx context.Context, req PaymentsRequest) (*Paymen
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -488,15 +659,13 @@ func (s *Service) GetPayments(ctx context.Context, req PaymentsRequest) (*Paymen
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetPaymentsTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	prevTotals, err := s.repo.GetPaymentsTotals(ctx, merchantIDs, prevStartUTC, prevEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	lyTotals, err := s.repo.GetPaymentsTotals(ctx, merchantIDs, lyStartUTC, lyEndUTC)
+	// PROMPT 25 Phase 3: current/previous/previous-year in one query instead
+	// of three.
+	currentTotals, prevTotals, lyTotals, err := s.repo.GetPaymentsTotalsThreePeriods(ctx, merchantIDs,
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +727,7 @@ func (s *Service) GetVAT(ctx context.Context, req VATRequest) (*VATResponse, err
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +766,7 @@ func (s *Service) GetVAT(ctx context.Context, req VATRequest) (*VATResponse, err
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -619,15 +788,14 @@ func (s *Service) GetVAT(ctx context.Context, req VATRequest) (*VATResponse, err
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetVATTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	prevTotals, err := s.repo.GetVATTotals(ctx, merchantIDs, prevStartUTC, prevEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	lyTotals, err := s.repo.GetVATTotals(ctx, merchantIDs, lyStartUTC, lyEndUTC)
+	// PROMPT 25 Phase 3: current/previous/previous-year in one query instead
+	// of three, over the same UNION ALL (product lines + delivery fees) —
+	// see GetVATTotalsThreePeriods' doc comment.
+	currentTotals, prevTotals, lyTotals, err := s.repo.GetVATTotalsThreePeriods(ctx, merchantIDs,
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -786,7 +954,7 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -825,7 +993,7 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -847,15 +1015,14 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 
 	started := time.Now()
 
-	currentPeriod, err := s.cancellationsPeriodTotals(ctx, merchantIDs, req.DateFrom, req.DateTo, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	previousPeriod, err := s.cancellationsPeriodTotals(ctx, merchantIDs, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"), prevStartUTC, prevEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	previousYear, err := s.cancellationsPeriodTotals(ctx, merchantIDs, lyFrom.Format("2006-01-02"), lyTo.Format("2006-01-02"), lyStartUTC, lyEndUTC)
+	currentPeriod, previousPeriod, previousYear, err := s.cancellationsPeriodTotalsThreePeriods(ctx, merchantIDs,
+		req.DateFrom, req.DateTo,
+		prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"),
+		lyFrom.Format("2006-01-02"), lyTo.Format("2006-01-02"),
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -941,29 +1108,38 @@ func (s *Service) cancellationsByMerchant(ctx context.Context, merchantIDs []str
 	return result, nil
 }
 
-// cancellationsPeriodTotals loads one period's CancellationsPeriodTotals —
-// factored out of GetCancellations since it runs three times (current,
-// previous, previous year), the same shape as every other tab's per-period
-// loop in this file.
-func (s *Service) cancellationsPeriodTotals(ctx context.Context, merchantIDs []string, from, to string, startUTC, endUTC time.Time) (CancellationsPeriodTotals, error) {
-	ordersCreated, err := s.repo.GetOrdersCreatedCount(ctx, merchantIDs, startUTC, endUTC)
+// cancellationsPeriodTotalsThreePeriods loads all three periods'
+// CancellationsPeriodTotals in two queries (GetOrdersCreatedCountThreePeriods
+// + GetCancellationsTotalsThreePeriods) instead of six (two per period,
+// three periods) — PROMPT 25 Phase 3, replacing the old
+// cancellationsPeriodTotals helper that ran once per period.
+func (s *Service) cancellationsPeriodTotalsThreePeriods(ctx context.Context, merchantIDs []string, currentFrom, currentTo, previousFrom, previousTo, previousYearFrom, previousYearTo string, current, previous, previousYear PeriodWindow) (currentPeriod, previousPeriod, previousYearPeriod CancellationsPeriodTotals, err error) {
+	currentOrdersCreated, previousOrdersCreated, previousYearOrdersCreated, err := s.repo.GetOrdersCreatedCountThreePeriods(ctx, merchantIDs, current, previous, previousYear)
 	if err != nil {
-		return CancellationsPeriodTotals{}, err
+		return CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, err
 	}
-	totals, err := s.repo.GetCancellationsTotals(ctx, merchantIDs, startUTC, endUTC)
+	currentTotals, previousTotals, previousYearTotals, err := s.repo.GetCancellationsTotalsThreePeriods(ctx, merchantIDs, current, previous, previousYear)
 	if err != nil {
-		return CancellationsPeriodTotals{}, err
+		return CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, err
 	}
-	return CancellationsPeriodTotals{
-		From:                   from,
-		To:                     to,
-		TotalOrdersCreated:     ordersCreated,
-		CancelledCount:         totals.CancelledCount,
-		CancelledAmountCents:   totals.CancelledAmountCents,
-		InternalCancelledCount: totals.InternalCancelledCount,
-		PlatformCancelledCount: totals.PlatformCancelledCount,
-		UnknownCancelledCount:  totals.UnknownCancelledCount,
-	}, nil
+
+	build := func(from, to string, ordersCreated int64, totals CancellationsTotals) CancellationsPeriodTotals {
+		return CancellationsPeriodTotals{
+			From:                   from,
+			To:                     to,
+			TotalOrdersCreated:     ordersCreated,
+			CancelledCount:         totals.CancelledCount,
+			CancelledAmountCents:   totals.CancelledAmountCents,
+			InternalCancelledCount: totals.InternalCancelledCount,
+			PlatformCancelledCount: totals.PlatformCancelledCount,
+			UnknownCancelledCount:  totals.UnknownCancelledCount,
+		}
+	}
+
+	return build(currentFrom, currentTo, currentOrdersCreated, currentTotals),
+		build(previousFrom, previousTo, previousOrdersCreated, previousTotals),
+		build(previousYearFrom, previousYearTo, previousYearOrdersCreated, previousYearTotals),
+		nil
 }
 
 // GetCancellationsByStaff is the nominative ranking's entry point (POST
@@ -981,7 +1157,7 @@ func (s *Service) GetCancellationsByStaff(ctx context.Context, req Cancellations
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1181,7 @@ func (s *Service) GetCancellationsByStaff(ctx context.Context, req Cancellations
 		return nil, ErrInvalidRequest
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -1049,7 +1225,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -1107,7 +1283,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -1142,11 +1318,11 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetProductsScopeTotals(ctx, merchantIDs, req.CategoryID, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	prevTotals, err := s.repo.GetProductsScopeTotals(ctx, merchantIDs, req.CategoryID, prevStartUTC, prevEndUTC)
+	// PROMPT 25 Phase 3: current/previous in one query instead of two.
+	currentTotals, prevTotals, err := s.repo.GetProductsScopeTotalsTwoPeriods(ctx, merchantIDs, req.CategoryID,
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1259,7 +1435,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -1322,7 +1498,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -1722,7 +1898,7 @@ func (s *Service) GetClients(ctx context.Context, req ClientsRequest) (*ClientsR
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -1758,7 +1934,7 @@ func (s *Service) GetClients(ctx context.Context, req ClientsRequest) (*ClientsR
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -1777,7 +1953,7 @@ func (s *Service) GetClients(ctx context.Context, req ClientsRequest) (*ClientsR
 		return nil, err
 	}
 
-	lifetimeRows, err := s.repo.GetCustomersLifetimeStats(ctx, merchantIDs, channels, startUTC, endUTC)
+	lifetimeRows, err := s.getCustomersLifetimeStatsCached(ctx, merchantIDs, channels, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1859,7 +2035,7 @@ func (s *Service) GetClientsTop(ctx context.Context, req ClientsTopRequest) (*Cl
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -1888,7 +2064,7 @@ func (s *Service) GetClientsTop(ctx context.Context, req ClientsTopRequest) (*Cl
 		return nil, ErrInvalidRequest
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -1902,7 +2078,7 @@ func (s *Service) GetClientsTop(ctx context.Context, req ClientsTopRequest) (*Cl
 
 	started := time.Now()
 
-	lifetimeRows, err := s.repo.GetCustomersLifetimeStats(ctx, merchantIDs, channels, startUTC, endUTC)
+	lifetimeRows, err := s.getCustomersLifetimeStatsCached(ctx, merchantIDs, channels, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1991,7 +2167,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -2027,7 +2203,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -2045,16 +2221,16 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 
 	started := time.Now()
 
-	active, err := s.repo.GetUpsellInstrumentationActive(ctx, merchantIDs)
+	active, err := s.getUpsellInstrumentationActiveCached(ctx, merchantIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	currentPeriod, err := s.upsellPeriodTotals(ctx, merchantIDs, channels, req.DateFrom, req.DateTo, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	previousPeriod, err := s.upsellPeriodTotals(ctx, merchantIDs, channels, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"), prevStartUTC, prevEndUTC)
+	currentPeriod, previousPeriod, err := s.upsellPeriodTotalsTwoPeriods(ctx, merchantIDs, channels,
+		req.DateFrom, req.DateTo, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"),
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2091,27 +2267,31 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 	return resp, nil
 }
 
-// upsellPeriodTotals loads one period's UpsellPeriodTotals — factored out of
-// GetUpsell since it runs twice (current, previous), same shape as
-// cancellationsPeriodTotals.
-func (s *Service) upsellPeriodTotals(ctx context.Context, merchantIDs, channels []string, from, to string, startUTC, endUTC time.Time) (UpsellPeriodTotals, error) {
-	totals, err := s.repo.GetUpsellTotals(ctx, merchantIDs, channels, startUTC, endUTC)
+// upsellPeriodTotalsTwoPeriods loads both periods' UpsellPeriodTotals in two
+// queries (GetUpsellTotalsWithOrdersTwoPeriods + GetUpsellOrdersTotalTwoPeriods)
+// instead of six (three per period, two periods) — PROMPT 25 Phase 3,
+// replacing the old upsellPeriodTotals helper that ran once per period.
+func (s *Service) upsellPeriodTotalsTwoPeriods(ctx context.Context, merchantIDs, channels []string, currentFrom, currentTo, previousFrom, previousTo string, current, previous PeriodWindow) (currentPeriod, previousPeriod UpsellPeriodTotals, err error) {
+	currentTotals, previousTotals, err := s.repo.GetUpsellTotalsWithOrdersTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
-		return UpsellPeriodTotals{}, err
+		return UpsellPeriodTotals{}, UpsellPeriodTotals{}, err
 	}
-	ordersWithUpsell, err := s.repo.GetOrdersWithUpsellCount(ctx, merchantIDs, channels, startUTC, endUTC)
+	currentOrdersTotal, previousOrdersTotal, err := s.repo.GetUpsellOrdersTotalTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
-		return UpsellPeriodTotals{}, err
+		return UpsellPeriodTotals{}, UpsellPeriodTotals{}, err
 	}
-	totalOrders, err := s.repo.GetUpsellOrdersTotal(ctx, merchantIDs, channels, startUTC, endUTC)
-	if err != nil {
-		return UpsellPeriodTotals{}, err
+
+	currentPeriod = UpsellPeriodTotals{
+		From: currentFrom, To: currentTo,
+		UpsellLines: currentTotals.UpsellLines, UpsellRevenueHTCents: currentTotals.UpsellRevenueHTCents,
+		OrdersWithUpsellCount: currentTotals.OrdersWithUpsellCount, TotalOrdersCount: currentOrdersTotal,
 	}
-	return UpsellPeriodTotals{
-		From: from, To: to,
-		UpsellLines: totals.UpsellLines, UpsellRevenueHTCents: totals.UpsellRevenueHTCents,
-		OrdersWithUpsellCount: ordersWithUpsell, TotalOrdersCount: totalOrders,
-	}, nil
+	previousPeriod = UpsellPeriodTotals{
+		From: previousFrom, To: previousTo,
+		UpsellLines: previousTotals.UpsellLines, UpsellRevenueHTCents: previousTotals.UpsellRevenueHTCents,
+		OrdersWithUpsellCount: previousTotals.OrdersWithUpsellCount, TotalOrdersCount: previousOrdersTotal,
+	}
+	return currentPeriod, previousPeriod, nil
 }
 
 // GetUpsellByStaff is the nominative ranking's entry point (POST
@@ -2125,7 +2305,7 @@ func (s *Service) GetUpsellByStaff(ctx context.Context, req UpsellByStaffRequest
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -2154,7 +2334,7 @@ func (s *Service) GetUpsellByStaff(ctx context.Context, req UpsellByStaffRequest
 		return nil, ErrInvalidRequest
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -2168,7 +2348,7 @@ func (s *Service) GetUpsellByStaff(ctx context.Context, req UpsellByStaffRequest
 
 	started := time.Now()
 
-	active, err := s.repo.GetUpsellInstrumentationActive(ctx, merchantIDs)
+	active, err := s.getUpsellInstrumentationActiveCached(ctx, merchantIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -2234,7 +2414,7 @@ func (s *Service) GetDiscounts(ctx context.Context, req DiscountsRequest) (*Disc
 		return nil, models.ErrUnauthorized
 	}
 
-	accessible, err := s.repo.ResolveAccessibleMerchants(ctx, user)
+	accessible, err := s.resolveAccessibleMerchants(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -2297,7 +2477,7 @@ func (s *Service) GetDiscounts(ctx context.Context, req DiscountsRequest) (*Disc
 		}
 	}
 
-	tzString, err := s.repo.GetMerchantTimezone(ctx, merchantIDs[0])
+	tzString, err := s.getMerchantTimezone(ctx, merchantIDs[0])
 	if err != nil {
 		return nil, fmt.Errorf("load merchant timezone: %w", err)
 	}
@@ -2315,11 +2495,11 @@ func (s *Service) GetDiscounts(ctx context.Context, req DiscountsRequest) (*Disc
 
 	started := time.Now()
 
-	currentPeriod, err := s.discountsPeriodTotals(ctx, merchantIDs, channels, req.DateFrom, req.DateTo, currentStartUTC, currentEndUTC)
-	if err != nil {
-		return nil, err
-	}
-	previousPeriod, err := s.discountsPeriodTotals(ctx, merchantIDs, channels, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"), prevStartUTC, prevEndUTC)
+	currentPeriod, previousPeriod, err := s.discountsPeriodTotalsTwoPeriods(ctx, merchantIDs, channels,
+		req.DateFrom, req.DateTo, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"),
+		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
+		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2392,31 +2572,39 @@ func (s *Service) GetDiscounts(ctx context.Context, req DiscountsRequest) (*Disc
 	return resp, nil
 }
 
-// discountsPeriodTotals loads one period's DiscountsPeriodTotals — factored
-// out of GetDiscounts since it runs twice (current, previous), same shape as
-// cancellationsPeriodTotals/upsellPeriodTotals.
-func (s *Service) discountsPeriodTotals(ctx context.Context, merchantIDs, channels []string, from, to string, startUTC, endUTC time.Time) (DiscountsPeriodTotals, error) {
-	scopeTotals, err := s.repo.GetDiscountsScopeTotals(ctx, merchantIDs, channels, startUTC, endUTC)
+// discountsPeriodTotalsTwoPeriods loads both periods' DiscountsPeriodTotals
+// in two queries (GetDiscountsScopeTotalsTwoPeriods +
+// GetDiscountsOrdersTotalsTwoPeriods) instead of four (two per period, two
+// periods) — PROMPT 25 Phase 3, replacing the old discountsPeriodTotals
+// helper that ran once per period.
+func (s *Service) discountsPeriodTotalsTwoPeriods(ctx context.Context, merchantIDs, channels []string, currentFrom, currentTo, previousFrom, previousTo string, current, previous PeriodWindow) (currentPeriod, previousPeriod DiscountsPeriodTotals, err error) {
+	currentScopeTotals, previousScopeTotals, err := s.repo.GetDiscountsScopeTotalsTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
-		return DiscountsPeriodTotals{}, err
+		return DiscountsPeriodTotals{}, DiscountsPeriodTotals{}, err
 	}
-	ordersTotals, err := s.repo.GetDiscountsOrdersTotals(ctx, merchantIDs, channels, startUTC, endUTC)
+	currentOrdersTotals, previousOrdersTotals, err := s.repo.GetDiscountsOrdersTotalsTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
-		return DiscountsPeriodTotals{}, err
+		return DiscountsPeriodTotals{}, DiscountsPeriodTotals{}, err
 	}
 
-	period := DiscountsPeriodTotals{
-		From: from, To: to,
-		TotalDiscountedCents:          scopeTotals.TotalAmountCents,
-		ReconstructedAmountCents:      scopeTotals.ReconstructedAmountCents,
-		MeasuredAmountCents:           scopeTotals.MeasuredAmountCents,
-		ReconstructedRedemptionsCount: scopeTotals.ReconstructedRedemptionsCount,
-		MeasuredRedemptionsCount:      scopeTotals.MeasuredRedemptionsCount,
-		DiscountedOrdersCount:         scopeTotals.DiscountedOrdersCount,
-		TotalOrdersCount:              ordersTotals.TotalOrdersCount,
-		ReferenceRevenueTTCCents:      ordersTotals.ReferenceRevenueTTCCents,
+	build := func(from, to string, scopeTotals DiscountsScopeTotals, ordersTotals DiscountsOrdersTotals) DiscountsPeriodTotals {
+		period := DiscountsPeriodTotals{
+			From: from, To: to,
+			TotalDiscountedCents:          scopeTotals.TotalAmountCents,
+			ReconstructedAmountCents:      scopeTotals.ReconstructedAmountCents,
+			MeasuredAmountCents:           scopeTotals.MeasuredAmountCents,
+			ReconstructedRedemptionsCount: scopeTotals.ReconstructedRedemptionsCount,
+			MeasuredRedemptionsCount:      scopeTotals.MeasuredRedemptionsCount,
+			DiscountedOrdersCount:         scopeTotals.DiscountedOrdersCount,
+			TotalOrdersCount:              ordersTotals.TotalOrdersCount,
+			ReferenceRevenueTTCCents:      ordersTotals.ReferenceRevenueTTCCents,
+		}
+		period.OrdersWithDiscountRatePercent = discountsRateOrNil(scopeTotals.DiscountedOrdersCount, scopeTotals.DiscountedOrdersCount, ordersTotals.TotalOrdersCount)
+		period.DiscountRatePercent = discountsRateOrNil(scopeTotals.DiscountedOrdersCount, scopeTotals.TotalAmountCents, ordersTotals.ReferenceRevenueTTCCents)
+		return period
 	}
-	period.OrdersWithDiscountRatePercent = discountsRateOrNil(scopeTotals.DiscountedOrdersCount, scopeTotals.DiscountedOrdersCount, ordersTotals.TotalOrdersCount)
-	period.DiscountRatePercent = discountsRateOrNil(scopeTotals.DiscountedOrdersCount, scopeTotals.TotalAmountCents, ordersTotals.ReferenceRevenueTTCCents)
-	return period, nil
+
+	return build(currentFrom, currentTo, currentScopeTotals, currentOrdersTotals),
+		build(previousFrom, previousTo, previousScopeTotals, previousOrdersTotals),
+		nil
 }

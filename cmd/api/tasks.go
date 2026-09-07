@@ -60,6 +60,14 @@ func SetupTasks(
 	// Chaque nuit à 3h : recalcul des patterns market basket
 	add("0 3 * * *", taskManager.RecomputeUpsellPatterns)
 
+	// Chaque nuit à 3h30 : garde-fou anti-redérive des compteurs client
+	// (PROMPT 26 Phase 4) — échantillon de 500 clients comparés à un
+	// recalcul live, jamais une correction (voir cmd/backfill_customer_stats
+	// pour ça). Placé entre RecomputeUpsellPatterns (3h) et
+	// CleanupExpiredPasswordResets (4h30), dans le même créneau creux 3h-5h
+	// que le reste de la maintenance de nuit.
+	add("30 3 * * *", taskManager.ReconcileCustomerStats)
+
 	// 1er du mois à 4h : purge des anciennes suggestions
 	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 

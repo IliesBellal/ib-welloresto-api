@@ -76,6 +76,70 @@ func (r *Repository) GetDiscountsScopeTotals(ctx context.Context, merchantIDs, c
 	return totals, nil
 }
 
+// discountRedemptionsScopeJoinMultiPeriod is discountRedemptionsScopeJoin's
+// multi-window sibling — see AnalyticsOrdersScopeMultiPeriod's doc comment.
+func discountRedemptionsScopeJoinMultiPeriod(merchantIDs, channels []string, windows []PeriodWindow) (string, []interface{}) {
+	where, args := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	where += "\n\t\tAND (" + channelCaseExpr + ") = ANY(?)"
+	args = append(args, channels)
+	return where, args
+}
+
+// discountsScopeTotalsSelectFragment mirrors ordersTotalsSelectFragment's
+// shape for GetDiscountsScopeTotals' 6 aggregates.
+func discountsScopeTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COALESCE(SUM(dr.amount_applied_cents) FILTER (WHERE ` + expr + `), 0),
+		COALESCE(SUM(dr.amount_applied_cents) FILTER (WHERE ` + expr + ` AND dr.is_reconstructed), 0),
+		COALESCE(SUM(dr.amount_applied_cents) FILTER (WHERE ` + expr + ` AND NOT dr.is_reconstructed), 0),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND dr.is_reconstructed),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND NOT dr.is_reconstructed),
+		COUNT(DISTINCT dr.order_id) FILTER (WHERE ` + expr + `)
+	`)
+	var args []interface{}
+	for i := 0; i < 6; i++ {
+		args = append(args, exprArgs...)
+	}
+	return fragment, args
+}
+
+// GetDiscountsScopeTotalsTwoPeriods replaces two GetDiscountsScopeTotals
+// calls (current/previous) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetDiscountsScopeTotalsTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentTotals, previousTotals DiscountsScopeTotals, err error) {
+	windows := []PeriodWindow{current, previous}
+	scopeWhere, scopeArgs := discountRedemptionsScopeJoinMultiPeriod(merchantIDs, channels, windows)
+
+	currentFragment, currentArgs := discountsScopeTotalsSelectFragment(current)
+	previousFragment, previousArgs := discountsScopeTotalsSelectFragment(previous)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`
+		FROM discount_redemptions dr
+		INNER JOIN orders o ON o.order_id = dr.order_id
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.TotalAmountCents, &currentTotals.ReconstructedAmountCents, &currentTotals.MeasuredAmountCents,
+			&currentTotals.ReconstructedRedemptionsCount, &currentTotals.MeasuredRedemptionsCount, &currentTotals.DiscountedOrdersCount,
+			&previousTotals.TotalAmountCents, &previousTotals.ReconstructedAmountCents, &previousTotals.MeasuredAmountCents,
+			&previousTotals.ReconstructedRedemptionsCount, &previousTotals.MeasuredRedemptionsCount, &previousTotals.DiscountedOrdersCount,
+		)
+	})
+	if err != nil {
+		return DiscountsScopeTotals{}, DiscountsScopeTotals{}, fmt.Errorf("get discounts scope totals two periods: %w", err)
+	}
+	return currentTotals, previousTotals, nil
+}
+
 // DiscountsOrdersTotals is GetDiscountsOrdersTotals' raw row — the
 // DiscountRatePercent/OrdersWithDiscountRatePercent denominators, computed
 // under the exact same AnalyticsOrdersScope+channel filter as every other
@@ -109,6 +173,55 @@ func (r *Repository) GetDiscountsOrdersTotals(ctx context.Context, merchantIDs, 
 		return DiscountsOrdersTotals{}, fmt.Errorf("get discounts orders totals: %w", err)
 	}
 	return totals, nil
+}
+
+// discountsOrdersTotalsSelectFragment mirrors paymentsTotalsSelectFragment's
+// shape for GetDiscountsOrdersTotals' 2 aggregates.
+func discountsOrdersTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COUNT(*) FILTER (WHERE ` + expr + `),
+		COALESCE(SUM(o.price) FILTER (WHERE ` + expr + `), 0)
+	`)
+	var args []interface{}
+	args = append(args, exprArgs...)
+	args = append(args, exprArgs...)
+	return fragment, args
+}
+
+// GetDiscountsOrdersTotalsTwoPeriods replaces two GetDiscountsOrdersTotals
+// calls (current/previous) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetDiscountsOrdersTotalsTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentTotals, previousTotals DiscountsOrdersTotals, err error) {
+	windows := []PeriodWindow{current, previous}
+	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere += "\n\t\tAND (" + channelCaseExpr + ") = ANY(?)"
+	scopeArgs = append(scopeArgs, channels)
+
+	currentFragment, currentArgs := discountsOrdersTotalsSelectFragment(current)
+	previousFragment, previousArgs := discountsOrdersTotalsSelectFragment(previous)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.TotalOrdersCount, &currentTotals.ReferenceRevenueTTCCents,
+			&previousTotals.TotalOrdersCount, &previousTotals.ReferenceRevenueTTCCents,
+		)
+	})
+	if err != nil {
+		return DiscountsOrdersTotals{}, DiscountsOrdersTotals{}, fmt.Errorf("get discounts orders totals two periods: %w", err)
+	}
+	return currentTotals, previousTotals, nil
 }
 
 // DiscountsMarginCoverageTotals is GetDiscountsMarginCoverage's raw row — see

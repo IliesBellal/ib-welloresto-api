@@ -210,6 +210,16 @@ func TestCustomersRepository_Postgres(t *testing.T) {
 	if progressValue != 4 {
 		t.Fatalf("expected progress unchanged on repeat, got %d", progressValue)
 	}
+	// PROMPT 26 : les compteurs customer_nb_orders/customer_total_spent sont
+	// désormais idempotents au même titre que la progression fidélité
+	// ci-dessus (orders.customer_stats_counted_at) — avant ce lot, un
+	// deuxième appel les incrémentait une seconde fois.
+	if err := db.QueryRowContext(ctx, `SELECT customer_nb_orders, customer_total_spent FROM customer WHERE customer_id = $1`, customerID).Scan(&nbOrders, &totalSpent); err != nil {
+		t.Fatalf("read back customer stats (repeat): %v", err)
+	}
+	if nbOrders != 1 || totalSpent != 2400 {
+		t.Fatalf("expected stats unchanged on repeat, got %d / %d", nbOrders, totalSpent)
+	}
 
 	// --- ReactivateRewards ---
 	if _, err := db.ExecContext(ctx, `UPDATE customer_rewards SET used_on_order_id = $1 WHERE reward_id = $2`, orderIntID, rewardID); err != nil {

@@ -29,7 +29,11 @@ END $$;
 ALTER TABLE discount_redemptions DROP CONSTRAINT IF EXISTS chk_discount_redemptions_scope_order_item;
 ALTER TABLE discount_redemptions DROP CONSTRAINT IF EXISTS fk_discount_redemptions_customer_id;
 ALTER TABLE discount_redemptions DROP CONSTRAINT IF EXISTS fk_discount_redemptions_order_item_id;
-DROP INDEX IF EXISTS uq_orderitems_order_item_id;
+-- Le CONSTRAINT (ajouté via ADD CONSTRAINT ... UNIQUE USING INDEX, PROMPT 27
+-- Phase 1) porte l'index : le supprimer via le CONSTRAINT retire les deux en
+-- une seule opération, jamais DROP INDEX seul (échouerait, l'index appartient
+-- désormais au constraint).
+ALTER TABLE orderitems DROP CONSTRAINT IF EXISTS uq_orderitems_order_item_id;
 ALTER TABLE discount_redemptions DROP CONSTRAINT IF EXISTS fk_discount_redemptions_order_id;
 ALTER TABLE discount_redemptions DROP CONSTRAINT IF EXISTS fk_discount_redemptions_discount_id;
 

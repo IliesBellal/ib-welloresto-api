@@ -71,6 +71,39 @@ func (r *Repository) GetOrdersCreatedCount(ctx context.Context, merchantIDs []st
 	return count, nil
 }
 
+// GetOrdersCreatedCountThreePeriods replaces three GetOrdersCreatedCount
+// calls (current/previous/previous-year) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetOrdersCreatedCountThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentCount, previousCount, previousYearCount int64, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := AnalyticsAllOrdersCreatedScopeMultiPeriod(merchantIDs, windows)
+
+	currentExpr, currentArgs := periodFilterPredicate(current, "o")
+	previousExpr, previousArgs := periodFilterPredicate(previous, "o")
+	previousYearExpr, previousYearArgs := periodFilterPredicate(previousYear, "o")
+
+	query := strings.TrimSpace(`
+		SELECT
+			COUNT(*) FILTER (WHERE `+currentExpr+`),
+			COUNT(*) FILTER (WHERE `+previousExpr+`),
+			COUNT(*) FILTER (WHERE `+previousYearExpr+`)
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, previousYearArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(&currentCount, &previousCount, &previousYearCount)
+	})
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("get orders created count three periods: %w", err)
+	}
+	return currentCount, previousCount, previousYearCount, nil
+}
+
 // GetCancellationsTotals aggregates the cancellation scope in one pass:
 // volume, amount, and the STAFF/CUSTOMER/SYSTEM/PLATFORM/NULL author-type
 // partition (via COUNT(*) FILTER, not a second query) — internal is
@@ -116,6 +149,62 @@ func (r *Repository) GetCancellationsTotals(ctx context.Context, merchantIDs []s
 		return CancellationsTotals{}, fmt.Errorf("get cancellations totals: %w", err)
 	}
 	return totals, nil
+}
+
+// cancellationsTotalsSelectFragment mirrors ordersTotalsSelectFragment's
+// shape for GetCancellationsTotals' 6 aggregates.
+func cancellationsTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
+	expr, exprArgs := periodFilterPredicate(w, "o")
+	fragment := strings.TrimSpace(`
+		COUNT(*) FILTER (WHERE ` + expr + `),
+		COALESCE(SUM(o.price) FILTER (WHERE ` + expr + `), 0),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND o.cancelled_by_type IN ('STAFF', 'CUSTOMER', 'SYSTEM')),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND o.cancelled_by_type = 'PLATFORM'),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND o.cancelled_by_type IS NULL),
+		COUNT(*) FILTER (WHERE ` + expr + ` AND o.cancelled_by_type = 'STAFF')
+	`)
+	var args []interface{}
+	for i := 0; i < 6; i++ {
+		args = append(args, exprArgs...)
+	}
+	return fragment, args
+}
+
+// GetCancellationsTotalsThreePeriods replaces three GetCancellationsTotals
+// calls (current/previous/previous-year) with one — PROMPT 25 Phase 3.
+func (r *Repository) GetCancellationsTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals CancellationsTotals, err error) {
+	windows := []PeriodWindow{current, previous, previousYear}
+	scopeWhere, scopeArgs := AnalyticsCancellationsScopeMultiPeriod(merchantIDs, windows)
+
+	currentFragment, currentArgs := cancellationsTotalsSelectFragment(current)
+	previousFragment, previousArgs := cancellationsTotalsSelectFragment(previous)
+	previousYearFragment, previousYearArgs := cancellationsTotalsSelectFragment(previousYear)
+
+	query := strings.TrimSpace(`
+		SELECT
+			`+currentFragment+`,
+			`+previousFragment+`,
+			`+previousYearFragment+`
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere
+
+	var args []interface{}
+	args = append(args, currentArgs...)
+	args = append(args, previousArgs...)
+	args = append(args, previousYearArgs...)
+	args = append(args, scopeArgs...)
+
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(
+			&currentTotals.CancelledCount, &currentTotals.CancelledAmountCents, &currentTotals.InternalCancelledCount, &currentTotals.PlatformCancelledCount, &currentTotals.UnknownCancelledCount, &currentTotals.StaffCancelledCount,
+			&previousTotals.CancelledCount, &previousTotals.CancelledAmountCents, &previousTotals.InternalCancelledCount, &previousTotals.PlatformCancelledCount, &previousTotals.UnknownCancelledCount, &previousTotals.StaffCancelledCount,
+			&previousYearTotals.CancelledCount, &previousYearTotals.CancelledAmountCents, &previousYearTotals.InternalCancelledCount, &previousYearTotals.PlatformCancelledCount, &previousYearTotals.UnknownCancelledCount, &previousYearTotals.StaffCancelledCount,
+		)
+	})
+	if err != nil {
+		return CancellationsTotals{}, CancellationsTotals{}, CancellationsTotals{}, fmt.Errorf("get cancellations totals three periods: %w", err)
+	}
+	return currentTotals, previousTotals, previousYearTotals, nil
 }
 
 // ---- Annulations — group_by=merchant (PROMPT 24 Phase 2) ----

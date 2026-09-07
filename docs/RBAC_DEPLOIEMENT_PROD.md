@@ -1,3 +1,11 @@
+> **ARCHIVÉ (2026-09-07, PROMPT 27)** — remplacé par
+> [`docs/DEPLOIEMENT_PROD.md`](DEPLOIEMENT_PROD.md), qui absorbe l'intégralité
+> de ce document (vague A/B/étapes/vérifications ci-dessous, reprises telles
+> quelles) dans le runbook unifié couvrant 087 → 123. Ne plus mettre ce
+> fichier à jour — il reste ici pour l'historique du chantier RBAC lots 1-11
+> uniquement. Toute référence future à "la procédure de déploiement RBAC"
+> doit pointer vers `DEPLOIEMENT_PROD.md`.
+
 # RBAC — déploiement en production (lots 1 à 11)
 
 Destiné à être suivi par quelqu'un qui n'a pas suivi les échanges qui ont mené

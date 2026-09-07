@@ -28,21 +28,35 @@
 -- comme split_by_source, puisque chaque poste de production (le profil) a sa
 -- propre cadence et sa propre capacité. Défauts alignés sur les anciennes
 -- constantes SharedPreferences (15 / 4 / 15).
+--
+-- PostgreSQL migration (réécrite le 2026-09-07, PROMPT 27 Phase 1) : le
+-- fichier original était en syntaxe MySQL non convertie (ENGINE=InnoDB,
+-- INT UNSIGNED, DATETIME ... ON UPDATE, KEY inline) — invalide en Postgres.
+-- Cette version reprend le schéma tel que réellement obtenu sur staging
+-- (docs/migration-postgres/67-migration-status-audit.md §1.2), où cette
+-- migration a été appliquée par un autre chemin que ce fichier : types
+-- Postgres, updated_at NOT NULL DEFAULT CURRENT_TIMESTAMP sans trigger (pas
+-- de reprise du comportement ON UPDATE CURRENT_TIMESTAMP de MySQL — aucun
+-- trigger n'existe sur staging, updated_at doit être renseigné explicitement
+-- par le code applicatif à chaque écriture), et idx_production_profiles_merchant
+-- en index séparé (pas de KEY inline en Postgres).
 
 CREATE TABLE production_profiles (
-    production_profile_id     VARCHAR(64)  NOT NULL,
-    merchant_id                VARCHAR(64)  NOT NULL,
-    name                        VARCHAR(255) NOT NULL,
-    split_by_source             BOOLEAN      NOT NULL DEFAULT TRUE,
-    display_only_paid_orders    BOOLEAN      NOT NULL DEFAULT FALSE,
-    load_slot_interval_minutes  INT UNSIGNED NOT NULL DEFAULT 15,
-    load_slot_duration_hours    INT UNSIGNED NOT NULL DEFAULT 4,
-    load_max_capacity_count     INT UNSIGNED NOT NULL DEFAULT 15,
-    created_at                  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at                  DATETIME     NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (production_profile_id),
-    KEY idx_production_profiles_merchant (merchant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    production_profile_id      varchar(64)  NOT NULL,
+    merchant_id                 varchar(64)  NOT NULL,
+    name                        varchar(255) NOT NULL,
+    split_by_source              boolean      NOT NULL DEFAULT true,
+    display_only_paid_orders     boolean      NOT NULL DEFAULT false,
+    load_slot_interval_minutes   integer      NOT NULL DEFAULT 15,
+    load_slot_duration_hours     integer      NOT NULL DEFAULT 4,
+    load_max_capacity_count      integer      NOT NULL DEFAULT 15,
+    created_at                   timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                   timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (production_profile_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_profiles_merchant
+    ON production_profiles (merchant_id);
 
 -- Jointure produit x profil. should_produce / should_monitor sont deux flags
 -- indépendants (un produit peut être l'un, l'autre, les deux, ou ni l'un ni
@@ -51,9 +65,9 @@ CREATE TABLE production_profiles (
 -- Pas de colonne merchant_id ici, comme product_configurable_attribute : le
 -- scoping se fait via production_profiles et products.
 CREATE TABLE product_production_profiles (
-    production_profile_id VARCHAR(64) NOT NULL,
-    product_id              VARCHAR(64) NOT NULL,
-    should_produce          BOOLEAN     NOT NULL DEFAULT FALSE,
-    should_monitor          BOOLEAN     NOT NULL DEFAULT FALSE,
+    production_profile_id varchar(64) NOT NULL,
+    product_id              varchar(64) NOT NULL,
+    should_produce           boolean    NOT NULL DEFAULT false,
+    should_monitor           boolean    NOT NULL DEFAULT false,
     PRIMARY KEY (production_profile_id, product_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+);
