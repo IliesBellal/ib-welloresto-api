@@ -281,3 +281,57 @@ ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) NULL DEFAULT NULL AFTER extra_pr
 5. **Portée Kiosk vs autres canaux** — le brief ne mentionne explicitement que le Kiosk pour l'affichage, mais `ConfigurableOption` (struct partagée, section 2a) est aussi utilisée par ScanNOrder et potentiellement le POS Flutter. L'image doit-elle apparaître **uniquement** sur Kiosk, ou aussi sur ScanNOrder (client final sur son téléphone) et le POS staff ? Ça change le périmètre de la section B (combien de structs/requêtes étendre réellement) et de la section D (Flutter Kiosk seul, ou aussi `wello_resto_flutter`/`wello-kiosk`).
 6. **Convention de route REST** — `PUT /menu/attribute_options/{option_id}/image` (cohérent avec `PUT /products/{product_id}/image`) vs un sous-chemin de l'attribut parent (`POST /menu/attributes/{attribute_id}/options/{option_id}/image`, plus explicite sur la hiérarchie mais plus long) — à trancher avant l'implémentation, pas de précédent strictement identique dans le code actuel (les uploads existants sont tous à plat sur l'entité elle-même, jamais nichés sous un parent).
 7. **Numéro de migration réel** — confirmer au moment de l'implémentation le dernier numéro effectivement utilisé dans `migrations/todo/` (045 au moment de cet audit, voir sessions précédentes) avant d'attribuer le numéro à la nouvelle migration de cette section A.
+
+---
+
+## 7. Implémentation — propagation de l'image par nom d'option (2026-09-08)
+
+**Statut à ce jour** : les sections 1-5 ci-dessus sont désormais **réalisées** (migration appliquée, `image_url` exposé sur `AttributeOption`/`ConfigurableOption`/`KioskModifierOption`, endpoint `PUT /menu/attribute_options/{option_id}/image` + `UploadAttributeOptionImage` en place côté back-office — voir [internal/modules/menu/handler.go:1655-1750](internal/modules/menu/handler.go#L1655-L1750) et `Attributes.tsx` côté React). Cette section documente une **extension comportementale** demandée après coup, pas une nouvelle fonctionnalité isolée.
+
+### Demande
+
+Deux options de configuration portant le **même nom** (ex. "Sauce barbecue" attachée à plusieurs produits/attributs différents pour le même marchand) doivent rester visuellement synchronisées : ajouter ou retirer une photo sur l'une doit se répercuter sur **toutes** les options du marchand dont le titre correspond, insensible à la casse — quel que soit le chemin par lequel le changement a été déclenché.
+
+### Chemins d'écriture identifiés sur `configurable_attribute_options.image_url`
+
+Avant cette session, 3 chemins existaient déjà pour écrire cette colonne, tous indépendants :
+
+1. **Endpoint dédié** `PUT /menu/attribute_options/{option_id}/image` → `UpdateAttributeOptionImageURL` — le chemin "principal" (upload effectif, avec suppression de l'ancien fichier R2).
+2. **Sauvegarde en lot d'un attribut** `PATCH /menu/attributes/{attribute_id}` → `UpdateAttribute` — le formulaire React envoie `image_url` dans le payload de chaque option à chaque sauvegarde (branche update-existante avec `COALESCE(?, image_url)`, et branche insert pour une nouvelle option). C'est ce chemin qui permet, en théorie, un retrait explicite (`image_url: ""`) même si aucun bouton "supprimer la photo" n'existe encore côté UI.
+3. **Création d'attribut** `POST /menu/attributes` → `CreateAttribute`/`insertAttributeOptionsTx`, et le même chemin réutilisé par l'import de menu (`import_commit_repository.go`) — `image_url` y est quasiment toujours vide en pratique (le formulaire n'autorise l'upload qu'une fois l'option enregistrée), mais le payload le permet techniquement.
+
+### Décision de conception
+
+Centraliser la propagation dans une seule fonction repository, appelée depuis les 3 chemins ci-dessus plutôt que de dupliquer la logique :
+
+```go
+func (r *MenuRepository) propagateAttributeOptionImageByTitle(ctx context.Context, merchantID, sourceTitle, imageURL string) error
+```
+
+[internal/modules/menu/repository.go](internal/modules/menu/repository.go) — `UPDATE ... FROM` (Postgres) sur `configurable_attribute_options` jointe à `configurable_attributes`, filtrée par `merchant_id` et `LOWER(TRIM(title)) = LOWER(TRIM(sourceTitle))`. `imageURL == ""` est traduit en `NULL` (retrait), cohérent avec le pattern déjà utilisé par `ClearProductCategoryImageURL`/`ClearMarketingCategoryImageURL`.
+
+**Écrit en Postgres uniquement** (pas de branche MySQL dialecte, contrairement au code legacy voisin) — conforme à `CLAUDE.md` : MySQL n'est plus une cible vivante, pas de nouveau code MySQL-spécifique à ajouter.
+
+Points d'accroche par chemin :
+- `UpdateAttributeOptionImageURL` (chemin 1) : réécrite pour lire le titre de l'option ciblée, puis délègue entièrement à `propagateAttributeOptionImageByTitle` (qui met aussi à jour l'option elle-même, puisqu'elle matche trivialement son propre titre). L'ancienne requête `UPDATE ... WHERE cao.id = ?` scopée à une seule ligne disparaît.
+- `UpdateAttribute` (chemin 2), branche update-existante : propage dès que `opt.ImageURL != nil` (ajout **ou** retrait explicite — nil reste "champ non fourni, ne rien faire", conformément au contrat `COALESCE` déjà documenté dans le code).
+- `UpdateAttribute` (chemin 2), branche insert-nouvelle-option, et `insertAttributeOptionsTx` (chemin 3, partagé par `CreateAttribute` et l'import) : propage seulement si `opt.ImageURL != nil && *opt.ImageURL != ""` — une option qui vient d'être créée n'a rien à "retirer".
+
+`setMenuUpdated(merchantID)` est appelé à l'intérieur de `propagateAttributeOptionImageByTitle` (invalidation du cache menu), ce qui corrige au passage une lacune : `UpdateAttributeOptionImageURL` ne l'appelait pas auparavant.
+
+### Portée volontairement exclue
+
+- **Pas de nouvel endpoint de suppression dédié** (`DELETE /menu/attribute_options/{option_id}/image`) — non demandé ; le retrait passe aujourd'hui par le chemin 2 (payload `image_url: ""`), et `UpdateAttributeOptionImageURL` accepterait de toute façon une chaîne vide si un tel endpoint était ajouté plus tard (il suffirait d'appeler la même fonction).
+- **Pas de nettoyage R2 des images orphelines côté options "sœurs"** : quand la propagation écrase `image_url` sur une option sœur qui avait sa propre image précédente (uploadée séparément avant l'introduction de cette règle), l'ancien fichier R2 n'est pas supprimé — seul le fichier de l'option directement éditée est nettoyé (comportement historique de `UploadAttributeOptionImage`). Risque : accumulation de fichiers orphelins dans le bucket R2 au fil des uploads sur des options synonymes. Non traité ici (nécessiterait de lire l'`image_url` de chaque ligne sœur avant écrasement et d'orchestrer les suppressions R2 depuis la couche repository ou de faire remonter la liste au handler) — à trancher dans une session dédiée si le volume constaté le justifie.
+- **Correspondance par nom uniquement** (`title`, insensible casse + espaces) — pas de correspondance plus stricte par type d'attribut ou par langue ; deux options "Sauce barbecue" sur deux attributs de types différents sont considérées identiques si leur titre matche.
+
+### Vérification
+
+- `go build ./...`, `go vet ./internal/modules/menu/...` : OK.
+- `go test ./internal/modules/menu/...` (suite standard, sans DB) : OK, inchangée.
+- Suite d'intégration Postgres (`-tags postgres_integration`, `POSTGRES_URL=$RENDER_STAGING_DATABASE_URL`, contre la base de **staging**) : nouveaux cas ajoutés dans `TestMenuRepository_Postgres` ([internal/modules/menu/postgres_integration_test.go](internal/modules/menu/postgres_integration_test.go)) couvrant :
+  - propagation à l'ajout, via le chemin 1, vers une option sœur nommée différemment en casse/espaces (`"  KETCHUP BIO  "`) sur un tout autre attribut ;
+  - propagation au retrait (chaîne vide → `NULL`), y compris sur l'option source elle-même ;
+  - propagation via le chemin 2 (`UpdateAttribute`, payload en lot).
+  
+  Les 3 nouvelles assertions passent contre staging. Le test `TestMenuRepository_Postgres` échoue par ailleurs sur une assertion **préexistante et indépendante** (`GetMenu catégorie itest absente ou mauvais compte de produits racines`, section `--- UpdateProduct complet` plus loin dans le même test) — confirmé préexistant en rejouant le test sur `main` avant toute modification de cette session (`git stash` puis re-run : même échec, même message). Non lié à ce changement, non corrigé ici (hors périmètre de la demande).

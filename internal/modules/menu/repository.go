@@ -511,7 +511,7 @@ func (r *MenuRepository) insertAttributeTx(ctx context.Context, merchantID strin
 
 	// Les id d'options ne servent pas au chemin unitaire, qui ne renvoie que
 	// l'attribut.
-	if _, err := r.insertAttributeOptionsTx(ctx, attributeID, payload.Options); err != nil {
+	if _, err := r.insertAttributeOptionsTx(ctx, merchantID, attributeID, payload.Options); err != nil {
 		return "", err
 	}
 
@@ -527,7 +527,7 @@ func (r *MenuRepository) insertAttributeTx(ctx context.Context, merchantID strin
 // unitaire les ignore ; l'import s'en sert pour alimenter
 // import_attribute_options_mapping sans avoir à relire la table ni à supposer
 // que l'ordre d'identity reflète l'ordre d'insertion.
-func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attributeID string, options []UpdateAttributeOptionPayload) ([]int64, error) {
+func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, merchantID, attributeID string, options []UpdateAttributeOptionPayload) ([]int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	optionIDs := make([]int64, 0, len(options))
@@ -597,6 +597,14 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, attribute
 			return nil, fmt.Errorf("insert option error: %w", err)
 		}
 		optionIDs = append(optionIDs, optionID)
+
+		// Une option nouvellement créée n'a rien à "retirer" : on ne propage
+		// que si une image a réellement été fournie.
+		if opt.ImageURL != nil && *opt.ImageURL != "" {
+			if err := r.propagateAttributeOptionImageByTitle(ctx, merchantID, opt.Title, *opt.ImageURL); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return optionIDs, nil
@@ -723,6 +731,15 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 			if err != nil {
 				return fmt.Errorf("update option error: %w", err)
 			}
+
+			// opt.ImageURL non-nil = valeur explicitement envoyée par ce
+			// chemin (ajout ou "" pour un retrait) : propage aux options du
+			// même nom, comme le fait le endpoint d'upload dédié.
+			if opt.ImageURL != nil {
+				if err := r.propagateAttributeOptionImageByTitle(ctx, merchantID, opt.Title, *opt.ImageURL); err != nil {
+					return err
+				}
+			}
 		} else {
 			// New option - create it
 			price := opt.Price
@@ -782,6 +799,14 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 			if err != nil {
 				return fmt.Errorf("insert option error: %w", err)
 			}
+
+			// Une option nouvellement créée n'a rien à "retirer" : on ne
+			// propage que si une image a réellement été fournie.
+			if opt.ImageURL != nil && *opt.ImageURL != "" {
+				if err := r.propagateAttributeOptionImageByTitle(ctx, merchantID, opt.Title, *opt.ImageURL); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -823,41 +848,71 @@ func (r *MenuRepository) GetAttributeOptionImageURL(ctx context.Context, merchan
 }
 
 // UpdateAttributeOptionImageURL met à jour l'URL d'image d'une option,
-// scopée au merchant via une jointure sur configurable_attributes.
+// scopée au merchant via une jointure sur configurable_attributes, puis
+// propage cette image à toutes les options du même nom (voir
+// propagateAttributeOptionImageByTitle).
 func (r *MenuRepository) UpdateAttributeOptionImageURL(ctx context.Context, merchantID, optionID, imageURL string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	// cao.id est un integer identity : un optionID non numérique valait 0 en
-	// MySQL (aucune ligne affectée) — même résultat sans requête.
+	// MySQL (aucune ligne) — même résultat sans requête.
 	if !menuNumericID(optionID) {
 		return fmt.Errorf("attribute_option_not_found")
 	}
 
-	// UPDATE multi-table MySQL -> UPDATE ... FROM (cible SET non qualifiée)
-	query := `UPDATE configurable_attribute_options cao
+	var title string
+	err := db.QueryRowContext(ctx,
+		`SELECT cao.title
+		 FROM configurable_attribute_options cao
 		 INNER JOIN configurable_attributes ca ON ca.id = cao.configurable_attribute_id
-		 SET cao.image_url = ?
-		 WHERE cao.id = ? AND ca.merchant_id = ?`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		query = `UPDATE configurable_attribute_options
+		 WHERE cao.id = ? AND ca.merchant_id = ?`,
+		optionID, merchantID,
+	).Scan(&title)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("attribute_option_not_found")
+		}
+		return fmt.Errorf("failed to get attribute option: %w", err)
+	}
+
+	return r.propagateAttributeOptionImageByTitle(ctx, merchantID, title, imageURL)
+}
+
+// propagateAttributeOptionImageByTitle applique imageURL ("" = retrait) à
+// TOUTES les options de configuration du marchand dont le titre correspond
+// (insensible à la casse, espaces ignorés) à sourceTitle — quel que soit
+// l'attribut auquel elles appartiennent. Deux options nommées "Sauce
+// barbecue" sur des produits différents doivent rester visuellement
+// synchronisées : ajouter ou retirer une photo sur l'une impacte toutes les
+// autres, quel que soit le chemin d'appel (upload dédié ou sauvegarde en lot
+// d'un attribut).
+func (r *MenuRepository) propagateAttributeOptionImageByTitle(ctx context.Context, merchantID, sourceTitle, imageURL string) error {
+	title := strings.TrimSpace(sourceTitle)
+	if title == "" {
+		return nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	var imageURLArg interface{}
+	if imageURL != "" {
+		imageURLArg = imageURL
+	}
+
+	_, err := db.ExecContext(ctx,
+		`UPDATE configurable_attribute_options
 		 SET image_url = ?
 		 FROM configurable_attributes ca
 		 WHERE ca.id = configurable_attribute_options.configurable_attribute_id
-		   AND configurable_attribute_options.id = ? AND ca.merchant_id = ?`
+		   AND ca.merchant_id = ?
+		   AND LOWER(TRIM(configurable_attribute_options.title)) = LOWER(?)`,
+		imageURLArg, merchantID, title,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to propagate attribute option image: %w", err)
 	}
 
-	res, err := db.ExecContext(ctx, query, imageURL, optionID, merchantID)
-	if err != nil {
-		return fmt.Errorf("failed to update attribute option image: %w", err)
-	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to check update result: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("attribute_option_not_found")
-	}
+	_ = r.setMenuUpdated(ctx, merchantID)
 
 	return nil
 }

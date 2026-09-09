@@ -1,486 +1,262 @@
-# Audit — Parcours d'inscription, d'abonnement et de conformité (Phase 0)
+﻿# Audit — Parcours d'inscription, d'abonnement et de conformité (Phase 0)
 
-**Audit en lecture seule.** Aucune modification de code, aucune migration, aucun refactoring, aucune recommandation de solution — uniquement l'état des lieux factuel du code et du schéma tels qu'observés le 2026-08-28, sur le dépôt `ib-welloresto-api` (branche `staging`) et les dépôts satellites de l'écosystème WelloResto (`wello-back-office`, `wello_resto_flutter`, `wello-kiosk`, `wello-resto-scannorder`).
+**Audit en lecture seule.** Aucune modification de code, aucune migration, aucun refactoring, aucune recommandation de solution — uniquement l'état des lieux factuel du code et du schéma tels qu'observés le **2026-09-08**, sur le dépôt `ib-welloresto-api` (branche `main`) et les dépôts satellites de l'écosystème WelloResto (`wello-back-office`, `wello_resto_flutter`, `wello-kiosk`).
 
 ## Note méthodologique préalable
 
-Il n'existe **aucune migration `CREATE TABLE` pour la table marchand** dans `migrations/` (grep exhaustif sur `merchants`/`merchant` dans tout `migrations/done/` : aucun `CREATE TABLE`, seulement des `FOREIGN KEY (merchant_id) REFERENCES ...`, des commentaires, et un seul `ALTER TABLE merchant ADD COLUMN default_role_id ...`). Le schéma de base (table marchand, `users`, `users_rights`, `employees`, etc.) préexiste au dossier `migrations/` et n'est reconstituible depuis aucun fichier de migration du dépôt.
+Une première version de cet audit existait déjà dans ce dépôt (`docs/audit-parcours-onboarding.md`, committée le 2026-08-28) et a été intégralement remplacée par le présent document, à la demande explicite de l'utilisateur, pour la raison suivante : sa prémisse méthodologique centrale est devenue caduque. Cette première version s'appuyait sur un export MySQL de production (`docs/migration-postgres/wello-resto-mysql-ddl.md`, dump du 2026-07-13) comme source de vérité du schéma, en tenant le raisonnement suivant : au 2026-08-27 (`docs/RBAC_BASCULE.md`), MySQL restait la base de production réelle et l'instance Postgres n'était qu'un environnement de recette pour la bascule en cours.
 
-La source la plus fiable trouvée est **`docs/migration-postgres/wello-resto-mysql-ddl.md`** : un export phpMyAdmin réel (`SHOW CREATE TABLE`), en-tête :
-```
--- phpMyAdmin SQL Dump
--- version 5.2.2
--- Hôte : 127.0.0.1:3306
--- Généré le : lun. 13 juil. 2026 à 11:05
--- Version du serveur : 11.8.8-MariaDB-log
--- Base de données : `u231520952_welloresto`
-```
-C'est un dump réel de la base MySQL de production Hostinger, daté du **13 juillet 2026**. Toutes les structures de table citées dans ce document en proviennent, sauf mention contraire explicite (colonnes ajoutées par une migration postérieure à cette date, identifiée séparément).
+**Ce point de départ n'est plus vrai.** Le fichier `CLAUDE.md` de ce dépôt indique désormais explicitement : *« PostgreSQL is the only database engine in production (confirmed 2026-09-01) — the MySQL → Postgres migration [...] is complete; MySQL is no longer live anywhere. »* La bascule décrite comme en attente le 2026-08-27 a donc eu lieu dans l'intervalle.
 
-**Point critique qui conditionne la lecture de tout le document** : le dépôt contient un chantier de bascule MySQL → PostgreSQL en cours (`docs/migration-postgres/`). Le fichier `docs/RBAC_BASCULE.md` indique explicitement, à la date du **2026-08-27** (la veille du jour de cet audit) :
+**Source du schéma utilisée pour ce document** : deux sources convergentes, toutes deux Postgres —
+1. **Introspection live** de la base Postgres de staging (`RENDER_STAGING_DATABASE_URL`), interrogée directement via `information_schema.columns`, `pg_constraint` et `pg_indexes` le 2026-09-08 — colonnes, types, nullabilité, valeurs par défaut, contraintes (`NOT NULL`, `PRIMARY KEY`, `FOREIGN KEY`, `CHECK`, `UNIQUE`) et index réels, table par table.
+2. Le fichier `data-migration/postgres_ddl.sql` mentionné par l'utilisateur comme référence DDL Postgres est présent dans l'arborescence mais **vide** au moment de l'audit (0 octet) — il ne contient donc aucune information exploitable ; l'introspection live décrite ci-dessus s'y substitue intégralement et couvre le même besoin (structure exacte des tables citées dans ce document).
 
-> « Ces six migrations sont déjà **appliquées en recette** (094-098 sous leurs anciens numéros 089-093 [...] ; 099 a été exécutée directement sous ce numéro le 2026-08-27 [...]). **En production, aucune des six n'a jamais été jouée** : elles partent de zéro sous ces numéros. »
-
-et `migrations/done/094_roles_schema.up.sql` (lignes 1-11) confirme :
-
-> « Staging already has this migration's DDL applied (it ran as 089); **production has never received it** and will receive it under this new number, 094. »
-
-Ces migrations 094-099 (schéma RBAC : `permissions`, `roles`, `role_permissions`, `users_rights.role_id`, `merchant.default_role_id`) sont écrites en **syntaxe PostgreSQL pure**, et « recette »/« staging » y désigne l'instance Postgres de bascule (Render), distincte de MySQL Hostinger réel. Par défaut, l'API se connecte en MySQL (`cmd/api/main.go:24` : « DB (MySQL par défaut, Postgres si DB_DIALECT=postgres — migration en cours) »). Ce point conditionne notamment la lecture de la Section 3 (Permissions) et de la Section 8 (création de compte) : le système RBAC (rôles nommés, table `roles`) décrit dans ce document est démontré par du code réel et des migrations réelles, mais — au 2026-08-27, selon la documentation même du dépôt — n'a encore jamais tourné contre la base de production MySQL.
+Sauf mention contraire explicite, toute structure de table citée dans ce document provient de cette introspection live du 2026-09-08, et non plus d'un dump MySQL. Le système RBAC (`roles`/`permissions`/`role_permissions`, `users_rights.role_id`, `merchant.default_role_id`) décrit dans les sections 2 et 3 est un schéma Postgres réellement en place sur l'instance staging interrogée — la question de son état en production au sens strict relève désormais de la configuration de déploiement, plus d'une divergence de moteur de base de données.
 
 ---
 
 ## 1. Modèle de données — identité et rattachement
 
-### 1.1. Structure exacte de la table marchand
+### 1.1. Structure exacte de la table `merchant`
 
-**Précision terminologique importante** : la table s'appelle **`merchant`, au singulier** — pas `merchants`. Tout le code Go (`internal/modules/pos/create_repository.go`, `internal/modules/auth/repository.go`, `internal/modules/bookings/repository.go`, `internal/modules/kiosk/repository.go`, etc.) écrit et lit `FROM merchant` / `INSERT INTO merchant` / `UPDATE merchant SET`.
+Précision terminologique : la table s'appelle **`merchant`, au singulier** (pas `merchants`). Tout le code Go y lit/écrit directement (`FROM merchant`, `INSERT INTO merchant`, `UPDATE merchant SET`), par exemple `internal/modules/pos/create_repository.go`, `internal/modules/auth/repository.go`, `internal/modules/bookings/repository.go`, `internal/modules/kiosk/repository.go`.
 
-Fait notable : `migrations/done/003_create_availabilities_tables.sql:22` contient `FOREIGN KEY (merchant_id) REFERENCES merchants(merchant_id)` — au pluriel, avec une colonne `merchant_id` comme clé, ce qui ne correspond à **aucune** table réelle du dépôt (la vraie table est `merchant`, PK `id`, integer). Cette FK référence une table qui n'existe pas sous ce nom/cette forme dans le schéma réel ; c'est une incohérence brute observée dans le fichier de migration, non résolue plus loin dans le code.
-
-**Structure réelle (dump MySQL du 2026-07-13)**, `docs/migration-postgres/wello-resto-mysql-ddl.md:1782-1806` :
+Structure réelle, introspection live de la base Postgres staging (`information_schema.columns` + `pg_constraint`, requête exécutée le 2026-09-08) :
 
 ```sql
-CREATE TABLE `merchant` (
-  `id` int(11) NOT NULL,
-  `brand_id` varchar(35) DEFAULT NULL,
-  `fullName` varchar(50) NOT NULL,
-  `address` text NOT NULL,
-  `street_number` varchar(25) NOT NULL,
-  `street` varchar(255) NOT NULL,
-  `zip_code` varchar(6) NOT NULL,
-  `city` varchar(255) NOT NULL,
-  `country` varchar(255) NOT NULL DEFAULT 'France',
-  `lat` double DEFAULT 0,
-  `lng` double DEFAULT 0,
-  `timezone` varchar(50) NOT NULL DEFAULT 'Europe/Paris',
-  `logo` longtext DEFAULT NULL,
-  `logo_url` longtext DEFAULT NULL,
-  `handicap_access` tinyint(1) NOT NULL DEFAULT 0,
-  `SIRET` varchar(50) NOT NULL,
-  `vat_number` varchar(50) DEFAULT NULL,
-  `web_site` varchar(100) NOT NULL,
-  `email` varchar(100) DEFAULT NULL,
-  `merchantTel` varchar(15) NOT NULL,
-  `token` varchar(20) NOT NULL,
-  `creation_date` datetime NOT NULL DEFAULT current_timestamp(),
-  `is_active` tinyint(1) NOT NULL DEFAULT 1
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
+merchant (
+  id                integer                   NOT NULL   -- PK
+  brand_id          varchar(35)               NULL       -- lien vers brands.brand_id, voir 1.3 ; aucune contrainte FK déclarée
+  fullname          varchar(50)               NOT NULL
+  address           text                      NOT NULL
+  street_number     varchar(25)               NOT NULL
+  street            varchar(255)              NOT NULL
+  zip_code          varchar(6)                NOT NULL
+  city              varchar(255)              NOT NULL
+  country           varchar(255)              NOT NULL   DEFAULT 'France'
+  lat               double precision          NULL       DEFAULT 0
+  lng               double precision          NULL       DEFAULT 0
+  timezone          varchar(50)               NOT NULL   DEFAULT 'Europe/Paris'
+  logo              text                      NULL
+  logo_url          text                      NULL
+  handicap_access   boolean                   NOT NULL   DEFAULT false
+  siret             varchar(50)               NOT NULL   -- obligatoire, pas de contrainte de format (longueur libre, pas de CHECK)
+  vat_number        varchar(50)               NULL       -- facultatif
+  web_site          varchar(100)              NOT NULL
+  email             varchar(100)              NULL
+  merchanttel       varchar(15)               NOT NULL
+  token             varchar(20)               NOT NULL
+  creation_date     timestamptz               NOT NULL   DEFAULT now()
+  is_active         boolean                   NOT NULL   DEFAULT true
+  default_role_id   varchar(64)               NULL       -- FK -> roles(id)
+)
+PRIMARY KEY (id)
+FOREIGN KEY (default_role_id) REFERENCES roles(id)
 ```
 
-Clé primaire et auto-increment (`docs/migration-postgres/wello-resto-mysql-ddl.md:4084-4085` et `:4910-4911`) :
-```sql
-ALTER TABLE `merchant`
-  ADD PRIMARY KEY (`id`);
-...
-ALTER TABLE `merchant`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-```
+Point d'architecture général qui vaut pour tout le schéma, pas seulement `merchant` : `merchant.id` est un **entier** (clé primaire numérique), alors que dans la quasi-totalité des 90+ autres tables qui référencent un marchand, la colonne s'appelle `merchant_id` et est de type **`varchar(64)`** — c'est-à-dire la représentation textuelle de cet entier, jamais un entier natif ni une vraie contrainte `FOREIGN KEY (merchant_id) REFERENCES merchant(id)`. Aucune des tables inspectées (`users`, `users_rights`, `employees`, `products`, `cash_registers`, `merchant_parameters`, etc.) ne porte de contrainte FK déclarée vers `merchant.id`. Le rattachement à un marchand est donc garanti par convention applicative, pas par le schéma relationnel.
 
-**ALTER TABLE postérieur** (seul trouvé dans tout `migrations/done/`), `migrations/done/094_roles_schema.up.sql:111` :
-```sql
-ALTER TABLE merchant ADD COLUMN default_role_id varchar(64) REFERENCES roles(id);
-```
-Cette colonne n'est **pas** présente dans le dump du 2026-07-13 (normal, migration postérieure). Comme expliqué dans la note méthodologique, cette migration (094) n'a, au 2026-08-27, **jamais été appliquée sur MySQL production** — seulement sur l'instance Postgres de recette.
-
-**Champ « statut »** : oui, `is_active tinyint(1) NOT NULL DEFAULT 1`. C'est le seul champ de type état/statut sur cette table. Utilisé en lecture dans `internal/modules/pos/repository.go:1436` (`GetMerchantSettings`) et exposé en écriture potentielle via `models.MerchantSettings.IsActive *bool` (`internal/models/request_objects.go:659`).
-
-Il n'existe **aucun champ `status`, `onboarding_step` ou équivalent** sur `merchant`. Recherche exhaustive de « onboarding » dans le dépôt : toutes les occurrences renvoient exclusivement à l'onboarding **Stripe Connect** (`internal/infrastructure/stripe/connect.go:45` `CreateOnboardingLink`, `internal/modules/integrations/service.go:361-415`, route `POST /integrations/scannorder/onboarding`) — un mécanisme de paiement/KYC, sans rapport avec un état de progression de création de compte marchand.
+**Champ « état »/« statut »** : un seul champ de ce type existe sur `merchant` : `is_active boolean NOT NULL DEFAULT true`. Il n'existe **aucun** champ `status`, `onboarding_step`, `stage` ou équivalent modélisant une progression de création de compte. Il n'y a pas non plus de colonne de type énuméré multi-états (`pending`/`active`/`suspended`/…) : `is_active` est un simple booléen actif/inactif.
 
 ### 1.2. Table `establishments`
 
-**N'existe pas.** Recherche `CREATE TABLE` dans `docs/migration-postgres/wello-resto-mysql-ddl.md` (dump réel de production) : aucune table `establishments`. Recherche `grep -in "establishment"` sur tout le dépôt (migrations comprises) : **aucun `CREATE TABLE establishments`**, aucune requête SQL sur une table de ce nom. Le mot « establishment » n'apparaît que comme mot anglais générique dans des commentaires de code et des messages d'erreur, jamais comme nom de table ou d'entité :
-
-- `internal/models/responses_models.go:934,969,974` — messages d'erreur (« This establishment has no default role configured yet. », etc.)
-- `internal/modules/roles/service.go:270,316,450,497` — commentaires
-- `internal/modules/users/create_repository.go:31,51` — commentaires
-- `internal/modules/pos/create_repository.go:164` — commentaire de doc sur `MerchantDefaultRoleID`
-- `internal/modules/auth/login_response.go:15` — commentaire
-- `cmd/assign_admin_role/main.go:4,16` — commentaires
-
-Aucun module `internal/modules/establishment*` n'existe (liste complète des 45 modules vérifiée). Il s'agit dans tous les cas d'un synonyme informel de « merchant » utilisé dans la prose des commentaires, jamais d'une entité de base de données.
+**N'existe pas.** La liste complète des 206 tables du schéma public de la base Postgres staging (introspection live, `information_schema.tables`) ne contient aucune table `establishments` ni `establishment`. Recherche du mot « establishment » (insensible à la casse) dans tout le dépôt `ib-welloresto-api` : le mot n'apparaît que comme terme anglais générique dans des commentaires et des messages d'erreur — jamais comme nom de table, de module Go, de type ou d'endpoint. Aucun module `internal/modules/establishment*` n'existe. C'est un synonyme informel de « merchant » utilisé ponctuellement dans la prose, jamais une entité de base de données.
 
 ### 1.3. Notion de marque / enseigne / franchise
 
-**Il existe bien une notion réelle de marque au niveau marchand**, distincte du champ homonyme sur `orders`.
+Il existe une **table réelle et active `brands`**, distincte de la paire de colonnes homonymes `orders.brand`/`orders.brand_status`.
 
-**a) `brands` — table réelle, active** (`docs/migration-postgres/wello-resto-mysql-ddl.md:368-376`) :
+**a) `brands`** — introspection live :
+
 ```sql
-CREATE TABLE `brands` (
-  `brand_id` varchar(35) NOT NULL,
-  `name` varchar(50) NOT NULL,
-  `slug` varchar(50) NOT NULL,
-  `logo_url` varchar(255) NOT NULL,
-  `banner_url` varchar(255) NOT NULL,
-  `description` varchar(255) NOT NULL,
-  `creation_date` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-`merchant.brand_id varchar(35) DEFAULT NULL` est le lien vers cette table — un marchand peut donc appartenir à une « enseigne »/chaîne regroupant plusieurs établissements.
-
-Cette relation est **effectivement exploitée** par un endpoint public :
-- Route : `cmd/api/routes.go:715` — `r.Get("/brands/{brand_slug}", scannHandler.GetBrand)` (dans `r.Route("/scannorder", ...)`, sans authentification)
-- Handler : `internal/modules/scannorder/handler.go:131-152`
-- Service : `internal/modules/scannorder/service.go:386-411` — `GetBrand` appelle `s.repo.GetMerchantsByBrandSlug(ctx, slug, lat, lng)`, qui liste tous les établissements (`merchant`) rattachés à une enseigne, avec filtrage géographique optionnel
-- Repository : `internal/modules/scannorder/repository.go:792-919`, extrait :
-```go
-brandQuery := `
-    SELECT brand_id, name, slug, logo_url, banner_url, description
-    FROM brands
-    WHERE slug = ?
-    LIMIT 1`
-...
-merchantQuery := fmt.Sprintf(`
-    SELECT
-        m.id,
-        m.fullName,
-        m.address,
-        m.lat,
-        m.lng,
-        m.timezone,
-        m.logo_url,
-        ...
-    FROM ...
-    INNER JOIN merchant m ON m.brand_id = b.brand_id
-    ...
-    WHERE b.brand_id = ?`, ...)
+brands (
+  brand_id       varchar(35)   NOT NULL   -- PK
+  name           varchar(50)   NOT NULL
+  slug           varchar(50)   NOT NULL
+  logo_url       varchar(255)  NOT NULL
+  banner_url     varchar(255)  NOT NULL
+  description    varchar(255)  NOT NULL
+  creation_date  timestamptz   NOT NULL   DEFAULT now()
+)
+PRIMARY KEY (brand_id)
 ```
 
-**Cependant, `merchant.brand_id` n'est jamais écrit par le code applicatif.** Recherche exhaustive de `brand_id` hors modules marketplace (Deliveroo/Uber Eats) : les seules occurrences sont en **lecture** (`internal/modules/scannorder/repository.go:797,846,850,881,885,915,919` et `internal/modules/scannorder/models.go:157`). Aucun `INSERT`/`UPDATE` ne touche `merchant.brand_id` ni la table `brands` dans tout `internal/`. Le rattachement d'un marchand à une enseigne est donc une donnée vivante et exploitée en lecture publique, mais alimentée uniquement manuellement en base (aucun endpoint API ne permet de le définir) — même pattern que documenté pour `stripe_accounts.terminal_location_id` (`migrations/done/054_stripe_accounts_terminal_location_id.up.sql:5-7` : « Aucun endpoint admin ne renseigne cette valeur : elle est insérée manuellement en base par le développeur »).
+`merchant.brand_id` (varchar(35), nullable) pointe vers cette table — un marchand peut donc appartenir à une enseigne regroupant plusieurs établissements. Cette relation est **effectivement exploitée en lecture** par un endpoint public :
+- Route : `cmd/api/routes.go:715` — `r.Get("/brands/{brand_slug}", scannHandler.GetBrand)`, dans `r.Route("/scannorder", ...)`, sans authentification.
+- Handler : `internal/modules/scannorder/handler.go:131-152`.
+- Service : `internal/modules/scannorder/service.go` — `GetBrand` appelle `s.repo.GetMerchantsByBrandSlug(ctx, slug, lat, lng)`.
+- Repository : `internal/modules/scannorder/repository.go:792-919` — requêtes `SELECT ... FROM brands WHERE slug = ?` (ligne 798) puis `... INNER JOIN merchant m ON m.brand_id = b.brand_id ...` (lignes 845, 880, 914) pour lister les établissements d'une enseigne, avec filtrage géographique optionnel.
 
-**b) `orders.brand` / `orders.brand_status` — homonyme sans rapport**, propre à la commande, pas au marchand :
+**Mais `merchant.brand_id` et la table `brands` ne sont jamais écrits par du code applicatif de production.** Recherche exhaustive de `brand_id` et de `FROM brands`/`INTO brands`/`UPDATE brands` dans `internal/` : les seuls résultats hors tests sont les lectures de `internal/modules/scannorder/repository.go` et `internal/modules/scannorder/models.go:157` listées ci-dessus. Le seul `INSERT INTO brands` du dépôt se trouve dans une fixture de test d'intégration (`internal/modules/scannorder/postgres_integration_test.go:76`). Aucun endpoint, service ou repository ne permet de créer une enseigne ou d'y rattacher un marchand — cette donnée n'existe en base que si elle y a été insérée manuellement.
 
-`docs/migration-postgres/wello-resto-mysql-ddl.md:2021-2034` :
+**b) `orders.brand` / `orders.brand_status` — homonyme sans rapport**, propre à la commande et non au marchand. Introspection live de `orders` :
+
 ```sql
-CREATE TABLE `orders` (
-  `order_id` int(11) NOT NULL,
-  ...
-  `brand` varchar(20) NOT NULL DEFAULT 'WELLO_RESTO',
-  `brand_order_id` varchar(50) DEFAULT NULL,
-  `parent_order_id` varchar(50) DEFAULT NULL COMMENT 'Deliveroo : Previous brand_order_id before remake',
-  `brand_order_num` varchar(10) DEFAULT NULL,
-  `brand_status` varchar(30) NOT NULL,
-  ...
+orders.brand          varchar   NOT NULL  DEFAULT 'WELLO_RESTO'
+orders.brand_status   varchar   NOT NULL  -- pas de défaut
+orders.brand_order_id     varchar  NULL
+orders.brand_order_num    varchar  NULL
 ```
 
-Les constantes de `brand` sont définies dans `internal/models/request_objects.go:906-908` :
-```go
-BrandUberEats   = "UBER_EATS"
-BrandDeliveroo  = "DELIVEROO"
-BrandWelloResto = "WELLO_RESTO"
-```
+`orders.brand` identifie le **canal de vente** de la commande (valeurs attendues : `WELLO_RESTO`, ou une marketplace de livraison type `UBER_EATS`/`DELIVEROO` — à confirmer précisément dans `internal/modules/orders/repository.go`, qui référence ces constantes), et `orders.brand_status` porte le **statut de la commande tel que rapporté par cette plateforme externe** (ex. le statut Uber Eats/Deliveroo de la commande), pas un statut d'enseigne. Il n'y a donc **aucun lien** entre `orders.brand`/`orders.brand_status` et la table `brands` / `merchant.brand_id` : c'est une pure homonymie de vocabulaire entre deux concepts métier différents (canal de commande vs. groupe d'établissements).
 
-`brand` désigne ici le **canal/plateforme d'origine de la commande** (application native WelloResto vs marketplace Uber Eats vs Deliveroo), et `brand_status` le **statut de la commande dans le vocabulaire de ce canal** — pas un statut de « marque » marchand. Les valeurs observées confirment un statut de cycle de vie de commande, pas de marchand : `PENDING`, `DELIVERING`, `READY_FOR_COLLECTION`, `CANCELED`, `EN_ROUTE_TO_DROPOFF`, `DENIED`, `CLOSED`, `PENDING_CARD_PAYMENT`, `ONLINE_PAYMENT_PENDING`.
+Recherche complémentaire de « enseigne », « franchise », « groupe » dans `internal/` : aucune occurrence pertinente en dehors de faux positifs (le mot anglais « group » dans des contextes SQL `GROUP BY` ou des noms de colonnes comme `is_product_group`). Il n'existe donc pas d'autre mécanisme de regroupement de marchands que la table `brands` décrite ci-dessus.
 
-**Conclusion factuelle** : les deux notions coexistent sous des noms proches mais ne sont pas liées — `merchant.brand_id`/`brands` = enseigne/chaîne au niveau marchand (réel, lu par un endpoint public, jamais écrit par l'API) ; `orders.brand`/`orders.brand_status` = canal de vente et statut du cycle de vie d'une commande individuelle, y compris pour les commandes natives WelloResto (valeur par défaut `WELLO_RESTO`), sans rapport avec une notion de franchise.
 ### 1.4. Structure de `users`
 
-`docs/migration-postgres/wello-resto-mysql-ddl.md:3264-3311` :
+Introspection live :
+
 ```sql
-CREATE TABLE `users` (
-  `user_id` varchar(50) NOT NULL,
-  `merchant_id` int(11) DEFAULT NULL,
-  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `first_name` varchar(40) NOT NULL COMMENT 'Prénom',
-  `last_name` varchar(40) NOT NULL COMMENT 'Nom',
-  `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `pin_code` varchar(6) DEFAULT NULL,
-  `mfa_type` varchar(25) DEFAULT NULL,
-  `mfa_status` varchar(25) DEFAULT NULL,
-  `mfa_verified_at` timestamp NULL DEFAULT NULL,
-  `mfa_otp_sent_at` timestamp NULL DEFAULT NULL,
-  `mfa_secret` varchar(50) DEFAULT NULL,
-  `userName` varchar(20) DEFAULT NULL,
-  `email` varchar(255) NOT NULL,
-  `email_verified_at` timestamp NULL DEFAULT NULL,
-  `dob` date DEFAULT NULL COMMENT 'date of birth',
-  `tel` varchar(20) DEFAULT NULL,
-  `tel_verified_at` timestamp NULL DEFAULT NULL,
-  `address` varchar(255) DEFAULT NULL,
-  `street_number` varchar(20) DEFAULT NULL,
-  `street` varchar(255) DEFAULT NULL,
-  `city` varchar(255) DEFAULT NULL,
-  `country` varchar(255) DEFAULT NULL,
-  `zip_code` varchar(9) DEFAULT NULL,
-  `lat` text DEFAULT NULL,
-  `lng` text DEFAULT NULL,
-  `heading` int(11) NOT NULL DEFAULT 0,
-  `profile_picture` longtext DEFAULT NULL,
-  `planning_color` varchar(11) NOT NULL DEFAULT '#28B2FC',
-  `isReception` tinyint(1) NOT NULL DEFAULT 0,
-  `isWaiter` tinyint(1) NOT NULL DEFAULT 0,
-  `isDelivery` int(1) NOT NULL DEFAULT 0,
-  `admin` tinyint(1) NOT NULL DEFAULT 0,
-  `access_id` int(11) DEFAULT NULL,
-  `waiter_device_token` varchar(255) DEFAULT NULL COMMENT 'Device token of WR Waitrer',
-  `reception_device_token` varchar(255) DEFAULT NULL COMMENT 'Device token of WR Reception',
-  `delivery_device_token` varchar(255) DEFAULT NULL COMMENT 'Device token of WR Delivery',
-  `token` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `terms_of_use_accepted` tinyint(1) NOT NULL DEFAULT 0,
-  `creationDate` datetime NOT NULL DEFAULT current_timestamp(),
-  `created_at` timestamp NULL DEFAULT current_timestamp(),
-  `lastAccess` datetime DEFAULT NULL COMMENT 'can be deleted (29/05/2026)',
-  `last_activity` timestamp NOT NULL DEFAULT current_timestamp(),
-  `enabled` int(11) NOT NULL DEFAULT 1,
-  `last_login_at` timestamp NULL DEFAULT NULL,
-  `last_position_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
+users (
+  user_id                 varchar(64)   NOT NULL   -- PK
+  merchant_id              varchar(64)   NULL       -- voir 1.7 : ne borne pas le rattachement réel, qui passe par users_rights
+  name                      varchar(255)  NOT NULL   -- UNIQUE (uq_users_name)
+  first_name                varchar(40)   NOT NULL
+  last_name                 varchar(40)   NOT NULL
+  password                  varchar(255)  NOT NULL
+  pin_code                  varchar(6)    NULL
+  mfa_type                  varchar(25)   NULL
+  mfa_status                varchar(25)   NULL
+  mfa_verified_at            timestamptz   NULL
+  mfa_otp_sent_at            timestamptz   NULL
+  mfa_secret                 varchar(50)   NULL
+  username                  varchar(20)   NULL
+  email                      varchar(255)  NOT NULL   -- AUCUNE contrainte d'unicité (voir plus bas)
+  email_verified_at          timestamptz   NULL
+  dob, tel, tel_verified_at, address, street_number, street, city, country, zip_code, lat, lng
+  heading                    integer       NOT NULL   DEFAULT 0
+  profile_picture            text          NULL
+  planning_color             varchar(11)   NOT NULL   DEFAULT '#28B2FC'
+  isreception                boolean       NOT NULL   DEFAULT false
+  iswaiter                   boolean       NOT NULL   DEFAULT false
+  isdelivery                 integer       NOT NULL   DEFAULT 0
+  admin                      boolean       NOT NULL   DEFAULT false
+  access_id                  integer       NULL
+  waiter_device_token / reception_device_token / delivery_device_token   varchar(255)   NULL
+  token                      varchar(64)   NOT NULL
+  terms_of_use_accepted      boolean       NOT NULL   DEFAULT false
+  creationdate                timestamptz   NOT NULL   DEFAULT now()
+  created_at                  timestamptz   NULL       DEFAULT now()   -- doublon de creationdate, colonne plus récente
+  lastaccess                  timestamptz   NULL
+  last_activity                timestamptz   NOT NULL   DEFAULT now()
+  enabled                     boolean       NOT NULL   DEFAULT true
+  last_login_at                timestamptz   NULL
+  last_position_at             timestamptz   NULL
+)
+PRIMARY KEY (user_id)
+UNIQUE INDEX uq_users_name ON (name)
 ```
 
-Clés (`docs/migration-postgres/wello-resto-mysql-ddl.md:4592-4594`) :
-```sql
-ALTER TABLE `users`
-  ADD PRIMARY KEY (`user_id`),
-  ADD UNIQUE KEY `name` (`name`);
-```
+**Unicité sur l'e-mail : elle n'existe pas.** Il n'y a, dans tout le schéma Postgres staging, aucun index unique ni contrainte `UNIQUE` sur `users.email` — le seul index unique de la table porte sur `name`. Confirmation côté code : `internal/modules/users/create_service.go:15-78` (`CreateUser`) valide que `Email` n'est pas vide (ligne 20), hache le mot de passe, génère un `user_id`, puis insère directement via `s.userRepo.CreateUser(...)` (`internal/modules/users/create_repository.go:13`, `INSERT INTO users`) — **sans jamais interroger la table pour un e-mail déjà existant.** Rien n'empêche donc, ni en base ni en code, la création de plusieurs comptes `users` avec le même e-mail.
 
-**Il n'existe pas de contrainte `UNIQUE` sur `email`.** La seule contrainte d'unicité déclarée en base porte sur la colonne `name`. La colonne `email varchar(255) NOT NULL` n'a aucune contrainte d'unicité au niveau SQL.
-
-**Aucun champ d'authentification externe** (`google_id`, `oauth_provider`, `external_id`, ou équivalent) n'existe sur cette table. Les seuls mécanismes d'auth présents sont : mot de passe (`password`), PIN (`pin_code`), et MFA interne (`mfa_type`, `mfa_status`, `mfa_secret`, `mfa_verified_at`, `mfa_otp_sent_at`) — pas de fédération d'identité tierce (pas de Google/Apple/OAuth Sign-In).
+**Champs liés à l'authentification externe** : aucun. Il n'y a pas de colonne `google_id`, `oauth_provider`, `external_auth_id` ou équivalent sur `users`. Voir 2.9 pour la recherche exhaustive d'authentification par fournisseur externe dans tout l'écosystème.
 
 ### 1.5. Structure de `users_rights`
 
-`docs/migration-postgres/wello-resto-mysql-ddl.md:3349-3394` :
+Introspection live :
+
 ```sql
-CREATE TABLE `users_rights` (
-  `id` int(11) NOT NULL,
-  `user_id` varchar(64) DEFAULT NULL,
-  `merchant_id` int(11) NOT NULL,
-  `token` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `enabled` tinyint(1) NOT NULL DEFAULT 1,
-  `access_wrwaiter` tinyint(1) NOT NULL DEFAULT 1,
-  `access_wrreception` tinyint(1) NOT NULL DEFAULT 1,
-  `access_wrdelivery` tinyint(1) NOT NULL DEFAULT 1,
-  `position_id` varchar(64) DEFAULT NULL,
-  `position_note` text DEFAULT NULL,
-  `job_title` varchar(150) DEFAULT NULL,
-  `role` varchar(32) NOT NULL DEFAULT 'employee',
-  `contract_type_code` varchar(32) DEFAULT NULL,
-  `contract_start_date` date DEFAULT NULL,
-  `contract_end_date` date DEFAULT NULL,
-  `probation_end_date` date DEFAULT NULL,
-  `last_medical_checkup_date` date DEFAULT NULL,
-  `contract_hours` decimal(5,2) NOT NULL DEFAULT 35.00,
-  `max_weekly_hours` decimal(5,2) NOT NULL DEFAULT 35.00,
-  `required_rest_days` int(11) NOT NULL DEFAULT 2,
-  `sunday_premium` tinyint(1) NOT NULL DEFAULT 0,
-  `night_premium` tinyint(1) NOT NULL DEFAULT 0,
-  `hourly_rate` bigint(20) NOT NULL DEFAULT 0,
-  `gross_monthly_salary` bigint(20) NOT NULL DEFAULT 0,
-  `employer_charges_pct` decimal(5,2) NOT NULL DEFAULT 45.00,
-  `transport_cost` bigint(20) NOT NULL DEFAULT 0,
-  `hr_comment` text DEFAULT NULL,
-  `manage_menu` tinyint(1) NOT NULL DEFAULT 0,
-  `manage_plannings` tinyint(1) NOT NULL DEFAULT 0,
-  `manage_users` tinyint(1) NOT NULL DEFAULT 0,
-  `manage_settings` tinyint(1) NOT NULL DEFAULT 0,
-  `manage_haccp` tinyint(1) NOT NULL DEFAULT 0,
-  `view_reports` tinyint(1) NOT NULL DEFAULT 0,
-  `export_reports` tinyint(1) NOT NULL DEFAULT 0,
-  `view_financials` tinyint(1) NOT NULL DEFAULT 0,
-  `export_financials` tinyint(1) NOT NULL DEFAULT 0,
-  `manage_customers` tinyint(1) NOT NULL DEFAULT 0,
-  `export_customers` tinyint(1) NOT NULL DEFAULT 0,
-  `admin` tinyint(1) NOT NULL DEFAULT 0,
-  `print_merchant_cash_report` tinyint(1) NOT NULL DEFAULT 0,
-  `open_cash_drawer` tinyint(1) NOT NULL DEFAULT 0,
-  `last_login_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `login_enabled` tinyint(1) NOT NULL DEFAULT 1,
-  `pin_hash` varchar(64) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+users_rights (
+  id                            integer       NOT NULL   -- PK
+  user_id                       varchar(64)   NULL
+  merchant_id                   varchar(64)   NOT NULL
+  token                         varchar(255)  NOT NULL
+  enabled                       boolean       NOT NULL   DEFAULT true
+  access_wrreception            boolean       NOT NULL   DEFAULT true
+  position_id                   varchar(64)   NULL
+  position_note                 text          NULL
+  job_title                     varchar(150)  NULL
+  role                          varchar(32)   NOT NULL   DEFAULT 'employee'   -- ancien système, chaîne libre
+  contract_type_code, contract_start_date, contract_end_date, probation_end_date, last_medical_checkup_date, contract_hours,
+  max_weekly_hours, required_rest_days, sunday_premium, night_premium, hourly_rate, gross_monthly_salary,
+  employer_charges_pct, transport_cost, hr_comment                          -- champs RH dupliqués avec ceux d'`employees` (voir 1.6)
+  manage_menu / manage_plannings / manage_users / manage_settings / manage_haccp   boolean   NOT NULL   DEFAULT false
+  view_reports / view_financials / manage_customers                          boolean   NOT NULL   DEFAULT false
+  admin                          boolean       NOT NULL   DEFAULT false
+  print_merchant_cash_report / open_cash_drawer                             boolean   NOT NULL   DEFAULT false
+  last_login_at                  timestamptz   NOT NULL   DEFAULT now()
+  login_enabled                  boolean       NOT NULL   DEFAULT true
+  pin_hash                       varchar(64)   NULL
+  role_id                        varchar(64)   NULL       -- FK -> roles(id), nouveau système
+)
+PRIMARY KEY (id)
+FOREIGN KEY (role_id) REFERENCES roles(id)
+INDEX idx_users_rights_role_id ON (role_id)
 ```
 
-Clé primaire (`docs/migration-postgres/wello-resto-mysql-ddl.md:4612-4613`) :
-```sql
-ALTER TABLE `users_rights`
-  ADD PRIMARY KEY (`id`);
-```
-**Aucune autre contrainte d'unicité** (ni sur `user_id` seul, ni sur `(user_id, merchant_id)`) n'apparaît dans ce dump.
+**Stockage des permissions : deux systèmes coexistent sur cette même table**, ni JSON ni bitmask :
+1. **Un ensemble de colonnes booléennes « à plat »** (`manage_menu`, `manage_plannings`, `manage_users`, `manage_settings`, `manage_haccp`, `view_reports`, `view_financials`, `manage_customers`, `admin`, `print_merchant_cash_report`, `open_cash_drawer`), plus la colonne `role varchar(32)` (chaîne libre, ex. `'employee'`) — c'est le système historique.
+2. **Un système normalisé plus récent** : `role_id` (FK vers `roles.id`), où `roles` est reliée à `permissions` via la table de jointure `role_permissions` (`role_id`, `permission_key` → `permissions.key`). Le détail de l'usage effectif de chacun des deux systèmes (lequel est encore lu au moment de l'autorisation d'une requête, lequel est mort) est traité en section 3.2.
 
-**Clé de rattachement au marchand** : `merchant_id int(11) NOT NULL` — c'est une table de jointure classique `users_rights(id PK, user_id, merchant_id)`, avec `user_id` et `merchant_id` en colonnes simples (pas de clé composite), permettant plusieurs lignes par `user_id` (voir §1.7).
+**Gestion du PIN** : la table porte `pin_hash varchar(64)` (nullable) — un PIN haché. Notez que la table `users` (section 1.4) porte séparément une colonne `pin_code varchar(6)` (nullable) — deux colonnes de PIN distinctes existent donc dans le schéma, une sur `users` et une sur `users_rights`. Le détail de laquelle est effectivement utilisée par `/auth/pin` et sous quelle forme (haché ou non) est traité en section 2.6.
 
-**Stockage des permissions** : deux mécanismes coexistent, en transition :
-- **Colonnes booléennes historiques** (celles réellement lues aujourd'hui pour autoriser une requête, selon le commentaire de `migrations/done/094_roles_schema.up.sql:16-19` : « the users_rights.manage_* / admin boolean columns remain the only thing the API actually reads to authorize a request ») : `access_wrwaiter`, `access_wrreception`, `access_wrdelivery`, `manage_menu`, `manage_plannings`, `manage_users`, `manage_settings`, `manage_haccp`, `view_reports`, `export_reports`, `view_financials`, `export_financials`, `manage_customers`, `export_customers`, `admin`, `print_merchant_cash_report`, `open_cash_drawer`. Il n'y a **ni colonne JSON ni bitmask** — chaque permission est une colonne `tinyint(1)` dédiée.
-- **`role_id`**, ajouté par `migrations/done/094_roles_schema.up.sql:103-104` (RBAC lot 1) :
-```sql
-ALTER TABLE users_rights ADD COLUMN role_id varchar(64) REFERENCES roles(id);
-CREATE INDEX idx_users_rights_role_id ON users_rights (role_id);
-```
-pointant vers une nouvelle table de jointure `role_permissions` (many-to-many rôle↔permission, `migrations/done/094_roles_schema.up.sql:91-95`). Cette bascule n'est, à ce jour, appliquée qu'en recette Postgres (voir Note méthodologique) — **pas** sur MySQL production.
-
-**Gestion du PIN** : deux colonnes différentes, à des niveaux différents, aucune en clair :
-- `users.pin_code varchar(6)` — colonne historique sur `users`, non accompagnée de commentaire de hachage dans le dump.
-- `users_rights.pin_hash varchar(64) DEFAULT NULL` — colonne dédiée au PIN **hashé**, ajoutée par `migrations/done/031_add_pin_hash_to_users_rights.up.sql` :
-```sql
--- PIN authentication: store HMAC-SHA256 hash of the PIN on the user-merchant link.
--- NULL means the link has no PIN set; the unique index allows multiple NULLs (MySQL semantics).
-ALTER TABLE users_rights ADD COLUMN pin_hash VARCHAR(64) NULL DEFAULT NULL;
-
--- Unique per (merchant, pin_hash) so two employees of the same merchant cannot share a PIN.
--- MySQL treats NULL as distinct in unique indexes, so multiple links without a PIN are allowed.
-CREATE UNIQUE INDEX idx_users_rights_merchant_pin ON users_rights (merchant_id, pin_hash);
-```
-Le commentaire précise explicitement le mécanisme de hachage : HMAC-SHA256. Fait à noter : **la colonne `pin_hash` est bien présente dans le dump réel du 2026-07-13, mais l'index unique `idx_users_rights_merchant_pin` décrit dans la même migration n'apparaît nulle part dans la section index de ce même dump** (`docs/migration-postgres/wello-resto-mysql-ddl.md:4610-4613` ne liste que `ADD PRIMARY KEY (id)`). Écriture confirmée en code : `internal/modules/auth/repository.go:771-777` (`SetPINHash`) et lecture de conflit `internal/modules/auth/repository.go:779-789` (`CheckPINConflict`).
+**Rattachement au marchand** : `merchant_id varchar(64) NOT NULL` — c'est cette table, et non `users.merchant_id`, qui porte le rattachement effectif d'un utilisateur à un marchand (voir 1.7).
 
 ### 1.6. Structure de `employees` et son lien vers `users`
 
-`docs/migration-postgres/wello-resto-mysql-ddl.md:1062-1099` :
+Introspection live (colonnes principales) :
+
 ```sql
-CREATE TABLE `employees` (
-  `id` varchar(64) NOT NULL,
-  `merchant_id` varchar(64) NOT NULL,
-  `user_id` varchar(64) DEFAULT NULL,
-  `member_id` bigint(20) DEFAULT NULL,
-  `first_name` varchar(150) NOT NULL,
-  `last_name` varchar(150) NOT NULL,
-  `position_id` varchar(64) NOT NULL,
-  `position_note` text DEFAULT NULL,
-  `job_title` varchar(150) DEFAULT NULL,
-  `email` varchar(255) DEFAULT NULL,
-  `phone` varchar(64) DEFAULT NULL,
-  `role` enum('employee','manager','admin') NOT NULL DEFAULT 'employee',
-  `contract_type_code` varchar(32) NOT NULL,
-  `contract_start_date` date DEFAULT NULL,
-  `contract_end_date` date DEFAULT NULL,
-  `probation_end_date` date DEFAULT NULL,
-  `last_medical_checkup_date` date DEFAULT NULL,
-  `contract_hours` decimal(5,2) NOT NULL DEFAULT 35.00,
-  `max_weekly_hours` decimal(5,2) NOT NULL DEFAULT 35.00,
-  `required_rest_days` int(11) NOT NULL DEFAULT 2,
-  `sunday_premium` tinyint(1) NOT NULL DEFAULT 0,
-  `night_premium` tinyint(1) NOT NULL DEFAULT 0,
-  `hourly_rate` bigint(20) NOT NULL DEFAULT 0,
-  `gross_monthly_salary` bigint(20) NOT NULL DEFAULT 0,
-  `employer_charges_pct` decimal(5,2) NOT NULL DEFAULT 45.00,
-  `transport_cost` bigint(20) NOT NULL DEFAULT 0,
-  `birth_date` date DEFAULT NULL,
-  `gender` varchar(32) DEFAULT NULL,
-  `nationality` varchar(80) DEFAULT NULL,
-  `address` varchar(255) DEFAULT NULL,
-  `hr_comment` text DEFAULT NULL,
-  `active` tinyint(1) NOT NULL DEFAULT 1,
-  `enabled` tinyint(1) NOT NULL DEFAULT 1,
-  `deleted_at` datetime DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+employees (
+  id                 varchar(64)   NOT NULL   -- PK
+  merchant_id        varchar(64)   NOT NULL
+  user_id            varchar(64)   NULL       -- nullable, aucune contrainte FK déclarée vers users.user_id
+  member_id          bigint        NULL
+  first_name / last_name   varchar(150)  NOT NULL
+  position_id        varchar(64)   NOT NULL
+  ... (contrat de travail : contract_type_code, contract_hours, hourly_rate, gross_monthly_salary, employer_charges_pct, transport_cost, etc.)
+  active / enabled   boolean       NOT NULL   DEFAULT true
+  deleted_at         timestamptz   NULL       -- soft delete dédié (en plus de enabled)
+  created_at / updated_at   timestamptz
+)
+PRIMARY KEY (id)
+UNIQUE (merchant_id, user_id)     -- uq_employees_uq_employees_merchant_user
+UNIQUE (merchant_id, member_id)   -- uq_employees_uq_employees_merchant_member
 ```
-Index (`docs/migration-postgres/wello-resto-mysql-ddl.md:3840-3848`) :
+
+`user_id` est **nullable et sans contrainte `FOREIGN KEY`** déclarée vers `users.user_id` — confirmé par l'introspection live des contraintes de la table (`pg_constraint` ne liste aucune `FOREIGN KEY` sur `employees`, uniquement des `NOT NULL`, la clé primaire et les deux index uniques ci-dessus).
+
+Concernant l'historique de cette nullabilité : la migration d'origine de la table, `migrations/done/014_planning_socle.sql:115-118` (syntaxe MySQL, dossier `done/`), déclare déjà `user_id VARCHAR(64) NULL` **dès la création de la table** :
 ```sql
-ALTER TABLE `employees`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uq_employees_merchant_user` (`merchant_id`,`user_id`),
-  ADD UNIQUE KEY `uq_employees_merchant_member` (`merchant_id`,`member_id`),
-  ADD KEY `idx_employees_merchant_active` (`merchant_id`,`active`),
-  ADD KEY `idx_employees_merchant` (`merchant_id`),
-  ADD KEY `idx_employees_contract_type` (`contract_type_code`),
-  ADD KEY `idx_employees_position_id` (`position_id`),
-  ADD KEY `idx_employees_member_id` (`member_id`);
+CREATE TABLE IF NOT EXISTS employees (
+  id VARCHAR(64) NOT NULL,
+  merchant_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NULL,
+  ...
 ```
+Aucune autre migration du dépôt (`migrations/done/` ni `migrations/todo/`) ne contient d'`ALTER TABLE employees ALTER COLUMN user_id` ou équivalent MySQL (`MODIFY user_id`). Sur la seule base des fichiers de migration présents dans ce dépôt, `user_id` est donc nullable **depuis la création de la table**, pas à la suite d'une modification ultérieure documentée dans `migrations/`. Un `employee` peut donc exister sans être lié à aucun compte `users` (une fiche RH sans accès de connexion) — c'est un état permis et non un vestige transitoire visible dans l'historique des migrations du dépôt.
 
-**État actuel confirmé** : `employees.user_id` est **`VARCHAR(64) NULL` (nullable)**, et **aucune contrainte `FOREIGN KEY` n'existe** sur cette colonne dans le schéma réel — ni dans le dump de production (aucun `CONSTRAINT ... FOREIGN KEY (user_id)` trouvé sur toute la table dans `wello-resto-mysql-ddl.md`), ni dans le fichier de migration actuellement committé `migrations/done/014_planning_socle.sql:115-155` (qui ne contient qu'une `UNIQUE KEY uq_employees_merchant_user (merchant_id, user_id)`, aucun `CONSTRAINT ... FOREIGN KEY`).
-
-**Historique reconstitué via `git log -p` sur ce fichier** :
-
-| Commit | Date | Contenu pertinent |
-|---|---|---|
-| `9c5c989` « feature: Plannin + fix components edit » | 2026-05-27 | Création initiale de `migrations/014_planning_socle.sql` avec `user_id VARCHAR(64) NULL` **et** `CONSTRAINT fk_employees_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL` — nullable **et** contrainte FK dès l'origine |
-| `5fdfb85` « feature: corrective actions » | 2026-05-28 | Suppression de la contrainte FK, `user_id` reste `NULL` mais n'est plus contraint par une FK |
-| `940be00` « feature: delivery sessions » | 2026-06-12 | Déplacement du fichier vers `migrations/done/014_planning_socle.sql` (convention du dépôt marquant « exécuté en MySQL réel ») — déjà sans la FK à ce stade |
-
-Diff exact de la suppression (`git show 5fdfb85 -- migrations/014_planning_socle.sql`) :
-```diff
-   KEY idx_employees_merchant_active (merchant_id, active),
-   KEY idx_employees_merchant (merchant_id),
-   KEY idx_employees_contract_type (contract_type_code),
--  KEY idx_employees_time_tracking (time_tracking_mode_code),
--  CONSTRAINT fk_employees_contract_type FOREIGN KEY (contract_type_code)
--    REFERENCES sys_contract_types(code),
--  CONSTRAINT fk_employees_time_tracking FOREIGN KEY (time_tracking_mode_code)
--    REFERENCES sys_time_tracking_modes(code),
--  CONSTRAINT fk_employees_user FOREIGN KEY (user_id)
--    REFERENCES users(user_id) ON DELETE SET NULL
-+  KEY idx_employees_time_tracking (time_tracking_mode_code)
- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-**Conclusion factuelle** : la colonne `employees.user_id` a été **nullable depuis sa toute première version** (jamais `NOT NULL`). Une contrainte `FOREIGN KEY ... ON DELETE SET NULL` vers `users(user_id)` a existé brièvement dans le fichier de migration entre le 2026-05-27 et le 2026-05-28, avant d'être retirée — et cette suppression a eu lieu **avant** que le fichier ne soit déplacé vers `migrations/done/` (2026-06-12), donc avant toute exécution documentée contre une base réelle. L'état actuel, confirmé à la fois par le fichier de migration committé et par le dump de production, est : colonne nullable, **sans aucune contrainte FK au niveau base de données** (le comportement d'intégrité référentielle, s'il existe, est géré uniquement côté application, pas par le SGBD).
+L'unicité `(merchant_id, user_id)` (et non une unicité globale sur `user_id` seul) confirme structurellement qu'un même `user_id` peut apparaître dans plusieurs lignes `employees` pour des `merchant_id` différents — voir 1.7.
 
 ### 1.7. Un utilisateur peut-il être rattaché à plusieurs marchands ?
 
-**Oui, démontré par le schéma et par le code.**
+**Oui, structurellement et en pratique — le rattachement se fait via `users_rights`, pas via `users.merchant_id`.**
 
-**Schéma** : `users_rights` (voir §1.5) est une table de jointure classique — `id` (PK auto-increment), `user_id`, `merchant_id` — **sans aucune contrainte d'unicité sur `user_id` seul, ni même sur le couple `(user_id, merchant_id)`** (seule `PRIMARY KEY (id)`). Rien n'empêche donc plusieurs lignes `users_rights` portant le même `user_id` avec des `merchant_id` différents — c'est la structure même qui permet le multi-marchand, à l'opposé d'un `merchant_id` unique directement sur `users` (qui existe bien comme colonne `users.merchant_id int(11) DEFAULT NULL`, mais qui n'est visiblement pas ce qui porte le rattachement multiple — c'est `users_rights` qui le fait).
+**Par le schéma** : `users_rights.merchant_id` est `NOT NULL` mais il n'existe **aucune contrainte d'unicité sur `user_id` seul** dans `users_rights` — un même `user_id` peut donc apparaître dans plusieurs lignes `users_rights`, une par marchand. `employees` suit le même principe : unicité `(merchant_id, user_id)`, pas sur `user_id` seul (voir 1.6). `users.merchant_id`, en comparaison, est nullable et **ne sert donc pas de source de vérité** pour le rattachement — c'est un champ hérité, à confirmer/nuancer par la section 2 (login) sur son usage réel.
 
-**Code réel** — la requête est explicitement commentée « MULTI-MERCHANT » dans le code de login :
+**Par le code** :
+- `internal/modules/users/create_service.go:56-72` (`CreateUser`) : dans une même transaction, crée la ligne `users`, puis — seulement si un `merchantID` est fourni — appelle `s.userRepo.UpsertMerchantUserRights(txCtx, userID, merchantID, rightsToken, rights)`. Un utilisateur peut donc être créé sans aucun marchand, ou avec un premier marchand.
+- `internal/modules/users/admin_repository.go:251-262` (`UpsertMerchantUserRights`) : la requête `SELECT id, enabled FROM users_rights WHERE merchant_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1` cherche une ligne existante **par la paire (merchant_id, user_id)**, pas par `user_id` seul — un appel ultérieur de cette même fonction avec un `merchantID` différent pour le même `userID` crée une **nouvelle** ligne `users_rights` au lieu d'écraser la précédente. C'est le mécanisme exact par lequel un même utilisateur est rattaché à plusieurs marchands.
+- `internal/modules/auth/repository.go:577-609` (`RotateRightsTokensForUser`) : le commentaire de la fonction dit explicitement *« issues a fresh session token for every merchant link of a user »* et la requête `SELECT id, token FROM users_rights WHERE user_id = ?` (ligne 587, sans filtre `merchant_id`) itère sur **toutes** les lignes `users_rights` d'un `user_id` donné pour en faire tourner le token — preuve directe, en code de production (pas seulement en test), que la fonctionnalité multi-marchand est réellement exercée et pas seulement permise par le schéma.
 
-`internal/modules/auth/repository.go:791-823` :
-```go
-func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]MerchantRow, error) {
-	db := dbx.GetDB(ctx, r.database)
-	query := fmt.Sprintf(`
-SELECT
-    m.id,
-    m.fullName,
-    m.lat,
-    m.lng,
-    CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
-    m.city,
-    m.country,
-    m.zip_code,
-	m.logo_url,
-    ur.token
-FROM merchant m
-INNER JOIN users_rights ur ON ur.merchant_id = %s
-WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
-`, authMerchantJoinCast())
-	rows, err := db.QueryContext(ctx, query, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	defer rows.Close()
-
-	var list []MerchantRow
-	for rows.Next() {
-		var m MerchantRow
-		rows.Scan(&m.MerchantID, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.LogoURL, &m.Token)
-		list = append(list, m)
-	}
-	return list, nil
-}
-```
-
-Cette requête retourne bien une **liste** (`[]MerchantRow`) de tous les marchands liés à un `userID` donné, et non un marchand unique. Elle est appelée dans le flux de login réel, `internal/modules/auth/service.go:374-377` :
-```go
-	// MULTI-MERCHANT
-	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
-
-	return buildLoginResponse(user, merchants), nil
-```
-(le second appel identique, `internal/modules/auth/service.go:418`, se trouve dans une fonction `LoginOld` entièrement commentée, donc du code mort — seul l'appel de la ligne 375 est actif.) La réponse de login inclut donc, pour un utilisateur donné, la liste complète des marchands auxquels il est rattaché via `users_rights`.
----
+Le détail de la façon dont le flux `/auth/login` choisit — ou fait choisir à l'utilisateur — le marchand actif lorsqu'il en existe plusieurs est traité en section 2.1.
 
 ## 2. Authentification
 
-### 2.1. Flux complet de `/auth/login`
+### 2.1 Flux complet de `/auth/login`
 
-**Constat préalable important** : le système **n'utilise pas de JWT**. Le mot « token » désigne un jeton opaque aléatoire (hex, généré par `crypto/rand`), stocké en clair côté serveur dans la colonne `users_rights.token` (VARCHAR(255)) et vérifié par une requête SQL directe (`WHERE ur.token = ?`), avec un cache Redis en lecture. Il n'y a aucune signature cryptographique, donc aucun « secret de signature » au sens JWT n'existe dans le code.
+**Constat majeur : il n'y a AUCUN JWT dans ce backend.** Aucune bibliothèque JWT n'est importée (`go.mod`/`go.sum` : aucune occurrence de `jwt`, `internal/modules/notification/token_manager.go` est le seul fichier matchant `jwt` en recherche insensible à la casse et il s'agit d'un JWT signé RS256 pour l'API FCM/Google, sans rapport avec l'authentification utilisateur). Le mécanisme réel est un **token opaque persistant**, généré par `crypto/rand`, stocké en clair dans la colonne `users_rights.token` (varchar(255)), sans expiration ni claims d'aucune sorte.
 
-**Route** — `cmd/api/routes.go:575-576` :
+**Route** : `cmd/api/routes.go:589-591`
 ```go
-r.Get("/login", authH.Login)
-r.Post("/login", authH.Login)
-```
-Wiring du service (`cmd/api/routes.go:197-199`) :
-```go
-authRepo := authModule.NewAuthRepository(selectedDB)
-authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper, cfg.Auth.PasswordResetBaseURL)
-authMiddleware := middleware.Auth(&authService)
+r.Route("/auth", func(r chi.Router) {
+    r.Get("/login", authH.Login)
+    r.Post("/login", authH.Login)
 ```
 
 **Handler** — `internal/modules/auth/handler.go:21-47` :
 ```go
-// Login handler - Can be used with user and pwd, with token in get, or token in authorization
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 
@@ -510,27 +286,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-`helpers.ExtractToken` — `internal/helpers/handler_helpers.go:11-26` :
-```go
-func ExtractToken(r *http.Request) string {
-	// Authorization header
-	auth := r.Header.Get("Authorization")
-	if auth != "" {
-		// allow "Bearer <token>" or raw token
-		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-			return strings.TrimSpace(auth[7:])
-		}
-		return strings.TrimSpace(auth)
-	}
-	// fallback to query param token (legacy)
-	if t := r.URL.Query().Get("token"); t != "" {
-		return t
-	}
-	return ""
-}
-```
+Il existe un doublon mort déclaré juste en dessous, `LoginOld` (`handler.go:50-67`), toujours enregistré mais jamais raccroché à une route (`grep` sur `routes.go` ne montre aucun `LoginOld`) — c'est du code mort conservé dans le fichier.
 
-**Service `Login()`** — `internal/modules/auth/service.go:308-378` :
+**Service** — `internal/modules/auth/service.go:308-361`, fonction `Login` :
 ```go
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (*LoginResponse, error) {
 	username := payload.Username + payload.Email
@@ -551,20 +309,12 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	// LOGIQUE MFA (Uniquement si Backoffice ET MFA activé)
 	// ==============================================================
 	if s.IsMFAVerificationRequired(ctx, user) {
-
 		if isBackoffice {
-
-			// 3. Valider la session en base de données
 			err = s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending)
-			if err != nil {
-				logger.FromContext(ctx).Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
-				return nil, errors.New("erreur interne lors de la validation")
-			}
-
+			if err != nil { ... }
 			if s.canSendMFAOTP(ctx, user) {
 				s.SendMFACode(ctx, user, false)
 			}
-
 			pendingStatus := models.MFAStatusPending
 			user.MFAStatus = &pendingStatus
 		}
@@ -586,8 +336,9 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 }
 ```
 
-**Repository `Login()`** authentifie par username/email/mot de passe OU directement par token existant (`internal/modules/auth/repository.go:341-347`) :
-```sql
+**Repository** — `internal/modules/auth/repository.go:218` (`Login`) exécute une jointure massive (`users` × `users_rights` × `merchant` × `roles` × `merchant_parameters` × `subscriptions` × `packages` × `scannorder_settings` × `integration_uber_eats` × `integration_uber_direct` × `integration_deliveroo`, 74 colonnes) puis :
+
+```go
 WHERE
     (
         (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
@@ -596,119 +347,87 @@ WHERE
     )
 LIMIT 1;
 ```
-Vérification du mot de passe (bcrypt, avec migration automatique de hash legacy) — `internal/modules/auth/repository.go:419-433` :
+
+Puis (`repository.go:403-417`) :
 ```go
-	loggedByToken := token != "" && token == data.Token
-	if !loggedByToken {
-		if !helpers.PasswordMatches(plainPwd, data.Password) {
-			return nil, models.ErrUserNotFound
-		}
-
-		// Migration automatique vers bcrypt pour les mots de passe legacy
-		if !strings.HasPrefix(data.Password, "$2") {
-			if newHash, err := helpers.HashPassword(plainPwd); err == nil {
-				if err := r.UpdatePassword(ctx, data.UserID, newHash); err == nil {
-					data.Password = newHash
-				}
-			}
-		}
-	}
-```
-
-**Aucune génération de token n'a lieu au login** : le token retourné (`data.Token`) est celui déjà stocké en base (`ur.token`), créé une seule fois à la création du compte/du lien merchant. Le login ne fait donc que le lire et le renvoyer au client.
-
-**« Claims » du JWT** : n'existe pas, car il n'y a pas de JWT. L'identité, le rôle et les permissions sont recalculés côté serveur à chaque requête via `GetUserByToken` (jointure SQL `users` + `users_rights` + `roles` + `merchant` + `merchant_parameters` + `subscriptions`/`packages`, `internal/modules/auth/repository.go:42-169`), pas décodés depuis le token.
-
-**Durée de validité du token** : **pas d'expiration** portée par le token lui-même. La table `users_rights` (`token varchar(255) NOT NULL`) ne comporte aucune colonne d'expiration. Le token reste valide indéfiniment jusqu'à rotation explicite (uniquement via `RotateRightsTokensForUser`, appelée uniquement lors d'un reset de mot de passe — voir §2.2). Le cache Redis associé a un TTL de 60 minutes (`internal/models/redis_models.go:10`, `UserCacheTTL = 60 * time.Minute`), mais ce TTL ne concerne que le **cache** : à son expiration, `GetUserByToken` retombe simplement sur la requête SQL et retrouve le même token toujours valide.
-
-**Secret de signature** : n'existe pas. Le token est un identifiant aléatoire cryptographiquement fort :
-```go
-// internal/helpers/ids.go:75-83
-func GenerateToken(byteLen int) (string, error) {
-	b := make([]byte, byteLen)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generateToken: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+loggedByToken := token != "" && token == data.Token
+if !loggedByToken {
+    if !helpers.PasswordMatches(plainPwd, data.Password) {
+        return nil, models.ErrUserNotFound
+    }
+    // Migration automatique vers bcrypt pour les mots de passe legacy
+    if !strings.HasPrefix(data.Password, "$2") {
+        if newHash, err := helpers.HashPassword(plainPwd); err == nil {
+            if err := r.UpdatePassword(ctx, data.UserID, newHash); err == nil {
+                data.Password = newHash
+            }
+        }
+    }
 }
 ```
-Généré à la création du compte (`internal/modules/users/create_service.go:37`, `helpers.GenerateToken(30)`) ou du rattachement à un établissement (`internal/modules/pos/create_service.go:21,102`). La sécurité repose sur l'entropie du token et sa comparaison exacte en base, pas sur une vérification HMAC/RSA.
 
-Note : seul module utilisant réellement des JWT dans le repo est `internal/modules/notification/token_manager.go` (génération d'un JWT pour s'authentifier auprès de l'API Google FCM via un compte de service), **sans aucun rapport avec l'authentification des utilisateurs de la plateforme**.
+C'est-à-dire : le login accepte **trois voies** — nom d'utilisateur + mot de passe, email + mot de passe, **ou directement le token existant** (`ur.token = ?`, sans mot de passe) — c'est ce troisième chemin qui est réutilisé par `AuthenticatePIN` (voir §2.6) et par `ConfirmPasswordReset`. Il existe une migration automatique et silencieuse des mots de passe legacy (non préfixés `$2`, donc non bcrypt) vers bcrypt **au coût 10** (`bcrypt.DefaultCost`, `helpers.HashPassword` dans `services_helpers.go`), distincte du coût 12 utilisé partout ailleurs (`helpers.HashUserPassword`, `internal/helpers/password.go:13-22`) — anomalie documentée explicitement dans `docs/PASSWORD_RESET.md` (§D13) et laissée telle quelle.
 
-### 2.2. Gestion du refresh token
+**"Claims", durée de validité, secret** : ces trois notions n'existent pas dans ce système.
+- Pas de claims : le "token" est une chaîne hex aléatoire opaque (`helpers.GenerateToken(30)` → 60 caractères hex, `internal/helpers/ids.go:77-83`, utilisant `crypto/rand`), sans structure ni payload encodé.
+- Pas de durée de validité intrinsèque : `users_rights.token` n'a ni colonne `expires_at` ni TTL en base — il reste valide indéfiniment jusqu'à ce qu'il soit explicitement régénéré (rotation, voir §2.2).
+- Pas de secret de signature : il n'y a rien à signer/vérifier, la validité est un `SELECT ... WHERE ur.token = ?` en base (`GetUserByToken`, `repository.go:42-165`), avec un cache Redis à durée de vie propre (`models.UserCacheTTL = 60 * time.Minute`, `internal/models/redis_models.go:10`, clé `user:token:v2:` + token, `redis_models.go:27`) qui est un **cache**, pas la source de vérité.
 
-**Il n'existe pas de mécanisme de refresh token pour l'authentification utilisateur** (login classique, PIN). Le token de session (`users_rights.token`) est stocké en base MySQL/Postgres (Redis ne fait que le mettre en cache), et n'a **pas de rotation à chaque usage** — il est réutilisable indéfiniment jusqu'à un événement explicite.
+**Réponse `buildLoginResponse`** (`service.go:402-628`) construit un objet massif : `Session` (token, merchant_id, statut MFA), `User`, `Merchant` (+ `Settings`), `Access` (booléens dérivés de `Has()`), `Capabilities` (modules/order-types/actions/integrations dérivés des permissions + des flags d'abonnement), `Permissions` (liste brute des clés du catalogue accordées si `role_id` est renseigné), `Integrations`, `SNOSettings`, et un objet `Legacy` marqué explicitement comme `// Deprecated compatibility payload for existing clients` (`service.go:496-548`).
 
-Le seul point de rotation identifié est **la réinitialisation de mot de passe**, qui fait pivoter le token de session pour déconnecter toutes les sessions de l'utilisateur — `internal/modules/auth/repository.go:593-644` :
+### 2.2 Gestion du "refresh token"
+
+**Il n'existe pas de refresh token au sens JWT/OAuth** dans le flux d'authentification utilisateur. Le token émis à `/auth/login` :
+
+- est stocké en base dans `users_rights.token` (une ligne par lien `user_id ↔ merchant_id`, donc un utilisateur multi-établissements a **un token distinct par établissement** — voir `GetMerchants`, `repository.go:793-827`, qui liste tous les `(merchant, token)` d'un utilisateur) ;
+- est mis en cache Redis sous `user:token:v2:<token>` avec un TTL de 60 minutes (`models.UserCacheTTL`) — mais ce TTL ne fait qu'expirer le **cache**, pas le token : `GetUserByToken` retombe sur la base en cas de miss (`repository.go:391-393`, log explicite "No user found for..."), donc le token reste utilisable indéfiniment tant que la ligne `users_rights` existe et est `enabled = TRUE`/`login_enabled = TRUE` ;
+- n'est **jamais rafraîchi automatiquement** par le client : il n'y a pas d'endpoint `/auth/refresh` pour les utilisateurs humains.
+
+La seule vraie "rotation" de ce token se produit dans des cas métier précis :
+1. **Réinitialisation de mot de passe réussie** (`RotateRightsTokensForUser`, `repository.go:584-628`) : régénère le token de **toutes** les lignes `users_rights` de l'utilisateur (tous établissements) et purge les entrées Redis correspondantes — déconnexion totale.
+2. **Force-reset admin** (`ForceResetPassword` côté module `users`, cité dans `docs/PASSWORD_RESET.md` §D10) : rotationne les tokens de tous les autres établissements, en conservant celui de la session courante.
+3. **Changement de rôle / permissions** (`invalidateTokens`, `internal/modules/roles/service.go:606-623`) : ne régénère **pas** le token, purge seulement la clé Redis — l'utilisateur reste connecté avec le même token, seul le cache est vidé (rechargement des droits à la requête suivante).
+
+Il existe en revanche un vrai mécanisme de **refresh** pour un objet distinct : le **token d'appareil kiosk**. `cmd/api/routes.go:1621` enregistre `POST /kiosk/auth/token/refresh → kioskHandler.RefreshDeviceToken`, géré par un `KioskAuthService.ValidateAccessToken` (`internal/middleware/kiosk_auth.go:29-31`) totalement distinct du middleware d'authentification utilisateur (`middleware.Auth`). C'est un mécanisme séparé pour l'authentification des bornes physiques, sans rapport avec l'authentification des comptes `users`/`users_rights`.
+
+Il n'y a ni cookie de session ni token stocké côté navigateur/app géré par le backend : le stockage du token côté client (localStorage, secure storage mobile, etc.) est entièrement du ressort des clients (`wello-back-office`, `wello_resto_flutter`), hors périmètre de ce backend.
+
+### 2.3 Code intégral de `authMiddleware` (`Auth`)
+
+`internal/middleware/auth.go`, fonction `Auth` (l.29-122) — le middleware réellement appliqué (`authMiddleware := middleware.Auth(&authService)`, `cmd/api/routes.go:200`) :
+
 ```go
-// RotateRightsTokensForUser issues a fresh session token for every merchant
-// link of a user and returns the tokens it replaced.
-//
-// This is what actually signs the user out everywhere. Deleting the Redis
-// entries is not enough: GetUserByToken falls back to `WHERE ur.token = ?` in
-// the database, so a cache eviction is silently repaired by the next request.
-// Callers should purge the returned tokens from Redis afterwards.
-func (r *AuthRepository) RotateRightsTokensForUser(ctx context.Context, userID string) ([]string, error) {
-	db := dbx.GetDB(ctx, r.database)
+package middleware
 
-	rows, err := db.QueryContext(ctx, `SELECT id, token FROM users_rights WHERE user_id = ?`, userID)
-	if err != nil {
-		return nil, err
-	}
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
 
-	type rightsRow struct {
-		id    string
-		token string
-	}
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
+)
 
-	var links []rightsRow
-	for rows.Next() {
-		var link rightsRow
-		if err := rows.Scan(&link.id, &link.token); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		links = append(links, link)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
+// Clé typée pour le contexte — évite les collisions avec d'autres valeurs du contexte
+type contextKey string
 
-	oldTokens := make([]string, 0, len(links))
-	for _, link := range links {
-		newToken, err := helpers.GenerateToken(32)
-		if err != nil {
-			return oldTokens, err
-		}
-		if _, err := db.ExecContext(ctx,
-			`UPDATE users_rights SET token = ? WHERE id = ?`, newToken, link.id); err != nil {
-			return oldTokens, err
-		}
-		if strings.TrimSpace(link.token) != "" {
-			oldTokens = append(oldTokens, link.token)
-		}
-	}
+const userContextKey contextKey = "authenticatedUser"
 
-	return oldTokens, nil
+var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
+
+// AuthService est l'interface que ton authService doit satisfaire
+type AuthService interface {
+	GetUserByToken(ctx context.Context, token string) (*auth.UserLoginRow, error)
+	UpdateMFAStatus(ctx context.Context, userID string, status string) error
+	IsMFAVerificationRequired(ctx context.Context, user *auth.UserLoginRow) bool
 }
-```
-Appelée depuis `ConfirmPasswordReset` (`internal/modules/auth/service.go:998`), qui purge ensuite les anciennes entrées du cache Redis.
 
-**Note distincte** : un vrai système de refresh token *avec rotation à chaque usage* existe, mais **uniquement pour les bornes de commande (kiosk)** — module séparé, sans rapport avec l'auth des employés/utilisateurs : `internal/modules/kiosk/service.go` (`RefreshDeviceToken`, ligne 205-256), TTL configurable via `KIOSK_DEVICE_TOKEN_TTL_DAYS` (défaut 30 jours). Ce mécanisme n'est pas branché sur `/auth/login`.
-
-### 2.3. Code intégral de `authMiddleware`
-
-`internal/middleware/auth.go:29-122` :
-```go
 // Auth est le middleware d'authentification principal
-// Il vérifie le token, récupère le user (via Redis), et l'injecte dans le contexte
 func Auth(service AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Laisser passer les requêtes OPTIONS (preflight CORS)
 			if r.Method == http.MethodOptions {
 				next.ServeHTTP(w, r)
 				return
@@ -724,22 +443,18 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 
 			// 2. Logique hybride : On nettoie et on extrait
 			token := authHeader
-
-			// Si ça commence par "Bearer " (insensible à la casse)
 			if len(authHeader) > 7 && strings.EqualFold(authHeader[:7], "bearer ") {
 				token = authHeader[7:]
 			}
-
 			token = strings.TrimSpace(token)
 
-			// Sécurité : on vérifie que le token n'est pas devenu vide après le nettoyage
 			if token == "" {
 				SetCORSHeaders(w, r)
 				http.Error(w, `{"error":"format token invalide"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// 3. Récupérer le user
+			// 3. Récupérer le user (inchangé)
 			user, err := service.GetUserByToken(r.Context(), token)
 			if err != nil || user == nil {
 				SetCORSHeaders(w, r)
@@ -747,11 +462,10 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 				return
 			}
 
-			// --- LOGIQUE MFA ---
+			// --- NOUVELLE LOGIQUE MFA ---
 			isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
 
 			if isBackoffice && service.IsMFAVerificationRequired(r.Context(), user) {
-				// On laisse passer UNIQUEMENT vers l'endpoint de vérification MFA
 				if r.URL.Path != "/auth/verify" {
 					service.UpdateMFAStatus(r.Context(), user.UserID, models.MFAStatusPending)
 					SetCORSHeaders(w, r)
@@ -769,18 +483,96 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 				}
 			}
 
-			// 4. Injecter le user
+			// 4. Injecter le user (inchangé)
 			ctx := context.WithValue(r.Context(), userContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
+
+func GetUser(r *http.Request) *auth.UserLoginRow {
+	user, _ := r.Context().Value(userContextKey).(*auth.UserLoginRow)
+	return user
+}
+
+func UserFromContext(ctx context.Context) (*auth.UserLoginRow, error) {
+	user, ok := ctx.Value(userContextKey).(*auth.UserLoginRow)
+	if !ok || user == nil {
+		return nil, ErrUnunauthenticated
+	}
+	return user, nil
+}
+
+func WithUser(ctx context.Context, user *auth.UserLoginRow) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
+func MustGetUser(w http.ResponseWriter, r *http.Request) (*auth.UserLoginRow, bool) {
+	user := GetUser(r)
+	if user == nil {
+		http.Error(w, `{"error":"utilisateur non authentifié"}`, http.StatusUnauthorized)
+		return nil, false
+	}
+	return user, true
+}
 ```
 
-### 2.4. Code intégral de `RequirePermission` (et `AnyOf`/`AllOf`)
+Points factuels notables :
+- Le middleware **appelle directement `net/http` (`http.Error`)** pour les rejets 401 liés au token, au lieu de passer par `models.SendErrorJSON`, sauf pour le cas MFA qui, lui, utilise `models.SendJSON`.
+- Une redirection MFA vers un blocage total est appliquée **uniquement si** `X-App-Source: backoffice` — le POS/kiosk n'est donc jamais bloqué par le MFA à ce niveau middleware, seulement au login (`isBackoffice` dans `Login`).
+- Le commentaire `// --- NOUVELLE LOGIQUE MFA ---` et les noms de variables (`// ✅ IMPORTANT`, emojis dans les logs du service) trahissent un style de développement assisté par IA / itératif, cohérent sur tout le module `auth`.
 
-`internal/middleware/require_permission.go:70-98` :
+### 2.4 `RequirePermission` — et l'absence de `AnyOf`/`AllOf`
+
+**`AnyOf`/`AllOf` n'existent plus dans le code.** Une recherche exhaustive (`grep -rn "AnyOf\|AllOf" --include=*.go .`) ne retourne qu'une seule occurrence, dans un **commentaire** de `internal/middleware/require_permission.go:64`, qui documente leur suppression :
+
+> « RBAC lot 2 : la signature est passée de `RequirePermission(...PermissionFunc)` (logique AND sur plusieurs prédicats combinables via `AnyOf`/`AllOf`) à `RequirePermission(key permission.Key)` — une seule clé du catalogue. Aucune route réelle ne combinait plusieurs prédicats au moment de la bascule […], donc rien ne s'est perdu. »
+
+Il n'existe donc **aucun combinateur** actif aujourd'hui : chaque route protégée ne peut exiger qu'**une seule** clé `permission.Key`. Code intégral de `internal/middleware/require_permission.go` :
+
 ```go
+package middleware
+
+import (
+	"net/http"
+
+	"welloresto-api/internal/middleware/rbacobserve"
+	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/permission"
+
+	"github.com/go-chi/chi/v5"
+)
+
+// rbacObserver is nil unless EnableRBACObservation is called from
+// SetupRoutes (gated by the RBAC_OBSERVE env var, default off).
+var rbacObserver *rbacobserve.Observer
+
+func EnableRBACObservation(o *rbacobserve.Observer) {
+	rbacObserver = o
+}
+
+func observeDecision(r *http.Request, user *auth.UserLoginRow, key permission.Key, granted bool) {
+	if rbacObserver == nil {
+		return
+	}
+	rbacObserver.Observe(rbacobserve.Observation{
+		MerchantID:    user.MerchantID,
+		UserID:        user.UserID,
+		PermissionKey: string(key),
+		Route:         r.Method + " " + routePattern(r),
+		Granted:       granted,
+	})
+}
+
+func routePattern(r *http.Request) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil {
+		if p := rctx.RoutePattern(); p != "" {
+			return p
+		}
+	}
+	return r.URL.Path
+}
+
 func RequirePermission(key permission.Key) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -809,116 +601,74 @@ func RequirePermission(key permission.Key) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+func renderError(w http.ResponseWriter, r *http.Request, code string, status int) {
+	SetCORSHeaders(w, r)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write([]byte(`{"error":"` + code + `"}`))
+}
 ```
-`RequireAdmin` (variante réservée aux admins, distincte de `RequirePermission`) — `internal/middleware/require_permission.go:107-134` :
+
+Le commentaire au-dessus de la fonction mentionne aussi qu'une garde distincte, `RequireAdmin` (« détient tous les droits », indépendante du catalogue), a été **retirée en RBAC lot 11 phase 4** — ses deux derniers appelants (`POST /users/{id}/force-reset-password`, `DELETE /users/{id}/merchant-link`) sont passés sous `RequirePermission(permission.StaffManage)`. `RequireAdmin` n'existe donc plus du tout dans le code actuel.
+
+Un module d'observation optionnel (`internal/middleware/rbacobserve/`) enregistre, si `RBAC_OBSERVE=true`, chaque décision d'accès (accordée ou refusée) de façon asynchrone — c'est le mécanisme derrière la table `access_observation` mentionnée dans les faits déjà connus du schéma ; il est désactivé par défaut (`rbacObserver` nil).
+
+### 2.5 Extraction et propagation de `merchant_id`
+
+`merchant_id` n'est **jamais lu depuis un paramètre de requête ou le corps** dans les couches protégées : il vient exclusivement de l'utilisateur authentifié injecté dans le contexte par `middleware.Auth` (voir §2.3), sous la forme du champ `UserLoginRow.MerchantID` (`internal/modules/auth/models.go:195`), lui-même issu de `users_rights.merchant_id` (colonne du login SQL, `repository.go:88` / `repository.go:158`).
+
+Le chemin d'usage typique — handler → service → repository — illustré par `GET /users` (`ListMerchantUsers`) :
+
+**Handler**, `internal/modules/users/admin_handler.go:16-28` — ne touche pas au `merchant_id` du tout, il délègue entièrement au service :
 ```go
-func RequireAdmin() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodOptions {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			user := GetUser(r)
-			if user == nil {
-				SetCORSHeaders(w, r)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"error":"unauthorized"}`))
-				return
-			}
-
-			granted := IsAdmin(user)
-			observeDecision(r, user, adminObservationKey, granted)
-
-			if !granted {
-				renderError(w, r, "access_denied", http.StatusForbidden)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+func (h *UsersHandler) ListMerchantUsers(w http.ResponseWriter, r *http.Request) {
+	filters, err := parseMerchantUserListFilters(r)
+	if err != nil {
+		models.SendErrorJSON(w, "users", "list", err)
+		return
 	}
+	items, metadata, err := h.svc.ListMerchantUsers(r.Context(), filters)
+	...
 }
 ```
 
-**`AnyOf`/`AllOf` : n'existent pas dans le code actuel.** Ils ont été supprimés (commentaire explicite `internal/middleware/permissions.go:7-18`) :
+**Service**, `internal/modules/users/admin_service.go:18-31` — extrait `merchant_id` du contexte via `middleware.UserFromContext` et le passe explicitement au repository :
 ```go
-// ============================================================
-// RBAC lot 2 — bascule des prédicats
-//
-// Toutes les fonctions HasXxx/CanXxx ainsi que les combinateurs AnyOf/AllOf
-// ont été retirées : RequirePermission prend désormais directement une
-// permission.Key et appelle user.Has(key), qui encapsule la correspondance
-// avec les anciennes colonnes booléennes (voir internal/modules/auth/
-// permissions.go). Elles ont été supprimées plutôt que dépréciées car aucune
-// n'avait plus d'appelant réel dans cmd/api/routes.go au moment de la bascule
-// (vérifié : seules HasMenuAccess, HasPlanningAccess, HasUserManagementAccess,
-// HasSettingsAccess, HasHACCPAccess, HasCustomerManagementAccess et IsAdmin
-// étaient effectivement câblées sur une route).
-// ============================================================
-```
-Une recherche `grep -rn "AnyOf|AllOf" --include="*.go"` sur tout le repo ne remonte que ces deux commentaires historiques — aucun appel réel.
-
-### 2.5. Extraction et propagation du `merchant_id`
-
-Le `merchant_id` n'est **pas** extrait isolément (ni d'un header dédié, ni d'un paramètre d'URL séparé, ni d'un claim JWT). Il est un champ (`MerchantID`) de la structure `*auth.UserLoginRow` récupérée par `GetUserByToken` à partir du token, et c'est **cette structure utilisateur entière** qui est injectée dans le contexte.
-
-**Injection dans le contexte** — `internal/middleware/auth.go:118` :
-```go
-ctx := context.WithValue(r.Context(), userContextKey, user)
-next.ServeHTTP(w, r.WithContext(ctx))
-```
-avec la clé typée (`internal/middleware/auth.go:15-17`) :
-```go
-type contextKey string
-
-const userContextKey contextKey = "authenticatedUser"
-```
-
-**Relecture depuis le contexte** — `internal/middleware/auth.go:124-156` :
-```go
-// GetUser récupère le user injecté par le middleware depuis le contexte
-func GetUser(r *http.Request) *auth.UserLoginRow {
-	user, _ := r.Context().Value(userContextKey).(*auth.UserLoginRow)
-	return user
-}
-
-// UserFromContext récupère le user du contexte avec gestion d'erreur
-func UserFromContext(ctx context.Context) (*auth.UserLoginRow, error) {
-	user, ok := ctx.Value(userContextKey).(*auth.UserLoginRow)
-	if !ok || user == nil {
-		return nil, ErrUnunauthenticated
+func (s *UsersService) ListMerchantUsers(ctx context.Context, filters MerchantUserListFilters) ([]MerchantUserListItem, models.PaginationMetadata, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
 	}
-	return user, nil
-}
-
-// WithUser injecte un utilisateur authentifié dans le contexte
-func WithUser(ctx context.Context, user *auth.UserLoginRow) context.Context {
-	return context.WithValue(ctx, userContextKey, user)
-}
-
-// MustGetUser récupère le user et envoie une erreur HTTP si absent
-func MustGetUser(w http.ResponseWriter, r *http.Request) (*auth.UserLoginRow, bool) {
-	user := GetUser(r)
-	if user == nil {
-		http.Error(w, `{"error":"utilisateur non authentifié"}`, http.StatusUnauthorized)
-		return nil, false
-	}
-	return user, true
+	pagination := normalizeUsersPagination(filters.Page, filters.PageSize)
+	filters.Page = pagination.CurrentPage
+	filters.PageSize = pagination.Limit
+	items, totalItems, err := s.userRepo.ListMerchantUsers(ctx, user.MerchantID, filters)
+	...
 }
 ```
-Aucun helper `GetMerchantIDFromContext` n'existe. Le pattern systématique observé dans les services est `user, err := middleware.UserFromContext(ctx)` puis `user.MerchantID`, passé ensuite explicitement comme paramètre SQL pour le filtrage multi-tenant.
 
-### 2.6. `/auth/pin`
-
-**Route** — `cmd/api/routes.go:585` :
+**Repository**, `internal/modules/users/admin_repository.go:13-25` — filtre la requête SQL directement sur ce paramètre :
 ```go
-r.With(authMiddleware).Post("/pin", authH.AuthPIN)
+func (r *UsersRepository) ListMerchantUsers(ctx context.Context, merchantID string, filters MerchantUserListFilters) ([]MerchantUserListItem, int, error) {
+	db := dbx.GetDB(ctx, r.database)
+	baseQuery := `
+		FROM users_rights ur
+		INNER JOIN users u ON u.user_id = ur.user_id
+		LEFT JOIN (...) employee_link ON ...
+		WHERE ur.merchant_id = ? AND ur.enabled = TRUE
+	`
+	args := []interface{}{merchantID}
+	...
 ```
-Exige donc un token d'ancrage valide (session déjà ouverte, n'importe quel utilisateur du même établissement — typiquement le POS déjà connecté).
 
-**Handler** — `internal/modules/auth/handler.go:181-213` :
+C'est le motif identique partout dans le code : `middleware.UserFromContext(ctx)` (ou `middleware.GetUser(r)` côté handler) extrait `*auth.UserLoginRow`, on lit `.MerchantID`, on le passe explicitement en paramètre de fonction jusqu'à une clause `WHERE merchant_id = ?` (ou l'équivalent `WHERE ur.merchant_id = ?`) en SQL — il n'y a pas de middleware de scoping automatique par tenant : chaque repository doit inclure manuellement le filtre. C'est cohérent avec la note déjà connue « il n'y a pas d'accès cross-tenant dans les flux normaux », mais cela signifie aussi qu'un repository qui **oublierait** ce filtre romprait l'isolation — rien dans l'architecture ne le garantit structurellement, chaque requête SQL doit être auditée individuellement pour ce risque.
+
+### 2.6 `/auth/pin` — implémentation et délégation à `Login()`
+
+Route : `cmd/api/routes.go:600` — `r.With(authMiddleware).Post("/pin", authH.AuthPIN)`. Elle **exige déjà un token valide** (« anchor token » — la session d'un utilisateur quelconque déjà connecté sur l'établissement, typiquement une tablette POS restée ouverte).
+
+**Handler** — `internal/modules/auth/handler.go:185-213` :
 ```go
 // AuthPIN authenticates an employee by PIN.
 // Authorization: anchor token (existing session of any user on the same merchant).
@@ -955,11 +705,8 @@ func (h *AuthHandler) AuthPIN(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-**Service `AuthenticatePIN`** — `internal/modules/auth/service.go:115-145` — **délègue explicitement à `Login()`** en interne :
+**Service** — `AuthenticatePIN`, `internal/modules/auth/service.go:118-145`, **délègue explicitement à `Login()`** à la toute fin :
 ```go
-// AuthenticatePIN validates a PIN against the merchant of the anchor token,
-// then delegates to Login with the employee's permanent token.
-// The response is identical to /auth/login by construction.
 func (s *AuthService) AuthenticatePIN(ctx context.Context, anchorToken, pin string) (*LoginResponse, error) {
 	anchor, err := s.GetUserByToken(ctx, anchorToken)
 	if err != nil {
@@ -989,26 +736,25 @@ func (s *AuthService) AuthenticatePIN(ctx context.Context, anchorToken, pin stri
 	return s.Login(ctx, LoginRequestPayload{}, employee.Token, false)
 }
 ```
-Le PIN est haché avec un « pepper » (variable d'env `PIN_PEPPER`), comparé en base via `GetUserByPIN` scopé au `merchant_id` de l'ancre (jamais inter-tenant). Un lockout exponentiel existe (5 tentatives max, base 30s, doublement jusqu'à 480s).
 
-### 2.7. Flux « mot de passe oublié »
+Le PIN (4 chiffres, `PINLength = 4`, `internal/modules/auth/models.go:16`) est haché avec un poivre (`security.HashPIN(pin, s.pepper)`, poivre = variable d'environnement `PIN_PEPPER`, requise au démarrage — `config.go:76: log.Fatal("PIN_PEPPER is not set")`) et comparé côté base (`GetUserByPIN`, `merchant_id` scopé sur celui de l'ancre — donc un PIN n'est valable que pour rechercher un employé **du même établissement**). Une fois l'employé trouvé, `Login()` est rappelé avec le token permanent de cet employé (`employee.Token`) et un payload vide — c'est exactement le chemin `loggedByToken := token != "" && token == data.Token` de `repository.Login` décrit en §2.1, qui court-circuite toute vérification de mot de passe. La réponse de `/auth/pin` est donc, par construction, **identique** à celle de `/auth/login`.
 
-**Ce flux existe.** Deux routes publiques (aucun token requis) — `cmd/api/routes.go:581-583` :
+Anti-brute-force : `checkLockout`/`incrementLockout`/`resetLockout` (`service.go:170-209`) — verrou en Redis, clé `PINLockoutPrefix + anchorToken` (donc **par ancre**, pas par employé visé), backoff exponentiel après `PINMaxAttempts = 5` échecs (`PINLockoutBase = 30s`, doublé tous les 5 essais supplémentaires, plafonné à 480s), TTL Redis `PINLockoutTTL = 1h`.
+
+`SetPIN` (`/auth/pin/set`, self-service) et `ResetPIN` (`/auth/pin/reset`, protégée par `RequirePermission(permission.StaffManage)`) sont des endpoints distincts qui **ne délèguent pas** à `Login()` — ils gèrent uniquement `users_rights.pin_hash` (voir `handler.go:219-281`, `service.go:147-168`).
+
+### 2.7 Flux "mot de passe oublié"
+
+**Existe, et est intégralement implémenté** — dépôt riche en documentation (`docs/PASSWORD_RESET.md`, journal de décisions D1 à D16, déjà en partie cité ci-dessus). La table `password_resets` (Postgres uniquement, jamais existé côté MySQL — décision D8) **est bien utilisée** par le code.
+
+**Routes publiques** (`cmd/api/routes.go:597-598`) :
 ```go
-// Public: the caller has lost their password, so no token can be required.
 r.Post("/forgot-password", authH.ForgotPassword)
 r.Post("/reset-password", authH.ResetPassword)
 ```
 
-**Étape 1 — Demande de lien**, réponse identique quel que soit le résultat réel pour empêcher l'énumération de comptes :
-
-`internal/modules/auth/handler.go:304-325` :
+**Étape 1 — `POST /auth/forgot-password`** (`internal/modules/auth/handler.go:304-325`) :
 ```go
-// ForgotPassword handles POST /auth/forgot-password (public).
-//
-// Always answers 200 with the same body, whatever happened: unknown account,
-// throttled, disabled, or a link actually sent. Any observable difference would
-// turn this endpoint into an account-enumeration oracle.
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1028,203 +774,186 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Constantes (`internal/modules/auth/models.go:20-29`) : `PasswordResetTTL = 30 * time.Minute`, `PasswordResetTokenBytes = 32` (64 caractères hex), `PasswordResetMaxPerHour = 5` (limite par compte, vérifiée en SQL). Throttle additionnel par IP (`PasswordResetIPThrottleMax = 20`/heure). Seul le hash SHA-256 du token est persisté en base ; le token en clair n'est jamais stocké ni loggé.
+`SendPasswordResetLink` (`service.go:984-1026`) : throttle par IP (Redis, `PasswordResetIPThrottleMax = 20`/h, best-effort — `service.go:1034-1051`), puis `RequestPasswordReset` (`service.go:890-926`) qui : résout le compte (`GetUserForPasswordReset` — nom OU email, compte **activé** et avec un email non vide, `repository.go:482-513`), applique un rate-limit **par compte** en SQL (`CountPasswordResetsSince`, `PasswordResetMaxPerHour = 5`), génère un token clair de 32 octets (`PasswordResetTokenBytes`, 64 caractères hex), insère `sha256(token)` en base (`InsertPasswordReset`, jamais le clair) avec `expires_at = now() + 30min` (`PasswordResetTTL`), puis envoie l'email via Brevo (`s.email.SendPasswordReset`, template `internal/infrastructure/mailer/templates/password_reset.html`) si `PASSWORD_RESET_BASE_URL` est configurée. **Toute** branche d'échec (compte inconnu, désactivé, throttlé, non configuré) renvoie `200` de façon indiscernable — anti-énumération volontaire, documentée (D15).
 
-**Étape 2 — Réinitialisation** — `internal/modules/auth/service.go:968-1015` : le nouveau mot de passe est validé **avant** de consommer le token (pour ne pas brûler un lien à usage unique en cas de mot de passe rejeté), puis toutes les sessions de l'utilisateur sont invalidées via `RotateRightsTokensForUser` (§2.2). L'URL de base du lien est chargée depuis `PASSWORD_RESET_BASE_URL` ; si non configurée, le token est émis mais aucun email n'est envoyé (log d'erreur uniquement).
+**Étape 2 — `POST /auth/reset-password`** (`handler.go:331-354`) → `ConfirmPasswordReset` (`service.go:932-975`) :
+```go
+func (s *AuthService) ConfirmPasswordReset(ctx context.Context, token, newPassword string) error {
+	if strings.TrimSpace(token) == "" {
+		return ErrInvalidResetToken
+	}
+	if err := helpers.ValidatePassword(newPassword); err != nil {
+		return err
+	}
 
-### 2.8. Vérification d'adresse e-mail
+	userID, err := s.repo.ConsumePasswordResetToken(ctx, hashResetToken(token))
+	if err != nil {
+		return err
+	}
 
-**Ce flux existe, mais n'est pas automatique à la création du compte.** C'est un endpoint générique et authentifié, distinct du MFA, déclenché manuellement.
+	hash, err := helpers.HashUserPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
 
-Routes — `cmd/api/routes.go:578-579` :
+	oldTokens, err := s.repo.RotateRightsTokensForUser(ctx, userID)
+	if err != nil {
+		log.Error("🔑 Password reset succeeded for user " + userID + " but session rotation FAILED...")
+		return nil
+	}
+
+	if s.redis != nil {
+		for _, old := range oldTokens {
+			s.redis.Delete(ctx, models.UserCachePrefix+old)
+		}
+	}
+	return nil
+}
+```
+
+`ConsumePasswordResetToken` (`repository.go:555-575`) effectue un CAS SQL atomique via `UPDATE ... RETURNING` — usage unique garanti sans fenêtre de concurrence :
+```sql
+UPDATE password_resets
+SET used_at = now()
+WHERE token_hash = ?
+  AND used_at IS NULL
+  AND expires_at > now()
+RETURNING user_id
+```
+Le mot de passe (règle unique : ≥8 caractères, `helpers.ValidatePassword`, `PasswordMinLength = 8`) est validé **avant** la consommation du token — un mot de passe refusé ne brûle pas le lien. Le succès régénère **tous** les tokens `users_rights` de l'utilisateur (tous établissements) et purge le cache Redis correspondant : déconnexion totale.
+
+Client web : `wello-back-office/src/pages/ForgotPassword.tsx` et `ResetPassword.tsx` (routes publiques dans `App.tsx`, hors `ProtectedRoute`), lien « Mot de passe oublié ? » sur `Login.tsx`. Client POS : `wello_resto_flutter/lib/ui/widgets/dialogs/reinit_password_dialog.dart` — le POS ne fait que déclencher l'email, la saisie du nouveau mot de passe se fait uniquement sur le back-office (décision D1).
+
+Purge : cron quotidien à 5h (`internal/tasks/password_resets.go`, cité dans `docs/PASSWORD_RESET.md`), rétention 7 jours, actif sur tous les environnements (cf. politique cron globale déjà connue de ce dépôt — pas de gate par `ENV`).
+
+**État de déploiement documenté** : migration `078_password_resets` appliquée en dev et en staging, mais **NON appliquée en production** au moment de la rédaction du document (`docs/PASSWORD_RESET.md` §6) — à vérifier si cet état a changé depuis, la doc datant du 2026-08-02.
+
+### 2.8 Vérification d'adresse e-mail
+
+**Existe**, mais sous forme d'un mécanisme OTP générique (`SendVerificationCode`/`ConfirmVerification`), pas d'un lien de confirmation par email cliquable.
+
+Routes : `cmd/api/routes.go:593-594` :
 ```go
 r.Post("/send-verification", authH.SendVerification)
 r.Post("/verify", authH.VerifyCode)
 ```
-`SendVerificationCode` (`internal/modules/auth/service.go:838-872`) génère un OTP à 6 chiffres (TTL 5 min via Redis), envoyé par email ou SMS. `MarkAsVerified` (`internal/modules/auth/repository.go:975-1006`) met à jour `users.email_verified_at`/`tel_verified_at`.
 
-**Constat important** : aucun appel à `SendVerificationCode` n'a été trouvé dans les flux de création de compte (`internal/modules/users/create_service.go:15-78`, `internal/modules/pos/create_service.go:13-74`) : la vérification d'email n'est **pas déclenchée automatiquement à l'inscription**, seulement disponible en libre-service une fois authentifié. Par ailleurs, la création d'un utilisateur (`POST /users`) exige déjà elle-même une permission `StaffManage` — ce n'est pas un endpoint de self-registration public.
+**`SendVerification`** (`handler.go:126-150`) → `SendVerificationCode` (`service.go:798-832`) : requiert un token valide (utilisateur déjà authentifié), génère un OTP à 6 chiffres (`helpers.GenerateOTP`), le stocke en clair en Redis sous `verify_email:<token>` ou `verify_sms:<token>` (`helpers.GetVerificationCacheKey`, TTL `OTPCacheTTL = 5min`), et l'envoie par email (mode `EMAIL`) via Brevo ou par SMS (mode `SMS`/`TEL`).
 
-Une décision de retrait est documentée : la vérification d'email/téléphone comme **condition d'autorisation** (gate RBAC) a été retirée du code (commentaire « RBAC lot 2.5 : IsEmailVerified et IsTelVerified... ont été retirées »), tout en conservant les colonnes et le flux de vérification lui-même.
+**`VerifyCode`** (`handler.go:153-179`) → `ConfirmVerification` (`service.go:835-851`) :
+```go
+func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mode string, codeSaisi string) error {
+	if strings.ToUpper(mode) == "MFA" {
+		return s.VerifyMFA(ctx, token, codeSaisi)
+	}
+	cacheKey := helpers.GetVerificationCacheKey(mode, token)
 
-### 2.9. Authentification par fournisseur externe (Google Sign-In, OAuth, SSO)
+	storedCode, found := s.redis.Get(ctx, cacheKey)
+	if !found || storedCode != codeSaisi {
+		return errors.New("code invalide ou expiré")
+	}
 
-Recherche exhaustive menée sur les 4 dépôts (`ib-welloresto-api`, `wello-back-office`, `wello_resto_flutter`, `wello-kiosk`).
+	_ = s.redis.Delete(ctx, cacheKey)
 
-**Résultat : aucune fonctionnalité d'authentification par fournisseur externe (Google Sign-In, OAuth « login social », SSO) pour les utilisateurs/employés de la plateforme n'a été trouvée, active ou non, dans aucun des 4 dépôts.**
+	return s.repo.MarkAsVerified(ctx, token, mode)
+}
+```
 
-Occurrences réelles trouvées (toutes sans rapport avec le login utilisateur) :
-- **API** — uniquement des flux OAuth **d'intégrations plateforme tierce** : OAuth Uber Eats (`internal/config/ubereats.go:16-17`, `internal/modules/ubereats/client.go:56,90`), OAuth2 Deliveroo (`internal/modules/deliveroo/client.go:29,81-82`), et un JWT + OAuth2 (`https://oauth2.googleapis.com/token`) pour obtenir un access token **Google FCM** via compte de service (`internal/modules/notification/token_manager.go:96-188`) — notifications push, pas login utilisateur. `go.mod` ne déclare que `google/uuid` et `google.golang.org/protobuf`, aucune lib OAuth2/Sign-In.
-- **Back-office** — aucune occurrence de `oauth`/`GoogleSignIn`/`sso`/`passport`/`firebase-auth`. Seules mentions Google : `@googlemaps/js-api-loader` (cartes) et une valeur d'énum `"google"` dans `ReservationSource` (source Google Reserve d'une réservation, sans rapport avec l'auth).
-- **POS Flutter** — aucune occurrence de `google_sign_in`, `oauth`, `firebase_auth`, `sso`. Dépendances Google : `firebase_core`, `firebase_messaging` (push), `google_fonts`, `google_maps_flutter` — aucune liée à l'authentification.
-- **Kiosk** — aucune occurrence. Système d'enrôlement propre par code + refresh token interne (`/auth/enroll`, `/auth/token/refresh`, `/auth/reclaim`), indépendant de tout fournisseur externe.
+**`MarkAsVerified`** (`repository.go:977-1010`) est bien le point d'écriture réel de `users.email_verified_at` :
+```go
+func (r *AuthRepository) MarkAsVerified(ctx context.Context, token string, mode string) error {
+	db := dbx.GetDB(ctx, r.database)
+	var column string
 
-**Conclusion** : le login (employé/back-office) repose exclusivement sur le couple identifiant + mot de passe, ou sur un PIN pour le POS, avec un token opaque stocké côté serveur. Aucun code, même mort ou expérimental, d'intégration Google Sign-In/OAuth « social login »/SSO pour l'authentification des utilisateurs n'existe dans l'écosystème audité.
+	switch strings.ToUpper(mode) {
+	case "EMAIL":
+		column = "email_verified_at"
+	case "SMS", "TEL":
+		column = "tel_verified_at"
+	default:
+		return errors.New("mode de vérification invalide")
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE users u
+		SET %s = NOW()
+		WHERE EXISTS (SELECT 1 FROM users_rights ur WHERE ur.user_id = u.user_id AND ur.token = ?)`, column)
+
+	result, err := db.ExecContext(ctx, query, token)
+	...
+}
+```
+
+**Conclusion factuelle** : `users.email_verified_at` **est bien écrite par du code réel**, via `POST /auth/verify` avec `mode: "email"` — mais ce flux nécessite que le client déclenche explicitement `send-verification` puis `verify` (ce n'est pas un lien cliquable envoyé automatiquement à la création du compte ; rien dans `create_service.go` n'appelle `SendVerificationCode`). Aucune preuve dans le code que ce flux est aujourd'hui déclenché automatiquement quelque part côté serveur (création de compte, changement d'email) — il semble n'exister qu'en tant qu'action explicite initiée côté client. Une recherche complémentaire dans `wello-back-office` et `wello_resto_flutter` serait nécessaire pour confirmer si ces écrans sont réellement branchés côté UI (hors périmètre vérifié ici).
+
+### 2.9 Authentification par fournisseur externe (Google Sign-In / OAuth / SSO)
+
+**N'existe pas** pour l'authentification des utilisateurs, dans aucun des quatre dépôts.
+
+- `internal/config/google.go` : `GOOGLE_API_KEY` est une clé pour l'API Google **Maps** (géocodage), sans lien avec un flux OAuth de connexion :
+  ```go
+  type GoogleConfig struct {
+      APIKey string
+  }
+  func loadGoogle() GoogleConfig {
+      return GoogleConfig{APIKey: os.Getenv("GOOGLE_API_KEY")}
+  }
+  ```
+  Toutes les autres occurrences de "google" dans le code (`internal/modules/googlemaps/`, `internal/modules/deliverytime/estimate.go`, `internal/tasks/delivery_time.go`, etc.) relèvent de Google Maps/Places, pas d'authentification.
+- Recherche exhaustive de "oauth"/"sso" dans le code Go : les seules occurrences sont dans `internal/modules/deliveroo/`, `internal/modules/ubereats/`, `internal/webhook/ubereats/` — il s'agit de l'**OAuth serveur-à-serveur** utilisé pour s'authentifier auprès des API Uber Eats / Deliveroo (intégrations livraison), jamais d'un OAuth pour authentifier un utilisateur final de la plateforme.
+- La table `external_tokens` (confirmée en introspection live sur staging) ne contient **que** deux `token_type` : `uber_eats_bearer_token` et `uber_eats_bearer_token_sandbox`. Colonnes : `token_type varchar` (clé), `access_token text`, `expires_at timestamptz`. C'est un cache de jetons d'accès aux API partenaires (Uber Eats), utilisé par `internal/modules/ubereats/repository.go:207-230` (`SELECT access_token, expires_at FROM external_tokens WHERE token_type = ?` / upsert), et référencé en commentaire dans `internal/modules/deliveroo/repository.go:28` comme piste "pour simplifier" mais pas encore implémenté pour Deliveroo (`// For simplicity call token endpoint each time (or store in external_tokens table)`) — Deliveroo n'a donc **pas** de token caché dans cette table aujourd'hui, à la différence d'Uber Eats. Rien à voir avec une connexion Google/SSO utilisateur.
+- Aucun composant "Se connecter avec Google" ni bouton OAuth n'a été identifié dans `wello-back-office/src/pages/Login.tsx` (le seul écran de login trouvé dans ce dépôt lors de la recherche du flux mot de passe oublié, §2.7) — l'écran ne propose que nom d'utilisateur/email + mot de passe.
+
+En résumé : le seul mécanisme d'authentification pour les comptes `users` sur toute la plateforme (API, back-office, POS Flutter, kiosk) est le couple identifiant/mot de passe (ou PIN, ou token existant), sans aucune fédération d'identité externe.
+
 ---
 
 ## 3. Permissions
 
-### 3.1. Liste exhaustive des permissions existantes dans le code
+### 3.1 Liste exhaustive des permissions
 
-Le système repose sur **deux mondes qui coexistent** (transition RBAC en cours) : un catalogue de permissions nommées (nouveau) et d'anciennes colonnes booléennes (legacy), reliées entre elles par une table de correspondance (« fallback »).
+Le catalogue est déclaré en Go dans `internal/permission/keys_gen.go` et répliqué en base dans la table `permissions` — les deux sont maintenus synchronisés par un test dédié (`internal/permission/keys_gen_test.go`, `TestAllMatchesMigrationCatalog`) qui scanne l'ensemble des migrations `*.up.sql` pour reconstruire le catalogue attendu et échoue si le fichier Go diverge. **Confirmé par introspection live sur le Postgres de staging** : les deux listes contiennent exactement les **18 mêmes clés**, dans le même ordre `sort_order`.
 
-#### 3.1.1. Catalogue RBAC (nouveau) — `internal/permission/keys_gen.go`
+| `sort_order` | Clé (`permission.Key`) | Domaine | Sensible | Libellé (`permissions.label`) |
+|---|---|---|---|---|
+| 15 | `pos.status.manage` | pos | non | Ouvrir et fermer l'établissement |
+| 20 | `pos.ticket.reopen` | pos | **oui** | Rouvrir un ticket clôturé |
+| 40 | `pos.refund` | pos | **oui** | Rembourser une vente |
+| 50 | `pos.cash_drawer.open` | pos | **oui** | Ouvrir le tiroir-caisse hors encaissement |
+| 55 | `pos.analytics` | pos | non | Consulter les analyses de vente |
+| 60 | `catalog.manage` | catalog | **oui** | Gérer les produits, les tarifs et les cartes |
+| 70 | `inventory.manage` | inventory | non | Gérer les stocks et les inventaires |
+| 80 | `haccp.manage` | haccp | non | Gérer le suivi HACCP |
+| 90 | `customers.manage` | customers | **oui** | Gérer et exporter les fiches clients |
+| 100 | `staff.manage` | staff | **oui** | Gérer les employés, les postes, les rôles et les droits |
+| 110 | `staff.schedule.manage` | staff | non | Gérer le planning et les pointages |
+| 120 | `reports.sales.read` | reports | non | Consulter et exporter les rapports de vente |
+| 130 | `reports.financial.read` | reports | **oui** | Consulter et exporter les rapports financiers |
+| 135 | `reports.staff_performance.read` | reports | **oui** | Consulter les analyses nominatives par salarié |
+| 140 | `settings.manage` | settings | **oui** | Paramétrer l'établissement |
+| 150 | `bookings.manage` | bookings | non | Paramétrer les réservations |
+| 160 | `platforms.manage` | platforms | non | Gérer les canaux et plateformes |
+| 170 | `kiosk.manage` | kiosk | non | Gérer les bornes Kiosk |
+| 180 | `seating_plan.manage` | seating_plan | non | Gérer le plan de salle |
 
-Fichier intégral :
+Aucune ligne `deprecated_at` non nulle trouvée en base à ce jour.
+
+**Clés déjà retirées du catalogue** (dead code documenté, ne plus jamais réutiliser) : `pos.access` et `pos.discount.apply`, supprimées par la migration `100_deprecate_pos_access_and_discount_apply.up.sql` (RBAC lot 8, 2026-08-27, `internal/permission/keys_gen.go:11-21`). Le commentaire du fichier précise que ni l'une ni l'autre ne gardait de route réelle au moment de leur retrait.
+
+**Trois clés du catalogue n'ont jamais eu d'équivalent booléen "legacy"** : `pos.ticket.reopen`, `pos.refund`, `inventory.manage` — historiquement, seul `Rights.Admin` les accordait (`internal/modules/auth/permissions.go:11-13`).
+
+**Champs booléens "legacy" retirés purement et simplement** (aucun fallback, aucune permission ne les remplace) lors du "dead-rights cleanup" du 2026-08-27 : `AccessWaiter`, `AccessDelivery`, `CanExportReports`, `CanExportFinancials`, `CanExportCustomers` — plus aucune trace dans `UserRowRights` (`internal/modules/auth/models.go:126-149`) ni dans `legacyPermissionFallback`.
+
+### 3.2 Rôles / profils de permissions — utilisation réelle
+
+**Oui**, le concept existe et est activement utilisé. Résolution des droits effectifs au moment d'une requête (`internal/modules/auth/permissions.go`, fonction `Has`) :
+
 ```go
-// Package permission declares the fixed catalog of RBAC permission keys as
-// typed Go constants. The catalog itself lives in the database (table
-// `permissions`, seeded by migrations/done/095_roles_permissions_catalog.up.sql,
-// extended by migrations/done/097_permission_pos_status_manage.up.sql, and
-// reduced by migrations/done/100_deprecate_pos_access_and_discount_apply.up.sql)
-// — this file is a typed mirror of every migration's net INSERT/DELETE
-// effect, kept honest by keys_gen_test.go, which fails the build the moment
-// the two diverge.
-//
-// Do not add, rename, or remove a key here without making the matching change
-// in a migration (a new one for an addition/rename/deprecation; see the
-// existing ones for the pattern) in the same change.
-package permission
-
-// Key is a permission key from the `permissions` catalog table. Typed rather
-// than a bare string so that RequirePermission and UserLoginRow.Has cannot
-// accidentally be called with an arbitrary string that was never declared as
-// a real permission.
-type Key string
-
-const (
-	POSStatusManage      Key = "pos.status.manage"
-	POSTicketReopen      Key = "pos.ticket.reopen"
-	POSRefund            Key = "pos.refund"
-	POSCashDrawerOpen    Key = "pos.cash_drawer.open"
-	CatalogManage        Key = "catalog.manage"
-	InventoryManage      Key = "inventory.manage"
-	HACCPManage          Key = "haccp.manage"
-	CustomersManage      Key = "customers.manage"
-	StaffManage          Key = "staff.manage"
-	StaffScheduleManage  Key = "staff.schedule.manage"
-	ReportsSalesRead     Key = "reports.sales.read"
-	ReportsFinancialRead Key = "reports.financial.read"
-	SettingsManage       Key = "settings.manage"
-)
-
-// All lists every permission key declared above, in catalog (sort_order) order.
-var All = []Key{
-	POSStatusManage,
-	POSTicketReopen,
-	POSRefund,
-	POSCashDrawerOpen,
-	CatalogManage,
-	InventoryManage,
-	HACCPManage,
-	CustomersManage,
-	StaffManage,
-	StaffScheduleManage,
-	ReportsSalesRead,
-	ReportsFinancialRead,
-	SettingsManage,
-}
-```
-
-Soit **13 permissions** dans le catalogue actuellement en vigueur, avec leur libellé exact tel que seedé en base par `migrations/done/095_roles_permissions_catalog.up.sql:17-32` (complété par `migrations/done/097_permission_pos_status_manage.up.sql:14-16`) :
-
-| Clé (`permission.Key`) | Domaine | Libellé (`label`) | `is_sensitive` |
-|---|---|---|---|
-| `pos.status.manage` | pos | Ouvrir et fermer l'établissement | false |
-| `pos.ticket.reopen` | pos | Rouvrir un ticket clôturé | true |
-| `pos.refund` | pos | Rembourser une vente | true |
-| `pos.cash_drawer.open` | pos | Ouvrir le tiroir-caisse hors encaissement | true |
-| `catalog.manage` | catalog | Gérer les produits, les tarifs et les cartes | true |
-| `inventory.manage` | inventory | Gérer les stocks et les inventaires | false |
-| `haccp.manage` | haccp | Gérer le suivi HACCP | false |
-| `customers.manage` | customers | Gérer et exporter les fiches clients | true |
-| `staff.manage` | staff | Gérer les employés, les postes, les rôles et les droits | true |
-| `staff.schedule.manage` | staff | Gérer le planning et les pointages | false |
-| `reports.sales.read` | reports | Consulter et exporter les rapports de vente | false |
-| `reports.financial.read` | reports | Consulter et exporter les rapports financiers | true |
-| `settings.manage` | settings | Paramétrer l'établissement | true |
-
-**Deux clés ont existé puis ont été supprimées du catalogue** : `pos.access` et `pos.discount.apply`, retirées par `migrations/done/100_deprecate_pos_access_and_discount_apply.up.sql:17-19` (« RBAC lot 8 », 2026-08-27) — le fichier de migration précise qu'aucune des deux n'a jamais gardé de route réelle.
-
-#### 3.1.2. Fonctions `Has*`/`Can*`/`Is*` restantes
-
-`internal/middleware/permissions.go` (fichier intégral) :
-```go
-package middleware
-
-import (
-	"welloresto-api/internal/modules/auth"
-)
-
-// ============================================================
-// RBAC lot 2 — bascule des prédicats
-//
-// Toutes les fonctions HasXxx/CanXxx ainsi que les combinateurs AnyOf/AllOf
-// ont été retirées : RequirePermission prend désormais directement une
-// permission.Key et appelle user.Has(key), qui encapsule la correspondance
-// avec les anciennes colonnes booléennes (voir internal/modules/auth/
-// permissions.go). Elles ont été supprimées plutôt que dépréciées car aucune
-// n'avait plus d'appelant réel dans cmd/api/routes.go au moment de la bascule.
-//
-// IsAdmin reste à part : il correspond à « détient tous les droits », pas à
-// un droit particulier du catalogue — voir middleware.RequireAdmin.
-//
-// RBAC lot 2.5 : IsEmailVerified et IsTelVerified ont été retirées. Ce
-// n'étaient pas des droits RBAC mais un statut de vérification de compte
-// détourné en décision d'autorisation — et qui vérifiait de toute façon
-// l'utilisateur connecté plutôt que le responsable de l'établissement.
-// ============================================================
-
-// IsAdmin vérifie que l'utilisateur est administrateur
-func IsAdmin(user *auth.UserLoginRow) bool {
-	return user.IsAdmin()
-}
-```
-
-Donc **une seule fonction prédicat subsiste** dans ce fichier : `IsAdmin`. Toutes les anciennes fonctions `HasMenuAccess`, `HasPlanningAccess`, `HasUserManagementAccess`, `HasSettingsAccess`, `HasHACCPAccess`, `HasCustomerManagementAccess`, `IsEmailVerified`, `IsTelVerified` **n'existent plus** dans le code (supprimées, pas dépréciées).
-
-Et `internal/modules/auth/permissions.go` (fichier intégral) :
-```go
-package auth
-
-import (
-	"welloresto-api/internal/permission"
-)
-
-// legacyPermissionFallback maps each catalog permission key to the historical
-// boolean field on UserRowRights that used to gate it, consulted only for a
-// user with no role yet (RoleID == nil — see Has).
-//
-// Three catalog keys are deliberately absent: pos.ticket.reopen, pos.refund,
-// inventory.manage. No boolean column ever granted these — historically only
-// Rights.Admin has them, which Has handles before ever consulting this map.
-var legacyPermissionFallback = map[permission.Key]func(UserRowRights) bool{
-	permission.POSStatusManage:      func(r UserRowRights) bool { return r.AccessReception },
-	permission.POSCashDrawerOpen:    func(r UserRowRights) bool { return r.OpenCashDrawer },
-	permission.CatalogManage:        func(r UserRowRights) bool { return r.CanManageMenu },
-	permission.HACCPManage:          func(r UserRowRights) bool { return r.CanManageHACCP },
-	permission.CustomersManage:      func(r UserRowRights) bool { return r.CanManageCustomers },
-	permission.StaffManage:          func(r UserRowRights) bool { return r.CanManageUsers },
-	permission.StaffScheduleManage:  func(r UserRowRights) bool { return r.CanManagePlannings },
-	permission.ReportsSalesRead:     func(r UserRowRights) bool { return r.CanViewReports },
-	permission.ReportsFinancialRead: func(r UserRowRights) bool { return r.CanViewFinancials },
-	permission.SettingsManage:       func(r UserRowRights) bool { return r.CanManageSettings },
-}
-
-// Has indique si l'utilisateur détient le droit demandé sur son établissement
-// courant.
-//
-// Deux mondes coexistent pendant la transition :
-//   - RoleID nil     -> l'utilisateur n'a pas encore de rôle, on retombe sur
-//     les colonnes booléennes historiques (comportement identique à
-//     aujourd'hui) ;
-//   - RoleID non nil -> les droits viennent du rôle, les booléens sont
-//     ignorés — même s'ils contredisent le rôle.
 func (u *UserLoginRow) Has(key permission.Key) bool {
 	if u.RoleID != nil {
-		if u.RoleSystemKey != nil && *u.RoleSystemKey == permission.SystemKeyAdmin {
-			return true
-		}
 		for _, granted := range u.Permissions {
 			if granted == string(key) {
 				return true
@@ -1242,266 +971,98 @@ func (u *UserLoginRow) Has(key permission.Key) bool {
 	}
 	return false
 }
-
-// HasAdminRole reports whether the user's RBAC ROLE is the admin role.
-//
-// Deliberately distinct from IsAdmin() (models.go), which is the legacy
-// Rights.Admin column alone. Rights.Admin frequently stays true in
-// production regardless of the assigned role (historical seeding), so a
-// caller that wants "is this user's *role* admin" must use this method.
-func (u *UserLoginRow) HasAdminRole() bool {
-	if u.RoleID != nil {
-		return u.RoleSystemKey != nil && *u.RoleSystemKey == permission.SystemKeyAdmin
-	}
-	return u.Rights.Admin
-}
 ```
 
-**Note factuelle importante** : trois clés du catalogue (`pos.ticket.reopen`, `pos.refund`, `inventory.manage`) n'ont **aucune** colonne booléenne héritée correspondante — un utilisateur du « monde historique » (sans `role_id`) ne peut jamais les obtenir sauf via `Rights.Admin`.
+Deux mondes coexistent explicitement (commenté dans le code, `permissions.go:38-47`) :
+- **`RoleID` renseigné** (`users_rights.role_id` non nul) : les droits viennent **uniquement** de `Permissions` — la liste chargée par `attachRolePermissions`/`loadRolePermissions` (`repository.go:432-462`, une seconde requête `SELECT permission_key FROM role_permissions WHERE role_id = ?`, filtrée ensuite par `permission.FilterValid`). Les colonnes booléennes `manage_*`/`admin` de `users_rights` sont **totalement ignorées** dans ce cas — **même si elles contredisent le rôle**.
+- **`RoleID` nul** : on retombe intégralement sur les colonnes booléennes historiques via `legacyPermissionFallback` (`permissions.go:22-33`), avec `Rights.Admin` qui court-circuite tout en premier.
 
-#### 3.1.3. Middleware appliquant les permissions
+**État réel en base (staging, introspection live)** : `users_rights.role_id` est renseigné pour **58 lignes sur 59** — un seul lien encore en "monde legacy". La bascule est donc, en pratique, quasiment terminée sur cet environnement.
 
-`internal/middleware/require_permission.go` (extraits, cf. §2.4 ci-dessus pour le code intégral de `RequirePermission`/`RequireAdmin`). Deux gardes existent : `middleware.RequirePermission(permission.Key)` et `middleware.RequireAdmin()`. Il n'existe plus de combinateurs `AnyOf`/`AllOf`.
+**Le court-circuit "admin toujours vrai" a été retiré du rôle admin lui-même** (RBAC lot 11 phase 3, commenté `permissions.go:49-61`) : un utilisateur avec `RoleID` pointant vers le rôle système `admin` n'obtient ses droits que par les lignes réellement présentes dans `role_permissions` pour ce rôle — pas par un `if role == admin { return true }`. Cela n'est jugé sûr par les auteurs que parce qu'un invariant testé (`TestSystemAdminRolesContainFullCatalog_Postgres`) et une tâche de réconciliation automatique (`internal/tasks/rbac.go`) garantissent que le rôle admin de chaque établissement porte l'intégralité du catalogue. Le rôle admin reste néanmoins **immuable et non supprimable** en écriture applicative (garde G4, `models.ErrRoleImmutable` — voir `roles/service.go:224-227`, `:285-289`, `:396-398`).
 
-#### 3.1.4. Colonnes booléennes historiques (« monde legacy »)
+**Résolution "quel rôle a créé ce grant" pour l'affichage** : `HasAdminRole()` (`permissions.go:82-104`) est un accesseur *display-only*, distinct de `Has()` — utilisé par le champ `admin` de la réponse de login et par `is_admin` de `GET /me/permissions`. Un ancien `IsAdmin()` qui lisait `Rights.Admin` brut a été supprimé en même temps que `RequireAdmin` (RBAC lot 11 phase 4) — c'était un chemin d'autorisation redondant hors du catalogue.
 
-`internal/modules/auth/models.go:126-154` :
-```go
-type UserRowRights struct {
+**Résolution effective d'une requête HTTP** : `RequirePermission(key)` (§2.4) appelle `user.Has(key)` directement sur l'objet `*auth.UserLoginRow` déjà chargé et mis en cache par le middleware d'authentification — il n'y a pas de re-résolution de rôle par requête au-delà de ce qui a été chargé au login/à la mise en cache (TTL 60 min, `UserCacheTTL`) : un changement de permissions du rôle prend effet immédiatement pour les nouvelles sessions/re-authentifications, et pour les sessions déjà en cache uniquement après invalidation explicite (`roles.Service.invalidateTokens`, appelée systématiquement à chaque mutation d'un rôle — création, permissions, archivage, changement d'assignation).
 
-	// Accès aux modules
-	AccessReception bool
-	AccessDelivery  bool
-	AccessWaiter    bool
+**Service `internal/modules/roles/`** expose : `ListPermissionCatalog` (regroupe par domaine), `MyPermissions` (permissions effectives + rôle du user courant, via `Has()` — garantit la cohérence avec ce que `RequirePermission` déciderait), `ListRoles`/`GetRole`/`CreateRole`/`UpdateRole`/`ArchiveRole`, `ReplacePermissions` (remplacement intégral, pas un diff), `SetUserRole`, `SetMerchantDefaultRole`. Garde-fous métier codés en dur :
+- **G1** — impossible de modifier ses propres permissions de rôle ou sa propre assignation de rôle (`ErrRoleSelfModification`).
+- **G2** — impossible de retirer `staff.manage` d'un rôle (ou de réassigner le dernier détenteur) si cela laisserait l'établissement sans aucun détenteur actif de `staff.manage` (`ErrRoleStaffManageRequired`).
+- **G4** — le rôle système `admin` est immuable (nom, description, permissions, archivage tous bloqués).
+- **G5/G6** — un rôle avec des détenteurs actifs ne peut pas être archivé ; le rôle `staff` ne peut pas être archivé tant qu'il est le rôle par défaut de l'établissement (`merchant.default_role_id`).
 
-	// Gestion & Rapports
-	PrintMerchantCashReport bool
-	OpenCashDrawer          bool
-	CanManageMenu           bool
-	CanManagePlannings      bool
-	CanManageUsers          bool
-	CanManageSettings       bool
-	CanManageHACCP          bool
+**Colonnes "legacy" `users_rights.manage_*`/`admin` — mortes ou vivantes ?** Réponse factuelle nuancée :
+- **Vivantes en lecture** dans `legacyPermissionFallback` — mais seulement pour les utilisateurs sans `role_id` (1 sur 59 en staging aujourd'hui).
+- **Vivantes en lecture directe, hors `Has()`**, à un seul endroit relevé dans le code exploré : `access.Permissions.PrintMerchantCashReport` dans `buildLoginResponse` (`service.go:433`) lit `user.Rights.PrintMerchantCashReport` directement — commentaire explicite : « n'a pas d'équivalent dans le catalogue et reste lu directement sur la colonne historique » (`service.go:429-431`). C'est la seule permission "legacy" qui n'a **pas** été portée dans `permission.All` et qui continue donc, par construction, à ignorer le système de rôles pour tout utilisateur (y compris avec `role_id` renseigné).
+- **Écrites encore aujourd'hui** à la création (`defaultMerchantUserRights`/`UpsertMerchantUserRights`, `internal/modules/users/admin_repository.go:251-...`) et lors des mises à jour manuelles de droits (`PUT /users/{id}/rights`) — donc pas du code mort côté écriture non plus, même si leur lecture est court-circuitée dès qu'un `role_id` est assigné.
+- Le champ `Capabilities.Actions.PrintMerchantCashReport` de la réponse de login (`service.go:470-478`) est, lui, une **constante `true`** — commentaire : la garde `CanPrintCashReport()` a été décommissionnée (RBAC lot 12) et « ce qu'elle gardait est ouvert à tous pour l'instant », le champ JSON restant émis uniquement pour compatibilité avec les clients qui le parsent déjà.
 
-	// Reports & Financials
-	CanViewReports      bool
-	CanExportReports    bool
-	CanViewFinancials   bool
-	CanExportFinancials bool
+### 3.3 Attribution des droits à la création d'un utilisateur — back-office
 
-	// Customers
-	CanManageCustomers bool
-	CanExportCustomers bool
+**Deux composants distincts** de création existent dans `wello-back-office`, non unifiés :
 
-	// Admin
-	Admin bool
-}
-```
-Soit **17 champs booléens** (16 droits + `Admin`), toujours présents en base et lus dans `internal/modules/auth/repository.go:183-188` et `:367-372`. Ce sont ces mêmes 16 clés (hors `admin`) que le back-office manipule sous forme de `MerchantUserPermissions` (voir §3.3).
-
-#### 3.1.5. Routes effectivement câblées sur chaque permission
-
-Extrait de `cmd/api/routes.go`, lignes 587-1486 (occurrences de `RequirePermission`/`RequireAdmin`) :
-```
-587:  r.With(authMiddleware, middleware.RequirePermission(permission.StaffManage)).Post("/pin/reset", authH.ResetPIN)
-599:  r.With(middleware.RequirePermission(permission.StaffManage)).Get("/", usersH.ListMerchantUsers)
-600:  r.With(middleware.RequirePermission(permission.StaffManage)).Post("/", usersH.CreateUser)
-601:  r.With(middleware.RequirePermission(permission.StaffManage)).Post("/create", usersH.CreateUser)
-602:  r.With(middleware.RequirePermission(permission.StaffManage)).Get("/linkable-search", usersH.SearchLinkableUsers)
-603:  r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}", usersH.GetMerchantUser)
-604:  r.With(middleware.RequirePermission(permission.StaffManage)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
-605:  r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/rights", usersH.GetMerchantUserRights)
-606:  r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
-607:  r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/member", usersH.GetMerchantUserMember)
-608:  r.With(middleware.RequirePermission(permission.StaffManage)).Patch("/{id}/member", usersH.PatchMerchantUserMember)
-609:  r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/role", rolesH.SetUserRole)
-610:  r.With(middleware.RequireAdmin()).Post("/{id}/force-reset-password", usersH.ForceResetPassword)
-611:  r.With(middleware.RequireAdmin()).Delete("/{id}/merchant-link", usersH.UnlinkMerchantUser)
-631:  r.Use(middleware.RequirePermission(permission.StaffManage))                          // groupe /roles
-644:  r.With(middleware.RequirePermission(permission.StaffManage)).Put("/default-role", rolesH.SetMerchantDefaultRole)
-655:  r.With(middleware.RequirePermission(permission.ReportsSalesRead))...
-667:  r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
-669:  r.With(middleware.RequirePermission(permission.POSStatusManage)).Patch("/status", posH.UpdatePOSStatus)
-700:  r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
-740:  r.Use(middleware.RequirePermission(permission.ReportsFinancialRead))
-766:  r.With(middleware.RequirePermission(permission.InventoryManage))...
-806-810: r.With(middleware.RequirePermission(permission.CatalogManage))... (x3)
-925:  r.With(middleware.RequirePermission(permission.HACCPManage))...
-1005: r.Use(middleware.RequirePermission(permission.StaffScheduleManage))
-1088: r.With(middleware.RequirePermission(permission.ReportsFinancialRead))...
-1190: r.With(middleware.RequirePermission(permission.POSTicketReopen))...
-1192: r.With(middleware.RequirePermission(permission.POSRefund))...
-1211: r.With(middleware.RequirePermission(permission.POSRefund))...
-1254: r.With(middleware.RequirePermission(permission.POSCashDrawerOpen))...
-1290-1294: r.With(middleware.RequirePermission(permission.CustomersManage))... (x3)
-1426: r.With(middleware.RequirePermission(permission.ReportsFinancialRead))...
-1485-1486: r.With(middleware.RequirePermission(permission.SettingsManage))... (x2)
-```
-Toutes les 13 clés du catalogue sont utilisées au moins une fois. `RequireAdmin()` n'est câblé que sur deux routes : `POST /users/{id}/force-reset-password` et `DELETE /users/{id}/merchant-link`.
-
-### 3.2. Concept de RÔLE / PROFIL de permissions
-
-**Oui — il existe un système de rôle nommé et réutilisable**, introduit par le commit RBAC en cours de bascule. Ce n'est pas embryonnaire au sens « juste une idée » : le schéma SQL, l'API REST et une bonne partie de la logique métier existent et sont fonctionnels. Il coexiste avec l'ancien modèle « une ligne = 16 droits individuels par utilisateur » qui reste la source de vérité tant qu'aucun rôle n'est assigné.
-
-#### 3.2.1. Schéma SQL — `migrations/done/094_roles_schema.up.sql`
-
-```sql
--- ---------------------------------------------------------------------------
--- 1. permissions — the fixed catalog of grantable actions.
--- ---------------------------------------------------------------------------
-CREATE TABLE permissions (
-    key           varchar(64) PRIMARY KEY,
-    domain        varchar(32) NOT NULL,
-    label         varchar(150) NOT NULL,
-    description   text NOT NULL DEFAULT '',
-    is_sensitive  boolean NOT NULL DEFAULT false,
-    sort_order    integer NOT NULL DEFAULT 0,
-    deprecated_at timestamptz
-);
-
--- ---------------------------------------------------------------------------
--- 2. roles — per-merchant named bundles of permissions.
--- ---------------------------------------------------------------------------
-CREATE TABLE roles (
-    id          varchar(64) PRIMARY KEY,          -- role-<uuid>, app-generated
-    merchant_id varchar(64) NOT NULL,
-    name        varchar(150) NOT NULL,
-    description text NOT NULL DEFAULT '',
-    system_key  varchar(16),                       -- 'admin' | 'staff' | NULL (custom role)
-    version     integer NOT NULL DEFAULT 1,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now(),
-    archived_at timestamptz,
-    CONSTRAINT roles_system_key_check CHECK (system_key IS NULL OR system_key IN ('admin', 'staff'))
-);
--- ---------------------------------------------------------------------------
--- 3. role_permissions — many-to-many role <-> permission.
--- ---------------------------------------------------------------------------
-CREATE TABLE role_permissions (
-    role_id        varchar(64) NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    permission_key varchar(64) NOT NULL REFERENCES permissions(key),
-    PRIMARY KEY (role_id, permission_key)
-);
-
--- ---------------------------------------------------------------------------
--- 4. users_rights.role_id — nullable pointer, not populated by this lot.
--- ---------------------------------------------------------------------------
-ALTER TABLE users_rights ADD COLUMN role_id varchar(64) REFERENCES roles(id);
-CREATE INDEX idx_users_rights_role_id ON users_rights (role_id);
-
--- ---------------------------------------------------------------------------
--- 5. merchant.default_role_id — role assigned to a newly linked user absent
---    any other choice.
--- ---------------------------------------------------------------------------
-ALTER TABLE merchant ADD COLUMN default_role_id varchar(64) REFERENCES roles(id);
-```
-Le rôle est **rattaché au périmètre du merchant** (`roles.merchant_id`), pas global à la plateforme — chaque établissement a ses propres rôles nommés, y compris ses deux rôles « système ».
-
-#### 3.2.2. Rôles système seedés automatiquement
-
-`internal/modules/roles/repository.go:119-181` :
-```go
-var systemRolePermissions = map[string][]permission.Key{
-	SystemKeyAdmin: permission.All,
-	SystemKeyStaff: {},
-}
-
-var systemRoleNames = map[string]string{
-	SystemKeyAdmin: "Administrateur",
-	SystemKeyStaff: "Employé polyvalent",
-}
-```
-Deux rôles nommés et réutilisables existent donc par construction pour chaque établissement : **« Administrateur »** (toutes les 13 permissions du catalogue) et **« Employé polyvalent »** (**zéro permission** par défaut). Au-delà, un merchant peut créer des **rôles personnalisés** via `POST /roles`, avec un ensemble de permissions librement défini via `PUT /roles/{id}/permissions`.
-
-#### 3.2.3. Routes REST exposées
-
-`cmd/api/routes.go:618-645` :
-```go
-// --- PERMISSIONS / ROLES (RBAC lot 6) ---
-r.Route("/permissions", func(r chi.Router) {
-	r.Use(authMiddleware)
-	r.Get("/", rolesH.ListPermissions)
-})
-
-r.Route("/me", func(r chi.Router) {
-	r.Use(authMiddleware)
-	r.Get("/permissions", rolesH.MyPermissions)
-})
-
-r.Route("/roles", func(r chi.Router) {
-	r.Use(authMiddleware)
-	r.Use(middleware.RequirePermission(permission.StaffManage))
-
-	r.Get("/", rolesH.ListRoles)
-	r.Post("/", rolesH.CreateRole)
-	r.Get("/{id}", rolesH.GetRole)
-	r.Patch("/{id}", rolesH.UpdateRole)
-	r.Put("/{id}/permissions", rolesH.ReplacePermissions)
-	r.Get("/{id}/members", rolesH.ListRoleMembers)
-	r.Post("/{id}/archive", rolesH.ArchiveRole)
-})
-
-r.Route("/merchant", func(r chi.Router) {
-	r.Use(authMiddleware)
-	r.With(middleware.RequirePermission(permission.StaffManage)).Put("/default-role", rolesH.SetMerchantDefaultRole)
-})
-```
-
-#### 3.2.4. Bascule automatique à la création d'un utilisateur
-
-Fait crucial : `internal/modules/users/admin_repository.go:328-337` (`UpsertMerchantUserRights`, branche INSERT) :
-```go
-// role_id comes from merchant.default_role_id (RBAC lot 4), never
-// hardcoded — fails explicitly (models.ErrMerchantDefaultRoleNotSet)
-// rather than inserting a new row with no role_id. Only this INSERT
-// branch (a brand new link) sets it; the UPDATE branch above re-enables
-// an existing link and must never overwrite whatever role_id it already
-// carries. See migrations/done/099_merchant_default_role_admin.up.sql.
-roleID, err := r.MerchantDefaultRoleID(ctx, merchantID)
-if err != nil {
-	return 0, err
-}
-
-insertID, err := db.InsertReturningID(ctx, `
-	INSERT INTO users_rights (
-		user_id, merchant_id, token, admin, role_id,
-		access_wrreception, access_wrdelivery, access_wrwaiter,
-		print_merchant_cash_report, open_cash_drawer, manage_menu,
-		manage_plannings, manage_users, manage_settings, manage_haccp,
-		view_reports, export_reports, view_financials, export_financials,
-		manage_customers, export_customers, enabled
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
-`, "id", userID, merchantID, token, rights.Admin, roleID, ...)
-```
-
-Et `migrations/done/099_merchant_default_role_admin.up.sql:1-28` :
-```sql
--- RBAC lot 4: repoints merchant.default_role_id at each establishment's
--- "admin" role. Direct consequence of the product decision behind this lot —
--- every account becomes Administrateur while permissions are not yet
--- exploited from any screen, so a newly linked user must land on the same
--- footing as everyone else.
-UPDATE merchant
-SET default_role_id = r.id
-FROM roles r
-WHERE r.merchant_id = CAST(merchant.id AS TEXT)
-  AND r.system_key = 'admin';
-```
-
-**Conséquence factuelle observée** : tout utilisateur nouvellement créé et lié à un établissement (`POST /users`, `POST /users/create`, ou `POST /users/{id}/merchant-link`) reçoit automatiquement un `role_id` pointant vers le rôle système « Administrateur » de ce merchant (puisque `merchant.default_role_id` pointe systématiquement sur ce rôle, migration 099). Or `Has()` (§3.1.2) court-circuite immédiatement à `true` pour toute clé dès lors que `RoleSystemKey == "admin"`, **avant même de consulter** les droits individuels envoyés dans la requête de création. Le commutateur « Administrateur » du formulaire de création (voir §3.3) — et l'objet `permissions` légataire envoyé par `LinkForm` — n'ont donc, en l'état, aucun effet sur l'autorisation réelle une fois le `role_id` posé : l'utilisateur créé est administrateur RBAC de fait.
-
-#### 3.2.5. Conclusion
-
-Le modèle **n'est pas** « une ligne = un droit individuel par utilisateur » de façon exclusive : c'est un système hybride où un rôle nommé, réutilisable, propre à chaque merchant, coexiste avec l'ancien modèle des 16 colonnes booléennes individuelles sur `users_rights`.
-
-### 3.3. Attribution des droits à la création d'un utilisateur dans le back-office
-
-Répertoire concerné : `wello-back-office/src/pages/equipe`. La page `EquipePage.tsx` délègue la création à un composant dédié, `CreateMemberSheet`, situé dans `src/components/team/CreateMemberSheet.tsx`.
-
-#### 3.3.1. Composant `CreateMemberSheet.tsx` (extrait — logique de soumission du formulaire de création)
+1. `src/components/users/UserCreateSheet.tsx` (170 lignes), monté depuis `src/pages/Users.tsx:71` — formulaire minimal (prénom/nom/email/téléphone uniquement), **aucun champ de droits ni de rôle**, `usersService.createUser` appelle simplement `POST /users` sans objet `rights`.
+2. `src/components/team/CreateMemberSheet.tsx` (435 lignes), monté depuis `src/pages/equipe/EquipePage.tsx:366` — c'est l'écran réellement utilisé pour la gestion d'équipe et le seul qui expose des champs de droits. **Code (résumé fidèle, structure JSX répétitive condensée) ci-dessous.**
 
 ```tsx
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { Search, Link2, AlertCircle, UserPlus } from "lucide-react";
+
+import { usersApi, planningPositionsApi, planningRefsApi } from "@/services/welloApi";
+import { qk } from "@/lib/queryKeys";
+import type { LinkableUser, CreateUserRequest } from "@/types/adminUsers";
+
+const SENTINEL_NONE = "__none__";
+
+export function CreateMemberSheet({ open, onOpenChange, onSuccess }: CreateMemberSheetProps) {
+  const [mode, setMode] = useState<"create" | "link">("create");
+  useEffect(() => { if (open) setMode("create"); }, [open]);
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full sm:max-w-xl !p-0 overflow-hidden flex flex-col">
+        <div className="shrink-0 border-b border-border bg-background px-6 pt-6 pb-4">
+          <SheetHeader>
+            <SheetTitle>Ajouter un membre</SheetTitle>
+            <SheetDescription>
+              Créez un nouveau compte ou liez un utilisateur existant à cet établissement.
+            </SheetDescription>
+          </SheetHeader>
+        </div>
+        <Tabs value={mode} onValueChange={(v) => setMode(v as "create" | "link")} className="flex min-h-0 flex-1 flex-col px-6 pb-6">
+          <TabsList className="mt-4 grid w-full grid-cols-2 shrink-0">
+            <TabsTrigger value="create"><UserPlus className="h-4 w-4 mr-2" />Nouveau membre</TabsTrigger>
+            <TabsTrigger value="link"><Link2 className="h-4 w-4 mr-2" />Lier un existant</TabsTrigger>
+          </TabsList>
+          <TabsContent value="create" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <CreateForm onSuccess={() => { onSuccess?.(); onOpenChange(false); }} />
+          </TabsContent>
+          <TabsContent value="link" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <LinkForm onSuccess={() => { onSuccess?.(); onOpenChange(false); }} />
+          </TabsContent>
+        </Tabs>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function CreateForm({ onSuccess }: { onSuccess: () => void }) {
+  const queryClient = useQueryClient();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -1512,211 +1073,142 @@ function CreateForm({ onSuccess }: { onSuccess: () => void }) {
   const [positionId, setPositionId] = useState("");
   const [role, setRole] = useState("");
   const [contractTypeCode, setContractTypeCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: positions = [] } = useQuery({ queryKey: qk.planningPositions.all, queryFn: () => planningPositionsApi.list() });
+  const { data: contractTypes = [] } = useQuery({ queryKey: qk.planningRefs.contractTypes, queryFn: () => planningRefsApi.contractTypes() });
+
+  const mutation = useMutation({
+    mutationFn: (payload: CreateUserRequest) => usersApi.create(payload),
+    onSuccess: () => {
+      toast.success("Membre créé");
+      queryClient.invalidateQueries({ queryKey: qk.users.all });
+      onSuccess();
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "Erreur lors de la création";
+      setError(msg);
+      toast.error(msg);
+    },
+  });
 
   const handleSubmit = () => {
+    setError(null);
+    if (!firstName.trim() || !lastName.trim() || !email.trim()) {
+      setError("Prénom, nom et email sont obligatoires.");
+      return;
+    }
     const payload: CreateUserRequest = {
       first_name: firstName.trim(),
       last_name: lastName.trim(),
       email: email.trim(),
       tel: tel.trim() || undefined,
       password: password ? password : undefined,
-      rights: {
-        admin,
-        login_enabled: loginEnabled,
-      },
+      rights: { admin, login_enabled: loginEnabled },
       planning: {
         ...(positionId ? { position_id: positionId } : {}),
         ...(role ? { role } : {}),
         ...(contractTypeCode ? { contract_type_code: contractTypeCode } : {}),
       },
     };
-
     mutation.mutate(payload);
   };
 
-  // Bloc "Accès" du formulaire — deux commutateurs seulement :
-  //   <Switch id="create-admin" checked={admin} onCheckedChange={setAdmin} />       — Administrateur
-  //   <Switch id="create-login" checked={loginEnabled} onCheckedChange={setLoginEnabled} /> — Connexion activée
-  //
-  // Bloc "Planning (optionnel)" contient un sélecteur "Rôle" avec seulement
-  // trois valeurs libres : employee / manager / admin — envoyées dans
-  // payload.planning.role. Ce n'est PAS le role_id RBAC (voir 3.2), c'est un
-  // champ RH/planning distinct.
-}
-```
-
-#### 3.3.2. Constats factuels sur l'écran de création
-
-- L'onglet **« Nouveau membre »** (`CreateForm`) ne présente que **deux commutateurs** dans le bloc « Accès » : `Administrateur` (bool `admin`) et `Connexion activée` (bool `login_enabled`). **Aucune case à cocher pour les 16 droits individuels** n'est présente à la création — contrairement à l'onglet « Lier un existant » (`LinkForm`) qui, lui, envoie explicitement les 16 clés à `false` (droits minimaux) lors du rattachement d'un utilisateur déjà existant à l'établissement.
-- **Aucun sélecteur de rôle RBAC** (`roles.Role` / `role_id`) n'apparaît dans `CreateForm`. Le champ « Rôle » du bloc « Planning (optionnel) » est un champ RH/planning distinct (`employee`/`manager`/`admin`, envoyé dans `payload.planning.role`), sans rapport avec le `role_id` RBAC.
-- Le sélecteur de rôle RBAC existe ailleurs dans le back-office, mais uniquement **après création**, dans l'onglet « Accès » de la fiche d'un membre existant (`AccessTab.tsx`), dont le commentaire d'en-tête précise :
-```tsx
-/**
- * E3 — replaces the old flat permission-toggle grid (RightsTab) entirely.
- * A single role selector, plus a read-only preview of what that role
- * grants — so an admin sees what they're assigning without opening the
- * roles screen separately.
- */
-```
-avec le sélecteur appelant `usersApi.updateRole(userId, roleId)` → `PUT /users/{id}/role`.
-
-#### 3.3.3. Format exact du payload envoyé à l'API à la création
-
-`wello-back-office/src/types/adminUsers.ts:136-152` :
-```ts
-/** Body of `POST /users` / `POST /users/create`. */
-export interface CreateUserRequest {
-  first_name: string;
-  last_name: string;
-  username?: string;
-  email: string;
-  /** May be empty: backend generates a random password when blank. */
-  password?: string;
-  tel?: string;
-  merchant_id?: string | null;
-  admin?: boolean;
-  rights?: {
-    admin?: boolean;
-    login_enabled?: boolean;
-    permissions?: Partial<MerchantUserPermissions>;
-  };
-  planning?: Partial<MerchantUserPlanningUpsertRequest>;
-}
-```
-
-Struct Go réceptrice, `internal/modules/users/create_models.go` (fichier intégral) :
-```go
-package users
-
-// CreateUserRequest is the JSON payload for POST /users/create.
-type CreateUserRequest struct {
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email      string                           `json:"email"`
-	Password   string                           `json:"password"`
-	Tel        string                           `json:"tel"`
-	MerchantID *string                          `json:"merchant_id,omitempty"`
-	Admin      bool                             `json:"admin"`
-	Rights     *MerchantUserRightsUpsertRequest `json:"rights,omitempty"`
+  return (
+    <div className="space-y-5 py-2">
+      {/* Identité : Prénom*, Nom*, Email*, Téléphone, Mot de passe (facultatif, généré si vide) */}
+      {/* Accès : Switch "Administrateur" (booléen legacy rights.admin), Switch "Connexion activée" */}
+      {/* Planning (optionnel) : Poste (position_id), Rôle (select statique "employee"/"manager"/"admin" — champ planning.role, PAS le role_id RBAC), Type de contrat */}
+      ...
+      <div className="flex justify-end pt-4 border-t border-border">
+        <Button onClick={handleSubmit} disabled={mutation.isPending}>
+          {mutation.isPending ? "Création…" : "Créer le membre"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
-// CreateUserResponse is the JSON body returned on success (201).
-type CreateUserResponse struct {
-	UserID string `json:"user_id"`
-}
+// LinkForm: recherche un utilisateur existant (usersApi.linkableSearch),
+// puis usersApi.merchantLink(user.user_id, { rights: { admin: false, login_enabled: true,
+//   permissions: { access_reception: false, print_merchant_cash_report: false, open_cash_drawer: false,
+//     manage_menu: false, manage_plannings: false, manage_users: false, manage_settings: false,
+//     manage_haccp: false, view_reports: false, view_financials: false, manage_customers: false } } })
+// — droits legacy tous à false par défaut ("droits minimaux"), à ajuster ensuite dans l'onglet "Droits".
 ```
 
-Côté service, `internal/modules/users/create_service.go:51-54` :
-```go
-rights := defaultMerchantUserRights(req.Admin)
-if req.Rights != nil {
-	rights = req.Rights.Normalize(defaultMerchantUserRights(req.Admin))
-}
-```
+*(Le bloc "Identité/Accès/Planning" complet — trois `<Card>` avec les champs listés en commentaire ci-dessus — fait `src/components/team/CreateMemberSheet.tsx:171-322` dans le fichier réel ; reproduit en résumé ici pour rester lisible, le détail JSX étant strictement répétitif.)*
 
-Comme le payload frontend n'envoie jamais `rights.permissions`, `Normalize` retombe sur les valeurs par défaut de `defaultMerchantUserRights(req.Admin)` pour les 16 droits individuels — seul le commutateur `Administrateur` de l'écran de création a un effet sur ces colonnes historiques. Et comme démontré en §3.2.4, ce même commutateur `admin` n'a de toute façon **aucun effet sur l'autorisation RBAC réelle**, celle-ci étant entièrement déterminée par `role_id` (systématiquement le rôle « Administrateur » du merchant dès la création).
----
+**Constats factuels sur cet écran** :
 
+1. **Aucun sélecteur de rôle RBAC (`role_id`) n'est présent dans ce formulaire de création.** Le seul champ nommé "Rôle" (`positionId`/`role` dans la section "Planning") est un `<Select>` **statique**, à trois valeurs codées en dur (`"employee" | "manager" | "admin"`, `CreateMemberSheet.tsx:283-286`), envoyé dans `payload.planning.role` — ce n'est **pas** le `role_id` de la table `roles` (RBAC), c'est le champ `employees.role` (l'enum `employees_role_enum` déjà documenté dans le schéma connu), une simple catégorisation RH/planning, sans effet sur les permissions.
+2. Le seul contrôle de droits exposé à la création est le switch booléen **"Administrateur"** (`rights.admin`, colonne legacy `users_rights.admin`) et **"Connexion activée"** (`rights.login_enabled`) — aucun réglage granulaire par domaine (menu, planning, HACCP, etc.) n'est proposé ici.
+3. **L'attribution effective du rôle RBAC (`role_id`) à la création n'est donc pas pilotée par l'utilisateur du back-office** : côté backend, `UpsertMerchantUserRights` (`internal/modules/users/admin_repository.go:303-311`) assigne automatiquement `merchant.default_role_id` à toute nouvelle ligne `users_rights` créée par `INSERT` — commentaire du code : « role_id comes from merchant.default_role_id (RBAC lot 4), never hardcoded — fails explicitly (`models.ErrMerchantDefaultRoleNotSet`) rather than inserting a new row with no role_id. » Le rôle assigné par défaut n'est donc pas choisi au moment de la création dans l'UI, mais hérité silencieusement du paramétrage de l'établissement.
+4. **L'assignation/changement explicite de rôle RBAC se fait dans un écran séparé, après création** : l'onglet "Droits" de la fiche employé (`wello-back-office/src/components/team/tabs/AccessTab.tsx`), qui appelle `PUT /users/{id}/role` (`usersApi.updateRole`, `src/services/welloApi.ts:273-278`, lui-même routé côté API vers `rolesH.SetUserRole` — `cmd/api/routes.go:624`). Le commentaire d'en-tête de ce fichier confirme explicitement l'architecture cible :
+   ```
+   * E3 — replaces the old flat permission-toggle grid (RightsTab) entirely.
+   * A single role selector, plus a read-only preview of what that role
+   * grants — so an admin sees what they're assigning without opening the
+   * roles screen separately.
+   *
+   * Deliberately its own tab, never merged with "Contrat" (which owns the
+   * planning position — the "poste"): keeping RBAC role assignment and job
+   * position in separate forms is the only thing preventing the two concepts
+   * from blurring together again.
+   ```
+   C'est-à-dire : un ancien écran "grille de permissions à bascules" (`RightsTab`) a été explicitement remplacé par un unique sélecteur de rôle avec aperçu en lecture seule des permissions qu'il accorde — mais cette UI n'est **jamais présentée pendant le flux de création**, uniquement en édition ultérieure d'une fiche existante (`AccessTab.tsx:36-74`, chargement de `detail.role_id` via `GET /users/{id}` puis `rolesApi.list()`/`rolesApi.get()` pour l'aperçu, mutation `usersApi.updateRole(userId, roleId)` au clic).
+
+En résumé pour 3.3 : la création d'un utilisateur dans le back-office ne permet de fixer que deux leviers de droits historiques (`admin` booléen, `login_enabled`) ; le rôle RBAC réel est assigné automatiquement (rôle par défaut de l'établissement) puis doit être changé manuellement, a posteriori, via un onglet "Droits" distinct du formulaire de création.
 ## 4. Fiscalité et registre de caisse
-
-Le schéma SQL complet n'existe dans aucun fichier `migrations/` versionné pour les tables fiscales — il n'est visible que dans le snapshot `docs/migration-postgres/04-schema-postgres-target.sql` (dump généré pendant le chantier de migration MySQL→Postgres). Ce point est noté explicitement partout où il s'applique ci-dessous.
 
 ### 4.1. Ouverture / clôture d'un registre de caisse
 
 #### 4.1.1. Tables SQL concernées
 
-Six tables portent le registre de caisse. **Aucune n'est créée par un fichier sous `migrations/done/` ou `migrations/todo/`** — leur DDL n'existe que dans le snapshot `docs/migration-postgres/04-schema-postgres-target.sql`, preuve que ces tables préexistent au système de migrations versionnées du dépôt.
+Six tables portent le registre de caisse, confirmées par introspection live sur le Postgres de staging. Aucune n'est créée par un fichier sous `migrations/done/` ou `migrations/todo/` — leur DDL n'est visible que dans le snapshot `docs/migration-postgres/04-schema-postgres-target.sql` (vérifié : `migrations/todo/` et `migrations/done/` ne contiennent aucun fichier dont le nom évoque `cash`, `receipt`, `order` ou `payment`).
 
-**`cash_desks`** (`docs/migration-postgres/04-schema-postgres-target.sql:463-470`) — la caisse physique (le "poste"), pas la session :
-```sql
-CREATE TABLE cash_desks (
-    cash_desk_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(64) NOT NULL,
-    name varchar(50) NOT NULL,
-    enabled boolean NOT NULL DEFAULT true,
-    creation_date timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (cash_desk_id)
-);
-```
+**`cash_desks`** (`docs/migration-postgres/04-schema-postgres-target.sql:463`) — la caisse physique (le « poste »), pas la session.
 
-**`cash_registers`** (lignes 504-523) — la session de caisse (ouverture/clôture), avec les 3 colonnes du chaînage fiscal :
-```sql
-CREATE TABLE cash_registers (
-    cash_register_id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    merchant_id varchar(64) NOT NULL,
-    cash_desk_id integer NOT NULL,
-    device_id varchar(50) NOT NULL,
-    user_id varchar(64) NOT NULL,
-    cash_fund integer NOT NULL,
-    final_cash_fund integer DEFAULT 0,
-    start_date timestamptz NOT NULL,
-    end_date timestamptz,
-    closed boolean NOT NULL DEFAULT false,
-    enclosed boolean NOT NULL DEFAULT false,
-    closure_comment varchar(255) NOT NULL,
-    closed_by varchar(25),
-    hash varchar(64),
-    signature text,
-    previous_hash varchar(64),
-    PRIMARY KEY (cash_register_id)
-);
-COMMENT ON COLUMN cash_registers.cash_fund IS 'in cents';
-```
-Deux états successifs et distincts : `closed` (le rapport Z est calculé, mais les `cash_registers_custom_items` restent modifiables) puis `enclosed` (verrouillage définitif).
+**`cash_registers`** (`docs/migration-postgres/04-schema-postgres-target.sql:504`) — la session de caisse (ouverture/clôture), avec les 3 colonnes du chaînage fiscal (`hash varchar(64)`, `signature text`, `previous_hash varchar(64)`). Deux états successifs et distincts : `closed` (le rapport Z est calculé, mais `cash_registers_custom_items` reste modifiable) puis `enclosed` (verrouillage définitif).
 
-**`cash_registers_items`** (lignes 548-555) — snapshot automatique des ventes par moyen de paiement, figé à la clôture :
-```sql
-CREATE TABLE cash_registers_items (
-    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    cash_register_id integer NOT NULL,
-    mop varchar(10) NOT NULL,
-    amount integer NOT NULL,
-    PRIMARY KEY (id)
-);
-```
+**`cash_registers_items`** (`:548`) — snapshot automatique des ventes par moyen de paiement, figé à la clôture.
 
-**`cash_registers_custom_items`** (lignes 531-540) — ajustements manuels saisis par le restaurateur :
-```sql
-CREATE TABLE cash_registers_custom_items (
-    id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-    label varchar(25) NOT NULL,
-    amount integer NOT NULL,
-    merchant_id varchar(64),
-    created_by varchar(35),
-    enabled boolean NOT NULL DEFAULT true,
-    cash_register_id integer NOT NULL,
-    PRIMARY KEY (id)
-);
-```
+**`cash_registers_custom_items`** (`:531`) — ajustements manuels saisis par le restaurateur.
 
-**`device_link`** (lignes 1105-1111) — liaison appareil secondaire → caisse principale.
+**`device_link`** (`:1105`) — liaison appareil secondaire → caisse principale.
 
-**Tables présentes dans le schéma mais mortes côté Go** — aucune occurrence d'`INSERT INTO` dans tout le dépôt : `cash_reports` (lignes 564-573), `cash_funds` (lignes 478-494), `sub_cash_registers` (lignes 3747-3755, référencée uniquement en lecture).
+**Tables présentes dans le schéma mais mortes côté Go** — aucune occurrence d'`INSERT INTO` dans tout le dépôt (grep exhaustif) : `cash_reports` (`:564`), `cash_funds` (`:478`), `sub_cash_registers` (`:3743`, référencée uniquement en lecture).
 
 #### 4.1.2. Endpoints HTTP
 
-Enregistrés dans `cmd/api/routes.go:1317-1336` et `:1246-1256` :
+Enregistrés dans `cmd/api/routes.go` :
 
-| Méthode | Route | Handler |
-|---|---|---|
-| POST | `/cash_register/open` | `cashRegisterH.OpenCashRegister` |
-| GET / POST | `/cash_register/history` | `cashRegisterH.GetHistory` |
-| POST | `/cash_register/link` | `cashRegisterH.HandleLinkDevice` |
-| DELETE | `/cash_register/link` | `cashRegisterH.HandleUnlinkDevice` |
-| GET | `/cash_register/{cash_register_id}/` | `cashRegisterH.GetCashRegisterHistoryByID` |
-| GET | `/cash_register/{cash_register_id}/summary` | `cashRegisterH.GetCashRegisterSummary` |
-| GET | `/cash_register/{cash_register_id}/tva-details` | `cashRegisterH.GetCashRegisterTVADetails` |
-| PATCH | `/cash_register/{cash_register_id}/close` | `cashRegisterH.CloseCashRegister` |
-| PATCH | `/cash_register/{cash_register_id}/enclose` | `cashRegisterH.EncloseCashRegister` |
-| POST | `/cash_register/{cash_register_id}/custom_items` | `cashRegisterH.AddCustomItem` |
-| DELETE | `/cash_register/{cash_register_id}/custom_items/{item_id}` | `cashRegisterH.DeleteCustomItem` |
-| POST | `/cash_drawer/open` | `cashRegisterH.OpenCashDrawer` (garde RBAC `permission.POSCashDrawerOpen`) |
+| Méthode | Route | Handler | Ligne |
+|---|---|---|---|
+| POST | `/cash_register/open` | `cashRegisterH.OpenCashRegister` | `routes.go:1489` |
+| GET / POST | `/cash_register/history` | `cashRegisterH.GetHistory` | `routes.go:1490-1491` |
+| POST / DELETE | `/cash_register/link` | `cashRegisterH.HandleLinkDevice` / `HandleUnlinkDevice` | `routes.go:1492-1493` |
+| GET | `/cash_register/{cash_register_id}/` | `cashRegisterH.GetCashRegisterHistoryByID` | `routes.go:1496` |
+| GET | `/cash_register/{cash_register_id}/summary` | `cashRegisterH.GetCashRegisterSummary` | `routes.go:1497` |
+| GET | `/cash_register/{cash_register_id}/tva-details` | `cashRegisterH.GetCashRegisterTVADetails` | `routes.go:1498` |
+| PATCH | `/cash_register/{cash_register_id}/close` | `cashRegisterH.CloseCashRegister` | `routes.go:1499` |
+| PATCH | `/cash_register/{cash_register_id}/enclose` | `cashRegisterH.EncloseCashRegister` | `routes.go:1500` |
+| POST | `/cash_register/{cash_register_id}/custom_items` | `cashRegisterH.AddCustomItem` | `routes.go:1502` |
+| DELETE | `/cash_register/{cash_register_id}/custom_items/{item_id}` | `cashRegisterH.DeleteCustomItem` | `routes.go:1503` |
+| POST | `/cash_drawer/open` | `cashRegisterH.OpenCashDrawer` (garde RBAC `permission.POSCashDrawerOpen`) | `routes.go:1415-1425` |
+
+**Séquence complète — ouverture** (`internal/modules/cash_registers/handler.go:26-48` → `service.go:19-30` → `repository.go:31-85`) :
+1. `OpenCashRegister` (repository) vérifie qu'aucune caisse n'est déjà ouverte pour le `device_id` (`WHERE end_date IS NULL AND device_id = ? AND merchant_id = ?`, `repository.go:37-44`) ; si oui, renvoie `"device_already_opened_cash_register"` sans erreur.
+2. Sinon, `INSERT INTO cash_registers (cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date, closure_comment) VALUES (..., '')` (`repository.go:61-71`) — `closure_comment` est rempli en chaîne vide car `NOT NULL` sans défaut en Postgres.
+3. Retourne `cash_register_id`. **Aucun calcul de hash à l'ouverture** — le chaînage n'intervient qu'à la fermeture.
+
+**Séquence complète — fermeture** (`handler.go:50-88` → `service.go:32-40` → `repository.go:388-527`), détaillée intégralement en §4.1.4a.
 
 #### 4.1.3. Séquence de numérotation
 
-Pas une seule séquence, mais **quatre chaînages distincts et indépendants** :
+Pas une seule séquence, mais **quatre chaînages distincts et indépendants**, plus une numérotation d'affichage séparée :
 
-1. **`orders.order_num`** — numéro affiché au client/marchand. Ce n'est **pas** une séquence fiscale continue : elle **se réinitialise à 1 dès que le dernier numéro atteint 99** — `internal/modules/order_life_cycle/repository.go:1825-1857` :
+1. **`orders.order_num`** — numéro affiché au client/marchand, **pas une séquence fiscale continue** : elle se réinitialise à 1 dès que le dernier numéro atteint 99 — `internal/modules/order_life_cycle/repository.go:1899-1931` :
 ```go
 // GetNextOrderNum returns the next order_num following the PHP behaviour:
 // - if last order_num is 99 or null -> return 1
@@ -1745,16 +1237,14 @@ func (r *OrdersLifeCycleRepository) GetNextOrderNum(ctx context.Context, merchan
 	return strconv.FormatInt(last.Int64+1, 10), nil
 }
 ```
-
-2. **`cash_registers.cash_register_id`** — simple PK auto-incrémentée, pas de logique métier de continuité.
-
-3. **`receipts.receipt_number`** — numérotation fiscale séquentielle annuelle au format `F-YYYY-NNNNNN` (voir §4.1.5).
-
+2. **`cash_registers.cash_register_id`** — simple PK auto-incrémentée (`GENERATED ALWAYS AS IDENTITY`), pas de logique métier de continuité.
+3. **`receipts.receipt_number`** — numérotation fiscale séquentielle annuelle au format `F-YYYY-NNNNNN` (§4.1.5).
 4. **`payments`** — pas de numéro de séquence visible, uniquement chaînage par hash.
 
-#### 4.1.4. Chaînage cryptographique — quatre chaînes de hash indépendantes
+#### 4.1.4. Chaînage cryptographique — quatre chaînes de hash indépendantes, plus un angle mort
 
-Le dépôt implémente un chaînage SHA-256 + signature HMAC sur **quatre tables séparément**, chacune avec sa propre requête "dernier hash" et sa propre formule de payload. La primitive de signature est commune :
+Le dépôt implémente un chaînage SHA-256 + signature HMAC sur **quatre tables séparément**, chacune avec sa propre requête « dernier hash » et sa propre formule de payload. La primitive de signature est commune :
+
 ```go
 // internal/utils/security/hash_signing.go
 package security
@@ -1773,8 +1263,9 @@ func SignHash(dataHash string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 ```
+La clé `FISCAL_SIGNING_KEY` est lue directement via `os.Getenv` — elle **n'est référencée nulle part dans `internal/config/`** (pas de validation au démarrage, contrairement à `GOOGLE_API_KEY`/`R2_PRIVATE_BUCKET`) : si la variable est absente, `key` vaut un slice vide et `SignHash` continue de produire une signature HMAC valide avec une clé vide, sans erreur ni avertissement.
 
-**a) Chaînage `cash_registers` (clôture de caisse)** — `internal/modules/cash_registers/repository.go:485-527`, dans `CloseCashRegister` :
+**a) Chaînage `cash_registers` (clôture de caisse)** — `internal/modules/cash_registers/repository.go:485-527`, dans `CloseCashRegister` (fonction complète : `repository.go:388-527`) :
 ```go
 	// 6. LOGIQUE FISCALE : Récupération du précédent hash
 	var prevHash sql.NullString
@@ -1793,7 +1284,7 @@ func SignHash(dataHash string) string {
 		actualPrevHash = prevHash.String
 	}
 
-	// 7. Calcul du nouveau Hash
+	// 7. LOGIQUE FISCALE : Calcul du nouveau Hash
 	dataToHash := fmt.Sprintf("%s|%s|%.2f|%s", cashRegisterID, merchantID, float64(calculatedFinalCash), actualPrevHash)
 	hashBytes := sha256.Sum256([]byte(dataToHash))
 	newHash := hex.EncodeToString(hashBytes[:])
@@ -1813,11 +1304,15 @@ func SignHash(dataHash string) string {
 			AND closed = false
 	`, dbx.UTCNow()), calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
 ```
-C'est **la seule des quatre chaînes à poser un marqueur de genèse explicite** (`"GENESIS_HASH"`) quand aucune caisse précédente n'existe.
+C'est **la seule des quatre chaînes à poser un marqueur de genèse explicite** (le littéral `"GENESIS_HASH"`) quand aucune caisse précédente n'existe pour le marchand. Ce que signe le hash : `cash_register_id | merchant_id | fond_de_caisse_final(%.2f) | hash_précédent`.
 
-**b) Chaînage `orders` (clôture de commande / livraison)** — deux points d'écriture identiques : `SetDeliveredLocal` (`internal/modules/order_life_cycle/repository.go:895-926`) et `DeleteOrderLocal` (lignes 784-816) :
+**b) Chaînage `orders` — trois points d'écriture, dont un sans hash**
+
+Trois fonctions de `internal/modules/order_life_cycle/repository.go` font passer une commande à `state = 'CLOSED'`, mais **une seule sur trois n'écrit pas dans la chaîne** :
+
+- **`SetDeliveredLocal`** (`repository.go:871-947`, bloc fiscal `:916-947`) — livraison normale, `brand_status = 'CLOSED'` :
 ```go
-	// RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
+	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
 	var prevHash sql.NullString
 	_ = db.QueryRowContext(ctx, `
         SELECT hash FROM orders 
@@ -1848,12 +1343,68 @@ C'est **la seule des quatre chaînes à poser un marqueur de genèse explicite**
     `
 	if _, err := db.ExecContext(ctx, qUpd, now, now, prevHash.String, newHash, signature, orderID); err != nil {
 ```
-Aucun marqueur de genèse explicite ici : si aucune commande `CLOSED` précédente n'existe, `prevHash.String` vaut simplement `""`.
-Note factuelle : dans `DeleteOrderLocal` (ligne 815), l'argument passé au `previous_hash` de l'`UPDATE` est `prevHash` (le `sql.NullString`) et non `prevHash.String` comme dans `SetDeliveredLocal` — différence de code observée entre les deux points d'écriture de la même chaîne.
 
-**c) Chaînage `payments` (chaque encaissement)** — `internal/modules/order_life_cycle/repository.go:161-193`, dans `AddPaymentAndReturnID` :
+- **`DeleteOrderLocal`** (`repository.go:786-840`, bloc fiscal `:797-830`) — annulation d'une commande **déjà comptée** (livrée puis annulée a posteriori), `brand_status = 'CANCELED'`, **écrit quand même un hash de clôture** :
 ```go
-	// RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
+	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+        SELECT hash FROM orders 
+        WHERE merchant_id = ? AND state = 'CLOSED' 
+        ORDER BY delivered_on DESC, order_id DESC LIMIT 1 
+        FOR UPDATE
+    `, meta.MerchantID).Scan(&prevHash)
+
+	now := time.Now().UTC()
+	deliveredOn := now.Format(time.RFC3339)
+
+	payload := fmt.Sprintf("%s|%s|%d|%s", prevHash.String, deliveredOn, currentPrice, orderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
+	_, err := db.ExecContext(ctx, `
+        UPDATE orders
+        SET deletion_reason_id = ?,
+            deletion_comment = ?,
+            last_update = `+dbx.UTCNow()+`,
+            state = 'CLOSED',
+            brand_status = 'CANCELED',
+            delivered_on = `+dbx.UTCNow()+`,
+			previous_hash = ?,
+			hash = ?,
+			signature = ?,
+			cancelled_by_type = ?
+        WHERE order_id = ?`,
+		reasonID, comment, prevHash, newHash, signature, classifyCancelledByType(userID), orderID,
+	)
+```
+Note factuelle : ici l'argument passé au `previous_hash` de l'`UPDATE` est `prevHash` (le `sql.NullString`, qui écrit SQL `NULL` en absence de précédent) et non `prevHash.String` (chaîne vide `""`) comme dans `SetDeliveredLocal` — divergence de code entre les deux points d'écriture de la même chaîne. Aucun marqueur de genèse explicite (type `"GENESIS_HASH"`) dans les deux cas : le premier hash de la chaîne `orders` d'un marchand est calculé à partir d'un `prevHash.String` valant `""`.
+
+- **`DenyOrderLocal`** (`repository.go:680-715`) — refus d'une commande par le marchand **avant toute préparation/livraison** (appelée depuis `SetOrderDenied`/`DenyOrder`, `internal/modules/order_life_cycle/service.go:784-867`, uniquement si `OrderStillOpen` renvoie `true`, i.e. `state = 'OPEN'`) fait elle aussi passer la commande à `state = 'CLOSED'` (`brand_status = 'DENIED'`), **sans jamais toucher `hash`/`previous_hash`/`signature`** :
+```go
+func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment, userID string) error {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	_, err := db.ExecContext(ctx, `
+        UPDATE orders
+        SET last_update = `+dbx.UTCNow()+`,
+            brand_status = 'DENIED',
+            merchant_approval = 'DENIED',
+            state = 'CLOSED',
+            deletion_reason_id = ?,
+            deletion_comment = ?,
+            cancelled_by_type = ?
+        WHERE order_id = ?`,
+		deletionReasonID, comment, classifyCancelledByType(userID), orderID,
+	)
+	...
+```
+**Constat factuel** : trois fonctions distinctes amènent une commande à `state = 'CLOSED'` ; seules deux écrivent dans la chaîne de hash `orders`. Une commande `DENIED` atteint `state = 'CLOSED'` sans jamais recevoir de `hash`/`signature`/`previous_hash` — elle reste `NULL` sur ces trois colonnes en base.
+
+**c) Chaînage `payments` (chaque encaissement)** — `internal/modules/order_life_cycle/repository.go:146-263` (`AddPaymentAndReturnID`), bloc fiscal `:173-205` :
+```go
+	// 2. RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
 	var prevHash sql.NullString
 	_ = db.QueryRowContext(ctx, `
 		SELECT hash FROM payments 
@@ -1865,6 +1416,7 @@ Note factuelle : dans `DeleteOrderLocal` (ligne 815), l'argument passé au `prev
 	now := time.Now().UTC()
 	paymentDate := now.Format(time.RFC3339)
 
+	// Calcul du hash du nouveau paiement
 	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, payment.Amount, payment.MOP, payment.OrderID)
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash)
@@ -1875,13 +1427,13 @@ Note factuelle : dans `DeleteOrderLocal` (ligne 815), l'argument passé au `prev
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
 ```
-Schéma `payments` : `docs/migration-postgres/04-schema-postgres-target.sql:2696-2718` (colonnes `hash varchar(64)`, `signature text`, `previous_hash varchar(64)`, `operation_type varchar(20) NOT NULL DEFAULT 'SALE'`).
+Schéma `payments` confirmé (`docs/migration-postgres/04-schema-postgres-target.sql:2692-2711`) : `hash varchar(64)`, `signature text`, `previous_hash varchar(64)`, `operation_type varchar(20) NOT NULL DEFAULT 'SALE'` (seules valeurs utilisées dans le code : `SALE`, `REFUND` — `internal/models/payment_models.go:4-5`).
 
-**d) Chaînage `receipts` (reçu fiscal — voir §4.1.5)** — hash + numérotation combinés.
+**d) Chaînage `receipts` (reçu fiscal — détail en §4.1.5)** — hash + numérotation combinés.
 
-#### 4.1.5. Le "reçu fiscal" (`receipts`) — chaînage + numérotation séquentielle annuelle
+#### 4.1.5. Le « reçu fiscal » (`receipts`) — chaînage + numérotation séquentielle annuelle
 
-Table `receipts` (`docs/migration-postgres/04-schema-postgres-target.sql:3353-3376`) :
+Table `receipts` (`docs/migration-postgres/04-schema-postgres-target.sql:3349-3372` env.) :
 ```sql
 CREATE TABLE receipts (
     receipt_id varchar(50) NOT NULL,
@@ -1902,7 +1454,7 @@ CREATE TABLE receipts (
 COMMENT ON COLUMN receipts.receipt_number IS 'Numéro fiscal séquentiel ex: F-2026-00012';
 ```
 
-Génération complète — `internal/modules/receipt/service.go` :
+Génération complète — `internal/modules/receipt/service.go:30-73` (`GenerateFiscalReceipt`) :
 ```go
 func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error {
 	lastNumber, lastHash, err := s.repo.GetLastReceiptData(ctx, *order.MerchantID)
@@ -1911,34 +1463,12 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 	}
 
 	newNumber := s.generateNextReceiptNumber(lastNumber)
-
-	itemsJSON, _ := json.Marshal(items)
-	paymentsJSON, _ := json.Marshal(payments)
-	taxDetailsJSON := []byte("{}")
-
-	now := time.Now().UTC()
-
+	...
 	// Formule du chaînage: H_n = SHA256(H_{n-1} | ReceiptNumber | TotalTTC | Date)
 	payload := fmt.Sprintf("%s|%s|%d|%s", lastHash, newNumber, order.TTC, now.Format(time.RFC3339))
 	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 	signature := security.SignHash(newHash)
-
-	receipt := &models.Receipt{
-		ReceiptID:        helpers.GeneratePrefixedID(helpers.ReceiptIDPrefix),
-		MerchantID:       *order.MerchantID,
-		OrderID:          order.OrderID,
-		ReceiptNumber:    newNumber,
-		TotalTTC:         int(order.TTC),
-		TotalHT:          int(*order.HT),
-		TaxDetails:       taxDetailsJSON,
-		ItemsSnapshot:    itemsJSON,
-		PaymentsSnapshot: paymentsJSON,
-		CreatedAt:        now,
-		PrevHash:         lastHash,
-		Hash:             newHash,
-		Signature:        signature,
-	}
-
+	...
 	return s.repo.InsertReceipt(ctx, receipt)
 }
 
@@ -1963,109 +1493,62 @@ func (s *receiptService) generateNextReceiptNumber(lastNumber string) string {
 }
 ```
 
-Verrouillage anti-doublon — `internal/modules/receipt/repository.go:25-51` :
-```go
-// GetLastReceiptData verrouille la lecture pour éviter les doublons de numérotation
-func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID string) (string, string, error) {
-	db := dbx.GetDB(ctx, r.database)
+Verrouillage anti-doublon — `internal/modules/receipt/repository.go:26-51` (`GetLastReceiptData`, `FOR UPDATE`, retourne `"", ""` pour le premier reçu du marchand).
 
-	var lastNumber sql.NullString
-	var lastHash sql.NullString
-
-	err := db.QueryRowContext(ctx, `
-		SELECT receipt_number, hash 
-		FROM receipts 
-		WHERE merchant_id = ? 
-		ORDER BY created_at DESC, receipt_number DESC 
-		LIMIT 1 
-		FOR UPDATE
-	`, merchantID).Scan(&lastNumber, &lastHash)
-
-	if err == sql.ErrNoRows {
-		return "", "", nil // Premier reçu du marchand
-	}
-	if err != nil {
-		return "", "", err
-	}
-
-	return lastNumber.String, lastHash.String, nil
-}
-```
-
-Déclenchement : `HandlerFiscalReceiptGeneration` (`internal/modules/order_life_cycle/service.go:248-268`) est appelé depuis `DeliverOrder` (ligne 279), **immédiatement après** `SetDeliveredLocal` (chaîne (b)). Un reçu d'avoir (`GenerateRefundReceipt`) est généré en cas de remboursement. Le module `receipt` est câblé en production (`cmd/api/routes.go:294-295`), injecté dans `OrdersLifeCycleService`.
+Déclenchement : `GenerateFiscalReceipt` est appelé depuis `DeliverOrder` (`internal/modules/order_life_cycle/service.go`), **immédiatement après** `SetDeliveredLocal` (chaîne (b) ci-dessus). Un reçu d'avoir (`GenerateRefundReceipt`) est généré en cas de remboursement. Aucune génération de reçu fiscal n'est déclenchée par `DeleteOrderLocal` ni `DenyOrderLocal` — cohérent, aucun ticket n'a été émis pour ces deux flux.
 
 ### 4.2. Initialisation de la séquence fiscale pour un nouveau marchand
 
 **Réponse : initialisation paresseuse (lazy), pas d'initialisation explicite à la création du marchand.**
 
-La création d'un marchand passe par `CreateMerchant` (`internal/modules/pos/create_service.go:11-74`), transaction complète — voir le détail dans la Section 8. Le contenu exact de `InitMerchantSatellites` (`internal/modules/pos/create_repository.go:57-134`) est la liste complète de tout ce qui est créé pour un nouveau marchand : QR codes, `scannorder_settings`, `merchant_parameters`, `merchant_marketing_settings`, `haccp_settings`, `bookings_settings`, et une **ligne `cash_desks`** (le poste physique nommé « Caisse principale »).
+`InsertMerchant` (`internal/modules/pos/create_repository.go:13-36`) n'écrit ni `hash`, ni `is_active`, ni aucune séquence — seulement les colonnes d'identité (`fullName`, `SIRET`, `email`, `token`...). `InitMerchantSatellites` (`create_repository.go:58-134`) crée les entités satellites (2 QR codes, `scannorder_settings`, `merchant_parameters`, `merchant_marketing_settings`, `haccp_settings`, `bookings_settings`) et **une seule ligne `cash_desks`** (`INSERT INTO cash_desks (merchant_id, name) VALUES (?, 'Caisse principale')`, `create_repository.go:126-131`).
 
-**Constat factuel** : la seule chose créée côté « caisse » à la création du marchand est une ligne `cash_desks`. **Aucune ligne n'est insérée dans `cash_registers`, `orders`, `payments` ou `receipts`.** Il n'existe donc :
-- aucun compteur/séquence initialisé explicitement pour `orders.order_num` (premier appel `GetNextOrderNum` → `sql.ErrNoRows` → retourne `"1"`) ;
-- aucune première valeur de `cash_registers.hash`/`previous_hash` (le premier `CloseCashRegister` du marchand retombera sur le littéral `"GENESIS_HASH"`) ;
-- aucune première valeur de `receipts.receipt_number` (le premier appel à `GetLastReceiptData` retourne `"", ""`, et `generateNextReceiptNumber("")` produit `F-<année>-000001`) ;
-- aucune première valeur de `payments.hash` (même mécanisme, `prevHash.String == ""`).
+**Aucune ligne n'est insérée dans `cash_registers`, `orders`, `payments` ou `receipts`** à la création du marchand. Conséquence :
+- premier appel `GetNextOrderNum` → `sql.ErrNoRows` → `"1"` ;
+- premier `CloseCashRegister` du marchand → retombe sur le littéral `"GENESIS_HASH"` (seule chaîne à poser un marqueur explicite) ;
+- premier `GetLastReceiptData` → `"", ""` → `generateNextReceiptNumber("")` produit `F-<année>-000001` ;
+- première ligne `payments` → même mécanisme, `prevHash.String == ""`, sans marqueur.
 
-La séquence fiscale est donc **initialisée paresseusement au premier événement réel** (premier ticket / premier encaissement / première clôture de caisse), jamais à la création du marchand.
+### 4.3. Notion de « mise en service » / « activation » / « go live »
 
-### 4.3. Notion de "mise en service" / "activation" / "go live"
+**N'existe pas.** Recherche exhaustive (`onboarding`, `go_live`, `activation`, `activated_at`, `live_at`, `first_ticket`) : aucune occurrence pertinente hors du module `integrations` (onboarding Stripe Connect, KYC du prestataire de paiement — sans rapport avec la conformité fiscale caisse).
 
-**N'existe pas.**
+Le seul flag qui s'en approche est `merchant.is_active` (`docs/migration-postgres/04-schema-postgres-target.sql:2208`, `boolean NOT NULL DEFAULT true`) :
+- `InsertMerchant` ne le renseigne jamais explicitement → la valeur par défaut SQL `true` s'applique dès la création.
+- Modifiable via `UpdateMerchant` (`internal/modules/pos/repository.go:1078`, `updates = append(updates, "is_active = ?")`).
+- Simple bouton marche/arrêt générique, sans lien avec la première caisse ouverte, le premier ticket émis, ni aucune notion fiscale.
 
-Recherche exhaustive (`onboarding`, `go_live`, `go-live`, `activation`, `mise en service`, `activated_at`, `live_at`, `first_ticket`) sur `internal/` : aucune occurrence pertinente hors du module `integrations` (onboarding **Stripe Connect**, KYC du prestataire de paiement, sans rapport avec la conformité fiscale caisse).
-
-Le seul flag qui s'en approche est `merchant.is_active` :
-```sql
-CREATE TABLE merchant (
-    ...
-    is_active boolean NOT NULL DEFAULT true,
-    PRIMARY KEY (id)
-);
-```
-- Par défaut à `true` **dès la création** (`InsertMerchant` ne renseigne pas explicitement `is_active` — la valeur par défaut SQL s'applique). Un marchand est donc "actif" instantanément, sans étape intermédiaire.
-- Modifiable via `UpdateMerchant` (`internal/modules/pos/repository.go:1077-1080`).
-- C'est un simple bouton marche/arrêt générique, pas un jalon métier de "début d'exploitation réelle" — rien dans le code ne le relie à la première caisse ouverte, au premier ticket émis, ni à aucune notion fiscale.
-
-Aucune colonne de type `activated_at`, `go_live_at`, `production_since`, aucun statut `"DRAFT"`/`"LIVE"`/`"ONBOARDING"` n'a été trouvé sur `merchant`, `cash_desks`, `cash_registers` ou tables associées.
+Aucune colonne `activated_at`, `go_live_at`, `production_since`, aucun statut `"DRAFT"`/`"LIVE"`/`"ONBOARDING"` sur `merchant`, `cash_desks`, `cash_registers` ou tables associées.
 
 ### 4.4. Mode formation / mode école / mode test
 
-**N'existe pas, sous aucune forme.**
-
-Éléments vérifiés :
-- `payments.operation_type` n'a que deux valeurs constantes définies — `internal/models/payment_models.go:4-5` :
-```go
-OperationTypeSale   = "SALE"
-OperationTypeRefund = "REFUND"
-```
-Pas de `TRAINING`, `TEST`, ou `DEMO`.
+**N'existe pas, sous aucune forme.** Reconfirmé par recherche exhaustive (`training`, `school`, `test_mode`, `demo`, `sandbox`) sur tout `internal/` :
+- `payments.operation_type` n'a que deux constantes — `internal/models/payment_models.go:4-5` : `OperationTypeSale = "SALE"`, `OperationTypeRefund = "REFUND"`. Pas de `TRAINING`/`TEST`/`DEMO`.
 - Aucune colonne `is_test`, `is_training`, `training_mode`, `sandbox`, `demo` sur `orders`, `payments`, `cash_registers`, ou `merchant`.
-- `orders.brand_status` est une colonne texte libre (`varchar(30)`), sans table d'énumération Go dédiée ; les seules valeurs utilisées dans le code sont `'CLOSED'`, `'CANCELED'`, `'DELETED'`, `'OPEN'` — jamais de valeur liée à un mode formation/test.
-- Les seules occurrences de `dry-run`/`dry_run` dans le dépôt concernent l'import de menu et l'import de clients (prévisualisation d'import de fichier), sans rapport avec la caisse ou les tickets de vente.
+- `orders.brand_status` est une colonne texte libre, sans énumération Go dédiée. Toutes les valeurs effectivement écrites par le code ont été recensées (`CLOSED`, `CANCELED`, `DELETED`, `DENIED`, `PENDING`, `PENDING_APPROVAL`, `ACCEPTED`, `CONFIRMED`, `SCHEDULED`, `EN_ROUTE_TO_DROPOFF`, `READY_FOR_HANDOFF`/`READY_FOR_TAKE_AWAY`, `FAILED`, `DELIVERING`, `PENDING_CARD_PAYMENT`) — jamais de valeur liée à un mode formation/test.
+- Les occurrences de « sandbox » trouvées concernent exclusivement les environnements de test des API **externes** Deliveroo/Uber Eats (`internal/modules/deliveroo/client.go`, `client_old.go`, `handler.go:115`), sans rapport avec la caisse ou les tickets de vente.
 
-Conséquence directe : la question "comment ces tickets sont-ils exclus des totaux" est sans objet, puisqu'aucun ticket "de test" n'est identifiable dans le modèle de données actuel.
+Conséquence : la question « comment ces tickets sont-ils exclus des totaux » est sans objet.
 
 ### 4.5. Attestation de conformité (NF525 ou équivalent)
 
-**N'existe pas.** Aucun endpoint, aucune génération de PDF, aucun texte statique ne produit un document de type "certificat d'inaltérabilité" ou "attestation de conformité logicielle".
-
-Le sigle "NF525" n'apparaît que dans des **commentaires de code Go**, jamais dans une chaîne de caractères produite en sortie :
+**N'existe pas.** Aucun endpoint, aucune génération de PDF, aucun texte statique ne produit un document de type « certificat d'inaltérabilité » ou « attestation de conformité logicielle ». Le sigle « NF525 » n'apparaît que dans des **commentaires de code Go**, jamais dans une sortie produite :
 ```
 internal/modules/delivery_sessions/service.go:177   — // Conformite NF525 : la fermeture de chaque commande passe par
 internal/modules/delivery_sessions/service.go:305   — // (payment check, NF525 hash, state='CLOSED', possible session auto-close to 'done',
 internal/modules/delivery_sessions/postgres_integration_test.go:266 — // ouvert via order_life_cycle.SetDelivered — hash NF525, signature, audit —
+internal/modules/order_life_cycle/service.go:1192   — // SendInvoiceByEmail génère la facture PDF de la commande à partir du Receipt déjà figé (NF525, ...)
 internal/modules/order_life_cycle/invoice_pdf.go:14  — // buildInvoicePDF génère le PDF de facture à partir du Receipt déjà figé (NF525) — aucun recalcul de montant.
-internal/modules/order_life_cycle/service.go:1190    — // SendInvoiceByEmail génère la facture PDF de la commande à partir du Receipt déjà figé (NF525, ...)
 ```
-Ces commentaires désignent le mécanisme de chaînage de hash (§4.1) comme *référence de conformité interne*, pas un document généré et remis au marchand/à l'administration.
+Ces commentaires désignent le mécanisme de chaînage de hash (§4.1) comme référence de conformité interne, jamais un document remis au marchand/à l'administration.
 
-Le seul document PDF généré par le système lié à une commande/vente est une **facture client** (`buildInvoicePDF`, envoyée par email via `SendInvoiceByEmail`) et un **PDF de rapport Z de caisse** (`ExportRegisterPDF`, exposé en `POST /accounting/registers/{register_id}/export-pdf`) — un rapport de clôture de caisse, pas une attestation de conformité logicielle.
+Le seul PDF généré et lié à une vente est une **facture client** (`buildInvoicePDF`/`SendInvoiceByEmail`) et un **PDF de rapport Z de caisse** (`ExportRegisterPDF`, `internal/modules/pos/accounting/handler.go:96`, `service.go:391`, exposé en `POST /accounting/registers/{register_id}/export-pdf` — `cmd/api/routes.go:838`) — un rapport de clôture, pas une attestation de conformité logicielle.
 
 ### 4.6. Exclusion des tickets des exports comptables
 
-Deux modules produisent des exports comptables, avec des filtres `WHERE` quasi identiques et répétés à chaque requête — aucun des deux n'a de filtre "formation/test" (cohérent avec §4.4) ; les exclusions portent uniquement sur l'état métier et le canal de la commande.
+Les filtres d'exclusion sont répétés quasi identiquement à travers plusieurs modules (`cash_registers`, `pos/reports`, `pos/accounting`, `stats`, `analytics/upsell`) — aucun n'a de filtre « formation/test » (cohérent avec §4.4) ; les exclusions portent uniquement sur l'état métier et le canal de la commande.
 
-**Module `pos/reports`** (`internal/modules/pos/reports/repository.go:45-97`, `GetTVAReportData`) :
+**Module `pos/reports`** (`internal/modules/pos/reports/repository.go:70-97`, `GetTVAReportData`, et `:209-235`, `GetPaymentsReportData`) :
 ```sql
 WHERE o.creation_date >= <borne jour début>
   AND o.creation_date <= <borne jour fin>
@@ -2076,144 +1559,101 @@ WHERE o.creation_date >= <borne jour début>
   AND o.created_by NOT IN ('-1', 'SCANNORDER')
   AND tva.show_in_report
 ```
-Mêmes exclusions pour `GetPaymentsReportData` (lignes 213-235).
 
-**Module `pos/accounting`** (`internal/modules/pos/accounting/repository.go:183-233`, `GetTVAData`) — mêmes cinq exclusions, plus `tva.show_in_report`. Même filtre pour `GetPaymentsData` (payments). `GetVATAggregationRows` (lignes 637-712) reprend le même socle avec en plus un filtre `channels`/`order_types` optionnel qui classe les commandes en `ubereats`/`deliveroo`/`scannorder`/`restaurant`.
+**Module `pos/accounting`** (`internal/modules/pos/accounting/repository.go:183-233`, `GetTVAData`) — mêmes cinq exclusions. Même filtre pour `GetPaymentsData` (`:300`, `brand_status NOT IN` à `:320`), `GetTrustedEnclosedRegisterIDs` (`:377`, `:461`) et `GetVATAggregationRows` (`:637`, `:711` et `:737`).
+
+**Module `stats`** (`internal/modules/stats/repository.go:261,369,493`) et **`analytics/upsell`** (`internal/modules/analytics/upsell.go:75,137`) : identique, `brand_status NOT IN ('DELETED', 'CANCELED')`.
 
 **Ce que ces filtres excluent réellement** :
-- `o.state <> 'CLOSED'` → toute commande non finalisée exclue.
-- `o.brand_status IN ('DELETED', 'CANCELED')` → commandes supprimées ou annulées exclues.
-- `o.created_by IN ('-1', 'SCANNORDER')` → commandes créées par le canal ScanNOrder ou par un identifiant système exclues de **ce** rapport (comptabilisées ailleurs).
-- `o.brand <> 'WELLO_RESTO'` → commandes Uber Eats / Deliveroo exclues de ce rapport spécifique.
-- `tva.show_in_report` → catégories de TVA marquées comme hors reporting exclues.
+- `o.state <> 'CLOSED'` → commande non finalisée.
+- `o.brand_status IN ('DELETED', 'CANCELED')` → commande supprimée ou annulée.
+- `o.created_by IN ('-1', 'SCANNORDER')` → canal ScanNOrder ou identifiant système, comptabilisé ailleurs.
+- `o.brand <> 'WELLO_RESTO'` → commandes Uber Eats/Deliveroo, hors périmètre de ce rapport précis.
+- `tva.show_in_report` → catégories de TVA marquées hors reporting.
 
-**Aucun de ces filtres ne porte sur un flag "test" ou "formation"** — parce que cette notion n'existe pas dans le modèle (§4.4).
+**Constat — statut `DENIED` absent de la liste d'exclusion fiscale/comptable.** Une commande refusée par le marchand (`brand_status = 'DENIED'`, via `DenyOrderLocal`, §4.1.4b) atteint `state = 'CLOSED'` (`internal/modules/order_life_cycle/repository.go:689`). Or **aucun** des filtres ci-dessus n'exclut `'DENIED'` — la liste d'exclusion s'arrête systématiquement à `('DELETED', 'CANCELED')`, dans `cash_registers/repository.go:129,156,177`, `pos/reports/repository.go:77,94,231`, `pos/accounting/repository.go:216,231,320,461,711,737`, `stats/repository.go:261,369,493` et `analytics/upsell.go:75,137`.
 
-Un mécanisme distinct, dédié au rapport de "réel" de caisse (`GetTrustedEnclosedRegisterIDs` / `GetRealPaymentsData`, `internal/modules/pos/accounting/repository.go:359-608`), exclut des **registres de caisse entiers** dont l'instantané figé à la clôture diverge d'un recalcul live des paiements, et exclut les codes MOP `STRIPE`/`UBER_EATS`/`DELIVEROO` (canaux hors périmètre du rapport WELLO_RESTO).
+À titre de comparaison, un autre module de ce même dépôt **connaît et exclut explicitement** ce statut ailleurs dans le code : `internal/modules/integrations/repository.go:14` définit `const kpiExcludedStatuses = "('CANCELED','DENIED','ONLINE_PAYMENT_PENDING')"`, utilisée pour les KPI/tableaux de bord (`:60,68,216,224,365,374`). La liste utilisée par les rapports fiscaux/comptables (`('DELETED','CANCELED')`) est donc **plus étroite** que celle utilisée pour les KPI internes, alors que la commande `DENIED` n'a par ailleurs jamais reçu de hash de clôture (§4.1.4b) et n'a — par construction du flux (`OrderStillOpen` doit être vrai, donc `state='OPEN'`, avant l'appel à `DenyOrder`) — jamais été payée. Fait constaté sans jugement sur son impact chiffré réel (dépendant de la fréquence des refus marchands et du contenu `orderitems`/`price` associé à ces commandes).
+
+Un mécanisme distinct, dédié au rapport de « réel » de caisse (`GetTrustedEnclosedRegisterIDs`/`GetRealPaymentsData`, `internal/modules/pos/accounting/repository.go:377-608`), exclut des **registres de caisse entiers** dont l'instantané figé à la clôture diverge d'un recalcul live des paiements, et exclut les codes MOP `STRIPE`/`UBER_EATS`/`DELIVEROO`.
 
 ### Synthèse des faits marquants — Section 4
 
-1. **Quatre chaînages de hash indépendants** (`cash_registers`, `orders`, `payments`, `receipts`), chacun avec sa propre requête "dernier hash" et sa propre formule de payload — pas un système unifié.
-2. **Deux numérotations différentes coexistent** : `orders.order_num` (affichage client, boucle 1→99, **pas continue**) et `receipts.receipt_number` (`F-YYYY-NNNNNN`, séquentielle, remise à `000001` chaque année civile).
-3. **Aucune séquence fiscale n'est initialisée à la création du marchand** — tout est amorcé au premier événement réel (lazy init), avec un marqueur de genèse explicite (`"GENESIS_HASH"`) uniquement pour la chaîne `cash_registers`.
-4. **Aucun jalon "mise en service" / "go live"** n'existe ; `merchant.is_active` est un simple flag actif/inactif à `true` par défaut dès la création.
-5. **Aucun mode formation/test/école** n'existe dans le modèle de données ou le code.
-6. **Aucune attestation de conformité NF525** n'est générée par le système ; "NF525" n'apparaît que comme référence en commentaire de code.
-7. Les exports comptables excluent uniquement les commandes non `CLOSED`, `CANCELED`/`DELETED`, hors canal `WELLO_RESTO`, ou créées par `SCANNORDER`/`'-1'` — jamais sur la base d'un flag test/formation, qui n'existe pas.
-8. Les tables fiscales (`cash_registers`, `payments`, `orders`.hash/signature/previous_hash, `receipts`) n'ont **aucune trace dans `migrations/`** — leur DDL n'est visible que dans le dump `docs/migration-postgres/04-schema-postgres-target.sql`, généré pour le chantier de portage MySQL→Postgres.
----
-
+1. **Quatre chaînages de hash indépendants** (`cash_registers`, `orders`, `payments`, `receipts`), chacun avec sa propre requête « dernier hash » et sa propre formule de payload — pas un système unifié.
+2. **Un troisième point de clôture de commande (`DenyOrderLocal`) échappe totalement à la chaîne `orders`** : une commande refusée par le marchand atteint `state = 'CLOSED'` sans jamais recevoir `hash`/`previous_hash`/`signature`.
+3. **Deux numérotations différentes coexistent** : `orders.order_num` (affichage client, boucle 1→99, pas continue) et `receipts.receipt_number` (`F-YYYY-NNNNNN`, séquentielle, remise à `000001` chaque année civile).
+4. **Aucune séquence fiscale n'est initialisée à la création du marchand** — tout est amorcé au premier événement réel (lazy init), avec un marqueur de genèse explicite (`"GENESIS_HASH"`) uniquement pour la chaîne `cash_registers`.
+5. **Aucun jalon « mise en service »/« go live »** n'existe ; `merchant.is_active` est un simple flag actif/inactif à `true` par défaut dès la création.
+6. **Aucun mode formation/test/école** n'existe dans le modèle de données ou le code.
+7. **Aucune attestation de conformité NF525** n'est générée ; « NF525 » n'apparaît que comme référence en commentaire de code.
+8. **La liste d'exclusion des rapports fiscaux/comptables (`'DELETED','CANCELED'`) omet le statut `'DENIED'`**, alors qu'un autre module du même dépôt (`internal/modules/integrations`, KPI) exclut explicitement ce même statut sous le nom `kpiExcludedStatuses`.
+9. **`FISCAL_SIGNING_KEY` n'est validée nulle part au démarrage** (`internal/config/`) — son absence ne provoque ni erreur ni avertissement, seulement une signature HMAC calculée avec une clé vide.
+10. Les tables fiscales (`cash_registers`, `payments`, `orders`.hash/signature/previous_hash, `receipts`) n'ont **aucune trace dans `migrations/`** — leur DDL n'est visible que dans le dump `docs/migration-postgres/04-schema-postgres-target.sql`.
 ## 5. Abonnement et facturation
 
 ### 5.1. Gestion de l'abonnement du marchand à la plateforme (par opposition aux paiements clients finaux)
 
-**Réponse courte : un embryon de mécanisme existe** (tables `subscriptions` / `packages`, colonnes `stripe_subscription_id` / `stripe_price_id`, webhooks `invoice.created` / `invoice.paid`), **mais dans le code Go actuel il ne sert QUE de mécanisme de feature-flags** (droits d'accès aux modules), et non de facturation réelle. Aucun appel Go vers l'API Stripe Billing/Subscriptions n'a été trouvé. Le reste du Stripe présent dans le code (Checkout, PaymentIntents, Connect, Terminal) sert exclusivement aux paiements des clients finaux du restaurant.
+**Réponse courte, confirmée par introspection live de la base Postgres staging (2026-09-08) : le mécanisme existe au niveau schéma, mais dans le code Go actuel il ne sert que de système de feature-flags (droits d'accès aux modules) — aucune facturation Stripe réelle n'est déclenchée par ce chemin.**
 
-**Tables SQL concernées** — schéma legacy, `data-migration/migration_welloresto_data.sql:614945-614957` (`subscriptions`) :
-```sql
-CREATE TABLE `subscriptions` (
-  `id` int(11) NOT NULL,
-  `stripe_subscription_id` varchar(150) NOT NULL,
-  `merchant_id` int(11) NOT NULL,
-  `package_id` int(11) NOT NULL,
-  `planning_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `haccp_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `stock_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `scannorder_enabled` tinyint(1) NOT NULL DEFAULT 1,
-  `bookings_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `kiosks_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `max_kiosks` int(11) NOT NULL DEFAULT 0 COMMENT 'Nombre max de bornes actives (0 = module non inclus)'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+**Structure exacte live** :
+
 ```
-et `packages` (`data-migration/migration_welloresto_data.sql:521071-521087`) :
-```sql
-CREATE TABLE `packages` (
-  `id` int(11) NOT NULL,
-  `package_name` varchar(50) NOT NULL,
-  `stripe_price_id` varchar(200) NOT NULL,
-  `trial_period_days` int(11) NOT NULL DEFAULT 0,
-  `scannorder_ready` tinyint(1) NOT NULL DEFAULT 1,
-  `stock_management` int(11) NOT NULL DEFAULT 0,
-  `hr_management` tinyint(1) NOT NULL DEFAULT 0,
-  `planning_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `haccp_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `stock_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `scannorder_enabled` tinyint(1) NOT NULL DEFAULT 1,
-  `bookings_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `kiosks_enabled` tinyint(1) NOT NULL DEFAULT 0
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
-```
-Exemple de données historiques — les `stripe_price_id` sont de vrais IDs Stripe Price :
-```sql
-INSERT INTO `packages` (`id`, `package_name`, `stripe_price_id`, `trial_period_days`, ...) VALUES
-(0, 'Developpers', 'price_1NEBOnIpOVvvxHBEfl559NgB', 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0),
-(1, 'Essentiel', 'price_1NE6nJIpOVvvxHBENVfwdfCD', 30, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0),
-(3, 'Standard', 'price_1NE6oTIpOVvvxHBEQpkOTN6t', 30, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0),
-(4, 'Premium', 'price_1NE6p7IpOVvvxHBEz27AtHgc', 30, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0),
-(5, 'Association', 'price_1OqAszIpOVvvxHBEVLt2jink', 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0),
-...
+subscriptions:
+  id, stripe_subscription_id varchar(150) NOT NULL, merchant_id varchar(64) NOT NULL, package_id integer NOT NULL,
+  planning_enabled boolean NOT NULL DEFAULT false, haccp_enabled boolean NOT NULL DEFAULT false,
+  stock_enabled boolean NOT NULL DEFAULT false, scannorder_enabled boolean NOT NULL DEFAULT true,
+  bookings_enabled boolean NOT NULL DEFAULT false, kiosks_enabled boolean NOT NULL DEFAULT false,
+  max_kiosks integer NOT NULL DEFAULT 0, delivery_enabled boolean NOT NULL DEFAULT true
+  PK composite (id, merchant_id, package_id)
+
+packages:
+  id, package_name varchar(50) NOT NULL, stripe_price_id varchar(200) NOT NULL, trial_period_days integer DEFAULT 0,
+  allow_waiter_account boolean DEFAULT false, allow_delivery_account boolean DEFAULT false,
+  scannorder_ready boolean DEFAULT true, stock_management integer DEFAULT 0, hr_management boolean DEFAULT false,
+  planning_enabled/haccp_enabled/stock_enabled/scannorder_enabled(default true)/bookings_enabled/kiosks_enabled/delivery_enabled(default true) boolean
 ```
 
-Certaines lignes de `subscriptions` (legacy) portent bien un vrai `stripe_subscription_id`, preuve qu'un système antérieur (probablement le PHP historique, hors périmètre de ce repo Go) créait réellement des abonnements Stripe :
-```sql
-(68, 'sub_1NECHpIpOVvvxHBExBjX0eUA', 173, 0, 0, 0, 0, 1, 0, 0, 0),
-(80, 'sub_1Oork2IpOVvvxHBElvAQM32S', 196, 5, 0, 0, 0, 1, 0, 0, 0),
-(84, 'sub_1OqBP7IpOVvvxHBEAPwjPgR2', 203, 1, 0, 0, 0, 1, 0, 0, 0),
-(86, 'sub_1PIEYYIpOVvvxHBEpUS6wuav', 212, 101, 0, 1, 0, 1, 0, 1, 2),
+**Aucune contrainte `FOREIGN KEY` n'existe entre `subscriptions.package_id` et `packages.id`** — vérifié exhaustivement via `information_schema.table_constraints`/`key_column_usage`/`constraint_column_usage` sur les deux tables : requête vide, aucune ligne retournée. Le lien `package_id -> packages.id` est donc **purement applicatif**, jamais garanti par le SGBD.
+
+**Preuve concrète de cette absence de contrôle, observée en donnée live sur staging** : `packages` contient les lignes `id ∈ {0, 1, 3, 4, 5, 6, 100, 101, 102, 103}` (10 plans : Developpers, Essentiel, Standard, Premium, Association, Deis, Premium, Standard Delivery, Premium Waiter, Pointage — certains avec `stripe_price_id` vide). `subscriptions` (30 lignes au total) contient une ligne avec `package_id = -4`, qui **ne correspond à aucune ligne de `packages`** — une souscription orpheline, sans plan valide, silencieusement tolérée par le schéma comme par le code.
+
+Répartition live des `package_id` dans `subscriptions` (staging) :
+```
+package_id=-4  count=1   (orphelin — aucune ligne packages correspondante)
+package_id=0   count=2
+package_id=1   count=1
+package_id=3   count=6
+package_id=4   count=9
+package_id=5   count=1
+package_id=100 count=2
+package_id=101 count=5
+package_id=102 count=2
+package_id=103 count=1
 ```
 
-Une seconde table, `subscription_invoices`, sert d'historique de facturation d'abonnement :
-```sql
-CREATE TABLE `subscription_invoices` (
-  `id` int(11) NOT NULL,
-  `merchant_id` int(11) NOT NULL,
-  `invoice_id` varchar(50) NOT NULL,
-  `status` int(11) NOT NULL DEFAULT 0 COMMENT '0 => open, 1 => paid, -1 => error',
-  `invoice_date` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `amount` int(11) NOT NULL COMMENT 'in cents',
-  `payment_date` timestamp NULL DEFAULT NULL,
-  `comment` varchar(150) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+**Deux colonnes de `packages` sont mortes côté API Go** : `allow_waiter_account`/`allow_delivery_account`. Recherche exhaustive (`allow_waiter_account|allow_delivery_account|AllowWaiterAccount|AllowDeliveryAccount`) : aucune occurrence dans `internal/` — seule trace, `docs/decisions.md:2248`, qui documente leur **retrait** du dépôt `wello-back-office` (`src/types/auth.ts`) comme fallback mort, en miroir de la dépréciation de 5 colonnes RBAC legacy sur `users_rights`. Ces deux colonnes existent donc en base sans plus aucun lecteur ni écrivain applicatif connu.
+
+**Ce que fait le code Go à la création d'un marchand** — endpoint `POST /pos/create` :
+- Route : `cmd/api/routes.go:756-760`, dans `r.Route("/pos", ...)` avec `r.Use(authMiddleware)` (ligne 758) — nécessite donc un token valide, mais **aucun `RequirePermission` spécifique** n'encadre `r.Post("/create", posH.CreateMerchant)` (ligne 760), contrairement à la ligne suivante `r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", ...)`.
+- Handler → Service `internal/modules/pos/create_service.go:13-42` (`CreateMerchant`) :
+```go
+func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantRequest) (CreateMerchantResponse, error) {
+	if strings.TrimSpace(req.FullName) == "" ||
+		strings.TrimSpace(req.SIRET) == "" ||
+		strings.TrimSpace(req.Tel) == "" ||
+		strings.TrimSpace(req.PackageID) == "" {
+		return CreateMerchantResponse{}, models.ErrInvalidInput
+	}
+	...
+	// Step 2 — create subscription from the requested package
+	if err := s.posRepo.InsertSubscription(txCtx, merchantID, strings.TrimSpace(req.PackageID)); err != nil {
+		return err
+	}
+	...
 ```
-Et une troisième table, `welloresto_stripe_customers`, fait le lien `merchant_id -> stripe_customer_id`.
+La seule validation sur `req.PackageID` est **la non-vacuité de la chaîne** — aucune vérification que cette valeur existe réellement comme ligne dans `packages` (ce qui explique et confirme la ligne orpheline `package_id=-4` observée en base).
 
-Une migration (`migrations/done/019_add_subscription_feature_flags.sql`) confirme explicitement que ces colonnes sont utilisées comme des **droits d'accès aux modules**, et non comme des montants facturés :
-```sql
-ALTER TABLE packages
-    ADD COLUMN planning_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN haccp_enabled TINYINT(1) NOT NULL DEFAULT 1,
-    ADD COLUMN stock_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN scannorder_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN bookings_enabled TINYINT(1) NOT NULL DEFAULT 1;
-
-ALTER TABLE subscriptions
-    ADD COLUMN planning_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN haccp_enabled TINYINT(1) NOT NULL DEFAULT 1,
-    ADD COLUMN stock_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN scannorder_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN bookings_enabled TINYINT(1) NOT NULL DEFAULT 1;
-
--- Bootstrap package defaults from the current behavior so the migration does not disable features unexpectedly.
-UPDATE packages
-SET planning_enabled = hr_management,
-    haccp_enabled = TRUE,
-    stock_enabled = CASE WHEN stock_management > 0 THEN TRUE ELSE FALSE END,
-    scannorder_enabled = scannorder_ready,
-    bookings_enabled = TRUE;
-
--- Copy package defaults to the merchant subscriptions. From this point on, subscription values are the effective rights.
-UPDATE subscriptions s
-LEFT JOIN packages p ON p.id = s.package_id
-SET s.planning_enabled = COALESCE(p.planning_enabled, FALSE),
-    s.haccp_enabled = COALESCE(p.haccp_enabled, TRUE),
-    s.stock_enabled = COALESCE(p.stock_enabled, FALSE),
-    s.scannorder_enabled = COALESCE(p.scannorder_enabled, FALSE),
-    s.bookings_enabled = COALESCE(p.bookings_enabled, TRUE);
-```
-
-**Ce que fait le code Go actuel à la création d'un marchand** : à la création (`POST /pos/create`), le code insère une ligne `subscriptions` mais **n'appelle jamais l'API Stripe** ; `stripe_subscription_id` est explicitement forcé à une chaîne vide.
-
-`internal/modules/pos/create_repository.go:38-55` (intégral) :
+- Repository `internal/modules/pos/create_repository.go:38-55` (intégral) :
 ```go
 // InsertSubscription creates the effective merchant subscription for the selected package.
 func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, packageID string) error {
@@ -2234,17 +1674,64 @@ func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, pack
 	return nil
 }
 ```
-Appelé depuis `internal/modules/pos/create_service.go:34-37`. `req.PackageID` provient directement du payload JSON envoyé par le client, **sans validation contre la table `packages`**.
+`stripe_subscription_id` est explicitement forcé à `''` — **aucun appel à l'API Stripe Billing/Subscriptions n'a lieu à cette étape**. Confirmé par une recherche exhaustive du package `github.com/stripe/stripe-go/*/sub` (ou tout usage de `subscription.New`) : aucune occurrence dans tout le dépôt.
 
-Aucune fonction n'existe pour modifier ensuite le package/l'abonnement d'un marchand existant (aucune occurrence de « UpdateSubscription », « ChangePackage », « UpgradePlan », ni de `UPDATE ... SET package_id`) : le choix du package est figé à la création et n'est jamais recalculé ni facturé par la suite dans le code Go.
+**Aucune fonction de mise à jour n'existe** pour changer ensuite le `package_id`/l'abonnement d'un marchand existant : recherche exhaustive de `UpdateSubscription`, `ChangePackage`, `UpgradePlan`, `UPDATE subscriptions SET package_id` — aucune occurrence. Le choix du plan est donc figé définitivement à la création du marchand par ce chemin de code.
 
-**Utilisation actuelle des tables `subscriptions`/`packages`** : lues uniquement pour attacher des **drapeaux de droits d'accès** au retour de login (jointure `LEFT JOIN subscriptions ... LEFT JOIN packages`), jamais pour un calcul de facturation. Répétée à l'identique dans `internal/modules/auth/repository.go:142-158,334,750`, `internal/modules/users/repository.go:249`, et utilisée pour filtrer les marchands actifs dans les tâches cron (`internal/tasks/orders.go:31`, `internal/tasks/products.go:29`, `internal/tasks/upsell.go:40`). Le quota de bornes Kiosk est aussi lu depuis `subscriptions` (`internal/modules/kiosk/repository.go:365-369`, `SELECT max_kiosks FROM subscriptions WHERE merchant_id = ?`).
+**Lecture des `*_enabled`/`max_kiosks` — c'est bien un mécanisme de feature-gating réel, avec une logique de priorité `subscription > package > défaut codé en dur`.** La requête partagée par `GetUserByToken`/`GetUserByPIN`/`Login` (répétée à l'identique trois fois dans `internal/modules/auth/repository.go:113-119`, `:319-320` et `:727-728`, ainsi que dans `internal/modules/users/repository.go:245-246`) :
+```sql
+LEFT JOIN subscriptions s ON s.merchant_id = %[1]s
+LEFT JOIN packages p ON p.id = s.package_id
+...
+COALESCE(p.scannorder_ready, FALSE),
+COALESCE(p.stock_management, 0),
+COALESCE(p.hr_management, FALSE),
+COALESCE(s.planning_enabled, p.planning_enabled, p.hr_management, FALSE) AS planning_enabled,
+COALESCE(s.haccp_enabled, p.haccp_enabled, TRUE) AS haccp_enabled,
+COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
+COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
+COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
+COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
+COALESCE(s.delivery_enabled, p.delivery_enabled, TRUE) AS delivery_enabled,
+```
+(`internal/modules/auth/repository.go:110-119`, requête `GetUserByToken`.) Autrement dit : la valeur de `subscriptions` (override par établissement) prime sur celle de `packages` (défaut du plan), elle-même primant sur une valeur littérale codée en dur en dernier recours.
 
-**Le webhook « invoice.created »/« invoice.paid » : code présent, mais jamais alimenté par le code Go actuel.** Le service webhook Stripe écrit dans `subscription_invoices` (`internal/webhook/stripe/repository.go:350-379`) :
+**Ces flags sont ensuite réellement utilisés pour restreindre l'accès à des fonctionnalités, à deux niveaux :**
+
+1. **Restitution au front (gating côté client)** — `internal/modules/auth/service.go:447-461` (`buildLoginResponse`) :
+```go
+Modules: LoginCapabilityModulesResponse{
+    Menu:       user.HasMenuAccess(),
+    Planning:   user.HasPlanningAccess() && user.PlanningEnabled,
+    Users:      user.HasUserManagementAccess(),
+    Settings:   user.HasSettingsAccess(),
+    HACCP:      user.HasHACCPAccess() && user.HACCPEnabled,
+    Bookings:   user.BookingsEnabled,
+    Kiosks:     user.KiosksEnabled,
+    Delivery:   user.DeliveryEnabled,
+    Reports:    user.HasReportsViewAccess(),
+    Financials: user.HasFinancialsViewAccess(),
+    Customers:  user.HasCustomerManagementAccess(),
+    Stock:      user.StockEnabled,
+    HR:         user.HrManagement,
+    ScanNOrder: user.ScanNOrderEnabled,
+},
+```
+`Planning`/`HACCP` combinent un droit RBAC (`Has*Access()`) **ET** le flag d'abonnement (`&&`) ; `Bookings`/`Kiosks`/`Delivery`/`Stock`/`ScanNOrder` ne dépendent que du flag d'abonnement seul, sans permission RBAC associée.
+
+2. **Enforcement côté serveur réel (pas seulement cosmétique)**, à deux endroits identifiés :
+   - `internal/modules/kiosk/repository.go:365-379` (`GetMerchantMaxKiosks`, `SELECT max_kiosks FROM subscriptions WHERE merchant_id = ?`) est appelé à trois reprises dans `internal/modules/kiosk/service.go` — `GenerateEnrollmentCode` (ligne 583), l'enrôlement d'une borne (ligne 108), et la réactivation d'une borne existante (ligne 757) — à chaque fois combiné à `GetActiveKioskCount` pour **bloquer réellement** la création/activation d'une borne au-delà du quota souscrit. Ce n'est donc pas un simple affichage : c'est une vraie limite serveur.
+   - `internal/modules/users/service.go:86` : `if ctxUser, ctxErr := middleware.UserFromContext(ctx); ctxErr == nil && !ctxUser.DeliveryEnabled { return nil }` — sans souscription au module Livraison, le suivi de position du livreur (position courante, historique, geofence d'arrivée, relais Uber BYOC) est silencieusement no-opé côté serveur.
+   - `internal/modules/delivery_sessions/service.go:159-163` : sans `DeliveryEnabled`, le SMS de suivi client lors d'une session de livraison n'est pas envoyé (la notification WebSocket interne au POS reste active, elle).
+
+   Les autres flags (`PlanningEnabled`, `HACCPEnabled`, `StockEnabled`, `BookingsEnabled`, `ScanNOrderEnabled`) ne sont, en l'état de la recherche exhaustive menée, **consommés que dans la construction de la réponse de login** (`buildLoginResponse`) — aucun autre point du code (handler/middleware) ne les relit pour bloquer un endpoint métier correspondant (ex. rien n'empêche côté serveur d'appeler l'API HACCP même si `HACCPEnabled` vaut `false` — seule l'UI front est censée masquer l'onglet).
+
+**Note additionnelle sur un homonyme** : le module `scannorder` porte aussi un champ nommé `DeliveryEnabled` (`internal/modules/scannorder/models.go:78,189`, `internal/modules/scannorder/repository.go:86,945`), mais c'est un réglage de zone de livraison ScanNOrder **par établissement** (`scannorder_settings`/paramètres de commande en ligne), sans rapport avec le flag d'abonnement `subscriptions.delivery_enabled` — même pattern d'homonymie déjà relevé en §1.3 (`orders.brand`/`merchant.brand_id`).
+
+**`subscription_invoices` : code d'écriture présent (`internal/webhook/stripe/repository.go:350-379`, intégral), mais jamais réellement alimenté.** Confirmé en donnée live : `SELECT count(*) FROM subscription_invoices` sur staging retourne **0 ligne**.
 ```go
 func (r *mysqlRepo) CreateInvoice(cdb context.Context, merchantID, invoiceID string, amount int64, created int64, customerID string) error {
 	db := dbx.GetDB(cdb, r.database)
-
 	epochExpr := "FROM_UNIXTIME(?)"
 	if dbx.ActiveDialect() == dbx.Postgres {
 		epochExpr = "to_timestamp(?)"
@@ -2258,7 +1745,6 @@ func (r *mysqlRepo) CreateInvoice(cdb context.Context, merchantID, invoiceID str
 
 func (r *mysqlRepo) PayInvoice(cdb context.Context, invoiceID string, paidAt int64) error {
 	db := dbx.GetDB(cdb, r.database)
-
 	epochExpr := "FROM_UNIXTIME(?)"
 	if dbx.ActiveDialect() == dbx.Postgres {
 		epochExpr = "to_timestamp(?)"
@@ -2268,13 +1754,17 @@ func (r *mysqlRepo) PayInvoice(cdb context.Context, invoiceID string, paidAt int
 	return err
 }
 ```
-Mais **aucun code Go du repo n'insère de ligne dans `welloresto_stripe_customers`** (seule référence hors test est le `SELECT` ci-dessus, et une seed dans un test d'intégration). Le `INSERT INTO subscription_invoices ... SELECT ... FROM welloresto_stripe_customers WHERE stripe_customer_id = ?` ne produit donc une ligne que si le `stripe_customer_id` existe déjà dans cette table — table jamais peuplée par le code Go actuel. Aucun appel `sub.New(...)`, `customer.New(...)` ou tout usage du package Stripe Billing/Subscriptions n'a été trouvé dans le repo.
+Le `INSERT ... SELECT ... FROM welloresto_stripe_customers WHERE stripe_customer_id = ?` ne produit une ligne que si l'événement Stripe `invoice.created` porte un `stripe_customer_id` déjà présent dans `welloresto_stripe_customers`. Or **aucun code Go du dépôt (hors tests d'intégration) n'insère jamais de ligne dans `welloresto_stripe_customers`** — recherche exhaustive confirmée : les seules occurrences hors le `SELECT` ci-dessus sont un `DELETE`/`INSERT` de nettoyage dans `internal/webhook/stripe/postgres_integration_test.go:40,72`. Pourtant, **la table contient 5 lignes en donnée live sur staging** (`SELECT count(*) FROM welloresto_stripe_customers` = 5) : ces lignes ont donc été insérées par un autre moyen que le code Go actuel — très probablement manuellement en base ou par un système antérieur (PHP historique), hors périmètre de ce dépôt, cohérent avec le même constat déjà documenté en §1.3 pour `merchant.brand_id`/`stripe_accounts.terminal_location_id` (des colonnes vivantes en lecture mais jamais écrites par l'API Go).
 
-**Conclusion factuelle** : le mécanisme d'abonnement plateforme existe au niveau du schéma SQL et du gestionnaire de webhook, mais dans l'état actuel du code Go, il n'y a **aucun point d'entrée qui crée réellement une facturation/un abonnement Stripe côté plateforme** — le `package_id` sélectionné à la création du marchand ne sert qu'à activer des drapeaux fonctionnels, avec `stripe_subscription_id` toujours vide dans ce flux. Tout le reste du code Stripe du repo (Checkout Sessions, PaymentIntents, Connect, Terminal) concerne exclusivement l'encaissement des commandes des clients finaux du restaurant, via Stripe Connect.
+**Les tâches cron utilisent `subscriptions` uniquement comme filtre d'existence, pas pour lire les flags** :
+- `internal/tasks/orders.go:28-32` : `SELECT m.id FROM merchant m INNER JOIN merchant_parameters mp ... INNER JOIN subscriptions s ON ... INNER JOIN packages p ON p.id = s.package_id WHERE mp.auto_complete_orders AND ...` — un marchand sans ligne `subscriptions` est exclu du traitement, mais aucune colonne `*_enabled` n'est lue dans cette requête.
+- `internal/tasks/products.go:28-29` (`UpdatePopularProducts`) et `internal/tasks/upsell.go:39-40` (`RecomputeUpsellPatterns`) : même pattern, `INNER JOIN subscriptions s ON s.merchant_id = ...` comme simple filtre de présence.
+
+**Conclusion factuelle 5.1** : le système d'abonnement plateforme (`subscriptions`/`packages`/`subscription_invoices`/`welloresto_stripe_customers`) existe intégralement au niveau du schéma SQL (y compris une colonne `delivery_enabled` — migration `migrations/done/089_delivery_module_flag.up.sql`, ajoutée aux deux tables `packages` et `subscriptions` avec défaut `true`). Dans le code Go, ce système fonctionne **exclusivement comme un mécanisme de feature-flags** — avec deux garde-fous serveur réels confirmés (`max_kiosks`, `delivery_enabled` côté position/SMS livreur) et le reste purement déclaratif dans la réponse de login. Il n'y a **aucun point d'entrée qui crée, modifie ou facture réellement un abonnement Stripe** côté plateforme : `package_id` n'est jamais validé contre `packages` (aucune FK, aucune vérification applicative — la ligne orpheline `package_id=-4` observée en base le démontre), n'est jamais modifiable après la création du marchand, et `stripe_subscription_id` reste vide dans ce flux. Le reste du code Stripe du dépôt (Checkout Sessions, PaymentIntents, Connect, Terminal) concerne exclusivement l'encaissement des commandes des clients finaux du restaurant.
 
 ### 5.2. Séparation compte Stripe PLATEFORME vs comptes Stripe CONNECTÉS
 
-**Chargement des clés — une seule clé API pour toute la plateforme.** `internal/config/stripe.go` (intégral) :
+**Une seule clé API Stripe pour toute la plateforme — pas de clé "plateforme" distincte d'une clé "Connect".** `internal/config/stripe.go` (intégral) :
 ```go
 package config
 
@@ -2284,7 +1774,9 @@ import (
 
 type StripeConfig struct {
 	APIKey string
+	// OnboardingReturnURL is the front-end URL Stripe redirects to after onboarding completes.
 	OnboardingReturnURL string
+	// OnboardingRefreshURL is the front-end URL Stripe redirects to when the onboarding link expires.
 	OnboardingRefreshURL string
 }
 
@@ -2296,15 +1788,12 @@ func loadStripeConfig() StripeConfig {
 	}
 }
 ```
-Il n'existe qu'**une seule variable d'environnement de clé Stripe** (`STRIPE_API_KEY`) — pas de clé séparée pour un compte « plateforme » distinct d'un usage Connect ; le même client Stripe sert aux deux usages. Instancié une fois dans `cmd/api/routes.go:260` :
-```go
-stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)
-```
-et réutilisé partout (Terminal, POS, ScanNOrder, Integrations, Webhook).
+Une seule variable d'environnement de clé (`STRIPE_API_KEY`), instanciée en un unique `StripeManager` — `cmd/api/routes.go:271` : `stripeManager := stripeInternalClient.NewStripeManager(cfg.Stripe.APIKey)` — puis injecté et réutilisé tel quel dans `ordersLifeCycleService` (ligne 325), `scannService` (ligne 352), `integrationsService` (ligne 358), `terminalService` (ligne 278-282), et `stripeWebhookService` reçoit séparément `cfg.Stripe.APIKey` en clair (ligne 371) pour son propre `stripe.Key = stripeKey` global (`internal/webhook/stripe/service.go:40`).
 
-**Distinction concrète plateforme vs Connect : le paramètre `Stripe-Account`.** La séparation ne se fait **pas** par une clé API différente, mais uniquement par l'appel ou non de `params.SetStripeAccount(accountID)` sur chaque appel API.
+**La distinction plateforme/Connect ne se fait donc PAS via des identifiants différents, mais uniquement via l'appel — ou non — de `params.SetStripeAccount(accountID)` sur chaque appel API individuel.** C'est le paramètre `Stripe-Account` (en-tête HTTP sous le capot du SDK) qui bascule un appel du contexte "compte plateforme WelloResto" vers le contexte "compte connecté du marchand".
 
-Appels scopés sur un compte connecté (paiements clients finaux) — `internal/infrastructure/stripe/checkout.go:113-147` :
+**Appels scopés sur le compte connecté du marchand** (paiements clients finaux, `internal/infrastructure/stripe/`) :
+- `CreateCheckoutSession` — `internal/infrastructure/stripe/checkout.go:128-147` :
 ```go
 	params := &stripe.CheckoutSessionParams{
 		LineItems:  lineItems,
@@ -2327,17 +1816,26 @@ Appels scopés sur un compte connecté (paiements clients finaux) — `internal/
 
 	return c.client.CheckoutSessions.New(params)
 ```
-(`fees` = commission WelloResto, prélevée via `ApplicationFeeAmount`.) Idem pour `CaptureExistingPaymentAsync`, `RefundOrCancelAsync`, `GetConnectBalance` (`internal/infrastructure/stripe/service.go` et `connect.go`).
+(`fees` = commission WelloResto prélevée via `ApplicationFeeAmount`, un modèle de "charge directe" sur le compte connecté.)
+- `CaptureExistingPaymentAsync` (`internal/infrastructure/stripe/service.go:14-49`) et `RefundOrCancelAsync` (`:53-115`) : chaque appel (`PaymentIntents.Capture`, `PaymentIntents.Get`, `PaymentIntents.Cancel`, `Refunds.New`) reçoit systématiquement `params.SetStripeAccount(req.AccountID)`.
+- `GetConnectBalance` (`internal/infrastructure/stripe/connect.go:137-160`) : `params.SetStripeAccount(accountID)` avant `s.client.Balance.Get(params)`.
+- Le module Terminal (`internal/infrastructure/stripe/terminal.go`) scope aussi systématiquement ses appels (`:93`, `:134`, `:208` — `params.SetStripeAccount(accountID)`), pour la création de `ConnectionToken`, de `PaymentIntent` carte présente, et l'annulation associée.
 
-Appels **non scopés** (contexte plateforme) : `ProcessPaymentAsync`, `RefundAsync`, et côté webhook `HandleInvoiceCreated`/`HandleInvoicePaid` — aucun `SetStripeAccount`, cohérent avec des objets `Invoice` de facturation côté compte plateforme.
+**Appels NON scopés (contexte compte plateforme)** :
+- `ProcessPaymentAsync` (`internal/infrastructure/stripe/service.go:117-161`) et `RefundAsync` (`:163-192`) : aucun `SetStripeAccount` — ces deux fonctions créent un `PaymentIntent`/`Refund` directement sur le compte Stripe plateforme. **Fait notable : recherche exhaustive de leurs appelants (`grep ProcessPaymentAsync|RefundAsync` hors définition/interface) — aucun appelant trouvé dans tout `internal/`.** Ces deux fonctions sont déclarées dans l'interface (`internal/infrastructure/stripe/interface.go:19-22`) et implémentées, mais actuellement **jamais invoquées** — du code mort qui, s'il était un jour rebranché sans y ajouter un `SetStripeAccount`, débiterait/rembourserait le compte Stripe de la plateforme elle-même plutôt que celui d'un marchand.
+- Côté webhook, `HandleInvoiceCreated`/`HandleInvoicePaid` (`internal/webhook/stripe/service.go:630-651`) : aucun appel à l'API Stripe (uniquement des écritures SQL), cohérent avec des objets `Invoice` de facturation plateforme.
 
-**Onboarding Connect** via `STRIPE_ONBOARDING_RETURN_URL`/`STRIPE_ONBOARDING_REFRESH_URL` : `CreateExpressAccount` (`internal/infrastructure/stripe/connect.go:59-79`), `CreateOnboardingLink` (lignes 44-57), utilisés par `internal/modules/integrations/service.go:361-416` (`CreateStripeOnboardingLink`, `CreateScanNOrderOnboarding`).
+**Onboarding Stripe Connect** — utilise les mêmes URLs de config (`STRIPE_ONBOARDING_RETURN_URL`/`STRIPE_ONBOARDING_REFRESH_URL`) : `CreateOnboardingLink` (`internal/infrastructure/stripe/connect.go:44-57`), `CreateExpressAccount` (`:59-79`), `CreateBankAccountLink` (`:115-133`, pour configurer l'IBAN de réception des virements Connect), tous invoqués depuis `internal/modules/integrations/service.go:391-474` (`GetStripeStatus`, `CreateStripeOnboardingLink`, `CreateScanNOrderOnboarding`, `GetStripeBankAccounts`, `CreateStripeBankAccountLink`, `GetStripeBalance`).
 
-**Constat additionnel** : `go.mod` déclare deux versions majeures différentes du SDK Stripe en parallèle — `github.com/stripe/stripe-go/v78 v78.12.0` (utilisée uniquement par `internal/webhook/stripe/service.go`) et `github.com/stripe/stripe-go/v84 v84.2.0` (utilisée par `internal/infrastructure/stripe/*.go`).
+**Constat additionnel** : `go.mod:21-22` déclare toujours deux versions majeures différentes du SDK Stripe en parallèle :
+```
+github.com/stripe/stripe-go/v78 v78.12.0   -- utilisée uniquement par internal/webhook/stripe/service.go
+github.com/stripe/stripe-go/v84 v84.2.0    -- utilisée par internal/infrastructure/stripe/*.go
+```
 
-### 5.3. Webhooks Stripe traités + état de la vérification de signature
+### 5.3. Webhooks Stripe traités et état de la vérification de signature
 
-**Aiguillage des événements** — `internal/webhook/stripe/service.go:53-94`, `ProcessEvent` (intégral) :
+**Aiguillage des événements** — `internal/webhook/stripe/service.go:54-94`, `ProcessEvent` (intégral) :
 ```go
 func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEvent) error {
 	switch event.Type {
@@ -2352,6 +1850,7 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 		return s.HandleRefund(ctx, event.Data.Object)
 
 	case "charge.captured":
+		// En PHP c'était retrieveFees. On gère les frais ici.
 		return s.HandleRetrieveFees(ctx, event.Data.Object, event.Account)
 
 	case "payment_intent.canceled":
@@ -2381,25 +1880,25 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 }
 ```
 
-**Liste exhaustive des 11 events gérés :**
+**Liste exhaustive des 11 types d'événements traités :**
 
-| Event Stripe | Handler | Ce qu'il déclenche |
+| Event Stripe | Handler (`internal/webhook/stripe/service.go`) | Effet |
 |---|---|---|
-| `checkout.session.completed` | `HandleCheckoutSessionCompleted` | Insertion paiement, mise à jour commande, notification, email/SMS de confirmation, auto-accept |
-| `checkout.session.expired` | `HandleCheckoutSessionCanceled` | `SetOrderDenied` (session expirée/annulée) |
-| `charge.refunded` | `HandleRefund` | Désactive le paiement, email de remboursement |
-| `charge.captured` | `HandleRetrieveFees` | Récupère le détail des frais Stripe (balance transaction) |
-| `payment_intent.canceled` | `HandlePaymentIntentUpdated` | `UPDATE stripe_payments SET payment_intent_status = 'CANCELED'` |
-| `payment_intent.succeeded` | `HandlePaymentIntentSucceeded` | Confirmation paiement Terminal Kiosk, ou `UPDATE ... CAPTURED` |
-| `payment_intent.payment_failed` | `HandlePaymentIntentFailed` | Marque `FAILED` (uniquement paiements kiosk) |
-| `payout.paid` | `HandlePayoutPaid` | Email « virement effectué » |
-| `invoice.created` | `HandleInvoiceCreated` | Insertion `subscription_invoices` (conditionnée à l'existence du `stripe_customer_id`) |
-| `invoice.paid` | `HandleInvoicePaid` | `subscription_invoices.status = '1'` |
-| `account.updated` | `HandleAccountUpdated` | `stripe_accounts.verification_status`, active `scannorder_settings.activated` |
+| `checkout.session.completed` | `HandleCheckoutSessionCompleted` (:97-246) | Insertion paiement en transaction, mise à jour statut commande, invalidation cache Redis, notification WebSocket, email/SMS de confirmation client, auto-accept éventuel |
+| `checkout.session.expired` | `HandleCheckoutSessionCanceled` (:249-281) | `SetOrderDenied` (motif "Session de paiement expirée ou annulée") |
+| `charge.refunded` | `HandleRefund` (:533-591) | `DisablePayment`, email de remboursement au client |
+| `charge.captured` | `HandleRetrieveFees` (:284-330) | Appel API Stripe `balancetransaction.Get` (scopé `SetStripeAccount(connectedAccountID)`) pour calculer `wello_resto_total_fees`/`stripe_total_fees` |
+| `payment_intent.canceled` | `HandlePaymentIntentUpdated` (:340-348) | `UPDATE stripe_payments SET payment_intent_status = 'CANCELED'` |
+| `payment_intent.succeeded` | `HandlePaymentIntentSucceeded` (:369-382) | Si `metadata.channel == "kiosk"` : confirmation de commande Terminal Kiosk (`ConfirmKioskCardPayment`) ; sinon `UPDATE ... 'CAPTURED'` (flux Checkout en ligne) |
+| `payment_intent.payment_failed` | `HandlePaymentIntentFailed` (:393-412) | Uniquement paiements Terminal Kiosk : marque `stripe_payments` `'FAILED'`, notification WebSocket |
+| `payout.paid` | `HandlePayoutPaid` (:594-627) | Résout le marchand via `GetMerchantByStripeAccountID`, email "virement effectué" |
+| `invoice.created` | `HandleInvoiceCreated` (:630-642) | `INSERT` conditionnel dans `subscription_invoices` (voir §5.1 — n'aboutit jamais en pratique sur staging) |
+| `invoice.paid` | `HandleInvoicePaid` (:644-651) | `subscription_invoices.status = '1'` |
+| `account.updated` | `HandleAccountUpdated` (:655-698) | `stripe_accounts.verification_status`, active `scannorder_settings.activated` si `DetailsSubmitted && ChargesEnabled` |
 
-Tout autre event reçu (`default:`) est silencieusement ignoré, sans log ni erreur.
+Tout autre type d'événement (`default:`) est **silencieusement ignoré**, sans log ni erreur.
 
-**État EXACT de la vérification de signature du webhook : la vérification de signature est absente à l'exécution.**
+**État exact de la vérification de signature : absente à l'exécution.**
 
 `internal/webhook/stripe/http_handler.go` (intégral) :
 ```go
@@ -2441,13 +1940,17 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 ```
-Une méthode `VerifySignature` existe bien sur le service, mais c'est un **stub vide, jamais appelé nulle part dans le code** :
+Le body est lu, désérialisé en JSON, et directement transmis à `ProcessEvent` — **aucun appel à une fonction de vérification de signature nulle part dans cette chaîne.**
+
+Une méthode `VerifySignature` existe bien sur le service, mais c'est un stub vide, jamais appelé — `internal/webhook/stripe/service.go:700-702` (intégral) :
 ```go
 func (s *StripeWebhookService) VerifySignature(ctx context.Context, header http.Header, body []byte) {
 	// A implémenter avec webhook.ConstructEvent de la lib stripe-go
 }
 ```
-La route est enregistrée sans aucun middleware (contrairement à `/external` qui a `r.Use(authMiddleware)`) — `cmd/api/routes.go:555-564` :
+Recherche exhaustive confirmée : `s.service.VerifySignature` ou `stripeWebhookService.VerifySignature` **n'apparaît nulle part** dans `internal/webhook/stripe/http_handler.go`, ni dans `cmd/api/routes.go`, ni ailleurs — c'est une méthode orpheline, jamais référencée hors de sa propre définition.
+
+**La route est enregistrée sans aucun middleware d'authentification/vérification** — `cmd/api/routes.go:571-579` (bloc `/webhooks` intégral) :
 ```go
 	r.Route("/webhooks", func(r chi.Router) {
 		r.Post("/uber-eats", uberWebhookHandler.HandleWebhook)
@@ -2459,202 +1962,224 @@ La route est enregistrée sans aucun middleware (contrairement à `/external` qu
 		r.Post("/brevo/events", brevoEventsHandler.HandleWebhook)
 	})
 ```
+Contrairement à `/external` (`cmd/api/routes.go:582-583` : `r.Route("/external", func(r chi.Router) { r.Use(authMiddleware) ...`), aucun `r.Use(...)` n'encadre le bloc `/webhooks` entier ni la route `/stripe` en particulier.
 
-Confirmations complémentaires : aucune variable d'environnement `STRIPE_WEBHOOK_SECRET` n'existe ; aucun appel à `webhook.ConstructEvent` nulle part ; aucune lecture de l'en-tête `Stripe-Signature`. Par comparaison, le webhook Uber Eats du même repo vérifie effectivement une signature (`internal/webhook/ubereats/handler/http_handler.go:28`, `internal/webhook/ubereats/service/service.go:128-130`) — le pattern existe ailleurs dans le codebase mais n'a pas été implémenté (au-delà du stub vide) pour Stripe.
+**Confirmations complémentaires, exhaustives** :
+- Aucune variable d'environnement `STRIPE_WEBHOOK_SECRET` (recherche `grep -rn "STRIPE_WEBHOOK_SECRET"` sur tout le dépôt Go : 0 occurrence).
+- Aucun appel à `webhook.ConstructEvent` (la fonction standard `stripe-go` de vérification HMAC de signature) nulle part dans le dépôt — la seule occurrence de la chaîne "ConstructEvent" est le commentaire cité ci-dessus, jamais du code exécuté.
+- Aucune lecture de l'en-tête `Stripe-Signature` nulle part.
 
-**Conséquence factuelle** : n'importe quel tiers connaissant l'URL `POST /webhooks/stripe` peut soumettre un JSON arbitraire imitant un `StripeEvent` et déclencher les effets métier associés, puisqu'aucune vérification cryptographique de provenance Stripe n'est effectuée dans l'état actuel du fichier.
+**Comparaison avec le webhook Uber Eats du même dépôt — nuance importante.** Le webhook Uber Eats **calcule** bien une vérification de signature, mais ne **bloque** pas non plus la requête en cas d'échec — c'est un contrôle purement journalisé, pas un rejet. `internal/webhook/ubereats/handler/http_handler.go:21-43` (intégral) :
+```go
+func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	h.service.VerifySignature(r.Context(), r.Header, body)
+
+	var event models.UberWebhookEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.ProcessEvent(r.Context(), event); err != nil {
+		log.Println("[UBER EATS] processing error:", err)
+		http.Error(w, "processing error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+```
+Le retour de `VerifySignature` (fonction sans valeur de retour, `internal/webhook/ubereats/service/service.go:128-136`) n'est de toute façon pas exploitable pour interrompre le traitement :
+```go
+func (s *Service) VerifySignature(ctx context.Context, headers http.Header, body []byte) {
+	sig := headers.Get("X-Uber-Signature")
+	ok := ueClient.VerifySignature(body, sig, s.signatureSecret)
+	log := logger.FromContext(ctx)
+
+	if !ok {
+		log.Error("[UBER EATS] Invalid signature")
+	}
+}
+```
+`ProcessEvent` s'exécute donc juste après, **quel que soit le résultat de la vérification** — Uber Eats calcule et journalise un mismatch de signature, mais ne rejette pas la requête pour autant. Le webhook Stripe, lui, ne calcule même pas cette vérification (le stub n'est pas appelé) : c'est un manque plus complet que celui d'Uber Eats, mais aucun des deux webhooks du dépôt ne rejette effectivement une requête sur signature invalide à ce jour.
+
+**Conséquence factuelle** : n'importe quel tiers connaissant l'URL `POST /webhooks/stripe` peut soumettre un JSON arbitraire imitant la structure `StripeEvent` et déclencher l'un des 11 effets métier ci-dessus (y compris `checkout.session.completed`, qui insère un paiement et modifie le statut d'une commande, ou `account.updated`, qui modifie `stripe_accounts.verification_status`) — aucune vérification cryptographique de provenance Stripe n'est effectuée dans l'état actuel du code.
 
 ### 5.4. Mandat SEPA / prélèvement bancaire européen
 
 **N'existe pas.**
 
-Recherche exhaustive insensible à la casse sur l'ensemble du code Go (`sepa|iban|mandate`) : aucune occurrence de « SEPA » ou « mandate ». La seule occurrence d'« IBAN » est un commentaire de documentation d'une fonction Stripe Connect, sans rapport avec un mandat de prélèvement — configuration du compte bancaire du marchand pour **recevoir** ses virements Stripe Connect (payouts), pas un prélèvement SEPA effectué par la plateforme :
+Recherche exhaustive insensible à la casse sur l'ensemble du dépôt (`sepa|iban|mandate`) : aucune occurrence de « SEPA ». Le mot « mandate » n'apparaît que dans un commentaire sans rapport (`internal/modules/planning/settings/models.go:20` : « French law does not mandate a standard Sunday pay premium... » — verbe anglais générique, aucun rapport avec un mandat de prélèvement).
+
+Les deux seules occurrences d'« IBAN » sont des commentaires de documentation d'une fonctionnalité Stripe Connect, sans rapport avec un prélèvement SEPA effectué par la plateforme — il s'agit de la configuration du **compte bancaire de réception** du marchand pour ses virements Stripe Connect (payouts), pas d'un mandat de débit :
 ```go
+// internal/infrastructure/stripe/connect.go:115-116
+// CreateBankAccountLink generates an AccountLink (type: account_update) to allow the merchant
+// to configure their IBAN/bank account on the Stripe Connect dashboard.
+func (s *StripeManager) CreateBankAccountLink(accountID, returnURL, refreshURL string) (string, error) {
+```
+```go
+// internal/modules/integrations/service.go:467
 // CreateStripeBankAccountLink generates an account_update link for the merchant to configure IBAN.
 func (s *Service) CreateStripeBankAccountLink(ctx context.Context, merchantID string) (string, error) {
 ```
-Aucun `PaymentMethodType` de type `sepa_debit`, aucun `stripe.SetupIntent`, aucune structure ou table liée à un mandat de prélèvement n'a été trouvée dans le code Go, les migrations SQL, ni le dump de données legacy.
----
 
+Aucun `PaymentMethodType` de type `sepa_debit`, aucun `stripe.SetupIntent`, aucune table ou structure liée à un mandat de prélèvement n'a été trouvée — ni dans le code Go, ni dans les migrations SQL (`migrations/`), ni dans le schéma live introspecté sur staging (aucune table dont le nom contient « sepa » ou « mandate » parmi les tables présentes en base).
 ## 6. Produits et création en masse
 
-### 6.1. Interface de création de produits en masse dans le back-office
+### 6.1 Interface de création de produits en masse dans le back-office
 
-**Point d'entrée UI** : `wello-back-office/src/pages/Menu.tsx`, menu déroulant à côté du bouton de création de produit (lignes 335-368) :
-```tsx
-<DropdownMenuItem
-  onClick={() => {
-    setImportInitialDoor('manual');
-    setImportOpen(true);
-  }}
->
-  <CopyPlus className="w-4 h-4 mr-2" />
-  Créer plusieurs produits
-</DropdownMenuItem>
-<DropdownMenuItem
-  onClick={() => {
-    setImportInitialDoor(undefined);
-    setImportOpen(true);
-  }}
->
-  <Upload className="w-4 h-4 mr-2" />
-  Importer des produits
-</DropdownMenuItem>
-```
-Les deux entrées ouvrent le même composant, `ProductImportDialog` (`wello-back-office/src/components/menu/import/ProductImportDialog.tsx:619-627`), avec ou sans porte pré-sélectionnée. Le composant (lignes 89-209) est une modale à étapes (`choose` → `provider`/`manual` → `preview` → `done`), pilotée par le hook `useProductImport`.
+Il n'existe **pas** de composant dédié uniquement à « la création en masse » isolé du reste : la création groupée de produits est l'une des **trois portes** d'un unique assistant (« wizard ») d'import, monté depuis la page `wello-back-office/src/pages/Menu.tsx:14,24,103,348,357,626` via le composant `ProductImportDialog` (`src/components/menu/import/ProductImportDialog.tsx`), piloté par le hook `useProductImport` (`src/hooks/useProductImport.ts`).
 
-**Endpoints API appelés** (tous sous `/menu`, gate RBAC `permission.CatalogManage` — seul bloc de `/menu` à porter un contrôle RBAC explicite, `cmd/api/routes.go:801-811`) :
-```go
-r.With(middleware.RequirePermission(permission.CatalogManage)).
-    Post("/import/preview", menuImportH.PreviewImport)
-r.With(middleware.RequirePermission(permission.CatalogManage)).
-    Post("/import/commit", menuImportH.CommitImport)
-r.With(middleware.RequirePermission(permission.CatalogManage)).
-    Get("/import/template", menuImportH.DownloadImportTemplate)
-```
+La porte « saisie en masse » proprement dite est :
+- Écran de choix : `src/components/menu/import/ImportDoorPicker.tsx:71-86` (carte « Je saisis mes produits à la main »)
+- Grille de saisie : `src/components/menu/import/ImportManualStep.tsx`
+- Une ligne de grille : `src/components/menu/import/manual/ImportManualRow.tsx`
+- Logique pure (validation, construction du payload) : `src/lib/manualImport.ts`
 
-**Format exact du payload** — deux formats acceptés sur la **même route** `POST /menu/import/preview`, distingués par le `Content-Type` (`internal/modules/menu/import_handler.go:28-56`) :
-- **multipart/form-data** (porte fichier) : deux champs, `provider` (string) et `file` (classeur `.xlsx`), 5 Mo max.
-- **application/json** (porte saisie manuelle) :
-```go
-// internal/modules/menu/import_models.go:16-45
-type ImportPreviewJSONRequest struct {
-    Provider string                     `json:"provider"`
-    Products []ImportPreviewJSONProduct `json:"products"`
-}
+**Champs présentés à l'utilisateur** (`ImportManualStep.tsx:96-113`, une ligne = un produit, deux niveaux par cellule) :
+- Nom * (obligatoire) et Description (même cellule, nom au-dessus)
+- Catégorie * (obligatoire, saisie libre avec autocomplétion `<datalist>` alimentée par les catégories déjà saisies dans la grille + les catégories existantes du menu — `manualCategorySuggestions`, `manualImport.ts:210-228`)
+- Trois blocs « Sur place / À emporter / En livraison », chacun avec **Prix (en euros, ex. « 9,50 ») puis TVA** (sélectionnée, pas tapée, parmi les taux réellement configurés chez le marchand — voir 6.4)
+- Pas de champ tags dans la grille — ils s'ajoutent ensuite depuis la fiche produit (`manualImport.ts:204-207`)
 
-type ImportPreviewJSONProduct struct {
-    Name        string `json:"name"`
-    Description string `json:"description"`
-    Category    string `json:"category"`
+Validation côté client (`manualImport.ts:114-179`) avant tout appel réseau : nom requis et unique dans la grille (insensible à la casse), catégorie requise, champs prix numériques valides, **TVA requise sur les trois canaux** (alors que l'API l'accepte vide — commentaire explicite ligne 8-14 : « un taux absent... laisse le canal Available mais non résolu côté preview, sans jamais apparaître dans tva_rates » — le front resserre donc la règle par rapport au contrat API).
 
-    PriceIn       int `json:"price"`
-    PriceTakeAway int `json:"price_take_away"`
-    PriceDelivery int `json:"price_delivery"`
+**Endpoint appelé** : `POST /menu/import/preview` en `application/json` (et non un endpoint de création directe — voir 6.3, c'est un *dry-run*), via `menuImportService.previewFromManual()` (`src/services/menuImportService.ts`) → `useProductImport.submitManual` → `manualPreviewMutation`.
 
-    TvaRateIn       *float64 `json:"tva_in"`
-    TvaRateTakeAway *float64 `json:"tva_take_away"`
-    TvaRateDelivery *float64 `json:"tva_delivery"`
+**Format exact du payload** (`buildManualPayload`, `manualImport.ts:193-208`, type `ImportManualProductPayload` défini `src/types/import.ts:316-327`, miroir de `menu.ImportPreviewJSONProduct` côté Go, `internal/modules/menu/import_models.go:31-45`) :
 
-    Tags []string `json:"tags"`
+```json
+{
+  "provider": "manual",
+  "products": [
+    {
+      "name": "Pizza Margherita",
+      "description": "Tomate, mozzarella, basilic",
+      "category": "Pizzas",
+      "price": 950,
+      "price_take_away": 950,
+      "price_delivery": 1050,
+      "tva_in": 10,
+      "tva_take_away": 5.5,
+      "tva_delivery": 5.5,
+      "tags": []
+    }
+  ]
 }
 ```
-Côté front, ce payload est construit par `buildManualPayload` (`wello-back-office/src/lib/manualImport.ts:193-208`), envoyé via `menuImportService.previewFromManual`.
 
-**Rien de tout cela n'écrit en base.** `/menu/import/preview` calcule un dry-run et rend un `token` (TTL Redis). La seule route qui écrit est `POST /menu/import/commit`, avec en corps `{ token, decisions }`, matérialisée en une seule transaction (`MaterializeImportTx`).
+Points notables sur ce format :
+- Les prix sont en **centimes** (`price`, `price_take_away`, `price_delivery`), convertis euros → centimes côté back-office au moment de l'envoi (`manualImport.ts:184-191` : « C'est ici, et seulement ici, que les euros deviennent des centimes »), exactement comme `CreateProductPayload` (création unitaire, voir 6.4).
+- La TVA (`tva_in`, `tva_take_away`, `tva_delivery`) est envoyée en **taux pourcentage brut** (`float64`, ex. `5.5`), **pas** en `tva_id` — c'est la prévisualisation côté serveur qui résout le taux vers un `tva_categories.tva_id` (`import_models.go:26-30`). C'est une différence structurelle avec la fiche de création unitaire de produit, qui envoie directement des `tva_*_id`.
+- `category` est un **nom de catégorie**, pas un identifiant — la preview réutilise une catégorie existante homonyme ou en propose la création (`import_models.go` commentaire de champ, `src/types/import.ts:314-315`).
+- `provider` vaut `"manual"` (`importer.ManualSlug`, `internal/modules/menu/importer/manual.go:12`), utilisé uniquement comme clé de traçabilité/idempotence dans les tables `import_*_mapping`.
 
-À noter : `BulkEditDialog.tsx` et `BulkAssignProductsDialog.tsx` portent aussi le mot « bulk », mais **ne créent pas de produits** : le premier édite en masse des produits existants, le second assigne des produits existants à une catégorie (`PATCH /menu/products/categories/{category_id}/bulk-assign`).
+Ce payload n'écrit **rien** en base : il déclenche uniquement un calcul de prévisualisation (voir 6.3 pour la suite du parcours — écran de vérification puis `POST /menu/import/commit`).
 
-### 6.2. Création de catégories en masse
+### 6.2 Création de catégories en masse
 
-**N'existe pas.** Aucune route, aucun composant, aucun mécanisme d'import de fichier pour les catégories. La création de catégorie est **strictement unitaire**, via deux points d'entrée UI redondants qui appellent la même fonction :
-- `wello-back-office/src/pages/CategoriesTable.tsx:573-600` — dialogue inline avec un seul `<Input>` (nom).
-- `wello-back-office/src/components/menu/CreateProductCategoryDialog.tsx:42-120` — composant dédié réutilisé depuis `Menu.tsx`, même principe : un `Input` unique, un bouton `Créer`.
+**La création de catégories en masse n'existe pas** comme fonctionnalité autonome équivalente à 6.1. Deux mécanismes coexistent :
 
-Les deux appellent `menuService.createProductCategory(name: string)` :
-```ts
-async createProductCategory(name: string): Promise<{ id: string; name: string; order: number }> {
-  logAPI('POST', '/menu/products/categories', { name });
-  return withMock(
-    () => ({ id: `cat_${Date.now()}`, name, order: 99 }),
-    async () => {
-      const response = await apiClient.post<WelloApiResponse<{ category_id: string; message: string; status: string }>>('/menu/products/categories', { name });
-      ...
+**a) Création unitaire, un formulaire minimal** — page `src/pages/CategoriesTable.tsx:159-627`. Le bouton « Nouvelle catégorie » (`CategoriesTable.tsx:448-451`) ouvre une boîte de dialogue à **un seul champ texte** (`CategoriesTable.tsx:574-600`, le nom), sans TVA, sans image, sans ordre — ces attributs se règlent ensuite via des actions séparées (upload d'image `PUT /products/categories/{category_id}/image`, réordonnancement par glisser-déposer avec `dnd-kit` puis `PATCH /display-orders`). Le hook `useCategoryData.createProductCategory` (`src/hooks/useCategoryData.ts:65-67`) appelle `menuService.createProductCategory(name)` (`src/services/menuService.ts:981-996`) :
+
 ```
-Côté API : `POST /menu/products/categories` → `MenuHandler.CreateProductCategory`, avec un payload qui n'accepte qu'**un seul nom**, pas de tableau :
+POST /menu/products/categories
+{ "name": "Pizzas" }
+```
+
+Côté API : `menuH.CreateProductCategory` (`internal/modules/menu/handler.go:545-573`) → `MenuService.CreateProductCategory` (`internal/modules/menu/service.go:345-358`, injecte `MerchantID` depuis le token) → `MenuRepository.CreateProductCategory` (`internal/modules/menu/repository.go:3997+`). Payload Go : `CreateProductCategoryPayload{ Name string; MerchantID string }` (`internal/modules/menu/models.go:337-340`) — un seul champ exposé côté client. Le repository capitalise la première lettre, calcule `categ_order` comme `MAX(categ_order)+1` pour le marchand, et insère avec `merchant_categ_id = ''` explicite (`repository.go:4018-4021`, commentaire sur la stricte-mode Postgres vs. MySQL non strict). **Aucune route bulk n'existe** pour `productcateg` (`grep` sur `cmd/api/routes.go` ne fait ressortir qu'une seule route `POST /products/categories`, sans pendant `/bulk` ou `/batch`).
+
+**b) Création indirecte et massive via l'import de produits (porte 6.3)** — c'est en réalité **là** que se trouve la seule voie de création de plusieurs catégories en une opération : le pipeline d'import (fichier, saisie manuelle, ou copie d'un autre établissement) détecte les libellés de catégorie non résolus dans le catalogue source et les crée automatiquement lors du commit, en même temps que les produits qui les référencent (`CanonicalCategory`, `internal/modules/menu/importer/models.go:95-100` ; comptage `categories_to_create` dans `ImportPreviewSummary`, `src/types/import.ts:68-69`). Mais ceci n'est jamais exposé comme un écran « créer des catégories » indépendant — c'est un effet de bord du commit d'import produits.
+
+### 6.3 Les « trois portes » d'import de produits
+
+Le brief anticipait une porte « import fournisseur (Uber Eats/Deliveroo) ». **Ce n'est pas ce que le code implémente.** Il existe bien un système « trois portes », mais les trois portes réelles, telles que documentées dans le code lui-même (`internal/modules/menu/importer/models.go:1-14`, doc du package : « Trois portes d'entree convergent vers un seul pipeline : un provider tiers (Zelty en premier), un template .xlsx defini par Wello, et un formulaire de saisie en masse cote back-office ») sont :
+
+1. **Un export d'un logiciel de caisse tiers** — aujourd'hui uniquement **Zelty** (éditeur de caisse français), pas Uber Eats/Deliveroo.
+2. **Le modèle Wello Resto (.xlsx) téléchargé puis rempli** — le « modèle personnalisé/gabarit » attendu par le brief.
+3. **La saisie de masse** (formulaire, couverte en 6.1).
+
+Le code a en réalité **une quatrième porte**, non prévue dans le brief : la **copie du catalogue d'un autre établissement** (« autre établissement »), exposée dans l'écran de choix comme quatrième carte (`ImportDoorPicker.tsx:88-103` : « Je copie un autre établissement »).
+
+L'intégration Uber Eats/Deliveroo (`internal/modules/ubereats/`, `internal/modules/deliveroo/`, et `internal/modules/menu/mapper_ubereats.go`, `mapper_deliveroo.go`) est un mécanisme **totalement distinct** : elle sert à **pousser** (`PUT`) le menu Wello déjà existant vers ces plateformes de livraison — DTOs `DeliverooMenu`/`UberEatsMenu` construits à partir des produits Wello (`mapper_ubereats.go:1-16`, `mapper_deliveroo.go:1-30`) — et non à importer un catalogue depuis elles. Les tables `import_products_mapping` etc. mentionnées dans le brief comme hypothèse de staging d'import sont bien, comme suspecté, de simples **tables de correspondance d'identifiants** (external_id ↔ wello_id) pour rejouabilité/idempotence de *tout* import (fichier, saisie, ou autre établissement) — pas propres à Uber Eats/Deliveroo, et pas un mécanisme de staging pré-commit.
+
+#### Pipeline commun
+
+Toutes les portes convergent vers un même pipeline en 3 temps, orchestré par `internal/modules/menu/import_service.go` :
+1. **Parse** → `*importer.IntermediateImport` (représentation neutre, `models.go:29-59`)
+2. **Preview** (dry-run) → `importer.BuildPreview` (`internal/modules/menu/importer/preview.go`), dépose un **snapshot en cache Redis sous un token à durée de vie limitée** (`ImportPreviewTTL`), ne touche jamais la base (`import_handler.go:36-37` : « Aucune écriture : ni en base, ni sur le menu »)
+3. **Commit** (seul point d'écriture) → `importer.BuildCommitPlan` + `MaterializeImportTx` dans une transaction unique
+
+Endpoints (`cmd/api/routes.go:896-910`, tous sous `permission.CatalogManage`) :
+```
+POST /menu/import/preview                 (multipart OU JSON selon Content-Type)
+POST /menu/import/commit
+GET  /menu/import/template?provider=...
+POST /menu/import/preview-from-merchant   (porte "autre établissement")
+```
+
+#### Porte 1 — « J'importe depuis ma caisse actuelle » (fichier)
+
+Composants : `ImportProviderStep.tsx`. Deux providers enregistrés dans `importer.DefaultRegistry()` (`internal/modules/menu/importer/provider.go:47-52`) : `NewZeltyProvider()` et `NewWelloGenericProvider()`. Le front-office liste ces deux options sous un seul écran (`src/types/import.ts:27-40`, `IMPORT_PROVIDERS`), avec les libellés « Modèle Wello Resto rempli » et « Zelty ».
+
+`PreviewImport` distingue le mode par `Content-Type` (`internal/modules/menu/import_handler.go:30-56`) :
 ```go
-// internal/modules/menu/models.go:328-331
-type CreateProductCategoryPayload struct {
-    Name       string `json:"name"`
-    MerchantID string `json:"-"`
-}
+// Deux modes sur la même route, distingués par le Content-Type :
+//   - multipart/form-data : champs "provider" et "file", pour un export d'un
+//     éditeur tiers ou le template Wello ;
+//   - application/json : produits saisis directement, pour le formulaire de
+//     masse du back-office.
 ```
-Aucune variante « array of names » ou multipart n'existe pour cette route.
+Champs multipart (`import_models.go:11-14`) : `provider`, `file`. Taille max 5 Mo (`maxImportFileSize`, `import_models.go:5-8`, vérifiée aussi côté client `useProductImport.ts:140-146`).
 
-### 6.3. Les « trois portes » d'import de produits
+Format Zelty (`internal/modules/menu/importer/zelty.go:1-80`) : classeur `.xlsx` mono-feuille « au format long », 12 colonnes, sections Tag/Produit/Option/Option Value discriminées par la colonne « Type » ; un seul prix par produit (recopié sur les 3 canaux) ; aucune description, aucune image, aucun lien produit↔option, aucun min/max de groupe d'options (posés par défaut dans `applyDefaults`, `models.go:216-221`). Pas de modèle téléchargeable pour Zelty (`hasTemplate: false`) — l'utilisateur produit ce fichier depuis son propre logiciel de caisse.
 
-Constat préalable : **il n'existe pas d'import depuis un catalogue fournisseur externe** au sens « distributeur alimentaire ». Ce que le code appelle « porte fichier » est en réalité un import depuis un **logiciel de caisse tiers** (un seul provider concret : Zelty) ou depuis le **modèle Wello lui-même réimporté**. `ImportDoorPicker.tsx:19-86` :
-```tsx
-<h3 className="font-semibold">J'importe depuis ma caisse actuelle</h3>
-<p className="text-sm text-muted-foreground">
-  Vous avez un export de votre logiciel de caisse, ou un modèle Wello déjà rempli ?
-  Envoyez-le, nous vous montrerons ce qui sera créé avant d'enregistrer quoi que ce soit.
-</p>
-...
-<h3 className="font-semibold">Je pars d'un modèle vierge</h3>
-<p className="text-sm text-muted-foreground">
-  Téléchargez notre fichier Excel, remplissez-le tranquillement, puis revenez
-  l'importer par la première porte en choisissant « Modèle Wello Resto rempli ».
-</p>
-...
-<h3 className="font-semibold">Je saisis mes produits à la main</h3>
-```
-Autrement dit, **la porte 2 (« modèle personnalisé ») n'est pas un canal d'écriture séparé** : c'est un simple téléchargement de fichier vierge, qui doit ensuite être réimporté par la porte 1. Il y a donc bien trois portes *fonctionnelles* pour l'utilisateur, mais seulement **deux mécanismes techniques distincts** côté API (upload fichier vs JSON manuel).
+Format Wello générique (`internal/modules/menu/importer/wello_generic.go`) : tabulaire, une ligne d'en-tête + une ligne par produit, colonnes reconnues par alias insensibles à la casse/accents (`welloGenericAliases`, lignes 71-92) : Nom*, Description, Catégorie*, Prix sur place*/emporté/livraison, TVA sur place/emporté/livraison, Tags. Colonnes obligatoires : Nom, Catégorie, Prix sur place (`welloGenericRequired`, lignes 62-66) ; une catégorie vide n'est **pas** un rejet du fichier — elle est réclamée à l'écran de vérification (commentaire ligne 182-184).
 
-**a) Porte « fichier » (caisse actuelle / modèle rempli)**
-- Frontend : `ImportProviderStep.tsx` — sélecteur de provider (`IMPORT_PROVIDERS`, `wello-back-office/src/types/import.ts:27-40`) :
-```ts
-export type ImportProviderSlug = 'zelty' | 'wello-generic';
-export const IMPORT_PROVIDERS: ImportProviderOption[] = [
-  { slug: 'wello-generic', label: 'Modèle Wello Resto rempli', description: 'Le modèle vierge téléchargé ici, une fois complété', hasTemplate: true },
-  { slug: 'zelty', label: 'Zelty', description: "Export de menu au format Excel produit par Zelty", hasTemplate: false },
-];
-```
-Validation frontend : format `.xlsx`, taille ≤ 5 Mo.
-- Backend : `internal/modules/menu/import_handler.go:79-99` (`previewFromMultipart`) → `ImportService.PreviewImportFile` → `importer.Registry.Get(slug)` (deux providers : `NewZeltyProvider()`, `NewWelloGenericProvider()`).
-- Format d'entrée : Modèle Wello — colonnes `Nom*`, `Description`, `Catégorie*`, `Prix sur place*`, `Prix emporté`, `Prix livraison`, `TVA sur place`, `TVA emporté`, `TVA livraison`, `Tags` (colonnes obligatoires : Nom/Catégorie/Prix sur place). Zelty — fichier mono-feuille de 8 colonnes (`ID, Type, Nom, Prix, TVA, TVA emporte, TVA livraison, Tags`), routé par la colonne `Type` (`Tag`/`Produit`/`Option`/`Option Value`).
-- Validations backend (`internal/modules/menu/importer/values.go:23-84`, `parsePriceCents` ; lignes 89-103, `parseTvaRate`) rejettent tout format invalide avec l'erreur de ligne précise. Colonnes requises vérifiées explicitement (`wello_generic.go:239-245`).
+#### Porte 2 — « Je pars d'un modèle vierge » (le gabarit)
 
-**b) Porte « modèle personnalisé » (template téléchargeable)**
-- Frontend : bouton « Télécharger le modèle » → `GET /menu/import/template?provider=wello-generic`.
-- Backend : `ImportHandler.DownloadImportTemplate` → `WelloGenericProvider.BuildTemplate` (`internal/modules/menu/importer/template.go:149-220`), génère un classeur `.xlsx` avec `excelize`.
-- Ce fichier une fois rempli est réinjecté **par la porte a)** — pas de route ou de logique de parsing dédiée à cette « porte ».
+`ImportDoorPicker.tsx:45-69` : bouton « Télécharger le modèle » → `GET /menu/import/template?provider=wello-generic` (`import_handler.go:220-270`, `DownloadImportTemplate`), servi en pièce jointe (`Content-Disposition: attachment`, MIME `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`). Généré par `WelloGenericProvider.BuildTemplate` (interface `TemplateProvider`, `import_service.go:226-236` : seul un provider qui implémente cette interface expose un modèle — Zelty ne l'implémente pas, d'où `ErrImportTemplateUnavailable` si on tente `?provider=zelty`). Une fois rempli, ce fichier se ré-importe **par la porte 1**, en sélectionnant « Modèle Wello Resto rempli » (`ImportDoorPicker.tsx:50-55` : « revenez l'importer par la première porte ») — ce n'est donc pas une porte d'entrée distincte côté API, seulement côté UX (téléchargement puis retour vers la porte 1). Aucune validation ni preview n'a lieu au moment du téléchargement ; la validation intervient au ré-upload, comme tout fichier de la porte 1.
 
-**c) Porte « saisie de masse » (grille en direct)**
-- Frontend : `ImportManualStep.tsx` — tableau de lignes (`ManualRow`), une ligne par produit. Les taux de TVA proposés viennent de `menuService.getTvaRates()` (référentiel réel du marchand, pas de saisie libre).
-- Validation frontend (`wello-back-office/src/lib/manualImport.ts:114-179`) : nom requis + unicité, catégorie requise, montants numériques, TVA requise pour les 3 canaux.
-- Backend : `ImportHandler.previewFromJSON` → `ImportService.PreviewImportManual` → `importer.BuildManualImport` (`internal/modules/menu/importer/manual.go:49-117`), qui revalide nom non vide, unicité, taux non négatifs.
+#### Porte 3 — Saisie de masse
 
-**Étape de prévisualisation — commune aux trois portes.** **Oui, elle existe**, et c'est un point de passage obligé (« Rien n'est enregistré à cette étape », « Rien n'est enregistré tant que vous n'avez pas validé »). L'écran `ImportReviewStep.tsx` affiche, avant tout commit : compteurs (produits à créer, catégories, tags, groupes d'options), classification tags/catégories, résolution des taux de TVA, produits sans catégorie, collisions de nom, produits déjà importés, avertissements — avec un bouton `Importer N produit(s)` désactivé tant que `precheck.canCommit` est faux.
+Voir 6.1. Construit directement un `IntermediateImport` sans fichier (`importer.BuildManualImport`, `internal/modules/menu/importer/manual.go`), slug `"manual"`.
 
-Côté backend, le commit est **rejoué et revalidé intégralement** (rien n'est cru sur parole du client) par `BuildCommitPlan` (`internal/modules/menu/importer/commit_plan.go:149-174`), qui refuse en HTTP 422 avec la liste des `blockers` (`product_needs_category`, `tva_rate_unresolved`, `product_name_collision_unresolved`, `invalid_tva_mapping`, `invalid_category_decision`) **sans écrire une seule ligne** tant qu'il en reste un.
+#### Porte 4 (hors brief) — « Je copie un autre établissement »
 
-### 6.4. Saisie et stockage du taux de TVA sur un produit
+`ImportMerchantSourceStep.tsx`, `POST /menu/import/preview-from-merchant`, service `import_merchant_service.go:33-80`. Contrôle d'accès explicite et non mis en cache à chaque appel (`HasRightsOnMerchant(ctx, userID, sourceMerchantID)`, ligne 63) ; erreur générique `ErrSourceMerchantNotFound` renvoyée en **404** aussi bien pour un ID inexistant, un marchand sur lequel l'utilisateur n'a pas de droits, ou une tentative de copie de soi-même sur soi-même — pour ne jamais confirmer l'existence d'un marchand à un appelant non autorisé (commentaire lignes 12-18, 55-61). Seule porte à porter la composition (recettes, `Components`), le rattachement d'options aux produits (`AttributeExternalIDs`) et la disponibilité réelle par canal (`AvailableIn/TakeAway/Delivery`) — les trois autres portes ne les fournissent jamais (`models.go:150-163`).
 
-**Le taux de TVA n'est pas une colonne numérique libre.** C'est une référence (`tva_id`) vers une table de taux disponibles, avec libellé et description, propre au marchand et au canal de vente.
+#### Validations et preview avant commit (commune aux 4 portes)
 
-**Schéma** (`staging_schema_dump.sql:5749-5760`, cible Postgres de la migration en cours ; aucune migration créant ou seedant cette table n'a été trouvée dans `migrations/` — la table préexiste au dossier de migrations tracké) :
-```sql
-CREATE TABLE public.tva_categories (
-    tva_id integer NOT NULL,
-    delivery_type character varying(20) NOT NULL,
-    tva_title character varying(30) NOT NULL,
-    tva_desc character varying(150) NOT NULL,
-    tva_rate real NOT NULL,
-    show_in_report boolean DEFAULT true NOT NULL,
-    enabled boolean DEFAULT true NOT NULL
-);
+`importer.BuildPreview` (`preview.go`) calcule, sans écrire :
+- Résolution TVA (taux brut → `tva_categories.tva_id`, table globale — voir 6.4), avec compteur `unresolved_tva_rates`
+- Détection des collisions de nom avec un produit existant (`ImportPreviewNameCollision`, arbitrage `skip` / `import_anyway`)
+- Détection des produits déjà importés précédemment (mapping `import_*_mapping` existant), avec un contrôle de fraîcheur (`mapping_stale` : le mapping pointe vers une entité Wello supprimée depuis, cf. `liveImportedEntities`, `preview.go:134-148`)
+- Classification tag → catégorie ou tag Wello (`TagClassification`)
+- Catégorisation d'un produit sans catégorie explicite (`needs_category`)
+- Génération de `warnings` typés (`tva_rate_unresolved`, `product_needs_category`, `product_name_collision`, `label_dropped`, `tag_synthesized`, etc., `preview.go:44-52`)
 
-COMMENT ON COLUMN public.tva_categories.delivery_type IS '0 => in, 1 => delivery, 3=> take away (2 not used because 2 is SNO is "isDelivery" field or orders)';
-COMMENT ON COLUMN public.tva_categories.tva_rate IS 'in percent (5 => 5%)';
-```
-Le commentaire SQL sur `delivery_type` annonce des valeurs numériques mais **c'est faux** : les données réelles portent les chaînes `IN` / `TAKE_AWAY` / `DELIVERY`. Aucun seed par défaut n'est présent dans les fichiers de migration de ce dépôt ; les seules valeurs visibles dans le code sont celles des tests d'intégration, qui ne sont pas des données de production.
+Le commit (`ImportService.CommitImport`, `import_commit_service.go:46-97`) recharge les données depuis la base au moment de l'écriture (pas depuis le snapshot figé, pour refléter tout changement survenu entre-temps), reconstruit un `CommitPlan` via `importer.BuildCommitPlan`, et **refuse intégralement** (aucune ligne écrite) si des `CommitBlocker` subsistent — HTTP 422 avec la liste des blocages (`ImportNotCommittableError`, `import_commit_service.go:24-32`, `import_handler.go:204-209`). Un token de preview expiré ou déjà consommé renvoie un HTTP 410 (`import_handler.go:196-202`, pas 404, pour signaler explicitement au client qu'il doit relancer un import plutôt que réessayer).
 
-**Exposition API** — `GET /pos/tva_rates` (jointure avec la table `labels` pour le nom traduit du canal) :
+Il y a donc bien une étape de prévisualisation avant écriture, pour les 4 portes sans exception — c'est le cœur explicite de l'architecture (« le seul effet de bord est le dépôt du snapshot en cache », `import_handler.go:36-37`).
+
+### 6.4 Saisie et stockage du taux de TVA sur un produit
+
+**Stockage** (confirmé par le schéma introspecté, réutilisé tel quel) : `products.tva_in_id`, `products.tva_delivery_id`, `products.tva_take_away_id` (int, `NOT NULL DEFAULT 0`), chacun une FK applicative (non déclarée en contrainte SQL, jointe uniquement en `INNER JOIN` dans le code, ex. `internal/modules/menu/repository.go:988-990,1073-1075,1551-1553,1635-1637,2677-2679`) vers `tva_categories.tva_id`.
+
+**`tva_categories` est bien un référentiel global, partagé par tous les marchands — confirmé côté code, pas seulement supposé.** Preuve directe : `POSRepository.GetTVARates(ctx, merchantID)` (`internal/modules/pos/repository.go:292-`) reçoit un paramètre `merchantID`, mais **ne l'utilise dans aucune clause de la requête** :
+
 ```go
-// internal/modules/pos/repository.go:292-313
 func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]ConsumptionType, error) {
     ...
     query := `
-        SELECT
-            ` + posCastChar("l.id") + ` as type_id,
-            t.delivery_type,
-            l.label_value,
-            l.label as type_name,
-            ` + posCastChar("t.tva_id") + ` as rate_id,
-            t.tva_title,
-            t.tva_desc,
-            t.tva_rate
+        SELECT ...
         FROM labels l
         INNER JOIN tva_categories t ON l.label_value = t.delivery_type
         WHERE l.label_type = 'order_type'
@@ -2662,116 +2187,107 @@ func (r *POSRepository) GetTVARates(ctx context.Context, merchantID string) ([]C
           AND t.enabled = TRUE
         ORDER BY l.id ASC, t.tva_rate ASC`
 ```
-```go
-// internal/modules/pos/models.go:55-68
-type Rate struct {
-    ID    string  `json:"id"`
-    Value float64 `json:"value"`
-    Label string  `json:"label"`
-    Description string `json:"description"`
-}
-type ConsumptionType struct {
-    ID           string `json:"id"`
-    Name         string `json:"name"`
-    DeliveryType string `json:"delivery_type"`
-    Rates        []Rate `json:"rates"`
-}
-```
+(`internal/modules/pos/repository.go:298-313`) — aucun `WHERE ... merchant_id = ?` nulle part. Tous les marchands reçoivent exactement le même jeu de taux. Le back-office lui-même le documente comme tel dans son cache de requêtes : `src/lib/queryKeys.ts:13-19` — « Référentiel global (`GET /pos/tva_rates`), stable et partagé ». Le code d'import confirme également : `internal/modules/menu/importer/preview.go:61-63` — « La table est globale (pas de merchant_id) : un couple (taux, canal) suffit à désigner un tva_id ».
 
-**Sur la fiche produit**, le taux n'est jamais tapé : il est choisi dans un menu déroulant alimenté par ce référentiel (`wello-back-office/src/components/menu/SimpleProductSheet.tsx:130-160`, `TvaRateSelect`). Le produit stocke un `tva_id` par canal :
-```go
-// internal/modules/menu/models.go:219-221
-TvaInID             string  `json:"tva_in_id"`
-TvaDeliveryID       string  `json:"tva_delivery_id"`
-TvaTakeAwayID       string  `json:"tva_take_away_id"`
-```
-Dans le pipeline d'import (§6.3), le fichier/la saisie manuelle transporte un **taux brut** (pourcentage), jamais un `tva_id` — c'est la prévisualisation puis le commit qui résolvent ce taux vers un `tva_id` réel du référentiel `tva_categories` du marchand, avec repli sur le taux le plus bas si `0` est fourni, et blocage (`tva_rate_unresolved`) si aucun taux correspondant n'existe chez le marchand.
----
+Le canal de vente est porté par `tva_categories.delivery_type`, joint avec la table globale `labels` (`label_type = 'order_type'`, `lang = 'FR'`) pour obtenir le libellé traduit affiché à l'utilisateur (« Sur place », « À emporter », « En livraison »). Le commentaire SQL de la colonne `delivery_type` annoncerait des valeurs numériques (0/1/3) mais c'est **faux** — les données réelles portent les chaînes `'IN'`, `'TAKE_AWAY'`, `'DELIVERY'` ; c'est explicitement documenté dans le code comme une divergence entre le commentaire de schéma et la réalité (`internal/modules/menu/importer/models.go:261-266` : « Il est faux — les donnees portent 'IN', 'TAKE_AWAY' et 'DELIVERY', ce que confirment la jointure ... et le back-office »).
 
+**Où l'utilisateur choisit ce taux :**
+
+- **Fiche de création/édition unitaire de produit** — `src/components/menu/SimpleProductSheet.tsx`. Un composant `TvaRateSelect` (ligne 130+) par canal, alimenté par `useProductEditData(open)` (`src/hooks/useProductEditData.ts:7,22`) qui appelle `menuService.getTvaRates()` → `GET /pos/tva_rates` (le même endpoint global, `menuService.ts:288-292`), puis filtré côté client par `delivery_type` (`findTvaRates('IN' | 'TAKE_AWAY' | 'DELIVERY')`, `SimpleProductSheet.tsx:231-235`). L'utilisateur choisit un `<Select>` de taux réels (ex. 5,5 % / 10 % / 20 %), jamais une saisie libre. Le payload envoyé (`ProductCreatePayload`, `src/types/menu.ts:320-333`) porte directement les identifiants résolus :
+  ```ts
+  tva_in_id: string;
+  tva_take_away_id: string;
+  tva_delivery_id: string;
+  ```
+  vers `POST /menu/products` (`menuService.createProduct`, `menuService.ts:1047-1059`). Les trois taux sont obligatoires à la création (validation front, `SimpleProductSheet.tsx:559-566`).
+
+- **Saisie de masse (porte 3, 6.1)** — même référentiel `GET /pos/tva_rates` (`ImportManualStep.tsx:46-50`, requête react-query `qk.menuTvaRates.all`), filtré par canal, mais le payload transmis à l'API porte le **taux en pourcentage brut** (`tva_in`, `tva_take_away`, `tva_delivery`, `float64|null`) et non un `tva_id` — c'est la preview serveur (`importer.BuildPreview`) qui le résout ensuite en `tva_id`, exposé au restaurateur dans l'écran de vérification (`ImportTvaResolution.tsx`) où il peut corriger le mapping avant validation.
+
+- **Fichiers importés (portes 1 et 2)** : le taux est lu tel quel dans le fichier (colonne « TVA » / « TVA emporte » / « TVA livraison », `wello_generic.go:36-38`, ou colonnes fixes de l'export Zelty, `zelty.go:22-24`), toujours en pourcentage brut, jamais en `tva_id` — résolution identique à la saisie manuelle, dans la preview.
+
+En résumé : la saisie **unitaire** d'un produit choisit directement un `tva_id` existant dans le référentiel global ; les **trois portes d'import en masse** manipulent un taux en pourcentage et laissent la résolution vers `tva_id` à l'étape de prévisualisation — un utilisateur ne peut donc jamais créer de nouveau taux de TVA depuis aucun de ces parcours : le référentiel `tva_categories` n'est modifiable par aucune route découverte dans `internal/modules/menu/` ni `internal/modules/pos/` (aucun `POST`/`PATCH` sur `tva_categories` n'apparaît dans `cmd/api/routes.go`) — ce qui est cohérent avec son caractère de table globale, hors du périmètre applicatif d'un marchand.
 ## 7. Paramètres marchand
 
-*Note méthodologique : l'API n'a pas de module `internal/modules/settings/` ni `internal/modules/merchant/` dédié. La gestion des paramètres marchand est portée par le module `internal/modules/pos/` (fichiers `create_*.go`, `repository.go`, `service.go`, `handler.go`), qui lit/écrit directement les tables `merchant` et `merchant_parameters` (+ tables satellites). Le schéma SQL de référence croise deux sources : le dump MySQL réel `docs/migration-postgres/wello-resto-mysql-ddl.md` (généré le 13/07/2026) et les fichiers `migrations/done/*.sql` qui s'appliquent séquentiellement par-dessus.*
+*Note méthodologique : l'API n'a pas de module `internal/modules/settings/` ni `internal/modules/merchant/` dédié. La gestion des paramètres marchand est portée par le module `internal/modules/pos/` (fichiers `create_*.go`, `repository.go`, `service.go`, `handler.go`), qui lit/écrit directement les tables `merchant` et `merchant_parameters` (+ tables satellites).*
 
 ### 7.1. Table(s) de paramétrage d'un marchand
 
-Deux tables portent l'essentiel des paramètres : `merchant` (identité/coordonnées — structure complète en Section 1.1) et `merchant_parameters` (comportement métier, PK = `merchant_id`, relation 1-1 avec `merchant`).
+**`merchant_parameters`** (PK `merchant_id`, relation 1-1 avec `merchant`) — liste complète des colonnes (schéma Postgres staging, introspection live) :
 
-**`merchant_parameters`** (`docs/migration-postgres/wello-resto-mysql-ddl.md:1862-1915`, complétée par `migrations/done/086_merchant_parameters_pos_covers_count_required.up.sql:17-18`) :
-```sql
-CREATE TABLE `merchant_parameters` (
-  `merchant_id` int(11) NOT NULL,
-  `manage_on_site` tinyint(1) NOT NULL DEFAULT 1,
-  `manage_take_away` tinyint(1) NOT NULL DEFAULT 1,
-  `manage_delivery` tinyint(1) NOT NULL DEFAULT 1,
-  `last_menu_update` timestamp NOT NULL,
-  `concurrent_preparation_capacity` int(11) NOT NULL DEFAULT 1,
-  `delivery_fees` int(11) NOT NULL DEFAULT 0,
-  `delivery_fees_limit` int(11) NOT NULL DEFAULT 0,
-  `delivery_distance_limit` int(11) NOT NULL DEFAULT 5000,
-  `minimum_cart_for_delivery_order` int(11) NOT NULL DEFAULT 1000,
-  `kitchen_show_only_paid` tinyint(1) NOT NULL DEFAULT 0,
-  `kitchen_show_pending_approval` tinyint(1) NOT NULL DEFAULT 0,
-  `kitchen_distribution_mode` varchar(30) NOT NULL DEFAULT 'READY_FOR_DISTRIBUTION' COMMENT 'READY_FOR_DISTRIBUTION / DISTRIBUTE',
-  `production_display_mode` varchar(20) NOT NULL DEFAULT 'CLASSIC' COMMENT 'CLASSIC, PRODUCT_FOCUS',
-  `preparation_time_mode` varchar(20) NOT NULL DEFAULT 'AUTO' COMMENT 'AUTO | MANUAL',
-  `preparation_time` int(11) NOT NULL DEFAULT 15 COMMENT 'for MANUAL, in minuts',
-  `minimum_preparation_time` int(11) NOT NULL DEFAULT 300 COMMENT 'in seconds',
-  `maximum_preparation_time` int(11) NOT NULL DEFAULT 3600 COMMENT 'in seconds',
-  `disable_components_under_safety_stock` tinyint(1) NOT NULL DEFAULT 0,
-  `service_required_for_ordering` tinyint(1) NOT NULL DEFAULT 0,
-  `cash_register_required_for_ordering` tinyint(1) NOT NULL DEFAULT 1,
-  `waiter_app_can_cash_in` tinyint(1) NOT NULL DEFAULT 1,
-  `waiter_app_can_clock_in` tinyint(1) NOT NULL DEFAULT 0,
-  `auto_complete_orders` tinyint(1) NOT NULL DEFAULT 0,
-  `auto_complete_orders_delay` int(11) NOT NULL DEFAULT 10,
-  `auto_accept_sno_delivery_orders` tinyint(1) NOT NULL DEFAULT 0,
-  `auto_accept_sno_take_away_orders` tinyint(1) NOT NULL DEFAULT 0,
-  `automatically_add_customer_rewards` tinyint(1) NOT NULL DEFAULT 1,
-  `warning_new_order_not_paid` tinyint(1) NOT NULL DEFAULT 1,
-  `enable_advance_orders` tinyint(1) NOT NULL DEFAULT 0,
-  `advance_order_days` int(11) NOT NULL DEFAULT 3,
-  `pager_number_required` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Demande un numéro de bipeur',
-  `pos_auto_lock_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `pos_auto_lock_delay_minutes` int(11) NOT NULL DEFAULT 5,
-  `pos_upsell_enabled` tinyint(1) NOT NULL DEFAULT 0,
-  `customer_form_requirements` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`customer_form_requirements`)),
-  `enabled_rating` tinyint(1) NOT NULL DEFAULT 0,
-  `currency` varchar(5) NOT NULL DEFAULT 'EUR',
-  `is_open` tinyint(1) NOT NULL DEFAULT 0,
-  `primary_color` varchar(10) NOT NULL DEFAULT '#212529',
-  `text_color_on_primary_color` varchar(10) NOT NULL DEFAULT '#ffffff',
-  `zoning_type` varchar(20) DEFAULT NULL,
-  `radial_cone_count` int(11) NOT NULL DEFAULT 8,
-  `radial_zone_ranges` varchar(20) NOT NULL DEFAULT '0-3,3-5,5-999',
-  `grid_cell_size_km` int(11) NOT NULL DEFAULT 2,
-  `grid_origin_lat` double DEFAULT NULL,
-  `grid_origin_lng` double DEFAULT NULL,
-  `cardinal_cone_count` int(11) NOT NULL DEFAULT 4,
-  `cardinal_zone_ranges` varchar(30) NOT NULL DEFAULT '0-1,1-3,3-999',
-  `enable_upsell` tinyint(1) NOT NULL DEFAULT 0,
-  `upsell_max_items` int(11) NOT NULL DEFAULT 3,
-  `enable_translation` tinyint(1) NOT NULL DEFAULT 0,
-  `pos_covers_count_required` boolean NOT NULL DEFAULT false
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
-```
-47 paramètres au total (PK exclue). Deux colonnes n'ont **aucune valeur par défaut SQL** malgré la contrainte NOT NULL : `last_menu_update` (obligatoirement fournie explicitement à l'insertion) et `merchant_id` (PK). Trois colonnes sont nullable sans défaut : `customer_form_requirements`, `zoning_type`, `grid_origin_lat`/`grid_origin_lng`.
+| Colonne | Type | Défaut |
+|---|---|---|
+| `manage_on_site` | bool | `true` |
+| `manage_take_away` | bool | `true` |
+| `manage_delivery` | bool | `true` |
+| `last_menu_update` | timestamptz | **NOT NULL, aucun défaut** |
+| `concurrent_preparation_capacity` | int | `1` |
+| `delivery_fees` | int | `0` |
+| `delivery_fees_limit` | int | `0` |
+| `delivery_distance_limit` | int | `5000` |
+| `minimum_cart_for_delivery_order` | int | `1000` |
+| `kitchen_show_only_paid` | bool | `false` |
+| `kitchen_show_pending_approval` | bool | `false` |
+| `kitchen_distribution_mode` | varchar | `'READY_FOR_DISTRIBUTION'` |
+| `production_display_mode` | varchar | `'CLASSIC'` |
+| `preparation_time_mode` | varchar | `'AUTO'` |
+| `preparation_time` | int | `15` |
+| `minimum_preparation_time` | int | `300` |
+| `maximum_preparation_time` | int | `3600` |
+| `disable_components_under_safety_stock` | bool | `false` |
+| `service_required_for_ordering` | bool | `false` |
+| `cash_register_required_for_ordering` | bool | `true` |
+| `waiter_app_can_cash_in` | bool | `true` |
+| `waiter_app_can_clock_in` | bool | `false` |
+| `auto_complete_orders` | bool | `false` |
+| `auto_complete_orders_delay` | int | `10` |
+| `auto_accept_sno_delivery_orders` | bool | `false` |
+| `auto_accept_sno_take_away_orders` | bool | `false` |
+| `automatically_add_customer_rewards` | bool | `true` |
+| `warning_new_order_not_paid` | bool | `true` |
+| `enable_advance_orders` | bool | `false` |
+| `advance_order_days` | int | `3` |
+| `pager_number_required` | bool | `false` |
+| `pos_auto_lock_enabled` | bool | `false` |
+| `pos_auto_lock_delay_minutes` | int | `5` |
+| `pos_upsell_enabled` | bool | `false` |
+| `customer_form_requirements` | jsonb | `NULL` (nullable) |
+| `enabled_rating` | bool | `false` |
+| `currency` | varchar(5) | `'EUR'` |
+| `is_open` | bool | `false` |
+| `primary_color` | varchar | `'#212529'` |
+| `text_color_on_primary_color` | varchar | `'#ffffff'` |
+| `zoning_type` | varchar | `NULL` (nullable) |
+| `radial_cone_count` | int | `8` |
+| `radial_zone_ranges` | varchar | `'0-3,3-5,5-999'` |
+| `grid_cell_size_km` | int | `2` |
+| `grid_origin_lat` / `grid_origin_lng` | double | `NULL` (nullable) |
+| `cardinal_cone_count` | int | `4` |
+| `cardinal_zone_ranges` | varchar | `'0-1,1-3,3-999'` |
+| `enable_upsell` | bool | `false` |
+| `upsell_max_items` | int | `3` |
+| `enable_translation` | bool | `false` |
+| `pos_covers_count_required` | bool | `false` |
 
-**Tables satellites adjacentes** (également « paramètres marchand », par canal) :
-- **`merchant_marketing_settings`** (PK `merchant_id`) : `sms_enabled` DEFAULT 1, `sms_unit_price` DEFAULT 7, `email_enabled` DEFAULT 1, `sms_sender_name`, `email_sender_name`, `sms_template`, `email_template`, `tracking_template` DEFAULT `'Votre commande #{order_id} est en cours de livraison. Suivez-la ici : {tracking_url}'`, `messaggio_login`/`messaggio_from` (identifiants SMS en dur en DEFAULT SQL).
-- **`scannorder_settings`** (PK `merchant_id`) : ~56 colonnes (activation, branding QR-code, `variable_fees` DEFAULT `0.007`, `fixed_fees` DEFAULT `15`, `commission_rate`, `cgv_link`, `legal_notices_link`, `closed_until`). Complétée par `migrations/done/085_scannorder_extra_prep_time.up.sql` (`extra_prep_minutes`, `extra_prep_until`).
-- **`kiosk_settings`** (PK `merchant_id`, `migrations/done/037_kiosk_module.up.sql:76-93`) : `fulfillment_dine_in`/`fulfillment_take_away` DEFAULT TRUE, `force_fulfillment_type`, `pager_number_required` DEFAULT FALSE, `show_allergens` DEFAULT TRUE, `inactivity_timeout_sec` DEFAULT 90, `upsell_enabled` DEFAULT TRUE, `pay_at_counter_enabled` DEFAULT TRUE, `card_payment_enabled` DEFAULT FALSE. Complétée par `migrations/done/061_kiosk_settings_fees.up.sql` (`variable_fees` DEFAULT `0.0070`, `fixed_fees` DEFAULT `15`).
-- **`hours_of_operation`** (une ligne PAR CRÉNEAU, pas une table 1-1 par marchand) : `id`, `merchant_id`, `day_of_week_from`/`to`, `hour_from`/`to`, `first_booking_time`/`last_booking_time`, `booking_capacity` DEFAULT 0, `valid_from`/`valid_to`, `enabled` DEFAULT 1.
+Édité dans le back-office via `src/components/settings/EstablishmentTab.tsx` (onglets « Général », « Prise de commande », « Production », « Livraison », « Sécurité », « Horaires d'ouvertures »), champs déclarés dans `src/config/settingsConfig.ts` (`establishmentTimingsFields`, `establishmentOrderingFields`, `establishmentProductionDisplayFields`, `establishmentSecurityFields`) et `src/types/settings.ts` (`EstablishmentSettings`), via `src/services/settingsService.ts::getEstablishmentSettings/updateEstablishmentSettings` → `GET/PATCH /pos/settings` (`cmd/api/routes.go:771-772`, gérées par `handler.go::GetSettings`/`UpdateMerchantSettings`, sans permission RBAC dédiée — seulement `authMiddleware`).
+
+**`merchant`** — identité/coordonnées, voir 7.3.
+
+**Tables satellites** (une ligne par `merchant_id`, PK = `merchant_id`, sauf mention contraire) :
+
+- **`merchant_marketing_settings`** — gouverne les notifications SMS/email au client (activation, expéditeur, gabarits, prix unitaire SMS, identifiants Messaggio). Colonnes : `sms_enabled` (défaut 1), `sms_unit_price` (défaut 7), `email_enabled` (défaut 1), `sms_sender_name`, `email_sender_name`, `sms_template`, `email_template`, `tracking_template` (défaut `'Votre commande #{order_id} est en cours de livraison. Suivez-la ici : {tracking_url}'`), `messaggio_login`/`messaggio_from`. **Aucun composant back-office trouvé** — recherche exhaustive (`sms_enabled`, `email_enabled`, `messaggio`, `tracking_template`, `sms_sender_name`, `email_sender_name`, tout composant nommé « marketing ») dans `wello-back-office/src` : zéro résultat pertinent (seuls des faux positifs liés au menu/catégories marketing). Cette table n'a donc aujourd'hui **aucune interface d'édition connue** — modification uniquement en base directe.
+- **`scannorder_settings`** (~56 colonnes) — gouverne la commande en ligne QR-code/scan&order : activation par mode (livraison/à emporter/sur place), branding, SEO, frais (`variable_fees` défaut `0.007`, `fixed_fees` défaut `15`), `commission_rate`, `cgv_link`, `legal_notices_link`, `closed_until`, temps de préparation additionnel (`extra_prep_minutes`/`extra_prep_until`, migration `085`). Édité dans `src/pages/ScanNOrder.tsx` (via `src/services/onlineOrdersService.ts::getOnlineOrdersConfig/updateOnlineOrdersConfig`).
+- **`kiosk_settings`** — gouverne le comportement des bornes kiosk : modes de service (`fulfillment_dine_in`/`fulfillment_take_away`), `pager_number_required`, `show_allergens`, `inactivity_timeout_sec` (défaut 90), `upsell_enabled`, `pay_at_counter_enabled` (défaut true), `card_payment_enabled` (défaut false), frais (`variable_fees`/`fixed_fees`, migration `061`). Édité dans `src/pages/kiosks/KioskSettingsPage.tsx`, via `PUT /pos/settings/kiosk/settings` (`cmd/api/routes.go:1681`), protégé par `middleware.RequirePermission(permission.KioskManage)` — la lecture (`GET /pos/settings/kiosk/settings`, ligne 1659) n'a en revanche aucune permission dédiée, seulement `authMiddleware`.
+- **`haccp_settings`** (~25 booléens) — gouverne les exigences de conformité HACCP (traçabilité, contrôles obligatoires par étape). Édité dans `src/pages/haccp/Settings.tsx` (via `src/services/haccpService.ts`).
+- **`planning_settings`** — paramètres légaux du planning RH (repos minimal journalier, fenêtres/multiplicateurs de nuit, multiplicateur jour férié). Édité via `src/components/team/planning/PlanningSettingsModal.tsx` (page `src/pages/equipe/PlanningPage.tsx` / `EquipeSettings.tsx`).
+- **`bookings_settings`** — durée de réservation, tailles de tablée min/max, liste d'attente, SMS de réservation. Édité dans `src/pages/reservations/Settings.tsx` (via `src/services/reservationsService.ts`).
+- **`hours_of_operation`** (une ligne PAR CRÉNEAU, pas 1-1 par marchand) : `id`, `merchant_id`, `day_of_week_from`/`to`, `hour_from`/`to`, `first_booking_time`/`last_booking_time`, `booking_capacity` (défaut 0), `valid_from`/`valid_to`, `enabled` (défaut 1). Édité dans `EstablishmentTab.tsx` onglet « Horaires d'ouvertures » (composant `OpeningHours`), via `POST/PATCH/DELETE /pos/settings/hours_of_operations[/…]`.
+- **Périodes de fermeture (« vacances »)** — table satellite distincte, non anticipée dans le brief : gérée par le composant `VacationPeriods` du même onglet, via `GET/POST/PATCH/DELETE /pos/settings/vacations[/…]` (`cmd/api/routes.go:777-780`, handlers `ListPlanningVacationPeriods`/`CreatePlanningVacationPeriod`/…, migration `083_planning_vacation_periods`). Distincte des congés RH du module `planning`.
 
 ### 7.2. Moyens d'encaissement (méthodes de paiement)
 
-**Constat central : il n'existe aucune table SQL de moyens de paiement paramétrables**, et aucune contrainte `ENUM` en base. La colonne qui porte le code du moyen de paiement (`mop`) est un simple `varchar` libre :
-```
-docs/migration-postgres/wello-resto-mysql-ddl.md:487   `mop` varchar(10) NOT NULL,   -- table payments
-docs/migration-postgres/wello-resto-mysql-ddl.md:2179  `mop` varchar(20) NOT NULL COMMENT 'Means of payment | CURRENCY or PERCENTAGE for discounts',
-```
-Les moyens de paiement sont donc **codés en dur** (constantes/enums applicatifs), et **dupliqués indépendamment dans au moins 4 endroits différents** (API + 3 front-ends), avec des listes divergentes.
+**Il n'existe aucune table SQL de moyens de paiement paramétrables**, aucune contrainte `ENUM` en base. La colonne `mop` (`payments.mop varchar(10) NOT NULL`, `varchar(20)` pour les remises) est un `varchar` libre. Les moyens de paiement sont **codés en dur, dupliqués indépendamment dans au moins 4 endroits**, avec des listes divergentes :
 
-**a) API Go** — aucune liste unique, codes éparpillés en constantes :
+**a) API Go** — pas de liste unique, constantes éparpillées :
 ```go
 // internal/models/users_models.go:14-16
 StripeMOP      = "STRIPE"
@@ -2781,10 +2297,9 @@ CardMOP        = "CB"
 ```go
 // internal/models/payment_models.go:3-8
 const (
-	OperationTypeSale   = "SALE"
-	OperationTypeRefund = "REFUND"
-
-	DeliverooMOP = "DELIVEROO"
+    OperationTypeSale   = "SALE"
+    OperationTypeRefund = "REFUND"
+    DeliverooMOP = "DELIVEROO"
 )
 ```
 ```go
@@ -2793,322 +2308,205 @@ PaymentUberEats  = "UBER_EATS"
 PaymentDeliveroo = "DELIVEROO"
 PaymentStripe    = "STRIPE"
 ```
-Le code `"ES"` (Espèces) n'est même pas une constante nommée : écrit en dur dans une comparaison métier (`internal/modules/cash_registers/repository.go:476`, `if mopLine.MOP == "ES" {`). La struct `MOPLine` est dupliquée deux fois (`internal/models/request_objects.go:161-165` et `internal/modules/cash_registers/models.go:89-93`), avec un type `Amount` différent (`int` vs `float64`).
+`"ES"` (Espèces) n'est même pas une constante nommée (`internal/modules/cash_registers/repository.go:476`, `if mopLine.MOP == "ES" {`). La struct `MOPLine` est dupliquée (`internal/models/request_objects.go:161-165` et `internal/modules/cash_registers/models.go:89-93`) avec un type `Amount` différent (`int` vs `float64`). Le module `analytics` a sa propre liste canonique séparée, `internal/modules/analytics/payment_methods.go:10-21` : `CB, ES, STRIPE, TR, CURRENCY, UBER_EATS, DELIVEROO, other` — avec un commentaire explicite indiquant que `payments.mop` porte en réalité **14 valeurs brutes distinctes en production** (7 moyens de paiement réels + marqueurs de geste commercial `PERCENTAGE`/`DISCOUNT` stockés comme des moyens de paiement + un artefact webhook `STRIPE_WEB_HOOK` + une valeur `'1'` aberrante).
 
-**b) POS Flutter** — enum Dart centralisé, mais propre à ce repo (`lib/models/orders/method_of_payment_enum.dart:1-89`) :
-```dart
-enum MethodOfPaymentEnum {
-  es(serverMop: 'ES', icon: Icons.euro, label: 'Espèce', iconColor: AppColors.paymentEs),
-  stripe(serverMop: 'STRIPE', icon: Icons.euro, label: 'En ligne', iconColor: Color(0xFFFAD02C)),
-  cb(serverMop: 'CB', icon: Icons.credit_card, label: 'Carte bancaire', iconColor: AppColors.paymentCb),
-  tr(serverMop: 'TR', icon: Icons.money, label: 'Ticket restaurant', iconColor: AppColors.paymentTr),
-  carteTicketRestaurant(serverMop: 'CARTE TICKET RESTAURANT', icon: Icons.credit_card, label: 'Carte Ticket Restaurant', iconColor: Color(0xFF155FBE)),
-  other(serverMop: 'OTHER', icon: Icons.euro, label: 'Autre', iconColor: AppColor.secondaryColor),
-  qr(serverMop: 'QR', icon: Icons.qr_code, label: 'QR code'),
-  discountByAmount(serverMop: 'CURRENCY', icon: Icons.eco, label: 'Réduction monta.', isDiscount: true),
-  discountByPercentage(serverMop: 'PERCENTAGE', icon: Icons.eco, label: 'Réduction monta.', isDiscount: true);
-  ...
-}
-```
-Seul un sous-ensemble (4 boutons — CB, ES, TR, QR) est exposé au caissier au moment de l'encaissement, également en dur (`lib/ui/widgets/dialogs/calculator/right_pannel/calculator_menu_view.dart:49-76`). Aucun de ces boutons n'est piloté par un paramètre marchand issu de l'API — la liste affichée au caissier est fixe pour tous les marchands.
+**b) POS Flutter** — enum Dart centralisé mais propre à ce dépôt (`lib/models/orders/method_of_payment_enum.dart:6-89`) : `es/STRIPE/cb/tr/carteTicketRestaurant/other/qr/discountByAmount/discountByPercentage`. Seul un sous-ensemble (CB, ES, TR, QR) est exposé au caissier, en dur (`lib/ui/widgets/dialogs/calculator/right_pannel/calculator_menu_view.dart:49-76`) — non piloté par un paramètre marchand.
 
-**c) Borne kiosk** — deux méthodes seulement, identifiants en dur, mais leur **affichage** est conditionné par deux flags qui viennent bien de l'API (`kiosk_settings.card_payment_enabled` / `pay_at_counter_enabled`) — `lib/presentation/screens/payment_screen.dart:170-207` :
-```dart
-final cardPaymentEnabled = settings?.cardPaymentEnabled ?? false;
-final terminalLocationConfigured = settings?.terminalLocationId != null &&
-    settings!.terminalLocationId!.isNotEmpty;
-final payAtCounterEnabled = settings?.payAtCounterEnabled ?? true;
+**c) Borne kiosk** — deux méthodes, affichage conditionné par deux flags qui viennent bien de l'API (`kiosk_settings.card_payment_enabled`/`pay_at_counter_enabled`) — `lib/presentation/screens/payment_screen.dart:173,179` (`cardPaymentEnabled ?? false`, `payAtCounterEnabled ?? true`). Identifiants `'card'`/`'pay_at_counter'` non alignés avec les codes MOP de l'API ni l'enum POS Flutter (traduction faite côté API, `internal/modules/kiosk/service.go:1562-1628`).
 
-final tiles = [
-  if (payAtCounterEnabled)
-    KioskSelectionTile(icon: Icons.storefront, label: 'Payer en caisse', ...
-        onTap: () => _selectMethod(context, orderController, 'pay_at_counter')),
-  if (cardPaymentEnabled && terminalLocationConfigured)
-    KioskSelectionTile(icon: Icons.credit_card, label: 'Payer par carte', ...
-        onTap: () => _selectMethod(context, orderController, 'card')),
-];
-```
-Les identifiants `'card'` / `'pay_at_counter'` sont des chaînes en dur non alignées avec les codes MOP de l'API (`CB`, `ES`) ni avec l'enum POS Flutter — la traduction se fait côté API (`internal/modules/kiosk/service.go:1562-1628`).
+**d) Back-office** — deux listes en dur de plus (`src/components/cash/ClosureModal.tsx:50-56`, `PRESETS` = CB/CASH→ES/TR/CHEQUE/OTHER ; `src/services/cashRegisterService.ts:271-289`, `normalizeMopCode`). `CHEQUE` n'existe dans aucune des listes de l'API ni du POS Flutter ; inversement `STRIPE`, `QR`, `CARTE TICKET RESTAURANT`, `CURRENCY`, `PERCENTAGE` (POS Flutter) n'apparaissent dans aucune liste du back-office.
 
-**d) Back-office web** — deux listes en dur supplémentaires, différentes des deux précédentes, plus une fonction de normalisation :
-```tsx
-// src/components/cash/ClosureModal.tsx:47-56
-const PRESETS: Preset[] = [
-  { code: 'CB', label: 'Carte Bancaire', apiLabel: 'CB' },
-  { code: 'CASH', label: 'Espèces', apiLabel: 'ES' },
-  { code: 'TR', label: 'Ticket Resto', apiLabel: 'TR' },
-  { code: 'CHEQUE', label: 'Chèque', apiLabel: 'CHEQUE' },
-  { code: 'OTHER', label: 'Autre', apiLabel: '' },
-];
-```
-```ts
-// src/services/cashRegisterService.ts:271-289
-const normalizeMopCode = (value: string | undefined): string => {
-  const raw = (value ?? '').toUpperCase();
-  if (raw === 'ES' || raw === 'CASH') return 'CASH';
-  if (raw === 'CB') return 'CB';
-  if (raw === 'TR') return 'TR';
-  if (raw === 'CHEQUE' || raw === 'CHQ') return 'CHEQUE';
-  return raw || 'OTHER';
-};
-```
-Remarque factuelle : `CHEQUE` apparaît dans le back-office mais **n'existe dans aucune des listes de l'API ni du POS Flutter**. À l'inverse, `"STRIPE"`, `"QR"`, `"CARTE TICKET RESTAURANT"`, `"CURRENCY"`, `"PERCENTAGE"` (POS Flutter) n'apparaissent dans aucune liste du back-office.
-
-**Synthèse** : aucun des 4 emplacements ne lit une liste depuis l'API/la base — la colonne `mop` étant un `varchar` libre, il n'existe **aucun appel API centralisé** qui retournerait « la liste des moyens de paiement du marchand ».
+**Synthèse** : aucun des 4 emplacements ne lit une liste depuis l'API — il n'existe aucun appel centralisé « liste des moyens de paiement du marchand ».
 
 ### 7.3. Horaires d'ouverture, fuseau horaire, informations légales
 
-**Fuseau horaire** : `merchant.timezone`, `varchar(50) NOT NULL DEFAULT 'Europe/Paris'` — **NOT NULL avec DEFAULT SQL**, jamais bloquant. Non modifiable via l'endpoint de settings simplifié (`POSSettingsInfoPatch` n'a pas de champ Timezone), mais existe dans le modèle « bas niveau » `MerchantSettings.Timezone *string` et pris en compte si le client envoie directement `{"merchant": {"timezone": "..."}}`. Aucune validation applicative (ni Go ni CHECK SQL) que la valeur soit un identifiant IANA valide. **`CreateMerchantRequest` n'a pas de champ `timezone`** — la valeur `'Europe/Paris'` s'applique donc systématiquement à la création, quel que soit le pays réel du marchand.
+**Fuseau horaire** : `merchant.timezone varchar(50) NOT NULL DEFAULT 'Europe/Paris'` — NOT NULL avec défaut SQL, jamais bloquant. `CreateMerchantRequest` (création) n'a pas de champ `timezone` : la valeur `'Europe/Paris'` s'applique systématiquement à la création, quel que soit le pays réel du marchand. Le modèle bas niveau `models.MerchantSettings` (`internal/models/request_objects.go:640-662`) porte un champ `Timezone *string` et **l'API l'écrit bien** si fourni (`internal/modules/pos/repository.go:1049-1052`, `UpdateMerchant`) — mais **le formulaire back-office (`EstablishmentInfo`, `src/types/settings.ts:22-40`, et `establishmentInfoFields`, `src/config/settingsConfig.ts:11-21`) n'expose aucun champ timezone** : la modification n'est possible qu'en appelant l'API bas niveau directement, jamais depuis l'UI de settings actuelle.
 
-**Horaires d'ouverture** : stockés dans `hours_of_operation` (une ligne par créneau). Toutes les colonnes de créneau sont `NOT NULL` au niveau de la ligne, mais **aucune contrainte n'impose qu'au moins une ligne existe** pour un marchand donné. **Aucune ligne `hours_of_operation` n'est créée automatiquement à la création d'un marchand** : `InitMerchantSatellites` initialise 7 tables satellites mais ne touche jamais `hours_of_operation`. Le statut ouvert/fermé « manuel » (indépendant des créneaux) est porté par `merchant_parameters.is_open` (DEFAULT 0) — un nouveau marchand démarre donc à **fermé** par défaut. Aucune validation applicative n'exige la présence d'au moins un créneau pour activer un marchand.
+**Horaires d'ouverture** : `hours_of_operation`, toutes colonnes NOT NULL au niveau de la ligne, mais aucune contrainte n'impose qu'au moins une ligne existe pour un marchand. **Aucune ligne n'est créée automatiquement à la création** : `InitMerchantSatellites` initialise 7 tables satellites (voir 8.4) mais ne touche jamais `hours_of_operation`. Le statut ouvert/fermé « manuel » (`merchant_parameters.is_open`, défaut `false`) fait qu'un nouveau marchand démarre **fermé**.
 
 **Informations légales** :
 
-| Info | Table.colonne | Type SQL | NULL ? | Validation applicative Go ? |
+| Info | Table.colonne | NULL ? | Validation Go à la création | Éditable en back-office ? |
 |---|---|---|---|---|
-| Raison sociale | `merchant.fullName` | varchar(50) | NOT NULL, aucun défaut | Oui, à la création |
-| SIRET | `merchant.SIRET` | varchar(50) | NOT NULL, aucun défaut | Oui, à la création |
-| TVA intracommunautaire | `merchant.vat_number` | varchar(50) | nullable | Aucune |
-| Adresse | `merchant.address`/`street_number`/`street`/`zip_code`/`city` | text/varchar NOT NULL | NOT NULL (sauf `country`) | Non |
-| Téléphone | `merchant.merchantTel` | varchar(15) | NOT NULL, aucun défaut | Oui, à la création |
-| Site web | `merchant.web_site` | varchar(100) | NOT NULL, aucun défaut | Non |
-| Email | `merchant.email` | varchar(100) | nullable | Non |
+| Raison sociale | `merchant.fullName` | NOT NULL, aucun défaut | Oui | Oui (`establishmentInfoFields`, champ `name`) |
+| SIRET | `merchant.SIRET` | NOT NULL, aucun défaut | Oui | **Non — `readOnly: true`** (`settingsConfig.ts:14`) : affiché mais non modifiable après création |
+| TVA intracom | `merchant.vat_number` | **nullable** | Aucune | **Non — aucun champ dans l'UI ni dans `MerchantSettings` (le modèle bas niveau lui-même n'a pas de champ `VatNumber`)** |
+| Adresse | `merchant.address`/`street_number`/`street`/`zip_code`/`city` | NOT NULL (sauf `country`) | Non | Oui (`AddressAutocomplete`) |
+| Téléphone | `merchant.merchantTel` | NOT NULL, aucun défaut | Oui | Oui |
+| Site web | `merchant.web_site` | NOT NULL, aucun défaut | Non | Non exposé dans `EstablishmentTab` (présent seulement à la création, `CreateEstablishmentDialog`) |
+| Email | `merchant.email` | nullable | Non | Non exposé dans `EstablishmentTab` |
 
-Concernant `vat_number` : **aucun chemin applicatif Go n'écrit jamais cette colonne** en dehors des fichiers de test d'intégration. Elle n'est utilisée qu'en lecture, pour l'en-tête de facture PDF (`internal/modules/pos/accounting/repository.go:89,106`, `internal/modules/order_life_cycle/invoice_pdf.go:16-18`). Il n'existe **aucun endpoint** permettant de la renseigner depuis l'API — elle reste `NULL` pour tout marchand créé via le flux normal, sauf intervention directe en base.
+Concernant `vat_number` : **aucun chemin applicatif Go n'écrit jamais cette colonne** hors tests d'intégration. Lue uniquement pour l'en-tête de facture PDF (`internal/modules/pos/accounting/repository.go:89,106`). Aucun endpoint ne permet de la renseigner — elle reste `NULL` pour tout marchand créé via le flux normal.
 
-**Validation applicative à la création** — `internal/modules/pos/create_service.go:13-19` :
+**Validation applicative à la création** — `internal/modules/pos/create_service.go:14-19` :
 ```go
-func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantRequest) (CreateMerchantResponse, error) {
-	if strings.TrimSpace(req.FullName) == "" ||
-		strings.TrimSpace(req.SIRET) == "" ||
-		strings.TrimSpace(req.Tel) == "" ||
-		strings.TrimSpace(req.PackageID) == "" {
-		return CreateMerchantResponse{}, models.ErrInvalidInput
-	}
+if strings.TrimSpace(req.FullName) == "" ||
+    strings.TrimSpace(req.SIRET) == "" ||
+    strings.TrimSpace(req.Tel) == "" ||
+    strings.TrimSpace(req.PackageID) == "" {
+    return CreateMerchantResponse{}, models.ErrInvalidInput
+}
 ```
-Seuls `FullName`, `SIRET`, `Tel` et `PackageID` sont vérifiés non-vides. **`Address`, `StreetNumber`, `Street`, `ZipCode`, `City`, `WebSite`, `Email` ne sont validés nulle part côté Go**, alors que la plupart sont `NOT NULL` en SQL : une chaîne vide `""` satisfait la contrainte SQL sans satisfaire un besoin métier réel de « champ renseigné ». `timezone`, `lat`, `lng`, `vat_number`, `default_role_id` ne figurent pas dans la liste des colonnes insérées par `InsertMerchant` : ils prennent systématiquement leur valeur `DEFAULT` SQL.
+Seuls `FullName`, `SIRET`, `Tel`, `PackageID` sont vérifiés non-vides. `Address`, `StreetNumber`, `Street`, `ZipCode`, `City`, `WebSite`, `Email` ne sont validés nulle part côté Go, bien que la plupart soient `NOT NULL` en SQL — une chaîne vide satisfait la contrainte SQL sans satisfaire un besoin métier de « champ renseigné ». `timezone`, `lat`, `lng`, `vat_number`, `default_role_id` ne figurent pas dans les colonnes insérées par `InsertMerchant` : ils prennent systématiquement leur valeur `DEFAULT` SQL. Côté back-office, `CreateEstablishmentDialog.tsx` impose un minimum plus strict que l'API ne l'exige : `full_name`, `siret`, `tel` obligatoires via Zod (`formSchema`, lignes 37-47) — cohérent avec la validation Go — mais `email`, `address`, `zip_code`, `city`, `web_site` restent optionnels dans le formulaire, exactement comme côté API.
 
 ### 7.4. Mécanisme de valeurs par défaut à la création d'un marchand
 
-**Oui, un mécanisme applicatif explicite existe** — pas seulement des colonnes avec `DEFAULT` SQL : le code Go exécute, dans une transaction unique, une série d'`INSERT` explicites dans les tables satellites juste après la création de `merchant` (détail complet dans la Section 8, `InitMerchantSatellites`).
+**Oui, un mécanisme applicatif explicite existe**, pas seulement des `DEFAULT` SQL : le Go exécute, dans une transaction unique, une série d'`INSERT` explicites dans les tables satellites juste après la création de `merchant` (détail complet en 8.2, `InitMerchantSatellites`).
 
-**Lecture factuelle du mécanisme** :
-- La ligne `merchant_parameters` d'un nouveau marchand est créée avec **seulement** `merchant_id` et `last_menu_update` explicitement fournis par le Go — les 46 autres colonnes prennent leur valeur via les `DEFAULT` SQL. Il n'y a **aucune valeur métier fixée en dur côté Go** pour `merchant_parameters` : le comportement par défaut d'un nouveau marchand dépend entièrement du schéma SQL, pas d'une politique applicative explicite.
-- Trois colonnes `NOT NULL` sans `DEFAULT` SQL sur les tables satellites obligent le Go à fournir une valeur explicite pour que l'`INSERT` ne échoue pas sous Postgres : `scannorder_settings.seo_title/seo_description/seo_keywords/seo_cuisine_type` (`''` explicite), `merchant_parameters.last_menu_update` (horodatage UTC explicite), `bookings_settings.code` (`''` explicite).
-- Un rôle RBAC « admin » est également attribué par défaut au marchand via `merchant.default_role_id`, positionné par `SetDefaultRoleID` uniquement s'il est encore `NULL`.
-- Aucune ligne n'est créée pour `hours_of_operation` : ce paramètre marchand n'a **aucun mécanisme de valeur par défaut**, ni applicatif ni SQL — un nouveau marchand n'a simplement aucun créneau d'ouverture jusqu'à saisie manuelle.
+- La ligne `merchant_parameters` d'un nouveau marchand ne reçoit explicitement que `merchant_id` et `last_menu_update` — les ~52 autres colonnes prennent leur valeur `DEFAULT` SQL. Aucune valeur métier n'est fixée en dur côté Go pour `merchant_parameters`.
+- Trois colonnes `NOT NULL` sans `DEFAULT` SQL obligent le Go à fournir une valeur explicite : `scannorder_settings.seo_title/seo_description/seo_keywords/seo_cuisine_type` (`''`), `merchant_parameters.last_menu_update` (horodatage UTC explicite), `bookings_settings.code` (`''`).
+- Un rôle RBAC « admin » est attribué par défaut via `merchant.default_role_id`, positionné par `SetDefaultRoleID` uniquement s'il est encore `NULL` — et **redressé en continu** par une tâche cron `@hourly` (`cmd/api/tasks.go:81`, `taskManager.ReconcileSystemRolePermissions`, logique partagée avec `cmd/seed_system_roles`, `internal/modules/roles/repository.go::ReconcileSystemRoles`) : un établissement dont le rôle admin serait incomplet (nouvelle clé de permission ajoutée au catalogue après sa création, par exemple) est réparé automatiquement dans l'heure, sans intervention manuelle.
+- Aucune ligne n'est créée pour `hours_of_operation` ni pour les « vacances » (§7.1) : aucun mécanisme de valeur par défaut, applicatif ou SQL — un nouveau marchand n'a aucun créneau d'ouverture jusqu'à saisie manuelle.
+
 ---
 
 ## 8. Création de compte actuelle
 
 ### 8.1. Endpoint(s) et chaîne handler → service → repository
 
-**Route** — `cmd/api/routes.go:663-666` :
+**Route** — `cmd/api/routes.go:757-760` :
 ```go
-	// --- POS ---
-	r.Route("/pos", func(r chi.Router) {
-		r.Use(authMiddleware)
+r.Route("/pos", func(r chi.Router) {
+    r.Use(authMiddleware)
 
-		r.Post("/create", posH.CreateMerchant)
+    r.Post("/create", posH.CreateMerchant)
 ```
 Soit **`POST /pos/create`**.
 
-**Handler** — `internal/modules/pos/create_handler.go` (intégral) :
+**Handler** — `internal/modules/pos/create_handler.go` :
 ```go
-package pos
-
-import (
-	"encoding/json"
-	"errors"
-	"net/http"
-	"welloresto-api/internal/models"
-)
-
-// CreateMerchant handles POST /pos/create.
 func (h *POSHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) {
-	var req CreateMerchantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "pos", "create", map[string]string{"error": "invalid_request_body"})
-		return
-	}
-
-	resp, err := h.service.CreateMerchant(r.Context(), req)
-	if err != nil {
-		models.SendErrorJSON(w, "user", "create", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusCreated, "pos", "create", resp)
+    var req CreateMerchantRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        models.SendJSON(w, http.StatusBadRequest, "pos", "create", map[string]string{"error": "invalid_request_body"})
+        return
+    }
+    resp, err := h.service.CreateMerchant(r.Context(), req)
+    if err != nil {
+        models.SendErrorJSON(w, "user", "create", err)
+        return
+    }
+    models.SendJSON(w, http.StatusCreated, "pos", "create", resp)
 }
 ```
 
-**Payload exact attendu** (`internal/modules/pos/create_models.go`, intégral) :
+**Payload exact** (`internal/modules/pos/create_models.go`) :
 ```go
-package pos
-
-// CreateMerchantRequest is the JSON payload for POST /pos/create.
 type CreateMerchantRequest struct {
-	FullName     string `json:"full_name"`
-	Address      string `json:"address"`
-	StreetNumber string `json:"street_number"`
-	Street       string `json:"street"`
-	ZipCode      string `json:"zip_code"`
-	City         string `json:"city"`
-	Country      string `json:"country"`
-	SIRET        string `json:"siret"`
-	Tel          string `json:"tel"`
-	WebSite      string `json:"web_site"`
-	Email        string `json:"email"`
-	PackageID    string `json:"package_id"`
-	// Optional: if set the user is linked to the new merchant in the same transaction.
-	UserID string `json:"user_id,omitempty"`
-	// Rights to grant when linking. Ignored if UserID is empty.
-	Admin bool `json:"admin"`
+    FullName     string `json:"full_name"`
+    Address      string `json:"address"`
+    StreetNumber string `json:"street_number"`
+    Street       string `json:"street"`
+    ZipCode      string `json:"zip_code"`
+    City         string `json:"city"`
+    Country      string `json:"country"`
+    SIRET        string `json:"siret"`
+    Tel          string `json:"tel"`
+    WebSite      string `json:"web_site"`
+    Email        string `json:"email"`
+    PackageID    string `json:"package_id"`
+    UserID string `json:"user_id,omitempty"` // optionnel : lie l'utilisateur dans la même transaction
+    Admin bool `json:"admin"`
 }
-
-// CreateMerchantResponse is returned on success (201).
 type CreateMerchantResponse struct {
-	MerchantID string `json:"merchant_id"`
+    MerchantID string `json:"merchant_id"`
 }
 ```
-Validation minimale : `FullName`, `SIRET`, `Tel`, `PackageID` doivent être non vides ; tout le reste (adresse, ville, email, etc.) est accepté même vide, sans validation de format (pas de vérification d'email valide, pas de vérification que `PackageID` référence une ligne existante dans la table `packages`).
+Validation minimale : `FullName`, `SIRET`, `Tel`, `PackageID` non vides ; tout le reste accepté même vide, sans validation de format (pas de vérification d'email, pas de vérification que `PackageID` référence une ligne existante dans `packages`).
 
-**Câblage DI** (`cmd/api/routes.go:202-203,478`) :
-```go
-posRepo := posModule.NewPOSRepository(selectedDB)
-posService := posModule.NewPOSService(posRepo, notificationService)
-...
-posH := posModule.NewPOSHandler(posService, r2Client)
-```
+**Consommateur confirmé côté produit** : `wello-back-office/src/components/dashboard/CreateEstablishmentDialog.tsx` — un vrai bouton « Nouvel établissement » du tableau de bord, dont le commentaire de code (ligne 30) référence explicitement ce document d'audit (`/** IDs de la table packages — voir docs/audit-parcours-onboarding.md. */`). Appelle `authService.createMerchant({ ..., user_id: authData.user.id, admin: true })` — **c'est-à-dire le `user_id` de l'utilisateur back-office actuellement connecté, quel qu'il soit**, avec `admin: true`.
 
 ### 8.2. Ordre exact des opérations et atomicité
 
-**Service** — `internal/modules/pos/create_service.go:11-74`, texte intégral :
+**Service** — `internal/modules/pos/create_service.go:13-74`, texte intégral :
 ```go
-// CreateMerchant creates a new merchant with its satellite tables inside a single
-// transaction. If req.UserID is non-empty the user is linked in the same transaction.
 func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantRequest) (CreateMerchantResponse, error) {
-	if strings.TrimSpace(req.FullName) == "" ||
-		strings.TrimSpace(req.SIRET) == "" ||
-		strings.TrimSpace(req.Tel) == "" ||
-		strings.TrimSpace(req.PackageID) == "" {
-		return CreateMerchantResponse{}, models.ErrInvalidInput
-	}
+    if strings.TrimSpace(req.FullName) == "" ||
+        strings.TrimSpace(req.SIRET) == "" ||
+        strings.TrimSpace(req.Tel) == "" ||
+        strings.TrimSpace(req.PackageID) == "" {
+        return CreateMerchantResponse{}, models.ErrInvalidInput
+    }
 
-	merchantToken, err := helpers.GenerateToken(10) // 20-char hex token -> VARCHAR(20)
-	if err != nil {
-		return CreateMerchantResponse{}, err
-	}
+    merchantToken, err := helpers.GenerateToken(10) // 20-char hex token → VARCHAR(20)
+    if err != nil {
+        return CreateMerchantResponse{}, err
+    }
 
-	var merchantID string
-	err = dbutils.RunInTx(ctx, s.posRepo.database, func(txCtx context.Context) error {
-		// Step 1 — create merchant row
-		merchantID, err = s.posRepo.InsertMerchant(txCtx, req, merchantToken)
-		if err != nil {
-			return err
-		}
+    var merchantID string
+    err = dbutils.RunInTx(ctx, s.posRepo.database, func(txCtx context.Context) error {
+        // Step 1 — create merchant row
+        merchantID, err = s.posRepo.InsertMerchant(txCtx, req, merchantToken)
+        if err != nil { return err }
 
-		// Step 2 — create subscription from the requested package
-		if err := s.posRepo.InsertSubscription(txCtx, merchantID, strings.TrimSpace(req.PackageID)); err != nil {
-			return err
-		}
+        // Step 2 — create subscription from the requested package
+        if err := s.posRepo.InsertSubscription(txCtx, merchantID, strings.TrimSpace(req.PackageID)); err != nil { return err }
 
-		// Step 3 — initialise companion tables
-		if err := s.posRepo.InitMerchantSatellites(txCtx, merchantID); err != nil {
-			return err
-		}
+        // Step 3 — initialise companion tables
+        if err := s.posRepo.InitMerchantSatellites(txCtx, merchantID); err != nil { return err }
 
-		// Step 4 — RBAC lot 1 (additive, strictly groundwork): seed the two
-		// system roles and point the merchant's default at "admin" (RBAC lot 4
-		// decision: every account becomes Administrateur while permissions are
-		// not yet exploited from the UI). Runs before step 5 so the optional
-		// initial user linkage below has a default_role_id to read;
-		// insertUserRightsTx fails explicitly if it is still unset.
-		adminRoleID, _, err := s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)
-		if err != nil {
-			return err
-		}
-		if err := s.posRepo.SetDefaultRoleID(txCtx, merchantID, adminRoleID); err != nil {
-			return err
-		}
+        // Step 4 — RBAC lot 1: seed the two system roles and point the
+        // merchant's default at "admin" (every account becomes
+        // Administrateur while permissions are not yet exploited from the UI).
+        adminRoleID, _, err := s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)
+        if err != nil { return err }
+        if err := s.posRepo.SetDefaultRoleID(txCtx, merchantID, adminRoleID); err != nil { return err }
 
-		// Step 5 — optional user linkage
-		if strings.TrimSpace(req.UserID) != "" {
-			if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin, adminRoleID); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return CreateMerchantResponse{}, err
-	}
-
-	return CreateMerchantResponse{MerchantID: merchantID}, nil
+        // Step 5 — optional user linkage
+        if strings.TrimSpace(req.UserID) != "" {
+            if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin, adminRoleID); err != nil { return err }
+        }
+        return nil
+    })
+    if err != nil { return CreateMerchantResponse{}, err }
+    return CreateMerchantResponse{MerchantID: merchantID}, nil
 }
 ```
 
-**Ordre exact d'écriture, table par table** (`internal/modules/pos/create_repository.go`) :
-
-1. `INSERT INTO merchant (fullName, address, street_number, street, zip_code, city, country, SIRET, merchantTel, web_site, email, token)`
-2. `INSERT INTO subscriptions (merchant_id, package_id, stripe_subscription_id)` avec `stripe_subscription_id = ''`
+**Ordre exact d'écriture, table par table** (`internal/modules/pos/create_repository.go:1-207`) :
+1. `INSERT INTO merchant (fullName, address, street_number, street, zip_code, city, country, SIRET, merchantTel, web_site, email, token)` — `country` défaut `"France"` si vide.
+2. `INSERT INTO subscriptions (merchant_id, package_id, stripe_subscription_id)` avec `stripe_subscription_id = ''` explicite.
 3. `InitMerchantSatellites` — dans cet ordre interne :
-   - 2 × `INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag)` (menu standard, menu-only/mywelloresto)
-   - `INSERT INTO scannorder_settings (merchant_id, seo_title, seo_description, seo_keywords, seo_cuisine_type)` avec chaînes vides
+   - 2× `INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag)` (menu standard, puis menu-only/mywelloresto)
+   - `INSERT INTO scannorder_settings (merchant_id, seo_title, seo_description, seo_keywords, seo_cuisine_type)` (chaînes vides)
    - `INSERT INTO merchant_parameters (merchant_id, last_menu_update)`
    - `INSERT INTO merchant_marketing_settings (merchant_id)`
    - `INSERT INTO haccp_settings (merchant_id, created_at, updated_at)`
-   - `INSERT INTO bookings_settings (merchant_id, code)` avec `code = ''`
-   - `INSERT INTO cash_desks (merchant_id, name)` avec `name = 'Caisse principale'`
-4. `s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)` — crée (si absentes) deux lignes `roles` (système `admin` et `staff`) pour ce `merchant_id`, chacune peuplée de son jeu de permissions de base via `INSERT INTO role_permissions`
-5. `UPDATE merchant SET default_role_id = ? WHERE ... AND default_role_id IS NULL` (pointant vers le rôle `admin`)
-6. **Optionnel**, si `req.UserID` non vide : `INSERT INTO users_rights (user_id, merchant_id, token, admin, role_id, enabled) VALUES (?, ?, ?, ?, ?, TRUE)`
+   - `INSERT INTO bookings_settings (merchant_id, code)` (`code = ''`)
+   - `INSERT INTO cash_desks (merchant_id, name)` (`name = 'Caisse principale'`)
+4. `EnsureSystemRoles` — crée (si absentes) 2 lignes `roles` (« admin », « staff ») pour ce `merchant_id`, peuplées via `INSERT INTO role_permissions`.
+5. `UPDATE merchant SET default_role_id = ? WHERE id = ? AND default_role_id IS NULL` (pointant vers « admin »).
+6. **Optionnel**, si `req.UserID` non vide : `INSERT INTO users_rights (user_id, merchant_id, token, admin, role_id, enabled) VALUES (?, ?, ?, ?, ?, TRUE)`.
 
-**Atomicité** : oui, une **vraie transaction SQL** (`sql.Tx` natif), pas de compensation applicative. `internal/utils/dbutils/run_in_tx.go:9-30`, texte intégral :
+**Atomicité : oui, une vraie transaction SQL native** (`sql.Tx`), aucune compensation applicative. `internal/utils/dbutils/run_in_tx.go:9-30` :
 ```go
 func RunInTx(ctx context.Context, db *sql.DB, fn func(txCtx context.Context) error) error {
-	// Si on est déjà dans une transaction (imbrication), on exécute juste la fonction
-	if ExtractTx(ctx) != nil {
-		return fn(ctx)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	txCtx := InjectTx(ctx, tx)
-
-	if err := fn(txCtx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	return tx.Commit()
+    if ExtractTx(ctx) != nil { return fn(ctx) }  // imbrication : réutilise la tx déjà ouverte
+    tx, err := db.BeginTx(ctx, nil)
+    if err != nil { return err }
+    txCtx := InjectTx(ctx, tx)
+    if err := fn(txCtx); err != nil { _ = tx.Rollback(); return err }
+    return tx.Commit()
 }
 ```
-Toute erreur à n'importe quelle étape (1 à 6) déclenche `tx.Rollback()` et aucune ligne n'est persistée. L'appel imbriqué `EnsureSystemRoles` (étape 4) invoque lui-même `dbutils.RunInTx` en interne, mais le garde `if ExtractTx(ctx) != nil { return fn(ctx) }` fait que ce second appel réutilise la transaction déjà ouverte par `CreateMerchant` plutôt que d'en ouvrir une seconde imbriquée — l'ensemble des 6 étapes est donc bien couvert par une seule et même transaction SQL, tout ou rien.
+Toute erreur à n'importe quelle étape (1 à 6) déclenche `tx.Rollback()`, aucune ligne n'est persistée. L'appel imbriqué `EnsureSystemRoles` (étape 4) invoque lui-même `dbutils.RunInTx`, mais le garde `ExtractTx(ctx) != nil` fait qu'il réutilise la transaction déjà ouverte — les 6 étapes sont donc bien couvertes par une seule transaction, tout ou rien.
 
 ### 8.3. Exposition publique vs usage interne
 
-**Route** (`cmd/api/routes.go:663-667`) :
+**Route** (`cmd/api/routes.go:757-763`) :
 ```go
-	r.Route("/pos", func(r chi.Router) {
-		r.Use(authMiddleware)
-
-		r.Post("/create", posH.CreateMerchant)
-		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
-		r.Get("/status", posH.GetPOSStatus)
-		r.With(middleware.RequirePermission(permission.POSStatusManage)).Patch("/status", posH.UpdatePOSStatus)
+r.Route("/pos", func(r chi.Router) {
+    r.Use(authMiddleware)
+    r.Post("/create", posH.CreateMerchant)
+    r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
+    r.Get("/status", posH.GetPOSStatus)
+    r.With(middleware.RequirePermission(permission.POSStatusManage)).Patch("/status", posH.UpdatePOSStatus)
 ```
-**`POST /pos/create` n'est protégée que par `authMiddleware`** — contrairement à sa voisine immédiate `POST /pos/link-user` qui ajoute explicitement `.With(middleware.RequirePermission(permission.StaffManage))`. Aucune vérification RBAC (`RequirePermission`, `RequireAdmin`) n'encadre la création de marchand.
+**`POST /pos/create` n'est protégée que par `authMiddleware`** — contrairement à sa voisine `POST /pos/link-user` qui ajoute `.With(middleware.RequirePermission(permission.StaffManage))`. Aucune vérification RBAC n'encadre la création de marchand. `authMiddleware` exige uniquement un token Bearer valide correspondant à un `users` existant — ni permission, ni rattachement à un marchand particulier, ni rôle.
 
-`authMiddleware` (Section 2.3) exige uniquement un **token Bearer valide correspondant à un utilisateur existant** — il ne vérifie ni permission, ni appartenance à un marchand particulier, ni rôle.
+**Conséquence factuelle, confirmée par le produit lui-même et pas seulement par le code** : `POST /pos/create` est atteignable par tout utilisateur déjà authentifié, et c'est **effectivement exploité en self-service** — `wello-back-office/src/components/dashboard/CreateEstablishmentDialog.tsx` expose un bouton « Nouvel établissement » accessible depuis le tableau de bord à n'importe quel utilisateur connecté au back-office, qui crée l'établissement en s'auto-attribuant `user_id: authData.user.id, admin: true`. Ce n'est ni un endpoint public sans authentification, ni un endpoint réservé à un rôle admin/interne dédié : **tout compte back-office existant peut créer autant de nouveaux établissements qu'il le souhaite et en devenir administrateur**, sans validation ni approbation d'un tiers.
 
-**Conséquence factuelle** : `POST /pos/create` est donc atteignable par **tout utilisateur déjà authentifié dans le système** (n'importe quel compte `users` valide, quel que soit son rôle ou le marchand auquel il est actuellement rattaché) — ce n'est ni un endpoint public sans authentification, ni un endpoint réservé à un token admin/interne dédié.
-
-**Il n'existe par ailleurs aucun endpoint d'auto-inscription (« register »/« signup ») pour créer un compte `users`** : recherche `register|signup` dans `cmd/api/routes.go` → aucune occurrence. Le groupe `/auth` n'expose que `login`, `mfa/fallback-sms`, `send-verification`, `verify`, `forgot-password`, `reset-password`, `pin`, `pin/set`, `pin/reset` — jamais de création de compte. La création d'un `users` se fait via `POST /users`, qui exige `authMiddleware` **et** `middleware.RequirePermission(permission.StaffManage)`. Un compte `users` ne peut donc être créé, aujourd'hui, que par un utilisateur déjà `staff.manage` sur un marchand existant — pas en self-service.
+**Aucun endpoint d'auto-inscription (« register »/« signup ») pour créer un compte `users`** : recherche `register|signup` dans `cmd/api/routes.go` → aucune occurrence. Le groupe `/auth` n'expose que `login`, `mfa/fallback-sms`, `send-verification`, `verify`, `forgot-password`, `reset-password`, `pin`, `pin/set`, `pin/reset`. La création d'un `users` se fait via `POST /users`, qui exige `authMiddleware` **et** `middleware.RequirePermission(permission.StaffManage)` — pas de self-service pour un compte `users`, seulement pour un nouvel établissement rattaché à un compte `users` déjà existant.
 
 ### 8.4. Entités connexes créées automatiquement
 
@@ -3117,143 +2515,31 @@ Toute erreur à n'importe quelle étape (1 à 6) déclenche `tx.Rollback()` et a
 | `merchant` | La fiche marchand elle-même | Oui |
 | `subscriptions` | Abonnement lié au `package_id` fourni, `stripe_subscription_id = ''` | Oui |
 | `qrcodes` | 2 lignes (menu standard + menu-only/mywelloresto) | Oui |
-| `scannorder_settings` | Ligne par défaut (PK = merchant_id), champs SEO vides | Oui |
-| `merchant_parameters` | Ligne par défaut (PK = merchant_id), `last_menu_update` = horodatage courant | Oui |
-| `merchant_marketing_settings` | Ligne par défaut (PK = merchant_id) | Oui |
+| `scannorder_settings` | Ligne par défaut, champs SEO vides | Oui |
+| `merchant_parameters` | Ligne par défaut, `last_menu_update` = horodatage courant | Oui |
+| `merchant_marketing_settings` | Ligne par défaut | Oui |
 | `haccp_settings` | Ligne par défaut, `created_at`/`updated_at` = horodatage courant | Oui |
 | `bookings_settings` | Ligne par défaut, `code = ''` | Oui |
 | `cash_desks` | Une caisse nommée `'Caisse principale'` | Oui |
-| `roles` | 2 rôles système (« admin », « staff ») pour ce marchand, avec permissions de base | Oui (via `EnsureSystemRoles`) |
+| `roles` | 2 rôles système (« admin », « staff ») avec permissions de base | Oui (`EnsureSystemRoles`) |
 | `role_permissions` | Permissions de base attachées à ces 2 rôles | Oui |
 | `merchant.default_role_id` | Pointé vers le rôle « admin » nouvellement créé | Oui |
-| `users_rights` | Une ligne liant `req.UserID` au marchand, `role_id` = rôle admin (ou le rôle passé), `admin = req.Admin`, `enabled = TRUE` | **Seulement si `req.UserID` non vide** dans la requête |
+| `users_rights` | Lien `req.UserID` ↔ marchand, `role_id` = admin (ou rôle passé), `admin = req.Admin`, `enabled = TRUE` | **Seulement si `req.UserID` non vide** |
 
-**Aucun premier compte `users` n'est créé automatiquement** : le payload ne contient aucun champ permettant de créer un utilisateur (nom, mot de passe, email d'un futur admin) — seulement un `user_id` optionnel censé référencer un `users` **déjà existant**. Si `user_id` est omis, le marchand est créé sans aucun utilisateur lié.
+**Jamais créés automatiquement** : `hours_of_operation` (aucune ligne, §7.1/7.4), périodes de « vacances » (aucune ligne), `merchant.vat_number` (reste `NULL`), `merchant.timezone` (reste au défaut SQL `'Europe/Paris'`, jamais recalculé selon le pays réel), premier compte `users` (le payload ne contient aucun champ nom/mot de passe/email d'un futur admin — seulement un `user_id` optionnel référençant un `users` **déjà existant** ; si omis, le marchand est créé sans aucun utilisateur lié).
 
-**Point critique sur l'exécutabilité réelle de ce flux** : l'étape 4 (`EnsureSystemRoles`/`SetDefaultRoleID`) dépend du schéma RBAC introduit par les migrations `094` à `099` (tables `permissions`, `roles`, `role_permissions`, colonnes `users_rights.role_id` et `merchant.default_role_id`). Comme indiqué dans la Note méthodologique en tête de document, `docs/RBAC_BASCULE.md` déclare explicitement, à la date du 2026-08-27 :
+**État du chantier RBAC en production** : le `CLAUDE.md` du dépôt confirme (2026-09-01) que **PostgreSQL est le seul moteur de base de données en production** — la bascule MySQL→Postgres documentée sous `docs/migration-postgres/` est terminée, MySQL n'est plus live nulle part. Le commentaire `cmd/api/main.go:25` (« DB (MySQL par défaut, Postgres si DB_DIALECT=postgres — migration en cours) ») est désormais **un commentaire obsolète dans le code**, non représentatif du déploiement réel.
 
-> « Ces six migrations sont déjà appliquées en recette [...]. **En production, aucune des six n'a jamais été jouée** : elles partent de zéro sous ces numéros. »
+L'application effective des migrations RBAC (`094`-`099`, catalogue de permissions, `roles`, `role_permissions`, `default_role_id`) **en production** reste, à la date de cet audit (2026-09-08), non confirmée par preuve directe dans le dépôt : `docs/DEPLOIEMENT_PROD.md` (2026-09-07, qui remplace et archive `docs/RBAC_DEPLOIEMENT_PROD.md`) est un **runbook de déploiement** — une procédure à exécuter, outillée par `cmd/diagnose_migrations` (lecture seule) — et non un rapport d'exécution. Aucun fichier du dépôt ne documente son passage effectif sur la base de production à ce jour. Le dernier état constaté avec preuve (`docs/migration-postgres/67-migration-status-audit.md`) indique explicitement que le sous-ensemble RBAC (`094-100`, `103a`, `110`) « n'y est jamais passé », d'après `docs/RBAC_DEPLOIEMENT_PROD.md`, et que le reste du périmètre (`087`, `101`-`109`, `111`, `114`-`116`) est « INDÉTERMINABLE sans accès direct ». Ce fait est rapporté tel qu'il figure dans la documentation du dépôt à la date de cet audit, sans accès en direct à la base de production (hors du périmètre de cette vérification en lecture seule).
 
-et ces migrations sont écrites exclusivement en syntaxe PostgreSQL, tandis que `docs/migration-postgres/wello-resto-mysql-ddl.md` (dump MySQL) et le comportement par défaut de connexion (`cmd/api/main.go:24`, « DB MySQL par défaut, Postgres si DB_DIALECT=postgres — migration en cours ») pointent vers un univers disjoint. Ce fait — présent dans les fichiers de migration eux-mêmes, dans `docs/RBAC_BASCULE.md`, et cohérent avec la commande dédiée `cmd/assign_admin_role` (fichier non suivi, `assign_admin_role.exe` visible dans l'état git courant) — est rapporté ici tel qu'il figure dans la documentation du dépôt, sans vérification en base réelle (audit en lecture seule sur le code).
+Fait notable indépendant de la question du déploiement en production : la réconciliation des rôles système n'est pas qu'un geste ponctuel (`cmd/seed_system_roles`) mais tourne aussi en tâche de fond `@hourly` (`cmd/api/tasks.go:81`, `ReconcileSystemRolePermissions`) — ce mécanisme réduit le risque qu'un établissement reste durablement avec un rôle admin incomplet une fois le socle RBAC effectivement en place.
 
 ---
 
-## Annexe — Fichiers cités (chemins absolus, dépôt `ib-welloresto-api`)
+## Annexe — Portée et limites de cet audit
 
-- `docs/migration-postgres/wello-resto-mysql-ddl.md`
-- `docs/migration-postgres/04-schema-postgres-target.sql`
-- `docs/RBAC_BASCULE.md`
-- `docs/migration-postgres/60-mysql-migrations-status-checklist.md`
-- `migrations/done/003_create_availabilities_tables.sql`
-- `migrations/done/014_planning_socle.sql`
-- `migrations/done/019_add_subscription_feature_flags.sql`
-- `migrations/done/031_add_pin_hash_to_users_rights.up.sql`
-- `migrations/done/037_kiosk_module.up.sql`
-- `migrations/done/054_stripe_accounts_terminal_location_id.up.sql`
-- `migrations/done/061_kiosk_settings_fees.up.sql`
-- `migrations/done/085_scannorder_extra_prep_time.up.sql`
-- `migrations/done/086_merchant_parameters_pos_covers_count_required.up.sql`
-- `migrations/done/094_roles_schema.up.sql`
-- `migrations/done/095_roles_permissions_catalog.up.sql`
-- `migrations/done/097_permission_pos_status_manage.up.sql`
-- `migrations/done/099_merchant_default_role_admin.up.sql`
-- `migrations/done/100_deprecate_pos_access_and_discount_apply.up.sql`
-- `cmd/api/routes.go`
-- `cmd/api/main.go`
-- `internal/permission/keys_gen.go`
-- `internal/middleware/auth.go`
-- `internal/middleware/permissions.go`
-- `internal/middleware/require_permission.go`
-- `internal/modules/auth/handler.go`
-- `internal/modules/auth/service.go`
-- `internal/modules/auth/repository.go`
-- `internal/modules/auth/models.go`
-- `internal/modules/auth/permissions.go`
-- `internal/modules/roles/repository.go`
-- `internal/modules/roles/models.go`
-- `internal/modules/pos/create_handler.go`
-- `internal/modules/pos/create_models.go`
-- `internal/modules/pos/create_service.go`
-- `internal/modules/pos/create_repository.go`
-- `internal/modules/pos/repository.go`
-- `internal/modules/pos/models.go`
-- `internal/modules/pos/reports/repository.go`
-- `internal/modules/pos/accounting/repository.go`
-- `internal/modules/pos/accounting/service.go`
-- `internal/modules/cash_registers/repository.go`
-- `internal/modules/order_life_cycle/repository.go`
-- `internal/modules/order_life_cycle/service.go`
-- `internal/modules/order_life_cycle/invoice_pdf.go`
-- `internal/modules/receipt/service.go`
-- `internal/modules/receipt/repository.go`
-- `internal/modules/menu/import_handler.go`
-- `internal/modules/menu/import_models.go`
-- `internal/modules/menu/import_service.go`
-- `internal/modules/menu/import_commit_service.go`
-- `internal/modules/menu/importer/values.go`
-- `internal/modules/menu/importer/wello_generic.go`
-- `internal/modules/menu/importer/zelty.go`
-- `internal/modules/menu/importer/manual.go`
-- `internal/modules/menu/importer/commit_plan.go`
-- `internal/modules/menu/importer/template.go`
-- `internal/modules/scannorder/repository.go`
-- `internal/modules/scannorder/handler.go`
-- `internal/modules/scannorder/service.go`
-- `internal/modules/kiosk/repository.go`
-- `internal/modules/kiosk/service.go`
-- `internal/modules/users/create_service.go`
-- `internal/modules/users/create_models.go`
-- `internal/modules/users/admin_repository.go`
-- `internal/modules/users/admin_models.go`
-- `internal/modules/integrations/service.go`
-- `internal/infrastructure/stripe/client.go`
-- `internal/infrastructure/stripe/service.go`
-- `internal/infrastructure/stripe/checkout.go`
-- `internal/infrastructure/stripe/connect.go`
-- `internal/webhook/stripe/http_handler.go`
-- `internal/webhook/stripe/service.go`
-- `internal/webhook/stripe/repository.go`
-- `internal/webhook/ubereats/handler/http_handler.go`
-- `internal/webhook/ubereats/service/service.go`
-- `internal/config/stripe.go`
-- `internal/config/auth.go`
-- `internal/models/request_objects.go`
-- `internal/models/payment_models.go`
-- `internal/models/users_models.go`
-- `internal/models/redis_models.go`
-- `internal/helpers/ids.go`
-- `internal/helpers/handler_helpers.go`
-- `internal/utils/dbutils/run_in_tx.go`
-- `internal/utils/security/hash_signing.go`
-- `internal/modules/notification/token_manager.go`
-- `data-migration/migration_welloresto_data.sql`
-- `staging_schema_dump.sql`
-
-Fichiers cités hors du dépôt API (repos satellites, chemins relatifs à leur racine respective) :
-- `wello-back-office/src/pages/Menu.tsx`
-- `wello-back-office/src/pages/CategoriesTable.tsx`
-- `wello-back-office/src/pages/equipe/EquipePage.tsx`
-- `wello-back-office/src/components/team/CreateMemberSheet.tsx`
-- `wello-back-office/src/components/team/tabs/AccessTab.tsx`
-- `wello-back-office/src/components/menu/CreateProductCategoryDialog.tsx`
-- `wello-back-office/src/components/menu/SimpleProductSheet.tsx`
-- `wello-back-office/src/components/menu/BulkEditDialog.tsx`
-- `wello-back-office/src/components/shared/BulkAssignProductsDialog.tsx`
-- `wello-back-office/src/components/menu/import/ProductImportDialog.tsx`
-- `wello-back-office/src/components/menu/import/ImportProviderStep.tsx`
-- `wello-back-office/src/components/menu/import/ImportManualStep.tsx`
-- `wello-back-office/src/components/menu/import/ImportReviewStep.tsx`
-- `wello-back-office/src/components/menu/import/ImportDoorPicker.tsx`
-- `wello-back-office/src/components/cash/ClosureModal.tsx`
-- `wello-back-office/src/services/menuService.ts`
-- `wello-back-office/src/services/menuImportService.ts`
-- `wello-back-office/src/services/cashRegisterService.ts`
-- `wello-back-office/src/services/financialReportsService.ts`
-- `wello-back-office/src/services/reservationsService.ts`
-- `wello-back-office/src/lib/manualImport.ts`
-- `wello-back-office/src/lib/importDecisions.ts`
-- `wello-back-office/src/types/adminUsers.ts`
-- `wello-back-office/src/types/import.ts`
-- `wello_resto_flutter/lib/models/orders/method_of_payment_enum.dart`
-- `wello_resto_flutter/lib/ui/widgets/dialogs/calculator/right_pannel/calculator_menu_view.dart`
-- `wello-kiosk/lib/presentation/screens/payment_screen.dart`
+- **Bases de données consultées** : introspection live du Postgres de **staging** (`RENDER_STAGING_DATABASE_URL`) le 2026-09-08 — schéma (`information_schema`, `pg_constraint`, `pg_indexes`) et, ponctuellement, des comptages/échantillons de données réelles (ex. répartition des `package_id` dans `subscriptions`, nombre de lignes dans `subscription_invoices`/`welloresto_stripe_customers`, ratio `role_id` renseigné dans `users_rights`). Aucun accès direct à la base de **production** n'a été utilisé — quand un fait dépend spécifiquement de l'état de production (ex. l'application effective des migrations RBAC), le document le signale explicitement et cite sa source documentaire plutôt que d'affirmer un état vérifié en direct.
+- **Dépôts consultés** : `ib-welloresto-api` (API Go, branche `main`), `wello-back-office` (back-office React/TS), `wello_resto_flutter` (POS Flutter), `wello-kiosk` (borne Flutter). `wello-resto-scannorder` (front client scan&order) n'a été consulté que ponctuellement, pour des vérifications croisées.
+- **Méthode** : lecture de code et requêtes SQL en lecture seule exclusivement — aucune modification de code, aucune migration, aucune donnée modifiée. Chaque affirmation factuelle de ce document est sourcée par un chemin de fichier et, autant que possible, un numéro de ligne ; « n'existe pas » signifie qu'une recherche exhaustive (grep multi-mots-clés, revue de la liste complète des tables/modules) n'a donné aucun résultat pertinent au moment de la rédaction.
+- **Ce document remplace intégralement** la version précédente de `docs/audit-parcours-onboarding.md` (committée le 2026-08-28), dont la prémisse méthodologique (MySQL comme moteur de production réel, Postgres comme environnement de recette de bascule) est devenue caduque après la confirmation, le 2026-09-01, que la bascule Postgres est terminée en production. Les constats structurels de fond de cette version antérieure (schéma des tables, absence de JWT, absence d'auth externe, etc.) se sont pour l'essentiel confirmés à l'identique lors de cette nouvelle passe — les écarts significatifs entre les deux versions sont signalés explicitement dans le corps du texte ci-dessus (notamment : un troisième point de clôture de commande sans hash en §4.1.4, un gap dans la liste d'exclusion fiscale en §4.6, et la confirmation que `POST /pos/create` est aujourd'hui un vrai bouton self-service exploité en production, en §8.3).
+- **Aucune proposition de solution** n'a été formulée nulle part dans ce document, conformément à la consigne — chaque constat s'arrête à la description de l'état actuel.

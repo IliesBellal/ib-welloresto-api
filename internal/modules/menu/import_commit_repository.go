@@ -530,7 +530,7 @@ func (r *MenuRepository) materializeAttributesTx(
 			options = append(options, optionPayload)
 		}
 
-		optionIDs, err := r.insertAttributeOptionsTx(ctx, attributeID, options)
+		optionIDs, err := r.insertAttributeOptionsTx(ctx, merchantID, attributeID, options)
 		if err != nil {
 			return fmt.Errorf("import: création des options de %q: %w", attribute.Name, err)
 		}

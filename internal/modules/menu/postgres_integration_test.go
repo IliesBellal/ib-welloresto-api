@@ -393,6 +393,57 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetAttributeOptionImageURL(id non numérique) = (%q, %v), want vide", url, err)
 	}
 
+	// propagation par nom (insensible à la casse/espaces), quel que soit
+	// l'attribut : une option "  KETCHUP BIO  " sur un tout autre attribut
+	// doit suivre l'image de "Ketchup bio" (opt0), à l'ajout comme au retrait.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO configurable_attributes (id, product_id, merchant_id, brand, attribute_type, name, title, min_options, max_options, enabled)
+		VALUES ('ca-itest-sibling', 0, $1, 'WELLO_RESTO', 'CHECK', 'sauce-sibling-itest', 'Autre groupe ?', 0, 1, TRUE)`, merchantID); err != nil {
+		t.Fatalf("seed attribut sibling: %v", err)
+	}
+	var siblingOptID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, max_quantity, extra_price, enabled)
+		VALUES ('ca-itest-sibling', '  KETCHUP BIO  ', 1, 0, 1) RETURNING id`).Scan(&siblingOptID); err != nil {
+		t.Fatalf("seed option sibling: %v", err)
+	}
+	siblingOptIDStr := strconv.FormatInt(siblingOptID, 10)
+
+	if err := repo.UpdateAttributeOptionImageURL(ctx, merchantID, opt0.ID, "https://img/itest-propagated.png"); err != nil {
+		t.Fatalf("UpdateAttributeOptionImageURL (propagation ajout): %v", err)
+	}
+	if url, err := repo.GetAttributeOptionImageURL(ctx, merchantID, siblingOptIDStr); err != nil || url != "https://img/itest-propagated.png" {
+		t.Fatalf("propagation ajout: image de l'option sibling = (%q, %v), want URL propagée", url, err)
+	}
+
+	if err := repo.UpdateAttributeOptionImageURL(ctx, merchantID, opt0.ID, ""); err != nil {
+		t.Fatalf("UpdateAttributeOptionImageURL (propagation retrait): %v", err)
+	}
+	if url, err := repo.GetAttributeOptionImageURL(ctx, merchantID, siblingOptIDStr); err != nil || url != "" {
+		t.Fatalf("propagation retrait: image de l'option sibling = (%q, %v), want vide", url, err)
+	}
+	if url, err := repo.GetAttributeOptionImageURL(ctx, merchantID, opt0.ID); err != nil || url != "" {
+		t.Fatalf("propagation retrait: image de l'option source = (%q, %v), want vide", url, err)
+	}
+
+	// même propagation via le chemin en lot (UpdateAttribute) : image_url
+	// non-nil dans le payload doit aussi impacter l'option sibling.
+	bulkImageURL := "https://img/itest-bulk-propagated.png"
+	if err := repo.UpdateAttribute(ctx, merchantID, attrID, &UpdateAttributePayload{
+		Type: "CHECK", Name: "sauce-itest", Title: "Sauces ?", Min: 0, Max: 3,
+		Options: []UpdateAttributeOptionPayload{
+			{ID: &opt0.ID, Title: "Ketchup bio", Price: 60, Enabled: &enabledTrue,
+				ImageURL: &bulkImageURL},
+			{Title: "Harissa", Price: 30, Enabled: &enabledTrue,
+				ComponentID: compID, Quantity: 5, UnitOfMeasureID: unitKGStr},
+		},
+	}); err != nil {
+		t.Fatalf("UpdateAttribute (propagation en lot): %v", err)
+	}
+	if url, err := repo.GetAttributeOptionImageURL(ctx, merchantID, siblingOptIDStr); err != nil || url != "https://img/itest-bulk-propagated.png" {
+		t.Fatalf("propagation en lot: image de l'option sibling = (%q, %v), want URL propagée", url, err)
+	}
+
 	// --- UpdateProduct complet (intégrations, configuration, composition, tags, allergènes) ---
 	priceOverride := 1250
 	if err := repo.UpdateProduct(ctx, merchantID, prodA, ProductUpdatePayload{
