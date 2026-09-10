@@ -42,18 +42,20 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 		}
 
 		// Step 4 — RBAC lot 1 (additive, strictly groundwork): seed the two
-		// system roles and point the merchant's default at "admin" (RBAC lot 4
-		// decision: every account becomes Administrateur while permissions are
-		// not yet exploited from the UI — see internal/modules/roles and
-		// migrations/done/099_merchant_default_role_admin.up.sql). Runs before
-		// step 5 so the optional initial user linkage below has a
-		// default_role_id to read; insertUserRightsTx fails explicitly if it
-		// is still unset.
-		adminRoleID, _, err := s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)
+		// system roles. LOT A Semaine 1, Chantier 4 (docs/decisions.md) : le
+		// défaut du marchand pointe désormais sur "staff", pas "admin" — tout
+		// membre créé ensuite (POST /pos/create garde+/users/create sans
+		// role_id explicite) arrive non-administrateur par défaut. Le
+		// propriétaire (ci-dessous, req.UserID + req.Admin) continue de
+		// recevoir explicitement adminRoleID sur son propre users_rights,
+		// inchangé. Runs before step 5 so the optional initial user linkage
+		// below has a default_role_id to read; insertUserRightsTx fails
+		// explicitly if it is still unset.
+		adminRoleID, staffRoleID, err := s.rolesRepo.EnsureSystemRoles(txCtx, merchantID)
 		if err != nil {
 			return err
 		}
-		if err := s.posRepo.SetDefaultRoleID(txCtx, merchantID, adminRoleID); err != nil {
+		if err := s.posRepo.SetDefaultRoleID(txCtx, merchantID, staffRoleID); err != nil {
 			return err
 		}
 

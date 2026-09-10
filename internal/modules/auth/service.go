@@ -76,7 +76,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLo
 		// Guard: a "null" value (from a previous buggy write or an evicted PIN session)
 		// unmarshals without error but yields a zero-value struct — reject it as a miss.
 		if err := json.Unmarshal([]byte(cached), &user); err == nil && user.UserID != "" {
-			log.Info("🧠🙋🏻‍♂️ User " + user.Name + " (" + user.UserID + ") found in Redis cache 🙋🏻‍♂️🧠")
+			log.Info("🧠🙋🏻‍♂️ Hit user " + user.LastName + " " + user.FirstName + " (" + user.UserID + ") for merchant " + user.MerchantID + " 🙋🏻‍♂️🧠")
 			return &user, nil
 		}
 	}
@@ -496,7 +496,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 	// Deprecated compatibility payload for existing clients.
 	// Do not use these flat fields in new code; migrate consumers to session, merchant, access, integrations and capabilities.
 	legacy := &LoginLegacyFields{
-		Name:                            user.Name,
+		//Name:                            user.Name,
 		FirstName:                       user.FirstName,
 		LastName:                        user.LastName,
 		UserID:                          user.UserID,
@@ -570,8 +570,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Merchants:    merchants,
 		},
 		User: &LoginUserResponse{
-			ID:                 user.UserID,
-			Name:               user.Name,
+			ID: user.UserID,
+			//Name:               user.Name,
 			FirstName:          user.FirstName,
 			LastName:           user.LastName,
 			Email:              user.Email,

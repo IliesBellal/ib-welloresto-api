@@ -32,6 +32,10 @@ type MerchantUserRightsUpsertRequest struct {
 	Admin        bool                    `json:"admin"`
 	Permissions  MerchantUserPermissions `json:"permissions"`
 	LoginEnabled bool                    `json:"login_enabled"`
+	// RoleID, when set, overrides merchant.default_role_id on the INSERT
+	// branch of UpsertMerchantUserRights (a brand new link only — never
+	// touches an existing link's role_id). LOT A Semaine 1, Chantier 4.
+	RoleID *string `json:"role_id,omitempty"`
 }
 
 type MerchantUserListFilters struct {

@@ -326,7 +326,7 @@ LEFT JOIN integration_deliveroo ind ON ind.merchant_id = %[1]s
 WHERE
     (
         (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
-        OR (UPPER(u.email)=UPPER(?) AND u.email <> '' AND u.email IS NOT NULL)
+        OR (lower(u.email)=lower(?) AND u.email <> '' AND u.email IS NOT NULL)
         OR ur.token = ?
     )
 LIMIT 1;

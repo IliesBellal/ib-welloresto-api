@@ -60,6 +60,10 @@ type RoleListItem struct {
 	Role
 	PermissionCount int `json:"permission_count"`
 	MemberCount     int `json:"member_count"`
+	// IsDefault marks the merchant's current default_role_id — LOT A
+	// Semaine 1, Chantier 4 : CreateMemberSheet.tsx (back-office) uses this
+	// to preselect the merchant's default role without a second endpoint.
+	IsDefault bool `json:"is_default"`
 }
 
 // RoleMember is one holder of a role — the shape GET /roles/{id}/members

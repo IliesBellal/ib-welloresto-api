@@ -306,9 +306,17 @@ func (r *UsersRepository) UpsertMerchantUserRights(ctx context.Context, userID, 
 	// branch (a brand new link) sets it; the UPDATE branch above re-enables
 	// an existing link and must never overwrite whatever role_id it already
 	// carries. See migrations/done/099_merchant_default_role_admin.up.sql.
-	roleID, err := r.MerchantDefaultRoleID(ctx, merchantID)
-	if err != nil {
-		return 0, err
+	// LOT A Semaine 1, Chantier 4 : rights.RoleID, quand fourni (sélecteur
+	// de rôle de CreateMemberSheet.tsx), prend le pas sur le défaut.
+	roleID := ""
+	if rights.RoleID != nil && strings.TrimSpace(*rights.RoleID) != "" {
+		roleID = strings.TrimSpace(*rights.RoleID)
+	} else {
+		var err error
+		roleID, err = r.MerchantDefaultRoleID(ctx, merchantID)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	insertID, err := db.InsertReturningID(ctx, `

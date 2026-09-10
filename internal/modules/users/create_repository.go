@@ -8,6 +8,37 @@ import (
 	"welloresto-api/internal/models"
 )
 
+// EmailExists reports whether a user already exists with this email,
+// compared case-insensitively (matches uq_users_email_lower — migration 124).
+func (r *UsersRepository) EmailExists(ctx context.Context, email string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var exists bool
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower(?))`,
+		email,
+	).Scan(&exists)
+	return exists, err
+}
+
+// RoleBelongsToMerchant reports whether roleID is an active (non-archived)
+// role of merchantID — the same scoping roles.Service.SetUserRole already
+// enforces (getMerchantRole) for the "Droits" tab's role picker. Duplicated
+// here rather than imported: internal/modules/roles imports internal/modules/users
+// (GetUsersRightsToken reuse, RBAC lot 6), so importing it back would be a
+// cycle. LOT A Semaine 1, Chantier 4 : guards CreateUserRequest.RoleID
+// against a role_id from a different merchant.
+func (r *UsersRepository) RoleBelongsToMerchant(ctx context.Context, merchantID, roleID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var exists bool
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM roles WHERE merchant_id = ? AND id = ? AND archived_at IS NULL)`,
+		merchantID, roleID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // CreateUser inserts a new user row inside the provided transaction.
 // The caller is responsible for committing or rolling back the transaction.
 func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, hashedPassword, token string) error {
@@ -20,7 +51,16 @@ func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firs
 			(?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, fullName, firstName, lastName, email, tel, hashedPassword, token,
 	)
-	return err
+	if err != nil {
+		// Repli pour le cas concurrent : deux requêtes passent la
+		// vérification d'existence (CreateUser, service.go) avant que l'une
+		// des deux n'insère — uq_users_email_lower (migration 124) tranche.
+		if dbx.IsDuplicateEntry(err) {
+			return models.ErrEmailAlreadyUsed
+		}
+		return err
+	}
+	return nil
 }
 
 // InsertUserRights creates a row in users_rights to link a user to a merchant.

@@ -24,6 +24,9 @@ func Open(t *testing.T) *sql.DB {
 		t.Skip("POSTGRES_URL not set — skipping postgres integration test")
 	}
 	t.Setenv("DB_DIALECT", "postgres")
+	if os.Getenv("FISCAL_SIGNING_KEY") == "" {
+		t.Setenv("FISCAL_SIGNING_KEY", "itest-fiscal-signing-key")
+	}
 
 	db, err := sql.Open("pgx", url)
 	if err != nil {

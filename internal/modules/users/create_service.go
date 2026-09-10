@@ -25,6 +25,17 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 		return "", err
 	}
 
+	// --- Reject duplicate email before doing any work (uq_users_email_lower,
+	// migration 124) — the INSERT itself still falls back to the same check
+	// for the concurrent case (create_repository.go, CreateUser).
+	exists, err := s.userRepo.EmailExists(ctx, req.Email)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return "", models.ErrEmailAlreadyUsed
+	}
+
 	// --- Hash password ---
 	hashed, err := HashPassword(req.Password)
 	if err != nil {
@@ -51,6 +62,19 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	rights := defaultMerchantUserRights(req.Admin)
 	if req.Rights != nil {
 		rights = req.Rights.Normalize(defaultMerchantUserRights(req.Admin))
+	}
+	if req.RoleID != nil && strings.TrimSpace(*req.RoleID) != "" {
+		if merchantID == "" {
+			return "", models.ErrInvalidInput
+		}
+		belongs, err := s.userRepo.RoleBelongsToMerchant(ctx, merchantID, strings.TrimSpace(*req.RoleID))
+		if err != nil {
+			return "", err
+		}
+		if !belongs {
+			return "", models.ErrRoleNotFound
+		}
+		rights.RoleID = req.RoleID
 	}
 
 	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {

@@ -681,17 +681,51 @@ func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID,
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// 1) Get metadata needed for the fiscal chain
+	var merchantID string
+	var currentPrice int
+	if err := db.QueryRowContext(ctx, `SELECT merchant_id, price FROM orders WHERE order_id = ?`, orderID).Scan(&merchantID, &currentPrice); err != nil {
+		log.Error(err.Error())
+		return err
+	}
+
+	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
+	var prevHash sql.NullString
+	_ = db.QueryRowContext(ctx, `
+        SELECT hash FROM orders
+        WHERE merchant_id = ? AND state = 'CLOSED'
+        ORDER BY delivered_on DESC, order_id DESC LIMIT 1
+        FOR UPDATE
+    `, merchantID).Scan(&prevHash)
+
+	actualPrevHash := "GENESIS_HASH"
+	if prevHash.Valid && prevHash.String != "" {
+		actualPrevHash = prevHash.String
+	}
+
+	now := time.Now().UTC()
+	deliveredOn := now.Format(time.RFC3339)
+
+	// Calcul du hash de clôture de commande
+	payload := fmt.Sprintf("%s|%s|%d|%s", actualPrevHash, deliveredOn, currentPrice, orderID)
+	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+	signature := security.SignHash(newHash)
+
 	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET last_update = `+dbx.UTCNow()+`,
             brand_status = 'DENIED',
             merchant_approval = 'DENIED',
             state = 'CLOSED',
+            delivered_on = `+dbx.UTCNow()+`,
             deletion_reason_id = ?,
             deletion_comment = ?,
-            cancelled_by_type = ?
+            cancelled_by_type = ?,
+            previous_hash = ?,
+            hash = ?,
+            signature = ?
         WHERE order_id = ?`,
-		deletionReasonID, comment, classifyCancelledByType(userID), orderID,
+		deletionReasonID, comment, classifyCancelledByType(userID), actualPrevHash, newHash, signature, orderID,
 	)
 	if err != nil {
 		log.Error(err.Error())

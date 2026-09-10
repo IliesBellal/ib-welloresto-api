@@ -483,6 +483,11 @@ var (
 	ErrProductNameAlreadyExistsWithRetry   = errors.New("product_name_already_exists_with_retry")
 	ErrComponentNameAlreadyExistsWithRetry = errors.New("component_name_already_exists_with_retry")
 	ErrAttributeNameAlreadyExistsWithRetry = errors.New("attribute_name_already_exists_with_retry")
+
+	// ErrEmailAlreadyUsed indique qu'un compte utilisateur existe déjà avec
+	// cette adresse e-mail (comparaison insensible à la casse, voir
+	// uq_users_email_lower — migration 124)
+	ErrEmailAlreadyUsed = errors.New("email_already_used")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1437,6 +1442,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "attribute_name_already_exists_with_retry"
 		errorMsg = "A configuration attribute with this name already exists. Submit the same request again to confirm and create it anyway."
+
+	case errors.Is(err, ErrEmailAlreadyUsed):
+		status = http.StatusConflict
+		errorStatus = "email_already_used"
+		errorMsg = "An account with this email already exists."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

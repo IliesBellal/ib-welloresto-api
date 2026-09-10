@@ -757,7 +757,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	r.Route("/pos", func(r chi.Router) {
 		r.Use(authMiddleware)
 
-		r.Post("/create", posH.CreateMerchant)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/create", posH.CreateMerchant)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
 		r.Get("/status", posH.GetPOSStatus)
 		r.With(middleware.RequirePermission(permission.POSStatusManage)).Patch("/status", posH.UpdatePOSStatus)

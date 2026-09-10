@@ -107,6 +107,11 @@ func (s *Service) ListRoles(ctx context.Context) ([]RoleListItem, error) {
 		return nil, err
 	}
 
+	defaultRoleID, err := s.repo.GetMerchantDefaultRoleID(ctx, currentUser.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]RoleListItem, 0, len(list))
 	for _, role := range list {
 		perms, err := s.repo.GetRolePermissions(ctx, role.ID)
@@ -117,7 +122,12 @@ func (s *Service) ListRoles(ctx context.Context) ([]RoleListItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, RoleListItem{Role: role, PermissionCount: len(perms), MemberCount: holders})
+		items = append(items, RoleListItem{
+			Role:            role,
+			PermissionCount: len(perms),
+			MemberCount:     holders,
+			IsDefault:       defaultRoleID != "" && role.ID == defaultRoleID,
+		})
 	}
 	return items, nil
 }

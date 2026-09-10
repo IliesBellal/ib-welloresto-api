@@ -11,6 +11,11 @@ type CreateUserRequest struct {
 	MerchantID *string                          `json:"merchant_id,omitempty"` // optional: auto-link user to merchant if provided
 	Admin      bool                             `json:"admin"`                 // if MerchantID is set, whether to link as admin or regular user
 	Rights     *MerchantUserRightsUpsertRequest `json:"rights,omitempty"`
+	// RoleID (RBAC) overrides merchant.default_role_id for this member when
+	// MerchantID is set and RoleID is non-empty — LOT A Semaine 1, Chantier 4
+	// (docs/decisions.md). Distinct from the "Poste RH" (employees.role)
+	// selector, which has no relation to RBAC.
+	RoleID *string `json:"role_id,omitempty"`
 }
 
 // CreateUserResponse is the JSON body returned on success (201).

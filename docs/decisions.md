@@ -1,3 +1,346 @@
+### LOT A Semaine 1 — Chantier 4 : garde de création + rôle par défaut + sélecteur de rôle (2026-09-10)
+
+Prérequis au self-onboarding (décision N6). Trois changements indissociables
+(cf. consigne : livrer un seul des trois cassait soit la création
+d'établissement, soit rendait impossible la création d'un second
+administrateur) + un correctif de sécurité trouvé en l'implémentant.
+
+- **1. `POST /pos/create`** (`cmd/api/routes.go`) : ajout de
+  `middleware.RequirePermission(permission.SettingsManage)`, comme sa
+  voisine `/pos/link-user` (`StaffManage`). **N6 confirmée sans adaptation** :
+  `RequirePermission` lit `middleware.GetUser(r)`, un unique
+  `*auth.UserLoginRow` déjà résolu pour LE marchand du jeton en cours
+  (`GetUserByToken`, jointure fixée par le token) — il n'y a nulle part de
+  liste de rattachements multi-marchands à ce stade, donc `user.Has(key)`
+  évalue structurellement sur le marchand courant, jamais sur l'ensemble des
+  rattachements de l'utilisateur. Rien à changer dans `RequirePermission`
+  lui-même.
+- **2. `POSService.CreateMerchant`** (`internal/modules/pos/create_service.go`) :
+  `SetDefaultRoleID` pointe désormais sur `staffRoleID` (deuxième valeur de
+  retour d'`EnsureSystemRoles`) au lieu d'`adminRoleID`. Le propriétaire
+  (`req.UserID` + `req.Admin`) continue de recevoir explicitement
+  `adminRoleID` sur son propre `users_rights` — ce n'était déjà pas lié au
+  défaut du marchand dans le code existant (l'appel à `insertUserRightsTx`
+  passait déjà `adminRoleID` en argument littéral, pas une lecture du
+  default), donc aucun changement nécessaire à cette ligne.
+- **Correctif de sécurité trouvé en implémentant le point 3** : `role_id`
+  (nouveau champ de `CreateUserRequest`) atteint directement
+  `users_rights.role_id` sans qu'aucune vérification n'existe que ce rôle
+  appartient bien au marchand cible — un `role_id` d'un AUTRE marchand aurait
+  été accepté tel quel. `roles.Service.SetUserRole` (utilisé par l'onglet
+  "Droits" existant) fait déjà cette vérification pour le même genre
+  d'entrée (`getMerchantRole`, scoping `merchant_id`) : même garde ajoutée
+  ici via `UsersRepository.RoleBelongsToMerchant` (dupliquée plutôt
+  qu'importée — `internal/modules/roles` importe déjà `internal/modules/users`
+  pour `GetUsersRightsToken`, RBAC lot 6, donc l'import inverse créerait un
+  cycle). Rejette avec `models.ErrRoleNotFound` (déjà mappé sur 404, code
+  existant du module `roles`) avant toute écriture.
+- **3. Sélecteur de rôle** :
+  - **API** — `CreateUserRequest.RoleID` (nouveau, optionnel) ; s'il est
+    fourni et valide (voir garde ci-dessus), il prend le pas sur
+    `merchant.default_role_id` dans `UpsertMerchantUserRights` (branche
+    INSERT seulement — une ré-activation de lien existant ne touche jamais
+    `role_id`, comme avant). `GET /roles` expose maintenant `is_default`
+    (bool, `RoleListItem`) : le rôle qui correspond à
+    `merchant.default_role_id` du marchand courant — pas de second
+    endpoint, `CreateMemberSheet.tsx` réutilise exactement la même requête
+    (`rolesApi.list()`, même clé de cache `qk.roles.list()`) qu'`AccessTab.tsx`.
+  - **Back-office** — sélecteur de rôle ajouté dans `CreateMemberSheet.tsx`,
+    section "Accès" (au-dessus des switches Administrateur/Connexion
+    activée, pas en remplacement). Valeur par défaut = le rôle marqué
+    `is_default`, mais seulement tant que l'admin n'a pas choisi autre chose
+    explicitement (un rafraîchissement de la liste des rôles ne doit pas
+    écraser un choix manuel — état `roleIdTouched`). Alimente
+    `CreateUserRequest.role_id`.
+  - **Champ Planning "Rôle" renommé "Poste RH"** (même fichier,
+    `CreateForm`) : c'est `employees.role` (employee/manager/admin), sans
+    aucun rapport avec le RBAC — seul le libellé et la variable locale
+    (`role` → `hrRole`) changent, la clé JSON (`planning.role`) et le
+    comportement restent identiques.
+- **4. Régression `Header.tsx`** : le bouton "Nouvel établissement" (et son
+  séparateur) n'apparaît plus dans le sélecteur d'établissement que si
+  `checkPermission(authData, 'settings.manage')` — un utilisateur "staff"
+  (rôle par défaut désormais) ne le voit plus.
+- **Vérifié** :
+  - `go build ./...`, `go test ./...` : verts (mêmes 4 échecs préexistants
+    sans rapport, déjà signalés aux chantiers 1-3).
+  - `go test -tags postgres_integration ./internal/modules/pos ./internal/modules/users ./internal/modules/roles/...`
+    contre Postgres 16 de dev local, **rattrapé jusqu'à la migration 123
+    inclue** (`roles`/`permissions`/`role_permissions` n'existaient pas du
+    tout dans ce conteneur avant ce chantier — nécessaires pour tester quoi
+    que ce soit RBAC). Une migration dans ce lot de rattrapage
+    (`113_drop_users_rights_admin_column`) a été **annulée juste après**
+    (son `.down.sql`) : le code actuel lit/écrit encore activement
+    `users_rights.admin` (ex. `Login`), donc cette migration 113 ne peut pas
+    être déployée nulle part en l'état — l'avoir laissée active aurait
+    faussé la suite des tests locaux. N'affecte que ce conteneur Docker
+    jetable, aucune conséquence sur staging/production.
+  - Deux nouveaux tests permanents : `TestPOSService_CreateMerchant_DefaultRoleIsStaff_Postgres`
+    (`internal/modules/pos`, défaut marchand = "staff", propriétaire reste
+    "admin") et `TestUsersService_CreateUser_RoleIDOverride_Postgres`
+    (`internal/modules/users`, package externe `users_test` pour la même
+    raison de cycle qu'au-dessus — role_id honoré sur le bon marchand,
+    rejeté sur un autre). Les deux passent contre Postgres 16 local.
+  - `npx tsc --noEmit -p tsconfig.app.json` (wello-back-office) :
+    **122 erreurs avant et après** ce chantier (comparaison par `git stash`
+    ciblé sur les 3 fichiers touchés) — aucune nouvelle erreur introduite ;
+    les 122 sont préexistantes et sans rapport (dette TypeScript déjà
+    présente sur `staging`, hors périmètre). `npm run build` (Vite) réussit.
+- **Scénario de test manuel** (à rejouer dans le back-office) :
+  1. Connecté en administrateur (rôle "admin", ou tout rôle avec
+     `settings.manage`) : le sélecteur d'établissement (Header) affiche
+     "Nouvel établissement" ; l'onglet Équipe → "Ajouter un membre" →
+     l'onglet "Nouveau membre" affiche un champ "Rôle" (section Accès,
+     au-dessus d'Administrateur/Connexion activée) présélectionné sur le
+     rôle par défaut du marchand (libellé suffixé "(défaut)"), et un champ
+     séparé "Poste RH" dans la section Planning (employee/manager/admin,
+     optionnel). Créer un membre sans toucher au sélecteur de rôle → le
+     nouveau membre reçoit le rôle par défaut du marchand ("staff" pour un
+     établissement créé après ce chantier). Changer explicitement le
+     sélecteur avant de créer → le membre reçoit le rôle choisi.
+  2. Connecté avec un utilisateur "staff" (aucune permission
+     `settings.manage`) : le bouton "Nouvel établissement" a disparu du
+     sélecteur d'établissement (seule la liste des établissements existants
+     reste visible). Un appel direct à `POST /pos/create` avec ce jeton
+     renvoie 403 (`access_denied`).
+  3. Sur un marchand existant créé avant ce chantier (default_role_id
+     encore "admin", non rétroactif) : créer un membre sans toucher au
+     sélecteur de rôle continue de lui donner le rôle "admin" de CE
+     marchand — le changement ne s'applique qu'aux marchands créés après ce
+     chantier, comme prévu (pas de migration de données ici).
+
+### LOT A Semaine 1 — Chantier 3 : unicité de l'adresse électronique (2026-09-10)
+
+Prérequis au self-onboarding (décision N7 ; docs/parcours-client-v2.docx §5.3).
+Avant ce chantier : aucune contrainte d'unicité sur `users.email` (ni en base,
+ni en code) — `CreateUser` n'interrogeait jamais la table avant d'insérer, et
+le login comparait `UPPER(u.email) = UPPER(?)`, incompatible avec un index
+fonctionnel `lower(email)`.
+
+- **Détection de doublons sur staging (exécutée avant d'écrire la migration,
+  comme demandé)** : 47 utilisateurs, aucun e-mail NULL/vide, **1 groupe de 4
+  doublons** — `iliesbellaltemp@gmail.com` partagé par les user_id 227, 233,
+  242, 244, tous `enabled = false`, créés à la même seconde (2026-05-30
+  18:40:54), lecture manifeste de comptes de test jetables (pas de doublon
+  parmi des comptes actifs). Signalé avant de continuer, conformément à la
+  consigne. **Aucun doublon en production** (déjà vérifié en amont de ce
+  chantier).
+- **Décision utilisateur sur la résolution du doublon** : pas d'index partiel
+  (`WHERE enabled = TRUE`), pas de nettoyage manuel hors-migration — la
+  migration elle-même désambiguïse tout doublon normalisé restant en
+  ajoutant un suffixe `+1`, `+2`, ... sur la partie locale de l'adresse
+  (compte le plus ancien par `user_id` inchangé, les suivants suffixés) :
+  no-op strict quand il n'y a aucun doublon (donc no-op en production),
+  self-healing partout ailleurs (staging comme un futur environnement dans
+  le même état). `users.name` est resynchronisé sur l'e-mail (voir
+  ci-dessous) **après** cette désambiguïsation, pour ne pas propager le
+  doublon dans `uq_users_name`.
+- **Migration** `migrations/todo/124_users_email_unique_index.{up,down}.sql` :
+  1. `email = lower(trim(email))` : normalisation.
+  2. Désambiguïsation des doublons restants (ci-dessus), no-op en prod.
+  3. `name = lower(trim(email))` : `users.name` devient l'adresse (préparation
+     au retrait de la colonne, lot C — non fait ici, colonne conservée
+     intacte comme demandé). Exécuté après les étapes 1-2 : `email` est déjà
+     normalisé et unique à ce stade, donc aucune collision possible sur
+     `uq_users_name` (index déjà existant) — point 4 du chantier vérifié.
+  4. `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_users_email_lower ON
+     users (lower(email))`, hors bloc transactionnel (même convention que
+     087/109/118) ; `.down.sql` symétrique (`DROP INDEX CONCURRENTLY`), sans
+     tenter de revenir sur la normalisation des données (même convention que
+     117 : une correction de données n'est pas réversible).
+  **Testée de bout en bout contre le Postgres 16 de dev local**, qui avait
+  lui aussi un doublon réel (5 comptes sur `iliesbellal@gmail.com`) : up
+  désambiguïse en `iliesbellal@gmail.com` / `+1` / `+2` / `+3` / `+4`,
+  `name` suit, index créé (`Index Scan` confirmé, voir plus bas) ; down
+  supprime l'index proprement ; ré-application de up idempotente (0 ligne
+  touchée sur les étapes 2-3 la seconde fois, `CREATE INDEX ... IF NOT
+  EXISTS` no-op).
+- **`internal/modules/auth/repository.go`, fonction `Login`** : le prédicat
+  e-mail passe de `UPPER(u.email)=UPPER(?)` à `lower(u.email)=lower(?)`.
+  Plan d'exécution vérifié contre le Postgres de dev : `EXPLAIN` sur le seul
+  prédicat email isolé confirme `Index Scan using uq_users_email_lower`
+  (contre `Seq Scan` avec l'ancien `UPPER(...)`, qui ne peut structurellement
+  jamais utiliser cet index, quelle que soit la volumétrie). Sur la requête
+  `Login` complète (3 conditions `OR` sur name/email/token, jointe à
+  `users_rights`), le planneur choisit un `Seq Scan` + `Hash Join` quelle
+  que soit la forme du prédicat — attendu sur ces deux tables (46/55 lignes
+  en dev) : Postgres ne descend pas dans un index pour un `OR` de conditions
+  disjointes sur des tables aussi petites. Confirmation fonctionnelle
+  demandée par le chantier : connexion testée avec une adresse en casse
+  mixte (`IliesBellal+1@Gmail.com`) contre une ligne stockée en minuscules —
+  correspond bien.
+  **Non touché** : `GetUserForPasswordReset` (même fichier) garde
+  `UPPER(u.email) = UPPER(?)` — son propre commentaire le documente comme
+  « a deliberate copy of the one in Login », qui n'est donc plus tout à fait
+  vrai après ce chantier. Non modifié car hors périmètre explicite (la
+  consigne ne cite que `Login`) ; à surveiller/aligner si un chantier futur
+  retouche ce fichier.
+- **`internal/modules/users/create_service.go` (`CreateUser`) et
+  `create_repository.go`** : vérification d'existence
+  (`UsersRepository.EmailExists`, `lower(email)=lower(?)`) ajoutée juste
+  après la validation des champs obligatoires et avant le hachage du mot de
+  passe (échec rapide) — retourne `models.ErrEmailAlreadyUsed` (nouveau,
+  `internal/models/responses_models.go`, mappé sur 409 comme les autres
+  erreurs `...AlreadyExists` du fichier). Repli pour le cas concurrent :
+  `CreateUser` (repository) intercepte désormais la violation de
+  `uq_users_email_lower` via `dbx.IsDuplicateEntry` (helper déjà existant,
+  utilisé ailleurs dans `tags`/`printers`/`productionprofiles`) et la
+  traduit dans la même erreur métier plutôt que de laisser remonter l'erreur
+  SQL brute.
+  **Point d'attention non résolu, à trancher si besoin** : l'index est
+  `lower(email)`, sans `trim` ; `EmailExists`/`CreateUser` ne trim pas non
+  plus l'entrée. Un e-mail avec espace(s) parasite(s) en entrée
+  (`" foo@bar.com"`) ne collisionnerait ni avec le pré-contrôle ni avec
+  l'index si `"foo@bar.com"` existe déjà sans espace — la normalisation par
+  `trim` n'a été appliquée qu'une fois, historiquement, par la migration.
+  Documenté (pas corrigé, hors périmètre explicite de ce chantier) dans le
+  nouveau test d'intégration.
+  **Autre point d'attention, pas un problème introduit par ce chantier**  :
+  `CreateUser` (service) fixe toujours `name = prénom + " " + nom` pour tout
+  nouvel utilisateur — seul le historique migré par 124 a `name = email`.
+  L'invariant « name suit l'e-mail » établi par la migration s'érode donc
+  dès la première création de compte après ce lot ; sans conséquence sur
+  `uq_users_name` (les deux valeurs restent uniques indépendamment), mais à
+  garder en tête pour le lot C (retrait de la colonne).
+- **Test permanent** `TestUsersRepository_EmailUniqueness_Postgres`
+  (`internal/modules/users/postgres_integration_test.go`) : `EmailExists`
+  case-insensitive avant/après création, `CreateUser` sur un doublon (casse
+  différente) rejeté avec `models.ErrEmailAlreadyUsed`, aucune ligne
+  insérée. **Exécuté avec succès** contre le Postgres 16 de dev local.
+- **Exécuté** : `go build ./...`, `go test ./...`, `go test -tags
+  postgres_integration ./internal/modules/users/... ./internal/modules/auth/...`
+  contre Postgres 16 local. Tout vert pour ce qui touche à ce chantier.
+  Échecs preexistants et sans rapport, confirmés identiques sur `staging`
+  avant modification (`git stash`) : trois tests dans
+  `internal/modules/auth` (`pin_test.go`, sqlmock) qui n'ont échoué que
+  lorsque `DB_DIALECT=postgres` était positionné globalement dans l'environnement
+  du process de test plutôt que scopé par test via `pgtest.Open`/`t.Setenv`
+  — artefact d'invocation de test, pas un bug ; `TestUsersRepository_Postgres`,
+  `TestInsertUserRights_FailsExplicitlyWhenNoDefaultRole` et
+  `TestAuthRepository_Postgres` — la base de dev locale n'a pas la table
+  `roles` (RBAC), en retard sur des migrations non rattrapées par ce
+  chantier (hors périmètre : ne concernent pas `users.email`).
+
+### LOT A Semaine 1 — Chantier 2 : chaînage fiscal sur `DenyOrderLocal` (2026-09-10)
+
+Prérequis au self-onboarding (décision N7, option A ; docs/audit-parcours-onboarding.md
+§4 fait marquant #2). Des trois fonctions qui font passer une commande à
+`state = 'CLOSED'` (`SetDeliveredLocal`, `DeleteOrderLocal`, `DenyOrderLocal`),
+seule `DenyOrderLocal` n'écrivait jamais `hash`/`previous_hash`/`signature` —
+une commande refusée par le marchand sortait de la chaîne fiscale `orders`
+sans laisser de trace, alors qu'elle atteint bien `state = 'CLOSED'`.
+
+- **Divergence `previous_hash` entre les deux fonctions existantes**,
+  signalée avant d'écrire le code (question posée, réponse reçue) : en
+  l'absence de commande `CLOSED` précédente pour le marchand,
+  `SetDeliveredLocal` écrit `prevHash.String` (chaîne vide `""`) alors que
+  `DeleteOrderLocal` écrit `prevHash` (le `sql.NullString`, donc SQL `NULL`)
+  — deux représentations différentes du même cas « premier maillon », sans
+  marqueur explicite dans ni l'une ni l'autre. **Aucune des deux n'a été
+  retenue pour `DenyOrderLocal`** (conforme à la consigne : ne pas harmoniser
+  les deux existantes dans ce chantier, ni les imiter dans leur ambiguïté).
+  À la place : un marqueur littéral **`"GENESIS_HASH"`**, sur le modèle exact
+  déjà en place pour la chaîne `cash_registers`
+  (`internal/modules/cash_registers/repository.go`, `actualPrevHash`) —
+  seule chaîne du dépôt qui rend ce cas explicite plutôt qu'ambigu. Choix
+  utilisateur, avec un principe supplémentaire par rapport à
+  `cash_registers` : `"GENESIS_HASH"` est aussi injecté dans le **payload
+  haché** (`payload := fmt.Sprintf("%s|%s|%d|%s", actualPrevHash, ...)`), pas
+  seulement dans la colonne — la valeur stockée et la valeur hachée restent
+  donc toujours identiques pour `DenyOrderLocal`, ce qui n'est le cas ni de
+  `SetDeliveredLocal` ni de `DeleteOrderLocal` (toutes deux hachent
+  `prevHash.String` mais stockent des choses différentes dans la colonne).
+  Ce chantier ne touche pas au code existant de ces deux fonctions.
+- **`currentPrice`/`merchantID` manquants dans la signature de
+  `DenyOrderLocal`** : sa signature (`orderID, deletionReasonID, comment,
+  userID`) suffisait déjà — un `SELECT merchant_id, price FROM orders WHERE
+  order_id = ?` a été ajouté en tête de fonction, sur le modèle du bloc « 1)
+  Get metadata » déjà présent dans `SetDeliveredLocal`/`DeleteOrderLocal`.
+  Aucun changement de signature, donc aucun changement dans `service.go`
+  (`SetOrderDenied`/`DenyOrder`) — l'option "remonter depuis l'appelant"
+  évoquée par le chantier n'était pas nécessaire.
+- **Point d'attention non explicitement listé par le chantier, mais
+  nécessaire à la correction du chaînage** : la requête qui retrouve le
+  hash précédent (`SELECT hash FROM orders WHERE merchant_id = ? AND state =
+  'CLOSED' ORDER BY delivered_on DESC, order_id DESC LIMIT 1 FOR UPDATE`,
+  partagée par les trois fonctions) trie par `delivered_on DESC`. En
+  PostgreSQL, `NULL` est trié en premier en `DESC` — si `DenyOrderLocal`
+  n'écrivait pas `delivered_on`, chaque commande refusée resterait
+  définitivement en tête de ce tri pour son marchand (NULL prime sur toute
+  date réelle), cassant l'ordre du chaînage pour toutes les clôtures
+  suivantes dès le premier refus. `delivered_on = `+dbx.UTCNow()+`` a donc
+  été ajouté à l'`UPDATE`, dans le même bloc que les trois colonnes de
+  chaînage — même valeur d'horodatage de clôture que `DeleteOrderLocal`
+  écrit déjà pour la même raison (elle aussi une clôture qui n'est pas une
+  vraie livraison).
+- **Payload identique dans sa forme** aux deux fonctions existantes :
+  `fmt.Sprintf("%s|%s|%d|%s", <prevHash>, deliveredOn, currentPrice,
+  orderID)`, `sha256`, `security.SignHash`.
+- **Non touché, conforme à la consigne** : aucune reprise d'historique — les
+  lignes `DENIED` déjà en base restent `NULL` sur les trois colonnes ; aucune
+  liste d'exclusion des rapports fiscaux modifiée.
+- **Test permanent** (`deny_order_fiscal_chain_postgres_integration_test.go`,
+  build tag `postgres_integration`) : deux refus successifs pour le même
+  marchand — le premier vérifie `hash`/`signature` non nuls et
+  `previous_hash = "GENESIS_HASH"`, le second vérifie que `previous_hash`
+  vaut bien le `hash` du premier (chaînage effectif, pas seulement présence
+  de valeurs). **Exécuté avec succès** contre le Postgres 16 de dev local
+  (`docker-compose.postgres.yml`, conteneur `welloresto-postgres-dev`) — la
+  base locale était en retard de plusieurs migrations (jusqu'à la 123 ;
+  115_permission_reports_staff_performance_read a échoué faute de table
+  `permissions`, sans rapport avec ce chantier, ignorée) : rattrapée pour
+  pouvoir exécuter ce test et le reste de la suite `postgres_integration` du
+  module.
+- **Exécuté** : `go build ./...`, `go test ./...`,
+  `go test -tags postgres_integration ./internal/modules/order_life_cycle/...
+  ./internal/modules/cash_registers/... ./internal/modules/receipt/...`
+  contre Postgres 16 local. Tout vert pour ce qui touche à ce chantier. Trois
+  échecs preexistants et sans rapport, confirmés identiques sur `staging`
+  avant modification (`git stash`) : schéma de la base de dev locale encore
+  en retard sur deux tests (`delivery_travel_seconds` manquante,
+  `configurable_attribute_options` de mauvais type — nécessitent des
+  migrations au-delà de celles rattrapées ici) et un test sqlmock
+  (`TestSendInvoiceByEmail_NewEmail_CreatesCustomer`) dont l'échec vient d'un
+  ordre de colonnes non déterministe côté mock, pas du code testé.
+
+### LOT A Semaine 1 — Chantier 1 : validation de `FISCAL_SIGNING_KEY` au démarrage (2026-09-10)
+
+Prérequis au self-onboarding (docs/audit-parcours-onboarding.md, défaut #9) :
+`security.SignHash` (internal/utils/security/hash_signing.go) lit
+`FISCAL_SIGNING_KEY` via `os.Getenv` sans aucune validation — absente, elle
+produit silencieusement une signature HMAC avec une clé vide, ni erreur ni
+log, donc reproductible par n'importe qui.
+
+- **Périmètre exact** : ajout d'un contrôle de démarrage, sur le modèle exact
+  de `PIN_PEPPER` (`internal/config/config.go`) — champ `App.FiscalSigningKey`
+  chargé via `os.Getenv("FISCAL_SIGNING_KEY")` dans `Load()`, `log.Fatal
+  ("FISCAL_SIGNING_KEY is not set")` dans `validate()` si vide. Aucune autre
+  modification.
+- **`security.SignHash` non touchée** — signature et comportement identiques
+  (consigne explicite du chantier). Le contrôle vit uniquement dans
+  `internal/config`, au démarrage de l'application (`config.Load()`), pas
+  dans `SignHash` elle-même.
+- **Production non impactée** : la variable y est déjà définie (vérifié avant
+  ce chantier) — ce contrôle ne fait donc rien de nouveau en prod, il ferme
+  simplement la possibilité de déployer sans elle.
+- **Tests d'intégration Postgres** (`*_postgres_integration_test.go`,
+  build tag `postgres_integration`) : `SetDeliveredLocal`/`DeleteOrderLocal`/
+  `DenyOrderLocal` (order_life_cycle) et les tests de `cash_registers`/
+  `receipt` appellent `security.SignHash` indirectement. Aucun ne définissait
+  `FISCAL_SIGNING_KEY`. Comme `SignHash` ne valide toujours rien elle-même,
+  cela ne faisait pas échouer ces tests — mais pour rester cohérent avec le
+  comportement réel de l'application (où `config.Load()` refuserait de
+  démarrer sans cette variable), `FISCAL_SIGNING_KEY` est désormais posée par
+  `pgtest.Open` (`internal/database/dbx/pgtest/pgtest.go`), le point de
+  setup commun à tous ces tests — même schéma que `DB_DIALECT` qui y est déjà
+  fixé. Valeur de test : `itest-fiscal-signing-key`, seulement si la variable
+  n'est pas déjà présente dans l'environnement.
+- **Exécuté** : `go build ./...` et `go test ./...` — verts. Les échecs
+  observés sur `internal/modules/planning/leave`, `internal/modules/planning/
+  swaps` et `internal/modules/ubereats` sont préexistants et sans rapport
+  avec ce chantier (confirmés identiques sur `staging` avant modification,
+  via `git stash`).
+
 ### PROMPT 25 Phase 3/4 — Les 7 autres fusions retenues (2026-09-07)
 
 Suite du point de passage sur l'onglet CA. Même méthode partout : requête

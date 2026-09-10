@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
@@ -419,6 +420,74 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	linked, err = repo.MerchantUserLinkExists(ctx, merchantID, userID)
 	if err != nil || linked {
 		t.Fatalf("expected link disabled, got linked=%v err=%v", linked, err)
+	}
+}
+
+// TestUsersRepository_EmailUniqueness_Postgres is LOT A Semaine 1, Chantier 3
+// (docs/decisions.md) : EmailExists must be case-insensitive (it backs the
+// pre-insert check in create_service.go), and CreateUser must translate a
+// concurrent duplicate — one that slips past that pre-check — into
+// models.ErrEmailAlreadyUsed via uq_users_email_lower (migration 124) rather
+// than leaking a raw SQL constraint violation.
+func TestUsersRepository_EmailUniqueness_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const userID = "itest-users-emailuniq-1"
+	const dupeUserID = "itest-users-emailuniq-2"
+	const email = "ITest.EmailUniq@Example.com"
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users_rights WHERE user_id IN ($1, $2)`, userID, dupeUserID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id IN ($1, $2)`, userID, dupeUserID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	repo := NewUserRepository(db)
+
+	// Before creation: no match, whatever the casing.
+	exists, err := repo.EmailExists(ctx, email)
+	if err != nil {
+		t.Fatalf("EmailExists (before create) failed: %v", err)
+	}
+	if exists {
+		t.Fatal("EmailExists reported true before the user was created")
+	}
+
+	if err := repo.CreateUser(ctx, userID, "ITest EmailUniq", "ITest", "EmailUniq", email, "+33611111113", "hash-1", "user-tok-emailuniq-1"); err != nil {
+		t.Fatalf("CreateUser failed against postgres: %v", err)
+	}
+
+	// EmailExists must match case-insensitively (mirrors uq_users_email_lower).
+	for _, candidate := range []string{email, strings.ToLower(email), strings.ToUpper(email), "  " + strings.ToLower(email) + "  "} {
+		exists, err := repo.EmailExists(ctx, candidate)
+		if err != nil {
+			t.Fatalf("EmailExists(%q) failed: %v", candidate, err)
+		}
+		if strings.TrimSpace(candidate) != candidate {
+			// Untrimmed input is a known gap (see docs/decisions.md, Chantier 3) —
+			// documented here, not asserted, so this test doesn't silently start
+			// failing once/if that gap is closed.
+			continue
+		}
+		if !exists {
+			t.Fatalf("EmailExists(%q) = false, want true (case-insensitive match)", candidate)
+		}
+	}
+
+	// A second CreateUser with the same email (different casing) must fail
+	// with the dedicated business error, not a raw SQL error.
+	err = repo.CreateUser(ctx, dupeUserID, "ITest Dupe", "ITest", "Dupe", strings.ToUpper(email), "+33611111114", "hash-2", "user-tok-emailuniq-2")
+	if !errors.Is(err, models.ErrEmailAlreadyUsed) {
+		t.Fatalf("CreateUser with duplicate email: err = %v, want models.ErrEmailAlreadyUsed", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE user_id = $1`, dupeUserID).Scan(&count); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the duplicate insert to be rejected, found %d row(s)", count)
 	}
 }
 
