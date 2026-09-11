@@ -25,6 +25,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/modules/onboarding"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/upsell"
@@ -43,6 +44,14 @@ type Service struct {
 	upsellService      *upsell.Service
 	notificationSvc    *notification.NotificationService
 	terminal           TerminalGateway
+	onboarding         *onboarding.Service
+}
+
+// SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic
+// onboarding completion ("device" task) — late-bound, see
+// menu.MenuService.SetOnboardingService's doc comment for why.
+func (s *Service) SetOnboardingService(o *onboarding.Service) {
+	s.onboarding = o
 }
 
 func NewService(
@@ -162,6 +171,10 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 	accessToken, expiresAt, err := s.generateAccessToken(kiosk.ID, kiosk.MerchantID)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.onboarding != nil {
+		s.onboarding.RecomputeOnboardingBestEffort(ctx, kiosk.MerchantID)
 	}
 
 	return &EnrollResponse{

@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/modules/onboarding"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
 	rolesModule "welloresto-api/internal/modules/roles"
 )
@@ -25,6 +26,14 @@ type POSService struct {
 	holidayService *settingspkg.Service
 	rolesRepo      *rolesModule.Repository
 	broadcaster    realtimeBroadcaster
+	onboarding     *onboarding.Service
+}
+
+// SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic
+// onboarding completion ("logo" task) — late-bound, see
+// menu.MenuService.SetOnboardingService's doc comment for why.
+func (s *POSService) SetOnboardingService(o *onboarding.Service) {
+	s.onboarding = o
 }
 
 // NewPOSService construit le service. broadcaster peut être nil (la diffusion
@@ -563,6 +572,9 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 func (s *POSService) SetLogoURL(ctx context.Context, merchantID, url string) (*models.POSSettingsResponse, error) {
 	if err := s.posRepo.UpdateMerchant(ctx, merchantID, &models.MerchantSettings{LogoURL: &url}); err != nil {
 		return nil, err
+	}
+	if s.onboarding != nil {
+		s.onboarding.RecomputeOnboardingBestEffort(ctx, merchantID)
 	}
 	return s.GetMerchantSettings(ctx, "")
 }

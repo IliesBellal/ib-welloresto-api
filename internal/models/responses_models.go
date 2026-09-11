@@ -495,11 +495,32 @@ var (
 	ErrIdempotencyKeyRequired = errors.New("idempotency_key_required")
 	ErrSignupInProgress       = errors.New("signup_in_progress")
 
+	// ErrSIRETAlreadyRegistered — LOT A Semaine 3, Chantier 10/14. Distinct
+	// from ErrEmailAlreadyUsed's message on purpose: the doc's own wording
+	// (docs/WelloResto-Parcours-Client-v2.docx §5.7) invites contact rather
+	// than login, since the caller here isn't necessarily the account
+	// holder — often an associate or franchisee needing to be attached.
+	ErrSIRETAlreadyRegistered = errors.New("siret_already_registered")
+
 	// LOT A Semaine 2, Chantier 7 — POST /v1/auth/google
 	ErrInvalidGoogleToken       = errors.New("invalid_google_token")
 	ErrGoogleEmailNotVerified   = errors.New("google_email_not_verified")
 	ErrGoogleAccountNotFound    = errors.New("google_account_not_found")
 	ErrGoogleAccountHasPassword = errors.New("google_account_has_password")
+
+	// LOT A Semaine 3, Chantier 13 — POST /v1/merchants/{id}/onboarding/{code}/skip
+	ErrOnboardingTaskNotSkippable   = errors.New("onboarding_task_not_skippable")
+	ErrOnboardingSkipReasonRequired = errors.New("onboarding_skip_reason_required")
+	ErrOnboardingTaskAlreadyDone    = errors.New("onboarding_task_already_done")
+
+	// LOT A Semaine 3, Chantier 12 — POST /v1/public/companies/resolve
+	ErrCompanyResolveInvalidInput = errors.New("company_resolve_invalid_input")
+
+	// LOT A Semaine 3, Chantiers 11/12 — shared by every rate-limited public route.
+	ErrRateLimited = errors.New("rate_limited")
+
+	// LOT A Semaine 3, Chantier 11 — POST/GET /v1/public/signup-context
+	ErrContextNotFound = errors.New("signup_context_not_found")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1480,6 +1501,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "signup_in_progress"
 		errorMsg = "A signup with this Idempotency-Key is already being processed."
 
+	case errors.Is(err, ErrSIRETAlreadyRegistered):
+		status = http.StatusConflict
+		errorStatus = "siret_already_registered"
+		errorMsg = "Cet établissement semble déjà enregistré. Contactez-nous pour être rattaché."
+
 	case errors.Is(err, ErrInvalidGoogleToken):
 		status = http.StatusUnauthorized
 		errorStatus = "invalid_google_token"
@@ -1489,6 +1515,36 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "google_email_not_verified"
 		errorMsg = "This Google account's email is not verified."
+
+	case errors.Is(err, ErrOnboardingTaskNotSkippable):
+		status = http.StatusBadRequest
+		errorStatus = "onboarding_task_not_skippable"
+		errorMsg = "Only the 'team' and 'logo' onboarding tasks can be skipped."
+
+	case errors.Is(err, ErrOnboardingSkipReasonRequired):
+		status = http.StatusBadRequest
+		errorStatus = "onboarding_skip_reason_required"
+		errorMsg = "A reason is required to skip an onboarding task."
+
+	case errors.Is(err, ErrOnboardingTaskAlreadyDone):
+		status = http.StatusConflict
+		errorStatus = "onboarding_task_already_done"
+		errorMsg = "This onboarding task is already done and cannot be skipped."
+
+	case errors.Is(err, ErrCompanyResolveInvalidInput):
+		status = http.StatusBadRequest
+		errorStatus = "company_resolve_invalid_input"
+		errorMsg = "name, postal_code and city are required."
+
+	case errors.Is(err, ErrRateLimited):
+		status = http.StatusTooManyRequests
+		errorStatus = "rate_limited"
+		errorMsg = "Too many requests. Please try again later."
+
+	case errors.Is(err, ErrContextNotFound):
+		status = http.StatusNotFound
+		errorStatus = "signup_context_not_found"
+		errorMsg = "This signup context does not exist or has expired."
 
 	case errors.Is(err, ErrGoogleAccountNotFound):
 		status = http.StatusNotFound

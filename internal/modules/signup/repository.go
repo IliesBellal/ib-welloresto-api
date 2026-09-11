@@ -91,17 +91,6 @@ func (r *Repository) GetSession(ctx context.Context, id string) (*Session, error
 	return s, nil
 }
 
-// GetSessionByContextToken looks up a session by id, treating contextToken
-// as that id — see models.go's doc comment: no endpoint in this chantier
-// writes a dedicated "pre-signup context" row, but the lookup mechanism is
-// ready for whichever future flow does (a pricing-page selection, etc.).
-func (r *Repository) GetSessionByContextToken(ctx context.Context, contextToken string) (*Session, error) {
-	if contextToken == "" {
-		return nil, nil
-	}
-	return r.GetSession(ctx, contextToken)
-}
-
 // finishSession is the shared implementation of CompleteSession/FailSession.
 func (r *Repository) finishSession(ctx context.Context, id, state string, status int, body []byte) error {
 	db := dbx.GetDB(ctx, r.database)

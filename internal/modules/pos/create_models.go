@@ -1,5 +1,7 @@
 package pos
 
+import "encoding/json"
+
 // CreateMerchantRequest is the JSON payload for POST /pos/create.
 type CreateMerchantRequest struct {
 	FullName     string `json:"full_name"`
@@ -13,7 +15,21 @@ type CreateMerchantRequest struct {
 	Tel          string `json:"tel"`
 	WebSite      string `json:"web_site"`
 	Email        string `json:"email"`
-	PackageID    string `json:"package_id"`
+	// Lat/Lng/PlaceID: LOT A Semaine 3, Chantier 14 — the establishment's
+	// Google Places location, silently captured (never shown for editing —
+	// see docs/WelloResto-Parcours-Client-v2.docx §5.4.3). Zero value (0, "")
+	// for a merchant created without a resolved place (e.g. /pos/create).
+	Lat     float64 `json:"lat,omitempty"`
+	Lng     float64 `json:"lng,omitempty"`
+	PlaceID string  `json:"place_id,omitempty"`
+	// SignupChannel/SignupSource: LOT A Semaine 3, Chantier 14 — populated
+	// only by /v1/signup ("self_signup", plus the vitrine's utm/landing/referrer
+	// attribution as raw JSON when present). Left empty by /pos/create,
+	// which has no such context — merchant.signup_channel/signup_source
+	// (migration 125) stay NULL for a staff-created merchant, as before.
+	SignupChannel string          `json:"signup_channel,omitempty"`
+	SignupSource  json.RawMessage `json:"signup_source,omitempty"`
+	PackageID     string          `json:"package_id"`
 	// Optional: if set the user is linked to the new merchant in the same transaction.
 	UserID string `json:"user_id,omitempty"`
 	// Rights to grant when linking. Ignored if UserID is empty.

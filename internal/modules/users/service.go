@@ -14,6 +14,7 @@ import (
 	"welloresto-api/internal/models"
 	auditpkg "welloresto-api/internal/modules/audit"
 	"welloresto-api/internal/modules/notification"
+	"welloresto-api/internal/modules/onboarding"
 	planningemployees "welloresto-api/internal/modules/planning/employees"
 	"welloresto-api/internal/modules/ubereats"
 )
@@ -29,6 +30,14 @@ type UsersService struct {
 	memberEmployee      memberEmployeeFacade
 	notificationService *notification.NotificationService
 	uberSvc             *ubereats.UberEatsService
+	onboarding          *onboarding.Service
+}
+
+// SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic
+// onboarding completion ("team" task) — late-bound, see
+// menu.MenuService.SetOnboardingService's doc comment for why.
+func (s *UsersService) SetOnboardingService(o *onboarding.Service) {
+	s.onboarding = o
 }
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")

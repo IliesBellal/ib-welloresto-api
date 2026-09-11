@@ -78,7 +78,10 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	}
 
 	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
-		if createErr := s.userRepo.CreateUser(txCtx, userID, fullName, req.FirstName, req.LastName, req.Email, req.Tel, hashed, userToken); createErr != nil {
+		// A staff member added by an admin never sees a consent screen —
+		// terms/marketing are a public-signup concept (LOT A Semaine 3,
+		// Chantier 14), not applicable here.
+		if createErr := s.userRepo.CreateUser(txCtx, userID, fullName, req.FirstName, req.LastName, req.Email, req.Tel, hashed, userToken, false, false); createErr != nil {
 			return createErr
 		}
 
@@ -96,6 +99,10 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	})
 	if err != nil {
 		return "", err
+	}
+
+	if merchantID != "" && s.onboarding != nil {
+		s.onboarding.RecomputeOnboardingBestEffort(ctx, merchantID)
 	}
 
 	return userID, nil

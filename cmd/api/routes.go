@@ -42,6 +42,7 @@ import (
 	bookingEventsModule "welloresto-api/internal/modules/bookingevents"
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
+	companiesModule "welloresto-api/internal/modules/companies"
 	customersModule "welloresto-api/internal/modules/customers"
 	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
@@ -64,6 +65,7 @@ import (
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
 	presetsModule "welloresto-api/internal/modules/presets"
+	pricingModule "welloresto-api/internal/modules/pricing"
 	printersModule "welloresto-api/internal/modules/printers"
 	productionprofilesModule "welloresto-api/internal/modules/productionprofiles"
 	rolesModule "welloresto-api/internal/modules/roles"
@@ -441,10 +443,20 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	presetsRepo := presetsModule.NewRepository(selectedDB)
 	presetsService := presetsModule.NewService(presetsRepo, menuRepoLegacy, locationsRepo)
 
-	// ---- Onboarding tasks (LOT A Semaine 2, Chantier 6c) ----
+	// ---- Onboarding tasks (LOT A Semaine 2, Chantier 6c ; auto-completion LOT A
+	// Semaine 3, Chantier 13) ----
 	onboardingRepo := onboardingModule.NewRepository(selectedDB)
 	onboardingService := onboardingModule.NewService(onboardingRepo)
 	onboardingH := onboardingModule.NewHandler(onboardingService)
+
+	// Late-bound (see menu.MenuService.SetOnboardingService's doc comment):
+	// wires RecomputeOnboarding into every write path that can complete a
+	// task (menu/team/logo now ; device once kioskService exists further
+	// down) without threading a new constructor parameter through these
+	// already-widely-used services.
+	menuService.SetOnboardingService(onboardingService)
+	posService.SetOnboardingService(onboardingService)
+	usersService.SetOnboardingService(onboardingService)
 
 	// ---- Google auth (LOT A Semaine 2, Chantier 7) : sessionFromToken
 	// reuses authRepo.GetUserByToken wholesale — same rich session lookup
@@ -456,11 +468,23 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	googleAuthService := googleauthModule.NewService(googleAuthVerifier, googleAuthRepo, authRepo)
 	googleAuthH := googleauthModule.NewHandler(googleAuthService)
 
+	// ---- Pricing (LOT A Semaine 3, Chantier 11a/11b) : single reference
+	// table + cheapest-plan calculation, consumed by signup-context below.
+	pricingRepo := pricingModule.NewRepository(selectedDB)
+	pricingService := pricingModule.NewService(pricingRepo)
+
+	// ---- Companies resolution (LOT A Semaine 3, Chantier 12) : relay to
+	// recherche-entreprises.api.gouv.fr, scored deterministically — never AI.
+	companiesService := companiesModule.NewService(companiesModule.NewSireneClient(), redisClient)
+	companiesH := companiesModule.NewHandler(companiesService)
+
 	// ---- Signup (LOT A Semaine 2, Chantier 6) : POST /v1/signup reuses
 	// posService/usersRepo/presetsService/onboardingRepo wholesale — no
 	// duplicated merchant-creation logic (see internal/modules/signup/service.go).
+	// pricingService/redisClient additionally back POST/GET
+	// /v1/public/signup-context (LOT A Semaine 3, Chantier 11).
 	signupSessionsRepo := signupModule.NewRepository(selectedDB)
-	signupService := signupModule.NewService(selectedDB, signupSessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, googleAuthVerifier)
+	signupService := signupModule.NewService(selectedDB, signupSessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, googleAuthVerifier, pricingService, redisClient, cfg.App.SignupContextSigningKey)
 	signupH := signupModule.NewHandler(signupService, signupSessionsRepo)
 
 	// ---- Services ----
@@ -508,6 +532,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		Pepper:                    cfg.Kiosk.Pepper,
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
+	kioskService.SetOnboardingService(onboardingService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
 
@@ -622,6 +647,17 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// (internal/modules/signup/handler.go), not middleware.
 		r.Post("/signup", signupH.Signup)
 
+		// LOT A Semaine 3, Chantier 11 — public, IP-rate-limited inside the
+		// service (see signup.Service.CreateContext). The pre-account tunnel
+		// (Chantier 14) and the vitrine site call these before any account
+		// exists, so — like /signup above — they cannot sit behind
+		// authMiddleware.
+		r.Route("/public", func(r chi.Router) {
+			r.Post("/signup-context", signupH.CreateSignupContext)
+			r.Get("/signup-context/{token}", signupH.GetSignupContext)
+			r.Post("/companies/resolve", companiesH.Resolve)
+		})
+
 		r.Route("/auth", func(r chi.Router) {
 			// Public — same reasoning: the whole point is to authenticate
 			// without an existing session (chantier 7).
@@ -630,11 +666,17 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			// Protected — chantier 8, self-service only (identity from the
 			// token, never from the request body — see SetPasswordForGoogleAccount).
 			r.With(authMiddleware).Post("/password/set", authH.SetPasswordForGoogleAccount)
+			// Chantier 14 — the back-office calls this once per session to
+			// decide whether to force the password-set screen.
+			r.With(authMiddleware).Get("/password/needs-set", authH.NeedsPasswordSet)
 		})
 
 		r.Route("/merchants/{id}/onboarding", func(r chi.Router) {
 			r.Use(authMiddleware)
 			r.Get("/", onboardingH.GetOnboarding)
+			// Owner-only (Service.SkipTask checks Rights.Admin) — LOT A
+			// Semaine 3, Chantier 13.
+			r.Post("/{code}/skip", onboardingH.SkipTask)
 		})
 	})
 

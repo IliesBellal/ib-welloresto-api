@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strconv"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
@@ -19,13 +20,41 @@ func (r *POSRepository) InsertMerchant(ctx context.Context, req CreateMerchantRe
 		country = "France"
 	}
 
+	// LOT A Semaine 3, Chantier 12 : merchant.vat_number existait sans
+	// qu'aucun chemin applicatif ne l'alimente. Dérivé du SIRET (SIREN = ses
+	// 9 premiers chiffres) à la création, quel que soit le canal
+	// (/v1/signup ou /pos/create) — un SIRET malformé ne bloque jamais la
+	// création, vatNumber reste alors "" (NULL en base, colonne nullable).
+	var vatNumber string
+	if len(req.SIRET) >= 9 {
+		if v, ok := helpers.ComputeVATNumber(req.SIRET[:9]); ok {
+			vatNumber = v
+		}
+	}
+
+	var lat, lng sql.NullFloat64
+	if req.Lat != 0 {
+		lat = sql.NullFloat64{Float64: req.Lat, Valid: true}
+	}
+	if req.Lng != 0 {
+		lng = sql.NullFloat64{Float64: req.Lng, Valid: true}
+	}
+
+	var signupSource sql.NullString
+	if len(req.SignupSource) > 0 {
+		signupSource = sql.NullString{String: string(req.SignupSource), Valid: true}
+	}
+
 	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO merchant
 			(fullName, address, street_number, street, zip_code, city, country,
-			 SIRET, merchantTel, web_site, email, token)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+			 SIRET, merchantTel, web_site, email, token, vat_number, lat, lng, place_id,
+			 signup_channel, signup_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
 		req.FullName, req.Address, req.StreetNumber, req.Street, req.ZipCode,
-		req.City, country, req.SIRET, req.Tel, req.WebSite, req.Email, token,
+		req.City, country, req.SIRET, req.Tel, req.WebSite, req.Email, token, sql.NullString{String: vatNumber, Valid: vatNumber != ""},
+		lat, lng, sql.NullString{String: req.PlaceID, Valid: req.PlaceID != ""},
+		sql.NullString{String: req.SignupChannel, Valid: req.SignupChannel != ""}, signupSource,
 	)
 	if err != nil {
 		log.Error("InsertMerchant: failed to insert merchant: " + err.Error())

@@ -23,6 +23,7 @@ import (
 	"welloresto-api/internal/modules/onboarding"
 	"welloresto-api/internal/modules/pos"
 	"welloresto-api/internal/modules/presets"
+	"welloresto-api/internal/modules/pricing"
 	"welloresto-api/internal/modules/users"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -47,25 +48,25 @@ func newTestHandlerWithVerifier(db *sql.DB, verifier *googleauth.Verifier) (*Han
 	locationsRepo := locations.NewLocationsRepository(db)
 	presetsService := presets.NewService(presetsRepo, menuRepo, locationsRepo)
 	onboardingRepo := onboarding.NewRepository(db)
+	pricingService := pricing.NewService(pricing.NewRepository(db))
 
-	svc := NewService(db, sessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, verifier)
+	svc := NewService(db, sessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, verifier, pricingService, nil, "itest-signing-key")
 	return NewHandler(svc, sessionsRepo), sessionsRepo
 }
 
 func validSignupPayload(email, siret string) SignupRequest {
 	return SignupRequest{
-		Provider:   "password",
-		Email:      email,
-		Password:   "Sup3r$ecret!",
-		FirstName:  "ITest",
-		LastName:   "Owner",
-		Tel:        "+33611110000",
-		PresetCode: "snack",
-		Merchant: SignupMerchant{
-			FullName: "ITest Signup Merchant", SIRET: siret, Tel: "0600000000",
-			Address: "a", StreetNumber: "1", Street: "s", ZipCode: "75001", City: "Paris",
-			WebSite: "https://x", Email: "biz-" + email,
+		Identity: SignupIdentity{
+			Provider: "password", Email: email, Password: "Sup3r$ecret!",
+			FirstName: "ITest", LastName: "Owner",
 		},
+		PresetCode: "snack",
+		Merchant: SignupMerchantPayload{
+			FullName: "ITest Signup Merchant", SIRET: siret, Tel: "0600000000",
+			Address: "1 rue de test", ZipCode: "75001", City: "Paris", Country: "FR",
+			Email: "biz-" + email,
+		},
+		AcceptsTerms: true,
 	}
 }
 
@@ -188,11 +189,19 @@ func TestSignup_Nominal_Postgres(t *testing.T) {
 		t.Fatalf("user (name=%q auth_provider=%q), want (name=%q auth_provider=password)", name, authProvider, email)
 	}
 
-	// --- preset applied: snack categories present ---
+	// --- preset applied: snack categories present (v2 — LOT A Semaine 3
+	// Chantier 9 — six categories, up from four in v1) ---
 	var categCount int
 	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM productcateg WHERE merchant_id = $1`, data.MerchantID).Scan(&categCount)
-	if categCount != 4 {
-		t.Fatalf("productcateg count = %d, want 4 (snack preset)", categCount)
+	if categCount != 6 {
+		t.Fatalf("productcateg count = %d, want 6 (snack preset v2)", categCount)
+	}
+
+	// --- vat_number derived from SIRET's SIREN (LOT A Semaine 3, Chantier 12) ---
+	var vatNumber string
+	db.QueryRowContext(ctx, `SELECT vat_number FROM merchant WHERE id = $1`, data.MerchantID).Scan(&vatNumber)
+	if vatNumber != "FR44732829320" {
+		t.Fatalf("vat_number = %q, want %q (derived from SIREN 732829320)", vatNumber, "FR44732829320")
 	}
 
 	// --- onboarding_tasks: five rows ---
@@ -261,11 +270,19 @@ func TestSignup_SIRETAlreadyTaken_Postgres(t *testing.T) {
 	}
 
 	rec2 := doSignup(t, h, "itest-idem-sirettaken-2", validSignupPayload(email2, siret))
-	if rec2.Code != http.StatusBadRequest {
-		t.Fatalf("second signup (same SIRET): status = %d, want 400 (body=%s)", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("second signup (same SIRET): status = %d, want 409 (body=%s)", rec2.Code, rec2.Body.String())
 	}
 	if bytes.Contains(rec2.Body.Bytes(), []byte(email1)) {
 		t.Fatalf("SIRET-taken rejection must not reveal the existing account's email — body: %s", rec2.Body.String())
+	}
+	env := decodeEnvelope(t, rec2)
+	var data struct {
+		Status string `json:"status"`
+	}
+	json.Unmarshal(env.Data, &data)
+	if data.Status != "siret_already_registered" {
+		t.Fatalf("data.status = %q, want siret_already_registered", data.Status)
 	}
 
 	var count int
@@ -405,9 +422,9 @@ func TestSignup_GoogleProvider_Postgres(t *testing.T) {
 	h, _ := newTestHandlerWithVerifier(db, verifier)
 
 	req := validSignupPayload(email, siret)
-	req.Provider = "google"
-	req.Password = "" // ignored for provider "google"
-	req.IDToken = signTestGoogleToken(t, priv, "test-kid", "test-client-id", "google-sub-signup-test", email)
+	req.Identity.Provider = "google"
+	req.Identity.Password = "" // ignored for provider "google"
+	req.Identity.IDToken = signTestGoogleToken(t, priv, "test-kid", "test-client-id", "google-sub-signup-test", email)
 
 	rec := doSignup(t, h, "itest-idem-google-1", req)
 	if rec.Code != http.StatusCreated {

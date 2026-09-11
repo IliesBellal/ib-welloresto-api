@@ -7,27 +7,31 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"welloresto-api/internal/helpers"
+	redisclient "welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/googleauth"
 	"welloresto-api/internal/modules/onboarding"
 	"welloresto-api/internal/modules/pos"
 	"welloresto-api/internal/modules/presets"
+	"welloresto-api/internal/modules/pricing"
 	"welloresto-api/internal/modules/users"
 	"welloresto-api/internal/utils/dbutils"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
 // DefaultPackageID is used when the request carries no context_token, or
-// the resolved signup_sessions row (see repository.go's
-// GetSessionByContextToken) has no package_id in its payload. LOT A Semaine
-// 2, Chantier 6b — decided with the user: packages.id=1 ("Essentiel", the
-// only package with a genuine trial_period_days outside the internal/test-
-// sounding ones) — the common self-serve SaaS pattern of starting a
-// self-signup on the cheapest real tier rather than the most-used one.
+// the context_token's plan_code cannot be resolved to a real packages.id
+// for any reason. LOT A Semaine 2, Chantier 6b — decided with the user:
+// packages.id=1 ("Essentiel", the only package with a genuine
+// trial_period_days outside the internal/test-sounding ones) — the common
+// self-serve SaaS pattern of starting a self-signup on the cheapest real
+// tier rather than the most-used one.
 const DefaultPackageID = "1"
 
 type Service struct {
@@ -39,6 +43,9 @@ type Service struct {
 	presetsService *presets.Service
 	onboardingRepo *onboarding.Repository
 	googleVerifier *googleauth.Verifier
+	pricingService *pricing.Service
+	redis          *redisclient.Client
+	contextSigner  *contextTokenSigner
 }
 
 func NewService(
@@ -50,6 +57,9 @@ func NewService(
 	presetsService *presets.Service,
 	onboardingRepo *onboarding.Repository,
 	googleVerifier *googleauth.Verifier,
+	pricingService *pricing.Service,
+	redis *redisclient.Client,
+	contextSigningKey string,
 ) *Service {
 	return &Service{
 		database:       db,
@@ -60,13 +70,90 @@ func NewService(
 		presetsService: presetsService,
 		onboardingRepo: onboardingRepo,
 		googleVerifier: googleVerifier,
+		pricingService: pricingService,
+		redis:          redis,
+		contextSigner:  newContextTokenSigner(contextSigningKey),
 	}
 }
 
-// Signup dispatches on req.Provider — "password" (chantier 6b) or "google"
-// (chantier 7c, the id_token replacing email+password entirely).
+// signupContextIPThrottlePrefix / Max / Window bound POST
+// /v1/public/signup-context — a public route with no auth, callable by the
+// vitrine site for every visitor composing a cart, so it gets the same
+// per-IP throttle shape as password-reset (see redisclient.Client.TooManyRequestsFromIP).
+const (
+	signupContextIPThrottlePrefix = "signupctx:ipthrottle:"
+	signupContextIPThrottleMax    = 30
+	signupContextIPThrottleWindow = time.Hour
+)
+
+// CreateContext handles POST /v1/public/signup-context (LOT A Semaine 3,
+// Chantier 11) — docs/WelloResto-Parcours-Client-v2.docx §4.4. Prices cart
+// via pricingService (the single implementation — see
+// pricing.Service.ResolveCheapestPlan's doc comment) and signs the result
+// into a stateless context_token (no DB row — see context_token.go's doc
+// comment on why).
+func (s *Service) CreateContext(ctx context.Context, clientIP string, req CreateContextRequest) (CreateContextResponse, error) {
+	if s.redis.TooManyRequestsFromIP(ctx, signupContextIPThrottlePrefix, clientIP, signupContextIPThrottleMax, signupContextIPThrottleWindow) {
+		return CreateContextResponse{}, models.ErrRateLimited
+	}
+
+	quote, err := s.pricingService.ResolveCheapestPlan(ctx, req.Cart)
+	if err != nil {
+		return CreateContextResponse{}, models.ErrInvalidInput
+	}
+
+	// recommended_channel: no business rule for self_serve vs assisted was
+	// found in the reference doc beyond the concept existing — always
+	// "self_serve" for now (the only channel this API actually routes
+	// through today). Revisit once an assisted-routing rule is specified.
+	const recommendedChannel = "self_serve"
+
+	claims := contextClaims{
+		Segment:            req.Segment,
+		Cart:               req.Cart,
+		PlanCode:           quote.PlanCode,
+		MonthlyTotalCents:  quote.MonthlyTotalCents,
+		Breakdown:          quote.Breakdown,
+		RecommendedChannel: recommendedChannel,
+		Attribution:        req.Attribution,
+	}
+	token, err := s.contextSigner.sign(claims)
+	if err != nil {
+		return CreateContextResponse{}, err
+	}
+
+	return CreateContextResponse{
+		ContextToken:       token,
+		ResolvedPlan:       quote,
+		RecommendedChannel: recommendedChannel,
+	}, nil
+}
+
+// GetContext handles GET /v1/public/signup-context/{token} — the tunnel
+// restitutes the cart and its server-computed price server-side, never
+// trusting anything the client itself carried (§4.4). Stateless: just JWT
+// verification, no DB lookup.
+func (s *Service) GetContext(ctx context.Context, token string) (GetContextResponse, error) {
+	claims, err := s.contextSigner.verify(strings.TrimSpace(token))
+	if err != nil {
+		return GetContextResponse{}, models.ErrContextNotFound
+	}
+	return GetContextResponse{
+		Segment: claims.Segment,
+		Cart:    claims.Cart,
+		ResolvedPlan: pricing.Quote{
+			PlanCode:          claims.PlanCode,
+			MonthlyTotalCents: claims.MonthlyTotalCents,
+			Breakdown:         claims.Breakdown,
+		},
+		RecommendedChannel: claims.RecommendedChannel,
+	}, nil
+}
+
+// Signup dispatches on req.Identity.Provider — "password" (chantier 6) or
+// "google" (chantier 7c, the id_token replacing email + password entirely).
 func (s *Service) Signup(ctx context.Context, req SignupRequest) (SignupResponse, error) {
-	switch req.Provider {
+	switch req.Identity.Provider {
 	case "password":
 		return s.signupPassword(ctx, req)
 	case "google":
@@ -89,13 +176,13 @@ func (s *Service) Signup(ctx context.Context, req SignupRequest) (SignupResponse
 // by the caller (handler.go) — this method has no knowledge of it and can be
 // called exactly once per real signup attempt.
 func (s *Service) signupPassword(ctx context.Context, req SignupRequest) (SignupResponse, error) {
-	email := strings.TrimSpace(req.Email)
-	firstName := strings.TrimSpace(req.FirstName)
-	lastName := strings.TrimSpace(req.LastName)
+	email := strings.TrimSpace(req.Identity.Email)
+	firstName := strings.TrimSpace(req.Identity.FirstName)
+	lastName := strings.TrimSpace(req.Identity.LastName)
 	if email == "" || firstName == "" || lastName == "" {
 		return SignupResponse{}, models.ErrInvalidInput
 	}
-	if err := helpers.ValidatePassword(req.Password); err != nil {
+	if err := helpers.ValidatePassword(req.Identity.Password); err != nil {
 		return SignupResponse{}, err
 	}
 
@@ -107,7 +194,7 @@ func (s *Service) signupPassword(ctx context.Context, req SignupRequest) (Signup
 		return SignupResponse{}, err
 	}
 
-	hashedPassword, err := helpers.HashUserPassword(req.Password)
+	hashedPassword, err := helpers.HashUserPassword(req.Identity.Password)
 	if err != nil {
 		return SignupResponse{}, err
 	}
@@ -123,7 +210,7 @@ func (s *Service) signupPassword(ctx context.Context, req SignupRequest) (Signup
 	// defaults to 'password' at the column level (migration 128) so it is
 	// left implicit here.
 	createOwner := func(txCtx context.Context) error {
-		return s.usersRepo.CreateUser(txCtx, userID, strings.ToLower(email), firstName, lastName, email, req.Tel, hashedPassword, userToken)
+		return s.usersRepo.CreateUser(txCtx, userID, strings.ToLower(email), firstName, lastName, email, req.Merchant.Tel, hashedPassword, userToken, req.AcceptsTerms, req.AcceptsMarketing)
 	}
 
 	return s.createOwnerAndMerchant(ctx, req, preset, siret, userID, createOwner)
@@ -139,7 +226,7 @@ func (s *Service) signupGoogle(ctx context.Context, req SignupRequest) (SignupRe
 	if s.googleVerifier == nil {
 		return SignupResponse{}, fmt.Errorf("signup: google provider not configured")
 	}
-	claims, err := s.googleVerifier.Verify(ctx, req.IDToken)
+	claims, err := s.googleVerifier.Verify(ctx, req.Identity.IDToken)
 	if err != nil {
 		return SignupResponse{}, models.ErrInvalidGoogleToken
 	}
@@ -148,8 +235,8 @@ func (s *Service) signupGoogle(ctx context.Context, req SignupRequest) (SignupRe
 	}
 
 	email := strings.TrimSpace(claims.Email)
-	firstName := strings.TrimSpace(req.FirstName)
-	lastName := strings.TrimSpace(req.LastName)
+	firstName := strings.TrimSpace(req.Identity.FirstName)
+	lastName := strings.TrimSpace(req.Identity.LastName)
 	if email == "" || firstName == "" || lastName == "" {
 		return SignupResponse{}, models.ErrInvalidInput
 	}
@@ -172,7 +259,7 @@ func (s *Service) signupGoogle(ctx context.Context, req SignupRequest) (SignupRe
 	// email_verified_at rempli depuis le jeton (chantier 7c) — all inside
 	// CreateGoogleUser (users/create_repository.go), not duplicated here.
 	createOwner := func(txCtx context.Context) error {
-		return s.usersRepo.CreateGoogleUser(txCtx, userID, strings.ToLower(email), firstName, lastName, email, req.Tel, claims.Sub, userToken)
+		return s.usersRepo.CreateGoogleUser(txCtx, userID, strings.ToLower(email), firstName, lastName, email, req.Merchant.Tel, claims.Sub, userToken, req.AcceptsTerms, req.AcceptsMarketing)
 	}
 
 	return s.createOwnerAndMerchant(ctx, req, preset, siret, userID, createOwner)
@@ -195,20 +282,25 @@ func (s *Service) validateSharedFields(ctx context.Context, req SignupRequest) (
 	}
 
 	// SIRET already attached to another merchant: refuse without revealing
-	// account existence (§5.7), log for manual review. Pre-check only —
-	// merchant.siret has no unique constraint in this schema, so a
-	// genuinely concurrent double-signup on the same SIRET is not caught at
-	// the DB level here. Flagged in docs/decisions.md; out of this
-	// chantier's explicit scope (unlike email, which had its own dedicated
-	// chantier — LOT A Semaine 1, Chantier 3).
+	// account existence, but WITH a distinct message this time
+	// (docs/WelloResto-Parcours-Client-v2.docx §5.7: "Cet établissement
+	// semble déjà enregistré. Contactez-nous pour être rattaché." — a
+	// different message from email-taken's, both equally silent on whether
+	// an *account* exists, but SIRET's own message additionally implies
+	// "get in touch to be attached", which email's must never imply since
+	// there the situation is "log in", not "contact us"). Pre-check only —
+	// the genuinely concurrent case (two signups for the same SIRET both
+	// passing this check before either commits) is caught at the DB level
+	// by uq_merchant_siret_valid (migration 132, LOT A Semaine 3 Chantier
+	// 10) and translated identically by isSIRETUniqueViolation below.
 	siretTaken, err := s.merchantSIRETExists(ctx, siret)
 	if err != nil {
 		return nil, "", err
 	}
 	if siretTaken {
-		logger.FromContext(ctx).Warn("signup: SIRET already attached to another merchant — rejected generically, needs manual review",
+		logger.FromContext(ctx).Warn("signup: SIRET already attached to another merchant — rejected with a dedicated message, needs manual review",
 			zap.String("siret", siret))
-		return nil, "", models.ErrInvalidInput
+		return nil, "", models.ErrSIRETAlreadyRegistered
 	}
 
 	preset, err := s.presetsRepo.GetActivePresetByCode(ctx, presetCode)
@@ -239,7 +331,8 @@ func (s *Service) rejectIfEmailTaken(ctx context.Context, email string) error {
 // create the owner user (via createOwner, provider-specific), reuse
 // POSService.CreateMerchant wholesale, ApplyPreset, create onboarding_tasks.
 func (s *Service) createOwnerAndMerchant(ctx context.Context, req SignupRequest, preset *presets.MerchantPreset, siret, userID string, createOwner func(context.Context) error) (SignupResponse, error) {
-	packageID := s.resolvePackageID(ctx, req.ContextToken)
+	packageID, segment := s.resolveContext(ctx, req.ContextToken)
+	_ = segment // reserved: not consumed by merchant creation yet (screen 3's preset_code already carries the effective choice)
 
 	var merchantID, ownerToken string
 	err := dbutils.RunInTx(ctx, s.database, func(txCtx context.Context) error {
@@ -247,10 +340,14 @@ func (s *Service) createOwnerAndMerchant(ctx context.Context, req SignupRequest,
 			return err
 		}
 
+		signupSource, _ := json.Marshal(s.contextAttribution(req))
+
 		merchantResp, err := s.posService.CreateMerchant(txCtx, pos.CreateMerchantRequest{
-			FullName: req.Merchant.FullName, Address: req.Merchant.Address, StreetNumber: req.Merchant.StreetNumber,
-			Street: req.Merchant.Street, ZipCode: req.Merchant.ZipCode, City: req.Merchant.City, Country: req.Merchant.Country,
-			SIRET: siret, Tel: req.Merchant.Tel, WebSite: req.Merchant.WebSite, Email: req.Merchant.Email,
+			FullName: req.Merchant.FullName, Address: req.Merchant.Address,
+			ZipCode: req.Merchant.ZipCode, City: req.Merchant.City, Country: req.Merchant.Country,
+			Lat: req.Merchant.Lat, Lng: req.Merchant.Lng, PlaceID: req.Merchant.PlaceID,
+			SIRET: siret, Tel: req.Merchant.Tel, Email: req.Merchant.Email,
+			SignupChannel: "self_signup", SignupSource: signupSource,
 			PackageID: packageID, UserID: userID, Admin: true,
 		})
 		if err != nil {
@@ -274,6 +371,15 @@ func (s *Service) createOwnerAndMerchant(ctx context.Context, req SignupRequest,
 		return nil
 	})
 	if err != nil {
+		if isSIRETUniqueViolation(err) {
+			// Lost the concurrent race the pre-check cannot catch (two
+			// signups for the same SIRET both passing validateSharedFields
+			// before either commits) — same dedicated message as the
+			// pre-check's own rejection.
+			logger.FromContext(ctx).Warn("signup: SIRET race lost to a concurrent signup — rejected with a dedicated message, needs manual review",
+				zap.String("siret", siret))
+			return SignupResponse{}, models.ErrSIRETAlreadyRegistered
+		}
 		return SignupResponse{}, err
 	}
 
@@ -285,31 +391,64 @@ func (s *Service) createOwnerAndMerchant(ctx context.Context, req SignupRequest,
 	}, nil
 }
 
+// contextAttribution decodes req.ContextToken (best-effort — an
+// expired/absent context loses only the attribution record, never blocks
+// signup) to fetch the vitrine's marketing attribution for
+// merchant.signup_source.
+func (s *Service) contextAttribution(req SignupRequest) Attribution {
+	if strings.TrimSpace(req.ContextToken) == "" {
+		return Attribution{}
+	}
+	claims, err := s.contextSigner.verify(req.ContextToken)
+	if err != nil {
+		return Attribution{}
+	}
+	return claims.Attribution
+}
+
 func (s *Service) merchantSIRETExists(ctx context.Context, siret string) (bool, error) {
+	// merchantSIRETExists is the pre-check — same predicate as
+	// uq_merchant_siret_valid (migration 132: `siret ~ '^[0-9]{14}$' AND
+	// is_active`, the format half already guaranteed here since siret has
+	// already passed helpers.ValidateSIRETFormat by the time this runs) so it
+	// never rejects a SIRET the index would actually accept — notably one
+	// previously used by a merchant since deactivated (is_active = false),
+	// which the index deliberately lets a new signup reclaim.
 	var exists bool
-	err := s.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM merchant WHERE siret = $1)`, siret).Scan(&exists)
+	err := s.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM merchant WHERE siret = $1 AND is_active)`, siret).Scan(&exists)
 	return exists, err
 }
 
-// resolvePackageID reads package_id from the signup_sessions row identified
-// by contextToken (see repository.go's GetSessionByContextToken), falling
-// back to DefaultPackageID when contextToken is empty, resolves to nothing,
-// or its payload carries no package_id. Best-effort: any lookup error falls
-// back to the default rather than failing the whole signup over an optional
-// hint.
-func (s *Service) resolvePackageID(ctx context.Context, contextToken string) string {
+// isSIRETUniqueViolation reports whether err is the race the pre-check in
+// validateSharedFields cannot catch: two concurrent signups both passing
+// the pre-check for the same SIRET before either commits. Scoped to
+// uq_merchant_siret_valid specifically (migration 132) — a different unique
+// violation inside the same transaction should surface as a genuine error,
+// not be silently reworded into "SIRET taken".
+func isSIRETUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && pgErr.ConstraintName == "uq_merchant_siret_valid"
+	}
+	return false
+}
+
+// resolveContext decodes contextToken (best-effort — see resolvePackageID's
+// predecessor doc comment) into (package_id, segment). Falls back to
+// DefaultPackageID when the token is empty, expired, or its plan_code
+// cannot be resolved to a real packages.id — any lookup failure here falls
+// back rather than failing the whole signup over an optional hint.
+func (s *Service) resolveContext(ctx context.Context, contextToken string) (packageID, segment string) {
 	if strings.TrimSpace(contextToken) == "" {
-		return DefaultPackageID
+		return DefaultPackageID, ""
 	}
-	session, err := s.sessionsRepo.GetSessionByContextToken(ctx, contextToken)
-	if err != nil || session == nil || len(session.Payload) == 0 {
-		return DefaultPackageID
+	claims, err := s.contextSigner.verify(contextToken)
+	if err != nil {
+		return DefaultPackageID, ""
 	}
-	var ctxPayload struct {
-		PackageID string `json:"package_id"`
+	pkgID, err := s.pricingService.GetPackageIDForPlan(ctx, claims.PlanCode)
+	if err != nil || pkgID == "" {
+		return DefaultPackageID, claims.Segment
 	}
-	if json.Unmarshal(session.Payload, &ctxPayload) != nil || strings.TrimSpace(ctxPayload.PackageID) == "" {
-		return DefaultPackageID
-	}
-	return ctxPayload.PackageID
+	return pkgID, claims.Segment
 }

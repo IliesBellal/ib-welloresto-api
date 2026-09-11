@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -74,7 +77,7 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().UTC().Add(SignupSessionTTL)
-	created, err := h.sessionsRepo.TryBeginSession(ctx, idempotencyKey, req.Email, req.Provider, req.ContextToken, reqJSON, expiresAt)
+	created, err := h.sessionsRepo.TryBeginSession(ctx, idempotencyKey, req.Identity.Email, req.Identity.Provider, req.ContextToken, reqJSON, expiresAt)
 	if err != nil {
 		models.SendErrorJSON(w, "signup", "create", err)
 		return
@@ -118,6 +121,34 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(rec.status)
 	_, _ = w.Write(rec.body.Bytes())
+}
+
+// CreateSignupContext handles POST /v1/public/signup-context (LOT A
+// Semaine 3, Chantier 11) — public, IP-rate-limited (see
+// Service.CreateContext).
+func (h *Handler) CreateSignupContext(w http.ResponseWriter, r *http.Request) {
+	var req CreateContextRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "signup", "create-context", models.ErrInvalidRequestBody)
+		return
+	}
+	resp, err := h.svc.CreateContext(r.Context(), helpers.ClientIP(r), req)
+	if err != nil {
+		models.SendErrorJSON(w, "signup", "create-context", err)
+		return
+	}
+	models.SendJSON(w, http.StatusCreated, "signup", "create-context", resp)
+}
+
+// GetSignupContext handles GET /v1/public/signup-context/{token} — public.
+func (h *Handler) GetSignupContext(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	resp, err := h.svc.GetContext(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "signup", "get-context", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "signup", "get-context", resp)
 }
 
 // replay writes a terminal session's cached response verbatim, or 409s if

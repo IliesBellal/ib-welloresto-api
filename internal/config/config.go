@@ -29,14 +29,24 @@ type App struct {
 	Port             string
 	PINPepper        string
 	FiscalSigningKey string
+	// SignupContextSigningKey signs POST /v1/public/signup-context's
+	// context_token (LOT A Semaine 3, Chantier 11 — a stateless, signed JWT
+	// per docs/WelloResto-Parcours-Client-v2.docx §4.4, not a DB-backed
+	// opaque id). Deliberately NOT validated/fatal like FiscalSigningKey —
+	// this is a new key with nothing deployed depending on it yet; signup.NewService
+	// falls back to a random in-process key (logged) when unset, so a
+	// missing env var never crashes startup. Set a real value before relying
+	// on tokens surviving a restart or being verified by another instance.
+	SignupContextSigningKey string
 }
 
 func Load() *AppConfig {
 	cfg := &AppConfig{
 		App: App{
-			Port:             getEnv("PORT", "8081"),
-			PINPepper:        os.Getenv("PIN_PEPPER"),
-			FiscalSigningKey: os.Getenv("FISCAL_SIGNING_KEY"),
+			Port:                    getEnv("PORT", "8081"),
+			PINPepper:               os.Getenv("PIN_PEPPER"),
+			FiscalSigningKey:        os.Getenv("FISCAL_SIGNING_KEY"),
+			SignupContextSigningKey: os.Getenv("SIGNUP_CONTEXT_SIGNING_KEY"),
 		},
 		Database:    loadDatabase(),
 		Google:      loadGoogle(),

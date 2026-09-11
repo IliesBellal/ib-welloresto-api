@@ -287,6 +287,31 @@ func (h *AuthHandler) SetPasswordForGoogleAccount(w http.ResponseWriter, r *http
 	models.SendJSON(w, http.StatusOK, "auth", "password_set", map[string]string{"status": "success"})
 }
 
+// NeedsPasswordSet handles GET /v1/auth/password/needs-set (LOT A Semaine 3,
+// Chantier 14) — same token-resolution pattern as SetPasswordForGoogleAccount
+// above.
+func (h *AuthHandler) NeedsPasswordSet(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "needs_password_set", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	caller, err := h.svc.GetUserByToken(r.Context(), token)
+	if err != nil || caller == nil {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "needs_password_set", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	needsSet, err := h.svc.NeedsPasswordSet(r.Context(), caller.UserID)
+	if err != nil {
+		models.SendErrorJSON(w, "auth", "needs_password_set", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "needs_password_set", map[string]interface{}{"needs_password_set": needsSet})
+}
+
 // ResetPIN clears the PIN of a target employee (sets pin_hash to NULL).
 // Authorization: admin/manager (HasUserManagementAccess).
 // Body: { "user_id": "..." }

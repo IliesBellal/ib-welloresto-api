@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/logger"
@@ -155,6 +157,34 @@ func (c *Client) InvalidateMerchantStatusCache(ctx context.Context, merchantID s
 	if _, err := c.ScanDeleteByPattern(ctx, pattern); err != nil {
 		logger.FromContext(ctx).Warn("⚠️ Redis Error (InvalidateMerchantStatusCache): " + err.Error())
 	}
+}
+
+// TooManyRequestsFromIP is a best-effort per-IP throttle for public routes
+// that call an external service or otherwise deserve rate limiting — same
+// read-modify-write counter as auth.AuthService.tooManyResetRequestsFromIP
+// (LOT A Semaine 1), generalized here so LOT A Semaine 3's two new public
+// routes (POST /v1/public/signup-context, POST /v1/public/companies/resolve)
+// don't each reimplement it. Not atomic (can undercount under concurrency) —
+// acceptable for a throttle, never the actual security boundary. A Redis
+// outage (c == nil, or the increment failing) disables it entirely rather
+// than blocking the caller.
+func (c *Client) TooManyRequestsFromIP(ctx context.Context, keyPrefix, clientIP string, max int, window time.Duration) bool {
+	if c == nil || c.rdb == nil || strings.TrimSpace(clientIP) == "" {
+		return false
+	}
+
+	key := keyPrefix + clientIP
+
+	count := 0
+	if raw, found := c.Get(ctx, key); found {
+		count, _ = strconv.Atoi(raw)
+	}
+	if count >= max {
+		return true
+	}
+
+	c.Set(ctx, key, strconv.Itoa(count+1), window)
+	return false
 }
 
 // ScanDeleteByPattern supprime toutes les clés correspondant au pattern via SCAN + DEL par batch.

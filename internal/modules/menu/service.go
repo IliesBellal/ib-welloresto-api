@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/modules/onboarding"
 	"welloresto-api/internal/modules/pos/accounting"
 	"welloresto-api/internal/modules/ubereats"
 )
@@ -44,6 +45,16 @@ type MenuService struct {
 
 	statusSyncTimeout time.Duration
 	statusSyncSem     chan struct{}
+
+	onboarding *onboarding.Service
+}
+
+// SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic
+// onboarding completion — late-bound (rather than a NewMenuService
+// parameter) to avoid rippling this constructor's signature across every
+// existing call site and test. Safe to leave unset: onMenuChanged nil-checks it.
+func (s *MenuService) SetOnboardingService(o *onboarding.Service) {
+	s.onboarding = o
 }
 
 func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, changes *MenuChangeNotifier, merchantHeader merchantHeaderProvider, allergensCatalog allergenCatalogProvider) *MenuService {
@@ -74,6 +85,9 @@ func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooSer
 // Décision D1 de docs/audits/2026-08-24-websocket-menu-haccp-status.md.
 func (s *MenuService) onMenuChanged(ctx context.Context, merchantID string) {
 	s.changes.Changed(ctx, merchantID)
+	if s.onboarding != nil {
+		s.onboarding.RecomputeOnboardingBestEffort(ctx, merchantID)
+	}
 }
 
 func (s *MenuService) UpdateProduct(ctx context.Context, token, productID string, updates ProductUpdatePayload) error {

@@ -41,15 +41,15 @@ func (r *UsersRepository) RoleBelongsToMerchant(ctx context.Context, merchantID,
 
 // CreateUser inserts a new user row inside the provided transaction.
 // The caller is responsible for committing or rolling back the transaction.
-func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, hashedPassword, token string) error {
+func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, hashedPassword, token string, termsAccepted, acceptsMarketing bool) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO users
-			(user_id, name, first_name, last_name, email, tel, password, token)
+			(user_id, name, first_name, last_name, email, tel, password, token, terms_of_use_accepted, accepts_marketing)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?)`,
-		userID, fullName, firstName, lastName, email, tel, hashedPassword, token,
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, fullName, firstName, lastName, email, tel, hashedPassword, token, termsAccepted, acceptsMarketing,
 	)
 	if err != nil {
 		// Repli pour le cas concurrent : deux requêtes passent la
@@ -72,15 +72,15 @@ func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firs
 // instead of relying on the column default, email_verified_at stamped now()
 // since Google's own id_token verification (not a click-through link) is
 // what just established it.
-func (r *UsersRepository) CreateGoogleUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, googleSub, token string) error {
+func (r *UsersRepository) CreateGoogleUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, googleSub, token string, termsAccepted, acceptsMarketing bool) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO users
-			(user_id, name, first_name, last_name, email, tel, password, token, auth_provider, google_sub, email_verified_at)
+			(user_id, name, first_name, last_name, email, tel, password, token, auth_provider, google_sub, email_verified_at, terms_of_use_accepted, accepts_marketing)
 		VALUES
-			(?, ?, ?, ?, ?, ?, '', ?, 'google', ?, `+dbx.UTCNow()+`)`,
-		userID, fullName, firstName, lastName, email, tel, token, googleSub,
+			(?, ?, ?, ?, ?, ?, '', ?, 'google', ?, `+dbx.UTCNow()+`, ?, ?)`,
+		userID, fullName, firstName, lastName, email, tel, token, googleSub, termsAccepted, acceptsMarketing,
 	)
 	if err != nil {
 		if dbx.IsDuplicateEntry(err) {

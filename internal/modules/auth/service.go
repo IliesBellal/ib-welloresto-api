@@ -190,6 +190,14 @@ func (s *AuthService) SetPasswordForGoogleAccount(ctx context.Context, callerUse
 	return nil
 }
 
+// NeedsPasswordSet is LOT A Semaine 3, Chantier 14's screen-triggering half
+// of the above — GET /v1/auth/password/needs-set, called by the back-office
+// once per session (first POS access) to decide whether to force the
+// password-set screen before letting a Google-origin owner into the till.
+func (s *AuthService) NeedsPasswordSet(ctx context.Context, callerUserID string) (bool, error) {
+	return s.repo.NeedsPasswordSet(ctx, callerUserID)
+}
+
 func (s *AuthService) checkLockout(ctx context.Context, anchorToken string) time.Duration {
 	val, found := s.redis.Get(ctx, models.PINLockoutPrefix+anchorToken)
 	if !found {

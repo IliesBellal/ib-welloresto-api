@@ -468,6 +468,26 @@ func (r *AuthRepository) UpdatePassword(ctx context.Context, userID, newHash str
 	return err
 }
 
+// NeedsPasswordSet reports whether userID is a Google-origin account with no
+// password yet — LOT A Semaine 3, Chantier 14's "forced password screen at
+// first POS access" needs this without paying for the giant login JOIN
+// (GetUserByToken/scanUserLoginRow) a second time or, worse, adding a column
+// to that already-74-column shared query. Deliberately its own tiny
+// single-table SELECT.
+func (r *AuthRepository) NeedsPasswordSet(ctx context.Context, userID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var needsSet bool
+	err := db.QueryRowContext(ctx, `
+		SELECT auth_provider = 'google' AND password = ''
+		FROM users
+		WHERE user_id = ?
+	`, userID).Scan(&needsSet)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return needsSet, err
+}
+
 // SetPasswordForGoogleAccount defines a password on a Google-origin account
 // that does not have one yet (LOT A Semaine 2, Chantier 8) — the WHERE guard
 // (auth_provider='google' AND password='') is the actual eligibility check,

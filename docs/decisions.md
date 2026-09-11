@@ -1,3 +1,424 @@
+### LOT A Semaine 3 — Découverte du document de référence et correctifs (2026-09-11)
+
+`docs/WelloResto-Parcours-Client-v2.docx` est apparu dans le dépôt en cours de
+session (déposé par l'utilisateur, sans préavis explicite) — c'est le
+document de référence introuvable depuis le début de ce lot. Lu en entier
+sur les sections touchant les chantiers 9 à 14 (extraction texte via
+`unzip`+`sed` sur `word/document.xml`, aucun outil docx dédié disponible).
+Plusieurs écarts trouvés avec ce qui avait déjà été livré et testé cette
+semaine — certains corrigés immédiatement (accord explicite de
+l'utilisateur sur les trois points ci-dessous), d'autres seulement
+consignés faute d'un chantier dédié pour les traiter.
+
+**Corrigés dans cette session, avec l'accord explicite de l'utilisateur** :
+
+1. **Formule §4.4 du pack le moins cher — entièrement refaite.** La version
+   livrée plus tôt reposait sur une simplification verbale ("Essentiel =
+   base only") qui s'est révélée fausse : le document donne
+   `coût_à_la_carte = 79 + Σ(modules) + planning(29 + 2,50×salariés) +
+   25×postes` comme option à part entière dans l'argmin, pas une exclusion.
+   Différence structurelle supplémentaire découverte en lisant §1.3 : le
+   planning n'est jamais un des "2 modules au choix" de Pro — Pro et Complet
+   incluent le planning jusqu'à 10 salariés en base, une ligne séparée des 2
+   modules choisis parmi {reservation, haccp, marketplaces, delivery}.
+   Réécrit dans `internal/modules/pricing/{models,service}.go` avec 7 tests
+   (`TestResolveCheapestPlan_Postgres`, dont un qui prouve explicitement que
+   le planning ne prend pas un des deux emplacements gratuits de Pro).
+2. **`POST /v1/public/signup-context` — payload et token entièrement
+   refaits.** Le document donne un panier imbriqué
+   (`cart: {modules, employees, kiosks, extra_pos, billing_cycle}` +
+   `attribution: {utm_source, landing, referrer}`), une réponse
+   `resolved_plan: {plan_code, monthly_total_cents, breakdown}` +
+   `recommended_channel`, et surtout un `context_token` **signé HS256** avec
+   un **TTL de 24h** — pas un id opaque adossé à une ligne `signup_sessions`
+   avec un TTL de 7 jours inventé faute de mieux. Le jeton est maintenant un
+   vrai JWT sans état (`internal/modules/signup/context_token.go`,
+   `golang-jwt/jwt/v5`, déjà une dépendance du dépôt) : aucune ligne
+   `signup_sessions` n'est plus créée pour un contexte — `GetContext` décode
+   le jeton directement, sans aller en base. Clé de signature
+   (`SIGNUP_CONTEXT_SIGNING_KEY`, nouvelle variable d'environnement) :
+   repli sur une clé aléatoire en mémoire si absente (les jetons ne
+   survivent alors pas à un redémarrage ni ne se vérifient entre plusieurs
+   instances) plutôt qu'un échec au démarrage — rien n'en dépend encore en
+   production, donc pas de raison de bloquer le déploiement sur une variable
+   qui n'existe pas encore. `recommended_channel` reste toujours
+   `"self_serve"` faute de règle métier trouvée pour `"assisted"`.
+3. **`POST /v1/signup` — restructuré selon §5.6 exactement**, avec l'accord
+   explicite de l'utilisateur de casser le contrat existant plutôt que de le
+   contourner. Nouveau corps `{context_token, identity: {provider, id_token
+   | email+password, first_name, last_name}, merchant: {full_name, address,
+   zip_code, city, country, lat, lng, tel, email, siret, place_id},
+   preset_code, accepts_terms, accepts_marketing}` — remplace l'ancien corps
+   plat. `merchant.address` redevient une chaîne unique (plus de
+   street/street_number séparés : la sélection Google Places du tunnel ne
+   les distingue pas) ; `lat`/`lng`/`place_id` sont désormais réellement
+   écrits sur `merchant` (colonnes déjà existantes, jamais alimentées avant
+   aujourd'hui — même famille de dette que `vat_number` au chantier 12) ;
+   `accepts_terms`/`accepts_marketing` écrits sur `users.terms_of_use_accepted`
+   (colonne déjà existante, jamais écrite) et `users.accepts_marketing`
+   (nouvelle, migration 136). `merchant.signup_channel`/`signup_source`
+   (colonnes de la migration 125, jamais alimentées non plus) reçoivent
+   désormais `"self_signup"` et l'attribution décodée du jeton de contexte.
+   **Message dédié pour le SIRET déjà pris** (§5.7 : « Cet établissement
+   semble déjà enregistré. Contactez-nous pour être rattaché. ») — distinct
+   du message générique réutilisé pour l'e-mail déjà pris, cette fois avec
+   le texte exact du document plutôt que la réutilisation initialement
+   demandée par le brief du chantier 10 (le document, trouvé après, est plus
+   spécifique et fait autorité). `internal/modules/pos/create_models.go` et
+   `create_repository.go` étendus pour porter lat/lng/place_id/signup_channel/
+   signup_source sur `CreateMerchantRequest` — `/pos/create` continue de ne
+   rien y écrire (ces champs restent vides pour un marchand créé par un
+   membre du staff).
+4. **NAF → archétype (écran 3, §5.5.1) — table réelle substituée** à la
+   supposition du chantier 14 (qui plaçait à tort 56.10A/56.10C sur
+   "pizzeria"). Table réelle : 56.10A→traditional, 56.10C→snack,
+   56.30Z→brasserie, 10.71C/10.71D→bakery, 47.81Z→snack — "pizzeria" et
+   "fast_food" ne sont jamais atteints par code NAF, seulement par choix
+   manuel ou par le segment du site. Corrigé dans
+   `wello-back-office/src/types/signupTunnel.ts`.
+5. **Consentement (`accepts_terms`/`accepts_marketing`)** ajouté à l'écran 3
+   du tunnel (deux cases à cocher, la première obligatoire pour activer
+   « Créer mon compte ») — absent de la première version du tunnel puisque
+   le champ n'existait pas encore côté API.
+
+**Petit ajout backend fait au passage** (nécessaire pour l'écran de mot de
+passe forcé du chantier 14, jamais construit avant faute de moyen de
+détecter côté frontend qu'un compte Google n'a pas de mot de passe) :
+`GET /v1/auth/password/needs-set` — sa propre requête isolée à une table
+(`AuthRepository.NeedsPasswordSet`), délibérément PAS une colonne ajoutée à
+la requête de login partagée (74 colonnes, `scanUserLoginRow`, utilisée par
+chaque requête authentifiée) : le risque de casser ce chemin critique pour
+un besoin ponctuel n'en valait pas la peine. `wello-back-office` : nouvelle
+page `SetPassword.tsx`, vérifiée via `useQuery` dans `ProtectedRoute`
+(mise en cache par token de session, jamais réinterrogée à chaque
+navigation).
+
+**Consigné mais volontairement non traité maintenant** (hors du périmètre
+des trois points d'accord explicite ; nécessiterait un chantier dédié) :
+- Le flux Google du §5.2.2 (`POST /v1/auth/google` en pré-vérification —
+  rattachement automatique, refus si mot de passe existant, création
+  `PENDING_ONBOARDING` sans marchand) décrit une mécanique différente de
+  `googleauth`/`signupGoogle` existants (qui créent utilisateur + marchand
+  en un seul appel, sans étape de pré-vérification séparée). Ces deux
+  designs ne sont pas nécessairement contradictoires (le premier pourrait
+  n'être qu'un contrôle amont avant le même appel unique final), mais ça
+  n'a pas été vérifié ni implémenté — le tunnel ne fait aujourd'hui qu'un
+  décodage client du JWT Google pour préremplir les champs, sans appel à
+  `/v1/auth/google` en amont ni logique de rattachement §5.2.3.
+- Réponse structurée pour `/v1/auth/google` seul (`{token, user, next_step}`)
+  non alignée avec l'existant (`{status, merchant_id, user_id, token}`).
+- `onboarding_tasks` (§8.4) utilise `task_key`/`pending`/`done` (chantier
+  6c, avant cette session) là où le document nomme les colonnes différemment
+  (`code`, statuts `todo|in_progress|done|skipped`, `position`,
+  `completed_by`, `metadata`) — écart pré-existant, non introduit cette
+  semaine, non corrigé (implique un changement de schéma plus large que
+  celui traité ici).
+- Reprise multi-appareil (§5.7 : « chaque écran persiste côté serveur à sa
+  validation ») non implémentée pour les écrans 1/2 du tunnel — seul le
+  `context_token` (une vraie ressource serveur) survit à un changement
+  d'appareil ; le reste de l'état vit en `sessionStorage` (protège contre un
+  rafraîchissement accidentel sur le même appareil, pas contre un
+  changement d'appareil).
+- Libellés des six archétypes (§5.5.2 : "Traditionnel", "Bar-brasserie",
+  "Fast-food et burger", "Snack et emporter", "Boulangerie et salon de thé")
+  repris dans les vignettes du tunnel ; le contenu détaillé de chaque
+  archétype (répartition zones/tables, `covers_required`, catégories) était
+  déjà celui donné directement par l'utilisateur au chantier 9 et concorde
+  avec §5.5.2 — pas de changement nécessaire là.
+
+**Exécuté** : `go build ./...` vert ; migration 136 appliquée sur
+`staging` ; API lancée en local (`go run ./cmd/api`) contre `staging`,
+tunnel piloté par Playwright dans un vrai navigateur (Chromium, installé
+temporairement) — parcours complet re-vérifié avec les nouveaux contrats
+(JWT de contexte réel décodé côté `curl`, cases à cocher testées : le
+bouton "Créer mon compte" reste désactivé tant que les CGU ne sont pas
+cochées). Suite complète `go test -tags postgres_integration
+./internal/modules/signup/... ./internal/modules/pricing/...
+./internal/modules/users/...` contre `staging` — verts à l'exception de
+trois échecs confirmés pré-existants et sans rapport avec cette session
+(migration 124 — unicité d'e-mail — jamais appliquée sur `staging` ; un
+argument de requête manquant dans un test déjà présent avant cette
+semaine ; `TestAuthRepository_Postgres`, déjà documenté comme pré-existant
+au chantier 8). Aucune régression trouvée sur les chantiers déjà livrés
+cette semaine (9/10/12/13) en dehors des changements décrits ci-dessus.
+
+### LOT A Semaine 3 — Chantier 14 : tunnel front (wello-back-office) (2026-09-11)
+
+- **Gap découvert en cours de route** : la session utilisateur (login/
+  `GetUserByToken`) n'exposait `auth_provider` nulle part, alors que l'écran
+  forcé de définition de mot de passe (dernier point du chantier) en a
+  besoin pour décider s'il doit s'afficher. Plutôt que d'ajouter une colonne
+  à la requête SQL partagée de 74 colonnes (`scanUserLoginRow`, utilisée par
+  chaque requête authentifiée de l'API), nouveau point d'entrée isolé :
+  `GET /v1/auth/password/needs-set` (`AuthRepository.NeedsPasswordSet`,
+  requête à une seule table) — zéro risque sur le chemin d'auth existant.
+  Testé (`TestNeedsPasswordSet_Postgres`, 5 cas) contre `staging`.
+- **`AddressAutocomplete.tsx`** (wello-back-office) : `fields` étendu
+  (`place_id`, `international_phone_number`, `opening_hours`, `types`,
+  `name`) et nouveau prop `searchType` (`'address'` par défaut, inchangé
+  pour les deux call sites existants — EstablishmentTab, ProfileTab —
+  `'establishment'` pour l'écran 2 du tunnel, seul moyen d'obtenir
+  téléphone/horaires/catégorie : Google ne les renvoie jamais pour une
+  simple adresse). Nouveau prop `onInputChange`, ajouté après un bug trouvé
+  en testant réellement le tunnel dans un navigateur (voir plus bas) : sans
+  lui, un texte tapé sans sélectionner de suggestion Google (API
+  indisponible, ou établissement non répertorié) ne remontait jamais au
+  formulaire parent — seul `onSelect` (déclenché uniquement par une vraie
+  sélection) le faisait.
+- **`CreateEstablishmentDialog.tsx`** branché sur `AddressAutocomplete`
+  (`searchType="address"`, comme demandé — pas de changement de
+  comportement pour cet écran interne, seulement moins de ressaisie).
+- **Tunnel** (`src/pages/signup-tunnel/`) : trois écrans, état en mémoire
+  (`React.useState`, persistance `sessionStorage` en plus pour survivre à un
+  rafraîchissement accidentel sur le même appareil). **Écart assumé par
+  rapport au brief** : "chaque écran persiste côté serveur à sa validation,
+  reprise sur un autre appareil" n'est pas construit — `POST /v1/signup` est
+  atomique (un seul appel final, pas de sauvegarde partielle possible côté
+  API), et créer un mécanisme de sauvegarde par écran aurait dépassé ce
+  chantier. Seul le `context_token` du chantier 11 (une vraie ressource
+  serveur) est restauré depuis `?ctx=`.
+- **Correspondance NAF → archétype (écran 3, §5.5.1)** : non tirée du
+  document de référence (indisponible) — construite depuis
+  `merchant_presets.naf_codes` (migration 131). Plusieurs codes sont
+  partagés entre archétypes (56.10A : traditional+pizzeria ; 56.10C :
+  pizzeria+fast_food+snack) ; l'ordre de priorité retenu en cas
+  d'ambiguïté (pizzeria d'abord) est une hypothèse, signalée dans le code
+  (`signupTunnel.ts`) comme à vérifier contre le vrai §5.5.1.
+- **Écran 1** : bouton Google (Google Identity Services, chargé à la volée,
+  aucune dépendance ajoutée) en action principale pleine largeur ; identité
+  e-mail/mot de passe repliable, non dégradée visuellement une fois ouverte.
+  `VITE_GOOGLE_CLIENT_ID` (nouvelle variable, même valeur que
+  `GOOGLE_CLIENT_ID` côté API) doit être configurée avant que le bouton
+  fonctionne — sans elle il échoue proprement vers le chemin e-mail, jamais
+  un écran cassé (vérifié dans le test navigateur ci-dessous).
+- **"Adresse déjà utilisée" (écran 1)** : ne peut être détecté qu'à la
+  soumission finale (écran 3) — `/v1/signup` est le seul point qui vérifie
+  l'unicité de l'e-mail, il n'existe pas de contrôle de disponibilité
+  indépendant. Sur `email_already_used`, l'orchestrateur renvoie
+  explicitement à l'écran 1 avec le message et les deux liens demandés.
+- **Idempotency-Key** : générée une fois par tunnel (`crypto.randomUUID()`,
+  `sessionStorage`), réutilisée sur tout retry — jamais régénérée avant un
+  nouveau succès ou un nouvel appel de `/creer-mon-compte`.
+- **`publicTunnelApi.ts`** : client dédié, n'envoie jamais `X-App-Source`
+  (contrairement à `apiClient` partagé, qui l'ajoute inconditionnellement) —
+  confirmé sur le code API que ce header n'a aucun effet sur les routes
+  publiques du tunnel de toute façon, mais l'omission reste volontaire et
+  documentée en tête de fichier, comme demandé.
+- **Testé réellement, pas seulement compilé** : API lancée en local
+  (`go run ./cmd/api`) contre `staging`, `npm run dev` pointé dessus,
+  parcours complet des 3 écrans piloté par Playwright (chromium, installé
+  temporairement, retiré ensuite) dans un vrai navigateur — screenshots à
+  chaque étape. C'est cette passe qui a révélé le bug `onInputChange`
+  ci-dessus (corrigé avant de considérer le chantier terminé). Soumission
+  finale (`POST /v1/signup`) délibérément non déclenchée pendant ce test
+  pour ne pas créer un faux marchand sur `staging`. `npx tsc --noEmit` et
+  `npx eslint src` verts sur tous les fichiers touchés/créés (le reste des
+  74 avertissements/erreurs eslint du dépôt sont préexistants, hors
+  périmètre).
+- **Confirmations utilisateur déjà obtenues avant ce chantier** : restriction
+  par référent HTTP de `VITE_GOOGLE_PLACES_API_KEY` déjà configurée en
+  console Google Cloud (confirmé par l'utilisateur) ; SIRET 81490975000014
+  déjà résolu manuellement (chantier 10).
+- **Non fait, à faire avant mise en production** : configurer
+  `VITE_GOOGLE_CLIENT_ID` (Google Cloud Console, OAuth 2.0) en
+  staging/production, valeur identique à `GOOGLE_CLIENT_ID` côté API.
+
+### LOT A Semaine 3 — Chantier 12 : résolution de l'entité légale (2026-09-11)
+
+- **Schéma de l'API vérifié en direct** (fetch de son OpenAPI + appels réels
+  à `recherche-entreprises.api.gouv.fr`, 2026-09-11), pas deviné : `q`,
+  `code_postal`, `activite_principale` (codes NAF pointés, séparés par
+  virgules), `etat_administratif` (`A`/`C`). Un résultat porte un `siret` de
+  premier niveau **souvent vide** — le SIRET utile vit dans `siege.siret`
+  (siège social) ou dans `matching_etablissements[].siret` (l'établissement
+  qui correspond réellement au `code_postal` demandé, potentiellement
+  différent du siège pour une enseigne à plusieurs adresses). `resolvedEstablishment`
+  (`internal/modules/companies/client.go`) préfère un établissement de
+  `matching_etablissements` dont le `code_postal` correspond exactement,
+  sinon retombe sur `siege`, sinon le premier établissement disponible —
+  vérifié en direct sur "Boulangerie Joseph" (75001) : renvoie le bon SIRET
+  et la bonne adresse, pas ceux du siège d'une enseigne différente.
+- **pg_trgm vérifié NON installé sur `staging`** (`pg_available_extensions`
+  le montre installable, mais `pg_extension` ne le liste pas) — conformément
+  à l'instruction du chantier ("vérifier... sinon similarité applicative"),
+  la similarité de nom est calculée entièrement en Go
+  (`internal/modules/companies/similarity.go` : Levenshtein normalisé sur
+  texte normalisé — minuscules, accents français retirés, ponctuation
+  écrasée), sans dépendance nouvelle. pg_trgm reste une amélioration
+  possible si l'extension est installée plus tard ; non bloquant ici.
+- **Poids du score = choix d'implémentation, pas une valeur du brief** :
+  0,75 × similarité nom + 0,20 × exactitude code postal + 0,05 × bonus
+  d'unicité (bonus seulement si l'API ne renvoie qu'un seul résultat brut).
+  Les deux seuils (0,85 haute confiance ; 0,5 plancher) sont bien ceux du
+  §5.4.2, appliqués tels quels.
+- **Défaillance du tiers → jamais une erreur** : `Service.Resolve` ne
+  retourne d'erreur Go que pour une entrée invalide ou le débit dépassé —
+  toute autre panne (timeout, réseau, statut HTTP inattendu, JSON invalide)
+  est capturée et journalée, puis renvoyée comme une liste de candidats
+  vide en 200, exactement la bascule "saisie manuelle" attendue par le
+  tunnel.
+- **Cache Redis** (name normalisé + code postal, 7 jours) et **débit limité
+  par IP** (20/heure — valeur non donnée par le brief, choisie plus stricte
+  que celle du chantier 11 puisque c'est la seule route publique du tunnel
+  qui sollicite un tiers) via le même `redis.Client.TooManyRequestsFromIP`
+  que le chantier 11.
+- **TVA intracommunautaire (`helpers.ComputeVATNumber`)** : câblée dans
+  `POSRepository.InsertMerchant`, donc active pour tout nouveau marchand
+  quel que soit le canal (`/v1/signup` et `/pos/create`), pas seulement
+  après un `companies/resolve` — un SIRET valide suffit à dériver le SIREN,
+  aucune dépendance à cet endpoint. `merchant.vat_number` reste vide (`''`
+  → `NULL`) pour un SIRET dont les 9 premiers caractères ne sont pas
+  numériques, sans jamais bloquer la création.
+- **Exécuté** : `go build ./...` vert ; `go test
+  ./internal/modules/companies/... ./internal/helpers/...` verts (7 + 2
+  tests, dont un test end-to-end contre l'API réelle exécuté manuellement,
+  pas dans la suite automatisée, pour ne pas rendre les tests dépendants
+  d'un tiers) ; `go test -tags postgres_integration
+  ./internal/modules/signup/... -run TestSignup_Nominal` re-exécuté contre
+  `staging` avec une nouvelle assertion `vat_number = "FR44732829320"` —
+  vert.
+
+### LOT A Semaine 3 — Chantier 11 : jeton de contexte et tarification (2026-09-11)
+
+- **`pricing_catalog`** (migration 133), une seule table plans+modules+addons
+  plutôt qu'une par catégorie — `kind` discrimine. `package_name` (pas un
+  `packages.id` figé) pour rester robuste à des id auto-incrémentés
+  différents entre environnements ; `pricing.Repository.GetPackageIDByName`
+  résout dynamiquement. `annual_price_cents` est le tarif **mensuel**
+  équivalent sous engagement annuel (grille "7900 / 6600 annuel"), jamais un
+  forfait annuel — nommé ainsi dans le commentaire de colonne pour éviter la
+  confusion la plus probable en relecture.
+- **"Pro" et "Complet" n'existaient dans `packages` sous aucun nom** —
+  décidé avec l'utilisateur de créer deux nouvelles lignes (migration 134)
+  plutôt que de réutiliser Standard/Premium (contenu jamais confirmé
+  équivalent). `stripe_price_id = ''`, même convention que Deis/Premium
+  Waiter/Pointage déjà en production pour un package sans Price Stripe réel.
+  **Un vrai Stripe Price doit être créé côté dashboard avant que "Pro" ou
+  "Complet" puisse être réellement facturé** — hors de portée (accès
+  Stripe dashboard).
+- **Formule du pack le moins cher (11b)** — la vraie formule §4.4 était
+  indisponible ; confirmée avec l'utilisateur comme une variante de ma
+  proposition initiale : Essentiel n'inclut jamais aucun module (exclu dès
+  qu'un module est demandé, "0 module inclus" est littéral) ; Complet est
+  toujours au prix plat, quel que soit le nombre de modules ; Pro inclut
+  gratuitement ses deux modules demandés les plus chers et facture le reste
+  individuellement ; à égalité, le pack supérieur gagne. Implémentée une
+  seule fois (`pricing.Service.ResolveCheapestPlan`) — site, tunnel et
+  back-office (lot B) l'appelleront tous, jamais une réimplémentation.
+- **Bornes** : trois paliers confirmés (1ère borne 18900/mois les 24 premiers
+  mois puis 8900 ; chaque borne supplémentaire 13900/mois les 24 premiers
+  mois puis 8900 aussi) — stockés comme données de référence dans
+  `pricing_catalog` (kind='addon') uniquement. Aucune logique de facturation
+  ne les consomme dans ce chantier : les bornes ne font pas partie du panier
+  "pack le moins cher", et une logique d'amortissement/proration serait un
+  chantier à part.
+- **`POST /v1/public/signup-context` / `GET .../{token}`** (`internal/modules/signup/`) :
+  réutilise `signup_sessions` (déjà prévue à cet effet — voir le commentaire
+  de la migration 127) avec `state = 'context'`, `id = context_token` généré
+  côté serveur (auto-référentiel, exactement ce que `GetSessionByContextToken`
+  attendait déjà). **TTL choisi arbitrairement à 7 jours** (aucune valeur
+  donnée par le brief) — plus long que les 24h de rejeu de `/v1/signup` :
+  un panier composé sur le site vitrine peut être repris plusieurs jours
+  après. Débit limité par IP via un nouveau
+  `redis.Client.TooManyRequestsFromIP` généralisé depuis le throttle déjà
+  existant de `SendPasswordResetLink` (30/heure/IP — pas de valeur donnée
+  non plus, choisie par analogie).
+- **11c déjà branché avant ce chantier** : `resolvePackageID`/
+  `GetSessionByContextToken` existaient depuis le chantier 6 (prévus pour un
+  futur chantier qui écrirait une ligne "contexte" — celui-ci). Rien à
+  modifier côté `/v1/signup` lui-même ; seul le producteur de la ligne
+  manquait.
+- **Exécuté** : `go build ./...` vert ; migrations 133/134 appliquées sur
+  `staging` ; `go test -tags postgres_integration
+  ./internal/modules/pricing/... ./internal/modules/signup/...` — tous
+  verts, incluant un test de bout en bout
+  (`TestSignup_ContextTokenResolvesPackage_Postgres`) qui prouve qu'un
+  panier à cinq modules résout "complet" et que `/v1/signup` crée bien
+  l'abonnement sur ce package, pas sur le défaut Essentiel.
+
+### LOT A Semaine 3 — Chantier 10 : unicité du SIRET (2026-09-11)
+
+- **Migration 132** : `CREATE UNIQUE INDEX CONCURRENTLY uq_merchant_siret_valid
+  ON merchant (siret) WHERE siret ~ '^[0-9]{14}$' AND is_active`. Partiel sur
+  les deux prédicats — voir l'en-tête du fichier pour le détail (parc
+  historique au format invalide non NOT NULL-défaillant, et réactivation
+  d'un marchand archivé qui retombe sous la contrainte). Le doublon
+  81490975000014 (Le Maghreb / Ok Pizza) a été résolu manuellement par
+  l'utilisateur avant l'écriture de cette migration, comme demandé.
+- **Pré-contrôle réaligné sur le prédicat de l'index** (point explicitement
+  demandé par le chantier) : `signup.merchantSIRETExists` ajoute `AND
+  is_active` — sans ce correctif, le pré-contrôle aurait rejeté un SIRET que
+  l'index autorise pourtant (celui d'un marchand désormais désactivé),
+  puisqu'il comparait `siret = $1` sans filtrer sur l'activité.
+- **Repli DB** (`signup.isSIRETUniqueViolation`, `internal/modules/signup/service.go`) :
+  intercepte spécifiquement la violation de `uq_merchant_siret_valid`
+  (`pgconn.PgError.Code == "23505" && ConstraintName ==
+  "uq_merchant_siret_valid"`) dans la transaction de création — jamais une
+  violation d'unicité générique, pour ne pas masquer une vraie erreur sous le
+  même message. Traduit vers `models.ErrInvalidInput`, identique au message
+  du pré-contrôle (§5.7, ne révèle jamais l'existence du compte).
+- **Volontairement non fait** (10c) : aucune contrainte `CHECK` sur le
+  format, aucune correction/normalisation d'un SIRET existant — voir l'en-tête
+  de la migration.
+- **Exécuté** : `go build ./...` vert ; migration 132 appliquée sur
+  `staging` ; suite `go test -tags postgres_integration
+  ./internal/modules/signup/...` (6 tests préexistants + 1 nouveau) —
+  7/7 verts après correction d'un test devenu obsolète
+  (`TestSignup_Nominal_Postgres` attendait encore 4 catégories pour "snack",
+  le compte v1 d'avant le chantier 9 ; passé à 6, le compte v2). Nouveau
+  `TestUqMerchantSiretValid_Postgres` prouve le comportement de l'index en
+  direct (deux marchands actifs ne peuvent jamais partager un SIRET valide ;
+  un SIRET libéré par la désactivation de son porteur redevient utilisable ;
+  la réactivation retombe sous la contrainte).
+
+### LOT A Semaine 3 — Chantier 13 : déduction automatique des tâches de démarrage (2026-09-11)
+
+- **`RecomputeOnboarding(ctx, merchantID)`** (`internal/modules/onboarding/service.go`)
+  ré-évalue quatre des cinq conditions à chaque appel (jamais un delta) et
+  n'écrit que via `SetTaskDoneIfNotDone` (`UPDATE ... WHERE status <> 'done'`)
+  — idempotent par construction, donc appelable sans réfléchir depuis
+  n'importe quel point d'écriture, y compris plusieurs fois pour le même
+  événement.
+  - **menu** : `EXISTS` sur `products` avec `enabled = TRUE`, `price > 0`,
+    `tva_in_id/tva_delivery_id/tva_take_away_id <> 0`.
+  - **device** : `EXISTS` sur `kiosks` pour le marchand (aucune distinction
+    de statut — la ligne existe dès l'enrôlement).
+  - **team** : `COUNT(*) FROM users_rights WHERE enabled = TRUE >= 2` — le
+    propriétaire créé au signup compte comme la première ligne.
+  - **logo** : `merchant.logo_url IS NOT NULL AND <> ''`.
+  - **payment** : volontairement absent d'ici — `MarkPaymentMandateAccepted`
+    existe comme point d'entrée pour le lot B (mandat SEPA), non appelé par
+    quoi que ce soit encore, exactement le "poser le hook, ne pas
+    l'implémenter" demandé.
+- **Points d'écriture branchés**, tous par injection tardive
+  (`SetOnboardingService`, appelé une fois dans `cmd/api/routes.go` après
+  construction de `onboardingService`) plutôt qu'un nouveau paramètre de
+  constructeur — évite de casser la signature de quatre services déjà
+  largement utilisés (et leurs tests existants) :
+  - `menu.MenuService.onMenuChanged` (déjà appelé après toute mutation
+    produit/catégorie — le point de signal "quelque chose a changé au menu"
+    existait déjà, pas besoin d'un nouveau call site).
+  - `kiosk.Service.EnrollDevice`, après la transaction de création de la
+    borne.
+  - `pos.POSService.SetLogoURL`, après l'upload du logo.
+  - `users.UsersService.CreateUser`, après création d'une ligne
+    `users_rights` pour un `merchant_id` non vide (staff ajouté).
+- **Skip (`POST /v1/merchants/{id}/onboarding/{code}/skip`)** : migration 135
+  ajoute `skip_reason`/`skipped_at` (distincts de `completed_at`, qui reste
+  réservé à une vraie complétion). Réservé au propriétaire — vérifié via
+  `currentUser.Rights.Admin` (même flag que gèle `signup.createOwnerAndMerchant`
+  à la création). Un événement métier réel reste prioritaire sur un skip :
+  `RecomputeOnboarding` traite `'skipped'` comme `'pending'` pour la
+  promotion vers `'done'` (`status <> 'done'` couvre les deux) — décision non
+  explicitée par le brief, mais l'inverse (un skip qui bloque définitivement
+  la détection automatique) semblait plus surprenant. Impossible de `skip`
+  une tâche déjà `'done'` (`ErrOnboardingTaskAlreadyDone`, 409).
+- **Exécuté** : `go build ./...` vert ; migration 135 appliquée sur
+  `staging` ; `go test -tags postgres_integration
+  ./internal/modules/onboarding/... -v` contre `staging` — 3/3 verts
+  (`TestRecomputeOnboarding_Postgres`, `TestSkipTask_Postgres` nouveaux,
+  `TestGetOnboarding_Postgres` préexistant toujours vert).
+
 ### LOT A Semaine 3 — Chantier 9 : corrections post-revue (2026-09-11)
 
 - **Répartition des zones validée par l'utilisateur** : traditional 14/6

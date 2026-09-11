@@ -98,3 +98,67 @@ func TestSetPasswordForGoogleAccount_Postgres(t *testing.T) {
 		}
 	})
 }
+
+// TestNeedsPasswordSet_Postgres covers LOT A Semaine 3, Chantier 14's
+// screen-triggering check: true only for a Google-origin account with no
+// password yet — the same eligibility condition SetPasswordForGoogleAccount
+// itself enforces, just read-only here.
+func TestNeedsPasswordSet_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id LIKE 'itest-needsset-%'`)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	seed := func(t *testing.T, userID, authProvider, password string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO users (user_id, name, first_name, last_name, email, tel, password, token, auth_provider)
+			VALUES ($1, $2, 'ITest', 'NeedsSet', $2, '+33600000000', $3, $4, $5)
+		`, userID, userID+"@example.com", password, "user-tok-"+userID, authProvider); err != nil {
+			t.Fatalf("seed user %s: %v", userID, err)
+		}
+	}
+
+	svc := AuthService{repo: NewAuthRepository(db)}
+
+	tests := []struct {
+		name         string
+		userIDSuffix string
+		authProvider string
+		password     string
+		want         bool
+	}{
+		{"google without password", "google-nopass", "google", "", true},
+		{"google with password", "google-haspass", "google", "$2a$12$existinghash", false},
+		{"password provider", "password-acct", "password", "$2a$12$somehash", false},
+		{"both (already set once)", "both-acct", "both", "$2a$12$somehash", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := "itest-needsset-" + tt.userIDSuffix
+			seed(t, userID, tt.authProvider, tt.password)
+
+			got, err := svc.NeedsPasswordSet(ctx, userID)
+			if err != nil {
+				t.Fatalf("NeedsPasswordSet: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("NeedsPasswordSet(%s/%q) = %v, want %v", tt.authProvider, tt.password, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("unknown user: false, no error", func(t *testing.T) {
+		got, err := svc.NeedsPasswordSet(ctx, "itest-needsset-does-not-exist")
+		if err != nil {
+			t.Fatalf("NeedsPasswordSet: %v", err)
+		}
+		if got {
+			t.Fatal("NeedsPasswordSet(unknown user) = true, want false")
+		}
+	})
+}

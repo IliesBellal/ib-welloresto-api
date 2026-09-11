@@ -108,7 +108,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	repo := NewUserRepository(db)
 
 	// --- create_repository: CreateUser + InsertUserRights (InsertReturningID) ---
-	if err := repo.CreateUser(ctx, userID, "ITest User", "ITest", "User", "itest-users@example.com", "+33611111111", "hash-1", "user-tok-users"); err != nil {
+	if err := repo.CreateUser(ctx, userID, "ITest User", "ITest", "User", "itest-users@example.com", "+33611111111", "hash-1", "user-tok-users", false, false); err != nil {
 		t.Fatalf("CreateUser failed against postgres: %v", err)
 	}
 	rightsID, err := repo.InsertUserRights(ctx, userID, merchantID, true, "rights-tok-users")
@@ -374,7 +374,7 @@ func TestUsersRepository_Postgres(t *testing.T) {
 	}
 
 	// Second linkable user exercises the insert branch of the upsert.
-	if err := repo.CreateUser(ctx, linkableUserID, "ITest Linkable", "Linkme", "User", "itest-linkable@example.com", "+33622222222", "hash-3", "user-tok-linkable"); err != nil {
+	if err := repo.CreateUser(ctx, linkableUserID, "ITest Linkable", "Linkme", "User", "itest-linkable@example.com", "+33622222222", "hash-3", "user-tok-linkable", false, false); err != nil {
 		t.Fatalf("CreateUser (linkable) failed: %v", err)
 	}
 	linkables, totalLinkable, err := repo.SearchLinkableUsers(ctx, merchantID, LinkableUserSearchFilters{Search: "Linkme", Page: 1, PageSize: 10})
@@ -455,7 +455,7 @@ func TestUsersRepository_EmailUniqueness_Postgres(t *testing.T) {
 		t.Fatal("EmailExists reported true before the user was created")
 	}
 
-	if err := repo.CreateUser(ctx, userID, "ITest EmailUniq", "ITest", "EmailUniq", email, "+33611111113", "hash-1", "user-tok-emailuniq-1"); err != nil {
+	if err := repo.CreateUser(ctx, userID, "ITest EmailUniq", "ITest", "EmailUniq", email, "+33611111113", "hash-1", "user-tok-emailuniq-1", false, false); err != nil {
 		t.Fatalf("CreateUser failed against postgres: %v", err)
 	}
 
@@ -478,7 +478,7 @@ func TestUsersRepository_EmailUniqueness_Postgres(t *testing.T) {
 
 	// A second CreateUser with the same email (different casing) must fail
 	// with the dedicated business error, not a raw SQL error.
-	err = repo.CreateUser(ctx, dupeUserID, "ITest Dupe", "ITest", "Dupe", strings.ToUpper(email), "+33611111114", "hash-2", "user-tok-emailuniq-2")
+	err = repo.CreateUser(ctx, dupeUserID, "ITest Dupe", "ITest", "Dupe", strings.ToUpper(email), "+33611111114", "hash-2", "user-tok-emailuniq-2", false, false)
 	if !errors.Is(err, models.ErrEmailAlreadyUsed) {
 		t.Fatalf("CreateUser with duplicate email: err = %v, want models.ErrEmailAlreadyUsed", err)
 	}
