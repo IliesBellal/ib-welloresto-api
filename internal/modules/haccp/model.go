@@ -89,6 +89,10 @@ type HubTemperatures struct {
 	LastSession *TemperatureSessionSummary `json:"last_session"`
 	Due         bool                       `json:"due"`
 	Overdue     bool                       `json:"overdue"`
+	// CompletedCount : nombre de relevés enregistrés sur la journée
+	// consultée. Alimente l'indicateur température du header POS (icône +
+	// nombre, rouge si 0) — voir docs/audits/2026-08-24-websocket-menu-haccp-status.md.
+	CompletedCount int `json:"completed_count"`
 }
 
 type HubCleaning struct {
@@ -103,12 +107,20 @@ type HubPlaceholder struct {
 	Enabled bool `json:"enabled"`
 }
 
+// HubIngredientsLabeling porte, en plus du flag d'activation hérité de
+// HubPlaceholder, le compteur de traçabilités du jour affiché sur
+// l'indicateur du header POS (icône + nombre, pas de rouge en v1).
+type HubIngredientsLabeling struct {
+	Enabled        bool `json:"enabled"`
+	CompletedCount int  `json:"completed_count"`
+}
+
 type HubData struct {
-	GlobalStatus        string          `json:"global_status"`
-	Temperatures        HubTemperatures `json:"temperatures"`
-	Cleaning            HubCleaning     `json:"cleaning"`
-	Reception           HubPlaceholder  `json:"reception"`
-	IngredientsLabeling HubPlaceholder  `json:"ingredients_labeling"`
+	GlobalStatus        string                 `json:"global_status"`
+	Temperatures        HubTemperatures        `json:"temperatures"`
+	Cleaning            HubCleaning            `json:"cleaning"`
+	Reception           HubPlaceholder         `json:"reception"`
+	IngredientsLabeling HubIngredientsLabeling `json:"ingredients_labeling"`
 }
 
 type HubResponse struct {

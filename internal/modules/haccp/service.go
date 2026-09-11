@@ -12,23 +12,52 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/audit"
+	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/utils/dbutils"
 )
+
+// realtimeBroadcaster diffuse un message WebSocket à tous les devices d'un
+// merchant. Satisfait par *notification.NotificationService ; déclaré en
+// interface pour garder le service testable sans hub réel — même patron que
+// pos.realtimeBroadcaster et menu.realtimeBroadcaster.
+type realtimeBroadcaster interface {
+	BroadcastToMerchant(merchantID string, payload map[string]interface{}) bool
+}
 
 type Service struct {
 	repo         *Repository
 	auditService audit.AuditService
 	db           *sql.DB
 	r2Client     *r2.Client
+	broadcaster  realtimeBroadcaster
 }
 
-func NewService(repo *Repository, auditService audit.AuditService, db *sql.DB, r2Client *r2.Client) *Service {
+// NewService construit le service. broadcaster peut être nil (la diffusion
+// temps réel est alors simplement inactive) : elle est best-effort et ne doit
+// jamais faire échouer une saisie qui vient d'aboutir.
+func NewService(repo *Repository, auditService audit.AuditService, db *sql.DB, r2Client *r2.Client, broadcaster realtimeBroadcaster) *Service {
 	return &Service{
 		repo:         repo,
 		auditService: auditService,
 		db:           db,
 		r2Client:     r2Client,
+		broadcaster:  broadcaster,
 	}
+}
+
+// broadcastHACCPUpdated diffuse l'événement `haccp_updated` après une saisie
+// aboutie (température, nettoyage, traçabilité, réception). Notification sans
+// état (décision D2 de docs/audits/2026-08-24-websocket-menu-haccp-status.md) :
+// le client va rechercher l'état exact via GET /haccp/hub, jamais de donnée
+// métier dans le payload. Best-effort et nil-safe.
+func (s *Service) broadcastHACCPUpdated(merchantID string) {
+	if s.broadcaster == nil {
+		return
+	}
+	s.broadcaster.BroadcastToMerchant(merchantID, map[string]interface{}{
+		"type":        notification.WSEventHACCPUpdated,
+		"merchant_id": merchantID,
+	})
 }
 
 func (s *Service) ListTemperatureZones(ctx context.Context) ([]Zone, error) {
@@ -204,6 +233,17 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 		return nil, err
 	}
 
+	// Compteurs du jour pour l'indicateur du header POS (température +
+	// traçabilité) — la même fenêtre [startAt, endAt) que le reste de GetHub.
+	temperatureReadingsCount, err := s.repo.CountTemperatureReadingsInRange(ctx, user.MerchantID, startAt, endAt)
+	if err != nil {
+		return nil, err
+	}
+	traceabilityCount, err := s.repo.CountTraceabilityRecordsInRange(ctx, user.MerchantID, startAt, endAt)
+	if err != nil {
+		return nil, err
+	}
+
 	globalStatus := "ok"
 	if temperatureOverdue || cleaningOverdueCount > 0 {
 		globalStatus = "warning"
@@ -215,10 +255,11 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 		Hub: HubData{
 			GlobalStatus: globalStatus,
 			Temperatures: HubTemperatures{
-				Enabled:     true,
-				LastSession: lastTemperatureSession,
-				Due:         temperatureDue,
-				Overdue:     temperatureOverdue,
+				Enabled:        true,
+				LastSession:    lastTemperatureSession,
+				Due:            temperatureDue,
+				Overdue:        temperatureOverdue,
+				CompletedCount: temperatureReadingsCount,
 			},
 			Cleaning: HubCleaning{
 				Enabled:        true,
@@ -227,8 +268,11 @@ func (s *Service) GetHub(ctx context.Context, dateValue string) (*HubResponse, e
 				TotalCount:     cleaningTotalCount,
 				OverdueCount:   cleaningOverdueCount,
 			},
-			Reception:           HubPlaceholder{Enabled: false},
-			IngredientsLabeling: HubPlaceholder{Enabled: hasTraceabilityRecords},
+			Reception: HubPlaceholder{Enabled: false},
+			IngredientsLabeling: HubIngredientsLabeling{
+				Enabled:        hasTraceabilityRecords,
+				CompletedCount: traceabilityCount,
+			},
 		},
 	}, nil
 }
@@ -565,6 +609,7 @@ func (s *Service) CreateTemperatureReadingsBatch(ctx context.Context, req BatchC
 		"session_id": session.ID,
 		"count":      len(toInsert),
 	})
+	s.broadcastHACCPUpdated(user.MerchantID)
 
 	return &BatchCreateReadingsResponse{
 		SessionID: session.ID,
@@ -994,6 +1039,7 @@ func (s *Service) CreateCleaningSession(ctx context.Context, req CreateCleaningS
 		"session_id": session.ID,
 		"count":      len(toInsert),
 	})
+	s.broadcastHACCPUpdated(user.MerchantID)
 
 	for i := range toInsert {
 		toInsert[i].SessionID = session.ID
@@ -1046,7 +1092,12 @@ func (s *Service) CreateGoodsReceipt(ctx context.Context, req CreateGoodsReceipt
 		}
 	}
 
-	return s.repo.CreateGoodsReceipt(ctx, user.MerchantID, user.UserID, req)
+	receipt, err := s.repo.CreateGoodsReceipt(ctx, user.MerchantID, user.UserID, req)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastHACCPUpdated(user.MerchantID)
+	return receipt, nil
 }
 
 func computeCleaningComputed(now time.Time, lastExecutionAt *time.Time, frequencyUnit string, frequencyCount int) (bool, bool) {
@@ -1196,6 +1247,7 @@ func (s *Service) CreateTraceabilityRecord(ctx context.Context, comment *string,
 	}
 
 	s.resolveTraceabilityPhotoURLs(record.Photos)
+	s.broadcastHACCPUpdated(user.MerchantID)
 	return record, nil
 }
 

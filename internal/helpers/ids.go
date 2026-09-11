@@ -65,6 +65,8 @@ const (
 	PasswordResetIDPrefix                = "pwd-reset"
 	RoleIDPrefix                         = "role"
 	ProductionProfileIDPrefix            = "production-profile"
+	MerchantPresetIDPrefix               = "prst"
+	OnboardingTaskIDPrefix               = "onb"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

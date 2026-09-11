@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -178,6 +179,9 @@ func (h *Handler) uploadScanNOrderImage(w http.ResponseWriter, r *http.Request, 
 		models.SendErrorJSON(w, "integrations", fnName, fmt.Errorf("failed to upload image"))
 		return
 	}
+	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
+	// sans ce paramètre le navigateur/CDN continue de servir l'ancienne image.
+	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
 
 	// 6. Persist URL in DB
 	if err := h.svc.UpdateScanNOrderImageURL(ctx, user.MerchantID, dbColumn, publicURL); err != nil {

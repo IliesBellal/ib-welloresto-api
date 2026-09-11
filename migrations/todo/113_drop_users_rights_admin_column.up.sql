@@ -27,12 +27,33 @@
 --
 -- Postgres syntax + defensive to_regclass/IF EXISTS guard, same convention
 -- as migrations 104/110.
+--
+-- ============================================================================
+-- NEUTRALIZED (2026-09-10, LOT A Semaine 2 prerequisite check, docs/decisions.md).
+-- This file was accidentally swept from migrations/todo/ into migrations/done/
+-- by commit c113a46 ("onboarding LOT A") alongside migrations that genuinely
+-- were applied — despite every blocking condition above still holding
+-- (verified directly against staging: users_rights.admin still exists, the
+-- three readers above are still live in deployed code). Moved back to
+-- migrations/todo/, and the DROP COLUMN below replaced with a no-op: even a
+-- blind "run every file in todo/ in order" can no longer break production.
+-- Restore the commented-out body verbatim once every reader above is
+-- confirmed gone from deployed code, production included.
+-- ============================================================================
 
 DO $$
 BEGIN
-  IF to_regclass('public.users_rights') IS NOT NULL THEN
-    ALTER TABLE users_rights
-      DROP COLUMN IF EXISTS admin;
-  END IF;
+  RAISE NOTICE '113_drop_users_rights_admin_column is neutralized (blocked) — see this file''s header. No-op, users_rights.admin left untouched.';
 END
 $$;
+
+-- Original body, preserved for restoration once actually safe:
+--
+-- DO $$
+-- BEGIN
+--   IF to_regclass('public.users_rights') IS NOT NULL THEN
+--     ALTER TABLE users_rights
+--       DROP COLUMN IF EXISTS admin;
+--   END IF;
+-- END
+-- $$;

@@ -407,3 +407,192 @@ revient avec les prix de base et cette méthode n'est autrement appelée que par
 — l'amortissement est protégé par mutex et couvert par un test de concurrence à 100 goroutines,
 mais sans validation par le détecteur. Le trajet réel bout-en-bout (back-office qui édite → borne
 et POS qui rechargent) n'a pas non plus été joué.
+
+## 11. Reprise de session (2026-09-11) — vérification d'intégrité avant l'incrément C
+
+Entre la fin de l'incrément B et le début de l'incrément C, une nouvelle session a démarré sur un
+contexte compacté, ~18 jours plus tard, avec entretemps un système RBAC complet livré
+(`55c4b9d feat(rbac): role-based permissions system (lots 1-9)`) et un chantier onboarding en cours
+(branche `staging`, nombreux fichiers non liés modifiés). Le `git status` initial ne mentionnait ni
+`internal/modules/menu/`, ni `internal/modules/pos/service.go`, ni
+`internal/modules/notification/` — aucun des fichiers des incréments A et B — ce qui pouvait signifier
+soit qu'ils avaient été commités, soit qu'ils avaient été perdus.
+
+Vérification faite avant de reprendre : les trois fichiers existaient sur disque avec le contenu
+attendu (`broadcastPOSStatus`, `menu_change_notifier.go`, les 3 constantes `WSEvent*`), et
+`git log` a confirmé qu'ils étaient commités (`37a5225 update: analytics and stuff` pour la base,
+`6cc81f5`/`55c4b9d` ensuite pour `pos/service.go` via le chantier RBAC). `go build ./...` et
+`go test ./internal/modules/menu/... ./internal/modules/pos/...` étaient au vert. Côté Flutter
+(POS et kiosk, dépôts git distincts), même constat : commités (`b0c1433 updates` pour le POS,
+`5cacd63 feature: kiosk`), wiring intact dans `main.dart`. Aucune perte de travail — reprise sur
+base saine confirmée avant d'écrire la moindre ligne de l'incrément C.
+
+## 12. Incrément C — livré (2026-09-11)
+
+### 12.1 Compteurs du hub HACCP
+
+Deux nouvelles requêtes dans `haccp/repository.go`, sur le patron exact de `ListTemperatureReadings`
+(fenêtre `[startAt, endAt)` déjà calculée par `GetHub`) :
+
+- `CountTemperatureReadingsInRange` — `COUNT(*)` sur `temperature_readings`
+- `CountTraceabilityRecordsInRange` — `COUNT(*)` sur `haccp_traceability_records`, **distincte**
+  de `HasTraceabilityRecords` qui est un booléen toutes dates confondues et ne convenait pas au
+  compteur du header.
+
+Côté modèle : `HubTemperatures` gagne `CompletedCount` (ajout pur). `IngredientsLabeling` change de
+type — `HubPlaceholder` (utilisé par `Reception`, qui reste `{enabled}` seul) ne suffisait plus une
+fois qu'un compteur devait s'y ajouter ; nouveau type `HubIngredientsLabeling{Enabled, CompletedCount}`
+propre à ce champ, `Reception` intact. Aucun champ existant modifié, conforme au plan initial.
+
+### 12.2 Diffusion `haccp_updated`
+
+Même patron que `pos.realtimeBroadcaster` et `menu.realtimeBroadcaster` : interface locale au
+module, `NewService` prend un `broadcaster` optionnel (nil-safe), `broadcastHACCPUpdated` envoie
+`{type, merchant_id}` — notification sans état (D2), aucune donnée métier au-delà de ce couple
+(vérifié par test : `len(payload) != 2` échoue si jamais un champ de plus s'y glisse).
+
+Branché sur les 4 écritures, chacune **après** le succès (hors transaction, même émplacement que
+l'audit déjà en place sur les deux premières) :
+- `CreateTemperatureReadingsBatch` — après `auditService.LogChange`
+- `CreateCleaningSession` — après `auditService.LogChange`
+- `CreateGoodsReceipt` — après le retour du repo (pas d'audit existant sur ce chemin)
+- `CreateTraceabilityRecord` — après la résolution des URLs de photos
+
+Câblage dans `routes.go` : `haccpService := haccpModule.NewService(haccpRepo, auditService,
+selectedDB, r2Client, notificationService)`.
+
+### 12.3 POS Flutter — consommation et header
+
+`HaccpController` (déjà existant) gagne `requestOpenHaccpHub()` / `consumeShouldOpenHaccpHub()`,
+même patron « consume once » que `BookingsController.requestOpenBookingsList` — nécessaire car
+`CustomAppBar` n'a pas accès à l'index d'onglet de `NavigationPage`. `NavigationPage` écoute les
+deux contrôleurs de façon symétrique (`_onHaccpControllerChanged` bascule sur l'index 4, un
+littéral déjà présent et stable dans `_selectContentPage`/`_canAccessIndex`, au même titre que
+l'index 8 pour les résas).
+
+`PushNotificationController` gagne le case `haccp_updated` → `haccpController.refreshHub()` (déjà
+robuste aux échecs : `_hub` n'est réassigné qu'en cas de succès).
+
+`AuthenticationController._applyLoginData` appelle désormais `HaccpController.initializeHub()`
+une fois à la connexion (fire-and-forget, gaté sur `capabilities.modules.haccp`, même style que
+`_fetchPrinterConfigs()`) au lieu du seul accès à `haccp_hub_screen` — c'est ce qui alimente
+l'indicateur du header dès l'ouverture de l'app plutôt qu'au premier tour sur l'onglet HACCP.
+
+**Ordre des providers corrigé** (identifié comme blocage en §8.1) : `createHaccpController` est
+remonté avant `createAuthenticationController` dans `main.dart`, puisque ce dernier construit
+`PushNotificationController`, qui dépend désormais de `HaccpController`.
+
+Modèles Flutter : `HaccpTemperatureHub.completedCount` (ajout), nouveau type
+`HaccpIngredientsLabelingHub{enabled, completedCount}` distinct de `HaccpSimpleFeatureHub`
+(toujours utilisé par `reception`) — miroir exact de la bifurcation côté Go. Régénérés via
+`dart run build_runner build` (project équipé de `json_serializable`), pas d'édition manuelle du
+`.g.dart`.
+
+### 12.4 Header — alignement des deux tiles (arbitrage utilisateur du jour)
+
+Vérification faite avant modification : contrairement à ce qui était supposé lors de l'arbitrage
+initial (§8.1), **aucune des deux tiles n'avait de garde-fou `isPhone`** — `CustomAppBar` ne faisait
+aucun test de largeur, le seul masquage existant étant celui de la barre entière pendant une prise
+de commande active sur téléphone (`navigation_page.dart`, sans rapport avec HACCP/résas).
+
+Décision appliquée : **les deux tiles sont masquées sur téléphone** (`isPhone`, seuil 600px de
+`ResponsiveHelper`), visibles uniquement tablette — comportement désormais identique pour les deux,
+conforme à la demande explicite du jour. `HaccpHeaderSummary` (nouveau) reprend le patron visuel de
+`BookingsHeaderSummary` (pilule `InkWell`, bordure bleue) : trois pastilles compactes icône+nombre
+(🌡 rouge si 0, 🧽 `completed/total`, 📋 neutre), rendu vide tant que `hub == null` (pas de pastille
+à 0 trompeuse avant la première réponse serveur). `CustomAppBar` la positionne en largeur fixe
+avant le verrou, le résumé résas gardant l'`Expanded`.
+
+### 12.5 Modifications
+
+| Fichier | Nature |
+|---|---|
+| `internal/modules/haccp/repository.go` | **Nouveau** — 2 requêtes de comptage |
+| `internal/modules/haccp/model.go` | `HubTemperatures.CompletedCount`, nouveau `HubIngredientsLabeling` |
+| `internal/modules/haccp/service.go` | Compteurs branchés dans `GetHub`, `realtimeBroadcaster`, `broadcastHACCPUpdated`, 4 sites d'appel |
+| `internal/modules/haccp/service_broadcast_test.go` | **Nouveau** — 3 tests |
+| `cmd/api/routes.go` | `NewService` reçoit `notificationService` |
+| `…/haccp_models.dart` + `.g.dart` | `completedCount`, `HaccpIngredientsLabelingHub` (régénéré) |
+| `…/haccp_controller.dart` | `requestOpenHaccpHub()` / `consumeShouldOpenHaccpHub()` |
+| `…/pushnotification_controller.dart` | Dépendance `HaccpController`, case `haccp_updated` |
+| `…/authentication_controller.dart` | `_initializeHaccpHubIfEnabled()` sur `_applyLoginData` |
+| `…/navigation_page.dart` | Écoute symétrique `HaccpController`, bascule index 4 |
+| `…/main.dart` | Provider HACCP remonté, `haccpController` passé au `PushNotificationController` |
+| `…/haccp_header_summary.dart` | **Nouveau** — 3 pastilles, tap → hub |
+| `…/custom_appbar.dart` | Gate `haccpEnabled`, `isPhone` sur les deux tiles |
+
+### 12.6 Validation
+
+- `go build ./...` : OK
+- `go test ./internal/modules/haccp/... ./internal/modules/menu/... ./internal/modules/pos/... ./internal/modules/notification/...` : OK
+- `go test ./internal/...` : échecs uniquement dans `planning/employees`, `planning/leave`,
+  `planning/swaps`, `ubereats` — confirmés **hors périmètre** (`git status --porcelain` sur ces
+  répertoires : aucun fichier modifié par ce chantier)
+- `flutter test test/` (POS) : OK, 19 tests
+- `dart analyze` sur tous les fichiers touchés : uniquement des avertissements **pré-existants**
+  (confirmés via `git show HEAD:<fichier>` sur les lignes concernées) — aucun introduit
+- `flutter analyze` (kiosk, aucun changement dans cet incrément) : « No issues found »
+
+**Non vérifié :** le trajet réel bout-en-bout (saisie HACCP sur un device → hub et header
+rafraîchis sur un autre) n'a pas été joué, ni le rendu visuel du header sur tablette réelle.
+
+## 13. Bug rapporté — tile HACCP absente (2026-09-11)
+
+### 13.1 Diagnostic
+
+Symptôme : la tile résas s'affiche, pas la tile HACCP. Cause trouvée par lecture de code + état git,
+sans instrumentation supplémentaire nécessaire.
+
+`lib/environment.dart` ne pointe **que** vers Render (`welloresto-api-staging`/`-prod`) — l'app
+Flutter ne parle jamais à un serveur local. Or les changements Go de l'incrément C
+(`internal/modules/haccp/{model,repository,service}.go`) étaient encore **non commités** en local,
+et le HEAD local lui-même avait 2 commits d'avance sur `origin/staging` (`c113a46` vs `885898e`,
+vérifié via `git fetch` + `git log origin/staging -- internal/modules/haccp/model.go`). L'API
+réellement servie renvoie donc encore l'ancienne forme de `GET /haccp/hub` : pas de
+`completed_count` sur `temperatures`, et `ingredients_labeling` toujours `{enabled}` seul.
+
+Le code généré par `json_serializable` pour ces deux champs faisait
+`(json['completed_count'] as num).toInt()` — un cast qui **lève** sur `null`. `HaccpController.
+initializeHub()` capture l'exception dans son `catch`, `_hub` reste `null`, et
+`HaccpHeaderSummary` — conçue pour ne jamais afficher une pastille à 0 trompeuse avant la première
+réponse serveur — retourne `SizedBox.shrink()` indéfiniment. Échec totalement silencieux, aucune
+trace visible, exactement le symptôme rapporté. Les résas n'appellent pas ce endpoint, d'où
+l'absence d'impact.
+
+### 13.2 Décision : parsing tolérant plutôt que déploiement immédiat
+
+Deux options proposées, l'utilisateur a choisi le correctif côté client uniquement (pas de
+commit/push vers `staging` pour l'instant — cohérent avec la consigne de ne jamais committer sans
+demande explicite à ce moment précis).
+
+`@JsonKey(defaultValue: 0)` ajouté sur les deux champs récents :
+`HaccpTemperatureHub.completedCount` et `HaccpIngredientsLabelingHub.completedCount`. Régénéré via
+`dart run build_runner build` : le code généré passe de `(json['completed_count'] as num).toInt()`
+à `(json['completed_count'] as num?)?.toInt() ?? 0`. **`HaccpCleaningHub.completedCount` non
+touché** : ce champ existait déjà côté API déployée avant l'incrément C, aucun risque de régression
+dessus.
+
+Effet : le hub se charge normalement même contre l'API actuelle, l'indicateur température affiche
+`0` (rouge, comportement voulu pour « aucun relevé »), l'indicateur traçabilité affiche `0` — la
+valeur réelle du jour ne remontera qu'une fois l'incrément C effectivement déployé. Ce correctif
+ne remplace pas le déploiement, il évite seulement qu'un décalage de version fasse échouer tout le
+hub plutôt que le seul champ concerné — utile aussi pour toute fenêtre de rollout future.
+
+### 13.3 Modifications
+
+| Fichier | Nature |
+|---|---|
+| `…/haccp_models.dart` | `@JsonKey(defaultValue: 0)` sur les 2 champs récents |
+| `…/haccp_models.g.dart` | Régénéré — cast nullable + fallback sur ces 2 champs uniquement |
+| `test/core/models/haccp_models_test.dart` | **Nouveau** — 5 tests, dont un reproduisant exactement la forme actuellement servie par l'API déployée |
+
+### 13.4 Validation
+
+- `dart analyze` : mêmes 4 warnings pré-existants qu'en §12.6, rien de nouveau
+- `flutter test test/` : OK, 24 tests (5 nouveaux)
+
+### 13.5 Reste à faire
+
+Le compteur température/traçabilité restera à 0 sur le header tant que l'incrément C n'est pas
+déployé sur `origin/staging` (commit + push, jamais fait sans demande explicite). La tile
+elle-même sera visible dès ce correctif — c'est la donnée qui reste figée à 0 jusqu'au déploiement.

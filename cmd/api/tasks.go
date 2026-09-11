@@ -86,6 +86,12 @@ func SetupTasks(
 	// du mois — deux DELETE simultanés se disputeraient l'unique connexion DB.
 	add("30 4 * * *", taskManager.CleanupExpiredPasswordResets)
 
+	// ── Self-onboarding (LOT A Semaine 2, Chantier 6a) ──────────────────────
+	// Chaque nuit à 4h45 : purge des sessions de signup de plus de 30 jours.
+	// 4h45 pour rester dans le même créneau creux que les autres tâches de
+	// sécurité/maintenance de nuit (3h-5h), sans coïncider avec elles.
+	add("45 4 * * *", taskManager.CleanupExpiredSignupSessions)
+
 	// ── Logs de requêtes API ─────────────────────────────────────────────────
 	// 1er du mois à 5h : purge des lignes api_request_logs de plus de 30 jours.
 	// Coïncide avec CleanupExpiredPasswordResets ce jour-là, mais la connexion

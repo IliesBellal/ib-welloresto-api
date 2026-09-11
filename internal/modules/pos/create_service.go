@@ -24,6 +24,7 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 	}
 
 	var merchantID string
+	var ownerRightsToken string
 	err = dbutils.RunInTx(ctx, s.posRepo.database, func(txCtx context.Context) error {
 		// Step 1 — create merchant row
 		merchantID, err = s.posRepo.InsertMerchant(txCtx, req, merchantToken)
@@ -61,9 +62,11 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 
 		// Step 5 — optional user linkage
 		if strings.TrimSpace(req.UserID) != "" {
-			if _, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin, adminRoleID); err != nil {
+			token, _, err := s.insertUserRightsTx(txCtx, req.UserID, merchantID, req.Admin, adminRoleID)
+			if err != nil {
 				return err
 			}
+			ownerRightsToken = token
 		}
 
 		return nil
@@ -72,7 +75,7 @@ func (s *POSService) CreateMerchant(ctx context.Context, req CreateMerchantReque
 		return CreateMerchantResponse{}, err
 	}
 
-	return CreateMerchantResponse{MerchantID: merchantID}, nil
+	return CreateMerchantResponse{MerchantID: merchantID, OwnerRightsToken: ownerRightsToken}, nil
 }
 
 // LinkUser links an existing user to an existing merchant with given rights.

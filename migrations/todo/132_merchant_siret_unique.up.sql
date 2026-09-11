@@ -1,0 +1,37 @@
+-- LOT A Semaine 3, Chantier 10 (docs/decisions.md) : unicité du SIRET.
+--
+-- Détection en production (2026-09-10/11) : 6 groupes de doublons, 0 SIRET
+-- vide/nul, 16 SIRET au format invalide sur 29 marchands. Un seul doublon ne
+-- pouvait pas être écarté par le prédicat ci-dessous : 81490975000014, porté
+-- par deux marchands actifs distincts (Le Maghreb, Ok Pizza) — corrigé
+-- manuellement avant cette migration (confirmé par l'utilisateur). Les cinq
+-- autres groupes sont soit des zéros/valeurs non conformes (aucune ne fait
+-- 14 caractères, donc hors du prédicat `^[0-9]{14}$`), soit un doublon entre
+-- un marchand actif et son archive inactive (78329229500020, JJHB + JJHB
+-- archivé), écarté par `is_active`.
+--
+-- Index PARTIEL sur les deux prédicats, volontairement :
+--   - `siret ~ '^[0-9]{14}$'` exclut tout le parc historique au format
+--     invalide (vide, trop court, non numérique) — la colonne est NOT NULL
+--     sans défaut, donc ce parc existe et ne doit pas être bloqué par cette
+--     migration.
+--   - `is_active` fait qu'un SIRET redevient disponible dès que son marchand
+--     est désactivé, et reste protégé à la réactivation — Postgres réévalue
+--     un index partiel sur chaque UPDATE de ses colonnes ou de ses colonnes
+--     de prédicat, donc la réactivation d'un marchand archivé retombe sous
+--     la contrainte si un doublon existe déjà parmi les actifs.
+--
+-- CONCURRENTLY : ne doit jamais s'exécuter dans une transaction. Si le
+-- lanceur de migrations de ce dépôt exécute chaque fichier dans une
+-- transaction implicite, cette migration doit être appliquée hors de ce
+-- mécanisme (script/psql direct) — à vérifier avant application.
+--
+-- Volontairement absent (voir docs/decisions.md) : aucune contrainte CHECK
+-- sur le format (bloquerait tout UPDATE sur les 16 marchands déjà au format
+-- invalide), aucune normalisation/déduplication automatique d'un SIRET
+-- existant. Le contrôle de format reste applicatif
+-- (internal/helpers.ValidateSIRETFormat, semaine 2), sur les nouvelles
+-- créations uniquement.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_merchant_siret_valid
+    ON merchant (siret)
+    WHERE siret ~ '^[0-9]{14}$' AND is_active;

@@ -468,6 +468,30 @@ func (r *AuthRepository) UpdatePassword(ctx context.Context, userID, newHash str
 	return err
 }
 
+// SetPasswordForGoogleAccount defines a password on a Google-origin account
+// that does not have one yet (LOT A Semaine 2, Chantier 8) — the WHERE guard
+// (auth_provider='google' AND password='') is the actual eligibility check,
+// atomic with the write: matched=false covers both "not a Google account"
+// and "already has a password" without a separate read-then-write race.
+// auth_provider becomes 'both' — see docs/decisions.md for why (the account
+// genuinely gains a second working login method).
+func (r *AuthRepository) SetPasswordForGoogleAccount(ctx context.Context, userID, newHash string) (matched bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+	res, err := db.ExecContext(ctx, `
+		UPDATE users
+		SET password = ?, auth_provider = 'both'
+		WHERE user_id = ? AND auth_provider = 'google' AND password = ''
+	`, newHash, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // ---------------------------------------------------------------------------
 // Password reset ("mot de passe oublié") — see docs/PASSWORD_RESET.md
 // ---------------------------------------------------------------------------

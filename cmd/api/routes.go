@@ -15,6 +15,7 @@ import (
 	"welloresto-api/internal/middleware/rbacobserve"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
+	googleauthModule "welloresto-api/internal/modules/googleauth"
 	"welloresto-api/internal/modules/googlemaps"
 	kioskModule "welloresto-api/internal/modules/kiosk"
 	"welloresto-api/internal/modules/receipt"
@@ -53,6 +54,7 @@ import (
 	importerModule "welloresto-api/internal/modules/menu/importer"
 	messaggioModule "welloresto-api/internal/modules/messaggio"
 	notificationModule "welloresto-api/internal/modules/notification"
+	onboardingModule "welloresto-api/internal/modules/onboarding"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
 	outboundModule "welloresto-api/internal/modules/outbound"
@@ -61,9 +63,11 @@ import (
 	posModule "welloresto-api/internal/modules/pos"
 	posAccountingModule "welloresto-api/internal/modules/pos/accounting"
 	posReportsModule "welloresto-api/internal/modules/pos/reports"
+	presetsModule "welloresto-api/internal/modules/presets"
 	printersModule "welloresto-api/internal/modules/printers"
 	productionprofilesModule "welloresto-api/internal/modules/productionprofiles"
 	rolesModule "welloresto-api/internal/modules/roles"
+	signupModule "welloresto-api/internal/modules/signup"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
 	tagsModule "welloresto-api/internal/modules/tags"
@@ -433,6 +437,32 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	rolesService := rolesModule.NewService(rolesRepo, usersRepo, auditService, redisClient)
 	rolesH := rolesModule.NewHandler(rolesService)
 
+	// ---- Merchant presets (LOT A Semaine 2, Chantier 5) ----
+	presetsRepo := presetsModule.NewRepository(selectedDB)
+	presetsService := presetsModule.NewService(presetsRepo, menuRepoLegacy, locationsRepo)
+
+	// ---- Onboarding tasks (LOT A Semaine 2, Chantier 6c) ----
+	onboardingRepo := onboardingModule.NewRepository(selectedDB)
+	onboardingService := onboardingModule.NewService(onboardingRepo)
+	onboardingH := onboardingModule.NewHandler(onboardingService)
+
+	// ---- Google auth (LOT A Semaine 2, Chantier 7) : sessionFromToken
+	// reuses authRepo.GetUserByToken wholesale — same rich session lookup
+	// every other auth path in this API goes through. Verifier constructed
+	// here (ahead of Signup below) since chantier 7c's provider "google"
+	// signup path also needs it.
+	googleAuthVerifier := googleauthModule.NewVerifier(cfg.Google.ClientID)
+	googleAuthRepo := googleauthModule.NewRepository(selectedDB)
+	googleAuthService := googleauthModule.NewService(googleAuthVerifier, googleAuthRepo, authRepo)
+	googleAuthH := googleauthModule.NewHandler(googleAuthService)
+
+	// ---- Signup (LOT A Semaine 2, Chantier 6) : POST /v1/signup reuses
+	// posService/usersRepo/presetsService/onboardingRepo wholesale — no
+	// duplicated merchant-creation logic (see internal/modules/signup/service.go).
+	signupSessionsRepo := signupModule.NewRepository(selectedDB)
+	signupService := signupModule.NewService(selectedDB, signupSessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, googleAuthVerifier)
+	signupH := signupModule.NewHandler(signupService, signupSessionsRepo)
+
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(selectedDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
@@ -462,7 +492,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	// ---- HACCP ----
 	haccpRepo := haccpModule.NewRepository(selectedDB)
-	haccpService := haccpModule.NewService(haccpRepo, auditService, selectedDB, r2Client)
+	haccpService := haccpModule.NewService(haccpRepo, auditService, selectedDB, r2Client, notificationService)
 
 	// ---- Planning ----
 	planningRepo := planningModule.NewRepository(selectedDB)
@@ -583,6 +613,29 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Use(authMiddleware)
 
 		r.Get("/routes", routeHandler.HandleGetRoute)
+	})
+
+	// --- V1 (LOT A Semaine 2 : self-onboarding) ---
+	r.Route("/v1", func(r chi.Router) {
+		// Public — self-onboarding cannot require a token that does not
+		// exist yet. Idempotency-Key handling lives inside the handler
+		// (internal/modules/signup/handler.go), not middleware.
+		r.Post("/signup", signupH.Signup)
+
+		r.Route("/auth", func(r chi.Router) {
+			// Public — same reasoning: the whole point is to authenticate
+			// without an existing session (chantier 7).
+			r.Post("/google", googleAuthH.Authenticate)
+
+			// Protected — chantier 8, self-service only (identity from the
+			// token, never from the request body — see SetPasswordForGoogleAccount).
+			r.With(authMiddleware).Post("/password/set", authH.SetPasswordForGoogleAccount)
+		})
+
+		r.Route("/merchants/{id}/onboarding", func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Get("/", onboardingH.GetOnboarding)
+		})
 	})
 
 	// --- AUTH ---

@@ -37,6 +37,14 @@ var (
 	// expired, or already consumed. Deliberately indistinguishable to the
 	// caller: telling them which one leaks whether a token ever existed.
 	ErrInvalidResetToken = errors.New("invalid_or_expired_token")
+
+	// ErrAccountNotEligibleForPasswordSet: POST /v1/auth/password/set (LOT A
+	// Semaine 2, Chantier 8) only applies to an account that is
+	// auth_provider='google' and has no password yet — either condition
+	// failing (not a Google account, or a password already set) returns
+	// this, deliberately not distinguishing the two: both mean "this
+	// endpoint doesn't apply to your account right now".
+	ErrAccountNotEligibleForPasswordSet = errors.New("account_not_eligible_for_password_set")
 )
 
 // ForgotPasswordRequest is the body of POST /auth/forgot-password.
@@ -68,6 +76,13 @@ type PINAuthRequest struct {
 // user_id is not accepted — the caller's identity comes from the auth token.
 type SetPINRequest struct {
 	PIN string `json:"pin"`
+}
+
+// SetPasswordRequest is used by POST /v1/auth/password/set (self-service,
+// LOT A Semaine 2, Chantier 8). user_id is not accepted, same reasoning as
+// SetPINRequest above.
+type SetPasswordRequest struct {
+	NewPassword string `json:"new_password"`
 }
 
 // ResetPINRequest is used by POST /auth/pin/reset (admin).

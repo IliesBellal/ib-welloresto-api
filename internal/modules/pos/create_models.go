@@ -23,6 +23,12 @@ type CreateMerchantRequest struct {
 // CreateMerchantResponse is returned on success (201).
 type CreateMerchantResponse struct {
 	MerchantID string `json:"merchant_id"`
+	// OwnerRightsToken is the new users_rights.token for req.UserID, set only
+	// when UserID was provided (empty otherwise). Additive field — LOT A
+	// Semaine 2, Chantier 6b needs it to hand back an opaque session token
+	// from POST /v1/signup without a second query; existing /pos/create
+	// callers that ignore it are unaffected.
+	OwnerRightsToken string `json:"owner_rights_token,omitempty"`
 }
 
 // LinkUserRequest is the JSON payload for POST /pos/link-user.

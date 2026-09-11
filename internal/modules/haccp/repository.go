@@ -1937,6 +1937,49 @@ func (r *Repository) findTraceabilityPhotosByRecordIDs(ctx context.Context, reco
 }
 
 // HasTraceabilityRecords indique si au moins un enregistrement de traçabilité
+// CountTemperatureReadingsInRange compte les relevés de température du
+// merchant enregistrés dans [startAt, endAt) — utilisé par GetHub pour le
+// compteur affiché sur l'indicateur du header (voir HubTemperatures).
+func (r *Repository) CountTemperatureReadingsInRange(ctx context.Context, merchantID string, startAt, endAt time.Time) (int, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM temperature_readings
+		WHERE merchant_id = ?
+		  AND created_at >= ?
+		  AND created_at < ?
+		  AND enabled = TRUE
+	`, merchantID, startAt.UTC(), endAt.UTC()).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountTraceabilityRecordsInRange compte les enregistrements de traçabilité
+// du merchant créés dans [startAt, endAt) — utilisé par GetHub. Distinct de
+// HasTraceabilityRecords, qui est un booléen toutes dates confondues et ne
+// convient pas au compteur du header.
+func (r *Repository) CountTraceabilityRecordsInRange(ctx context.Context, merchantID string, startAt, endAt time.Time) (int, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM haccp_traceability_records
+		WHERE merchant_id = ?
+		  AND created_at >= ?
+		  AND created_at < ?
+		  AND enabled = TRUE
+	`, merchantID, startAt.UTC(), endAt.UTC()).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // existe pour ce merchant (utilisé par GetHub pour activer le slot
 // ingredients_labeling).
 func (r *Repository) HasTraceabilityRecords(ctx context.Context, merchantID string) (bool, error) {

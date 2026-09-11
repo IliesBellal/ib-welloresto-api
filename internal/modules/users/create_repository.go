@@ -63,6 +63,34 @@ func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firs
 	return nil
 }
 
+// CreateGoogleUser inserts a new user row for the provider="google" branch
+// of POST /v1/signup (LOT A Semaine 2, Chantier 7c) — a distinct INSERT from
+// CreateUser rather than an optional/overloaded parameter, since the set of
+// columns genuinely differs: no password to hash (password is NOT NULL in
+// this schema, so '' — never NULL — is the sentinel googleauth.Repository
+// already treats as "no password"), auth_provider/google_sub explicit
+// instead of relying on the column default, email_verified_at stamped now()
+// since Google's own id_token verification (not a click-through link) is
+// what just established it.
+func (r *UsersRepository) CreateGoogleUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, googleSub, token string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO users
+			(user_id, name, first_name, last_name, email, tel, password, token, auth_provider, google_sub, email_verified_at)
+		VALUES
+			(?, ?, ?, ?, ?, ?, '', ?, 'google', ?, `+dbx.UTCNow()+`)`,
+		userID, fullName, firstName, lastName, email, tel, token, googleSub,
+	)
+	if err != nil {
+		if dbx.IsDuplicateEntry(err) {
+			return models.ErrEmailAlreadyUsed
+		}
+		return err
+	}
+	return nil
+}
+
 // InsertUserRights creates a row in users_rights to link a user to a merchant.
 // Returns the generated rights ID.
 //

@@ -250,6 +250,43 @@ func (h *AuthHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "auth", "pin_set", map[string]string{"status": "success"})
 }
 
+// SetPasswordForGoogleAccount handles POST /v1/auth/password/set (LOT A
+// Semaine 2, Chantier 8) — self-service, same identity pattern as SetPIN
+// above (token re-resolved via GetUserByToken, not the request body).
+func (h *AuthHandler) SetPasswordForGoogleAccount(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if token == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "password_set", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var req SetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NewPassword) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "auth", "password_set", map[string]string{"error": "invalid_request"})
+		return
+	}
+
+	caller, err := h.svc.GetUserByToken(r.Context(), token)
+	if err != nil || caller == nil {
+		models.SendJSON(w, http.StatusUnauthorized, "auth", "password_set", map[string]string{"error": "invalid_token"})
+		return
+	}
+
+	if err := h.svc.SetPasswordForGoogleAccount(r.Context(), caller.UserID, req.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, ErrAccountNotEligibleForPasswordSet):
+			models.SendJSON(w, http.StatusConflict, "auth", "password_set", map[string]string{"error": "account_not_eligible_for_password_set"})
+		case errors.Is(err, models.ErrInvalidInputPasswordTooShort):
+			models.SendJSON(w, http.StatusBadRequest, "auth", "password_set", map[string]string{"error": "password_too_short"})
+		default:
+			models.SendErrorJSON(w, "auth", "password_set", err)
+		}
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "auth", "password_set", map[string]string{"status": "success"})
+}
+
 // ResetPIN clears the PIN of a target employee (sets pin_hash to NULL).
 // Authorization: admin/manager (HasUserManagementAccess).
 // Body: { "user_id": "..." }

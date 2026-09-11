@@ -167,6 +167,29 @@ func (s *AuthService) ResetPIN(ctx context.Context, merchantID, targetUserID str
 	return s.repo.SetPINHash(ctx, merchantID, targetUserID, nil)
 }
 
+// SetPasswordForGoogleAccount lets a Google-origin account (no password yet)
+// define one — LOT A Semaine 2, Chantier 8. The POS/kiosk run on shared
+// tablets with no Google account; an owner who signed up via Google
+// otherwise has no way to unlock their own till. Screen-triggering (forced
+// on first POS access) is semaine 3 — this is only the endpoint.
+func (s *AuthService) SetPasswordForGoogleAccount(ctx context.Context, callerUserID, newPassword string) error {
+	if err := helpers.ValidatePassword(newPassword); err != nil {
+		return err
+	}
+	hash, err := helpers.HashUserPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	matched, err := s.repo.SetPasswordForGoogleAccount(ctx, callerUserID, hash)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return ErrAccountNotEligibleForPasswordSet
+	}
+	return nil
+}
+
 func (s *AuthService) checkLockout(ctx context.Context, anchorToken string) time.Duration {
 	val, found := s.redis.Get(ctx, models.PINLockoutPrefix+anchorToken)
 	if !found {

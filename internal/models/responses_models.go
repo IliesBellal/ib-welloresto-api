@@ -488,6 +488,18 @@ var (
 	// cette adresse e-mail (comparaison insensible à la casse, voir
 	// uq_users_email_lower — migration 124)
 	ErrEmailAlreadyUsed = errors.New("email_already_used")
+
+	// LOT A Semaine 2, Chantier 6 — POST /v1/signup
+	ErrInvalidSIRETFormat     = errors.New("invalid_siret_format")
+	ErrInvalidPresetCode      = errors.New("invalid_preset_code")
+	ErrIdempotencyKeyRequired = errors.New("idempotency_key_required")
+	ErrSignupInProgress       = errors.New("signup_in_progress")
+
+	// LOT A Semaine 2, Chantier 7 — POST /v1/auth/google
+	ErrInvalidGoogleToken       = errors.New("invalid_google_token")
+	ErrGoogleEmailNotVerified   = errors.New("google_email_not_verified")
+	ErrGoogleAccountNotFound    = errors.New("google_account_not_found")
+	ErrGoogleAccountHasPassword = errors.New("google_account_has_password")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1447,6 +1459,46 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "email_already_used"
 		errorMsg = "An account with this email already exists."
+
+	case errors.Is(err, ErrInvalidSIRETFormat):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_siret_format"
+		errorMsg = "SIRET must be 14 digits and pass the Luhn checksum."
+
+	case errors.Is(err, ErrInvalidPresetCode):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_preset_code"
+		errorMsg = "preset_code does not match any active merchant preset."
+
+	case errors.Is(err, ErrIdempotencyKeyRequired):
+		status = http.StatusBadRequest
+		errorStatus = "idempotency_key_required"
+		errorMsg = "The Idempotency-Key header is required."
+
+	case errors.Is(err, ErrSignupInProgress):
+		status = http.StatusConflict
+		errorStatus = "signup_in_progress"
+		errorMsg = "A signup with this Idempotency-Key is already being processed."
+
+	case errors.Is(err, ErrInvalidGoogleToken):
+		status = http.StatusUnauthorized
+		errorStatus = "invalid_google_token"
+		errorMsg = "The Google id_token could not be verified."
+
+	case errors.Is(err, ErrGoogleEmailNotVerified):
+		status = http.StatusForbidden
+		errorStatus = "google_email_not_verified"
+		errorMsg = "This Google account's email is not verified."
+
+	case errors.Is(err, ErrGoogleAccountNotFound):
+		status = http.StatusNotFound
+		errorStatus = "google_account_not_found"
+		errorMsg = "No account matches this Google identity. Use POST /v1/signup with provider \"google\" to create one."
+
+	case errors.Is(err, ErrGoogleAccountHasPassword):
+		status = http.StatusConflict
+		errorStatus = "google_account_has_password"
+		errorMsg = "This email already has a password-based account. Log in with your password, then link Google from settings."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

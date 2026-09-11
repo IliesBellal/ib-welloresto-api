@@ -1,3 +1,503 @@
+### LOT A Semaine 3 — Chantier 9 : corrections post-revue (2026-09-11)
+
+- **Répartition des zones validée par l'utilisateur** : traditional 14/6
+  (inchangé), pizzeria 10 en zone unique (inchangé), **brasserie corrigée**
+  13/4/8 (Salle/Comptoir/Terrasse) — la répartition initiale 12/5/8 était une
+  hypothèse. Le Comptoir se compte en tabourets (4 postes) : modélisé en
+  `table_count: 4, seats: 1, shape: "circle"` (une ligne `locations` par
+  tabouret), plutôt que le `seats: 2, shape: square` retenu par erreur au
+  premier passage.
+- **`cash_handling` confirmé tel quel, logique consignée** :
+  `cash_register_required_for_ordering = true` sur les six archétypes — c'est
+  ce qui garantit qu'un marchand en `activation_state = 'SETUP'` ne peut
+  encaisser aucune commande avant sa mise en exploitation.
+  `waiter_app_can_cash_in = true` uniquement pour traditional/brasserie/
+  pizzeria (service à table, où un serveur encaisse au guéridon) ; `false`
+  pour fast_food/snack/bakery (modèle comptoir, l'encaissement ne se fait
+  qu'à la caisse).
+- **Immutabilité de 131 une fois livrée** : `ON CONFLICT (code, version) DO
+  NOTHING` rend le fichier idempotent (rejouable sans erreur) mais **pas
+  réactualisable** — une fois `131_merchant_presets_v2` appliquée quelque
+  part, corriger un contenu v2 (ex. une répartition de tables) exige une
+  migration v3, jamais une modification de ce fichier suivie d'un rejeu (le
+  INSERT n'écrase pas une ligne déjà présente). La correction ci-dessus a été
+  faite en modifiant directement `131_merchant_presets_v2.up.sql` uniquement
+  parce que ce fichier n'avait pas encore quitté `migrations/todo/` (jamais
+  appliqué en production) — plus permis une fois passé en `done/`.
+- **Exécuté** : ligne `prst-brasserie-2` corrigée directement sur `staging`
+  (déjà appliquée depuis le chantier précédent, avant que cette revue
+  n'arrive) puisque non encore livrée ; `go test -tags postgres_integration
+  ./internal/modules/presets/... -run TestApplyPreset -v` re-exécuté contre
+  `staging` après correction — toujours 4/4 verts (aucun test n'exerçait
+  spécifiquement la zone Comptoir de brasserie, donc rien à mettre à jour
+  côté tests pour ce point précis).
+
+### LOT A Semaine 3 — Chantier 9 : correction du seed des archétypes v2 (2026-09-10)
+
+- **Contenu v2 fourni par l'utilisateur en réponse à une question de
+  clarification** — le brief lui-même contenait un `[COLLER ICI LE TABLEAU
+  CI-DESSUS]` non résolu et `docs/parcours-client-v2.docx` n'existe pas dans
+  le dépôt. Plutôt que de proposer un nouveau contenu inventé (exactement le
+  problème que ce chantier corrige), la table exacte a été redemandée avant
+  d'écrire quoi que ce soit.
+- **Nouvelle version (v2) plutôt qu'écrasement en place**, comme demandé :
+  `UPDATE ... SET is_active = false WHERE version = 1` puis `INSERT` des six
+  lignes v2 (`prst-<code>-2`), `ON CONFLICT (code, version) DO NOTHING` pour
+  rester idempotent comme 126. `GetActivePresetByCode` (tri par `version
+  DESC`, filtre `is_active`) bascule donc automatiquement sur v2 sans
+  modification de code.
+- **Champ renommé `payments` → `cash_handling`** dans `PresetConfig`
+  (`internal/modules/presets/models.go`) et dans le JSON de la migration —
+  `PaymentsConfig` devient `CashHandlingConfig`. Seuls
+  `internal/modules/presets/{models,repository}.go` référençaient ce champ ;
+  aucune autre référence dans le dépôt (vérifié par grep) donc aucun autre
+  fichier à toucher.
+- **Assomptions documentées ici faute de détail dans la table fournie** (à
+  vérifier contre le document de référence si disponible un jour) :
+  - Répartition des tables entre zones quand la table donne un total sans
+    détail par zone : traditional 20 tables/2 zones → Salle 14 + Terrasse 6 ;
+    brasserie 25 tables/3 zones → Salle 12 + Comptoir 5 + Terrasse 8.
+    Comptoir/Terrasse repris en `seats: 2, shape: square` (mobilier bar/petite
+    table), le reste en `seats: 4, shape: rectangle`, par cohérence avec les
+    formes déjà utilisées en v1.
+  - `cash_handling` (ex-`payments`) : la table v2 ne redonne pas ces deux
+    booléens par archétype — conservés identiques à v1 pour chaque code
+    (rien ne les consomme encore, donc aucun risque à date).
+  - Libellés/descriptions (`label`, `description`) : reformulés pour rester
+    cohérents avec le nouveau contenu (ex. traditional mentionne désormais la
+    terrasse) ; la table fournie ne spécifiait que la configuration, pas ces
+    deux champs texte.
+- **Tests** (`internal/modules/presets/apply_preset_postgres_integration_test.go`) :
+  `TestApplyPreset_Snack_CategoriesAndChannels_Postgres` mis à jour
+  (`manage_on_site` attendu `true` — c'était le bug ; canaux tous `true`,
+  nouvelles catégories, `preparation_time` 10, version figée 2).
+  `TestApplyPreset_Traditional_FloorPlan_Postgres` mis à jour pour les deux
+  zones (Salle 14 / Terrasse 6, au lieu d'une seule zone de 12).
+  `TestApplyPreset_FastFood_NoFloorPlan_Postgres` ajouté (n'existait pas) :
+  vérifie explicitement 0 `floors`/0 `locations` et `pager_number_required =
+  true`, comme demandé par le chantier.
+- **Exécuté** : `go build ./...` (vert) ; migrations 125 à 131 appliquées sur
+  `staging` dans l'ordre (aucune n'y était encore appliquée) ; `go test
+  -tags postgres_integration ./internal/modules/presets/... -run
+  TestApplyPreset -v` contre `staging` — 4/4 verts ; validation
+  supplémentaire (`Config.Validate()`) exécutée pour les six archétypes v2
+  (traditional, brasserie, pizzeria, fast_food, snack, bakery) via un
+  programme jetable, tous valides, aucun ne trouvé en `is_active=false`
+  après migration sauf les six lignes v1 attendues.
+
+### LOT A Semaine 2 — Chantier 8 : définition de mot de passe sur compte Google (2026-09-10)
+
+- **`auth_provider` après définition du mot de passe — décidé avec l'utilisateur** :
+  `'both'`, pas `'google'` inchangé. Argument retenu : le compte gagne
+  réellement un second moyen de connexion opérationnel à cet instant —
+  garder `'google'` mentirait sur l'état réel. Effet pratique nul sur la
+  logique du chantier 7 : `googleauth.Repository.FindUserByEmail` (la
+  vérification "compte sans mot de passe" de `/v1/auth/google`) lit déjà la
+  colonne `password` directement (`password != ''`), jamais `auth_provider`
+  — ce chantier ne fait donc que garder la colonne honnête pour un futur
+  écran ou une requête d'analytique qui s'y fierait.
+- **`POST /v1/auth/password/set`**, protégé (`authMiddleware`), self-service
+  strict : l'identité vient du jeton (`helpers.ExtractToken` +
+  `GetUserByToken`, même mécanique que `SetPIN` dans le même fichier —
+  pattern suivi à l'identique plutôt que `middleware.UserFromContext`,
+  utilisé ailleurs cette semaine, pour rester cohérent avec le reste de ce
+  fichier précis), jamais un `user_id` du corps de la requête.
+- **Garde d'éligibilité atomique** (`AuthRepository.SetPasswordForGoogleAccount`) :
+  un seul `UPDATE ... WHERE auth_provider = 'google' AND password = ''`,
+  `RowsAffected() == 0` distingue "pas un compte Google" et "a déjà un mot
+  de passe" — les deux retournent la même erreur
+  (`ErrAccountNotEligibleForPasswordSet`, 409), délibérément indifférenciées
+  (aucune des deux n'a besoin d'un message plus précis, et ça évite une
+  lecture séparée avant l'écriture, donc pas de fenêtre de course entre les
+  deux).
+- **Politique existante réutilisée telle quelle** :
+  `helpers.ValidatePassword`/`helpers.HashUserPassword` (coût 12) — mêmes
+  fonctions que le chantier 6, aucune duplication de règle de mot de passe.
+- **Déclenchement côté interface (écran forcé au premier accès POS) hors
+  périmètre**, comme demandé — seul l'endpoint est livré.
+- **Test** (`internal/modules/auth/password_set_postgres_integration_test.go`) :
+  compte Google sans mot de passe → succès, `auth_provider` devient `both`,
+  hash vérifiable via `helpers.PasswordMatches` ; compte Google avec mot de
+  passe déjà défini → rejeté, rien modifié ; compte `auth_provider =
+  'password'` → rejeté (cet endpoint est Google-only) ; mot de passe trop
+  court → rejeté avant toute écriture. Exercé au niveau `Service`
+  (`AuthRepository.SetPasswordForGoogleAccount`'s clause WHERE est ce qui
+  compte réellement ici) plutôt qu'au niveau HTTP — la résolution du jeton
+  côté handler est déjà couverte par `TestAuthRepository_Postgres`/`GetUserByToken`.
+- **Exécuté** : `go build ./...`, `go test -tags postgres_integration
+  ./internal/modules/auth/... -run TestSetPasswordForGoogleAccount_Postgres`
+  contre Postgres 16 local — vert. `TestAuthRepository_Postgres` (préexistant,
+  non touché par ce chantier) échoue sur ce conteneur de dev local
+  (`role_permissions_permission_key_fkey` — la migration 100, appliquée
+  pendant le rattrapage de la semaine 1, dépréciait `pos.access` du
+  catalogue de permissions ; le test le référence encore) — confirmé
+  identique sur `staging` (branche) avant toute modification de cette
+  semaine (`git stash`), donc sans rapport avec ce chantier.
+
+### LOT A Semaine 2 — Chantier 7 : connexion Google (2026-09-10)
+
+- **Dépendance ajoutée** : `github.com/golang-jwt/jwt/v5` — aucune bibliothèque
+  JWT n'existait dans ce dépôt. Nécessaire pour vérifier le `id_token`
+  entrant de Google (un vrai JWT signé RS256, côté Google — ne concerne pas
+  la contrainte "aucun JWT dans ce système", qui porte sur les jetons émis
+  par cette API elle-même, jamais introduite ici : la réponse reste le
+  `users_rights.token` opaque existant, confirmé par un test qui compare les
+  deux valeurs directement en base).
+- **7a. Schéma** : `users.google_sub` ajouté (`migrations/todo/130_users_google_sub.up.sql`).
+  `UNIQUE` simple (pas d'index partiel) — en Postgres, une contrainte
+  `UNIQUE` ne considère jamais plusieurs `NULL` en conflit, donc tous les
+  comptes sans Google restent acceptés sans avoir besoin d'un `WHERE
+  google_sub IS NOT NULL` explicite. `users.auth_provider` existait déjà
+  (tiré en avance au chantier 6).
+- **7b. `POST /v1/auth/google`** (public, nouveau module `internal/modules/googleauth`) :
+  - **Vérification du `id_token`** (`verifier.go`) : JWKS Google
+    (`https://www.googleapis.com/oauth2/v3/certs`) récupéré et mis en cache
+    **1h explicitement** — géré à la main (mutex + horodatage), pas délégué
+    au cache interne d'une bibliothèque, pour que la durée soit exacte et
+    visible plutôt qu'une politique opaque. Contrôles : signature RS256,
+    `aud == GOOGLE_CLIENT_ID` (nouvelle variable d'environnement,
+    `internal/config/google.go` — **optionnelle au démarrage**, contrairement
+    à `GOOGLE_API_KEY` : `POST /v1/auth/google` échoue simplement à
+    l'exécution si elle est absente, même posture que
+    `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` selon CLAUDE.md), `iss`, `exp`.
+    `email_verified` est retourné tel quel par `Verify` (pas rejeté à ce
+    niveau) — le refus est une règle métier tranchée par le service, pas
+    une question cryptographique.
+  - **Les cinq branches de §5.2.3, implémentées exactement, dans l'ordre** :
+    1. `google_sub` connu → connexion. Résolution du token via une nouvelle
+       requête (`FindTokenByGoogleSub`), puis **réutilisation intégrale**
+       d'`auth.AuthRepository.GetUserByToken` (la même grosse jointure que
+       tout autre chemin de session dans cette API) pour construire la
+       réponse — rien re-dérivé à la main.
+    2. `google_sub` inconnu, adresse inconnue → `google_account_not_found`
+       (404). Ce n'est pas le rôle de cet endpoint de créer un compte — le
+       message renvoyé invite explicitement vers `POST /v1/signup` avec
+       `provider: "google"` (chantier 7c).
+    3. `google_sub` inconnu, adresse connue, **sans mot de passe** →
+       rattachement automatique (`LinkGoogleSub`) puis connexion.
+       "Sans mot de passe" = `password = ''`, pas `IS NULL` :
+       `users.password` est `NOT NULL` dans ce schéma (vérifié), donc `''`
+       est le sentinel qu'un compte créé côté Google (chantier 7c) porte
+       réellement.
+    4. `google_sub` inconnu, adresse connue, **avec mot de passe** → refus
+       (`google_account_has_password`, 409), **jamais de rattachement
+       silencieux** — vérifié par un test qui contrôle `google_sub IS NULL`
+       après le refus, pas seulement le code d'erreur.
+    5. `email_verified == false` → refus systématique
+       (`google_email_not_verified`), contrôlé en premier, avant toute autre
+       branche — jamais contournable.
+  - Erreurs traduites au niveau du `Handler` (`translateError`), pas dans
+    `internal/models` : `models` ne peut pas importer un module métier
+    (inverserait le sens des dépendances) — même convention que
+    `presets.ErrPresetNotFound` au chantier 6.
+- **7c. Extension de `POST /v1/signup`, `provider: "google"`** :
+  `signup.Service.Signup` se scinde en `signupPassword`/`signupGoogle`, la
+  partie commune (validation SIRET/preset, création marchand via
+  `POSService.CreateMerchant`, `ApplyPreset`, `onboarding_tasks`) factorisée
+  dans `createOwnerAndMerchant` — aucune duplication de la logique de
+  création de marchand, comme pour le chemin mot de passe. `id_token`
+  remplace entièrement email + mot de passe (même vérification et même
+  garde `email_verified` que `/v1/auth/google`, pour qu'on ne puisse pas
+  contourner ce refus en passant par l'inscription avec une adresse non
+  contrôlée). Nouvelle méthode `UsersRepository.CreateGoogleUser`
+  (`users/create_repository.go`) plutôt qu'un paramètre optionnel sur
+  `CreateUser` — l'ensemble de colonnes écrites diffère réellement
+  (`auth_provider`, `google_sub`, `email_verified_at = now()`, `password =
+  ''`), pas une simple variante.
+  **Imprécision mineure assumée** : `CreateGoogleUser` retombe sur
+  `models.ErrEmailAlreadyUsed` pour toute violation de contrainte unique
+  détectée par `dbx.IsDuplicateEntry` (générique, ne distingue pas
+  `uq_users_email_lower` de `uq_users_google_sub`) — en pratique
+  inatteignable pour `google_sub` (la branche 1 de `/v1/auth/google` l'aurait
+  déjà intercepté avant d'arriver ici), donc non corrigé pour rester
+  proportionné à un cas résiduel.
+- **Tests** :
+  - `internal/modules/googleauth/verifier_test.go` (unitaire, sans DB) :
+    signature valide, `aud`/`iss`/`exp` invalides, signature falsifiée
+    (signée par une autre clé que celle publiée), `email_verified=false`
+    retourné sans être rejeté par `Verify`. Serveur JWKS local
+    (`httptest.NewServer`) + clé RSA générée pour le test — `certsURL` rendu
+    injectable dans `Verifier` pour ça (`NewVerifierWithCertsURL`, exportée,
+    utilisée aussi par le test d'inscription Google — voir plus bas).
+  - `internal/modules/googleauth/service_postgres_integration_test.go` :
+    les cinq branches, via `authenticateClaims` directement (pas
+    `Authenticate`) — la vérification cryptographique est déjà couverte
+    séparément, inutile de refaire un vrai `id_token` signé pour tester
+    l'arbre de décision base de données. **Piège rencontré** : le `cleanup()`
+    d'usage (nettoyer avant de semer) a été appelé APRÈS la création du
+    marchand par erreur dans une première version — supprimait le marchand
+    qu'on venait de créer. Corrigé (nettoyage en fin de test uniquement,
+    commentaire explicite pour ne pas reproduire l'erreur) ; un deuxième
+    piège (`GetUserByToken` scanne plusieurs colonnes `merchant_parameters`/
+    `scannorder_settings` en `NOT NULL`, absentes d'un simple `INSERT INTO
+    merchant`) a nécessité de semer ces deux tables satellites aussi.
+  - `internal/modules/signup/handler_postgres_integration_test.go`,
+    `TestSignup_GoogleProvider_Postgres` : inscription complète via
+    `provider: "google"`, vérifie `auth_provider='google'`,
+    `google_sub` renseigné, `password=''`, `email_verified_at` non NULL.
+- **Exécuté** : `go build ./...`, `go test ./...` (mêmes 4 échecs
+  préexistants et sans rapport), `go test -tags postgres_integration
+  ./internal/modules/googleauth/... ./internal/modules/signup/...` contre
+  Postgres 16 local — tout vert, suites rejouées (`-count=1`) pour confirmer
+  la répétabilité après les deux corrections de test ci-dessus.
+
+### LOT A Semaine 2 — Chantier 6 : signup_sessions, POST /v1/signup, onboarding_tasks (2026-09-10)
+
+- **6a. `signup_sessions`** (`migrations/todo/127_signup_sessions.up.sql`) :
+  table à double rôle, non détaillé par le brief — documenté ici. `id` =
+  valeur brute de l'en-tête `Idempotency-Key`, pas un id préfixé généré
+  (`helpers.GeneratePrefixedID`) : c'est ce qui permet à un rejeu de
+  retrouver directement la ligne. `payload` porte d'abord la requête
+  entrante (`state = 'pending'`), puis est **écrasé** par la réponse HTTP
+  mise en cache une fois le traitement terminé (`state = 'completed'` ou
+  `'failed'`) — `{"status": <code>, "body": <bytes exacts écrits par
+  models.SendJSON/SendErrorJSON>}`. `context_token` : la colonne existe et
+  sa recherche est câblée (`GetSessionByContextToken`), mais **aucun
+  endpoint de ce chantier n'écrit de ligne "contexte" séparée** — un futur
+  chantier (page de sélection d'offre, etc.) pourra en écrire une que
+  `/v1/signup` saura déjà lire.
+  - Purge quotidienne à 30 jours (`internal/tasks/signup_sessions.go`,
+    `CleanupExpiredSignupSessions`, cron `45 4 * * *`), même modèle que
+    `CleanupExpiredPasswordResets`. Distincte de la fenêtre de rejeu 24h
+    (`SignupSessionTTL`), qui ne borne que le comportement applicatif
+    (`state`), pas la rétention en base.
+  - Colonne `users.auth_provider` (`migrations/todo/128_users_auth_provider.up.sql`)
+    **tirée en avance du chantier 7a** : le brief la déclare sous "7a.
+    Schéma", mais le code du chantier 6b l'écrit dès maintenant
+    (`auth_provider = 'password'`). `google_sub` reste au chantier 7.
+    Défaut `'password'` — tout utilisateur existant en garde le
+    comportement inchangé (ils ont tous un mot de passe).
+- **6b. `POST /v1/signup`** (public, `cmd/api/routes.go`, hors
+  `authMiddleware` ; nouveau module `internal/modules/signup`) :
+  - **`package_id` — décidé avec l'utilisateur** : aucun endpoint de ce
+    chantier ne crée de ligne `signup_sessions` "contexte" avant l'appel à
+    `/v1/signup`, donc `context_token` ne peut résoudre un `package_id` que
+    si un flux amont (hors périmètre) en a déjà stocké un dans son
+    `payload`. Défaut retenu : `packages.id=1` ("Essentiel", le seul
+    package hors ceux à consonance interne/test à porter un vrai
+    `trial_period_days`) — convention self-serve SaaS courante (démarrer
+    sur le palier le plus bas, laisser monter en gamme ensuite), un seul
+    marchand vivant dessus aujourd'hui donc aucun biais tiré du volume.
+  - **Réutilisation complète, aucune duplication** (consigne du chantier) :
+    `Service.Signup` appelle `POSService.CreateMerchant` tel quel
+    (`InsertMerchant`/`InsertSubscription`/`InitMerchantSatellites`/
+    `EnsureSystemRoles`/`SetDefaultRoleID`/lien ADMIN du propriétaire — rien
+    de dupliqué), à l'intérieur de la MÊME transaction
+    (`dbutils.RunInTx` détecte une transaction déjà active dans le `ctx` —
+    `ExtractTx(ctx) != nil` — et exécute directement la closure sans en
+    ouvrir une seconde : confirmé en lisant `internal/utils/dbutils/run_in_tx.go`
+    avant d'écrire quoi que ce soit). `users.UsersRepository.CreateUser` est
+    lui aussi réutilisé tel quel — `name = lower(email)` est simplement
+    l'argument `fullName` passé par cet appelant, `auth_provider` vient du
+    défaut de colonne (pas besoin d'étendre la signature).
+  - **`CreateMerchantResponse` étendu** (`OwnerRightsToken`, champ additif
+    `omitempty`) : `/pos/create` existant n'est pas affecté, `/v1/signup` en
+    a besoin pour renvoyer "le jeton opaque `users_rights.token`" sans
+    requête supplémentaire.
+  - **Garde `settings.manage` non contournée** (point d'attention du
+    chantier) : elle vit uniquement sur la route `/pos/create`
+    (`cmd/api/routes.go`), jamais dans `POSService`. Appeler
+    `posService.CreateMerchant` directement depuis `signup.Service` ne
+    contourne donc rien — la garde ne s'appliquait déjà qu'à la route, pas
+    au service.
+  - **SIRET** : format 14 chiffres + clé de Luhn (`helpers.ValidateSIRETFormat`,
+    vérifié contre `73282932000074`, le SIRET public de La Poste/INSEE,
+    couramment utilisé comme exemple valide). Existence réelle non
+    vérifiée (non bloquant, conforme). SIRET déjà pris → rejet générique
+    (`models.ErrInvalidInput`, même famille d'erreur qu'un format invalide,
+    ne révèle jamais l'adresse du compte existant) + log structuré
+    (`zap.String("siret", ...)`) pour traitement manuel.
+    **Point d'attention non résolu, à surveiller** : `merchant.siret` n'a
+    aucune contrainte d'unicité en base (vérifié). La vérification de ce
+    chantier est un pre-check applicatif seulement — une vraie double
+    inscription concurrente sur le même SIRET n'est pas interceptée au
+    niveau base (contrairement à l'e-mail, qui avait `uq_users_email_lower`
+    et son propre chantier dédié, LOT A Semaine 1 Chantier 3). Hors
+    périmètre explicite de ce chantier ; signalé plutôt que corrigé en
+    silence.
+  - **Idempotence** (mécanisme non détaillé par le brief, conçu et
+    documenté ici) : le `Handler` capture les octets exacts écrits par
+    `models.SendJSON`/`SendErrorJSON` via un petit `http.ResponseWriter`
+    maison en mémoire (`memResponseWriter` — délibérément pas
+    `net/http/httptest.ResponseRecorder`, réservé aux tests), les met en
+    cache (`CompleteSession`/`FailSession`) puis les recopie vers le writer
+    réel. `TryBeginSession` (`INSERT ... ON CONFLICT (id) DO NOTHING`) tranche
+    la course concurrente : le perdant relit la session et rejoue si
+    terminale, renvoie 409 (`signup_in_progress`) si encore `pending`.
+    **Sémantique standard de clé d'idempotence retenue** : succès ET rejet
+    métier (e-mail pris, SIRET pris, preset invalide...) sont tous les deux
+    mis en cache et rejoués à l'identique — une même clé réutilisée après un
+    échec ne retraite jamais silencieusement avec des données différentes.
+    Le rejeu n'est **pas** garanti identique octet pour octet
+    (`signup_sessions.payload` est `jsonb`, tel que spécifié par le
+    chantier — Postgres reformate l'espacement JSON au retour), seulement
+    identique en contenu ; test adapté en conséquence (comparaison JSON
+    décodée, pas `bytes.Equal`).
+- **6c. `onboarding_tasks`** (`migrations/todo/129_onboarding_tasks.up.sql`,
+  nouveau module `internal/modules/onboarding`) : cinq lignes fixes
+  (`menu`, `payment`, `device`, `team`, `logo`), statut `pending` à la
+  création — la déduction automatique reste explicitement hors périmètre
+  (semaine 3). `GET /v1/merchants/{id}/onboarding` : **protégé**
+  (`authMiddleware`), scopé au marchand du jeton appelant — le brief ne
+  précisait pas public/protégé ; choisi par cohérence avec le reste de
+  l'API ("every authenticated request is scoped to a merchant via the auth
+  token", CLAUDE.md), pas un des trois points explicitement soumis à
+  confirmation.
+- **Tests** (`internal/modules/signup/handler_postgres_integration_test.go`,
+  `internal/modules/onboarding/service_postgres_integration_test.go`) : cas
+  nominal (catégories/canaux du preset "snack" appliqués, 5 tâches
+  d'onboarding créées, jeton retourné = `users_rights.token` réel),
+  e-mail déjà utilisé, SIRET déjà pris (+ vérifie qu'aucune adresse n'est
+  révélée dans la réponse), rejeu idempotent (même contenu, aucun
+  doublon créé), `Idempotency-Key` manquant, lecture onboarding scopée au
+  marchand appelant. Tous exécutés via le `Handler` réel (pas seulement le
+  `Service`) — c'est lui qui porte la mécanique d'idempotence. **Piège
+  rencontré en écrivant ces tests** : les lignes `signup_sessions` ne sont
+  pas nettoyées par défaut entre deux exécutions de la suite (chaque test
+  utilise une clé d'idempotence fixe) — un rejeu résiduel d'un run
+  précédent pointait vers un user/merchant déjà supprimé par le nettoyage
+  précédent. Corrigé (`DELETE FROM signup_sessions WHERE email = ...` ajouté
+  au nettoyage de test) ; suite rejouée trois fois de suite (`-count=1`)
+  pour confirmer.
+- **Exécuté** : `go build ./...`, `go test ./...` (mêmes 4 échecs
+  préexistants et sans rapport que les chantiers précédents), `go test -tags
+  postgres_integration ./internal/modules/signup/... ./internal/modules/onboarding/...`
+  contre Postgres 16 local — tout vert.
+
+### LOT A Semaine 2 — Chantier 5 : table des archétypes et ApplyPreset (2026-09-10)
+
+- **5a. Schéma** (`migrations/todo/125_merchant_presets.up.sql`) : table
+  `merchant_presets` (id `prst-...`, `UNIQUE (code, version)`, `config jsonb`)
+  + colonnes `merchant.preset_code/preset_version/place_id/activation_state
+  (défaut 'SETUP')/went_live_at/signup_channel/signup_source`. **Rattrapage
+  explicite inclus** (le point signalé par le chantier) : `UPDATE merchant
+  SET activation_state = 'LIVE', went_live_at = COALESCE(went_live_at,
+  creation_date) WHERE activation_state = 'SETUP'` — testé contre le
+  Postgres de dev local, 28 marchands existants correctement rebasculés en
+  LIVE après l'`ALTER TABLE`. Pas de `CHECK` sur `activation_state` :
+  cohérent avec `orders.state`/`brand_status`, aucun statut de ce dépôt n'a
+  de contrainte au niveau base, validation applicative seulement.
+- **5b. Correspondance config ↔ colonnes, confirmée avant d'écrire le JSON**
+  (comme demandé) — contre le schéma réel vérifié sur staging, pas le dump
+  statique `docs/migration-postgres/04-schema-postgres-target.sql` (déjà
+  périmé sur au moins une colonne, `pos_covers_count_required`, ajoutée par
+  la migration 086 et absente du dump) :
+  - `channels` → `merchant_parameters.manage_on_site/manage_take_away/manage_delivery`
+  - `kitchen.display` → `production_display_mode` ; `kitchen.call_numbers` →
+    `pager_number_required`
+  - `categories` → lignes `productcateg` (réutilise
+    `menu.MenuRepository.CreateProductCategory`, pas de SQL dupliqué)
+  - `floor_plan` (zones, tables) → lignes `floors` + `locations` (réutilise
+    `locations.LocationsRepository.CreateFloor`/`CreateTable`)
+  - `prep_times` → `preparation_time_mode/preparation_time/minimum_preparation_time/maximum_preparation_time`
+  - `covers_required` → `pos_covers_count_required`
+  - **Quatre champs sans correspondance propre, tranchés par l'utilisateur** :
+    `kitchen.grouping` retiré du schéma (le seul candidat réel,
+    `production_profiles`, est une entité à part entière — capacité/file —
+    pas un simple booléen de préréglage) ; `payments` conservé mais mappé sur
+    `cash_register_required_for_ordering`/`waiter_app_can_cash_in` (aucun
+    réglage "moyens de paiement acceptés" n'existe dans ce schéma) ;
+    `printing` retiré (aucune colonne marchand — `printers` est une table
+    d'instances avec IP/port/bluetooth, pas préréglable) ; `suggested_modules`
+    conservé mais **jamais appliqué** par `ApplyPreset` — stocké/informatif
+    seulement, `packages`/`subscriptions` restent pilotés par le
+    souscripteur, jamais par un archétype.
+- **5b, contenu des six archétypes — réserve explicite** : `docs/parcours-client-v2.docx`
+  n'est pas accessible depuis cet environnement (fichier absent du dépôt).
+  Labels/catégories/tailles de plan de salle/temps de préparation/codes NAF
+  du seed (`migrations/todo/126_merchant_presets_seed.up.sql`) sont **une
+  proposition, pas une extraction du document de référence** — décision
+  utilisateur de les garder tels quels pour débloquer ApplyPreset, à
+  corriger après coup contre le vrai §5.5.2. `ON CONFLICT (code, version) DO
+  NOTHING`, même convention que 095_roles_permissions_catalog. `naf_codes`
+  volontairement non lu par le Go de ce chantier (voir plus bas).
+- **5c. `ApplyPreset`** (nouveau module `internal/modules/presets` :
+  `models.go`/`repository.go`/`service.go`) :
+  1. `GetActivePresetByCode` — la **dernière** version active du code (pas
+     une version figée à l'avance) : `merchant.preset_version` fige ensuite
+     ce qui a été appliqué, jamais rétroactif si l'archétype évolue ensuite.
+  2. `PresetConfig.Validate()` — rejette AVANT toute écriture (format
+     `kitchen.display`, `prep_times.mode`, cohérence min ≤ max, formes de
+     table valides `circle/square/rectangle/oval` — même liste que
+     `locations/service.go`'s `validTableShapes`, dupliquée plutôt
+     qu'exportée pour ne pas élargir la surface publique de `locations` pour
+     un seul appelant). Empêche exactement ce que le chantier demandait :
+     qu'une erreur de préréglage produise un marchand à moitié configuré.
+  3. `UpdateMerchantParametersFromConfig` (UPDATE unique) → catégories
+     (`menu.MenuRepository.CreateProductCategory`, dans l'ordre) → zones +
+     tables si `floor_plan.enabled` (`locations.LocationsRepository`,
+     positionnement en grille simple — un préréglage ne peut pas connaître
+     une vraie disposition de salle) → `SetMerchantPreset` (dernière étape,
+     une fois tout le reste réussi).
+  4. Tout passe par `dbx.GetDB(ctx, ...)` (pattern de transaction ambiante
+     déjà utilisé par `dbutils.RunInTx`/`POSService.CreateMerchant`) : appelé
+     depuis une transaction existante, chaque sous-repository (menu,
+     locations, presets) y participe automatiquement sans qu'`ApplyPreset`
+     ait besoin de connaître ou propager un `*sql.Tx`.
+  5. **`naf_codes` (`text[]`)** délibérément non modélisé côté Go dans ce
+     chantier : aucun appelant n'a besoin de le relire (ApplyPreset ne
+     l'utilise pas — "non exploité par ce chantier", cf. le commentaire de
+     la colonne), et ce dépôt n'a aucun précédent de scan d'un tableau
+     Postgres via `database/sql`+pgx (aurait exigé `pgtype.Array[string]`,
+     une première). Seule la migration seed l'écrit (littéral SQL). À
+     traiter proprement si/quand un futur endpoint doit l'exposer.
+  6. **`POSService.CreateMerchant` (`/pos/create`) non modifié** — la
+     consigne du chantier ("ApplyPreset appelée DANS la transaction de
+     création, après InitMerchantSatellites") décrit l'usage prévu, câblé au
+     chantier 6 (`POST /v1/signup`) ; `/pos/create` ne prend aujourd'hui
+     aucun `presetCode` et rien dans ce chantier ne demandait de lui en
+     ajouter un.
+- **Tests** (`internal/modules/presets/apply_preset_postgres_integration_test.go`,
+  package externe `presets_test` pour réutiliser `pos.NewPOSRepository` sans
+  risque de cycle) : `snack` (cas nominal demandé — catégories dans l'ordre,
+  canaux, `floor_plan` désactivé → aucune ligne `floors`/`locations`,
+  `preset_code`/`preset_version` figés) ; `traditional` (branche plan de
+  salle — 1 zone, 12 tables de 4) ; code inconnu →
+  `presets.ErrPresetNotFound`, rien écrit sur `merchant`. **Les trois
+  passent** contre le Postgres 16 de dev local — qui a nécessité un
+  rattrapage supplémentaire, migration 086 (`pos_covers_count_required`),
+  plus ancienne que tout ce qui avait été rattrapé la semaine 1 et donc
+  manquée par ce rattrapage-là ; déjà dans `migrations/done/` (donc
+  réellement appliquée en production), aucune conséquence hors de ce
+  conteneur jetable.
+- **Exécuté** : `go build ./...`, `go test ./...` (mêmes 4 échecs
+  préexistants et sans rapport que les chantiers précédents), `go test -tags
+  postgres_integration ./internal/modules/presets/...` contre Postgres 16
+  local — tout vert.
+
+### LOT A Semaine 2 — Prérequis : neutralisation de la migration 113 (2026-09-10)
+
+Vérification demandée avant de commencer la semaine 2 ("la migration 113 doit
+être neutralisée... confirmer que c'est fait"). **Ne l'était pas** :
+`113_drop_users_rights_admin_column` avait été déplacée de `migrations/todo/`
+vers `migrations/done/` par le commit `c113a46` ("onboarding LOT A"), dans le
+même mouvement que 087/094-123 — sauf que son propre en-tête dit explicitement
+"PREPARED, NOT MEANT TO BE APPLIED YET" : trois lecteurs de
+`users_rights.admin` sont toujours actifs dans le code déployé
+(`auth/permissions.go` `Has()` branche historique, `UserLoginRow.HasAdminRole()`,
+`LoginLegacyFields.Admin` — confirmé inchangé dans le code actuel).
+
+- **Vérifié directement contre staging** (lecture seule) avant toute action :
+  `users_rights.admin` existe toujours, `roles`/`permissions` existent déjà
+  (094+ bien appliquées) — la migration 113 elle-même n'a donc PAS été
+  exécutée, aucun incident réel. Le problème est le classement
+  (`migrations/done/` = signal "déjà appliqué, rien à vérifier"), pas l'état
+  de la base.
+- **Décision utilisateur** : remise dans `migrations/todo/` (`git mv`,
+  historique préservé) ET neutralisation du contenu — le `DROP COLUMN` de
+  `up.sql` est remplacé par un no-op (`RAISE NOTICE` explicite), le corps
+  original conservé en commentaire pour restauration verbatim une fois les
+  trois lecteurs réellement partis du code déployé (production comprise).
+  Objectif : même un « rejouer tous les fichiers de todo/ dans l'ordre, sans
+  réfléchir » ne peut plus casser la production. `down.sql` inchangé dans son
+  comportement (`ADD COLUMN IF NOT EXISTS` était déjà un no-op sûr si la
+  colonne existe), un commentaire ajouté pour expliquer pourquoi il devient
+  inatteignable en pratique.
+- **Testé contre le Postgres 16 de dev local** : le fichier neutralisé
+  s'exécute proprement (le `NOTICE` s'affiche, `users_rights.admin` reste
+  intact après coup).
+- Chantiers 5 à 8 de cette semaine peuvent commencer.
+
 ### LOT A Semaine 1 — Chantier 4 : garde de création + rôle par défaut + sélecteur de rôle (2026-09-10)
 
 Prérequis au self-onboarding (décision N6). Trois changements indissociables
