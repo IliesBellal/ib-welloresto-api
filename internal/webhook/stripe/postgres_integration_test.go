@@ -24,7 +24,6 @@ func TestStripeRepository_Postgres(t *testing.T) {
 	var orderIntID int64
 	const accountID = "itest-acct-1"
 	const stripeCustomerID = "itest-cus-1"
-	const invoiceID = "itest-inv-1"
 
 	cleanup := func() {
 		if orderIntID != 0 {
@@ -36,7 +35,7 @@ func TestStripeRepository_Postgres(t *testing.T) {
 		if merchantIntID != 0 {
 			merchantID := strconv.FormatInt(merchantIntID, 10)
 			_, _ = db.ExecContext(ctx, `DELETE FROM customer WHERE merchant_id = $1`, merchantID)
-			_, _ = db.ExecContext(ctx, `DELETE FROM subscription_invoices WHERE merchant_id = $1`, merchantID)
+			_, _ = db.ExecContext(ctx, `DELETE FROM subscriptions WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM welloresto_stripe_customers WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM stripe_accounts WHERE merchant_id = $1`, merchantID)
 			_, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, merchantID)
@@ -290,34 +289,36 @@ func TestStripeRepository_Postgres(t *testing.T) {
 		t.Fatal("expected payment disabled after DisablePayment")
 	}
 
-	// --- Subscription: FROM_UNIXTIME -> to_timestamp fix ---
-	created := time.Now().UTC().Add(-1 * time.Hour)
-	if err := repo.CreateInvoice(ctx, merchantID, invoiceID, 1500, created.Unix(), stripeCustomerID); err != nil {
-		t.Fatalf("CreateInvoice failed against postgres: %v", err)
-	}
-	var invoiceDate time.Time
-	if err := db.QueryRowContext(ctx, `SELECT invoice_date FROM subscription_invoices WHERE invoice_id = $1`, invoiceID).Scan(&invoiceDate); err != nil {
-		t.Fatalf("read back invoice_date: %v", err)
-	}
-	if diff := invoiceDate.Sub(created); diff < -2*time.Second || diff > 2*time.Second {
-		t.Fatalf("expected invoice_date ~= %v, got %v (diff %v) — check to_timestamp epoch handling", created, invoiceDate, diff)
+	// --- Subscription (LOT B B2a-0): to_timestamp epoch handling, now
+	// against subscriptions.current_period_end/status instead of the
+	// retired subscription_invoices/CreateInvoice/PayInvoice path. ---
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO subscriptions (merchant_id, package_id, stripe_subscription_id, billing_cycle, status)
+		VALUES ($1, 1, '', 'monthly', 'setup')`, merchantID); err != nil {
+		t.Fatalf("seed subscriptions: %v", err)
 	}
 
-	paidAt := time.Now().UTC()
-	if err := repo.PayInvoice(ctx, invoiceID, paidAt.Unix()); err != nil {
-		t.Fatalf("PayInvoice failed against postgres: %v", err)
+	periodEnd := time.Now().UTC().Add(30 * 24 * time.Hour)
+	if err := repo.UpdateSubscriptionBillingPeriod(ctx, merchantID, periodEnd.Unix()); err != nil {
+		t.Fatalf("UpdateSubscriptionBillingPeriod failed against postgres: %v", err)
 	}
-	var status int
-	var paymentDate time.Time
-	if err := db.QueryRowContext(ctx, `SELECT status, payment_date FROM subscription_invoices WHERE invoice_id = $1`, invoiceID).
-		Scan(&status, &paymentDate); err != nil {
-		t.Fatalf("read back after PayInvoice: %v", err)
+	var gotPeriodEnd time.Time
+	if err := db.QueryRowContext(ctx, `SELECT current_period_end FROM subscriptions WHERE merchant_id = $1`, merchantID).Scan(&gotPeriodEnd); err != nil {
+		t.Fatalf("read back current_period_end: %v", err)
 	}
-	if status != 1 {
-		t.Fatalf("expected status=1, got %d", status)
+	if diff := gotPeriodEnd.Sub(periodEnd); diff < -2*time.Second || diff > 2*time.Second {
+		t.Fatalf("expected current_period_end ~= %v, got %v (diff %v) — check to_timestamp epoch handling", periodEnd, gotPeriodEnd, diff)
 	}
-	if diff := paymentDate.Sub(paidAt); diff < -2*time.Second || diff > 2*time.Second {
-		t.Fatalf("expected payment_date ~= %v, got %v (diff %v)", paidAt, paymentDate, diff)
+
+	if err := repo.SetSubscriptionStatus(ctx, merchantID, "active"); err != nil {
+		t.Fatalf("SetSubscriptionStatus failed against postgres: %v", err)
+	}
+	var gotStatus string
+	if err := db.QueryRowContext(ctx, `SELECT status FROM subscriptions WHERE merchant_id = $1`, merchantID).Scan(&gotStatus); err != nil {
+		t.Fatalf("read back status: %v", err)
+	}
+	if gotStatus != "active" {
+		t.Fatalf("expected status=active, got %q", gotStatus)
 	}
 
 	// --- Connect account status ---

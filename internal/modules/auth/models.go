@@ -168,14 +168,20 @@ type UserRowRights struct {
 // ==============================================================
 type UserLoginRow struct {
 	// User Info
-	UserID               string
-	Password             string
-	Name                 string
-	FirstName            string
-	LastName             string
-	Email                string
-	Tel                  string
-	Enabled              bool
+	UserID    string
+	Password  string
+	Name      string
+	FirstName string
+	LastName  string
+	Email     string
+	Tel       string
+	Enabled   bool
+	// IsPlatformStaff mirrors users.is_platform_staff (LOT B PRÉALABLE/B1d) —
+	// a WelloResto internal staff flag, orthogonal to every merchant-scoped
+	// RBAC right above: it grants access to the cross-tenant /v1/admin/*
+	// endpoints (subscription_overrides) via middleware.RequirePlatformAdmin,
+	// never checked by RequirePermission's merchant-scoped Has().
+	IsPlatformStaff      bool
 	TermsOfUseAccepted   bool
 	ProfilePicture       sql.NullString
 	ReceptionDeviceToken sql.NullString

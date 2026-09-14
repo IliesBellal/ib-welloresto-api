@@ -47,6 +47,21 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{database: db, customerRepo: customers.NewCustomerRepository(db)}
 }
 
+// IsMerchantSuspended — LOT B B2b-2 (§7.5) : "canaux en ligne coupés" pour
+// un marchand suspended — Scan&Order est l'un de ces canaux.
+func (r *Repository) IsMerchantSuspended(ctx context.Context, merchantID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var status sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT status FROM subscriptions WHERE merchant_id = ?`, merchantID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status.Valid && status.String == "suspended", nil
+}
+
 func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.MerchantRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 

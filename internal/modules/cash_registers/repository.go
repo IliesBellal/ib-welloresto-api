@@ -28,6 +28,34 @@ func NewCashRegisterRepository(db *sql.DB) *CashRegisterRepository {
 	return &CashRegisterRepository{database: db}
 }
 
+// IsActivatedForOrdering — LOT B B2b-3 (§7.6) : true tant que
+// merchant.activation_state = 'LIVE' et subscriptions.status != 'suspended'.
+// Lecture toujours fraîche (jamais via l'utilisateur authentifié mis en
+// cache Redis — voir docs/decisions.md) : l'ouverture de caisse est
+// justement l'endroit où un délai de cache serait le plus visible pour un
+// marchand qui vient de régulariser son mandat ou son impayé.
+func (r *CashRegisterRepository) IsActivatedForOrdering(ctx context.Context, merchantID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var activationState string
+	var subStatus sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT m.activation_state, s.status
+		FROM merchant m
+		LEFT JOIN subscriptions s ON s.merchant_id = m.id::text
+		WHERE m.id::text = ?
+	`, merchantID).Scan(&activationState, &subStatus)
+	if err != nil {
+		return false, err
+	}
+	if activationState != "LIVE" {
+		return false, nil
+	}
+	if subStatus.Valid && subStatus.String == "suspended" {
+		return false, nil
+	}
+	return true, nil
+}
+
 func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *models.OpenCashRegisterRequest, merchantID string) (*models.CashRegisterOpenResponse, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)

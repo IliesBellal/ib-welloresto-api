@@ -521,6 +521,65 @@ var (
 
 	// LOT A Semaine 3, Chantier 11 — POST/GET /v1/public/signup-context
 	ErrContextNotFound = errors.New("signup_context_not_found")
+
+	// ErrUnknownPackageID — LOT B B1a, pos.POSRepository.InsertSubscription.
+	// packageID didn't match any packages.id — caught before the insert
+	// since subscriptions.package_id has no foreign key yet (a live orphan
+	// row would make one fail to apply; see docs/decisions.md).
+	ErrUnknownPackageID = errors.New("unknown_package_id")
+
+	// LOT B B1b — subscriptions.Repository.AddItem
+	ErrInvalidSubscriptionItemKind = errors.New("invalid_subscription_item_kind")
+	ErrInvalidSubscriptionItemCode = errors.New("invalid_subscription_item_code")
+
+	// LOT B B1c — subscriptions.ComputeSubscriptionAmount
+	ErrSubscriptionNotFound = errors.New("subscription_not_found")
+	// ErrSubscriptionItemPriceUnavailable: code is a valid subscription_items
+	// code (AddItem accepts it) but pricing_catalog (chantier 11) has no
+	// price this computation can use for it — "kiosk" only has tiered
+	// addon rows (kiosk_first_tier1/kiosk_additional_tier1/kiosk_tier2, no
+	// plain "kiosk" price) and "sms" has no pricing_catalog row at all. See
+	// docs/decisions.md — surfaced loudly rather than silently billed as 0.
+	ErrSubscriptionItemPriceUnavailable = errors.New("subscription_item_price_unavailable")
+
+	// LOT B B1d — subscription_overrides
+	ErrInvalidOverrideKind   = errors.New("invalid_override_kind")
+	ErrInvalidOverrideReason = errors.New("invalid_override_reason")
+	// ErrOverrideTargetUnsupported: target is malformed for kind (not an
+	// integer for price/kiosk_quota), or — for kind=module — names a code
+	// with no subscriptions.*_enabled column yet ("marketplaces") or one
+	// blocked by the P3 guard ("kiosk", "sms", not billable yet).
+	ErrOverrideTargetUnsupported = errors.New("override_target_unsupported")
+	ErrOverrideNotFound          = errors.New("override_not_found")
+
+	// LOT B B2a — internal/modules/billing
+	// ErrBillingCustomerNotFound: the OTHER merchant referenced by attach-to
+	// has no platform_billing_customers row yet — nothing to share.
+	ErrBillingCustomerNotFound = errors.New("billing_customer_not_found")
+	// ErrBillingCustomerHasInvoices: the target merchant already has Stripe
+	// invoices on its own Customer — B2a-1 refuses retroactive merging.
+	ErrBillingCustomerHasInvoices = errors.New("billing_customer_has_invoices")
+
+	// ErrCashRegisterNotActivated — LOT B B2b-3 (§7.6) : refus d'ouverture de
+	// registre tant que activation_state != 'LIVE' ou subscriptions.status
+	// = 'suspended'. Message volontairement identique dans les deux cas —
+	// aucun montant, aucun détail d'abonnement, voir le brief.
+	ErrCashRegisterNotActivated = errors.New("cash_register_not_activated")
+
+	// LOT B B2c-0 — subscriptions.ResolveStripeLineItems /
+	// billing.CreateOrUpdateStripeSubscription
+	// ErrStripeCatalogPriceMissing: a subscription_items code has a usable
+	// cents price (ComputeSubscriptionAmount succeeds) but no real Stripe
+	// Price yet (pricing_catalog.stripe_price_id is NULL) — see
+	// cmd/ensure_stripe_prices. Distinct from
+	// ErrSubscriptionItemPriceUnavailable, which is about the cents price
+	// itself being absent (kiosk/sms) — a code can have one without the
+	// other.
+	ErrStripeCatalogPriceMissing = errors.New("stripe_catalog_price_missing")
+	// ErrAnnualStripeSubscriptionNotSupported: billing_cycle='annual' has no
+	// Stripe Price mapping yet (see subscriptions.ResolveStripeLineItems'
+	// doc comment) — out of scope for B2c-0, not silently mischarged.
+	ErrAnnualStripeSubscriptionNotSupported = errors.New("annual_stripe_subscription_not_supported")
 )
 
 // SendErrorJSON analyse l'erreur et envoie la réponse structurée appropriée
@@ -1555,6 +1614,79 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "google_account_has_password"
 		errorMsg = "This email already has a password-based account. Log in with your password, then link Google from settings."
+
+	case errors.Is(err, ErrUnknownPackageID):
+		status = http.StatusBadRequest
+		errorStatus = "unknown_package_id"
+		errorMsg = "package_id does not match any known package."
+
+	case errors.Is(err, ErrInvalidSubscriptionItemKind):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_subscription_item_kind"
+		errorMsg = "kind must be one of: plan, module, metered."
+
+	case errors.Is(err, ErrInvalidSubscriptionItemCode):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_subscription_item_code"
+		errorMsg = "code does not match any known subscription item code."
+
+	case errors.Is(err, ErrSubscriptionNotFound):
+		status = http.StatusNotFound
+		errorStatus = "subscription_not_found"
+		errorMsg = "This merchant has no subscription."
+
+	case errors.Is(err, ErrSubscriptionItemPriceUnavailable):
+		// LOT B PRÉALABLE P1 : 501 se confondait avec "non implémenté" côté
+		// appelant — ce cas est un état métier attendu (kiosk/sms n'ont pas
+		// encore de prix dans pricing_catalog), pas un endpoint manquant.
+		status = http.StatusConflict
+		errorStatus = "pricing_unavailable_for_code"
+		errorMsg = "This subscription item code has no usable price in the pricing catalog yet."
+
+	case errors.Is(err, ErrInvalidOverrideKind):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_override_kind"
+		errorMsg = "kind must be one of: module, price, kiosk_quota."
+
+	case errors.Is(err, ErrInvalidOverrideReason):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_override_reason"
+		errorMsg = "reason must be one of: commercial, test, partenaire, migration, geste."
+
+	case errors.Is(err, ErrOverrideTargetUnsupported):
+		status = http.StatusBadRequest
+		errorStatus = "override_target_unsupported"
+		errorMsg = "target is not a supported value for this override kind."
+
+	case errors.Is(err, ErrOverrideNotFound):
+		status = http.StatusNotFound
+		errorStatus = "override_not_found"
+		errorMsg = "This override does not exist or was already revoked."
+
+	case errors.Is(err, ErrBillingCustomerNotFound):
+		status = http.StatusNotFound
+		errorStatus = "billing_customer_not_found"
+		errorMsg = "The other merchant has no platform billing customer yet."
+
+	case errors.Is(err, ErrBillingCustomerHasInvoices):
+		status = http.StatusConflict
+		errorStatus = "billing_customer_has_invoices"
+		errorMsg = "This merchant already has invoices on its own Stripe customer — retroactive merging is not supported."
+
+	case errors.Is(err, ErrCashRegisterNotActivated):
+		status = http.StatusForbidden
+		errorStatus = "cash_register_not_activated"
+		errorMsg = "Votre caisse n'est pas encore activée. Rendez-vous dans votre espace de gestion."
+
+	case errors.Is(err, ErrStripeCatalogPriceMissing):
+		status = http.StatusConflict
+		errorStatus = "stripe_catalog_price_missing"
+		errorMsg = "This subscription item has no real Stripe price yet — run cmd/ensure_stripe_prices."
+
+	case errors.Is(err, ErrAnnualStripeSubscriptionNotSupported):
+		status = http.StatusConflict
+		errorStatus = "annual_stripe_subscription_not_supported"
+		errorMsg = "Annual billing is not yet wired to a real Stripe subscription."
 
 	default:
 		// Pour les erreurs inconnues, on peut logguer l'erreur réelle ici

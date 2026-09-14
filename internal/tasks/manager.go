@@ -8,7 +8,9 @@ import (
 	"welloresto-api/internal/infrastructure/mailer"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/bookings"
+	dunningModule "welloresto-api/internal/modules/dunning"
 	"welloresto-api/internal/modules/order_life_cycle"
+	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	upsellModule "welloresto-api/internal/modules/upsell"
 
 	"go.uber.org/zap"
@@ -23,7 +25,11 @@ type TasksManager struct {
 	BookingService *bookings.BookingsService
 	AICache        *aicache.Cache
 	UpsellRepo     *upsellModule.Repository
-	Logger         *zap.Logger
+	// DunningService — LOT B B2b-1 : cascade d'impayé (RunDunningCascade).
+	DunningService *dunningModule.Service
+	// SubscriptionsService — LOT B B2c-1 : échéances de trial (RunTrialExpiryCheck).
+	SubscriptionsService *subscriptionsModule.Service
+	Logger               *zap.Logger
 }
 
 // NewTasksManager crée une nouvelle instance du gestionnaire avec les dépendances injectées
@@ -35,17 +41,21 @@ func NewTasksManager(
 	booking *bookings.BookingsService,
 	aiCache *aicache.Cache,
 	upsellRepo *upsellModule.Repository,
+	dunningService *dunningModule.Service,
+	subscriptionsService *subscriptionsModule.Service,
 	logger *zap.Logger,
 ) *TasksManager {
 	return &TasksManager{
-		DB:             db,
-		EmailService:   email,
-		OrderService:   order,
-		StripeService:  stripe,
-		BookingService: booking,
-		AICache:        aiCache,
-		UpsellRepo:     upsellRepo,
-		Logger:         logger,
+		DB:                   db,
+		EmailService:         email,
+		OrderService:         order,
+		StripeService:        stripe,
+		BookingService:       booking,
+		AICache:              aiCache,
+		UpsellRepo:           upsellRepo,
+		DunningService:       dunningService,
+		SubscriptionsService: subscriptionsService,
+		Logger:               logger,
 	}
 }
 

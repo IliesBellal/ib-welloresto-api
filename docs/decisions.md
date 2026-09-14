@@ -1,3 +1,1028 @@
+### LOT B F1/F2 — Clôture : liste blanche de suspension, non-unification expires_at/trial_ends_at, correctif mandat actif (2026-09-14)
+
+**F1 — liste blanche de suspension.** Ajouté à `internal/middleware/require_not_suspended.go`
+exactement les quatre groupes identifiés en revue comme des consultations
+bloquées par erreur (POST utilisé pour porter des critères de filtre, jamais
+pour écrire) : `/v1/analytics` (préfixe — couvre ses 4 sous-groupes
+`merchants`/`cancellations`/`clients`/`upsell`, tous enregistrés sous ce même
+préfixe) ; et, en correspondance EXACTE (pas préfixe, pour ne pas exempter
+les routes sœurs mutatives du même groupe) : `/v1/orders/pricing`,
+`/v1/orders/upsell`, `/v1/orders/list`, `/v1/orders/history`,
+`/v1/cash_register/history`, `/v1/bookings` et `/v1/bookings/` (racine —
+`SearchBookings`). Vérifié explicitement que `/v1/orders/create`,
+`/v1/bookings/create` restent bloqués. `/v1/orders/{id}/invoice/email-sms`
+laissé bloqué **explicitement, pas par oubli** : ce n'est pas une
+consultation, ça déclenche un envoi réel au client final du restaurant — un
+effet externe incompatible avec la suspension. Test unitaire
+(`require_not_suspended_test.go`) étendu avec les 4 groupes + les 3 cas
+négatifs ci-dessus.
+
+**F1 — `expires_at`/`trial_ends_at`, décision confirmée : ne pas unifier
+maintenant.** Le chevauchement conceptuel entre les deux colonnes (déjà
+signalé en B2c-1, voir ci-dessous) reste de la dette technique **explicite**,
+pas un oubli. Ni `subscription_overrides.expires_at` (marqueur passif, aucun
+comportement branché) ni `trial_ends_at` (comportement actif, mais seulement
+pour `kind='price'`) ne sont touchés dans ce chantier. Reporté au lot C,
+une fois toutes les dérogations réellement créées en production connues —
+tenter une unification maintenant, sur la seule base d'une hypothèse de ce à
+quoi ressembleront les dérogations réelles, risquerait de figer le mauvais
+schéma.
+
+**F2 — vérifié, bug trouvé et corrigé.** Scénario demandé : une dérogation
+`price` LIVE via `trial_ends_at`, PUIS un vrai mandat SEPA accepté AVANT
+l'échéance de la dérogation — la logique d'expiration doit vérifier un
+mandat réellement actif, pas seulement une ligne `subscription_overrides`.
+
+Ce que j'ai trouvé, avant correction : `Repository.HasSepaMandate`
+(`internal/modules/subscriptions/overrides_repository.go`) ne vérifiait que
+`SELECT EXISTS(SELECT 1 FROM sepa_mandates WHERE merchant_id = ?)` — aucun
+filtre sur `sepa_mandates.status`. Ça fonctionnait aujourd'hui, mais **par
+accident** : aucun code de ce dépôt n'écrit jamais un statut autre que
+`'active'` (`billing.MandateStatusActive`) dans `sepa_mandates` — il n'existe
+encore aucun flux de révocation/annulation de mandat. Le jour où une ligne
+`sepa_mandates` avec un statut non-actif apparaîtrait (mandat révoqué côté
+Stripe, par exemple), `RunTrialExpiryCheck` aurait laissé la dérogation
+"s'éteindre en douceur" au lieu de correctement repasser le marchand en
+SETUP.
+
+Corrigé : `HasSepaMandate` filtre désormais explicitement
+`AND status = 'active'`. Pas d'import du paquet `billing` pour réutiliser sa
+constante (celui-ci importe déjà `subscriptions`, un import inverse
+boclerait — même raison déjà documentée en B2c-0) ; le littéral `'active'`
+est répété avec un commentaire renvoyant à `billing.MandateStatusActive`.
+
+**Tests F2** (`overrides_trial_postgres_integration_test.go`), tous verts
+contre staging :
+- `TestRunTrialExpiryCheck_MandateAcceptedBeforeDeadline_Postgres` — le
+  scénario exact demandé : dérogation créée avec une échéance future, mandat
+  accepté en cours de trial (bien avant l'échéance), rien ne bouge tant que
+  l'échéance n'est pas atteinte, puis à l'échéance la dérogation s'éteint et
+  `activation_state` reste `LIVE` inchangé.
+- `TestRunTrialExpiryCheck_InactiveMandateOnly_RevertsToSetup_Postgres` —
+  reproduit la régression que l'ancienne requête ne pouvait pas attraper : une
+  ligne `sepa_mandates` existe mais `status='canceled'` → doit repasser en
+  SETUP. **Confirmé en désactivant temporairement le correctif** que ce test
+  échoue sans lui (`activation_state` restait `LIVE` à tort), avant de le
+  restaurer.
+
+Suite complète (`subscriptions`/`billing`/`dunning`/`webhook/stripe`/
+`cash_registers`/`middleware`) exécutée sans régression après F1/F2.
+
+**F3 — statut : en attente de déploiement.** Investigation avant tout test :
+deux webhook endpoints Stripe (mode test) sont déjà configurés et `enabled`,
+pointant vers `https://welloresto-api-staging.onrender.com/webhooks/stripe`
+(confirmé via l'API Stripe, `GET /v1/webhook_endpoints` — un endpoint compte
+sur son `application` un Connect app id, l'autre est au niveau du compte,
+238 événements activés dont `invoice.created`/`invoice.paid`). Le serveur
+staging est donc déjà publiquement joignable — **mais aucun code du lot B
+n'est commité** (`git log` : le dernier commit précède tout le lot B ; seules
+les migrations ont été appliquées directement à la base staging, jamais via
+un déploiement). Le serveur staging actuellement en ligne ne peut donc pas
+traiter ces webhooks correctement — la vérification réelle demandée par F3
+n'a de sens qu'une fois le code déployé. Décision prise avec l'utilisateur :
+il déploie le lot B sur staging lui-même, puis je relance le test de cycle de
+facturation réel (mandat SEPA réel + Test Clock, méthode B2c-0) contre le
+vrai serveur staging désormais public — sans tunnel, puisque le serveur
+public existe déjà. F4 reste ouvert tant que F3 n'est pas vert.
+
+---
+
+### LOT B B2c-1 — Prix de remplacement à échéance (2026-09-14)
+
+**Chevauchement trouvé avant tout code, signalé plutôt que masqué** :
+`subscription_overrides.expires_at` existe déjà depuis B1d (migration 139) —
+un marqueur passif ("l'override n'est plus en vigueur"), sans AUCUN
+comportement actif branché dessus (juste un filtre dans
+`ListActiveOverrides`). `trial_ends_at` (ce chantier) est explicitement une
+NOUVELLE colonne demandée par le brief, avec un vrai comportement actif
+(rappels, bandeau, réversion). Implémenté tel que demandé (colonne
+distincte), mais les deux colonnes se chevauchent conceptuellement —
+`expires_at` reste du poids mort. À unifier dans un futur nettoyage, pas
+dans ce chantier.
+
+**Interprétation retenue, à confirmer** : le brief décrit le mécanisme
+"retombe en SETUP" uniquement en termes de `activation_state` — un concept
+qui n'a de sens que pour une dérogation `kind='price'` (celle qui, avec un
+trial, doit VISIBLEMENT faire passer le marchand en LIVE dès la création,
+sinon "il retombe en SETUP" à l'échéance n'aurait rien à quoi revenir).
+`trial_ends_at` reste une colonne générique (n'importe quel kind peut la
+porter, rappels/bandeau s'appliquent alors génériquement), mais seul
+`kind='price'` déclenche l'octroi/la réversion de `activation_state` à la
+création/l'échéance. Les dérogations `module`/`kiosk_quota` avec
+`trial_ends_at` sont juste révoquées à l'échéance, sans tenter de deviner un
+retour en arrière sur leur propre effet (même logique que la révocation
+manuelle déjà documentée en B1d : aucune valeur "avant" n'est tracée nulle
+part).
+
+**Implémenté** : `subscriptions.Service.CreateOverride` accepte
+`trialEndsAt` ; pour `kind='price'` avec une échéance, octroie LIVE
+immédiatement (même mécanisme que B2a-3 : `went_live_at` posé une seule
+fois, jamais écrasé). `RunTrialExpiryCheck` (appelé depuis le même créneau
+`@hourly` que la cascade d'impayé B2b-1 — deux `add("@hourly", ...)`
+séparés, pas un enregistrement cron distinct, pour garder l'isolation
+`SkipIfStillRunning` par tâche) : rappels J-7/J-1 (jamais renvoyés, colonnes
+`trial_reminder_*_sent_at`), et à l'échéance — `sepa_mandates` existant ?
+override simplement révoqué (l'abonnement récurrent B2c-0 prend le relais) ;
+sinon révoqué ET (kind='price' seulement) `activation_state` repasse à
+`SETUP`, jamais `SUSPENDED` (comme demandé). Bandeau : `GET /v1/merchant/activation-status`
+(B2b-3) porte désormais aussi `trial_ends_at` quand pertinent — distinct du
+bandeau SETUP par construction (un marchand en trial est déjà `LIVE`, donc
+la condition existante `activation_state == 'SETUP'` ne peut pas se
+déclencher pour lui).
+
+**Nouveau template Brevo requis, pas encore créé** : `trial_expiry_reminder.html`
+(même caveat que les templates de la cascade d'impayé, B2b-1).
+
+**Tests** : 6 tests d'intégration Postgres — octroi LIVE à la création (avec
+et sans trial), rappels J-7 puis J-1 sans double-envoi, échéance sans mandat
+(révocation + retour SETUP + subscriptions.status='setup'), échéance avec
+mandat (révocation seule, LIVE inchangé). Tous verts contre staging, plus la
+suite complète (`subscriptions`/`billing`/`dunning`/`webhook/stripe`/
+`cash_registers`) sans régression.
+
+---
+
+### LOT B B2c-0 — Abonnement Stripe récurrent : préalable comblé, deux pièges réels trouvés (2026-09-13)
+
+Rapporté isolément, avant tout code B2c-1/2, comme demandé — c'est le point
+qui rendait toute la cascade B2b inerte.
+
+**Constat de départ, avant tout code** : `packages.stripe_price_id`
+("Essentiel", packages.id=1) — la seule ligne réellement peuplée d'un id
+Stripe dans ce dépôt avant ce chantier — s'est avéré être un objet **LIVE
+MODE** lors d'une tentative de lecture avec la clé test (`404 : "a similar
+object exists in live mode"`). Inutilisable pour la vérification demandée, et
+un signal de mélange live/test dans les données de staging sans rapport
+avec ce chantier — signalé, pas corrigé ici (hors périmètre).
+
+**Construit** :
+- `pricing_catalog.stripe_price_id`/`per_unit_stripe_price_id` (migration
+  143) — pricing_catalog porte désormais ses propres Price Stripe (plan ET
+  module, contrairement à `packages` qui ne couvrait que les plans).
+- `cmd/ensure_stripe_prices` : outil idempotent qui crée un Price Stripe
+  réel (mode test) pour chaque code facturable sans en avoir encore un.
+  Exécuté contre staging avec la clé test fournie — **9 Price créés**,
+  documentés ici : essentiel (`price_1UF1QMIpOVvvxHBEiTfqWwrk`), pro
+  (`price_1UF1QMIpOVvvxHBETZTXaesA`), complet
+  (`price_1UF1QLIpOVvvxHBEuAehWMoP`), reservation
+  (`price_1UF1QNIpOVvvxHBEAqRNuLVX`), haccp
+  (`price_1UF1QNIpOVvvxHBEHnf9G7FI`), planning (flat,
+  `price_1UF1QNIpOVvvxHBEl2GeFPQf`), planning per-employee
+  (`price_1UF1QOIpOVvvxHBEyrp6oa9N`), marketplaces
+  (`price_1UF1QOIpOVvvxHBExdwtMl2N`), delivery
+  (`price_1UF1QMIpOVvvxHBEpqw9Dzow`), extra_seat
+  (`price_1UF1QOIpOVvvxHBECz7nVOlN`). Ré-exécuté une 2e fois : confirmé
+  idempotent (aucun doublon). kiosk/sms exclus, sans prix du tout (P1/P3).
+- `subscriptions.Service.ResolveStripeLineItems` : résout les
+  subscription_items actifs en vraies paires Price/quantité (miroir de
+  `computeAmount`, mais Price Stripe au lieu de centimes) — échoue
+  explicitement (`ErrStripeCatalogPriceMissing`) plutôt que d'improviser un
+  montant, et refuse `billing_cycle='annual'` explicitement
+  (`ErrAnnualStripeSubscriptionNotSupported` — aucune correspondance Stripe
+  pour la règle "×10 mois" du B1c, hors périmètre de ce chantier).
+- `billing.Service.CreateOrUpdateStripeSubscription` : crée l'abonnement
+  Stripe au moment du mandat (`HandleSetupIntentSucceeded`), ou met à jour
+  l'existant (`SyncSubscriptionItems`, diff par le code en métadonnée de
+  chaque item Stripe) — ne crée jamais un second abonnement. Branché en
+  retour dans `subscriptions.ApplyItemChanges` (B1e) via une petite
+  interface (`subscriptions.StripeSyncer`), pas un import du paquet
+  `billing` (qui, lui, importe déjà `subscriptions` pour résoudre les
+  lignes — un import dans les deux sens aurait été un vrai cycle).
+
+**Deux pièges réels trouvés en vérifiant contre la vraie API Stripe (mode
+test, clé fournie), avant tout déploiement** :
+1. **Un `PaymentMethod` simplement attaché à un Customer n'est PAS un
+   mandat SEPA.** Sans un `SetupIntent` confirmé avec `mandate_data`
+   (exactement le flux réel de B2a-3), l'abonnement Stripe créé reste
+   `incomplete` indéfiniment — Stripe ne tente même pas le prélèvement
+   automatique. Ce chantier utilise donc systématiquement le même chemin de
+   confirmation que B2a-3 pour tout test, jamais un simple `Attach`.
+2. **Un abonnement `incomplete` expire après 23h RÉELLES** (`incomplete_expired`,
+   terminal, irréversible) — indépendant de l'avancement d'une Test Clock.
+   La 1re tentative de vérification a fait avancer la Test Clock de 3 jours
+   immédiatement après création, ce qui a fait expirer l'abonnement avant
+   que le règlement SEPA asynchrone (qui, lui, se résout en temps réel,
+   pas en temps simulé) ait pu aboutir. Corrigé : interroger en temps réel
+   (pas via la Test Clock) jusqu'à ce que le 1er prélèvement se résolve,
+   puis seulement ensuite avancer la Test Clock pour tester les cycles
+   suivants.
+
+**Preuve de bout en bout, contre un vrai marchand de staging (créé et
+nettoyé) et la vraie API Stripe test, mandat réellement accepté** :
+1. `CreateOrUpdateStripeSubscription` (1er appel) → Subscription Stripe
+   réelle créée, statut `active` une fois le mandat confirmé, 1 ligne
+   (essentiel).
+2. `subscriptions.ApplyItemChanges(add=haccp)` → **le même** id
+   d'abonnement Stripe (vérifié égal), passé à 2 lignes — jamais un second
+   abonnement créé.
+3. Test Clock avancée d'un cycle de facturation → **2 factures réelles**
+   retrouvées pour ce Customer, montants cohérents avec l'évolution de la
+   composition (7900 payée avant le changement de module, la suivante
+   couvrant essentiel+haccp) — `invoice.created` se déclenche bien avec la
+   composition réelle, pas un montant recalculé à la main.
+
+**Non re-vérifié dans cette passe** : le webhook `invoice.created`/
+`invoice.paid` lui-même n'a pas été rejoué littéralement depuis cette
+vérification (pas de tunnel HTTP configuré) — seule la génération réelle
+des factures par Stripe a été confirmée par lecture directe de l'API. Le
+risque de forme (payload webhook vs objet API) déjà couvert pour
+`setup_intent.succeeded` (B2b-0) est structurellement plus faible ici :
+`Invoice.Metadata`/`PeriodEnd` sont des champs inline, pas des références
+imbriquées expansibles — la classe de bug trouvée en B2b-0 ne s'applique
+pas de la même façon.
+
+**Tests automatisés** (sans Stripe réel, `fakeStripe` — cohérent avec le
+reste de ce chantier) : résolution des lignes Stripe (nominal, code non
+facturable, cycle annuel refusé, quantités metered), et
+`CreateOrUpdateStripeSubscription` appelé 3 fois de suite ne crée qu'un seul
+abonnement (1 `CreateSubscription`, 2 `SyncSubscriptionItems`). Tous verts
+contre staging, plus la suite complète (`billing`/`subscriptions`/
+`webhook/stripe`/`dunning`/`cash_registers`) sans régression.
+
+**Résultat : B2c-0 est vert, la cascade B2b peut réellement se déclencher
+de bout en bout.** Prêt à enchaîner sur B2c-1/B2c-2.
+
+---
+
+### LOT B B2b-1/2/3 — Cascade d'impayé, bandeau, effets de suspension (2026-09-12)
+
+**B2b-1 — machine à états.** Nouveau module `internal/modules/dunning` +
+table `subscription_dunning` (migration 142, appliquée à staging) : une
+ligne = une cascade en cours pour un merchant, supprimée (pas juste
+réinitialisée) au retour à `active` — "aucune ligne" est la seule source de
+vérité pour "rien en cours" côté cron. Webhooks
+`invoice.payment_failed`/`invoice.paid` étendus dans
+`internal/webhook/stripe/service.go` (`invoice.paid` appelle désormais aussi
+`dunning.Service.ClearDunning`, en plus de son écriture `subscriptions.status`
+déjà en place depuis B2a-0). Cron `RunDunningCascade` (`@hourly`,
+`cmd/api/tasks.go`) : ré-évalue l'état réel de chaque merchant `past_due` à
+chaque exécution — jamais un envoi planifié à l'avance, exactement la
+consigne du brief. Gating "aucun envoi pendant les services" implémenté en
+réutilisant `internal/modules/openinghours` (déjà utilisé pour le statut
+POS), pas réinventé.
+
+**Bug trouvé et corrigé pendant l'écriture des tests** (pas en prod, avant
+tout déploiement) : le lendemain de l'envoi du dernier rappel (48h avant
+suspension), le cron retombait dans la relance hebdomadaire générique au
+lieu de rester silencieux jusqu'à la suspension elle-même — `FinalNoticeSentAt`
+déjà posé désactivait la branche "dernier rappel" sans empêcher la branche
+suivante de s'exécuter. Corrigé : une fois dans la fenêtre des 48h, plus
+aucune autre branche ne s'exécute avant la suspension. Test qui l'a
+attrapé : `TestRunCascade_FinalNoticeAndWeeklyReminder_Postgres` (2 exécutions
+successives du cron, la 2e ne doit rien renvoyer).
+
+**"Réessayer maintenant"** (`POST /v1/billing/retry-now`) : retente la
+collecte sur la dernière facture Stripe ouverte du Customer déjà attaché
+(`Invoices.List(status=open)` + `Invoices.Pay`), jamais une nouvelle saisie
+d'IBAN. **Hypothèse explicite, à confirmer** : ce chantier suppose qu'un
+mécanisme Stripe de facturation récurrente (Subscription + Invoices réels)
+existe déjà en amont de cette cascade — B2a/B2b ne construisent que la
+réaction aux événements `invoice.*`/`setup_intent.*`, jamais la création de
+la Subscription/du prix récurrent elle-même. Si ce mécanisme n'existe pas
+encore réellement, `invoice.payment_failed`/`invoice.paid` ne se
+déclencheront jamais et toute la cascade reste inerte en pratique — à
+vérifier avant de considérer B2b comme utilisable de bout en bout.
+
+**Nouveaux templates Brevo requis, pas encore créés** :
+`dunning_first_notice.html`, `dunning_second_notice.html`,
+`dunning_weekly_reminder.html`, `dunning_final_notice.html`. Le code est
+complet et correct (`mailer.Service.SendAsync` est appelé avec les bons
+noms/données) mais ces templates n'existent pas encore côté Brevo — aucun
+outil de ce dépôt ne peut les créer. Un envoi réel restera vide/en erreur
+tant qu'ils ne sont pas provisionnés côté Brevo.
+
+**B2b-2 — effets de la suspension.**
+- *Lecture seule back-office* : nouveau middleware
+  `middleware.RequireNotSuspended`, branché juste après `authMiddleware`
+  dans les ~40 groupes de routes authentifiées de `cmd/api/routes.go`
+  (modification mécanique, `sed` sur le motif exact `r.Use(authMiddleware)` —
+  vérifié qu'aucune occurrence n'a été manquée). Bloque toute requête non-GET
+  d'un marchand `suspended`, sauf une liste d'exemptions explicite
+  (`/admin`, `/billing`, `/pos/reports`, `/pos/accounting`, `/accounting`,
+  `/cash_register/.../close` et `/enclose`). **Choix assumé, pas une revue
+  exhaustive de chaque route de l'API** : cette liste vient de ce qui est
+  explicitement nommé dans le brief (exports fiscaux, clôture de caisse) plus
+  ce qu'un marchand suspended doit garder pour se régulariser (billing) et ce
+  que le staff interne doit garder pour le faire à sa place (admin). D'autres
+  routes mériteraient peut-être une exemption (rattachement/détachement
+  d'appareil, gestion des accès utilisateurs pour corriger qui est
+  propriétaire...) — à revoir avant de considérer cette liste comme
+  définitive. Lecture toujours fraîche (jamais via l'utilisateur
+  authentifié mis en cache Redis, `models.UserCacheTTL` = 60 minutes) —
+  même raisonnement que pour le bandeau (B2b-3).
+- *Canaux en ligne coupés* : `scannorder.Service.CreateOrderSNO` refuse
+  désormais toute commande (Scan&Order et "QR à table", qui partagent ce
+  même point d'entrée — `orderType == "IN"`) pour un merchant `suspended`,
+  avant toute autre logique.
+- *POS — refus d'ouverture de registre* :
+  `cash_registers.Service.OpenCashRegister` refuse si
+  `activation_state != 'LIVE'` OU `status = 'suspended'`, message unique
+  "Votre caisse n'est pas encore activée. Rendez-vous dans votre espace de
+  gestion." dans les deux cas — aucun montant, aucun détail. Vérifié que
+  `past_due` seul (sans suspension) n'empêche PAS l'ouverture — seule la
+  suspension effective bloque, conformément au §7.5/§7.6.
+- *Exports fiscaux et clôture de caisse* : jamais bloqués (exemptés du
+  middleware ci-dessus) — vérifié par test que ces chemins restent exempts.
+
+**B2b-3 — bandeau et cache.**
+`GET /v1/merchant/activation-status` (nouveau, authentifié seul) : lecture
+toujours fraîche de `merchant.activation_state`/`subscriptions.status` —
+**jamais** ajoutée à l'objet utilisateur authentifié mis en cache Redis
+(`internal/modules/auth/service.go`, `models.UserCacheTTL` = 60 minutes).
+C'est le point précis que le brief demandait de vérifier : ajouter ces deux
+champs à l'objet caché aurait réintroduit jusqu'à 60 minutes de délai avant
+la disparition du bandeau après le webhook `setup_intent.succeeded` — évité
+en construction, pas par une invalidation de cache (aucun index
+merchant→tokens n'existe pour invalider sélectivement les entrées Redis
+d'un marchand). **Le back-office (dépôt séparé, hors périmètre de cette
+session) doit interroger CET endpoint pour le bandeau, pas les champs
+`activation_state`/abonnement déjà présents dans la réponse de login (qui,
+eux, restent cachés)** — point d'intégration à transmettre.
+
+**Tests** : 6 nouveaux tests d'intégration Postgres pour `dunning` (1er/2e/3e
+échec, remise à zéro sur paiement réussi, suspension après échéance, dernier
+rappel + relance hebdomadaire sans double-envoi, "réessayer maintenant"), 1
+test unitaire pur pour la liste d'exemptions du middleware, 1 test
+d'intégration pour `IsActivatedForOrdering` (les 4 combinaisons
+SETUP/LIVE × suspended/actif/past_due), 1 test d'intégration pour le
+bandeau. Tous verts contre staging. `go test ./...` ne montre que les
+échecs préexistants déjà signalés (planning/employees, planning/leave,
+planning/swaps, ubereats) — aucun fichier de ces paquets touché ici.
+
+**Questions ouvertes** :
+1. La liste d'exemptions du middleware lecture-seule doit être revue avant
+   production — pas garantie exhaustive.
+2. "Réessayer maintenant" suppose une vraie Subscription Stripe existante —
+   à vérifier que ce mécanisme est bien en place, sinon toute la cascade
+   reste inerte en pratique.
+3. Templates Brevo à créer avant que les relances envoient un contenu réel.
+4. Le back-office doit être informé de basculer sur
+   `GET /v1/merchant/activation-status` pour le bandeau plutôt que sur les
+   champs déjà présents (et cachés) de la réponse de login.
+
+---
+
+### LOT B B2b-0 — Vérification Stripe réelle : un bug trouvé et corrigé (2026-09-12)
+
+Fait avant tout code de cascade, comme demandé. `STRIPE_API_KEY` fournie par
+l'utilisateur pour cette vérification (clé test, communiquée hors fichier,
+jamais écrite sur disque ni committée — l'utilisateur prévoit de la révoquer
+après ce chantier).
+
+**Méthode.** Plutôt que de configurer un tunnel/Stripe CLI pour recevoir un
+vrai webhook HTTP (complexité opérationnelle sans plus-value ici — la
+vérification de signature est de toute façon différée, voir B2b-2 du brief
+d'origine, donc `internal/webhook/stripe/http_handler.go` n'exige aucun
+secret de webhook et accepte tout corps JSON), vérification directe contre
+la vraie API Stripe (test mode) : `CreateSepaSetup` réel (Customer + SetupIntent),
+mandat complété avec l'IBAN de test FR officiel de succès
+(`FR1420041010050500013M02606`, docs.stripe.com/testing#sepa-direct-debit),
+puis le SetupIntent re-récupéré SANS `expand` (exactement la forme que porte
+`data.object` d'un webhook réel) injecté tel quel dans le code déjà écrit.
+Fait une première fois en isolation (Stripe seul), puis une seconde fois de
+bout en bout contre un vrai marchand de staging (créé puis nettoyé) en
+passant par le vrai `billing.Service`/`Repository`/routes — pas seulement
+contre l'API Stripe seule.
+
+**Bug trouvé : `sepa_mandates.last4_iban_masked` restait toujours NULL.**
+`HandleSetupIntentSucceeded` lisait `intent.PaymentMethod.SEPADebit.Last4`
+en supposant le payload du webhook expansé — hypothèse fausse. Un
+`setup_intent.succeeded` réel porte `payment_method` comme une simple
+référence par id (`SEPADebit` reste `nil`), jamais l'objet complet. La
+signature du mandat elle-même (statut, transition LIVE) n'était pas
+affectée — seul le masquage d'IBAN, explicitement demandé par le schéma,
+était silencieusement perdu.
+
+**Corrigé** : `internal/infrastructure/stripe/billing.go` gagne
+`GetPaymentMethod(id)` ; `HandleSetupIntentSucceeded` l'appelle en repli
+quand `SEPADebit` n'est pas déjà présent dans le payload (jamais le cas
+aujourd'hui, mais sans coût si Stripe changeait ce comportement). Test
+d'intégration mis à jour pour reproduire la forme réelle (référence nue,
+plus un objet en ligne) plutôt que la forme supposée initialement.
+
+**Confirmé de bout en bout, contre un vrai marchand de staging (créé et
+nettoyé pour ce test) et la vraie API Stripe** :
+`CreateSepaSetup` → Customer + SetupIntent réels → mandat complété (IBAN de
+test FR) → `HandleSetupIntentSucceeded` sur le payload non-expansé réel →
+`merchant.activation_state = 'LIVE'`, `went_live_at` renseigné,
+`subscriptions.status = 'active'`, `sepa_mandates.last4_iban_masked = '2606'`
+(les 4 derniers chiffres réels de l'IBAN de test) — tout cela sans délai, sans
+intervention manuelle, exactement la décision N4b.
+
+**Non couvert par cette vérification** : les IBAN de test simulant un refus
+de mandat ou un échec de prélèvement (`AT8619...`/`FR84...` etc.) n'ont pas
+été exercés — B2b-0 visait la forme du webhook de mandat, pas encore la
+cascade d'impayé (B2b-1, qui a son propre risque de forme sur
+`invoice.payment_failed`, pas vérifié ici). Le webhook réel n'a pas non plus
+été livré par un vrai POST HTTP Stripe (pas de tunnel configuré) — la forme
+JSON a été confirmée par récupération API directe non-expansée, ce qui est
+la même sérialisation que Stripe utilise pour `data.object`, mais le
+chemin HTTP+chi lui-même (déjà utilisé sans souci par tous les autres
+endpoints de ce dépôt) n'a pas été rejoué littéralement.
+
+---
+
+### LOT B B2a-1/2/3 — Table de facturation plateforme, mandat SEPA (2026-09-12)
+
+Implémenté à la suite de B2a-0 (ci-dessous). Nouveau module
+`internal/modules/billing` — délibérément séparé de `subscriptions` (qui
+possède déjà `pricing.Repository` comme dépendance externe) et de
+`internal/webhook/stripe` (qui reste le seul point d'entrée des webhooks
+Stripe, dispatchant vers `billing.Service` pour les événements de ce
+chantier).
+
+**B2a-1 — `platform_billing_customers`** (migration 140), nom sans
+ambiguïté avec `welloresto_stripe_customers` (confirmé lié au compte
+connecté). Pas de FK vers `merchant(id)` malgré le schéma du brief : testé
+directement contre staging, `merchant_id text REFERENCES merchant(id)`
+échoue à la création (`SQLSTATE 42804`, types incompatibles — `merchant.id`
+est `integer`) — même situation déjà documentée pour
+`subscription_items`/`subscription_overrides`. Une `UNIQUE (merchant_id)`
+porte l'invariant "un merchant_id, une ligne, un stripe_customer_id" à sa
+place. Deux endpoints admin (`RequirePlatformAdmin`, déjà en place depuis
+B1d) : `attach-to/{other_merchant_id}` (refuse si la cible a déjà des
+factures Stripe sur son propre Customer — vérifié en interrogeant l'API
+Stripe directement, `Invoices.List`, jamais via l'ex-`subscription_invoices`)
+et `detach` (crée un nouveau Customer dédié).
+
+**B2a-2 — création paresseuse.** `Service.resolveOrCreateBillingCustomer`
+(privé, appelé par `CreateSepaSetup`) : réutilise la ligne existante telle
+quelle si présente (y compris une ligne mutualisée — jamais de second
+Customer créé pour un merchant déjà rattaché à un autre), sinon crée un
+Customer Stripe et la ligne (`is_primary_for_merchant=true`). Contact
+"propriétaire" résolu via `users_rights.admin=TRUE` le plus ancien (même
+proxy déjà documenté pour la remise multi-marchand, `hasMultiMerchantOwner`),
+repli sur `merchant.email`/`merchant.fullname` si aucun admin.
+
+**B2a-3 — mandat SEPA.**
+`POST /v1/billing/sepa/setup` (client, `settings.manage`) résout/crée le
+Customer puis crée un `SetupIntent` `sepa_debit`/`usage=off_session` et
+retourne son `client_secret`. Webhook `setup_intent.succeeded`, ajouté au
+dispatcher existant (`internal/webhook/stripe/service.go`, qui appelle
+désormais `billing.Service.HandleSetupIntentSucceeded`) : écrit
+`sepa_mandates`, `subscriptions.status='active'`,
+`merchant.activation_state='LIVE'`/`went_live_at=now()` — cette dernière
+écriture gardée par `WHERE went_live_at IS NULL` (un webhook rejoué ne doit
+pas déplacer la date de mise en service réelle). **Décision N4b
+re-vérifiée, pas supposée** : aucune condition sur `subscription_items`, un
+produit vendable, ou quoi que ce soit d'autre — testé explicitement avec un
+marchand n'ayant AUCUNE ligne `subscription_items` au moment du mandat, qui
+passe quand même en LIVE.
+
+**Note technique** : `HandleSetupIntentSucceeded` prend le JSON brut de
+l'événement plutôt qu'un `*stripe.SetupIntent` typé, parce que
+`internal/webhook/stripe` (le dispatcher existant) est resté sur
+`stripe-go v78` tandis que ce nouveau module (comme
+`internal/infrastructure/stripe`) est sur `v84` — les deux coexistent dans
+`go.mod` sans conflit, mais un objet typé de l'un n'est pas celui de
+l'autre ; le format JSON Stripe, lui, ne change pas selon la version du SDK.
+Pas de migration du dispatcher vers v84 dans ce chantier (hors scope,
+risque de régression sur les webhooks Connect existants).
+
+**Choix Elements intégré vs page hébergée — proposition, pas un choix
+déjà tranché en votre nom.** Le coût CÔTÉ BACKEND des deux options est
+quasi identique (un seul appel Stripe qui change : `SetupIntent.New`
+retournant un `client_secret`, contre `checkout/session.New` en
+`mode=setup` retournant une URL) — la vraie différence de charge de travail
+est côté FRONT (`wello-back-office`, un dépôt distinct, hors périmètre de
+cette session). **Implémenté ici : l'option A** (le backend retourne un
+`client_secret`, prêt pour un composant Stripe Elements) — recommandé
+puisque c'est la cible produit et que ça ne coûte rien de plus à construire
+que B côté API. Reste explicitement à faire, ailleurs : le composant
+Stripe Elements réel dans `wello-back-office`. Si cette intégration front ne
+peut pas être livrée à temps, le repli B ne demande qu'un changement
+contenu (`CreateSepaSetupIntent` → une `checkout.Session` en mode setup,
+retourner `.URL` au lieu de `.ClientSecret`) — pas une refonte.
+
+**Tests** : 5 tests d'intégration Postgres
+(`internal/modules/billing/billing_postgres_integration_test.go`), tous
+verts contre staging — première souscription (Customer créé), deuxième
+établissement du même opérateur (Customer distinct, vérifié qu'un rappel
+n'en recrée pas un troisième), mutualisation (+ les deux refus : source sans
+Customer, cible ayant déjà des factures), détachement, passage en LIVE
+(mandat seul, y compris le cas sans aucune ligne `subscription_items`, et
+non-régression de `went_live_at` sur rejeu). Stripe lui-même est un faux
+(`fakeStripe`, implémentant la même interface que `StripeManager`) : cet
+environnement n'a pas de `STRIPE_API_KEY` (`.env` absent du dépôt, voir
+CLAUDE.md), donc aucun test ici n'a pu appeler la vraie API Stripe — signalé
+plutôt que contourné silencieusement. `internal/webhook/stripe`'s propre
+test d'intégration a été adapté (son bloc "Subscription" testait
+`CreateInvoice`/`PayInvoice` contre `subscription_invoices`, remplacé par
+`SetSubscriptionStatus`/`UpdateSubscriptionBillingPeriod` contre
+`subscriptions`, cohérent avec B2a-0).
+
+Migrations 140/141 appliquées à staging (additives).
+
+---
+
+### LOT B B2a-0 — Vérification lecture de subscription_invoices (2026-09-12)
+
+Réponse, avant tout code sur B2a-1/2/3 : **`subscription_invoices` n'est lue
+nulle part par l'application.** Recherche exhaustive (`grep` sur tout le
+dépôt Go) : les trois seules occurrences du nom de table sont
+`internal/webhook/stripe/repository.go` (l'`INSERT` de `CreateInvoice` et
+l'`UPDATE` de `PayInvoice`, écriture pure) et
+`internal/webhook/stripe/postgres_integration_test.go` (deux `SELECT`, mais
+qui vérifient l'effet de ces mêmes écritures dans le test du module — pas un
+consommateur applicatif). Une seule implémentation du `Repository`
+(`mysqlRepo`, malgré son nom — même motif que le reste du dépôt : les
+requêtes passent par `dbx`/`Rebind` pour rester portables MySQL/Postgres),
+donc pas de second chemin de lecture caché derrière un autre dialecte.
+Aucun handler HTTP, export, rapport ou module analytics ne la sélectionne.
+
+**Décision (conforme à la règle donnée) : `HandleInvoiceCreated`/`HandleInvoicePaid`
+seront REMPLACÉS, pas dupliqués** — ils écriront désormais
+`subscriptions.status`/`current_period_end` au lieu de
+`subscription_invoices`/`repo.CreateInvoice`/`repo.PayInvoice`. La table
+`subscription_invoices` elle-même n'est pas supprimée dans ce chantier (pas
+demandé), seulement plus alimentée par ces deux handlers.
+
+---
+
+### LOT B B2a — Investigation préalable, arrêtée avant tout code (2026-09-12)
+
+Avant d'écrire le moindre code B2a (mandat SEPA), recherche de l'existant
+autour de la facturation "WelloResto facture le marchand" — un
+`SetupIntent` SEPA a besoin d'un objet Stripe `Customer` auquel s'attacher,
+et rien dans ce dépôt ne semblait en créer un. Deux découvertes qui changent
+la donne, remontées à l'utilisateur avant toute écriture (aucun code B2a
+n'a été commencé suite à cette investigation — en attente de ses indications) :
+
+**1. `welloresto_stripe_customers` existe déjà, avec des données réelles.**
+Table héritée de l'ère MySQL (`merchant_id` PK, `creator_user_id`,
+`stripe_customer_id`), 5 lignes en staging, identiques aux 5 lignes déjà
+présentes dans le dump MySQL d'origine (`data-migration/migration_welloresto_data.sql`) :
+merchants historiques 173/196/203/212/217 (numérotation MySQL), avec des
+`cus_...` qui ressemblent à de vrais identifiants Stripe Customer. Aucun
+code Go n'écrit dans cette table aujourd'hui (recherche exhaustive) — elle
+n'est que lue, une seule fois, dans une sous-requête de
+`internal/webhook/stripe/repository.go` (`CreateInvoice`, voir point 2).
+**Précision de l'utilisateur, à respecter** : cette table sert au compte
+Stripe **connecté** (`stripe_accounts`), pas à la relation
+"marchand-client-payeur-de-WelloResto" que B2a doit construire — donc PAS le
+bon endroit pour stocker le `stripe_customer_id` du mandat SEPA. Observation
+factuelle à noter en tension apparente avec cette lecture, sans trancher :
+`merchant_id=212` (Croq'Ô'Pizzas, déjà croisé au P2 du chantier précédent)
+a une ligne ici avec `creator_user_id` correspondant à un des deux admins
+réels de ce marchand (`user_id=226`, `croqopizzas4@gmail.com`) — cohérent
+avec un Customer représentant le marchand lui-même plutôt qu'un artefact du
+compte connecté. Remonté tel quel, pas interprété plus loin.
+
+**2. `invoice.created`/`invoice.paid` sont déjà des webhooks Stripe gérés en
+production** (`internal/webhook/stripe/service.go`, section "7. Invoices
+(Subscription)") — exactement les deux noms d'événements que B2b demande
+d'ajouter. Le comportement actuel : `HandleInvoiceCreated` lit
+`invoice.Metadata["merchant_id"]` et appelle `repo.CreateInvoice`, qui
+insère dans `subscription_invoices` (`status`/`amount`/`payment_date`) SOUS
+RÉSERVE qu'une ligne `welloresto_stripe_customers` existe pour le
+`stripe_customer_id` de la facture (jointure de garde, pas de lecture réelle
+de colonne) ; `HandleInvoicePaid` appelle `repo.PayInvoice`. Aucun des deux
+ne touche `subscriptions.status`/`current_period_end` — la table
+`subscription_invoices` est distincte du modèle LOT B B1b/B1c. Usage
+recherché exhaustivement dans tout le dépôt (code Go, docs) : ni l'un ni
+l'autre n'est lu ailleurs que dans ce même fichier
+(`internal/webhook/stripe/repository.go` et son test d'intégration) — aucun
+handler HTTP, export comptable ou module de reporting ne les expose. En
+staging : `subscription_invoices` a 0 ligne, `welloresto_stripe_customers`
+en a 5 (voir point 1) — le chemin d'écriture existe et est appelé (le
+handler est bien branché dans `ProcessEvent`), mais rien ne prouve depuis le
+code seul si le webhook Stripe réel envoie encore ces événements
+aujourd'hui pour ces 5 marchands historiques.
+
+**En attente des indications de l'utilisateur avant de reprendre B2a** —
+notamment : où stocker le `stripe_customer_id` du mandat SEPA si ce n'est
+pas `welloresto_stripe_customers`, et si `HandleInvoiceCreated`/`HandleInvoicePaid`
+doivent être étendus (garder l'écriture `subscription_invoices` existante et
+ajouter les écritures `subscriptions.status`/`current_period_end`) ou
+remplacés.
+
+---
+
+### LOT B B1d/B1e — Suite : préalable, dérogations, aperçu (2026-09-12)
+
+Jour 1 du brief "LOT B — Suite" : PRÉALABLE (P1/P2/P3) + B1d (dérogations
+commerciales) + B1e (aperçu de changement). Arrêté ici pour rapport avant
+B2a/B2b/B2c, comme demandé. Rien commité (attente d'une demande explicite).
+
+**P1 — corrigé.** `ErrSubscriptionItemPriceUnavailable` répondait 501
+(`internal/models/responses_models.go`). Remplacé par 409, code
+`pricing_unavailable_for_code` — un état métier attendu (kiosk/sms sans prix
+grille), pas un endpoint manquant. Le sentinel Go (`ErrSubscriptionItemPriceUnavailable`)
+n'a pas été renommé, seul le mapping HTTP a changé.
+
+**P2 — investigué, non tranché (comme demandé).** Le seul admin staging avec
+4 marchands est `user_id=2` (`iliesbellal@gmail.com` — le compte de
+l'opérateur de cette session). Détail par marchand :
+
+| merchant_id | nom | SIRET | tél | créé le |
+|---|---|---|---|---|
+| 2 | Brasserie du midi | 65948751326549 | +33609217928 | 2022-04-20 |
+| 303 | BdM 2 | 12345678900 (factice — 11 chiffres, pas un SIRET valide) | +33609217928 | 2026-08-29 |
+| 212 | Croq'Ô'Pizzas | 419750591 | +33387513569 | 2024-05-19 |
+| 230 | Ok Pizza | 81860975000014 | +33387661154 | 2025-09-03 |
+
+Merchants 2 et 303 partagent SIRET-motif/téléphone/email avec le compte
+lui-même — 303 ("BdM 2") ressemble à un clone de test du merchant 2, créé il
+y a deux semaines, pas un second établissement réel. Merchants 212 et 230 ont
+des SIRET et téléphones distincts et **chacun un autre admin réel déjà
+enregistré** (212 : `croqopizzas4@gmail.com`, `slimani_nabil@hotmail.com` ;
+230 : aucun autre admin trouvé) — ce ne sont pas des établissements de
+`user_id=2`.
+
+Conclusion factuelle (confiance haute pour 212, moyenne pour 230, faute
+d'un second signal indépendant sur celui-ci) : ce n'est PAS le cas (a) — un
+propriétaire réel de 4 établissements. C'est plus proche du cas (b), avec
+une nuance : `user_id=2` semble être un compte interne (l'opérateur de ce
+dépôt) avec accès admin sur des marchands clients pour support/test, plus un
+marchand personnel réel (2) et son clone de test (303). La règle de remise
+multi-marchand (B1c, déjà livrée) s'applique donc aujourd'hui à un compte qui
+n'est très probablement pas un franchisé — à corriger dans un chantier
+séparé une fois confirmé (pas dans celui-ci, conformément à la consigne
+"ne pas trancher, remonter").
+
+**P3 — implémenté.** Avant ce chantier, `Repository.AddItem` n'interrogeait
+pas `pricing_catalog` du tout (le prix était un paramètre fourni par
+l'appelant) — kiosk/sms auraient pu être écrits sans aucun garde-fou. Ajouté :
+- `subscriptions.Service.AddItem` (nouveau point d'entrée gardé — les
+  handlers l'utilisent, jamais `Repository.AddItem` directement) vérifie
+  `pricing_catalog` avant écriture.
+- `subscriptions.resolveUnitPriceCents`/`PriceAvailableForCode` : source
+  unique de "ce code a-t-il un prix", partagée par `ComputeSubscriptionAmount`,
+  `AddItem`, `ApplyItemChanges` (B1e) et la garde de dérogation (B1d) — un
+  code devient inscriptible exactement quand il devient calculable, jamais
+  avant, sans risque de divergence entre deux implémentations dupliquées.
+- Côté B1d, `CreateOverride` rejette toute dérogation `kind=module` visant
+  `kiosk`/`sms` avec le même `ErrSubscriptionItemPriceUnavailable` (409).
+  Interprétation retenue : la garde P3 porte sur les dérogations qui
+  contournent la facturation d'un *code subscription_items* (module/price) —
+  pas sur `kiosk_quota`, un mécanisme opérationnel préexistant
+  (`subscriptions.max_kiosks`, déjà utilisé par `kiosk.Repository.GetMerchantMaxKiosks`
+  avant ce chantier) sans rapport avec `pricing_catalog`. À confirmer que
+  cette lecture est la bonne — c'est une interprétation d'un point ambigu du
+  brief, pas une évidence.
+
+**B1d — implémenté.** Table `subscription_overrides`
+(`migrations/todo/139_subscription_overrides.up.sql`) + module
+`internal/modules/subscriptions` (overrides_repository.go/overrides_service.go)
++ 3 endpoints (`POST /v1/admin/merchants/{id}/overrides`,
+`GET /v1/admin/overrides`, `DELETE /v1/admin/overrides/{id}`), appliquée à
+staging (voir plus bas).
+
+*Permission interne — décision prise avec l'utilisateur, pas silencieuse.*
+Aucune notion de "staff WelloResto" cross-tenant n'existait dans ce dépôt
+(le seul précédent, `/admin/upsell`, porte un TODO explicite l'attendant).
+Après consultation : colonne `users.is_platform_staff` (migration 138,
+`ADD COLUMN ... DEFAULT false` — personne n'est basculé automatiquement) +
+middleware `middleware.RequirePlatformAdmin`, indépendant de
+`RequirePermission`/`settings.manage`. **Suite nécessaire avant tout test
+end-to-end en staging** : aucun compte n'a `is_platform_staff = true`
+aujourd'hui — un `UPDATE` manuel ciblé sera nécessaire (pas fait ici, hors
+scope de ce chantier de code).
+
+*`target` — schéma sans colonne "valeur" dédiée, donc une convention a dû
+être choisie :*
+- `kind='module'` : `target` = un code façon `subscription_items`
+  (`reservation`, `haccp`, `planning`, `delivery`, `kiosk` — mappés
+  respectivement vers `bookings_enabled` [note : `reservation` est nommé
+  `bookings_enabled` en base, écart déjà connu ailleurs dans ce document],
+  `haccp_enabled`, `planning_enabled`, `delivery_enabled`, `kiosks_enabled`).
+  `marketplaces` n'a **aucune** colonne `*_enabled` en base — rejeté
+  explicitement (`ErrOverrideTargetUnsupported`), pas silencieusement ignoré.
+  `kiosk`/`sms` en plus bloqués par P3.
+- `kind='price'` : `target` = la valeur entière de `override_price_cents`
+  (en texte).
+- `kind='kiosk_quota'` : `target` = la nouvelle valeur de
+  `subscriptions.max_kiosks` (en texte).
+
+*Révocation — ne défait pas l'effet.* `RevokeOverride` positionne
+`revoked_at` mais ne réinitialise pas la colonne `*_enabled`/
+`override_price_cents`/`max_kiosks` que la dérogation avait modifiée : aucune
+valeur "avant" n'est tracée nulle part pour y revenir, et en deviner une
+(ex. remettre `FALSE`) serait faux si le module était déjà activé
+indépendamment de la dérogation. Remise en état manuelle par le staff en
+parallèle de la révocation, pour l'instant — **question ouverte**, à trancher
+avant B2 si des dérogations réelles doivent être créées/révoquées en
+production.
+
+**B1e — implémenté.** `GET /v1/subscriptions/preview?add=...&remove=...` et
+`POST /v1/subscriptions/items`, gardés par `settings.manage` (client-facing).
+Aucune écriture côté preview — vérifié par test (`ListActive` inchangé après
+appel).
+
+*Prorata — approximation assumée.* `subscriptions.current_period_end` reste
+`NULL` tant qu'un cycle de facturation réel n'a pas démarré (LOT B2, mandat
+SEPA) — la quasi-totalité du staging aujourd'hui. Repli : mois nominal de 30
+jours (delta appliqué en entier). À revoir une fois B2 câblé sur de vraies
+périodes Stripe — **signalé, pas silencieux**.
+
+*Comparaison pack vs à la carte (§7.7) — normalisée en mensuel des deux
+côtés.* `pricing.Service.ResolveCheapestPlan` utilise
+`pricing_catalog.annual_price_cents` (un taux annuel pré-calculé, chantier
+11) tandis que ce module applique sa propre règle annuelle (B1c, règle 4 :
+×10 sur le total mensuel) — deux conventions annuelles non interchangeables,
+déjà documentées comme telles dans `amount.go` avant ce chantier. Combiner
+les deux directement aurait comparé des choses non comparables ; la
+comparaison §7.7 tourne donc toujours en mensuel (`Cart.BillingCycle="monthly"`
+et le total à la carte ramené au mensuel via division par 10 si le cycle est
+annuel), tandis que `current_total_cents`/`new_total_cents` restent sur le
+vrai cycle du marchand. **Simplification assumée, à revalider** — réconcilier
+proprement les deux conventions annuelles serait un chantier à part entière,
+pas quelque chose à improviser ici.
+
+**Tests.** 21 tests d'intégration Postgres (`-tags postgres_integration`,
+`internal/modules/subscriptions/*_postgres_integration_test.go`), tous verts
+contre staging : création de dérogation (les 3 `kind`), révocation (+ double
+révocation, + id inconnu), rejet P3 (kiosk/sms), rejet cible non mappée
+(marketplaces), kind/reason invalides, aperçu avec et sans bascule de pack
+(calculé à partir des vrais prix `pricing_catalog` de staging : essentiel
+79,00 / pro 129,00 / complet 189,00 / réservation 59,00 — ajouter réservation
+seule à un essentiel fait bien basculer vers pro à 129,00 < 138,00), rejet
+d'ajout non facturable en preview et en apply, application réelle
+add+remove avec `override_price_cents` intact. Trois tests `auth` cassés par
+l'ajout de la colonne `is_platform_staff` au SELECT partagé
+(`GetUserByToken`/`Login`/`GetUserByPIN`) ont été corrigés (décalage d'index
+dans les mocks `sqlmock`) — pas de régression restante. `go test ./...`
+montre par ailleurs des échecs préexistants et sans rapport
+(`planning/employees`, `planning/leave`, `planning/swaps`, `ubereats`) —
+aucun fichier de ces paquets n'a été touché par ce chantier, vérifié via
+`git status`.
+
+**Migrations appliquées à staging** (comme la 137 l'était déjà avant ce
+chantier) : 138 (`users.is_platform_staff`) et 139 (`subscription_overrides`),
+toutes deux strictement additives (`ADD COLUMN IF NOT EXISTS`,
+`CREATE TABLE`).
+
+**Questions ouvertes pour la suite (pas tranchées silencieusement) :**
+1. P2 : qui décide si la règle de remise multi-marchand doit exclure les
+   comptes staff internes ?
+2. La révocation d'une dérogation doit-elle réellement défaire l'effet
+   (remettre le module à faux, effacer l'override de prix, restaurer le
+   quota kiosk précédent) ? Si oui, il faut décider quoi stocker comme
+   "valeur avant" à la création.
+3. `marketplaces` comme cible de dérogation `module` : faut-il lui donner une
+   vraie colonne `*_enabled`, ou est-ce hors de portée de `subscription_overrides` ?
+4. Qui bascule le·s premier·s compte·s `is_platform_staff = true` en
+   staging, pour permettre un test end-to-end des endpoints B1d ?
+
+---
+
+### LOT B B1 — Préalable (2026-09-12)
+
+Trois correctifs de cinq minutes demandés avant le chantier B1 (modèle
+d'abonnement), traités avant toute écriture de code sur B1a-e.
+
+**1. Validation au démarrage — appliquée.** `GOOGLE_CLIENT_ID` et
+`SIGNUP_CONTEXT_SIGNING_KEY` sont désormais `log.Fatal` au démarrage si
+absentes, sur le modèle exact de `PIN_PEPPER`/`FISCAL_SIGNING_KEY`
+(`internal/config/config.go`). Les deux avaient été rendues délibérément
+non bloquantes au LOT A (voir l'entrée du 2026-09-11 ci-dessous) — décision
+maintenant inversée par ce brief. **Point d'attention avant déploiement** :
+`docs/decisions.md` ne dit nulle part si ces deux variables sont
+effectivement positionnées sur les environnements Render (staging et
+production) — le dépôt ne contient aucun `render.yaml` ni équivalent pour
+le vérifier depuis le code. Si l'une des deux est absente d'un
+environnement déployé, ce correctif transforme un comportement dégradé
+(clé aléatoire en mémoire / erreur runtime sur `/v1/auth/google`) en
+crash-loop au démarrage. À confirmer côté Render avant de merger/déployer.
+`internal/modules/onboarding` et les tests d'intégration Postgres ne
+passent pas par `config.Load()` (ils utilisent `pgtest.Open` directement) :
+aucun test existant cassé par ce changement — vérifié par `go build ./...`.
+
+**2. Vérification Google id_token à `GOOGLE_CLIENT_ID` vide — déjà correcte,
+aucune faille trouvée.** `googleauth.Verifier.Verify`
+(`internal/modules/googleauth/verifier.go:87`) retourne une erreur
+immédiatement si `v.clientID == ""`, avant même de tenter de parser le
+jeton — aucune branche du code n'accepte un jeton quand `GOOGLE_CLIENT_ID`
+est vide. Ce n'est pas un contournement d'authentification : c'est un échec
+fermé. Rien à corriger ; consigné ici pour clore explicitement le point du
+brief.
+
+**3. Écart de nommage `onboarding_tasks` — décrit, non appliqué (170 lignes
+existantes en staging, présumées de taille comparable en production).**
+
+Colonne réellement en base (migration `129_onboarding_tasks`, livrée LOT A
+Semaine 2 chantier 6c) : `task_key TEXT NOT NULL`, exposée telle quelle dans
+l'API (`Task.TaskKey` avec `json:"task_key"` — `internal/modules/onboarding/models.go`).
+Colonne attendue par `docs/WelloResto-Parcours-Client-v2.docx` §8.4 :
+`code TEXT NOT NULL`.
+
+Ce n'est pas qu'un renommage de colonne, pour trois raisons :
+- **`task_key` est un champ de réponse JSON public**, consommé par au moins
+  `wello-back-office` (écran de liste de démarrage) et potentiellement
+  `wello_resto_flutter`/`wello-kiosk` s'ils lisent cet endpoint. Renommer la
+  colonne SQL sans renommer le champ JSON ne change rien pour les clients ;
+  renommer les deux casse le contrat d'API en place tant que les fronts ne
+  sont pas mis à jour en même temps — coordination inter-dépôts, pas une
+  migration isolée.
+- **Un deuxième écart de nommage existe sur la même table** :
+  `skip_reason` (migration `135_onboarding_tasks_skip`, réel) vs
+  `skipped_reason` (document, §8.4). Même problème d'exposition JSON
+  (`json:"skip_reason,omitempty"`).
+- **Le schéma du document a trois colonnes qui n'existent pas du tout** en
+  base réelle : `position SMALLINT` (l'ordre réel vient de `created_at`,
+  implicite, pas d'une colonne dédiée), `completed_by TEXT` (aucune
+  attribution de qui/quoi a complété une tâche n'est tracée aujourd'hui), et
+  `metadata JSONB DEFAULT '{}'` (aucune extensibilité par ligne). Un
+  `ALTER TABLE ... RENAME COLUMN` ne crée pas ces colonnes ; il faudrait un
+  vrai chantier de mise à niveau du modèle, pas un correctif de nommage.
+  Le document liste aussi un statut `in_progress` inexistant côté code
+  (`pending | done | skipped` réels vs `todo | in_progress | done | skipped`
+  documentés) — encore un écart, pas traité ici.
+
+**Résolution proposée (non appliquée)** : traiter ceci comme son propre
+petit chantier plus tard (hors B1, puisque B1 ne touche pas `onboarding_tasks`) —
+migration additive (`ALTER TABLE ... RENAME COLUMN task_key TO code`,
+`RENAME COLUMN skip_reason TO skipped_reason`, + `ADD COLUMN position`,
+`completed_by`, `metadata` avec des valeurs par défaut rétro-compatibles),
+suivie d'une mise à jour coordonnée du struct Go, du handler, et des trois
+front-ends consommateurs dans la même fenêtre de déploiement. Ne pas
+renommer la colonne SQL sans renommer le champ JSON en même temps (contrat
+à moitié migré = pire que l'écart actuel).
+
+---
+
+### LOT B B1a — Validation du plan (2026-09-12)
+
+**Validation applicative ajoutée.** `pos.POSRepository.InsertSubscription`
+(`internal/modules/pos/create_repository.go`) vérifie désormais que
+`packageID` existe dans `packages` avant l'`INSERT`, et retourne
+`models.ErrUnknownPackageID` (nouveau sentinel, `internal/models/responses_models.go`,
+mappé 400 `unknown_package_id` dans `SendErrorJSON`) sinon. Toujours pas de
+contrainte de clé étrangère sur `subscriptions.package_id` (elle échouerait
+tant que la ligne orpheline existe — voir ci-dessous — et le calendrier ne
+le permet pas) : cette vérification côté code est la seule garde pour
+l'instant, notée comme suite à faire une fois l'orpheline traitée. Testé
+contre le Postgres de staging (`TestInsertSubscription_UnknownPackageID_Postgres`,
+`internal/modules/pos/postgres_integration_test.go`) : rejet du
+`package_id=-4` sans écrire de ligne, insertion normale toujours acceptée.
+
+**Ligne orpheline — investiguée en détail, résolue par explication plutôt
+que par correction de données.** `subscriptions.id=91` en staging :
+`merchant_id='-217'`, `package_id=-4` (aucune correspondance dans
+`packages`). Recherche complète avant de trancher :
+- `merchant.id=217` ("OK PIZZA", `is_active=false`) existe bien, mais rien
+  ne le lie formellement à `-217` — le signe négatif n'est pas un pointeur
+  vers `217` en clair.
+- Une deuxième ligne du même type existe : `subscriptions.id=101`,
+  `merchant_id='-230'`, mais avec un `package_id=3` **valide** — donc pas
+  détectée par le contrôle FK-like ajouté ci-dessus, qui ne porte que sur
+  `package_id`.
+- Trois marchands quasi-homonymes coexistent en base ("OK PIZZA" 217 inactif,
+  "Ok Pizza" 230 actif sans abonnement valide, "OK Pizza" 237 actif avec un
+  abonnement sain `id=108, package_id=3`) — signe d'un historique de
+  recréation de compte pour le même restaurant, qui a d'abord fait
+  soupçonner une corruption de données (signe négatif = ancien pointeur vers
+  le marchand courant, à corriger).
+
+**Confirmé par l'utilisateur** : le signe négatif sur `merchant_id` (et donc
+sur `package_id`, négé en même temps) est une ancienne convention manuelle
+pour désactiver temporairement un abonnement — pas une corruption, pas un
+pointeur cassé à réparer. Ces deux lignes (`91`, `101`) sont des lignes
+mortes : aucun code applicatif actuel ne les lit, ne les écrit, ni ne
+dépend du signe négatif (recherché explicitement — aucune fonction
+`Disable`/`Pause` de ce type dans le code actuel). **Aucune donnée
+modifiée** : pas de réattribution de plan, la ligne reste en l'état. La
+seule action utile était la garde applicative ci-dessus, pour qu'un
+**nouvel** abonnement ne puisse plus se retrouver dans le même état.
+
+---
+
+### LOT B B1b — Lignes de facturation (2026-09-12)
+
+**Migration 137, appliquée sur le Postgres de staging** (vérifié :
+`subscription_items` créée, colonnes `subscriptions` ajoutées, 64/64
+abonnements existants backfillés à `active` — pas un seul resté à `setup`).
+`migrations/todo/137_subscription_items.{up,down}.sql`.
+
+- `subscription_items` — ce qui est FACTURÉ, distinct de
+  `subscriptions.*_enabled` (ce à quoi le marchand a ACCÈS, inchangé) :
+  `id, merchant_id, code, kind, quantity, unit_price_cents, created_at,
+  updated_at, removed_at`. Pas de CHECK constraint sur `kind`/`code` (même
+  convention que `pricing_catalog.kind`) — validé côté applicatif
+  (`subscriptions.ValidKinds`/`ValidCodes`, closed set exact du brief).
+  Index unique partiel `(merchant_id, code) WHERE removed_at IS NULL` :
+  une seule ligne active par code et par marchand, pour empêcher une double
+  facturation — pas demandé explicitement par le brief mais découle
+  directement du modèle qu'il décrit (une ligne "retirée" doit pouvoir être
+  remplacée, pas coexister avec son remplacement).
+- **Écart de préfixe d'id, assumé** : le brief demande `sbit_`
+  (underscore), mais `helpers.GeneratePrefixedID` — utilisé par toutes les
+  tables de ce type dans ce dépôt (`onb-`, `prst-`, `ctx-`) — génère
+  systématiquement `prefix-<uuid>` (tiret). Choix : aligné sur la
+  convention réelle du code plutôt que sur la notation du brief, comme déjà
+  observé sur `onboarding_tasks` (`onbt_` documenté vs `onb-` réel, voir
+  l'entrée du préalable ci-dessus). Un id est une clé opaque, jamais un
+  contrat exposé — contrairement au nom d'une colonne JSON, ce n'est pas le
+  genre d'écart qui casse un client.
+- `subscriptions` : quatre colonnes ajoutées — `override_price_cents`
+  (nullable, NULL = tarif de grille), `billing_cycle` (`monthly` par
+  défaut), `current_period_end` (nullable), `status` (`setup` par défaut,
+  **backfillé à `active`** pour tout marchand existant, même vigilance que
+  `activation_state` en semaine 2/migration 125 — sans le backfill, les 64
+  abonnements de staging seraient tous repassés "en cours de
+  configuration").
+- Nouveau module `internal/modules/subscriptions` (`models.go`,
+  `repository.go`) : `Item`, constantes `Kind*`/`Code*`, `Repository.AddItem`
+  (valide kind/code, retourne `models.ErrInvalidSubscriptionItemKind`/
+  `ErrInvalidSubscriptionItemCode` sinon — sentinelles centralisées dans
+  `internal/models/responses_models.go`, même convention que
+  `ErrUnknownPackageID`), `RemoveItem` (soft, `removed_at`), `ListActive`
+  (l'entrée du calcul du chantier B1c). Pas de handler HTTP dans ce
+  chantier — B1b ne demande que la table et son modèle, pas d'endpoint.
+  Testé contre le Postgres de staging
+  (`TestRepository_Postgres`, `internal/modules/subscriptions/repository_postgres_integration_test.go`) :
+  kind/code invalides rejetés, doublon actif rejeté par l'index, retrait
+  puis réajout du même code accepté.
+
+**Non traité ici, à noter pour B1c** : le brief dit que le calcul du
+montant (hors dérogation) doit utiliser "les prix de la table de référence
+tarifaire" (`pricing_catalog`, chantier 11) plutôt que
+`subscription_items.unit_price_cents` — cette dernière colonne n'est donc
+qu'un instantané pour l'historique de facturation, jamais relue pour le
+calcul en cours. Documenté dans le commentaire de la migration pour ne pas
+l'oublier au chantier suivant.
+
+---
+
+### LOT B B1c — Calcul du montant (2026-09-12)
+
+`subscriptions.Service.ComputeSubscriptionAmount` (`internal/modules/subscriptions/amount.go`),
+les cinq règles du brief, dans l'ordre. **Le service de tarification du
+chantier 11 (`pricing.Repository.LoadCatalog`) est bien réutilisé** — pas de
+grille dupliquée — mais sa structure ne couvre pas tout le périmètre de
+B1c, pour deux raisons concrètes trouvées en la parcourant, pas supposées :
+
+- **`kiosk`** (code `subscription_items` valide, accepté par `AddItem`) n'a
+  pas de prix unique dans `pricing_catalog` : la borne y est modélisée en
+  trois lignes `addon` distinctes (`kiosk_first_tier1`,
+  `kiosk_additional_tier1`, `kiosk_tier2` — palier temporel + 1ère/
+  supplémentaire, chantier 11a). Choisir l'une des trois arbitrairement
+  aurait été une facturation incorrecte silencieuse.
+- **`sms`** (code `subscription_items` valide lui aussi) n'a **aucune**
+  ligne dans `pricing_catalog`, sous aucun `kind`.
+
+Dans les deux cas, `ComputeSubscriptionAmount` retourne
+`models.ErrSubscriptionItemPriceUnavailable` (nouveau sentinel, mappé 501
+`subscription_item_price_unavailable`) plutôt que de facturer 0 ou un tarif
+inventé — testé (`TestComputeSubscriptionAmount_UnsupportedCode_Postgres`).
+Pas bloquant pour B1c (rien ne crée encore de ligne `kiosk`/`sms` en usage
+réel), mais à lever avant qu'un vrai marchand ait l'une de ces deux lignes
+actives : soit ajouter les prix manquants à `pricing_catalog`, soit décider
+que `kiosk`/`sms` ne passent jamais par ce calcul générique (pré-requis =
+une décision produit, pas un choix technique — non tranché ici).
+
+**Écart de nom, ponté sans le corriger** : `subscription_items` utilise
+`extra_pos`, `pricing_catalog` utilise `extra_seat` pour le même concept
+(poste de caisse supplémentaire) — un simple alias câblé dans
+`amount.go` (`extraPOSCatalogCode`), pas une donnée à renommer dans l'une
+des deux tables.
+
+**Règle 3 (quantités variables)** : `planning_employee` et `extra_pos` sont
+toujours recalculés à l'appel (`employees`/`cash_desks`, comptage direct —
+même posture que les lectures croisées d'`onboarding.Repository`), jamais
+lus depuis `subscription_items.quantity` — testé explicitement avec une
+quantité stockée volontairement fausse (99) pour prouver qu'elle est
+ignorée. "Le plan" pour le seuil des 10 salariés gratuits est déterminé
+depuis la ligne `subscription_items` active de `kind='plan'` (donc ce qui
+est **facturé**), pas depuis `subscriptions.package_id` (ce à quoi le
+marchand a **accès**) — cohérent avec tout le principe du §7.1 : c'est bien
+le plan payé qui doit déterminer la franchise, pas le plan auquel le
+marchand a accès par ailleurs (dérogation).
+
+**Règle 4 (cycle annuel)** : multiplicateur ×10 appliqué au total mensuel
+de la grille, uniforme sur toutes les lignes. Délibérément **distinct** de
+`pricing_catalog.annual_price_cents` (déjà une remise figée pour les trois
+plans, utilisée uniquement par `pricing.Service.ResolveCheapestPlan` pour
+le devis d'un nouveau prospect) — les deux mécanismes ne sont jamais
+combinés ici : ce calcul relit toujours `monthly_price_cents`, jamais
+`annual_price_cents`.
+
+**Règle 5 (remise multi-établissement)** : ce schéma n'a pas de colonne
+"propriétaire" dédiée — seul `users_rights.admin` (booléen déjà existant,
+posé à la création du marchand) s'en approche. Interprétation retenue,
+assumée et non tranchée avec l'utilisateur : la remise s'applique dès qu'un
+admin du marchand administre aussi un autre marchand — vérifié en staging
+que ce cas existe réellement (plusieurs utilisateurs administrent 2 à 4
+marchands). À confirmer si "propriétaire" doit un jour désigner une
+personne unique plutôt que n'importe quel admin.
+
+**Ordre d'application retenu** (le brief ne le précise pas explicitement) :
+override (si présent) court-circuite tout le reste ; sinon, prix de grille
+→ cycle annuel (×10) → remise multi-établissement (10 %, sur le total déjà
+annualisé). Le détail (`Breakdown`) retourné reste toujours celui de la
+grille, y compris quand `override_price_cents` s'applique — conforme à "le
+détail est quand même calculé et retourné, pour affichage comparatif".
+
+Testé contre le Postgres de staging
+(`internal/modules/subscriptions/amount_postgres_integration_test.go`) :
+calcul nominal, remplacement par tarif dérogatoire, quantité `planning_employee`
+variable (13 salariés, plan Pro → 3 facturés), `extra_pos` variable (3 caisses
+→ 2 facturées), cycle annuel (×10), remise multi-établissement (10 %, vérifié
+avec deux marchands réels administrés par le même utilisateur), code sans
+prix (`kiosk`) rejeté, abonnement introuvable rejeté.
+
+---
+
 ### LOT A Semaine 3 — Découverte du document de référence et correctifs (2026-09-11)
 
 `docs/WelloResto-Parcours-Client-v2.docx` est apparu dans le dépôt en cours de

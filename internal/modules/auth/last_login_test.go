@@ -24,9 +24,9 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
-		WillReturnRows(sqlmock.NewRows(makeColumns(82)).AddRow(
-			// user (0-10)
-			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, nil, true, "ignored", nil,
+		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(
+			// user (0-11) — is_platform_staff (LOT B PRÉALABLE) inserted right after enabled
+			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, false, nil, true, "ignored", nil,
 			// rights (11-31): ...booleans..., merchant_id, role_id, role_system_key, mfa_type, mfa_status, mfa_verified_at, mfa_otp_sent_at
 			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil, nil, nil,
 			// merchant (35-42)

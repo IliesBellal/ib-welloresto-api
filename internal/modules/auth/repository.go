@@ -56,6 +56,7 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
+    u.is_platform_staff,
     u.profile_picture,
 	u.email_verified_at,
 
@@ -170,7 +171,7 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 
 	err := row.Scan(
 		&data.UserID, &data.Password, &data.Name, &data.FirstName, &data.LastName, &data.Email, &data.Tel,
-		&data.Enabled, &data.ProfilePicture, &data.EmailVerifiedAt,
+		&data.Enabled, &data.IsPlatformStaff, &data.ProfilePicture, &data.EmailVerifiedAt,
 
 		&data.MerchantRightsID,
 		&data.Token, &data.Rights.AccessReception,
@@ -227,6 +228,7 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
+    u.is_platform_staff,
     u.profile_picture,
     u.terms_of_use_accepted,
     u.password,
@@ -345,7 +347,7 @@ LIMIT 1;
 
 	err := row.Scan(
 		&data.UserID, &data.Name, &data.FirstName, &data.LastName, &data.Email,
-		&data.Tel, &data.Enabled, &data.ProfilePicture,
+		&data.Tel, &data.Enabled, &data.IsPlatformStaff, &data.ProfilePicture,
 		&data.TermsOfUseAccepted, &data.Password, &data.EmailVerifiedAt,
 
 		&data.MerchantRightsID,
@@ -490,7 +492,7 @@ func (r *AuthRepository) NeedsPasswordSet(ctx context.Context, userID string) (b
 
 // SetPasswordForGoogleAccount defines a password on a Google-origin account
 // that does not have one yet (LOT A Semaine 2, Chantier 8) — the WHERE guard
-// (auth_provider='google' AND password='') is the actual eligibility check,
+// (auth_provider='google' AND password=”) is the actual eligibility check,
 // atomic with the write: matched=false covers both "not a Google account"
 // and "already has a password" without a separate read-then-write race.
 // auth_provider becomes 'both' — see docs/decisions.md for why (the account
@@ -687,6 +689,7 @@ SELECT
     u.email,
     u.tel,
     u.enabled,
+    u.is_platform_staff,
     u.profile_picture,
 	u.email_verified_at,
 

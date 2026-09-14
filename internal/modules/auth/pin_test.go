@@ -92,16 +92,16 @@ func seedAnchorInMemRedis(mem *memRedis, token, merchantID, userID string) {
 	mem.store[models.UserCachePrefix+token] = string(data)
 }
 
-// pinColumns returns the 75 column names expected by scanUserLoginRow.
-func pinColumns() []string { return makeColumns(75) }
+// pinColumns returns the 76 column names expected by scanUserLoginRow.
+func pinColumns() []string { return makeColumns(76) }
 
-// pinMinRow returns 75 driver.Value values for a minimal active users_rights row.
+// pinMinRow returns 76 driver.Value values for a minimal active users_rights row.
 // The filter columns (ur.enabled, ur.login_enabled) are in WHERE, not SELECT,
 // so they don't appear here — a non-empty result means the link passed the filter.
 func pinMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
-		// user (0-9)
-		userID, "hashed", "Name", "First", "Last", "email@ex.com", "+33600000000", true, nil, nil,
+		// user (0-10) — is_platform_staff (LOT B PRÉALABLE) inserted right after enabled
+		userID, "hashed", "Name", "First", "Last", "email@ex.com", "+33600000000", true, false, nil, nil,
 		// rights (10-30): ...booleans..., merchant_id, role_id, role_system_key, mfa×4
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant
@@ -507,9 +507,9 @@ func TestGetUserByToken_PINTokenNotInDB(t *testing.T) {
 // 75-column scanUserLoginRow used by GetUserByToken/GetUserByPIN).
 func loginMinRow(userID, token, merchantID string) []driver.Value {
 	return []driver.Value{
-		// user (0-10): user_id, name, first_name, last_name, email, tel, enabled,
-		//              profile_picture, terms_of_use_accepted, password, email_verified_at
-		userID, "Name", "First", "Last", "email@ex.com", "+33600000000", true, nil, false, "hashed", nil,
+		// user (0-11): user_id, name, first_name, last_name, email, tel, enabled,
+		//              is_platform_staff, profile_picture, terms_of_use_accepted, password, email_verified_at
+		userID, "Name", "First", "Last", "email@ex.com", "+33600000000", true, false, nil, false, "hashed", nil,
 		// rights: mr_id, token, 12 bool rights, merchant_id, role_id, role_system_key, mfa×4
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant
@@ -568,7 +568,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(82)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

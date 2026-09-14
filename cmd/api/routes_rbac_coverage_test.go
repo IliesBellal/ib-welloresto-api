@@ -141,7 +141,11 @@ var guardedRoutePatterns = []guardedRoutePattern{
 	guard("GET", "/stats/dashboard/summary", "permission.ReportsSalesRead",
 		`RequirePermission\(permission\.ReportsSalesRead\)\)\.\s*Get\(\s*"/summary"\s*,\s*statsH\.GetDashboardSummary\)`),
 	guard("POST", "/accounting/* (group)", "permission.ReportsFinancialRead (r.Use on the sub-group)",
-		`r\.Route\(\s*"/accounting"\s*,\s*func\(r chi\.Router\) \{\s*r\.Use\(authMiddleware\)\s*r\.Use\(middleware\.RequirePermission\(permission\.ReportsFinancialRead\)\)`),
+		// LOT B B2b-2 : r.Use(notSuspendedMiddleware) inserted right after
+		// every r.Use(authMiddleware) in routes.go (mechanical, all ~40
+		// groups) — tolerated here as an optional line so this guard still
+		// matches without re-encoding that whole change into this pattern.
+		`r\.Route\(\s*"/accounting"\s*,\s*func\(r chi\.Router\) \{\s*r\.Use\(authMiddleware\)\s*(?:r\.Use\(notSuspendedMiddleware\)\s*)?r\.Use\(middleware\.RequirePermission\(permission\.ReportsFinancialRead\)\)`),
 	guard("GET", "/integrations/stripe/balance", "permission.ReportsFinancialRead",
 		`RequirePermission\(permission\.ReportsFinancialRead\)\)\.\s*Get\(\s*"/stripe/balance"\s*,\s*integrationsHandler\.GetStripeBalance\)`),
 	guard("GET", "/planning/performance", "permission.ReportsFinancialRead",

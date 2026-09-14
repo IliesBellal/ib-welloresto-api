@@ -68,6 +68,10 @@ const (
 	MerchantPresetIDPrefix               = "prst"
 	OnboardingTaskIDPrefix               = "onb"
 	SignupContextIDPrefix                = "ctx"
+	SubscriptionItemIDPrefix             = "sbit"
+	SubscriptionOverrideIDPrefix         = "sbov"
+	PlatformBillingCustomerIDPrefix      = "pbc"
+	SepaMandateIDPrefix                  = "sepa"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

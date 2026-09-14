@@ -17,6 +17,8 @@ import (
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/billing"
+	"welloresto-api/internal/modules/dunning"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/utils/dbutils"
@@ -34,9 +36,17 @@ type StripeWebhookService struct {
 	notification   *notification.NotificationService
 	redis          *redis.Client
 	db             *sql.DB
+	// billing handles the LOT B B2a platform-billing events
+	// (setup_intent.succeeded, invoice.created/paid) — a separate module
+	// from this package's own Connect-account order-payment concerns (see
+	// docs/decisions.md, LOT B B2a investigation).
+	billing *billing.Service
+	// dunning handles the LOT B B2b-1 cascade d'impayé
+	// (invoice.payment_failed, and invoice.paid's dunning-clearing side).
+	dunning *dunning.Service
 }
 
-func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client, db *sql.DB) *StripeWebhookService {
+func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client, db *sql.DB, billingSvc *billing.Service, dunningSvc *dunning.Service) *StripeWebhookService {
 	stripe.Key = stripeKey
 	return &StripeWebhookService{
 		repo:           repo,
@@ -47,6 +57,8 @@ func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Ser
 		notification:   notification,
 		redis:          redis,
 		db:             db,
+		dunning:        dunningSvc,
+		billing:        billingSvc,
 	}
 }
 
@@ -84,6 +96,16 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 
 	case "invoice.paid":
 		return s.HandleInvoicePaid(ctx, event.Data.Object)
+
+	case "invoice.payment_failed":
+		// LOT B B2b-1 — cascade d'impayé.
+		return s.HandleInvoicePaymentFailed(ctx, event.Data.Object)
+
+	case "setup_intent.succeeded":
+		// LOT B B2a — SEPA mandate acceptance. See billing.Service for why
+		// this takes the raw event payload rather than a typed object
+		// (stripe-go v78/v84 split between this dispatcher and that package).
+		return s.billing.HandleSetupIntentSucceeded(ctx, event.Data.Object)
 
 	case "account.updated":
 		return s.HandleAccountUpdated(ctx, event.Data.Object)
@@ -626,7 +648,12 @@ func (s *StripeWebhookService) HandlePayoutPaid(ctx context.Context, data json.R
 	return nil
 }
 
-// 7. Invoices (Subscription)
+// 7. Invoices (Subscription) — LOT B B2a-0 : REMPLACE l'ancien comportement
+// (INSERT/UPDATE subscription_invoices via repo.CreateInvoice/PayInvoice) au
+// lieu de le dupliquer, confirmé sans aucun lecteur applicatif de cette
+// table (docs/decisions.md, chantier B2a-0). Écrit désormais
+// subscriptions.status/current_period_end directement, le modèle LOT B
+// B1b/B1c.
 func (s *StripeWebhookService) HandleInvoiceCreated(ctx context.Context, data json.RawMessage) error {
 	var invoice stripe.Invoice
 	if err := json.Unmarshal(data, &invoice); err != nil {
@@ -638,7 +665,7 @@ func (s *StripeWebhookService) HandleInvoiceCreated(ctx context.Context, data js
 		return nil
 	}
 
-	return s.repo.CreateInvoice(ctx, merchantID, invoice.ID, invoice.AmountDue, invoice.Created, invoice.Customer.ID)
+	return s.repo.UpdateSubscriptionBillingPeriod(ctx, merchantID, invoice.PeriodEnd)
 }
 
 func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.RawMessage) error {
@@ -647,7 +674,37 @@ func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.
 		return fmt.Errorf("unmarshal invoice: %w", err)
 	}
 
-	return s.repo.PayInvoice(ctx, invoice.ID, invoice.StatusTransitions.PaidAt)
+	merchantID := invoice.Metadata["merchant_id"]
+	if merchantID == "" {
+		return nil
+	}
+
+	if err := s.repo.SetSubscriptionStatus(ctx, merchantID, "active"); err != nil {
+		return err
+	}
+	// LOT B B2b-1 : une échéance réussie arrête la cascade d'impayé en
+	// cours, s'il y en avait une — no-op si aucune (le cas normal).
+	if err := s.dunning.ClearDunning(ctx, merchantID); err != nil {
+		return err
+	}
+	return s.repo.UpdateSubscriptionBillingPeriod(ctx, merchantID, invoice.PeriodEnd)
+}
+
+// HandleInvoicePaymentFailed — LOT B B2b-1 : point d'entrée de la cascade
+// d'impayé (§7.5). Toute la logique d'escalade (1er échec vs 2e, envoi des
+// relances) vit dans dunning.Service.HandlePaymentFailed.
+func (s *StripeWebhookService) HandleInvoicePaymentFailed(ctx context.Context, data json.RawMessage) error {
+	var invoice stripe.Invoice
+	if err := json.Unmarshal(data, &invoice); err != nil {
+		return fmt.Errorf("unmarshal invoice: %w", err)
+	}
+
+	merchantID := invoice.Metadata["merchant_id"]
+	if merchantID == "" {
+		return nil
+	}
+
+	return s.dunning.HandlePaymentFailed(ctx, merchantID)
 }
 
 // HandleAccountUpdated caches the Connect account verification status in stripe_accounts.

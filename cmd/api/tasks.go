@@ -71,6 +71,16 @@ func SetupTasks(
 	// 1er du mois à 4h : purge des anciennes suggestions
 	add("0 4 1 * *", taskManager.CleanupOldUpsellSuggestions)
 
+	// ── Facturation plateforme (LOT B B2b-1 / B2c-1) ─────────────────────────
+	// Cascade d'impayé + échéances de trial : toutes deux ré-évaluées à
+	// chaque exécution (jamais un envoi planifié à l'avance), donc une
+	// cadence horaire suffit pour respecter la granularité réelle du brief
+	// (hebdomadaire pour les relances d'impayé, J-7/J-1/48h pour les trials)
+	// sans sur-solliciter la base. Même créneau cron pour les deux — B2c-1
+	// étend explicitement celui-ci plutôt que d'en enregistrer un second.
+	add("@hourly", taskManager.RunDunningCascade)
+	add("@hourly", taskManager.RunTrialExpiryCheck)
+
 	// ── RBAC ─────────────────────────────────────────────────────────────────
 	// Réconcilie le rôle admin de chaque établissement avec le catalogue de
 	// permissions — un ajout au catalogue n'a plus besoin d'un lancement manuel

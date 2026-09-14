@@ -822,6 +822,19 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	req.Merchant = merchant
 	req.MerchantID = merchant.MerchantID
 
+	// LOT B B2b-2 (§7.5) : Scan&Order est un "canal en ligne" — coupé pour
+	// un marchand suspended. Vérifié ici, avant tout le reste, pour ne
+	// jamais construire une commande pour un marchand qui ne doit plus en
+	// recevoir en ligne.
+	suspended, err := s.repo.IsMerchantSuspended(ctx, req.MerchantID)
+	if err != nil {
+		log.Error("IsMerchantSuspended", zap.Error(err))
+		return models.CreateOrderResult{Status: "error_003"}, err
+	}
+	if suspended {
+		return models.CreateOrderResult{Status: "merchant_suspended"}, nil
+	}
+
 	order := req.Order
 	orderType := order.OrderType
 

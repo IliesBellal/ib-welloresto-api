@@ -69,6 +69,23 @@ func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, pack
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
+	// LOT B B1a: packageID was never checked against packages before this —
+	// a live orphan row (package_id=-4, no matching packages.id) proved it.
+	// subscriptions.package_id has no foreign key yet — a live orphan row
+	// would make the constraint fail to apply, and the calendar doesn't
+	// allow fixing that first (see docs/decisions.md) — so this applicative
+	// check is the only guard against a new orphan being created the same way.
+	var exists bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM packages WHERE id = ?)`, packageID,
+	).Scan(&exists); err != nil {
+		log.Error("InsertSubscription: failed to check package_id: " + err.Error())
+		return err
+	}
+	if !exists {
+		return models.ErrUnknownPackageID
+	}
+
 	// stripe_subscription_id est NOT NULL sans défaut : MySQL non-strict
 	// insérait '' silencieusement, Postgres rejette — '' explicite pour un
 	// résultat identique dans les deux dialectes.

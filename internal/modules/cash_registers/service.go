@@ -22,6 +22,17 @@ func (s *CashRegisterService) OpenCashRegister(ctx context.Context, token string
 		return nil, models.ErrUnauthorized
 	}
 
+	// LOT B B2b-3 (§7.6) : refus d'ouverture de registre tant que
+	// activation_state != 'LIVE' ou status = 'suspended' — même message
+	// dans les deux cas, aucun montant, aucun détail d'abonnement.
+	activated, err := s.cashRegisterRepo.IsActivatedForOrdering(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if !activated {
+		return nil, models.ErrCashRegisterNotActivated
+	}
+
 	// merchantID via user
 	// userID vient de req (comme en PHP)
 	req.CashRegister.UserID = user.UserID

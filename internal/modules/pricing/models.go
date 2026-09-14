@@ -63,6 +63,11 @@ type CatalogPlan struct {
 	MonthlyPriceCents    int
 	AnnualPriceCents     int
 	IncludedModulesCount *int // nil = unlimited (complet)
+	// StripePriceID — LOT B B2c-0: the real Stripe Price this plan's
+	// monthly amount is billed through. Empty until
+	// cmd/ensure_stripe_prices provisions one (see docs/decisions.md) —
+	// never created on the fly by request-serving code.
+	StripePriceID string
 }
 
 // CatalogModule is one kind='module' row.
@@ -72,6 +77,13 @@ type CatalogModule struct {
 	MonthlyPriceCents int
 	PerUnitPriceCents *int
 	PerUnitLabel      string
+	// StripePriceID — the flat monthly Price for this module (B2c-0).
+	StripePriceID string
+	// PerUnitStripePriceID — planning's own per-employee Price, distinct
+	// from StripePriceID above (planning's flat monthly amount) — see
+	// subscriptions.CodePlanningEmployee, a separate subscription_items
+	// line billed at this rate, not at StripePriceID's.
+	PerUnitStripePriceID string
 }
 
 // CatalogAddon is one kind='addon' row (poste supplémentaire, bornes —
@@ -80,6 +92,9 @@ type CatalogAddon struct {
 	Code              string
 	Label             string
 	MonthlyPriceCents int
+	// StripePriceID — extra_seat's Price, consumed by
+	// subscriptions.CodeExtraPOS (B2c-0).
+	StripePriceID string
 }
 
 // Catalog is the whole pricing_catalog table, bucketed by kind.

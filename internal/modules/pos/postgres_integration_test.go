@@ -5,6 +5,7 @@ package pos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -414,5 +415,43 @@ func TestPOSStatus_Postgres(t *testing.T) {
 	}
 	if status.Wello.IsOpen != 0 || status.Wello.Status != "CLOSED" {
 		t.Fatalf("GetPOSStatus férié = %+v", status.Wello)
+	}
+}
+
+// TestInsertSubscription_UnknownPackageID_Postgres — LOT B B1a: a live orphan
+// row (subscriptions.package_id=-4, no matching packages.id) showed
+// InsertSubscription never checked packageID against packages before
+// inserting. Covers both the rejection and that a valid packageID still
+// succeeds (the existing happy path is already exercised by
+// TestPOSRepository_Postgres).
+func TestInsertSubscription_UnknownPackageID_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	merchantID, err := NewPOSRepository(db).InsertMerchant(ctx, CreateMerchantRequest{
+		FullName: "ITest Unknown Package Merchant", Address: "a", StreetNumber: "1", Street: "s",
+		ZipCode: "75001", City: "Paris", SIRET: "siret-unknown-pkg", Tel: "06",
+		WebSite: "https://x", Email: "itest-unknown-pkg@example.com",
+	}, "mtok-unknown-pkg")
+	if err != nil || merchantID == "" || merchantID == "0" {
+		t.Fatalf("InsertMerchant = (%q, %v)", merchantID, err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM subscriptions WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantID)
+	})
+
+	repo := NewPOSRepository(db)
+
+	if err := repo.InsertSubscription(ctx, merchantID, "-4"); !errors.Is(err, models.ErrUnknownPackageID) {
+		t.Fatalf("InsertSubscription(package_id=-4) = %v, want ErrUnknownPackageID", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscriptions WHERE merchant_id = $1`, merchantID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("subscriptions after rejected insert = (%d, %v), want 0", count, err)
+	}
+
+	if err := repo.InsertSubscription(ctx, merchantID, "1"); err != nil {
+		t.Fatalf("InsertSubscription(package_id=1): %v", err)
 	}
 }

@@ -38,6 +38,7 @@ import (
 	analyticsModule "welloresto-api/internal/modules/analytics"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
+	billingModule "welloresto-api/internal/modules/billing"
 	bookingcommModule "welloresto-api/internal/modules/bookingcomm"
 	bookingEventsModule "welloresto-api/internal/modules/bookingevents"
 	bookingsModule "welloresto-api/internal/modules/bookings"
@@ -46,6 +47,7 @@ import (
 	customersModule "welloresto-api/internal/modules/customers"
 	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
+	dunningModule "welloresto-api/internal/modules/dunning"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	discountsModule "welloresto-api/internal/modules/discounts"
 	haccpModule "welloresto-api/internal/modules/haccp"
@@ -72,6 +74,7 @@ import (
 	signupModule "welloresto-api/internal/modules/signup"
 	statsModule "welloresto-api/internal/modules/stats"
 	stocksModule "welloresto-api/internal/modules/stocks"
+	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	tagsModule "welloresto-api/internal/modules/tags"
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
@@ -204,6 +207,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	authRepo := authModule.NewAuthRepository(selectedDB)
 	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper, cfg.Auth.PasswordResetBaseURL)
 	authMiddleware := middleware.Auth(&authService)
+	// LOT B B2b-2 : lecture seule pour un marchand suspended — voir
+	// internal/middleware/require_not_suspended.go pour la liste d'exemptions
+	// et le raisonnement. Appliqué juste après authMiddleware partout où
+	// celui-ci l'est (mécaniquement, voir docs/decisions.md).
+	notSuspendedMiddleware := middleware.RequireNotSuspended(selectedDB)
 
 	// ---- POS ----
 	posRepo := posModule.NewPOSRepository(selectedDB)
@@ -371,6 +379,45 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	)
 	integrationsHandler := integrationsModule.NewHandler(integrationsService, r2Client)
 
+	// ---- Pricing (LOT A Semaine 3, Chantier 11a/11b) : single reference
+	// table + cheapest-plan calculation, consumed by signup-context below.
+	pricingRepo := pricingModule.NewRepository(selectedDB)
+	pricingService := pricingModule.NewService(pricingRepo)
+
+	// ---- Subscriptions (LOT B B1b/B1c/B1d/B1e) : billed lines
+	// (subscription_items), computed amount, commercial dérogations
+	// (subscription_overrides, internal-only) and the client-facing
+	// preview/apply endpoints. Constructed here (before billing) because
+	// billing.Service needs it (B2c-0's ResolveStripeLineItems) — moved up
+	// from its original spot further down in this function.
+	subscriptionsRepo := subscriptionsModule.NewRepository(selectedDB)
+	subscriptionsService := subscriptionsModule.NewService(selectedDB, subscriptionsRepo, pricingRepo, pricingService)
+	subscriptionsH := subscriptionsModule.NewHandler(subscriptionsService)
+
+	// ---- Billing (LOT B B2a) : platform_billing_customers + sepa_mandates —
+	// "WelloResto facture le marchand", distinct de stripeManager's usage
+	// ailleurs pour les comptes Connect des marchands (paiements clients
+	// finaux). Même stripeManager (une seule clé API Stripe plateforme),
+	// mais jamais d'en-tête StripeAccount — voir internal/infrastructure/stripe/billing.go.
+	billingRepo := billingModule.NewRepository(selectedDB)
+	billingService := billingModule.NewService(billingRepo, stripeManager, subscriptionsService)
+	billingHandler := billingModule.NewHandler(billingService)
+	// LOT B B2c-0 : referme le cycle — un changement de module
+	// (subscriptions.ApplyItemChanges) met désormais aussi à jour
+	// l'abonnement Stripe réel, via cette seule capacité exposée en retour
+	// (subscriptions.StripeSyncer), pas un import du paquet billing.
+	subscriptionsService.SetStripeSyncer(billingService)
+	// LOT B B2c-1 : les rappels d'échéance de trial (RunTrialExpiryCheck).
+	subscriptionsService.SetMailer(mailService)
+
+	// ---- Dunning (LOT B B2b-1) : cascade d'impayé — subscriptions.status
+	// past_due -> suspended (ou retour à active), pilotée par les webhooks
+	// invoice.payment_failed/invoice.paid et par le cron RunDunningCascade
+	// (cmd/api/tasks.go).
+	dunningRepo := dunningModule.NewRepository(selectedDB)
+	dunningService := dunningModule.NewService(dunningRepo, selectedDB, mailService, smsService, stripeManager)
+	dunningHandler := dunningModule.NewHandler(dunningService)
+
 	// 3. Initialiser le StripeWebhookService Stripe
 	stripeWebhookService := webhookstripe.NewStripeWebhookService(
 		stripeRepo,
@@ -381,6 +428,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		notificationService,
 		redisClient,
 		selectedDB,
+		billingService,
+		dunningService,
 	)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
@@ -467,11 +516,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	googleAuthRepo := googleauthModule.NewRepository(selectedDB)
 	googleAuthService := googleauthModule.NewService(googleAuthVerifier, googleAuthRepo, authRepo)
 	googleAuthH := googleauthModule.NewHandler(googleAuthService)
-
-	// ---- Pricing (LOT A Semaine 3, Chantier 11a/11b) : single reference
-	// table + cheapest-plan calculation, consumed by signup-context below.
-	pricingRepo := pricingModule.NewRepository(selectedDB)
-	pricingService := pricingModule.NewService(pricingRepo)
 
 	// ---- Companies resolution (LOT A Semaine 3, Chantier 12) : relay to
 	// recherche-entreprises.api.gouv.fr, scored deterministically — never AI.
@@ -587,7 +631,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	notificationH := notificationModule.NewNotificationHandler(notificationService)
 
 	// Option A: instantiate a single TasksManager in SetupRoutes and share it with cron wiring and admin manual trigger.
-	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, log)
+	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, log)
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
 	// ============================================================
@@ -636,6 +680,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// API externes
 	r.Route("/external", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/routes", routeHandler.HandleGetRoute)
 	})
@@ -673,6 +718,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Route("/merchants/{id}/onboarding", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Get("/", onboardingH.GetOnboarding)
 			// Owner-only (Service.SkipTask checks Rights.Admin) — LOT A
 			// Semaine 3, Chantier 13.
@@ -700,6 +746,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- USERS ---
 	r.Route("/users", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/profile", usersH.GetProfile)           // used by: back-office
 		r.Patch("/profile", usersH.UpdateProfile)      // used by: back-office
@@ -728,16 +775,19 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- PERMISSIONS / ROLES (RBAC lot 6) ---
 	r.Route("/permissions", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Get("/", rolesH.ListPermissions)
 	})
 
 	r.Route("/me", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Get("/permissions", rolesH.MyPermissions)
 	})
 
 	r.Route("/roles", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Use(middleware.RequirePermission(permission.StaffManage))
 
 		r.Get("/", rolesH.ListRoles)
@@ -751,12 +801,19 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	r.Route("/merchant", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/default-role", rolesH.SetMerchantDefaultRole)
+
+		// LOT B B2b-3 : source de données du bandeau "Mode configuration" —
+		// aucune permission au-delà d'être connecté, lecture toujours
+		// fraîche (voir billing.Repository.GetActivationStatus).
+		r.Get("/activation-status", billingHandler.GetActivationStatus)
 	})
 
 	// --- STATS ---
 	r.Route("/stats", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		// RBAC lot 8 : tuile de reporting sur la page d'accueil back-office —
 		// le front doit traiter un 403 en masquant la tuile, pas en cassant
@@ -785,6 +842,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// (Repository.ResolveAccessibleMerchants), not a sales figure.
 		r.Route("/analytics/merchants", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Use(middleware.RequirePermission(permission.POSAnalytics))
 
 			r.Get("/", analyticsH.GetAccessibleMerchants)
@@ -792,6 +850,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Route("/analytics", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
 
 			r.Post("/revenue", analyticsH.GetRevenue)
@@ -817,6 +876,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// break the rest of the Annulations tab.
 		r.Route("/analytics/cancellations", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
 
 			r.Post("/by-staff", analyticsH.GetCancellationsByStaff)
@@ -830,6 +890,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// frontend, never break the rest of the Clients tab.
 		r.Route("/analytics/clients", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Use(middleware.RequirePermission(permission.CustomersManage))
 
 			r.Post("/top", analyticsH.GetClientsTop)
@@ -842,6 +903,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// frontend, never break the rest of the tab.
 		r.Route("/analytics/upsell", func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
 
 			r.Post("/by-staff", analyticsH.GetUpsellByStaff)
@@ -851,6 +913,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- POS ---
 	r.Route("/pos", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/create", posH.CreateMerchant)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-user", posH.LinkUser)
@@ -926,6 +989,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// RBAC lot 8 : rapports financiers — reports.financial.read.
 	r.Route("/accounting", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Use(middleware.RequirePermission(permission.ReportsFinancialRead))
 
 		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
@@ -936,6 +1000,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- STOCKS ---
 	r.Route("/stocks", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/barcode/{barcode}", stocksH.GetBarcodeInfo)
 		r.Post("/barcode/create", stocksH.CreateBarcode)
@@ -960,6 +1025,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- DEVICES ---
 	r.Route("/device", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Post("/token", authH.SaveDeviceToken)
 	})
@@ -972,6 +1038,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- UPLOADS ---
 	r.Route("/uploads", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Post("/haccp", haccpH.UploadHACCP)
 	})
@@ -979,6 +1046,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- MENU ---
 	r.Route("/menu", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", menuH.GetMenu)
 		r.Get("/translation-langs", menuH.GetTranslationLanguages)
@@ -1172,6 +1240,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- HACCP ---
 	r.Route("/haccp", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/settings", haccpH.GetSettings)
 		// RBAC lot 8 (suite) : haccp.manage regarde ici — CONFIGURATION des
@@ -1228,6 +1297,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- PLANNING ---
 	r.Route("/planning/me", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/time-entries", planningH.ListCurrentUserTimeEntries)
 		r.Get("/time-entries/current", planningH.GetCurrentUserTimeEntry)
@@ -1244,6 +1314,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	r.Route("/planning", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		// Référentiels non sensibles (labels/couleurs, pas de donnée RH ou
 		// salariale — vérifié dans le code Go) : libres, authentifiées
@@ -1347,6 +1418,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- ALLERGENS (system-wide, read-only) ---
 	r.Route("/allergens", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", allergensH.ListAllergens)
 	})
@@ -1354,6 +1426,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- PRINTERS ---
 	r.Route("/printers", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", printersH.ListPrinters)
 		r.Post("/", printersH.CreatePrinter)
@@ -1364,6 +1437,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- PRODUCTION PROFILES ---
 	r.Route("/production-profiles", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", productionProfilesH.ListProfiles)
 		r.Post("/", productionProfilesH.CreateProfile)
@@ -1380,6 +1454,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// utilisé ailleurs (prise de commande, association table/réservation).
 	r.Route("/floors", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Use(middleware.RequirePermission(permission.SeatingPlanManage))
 
 		r.Post("/", locationsH.CreateFloor)
@@ -1402,6 +1477,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- LOCATIONS ---
 	r.Route("/locations", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", locationsH.GetLocations)
 
@@ -1418,12 +1494,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- SERVICES ---
 	r.Route("/services", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/{device_id}", servicesH.GetCurrentService)
 	})
 
 	r.Route("/orders", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		// --- 1. ENDPOINTS DE CONSULTATION (Libres) ---
 		// On laisse passer les GET et les POST qui servent uniquement à filtrer/lister
@@ -1481,12 +1559,57 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// TODO(@user): protéger cette route avec un middleware admin dédié quand il sera disponible. Pour l'instant elle utilise authMiddleware seul.
 	r.Route("/admin/upsell", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 		r.Post("/recompute-patterns", adminUpsellH.RecomputePatterns)
+	})
+
+	// --- ADMIN — COMMERCIAL OVERRIDES (LOT B B1d) ---
+	// Internal only, never exposed to the client — gated by
+	// middleware.RequirePlatformAdmin (users.is_platform_staff, migration
+	// 138), NOT permission.SettingsManage, per the brief's explicit
+	// instruction. This is also the middleware admin/upsell's own TODO above
+	// has been waiting on — not wired in there in this chantier since that
+	// route wasn't part of this brief, flagged in docs/decisions.md instead.
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+		r.Use(middleware.RequirePlatformAdmin)
+
+		r.Post("/merchants/{id}/overrides", subscriptionsH.CreateOverride)
+		r.Get("/overrides", subscriptionsH.ListOverrides)
+		r.Delete("/overrides/{id}", subscriptionsH.RevokeOverride)
+
+		// LOT B B2a-1 : mutualisation de facturation entre établissements —
+		// geste manuel réservé au staff interne, jamais en self-service.
+		r.Post("/merchants/{id}/billing-customer/attach-to/{other_merchant_id}", billingHandler.AttachBillingCustomer)
+		r.Post("/merchants/{id}/billing-customer/detach", billingHandler.DetachBillingCustomer)
+	})
+
+	// --- SUBSCRIPTIONS (LOT B B1e) --- client-facing preview/apply.
+	r.Route("/subscriptions", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+		r.Use(middleware.RequirePermission(permission.SettingsManage))
+
+		r.Get("/preview", subscriptionsH.PreviewChange)
+		r.Post("/items", subscriptionsH.ApplyItems)
+	})
+
+	// --- BILLING (LOT B B2a/B2b-1) --- client-facing SEPA mandate setup +
+	// "réessayer maintenant" (cascade d'impayé).
+	r.Route("/billing", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+		r.Use(middleware.RequirePermission(permission.SettingsManage))
+
+		r.Post("/sepa/setup", billingHandler.CreateSepaSetup)
+		r.Post("/retry-now", dunningHandler.RetryNow)
 	})
 
 	// --- DELIVERY SESSIONS ---
 	r.Route("/delivery_sessions", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/pending", deliverySessionsH.GetPendingDeliverySessions)
 
@@ -1509,6 +1632,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- CASH DRAWER ---
 	r.Route("/cash_drawer", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		// RBAC lot 8 : GET -> POST (un endpoint dont l'objet est de déclencher
 		// un effet de bord physique — ouvrir le tiroir-caisse hors
@@ -1525,6 +1649,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// Deprecated on 2024-06-25
 	r.Route("/customer", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/search", customersH.SearchCustomers)
 		r.Get("/list", customersH.ListCustomers)
@@ -1542,6 +1667,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- CUSTOMERS ---
 	r.Route("/customers", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		// --- Import de clients en masse ---
 		// Comme l'import de produits (/menu/import/preview + /commit +
@@ -1580,6 +1706,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- CASH REGISTER ---
 	r.Route("/cash_register", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Post("/open", cashRegisterH.OpenCashRegister)
 		r.Get("/history", cashRegisterH.GetHistory)
@@ -1602,6 +1729,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- BOOKINGS ---
 	r.Route("/bookings", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", bookingsH.ListBookingsBackOffice)
 		r.Post("/", bookingsH.SearchBookings)
@@ -1674,6 +1802,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// Dashboard endpoints (auth required)
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
 
 			r.Get("/uber-eats", integrationsHandler.GetUberEats)
 			r.Get("/uber-eats/accounts", integrationsHandler.ListUberEatsAccounts)
@@ -1747,6 +1876,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- KIOSK (back-office) ---
 	r.Route("/pos/settings/kiosk", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/enrollment-codes", kioskAdminHandler.ListEnrollmentCodes)
 		r.Get("/devices", kioskAdminHandler.ListKioskDevices)
@@ -1784,6 +1914,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- WEBSOCKET ---
 	r.Route("/ws", func(r chi.Router) {
 		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			websocket.ServeWS(wsHub, w, r)

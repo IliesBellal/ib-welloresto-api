@@ -42,9 +42,12 @@ type Repository interface {
 	UpdatePaymentIntentStatus(cdb context.Context, paymentIntentID, status string) error
 	DisablePayment(cdb context.Context, paymentIntentID string) error
 
-	// Subscription (Simplified placeholders based on your PHP)
-	CreateInvoice(cdb context.Context, merchantID, invoiceID string, amount int64, created int64, customerID string) error
-	PayInvoice(cdb context.Context, invoiceID string, paidAt int64) error
+	// Subscription (LOT B B2a-0 : remplace l'ancien CreateInvoice/PayInvoice,
+	// qui écrivaient subscription_invoices — confirmé sans aucun lecteur
+	// applicatif, voir docs/decisions.md — au profit du modèle LOT B
+	// B1b/B1c, subscriptions.status/current_period_end)
+	SetSubscriptionStatus(cdb context.Context, merchantID, status string) error
+	UpdateSubscriptionBillingPeriod(cdb context.Context, merchantID string, periodEndUnix int64) error
 
 	GetMerchantByStripeAccountID(cdb context.Context, accountID string) (*PayoutMerchant, error)
 
@@ -347,34 +350,24 @@ func (r *mysqlRepo) DisablePayment(cdb context.Context, paymentIntentID string) 
 	return err
 }
 
-// --- Subscription ---
-func (r *mysqlRepo) CreateInvoice(cdb context.Context, merchantID, invoiceID string, amount int64, created int64, customerID string) error {
-	db := dbx.GetDB(cdb, r.database)
+// --- Subscription (LOT B B2a-0) ---
 
-	// FROM_UNIXTIME(epoch) depends on the MySQL session's time_zone setting
-	// (not pinned to UTC anywhere in this codebase's connection setup — a
-	// pre-existing ambiguity). Postgres's to_timestamp(epoch) has no such
-	// ambiguity: it always returns the correct absolute UTC instant.
-	epochExpr := "FROM_UNIXTIME(?)"
-	if dbx.ActiveDialect() == dbx.Postgres {
-		epochExpr = "to_timestamp(?)"
-	}
-	query := fmt.Sprintf(`INSERT INTO subscription_invoices(merchant_id, invoice_id, invoice_date, amount)
-			  SELECT ?, ?, %s, ?
-			  FROM welloresto_stripe_customers WHERE stripe_customer_id = ?`, epochExpr)
-	_, err := db.ExecContext(cdb, query, merchantID, invoiceID, created, amount, customerID)
+// SetSubscriptionStatus writes subscriptions.status for merchantID —
+// invoice.paid's confirmation that the current billing period was actually
+// collected.
+func (r *mysqlRepo) SetSubscriptionStatus(cdb context.Context, merchantID, status string) error {
+	db := dbx.GetDB(cdb, r.database)
+	_, err := db.ExecContext(cdb, `UPDATE subscriptions SET status = ? WHERE merchant_id = ?`, status, merchantID)
 	return err
 }
 
-func (r *mysqlRepo) PayInvoice(cdb context.Context, invoiceID string, paidAt int64) error {
+// UpdateSubscriptionBillingPeriod writes subscriptions.current_period_end
+// for merchantID from a Stripe Invoice's period_end (Unix epoch). Postgres
+// only (to_timestamp) — the sole live dialect, see CLAUDE.md — unlike the
+// FROM_UNIXTIME/to_timestamp split this replaces.
+func (r *mysqlRepo) UpdateSubscriptionBillingPeriod(cdb context.Context, merchantID string, periodEndUnix int64) error {
 	db := dbx.GetDB(cdb, r.database)
-
-	epochExpr := "FROM_UNIXTIME(?)"
-	if dbx.ActiveDialect() == dbx.Postgres {
-		epochExpr = "to_timestamp(?)"
-	}
-	query := fmt.Sprintf(`UPDATE subscription_invoices SET status = '1', payment_date = %s WHERE invoice_id = ?`, epochExpr)
-	_, err := db.ExecContext(cdb, query, paidAt, invoiceID)
+	_, err := db.ExecContext(cdb, `UPDATE subscriptions SET current_period_end = to_timestamp(?) WHERE merchant_id = ?`, periodEndUnix, merchantID)
 	return err
 }
 

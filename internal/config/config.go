@@ -32,11 +32,15 @@ type App struct {
 	// SignupContextSigningKey signs POST /v1/public/signup-context's
 	// context_token (LOT A Semaine 3, Chantier 11 — a stateless, signed JWT
 	// per docs/WelloResto-Parcours-Client-v2.docx §4.4, not a DB-backed
-	// opaque id). Deliberately NOT validated/fatal like FiscalSigningKey —
-	// this is a new key with nothing deployed depending on it yet; signup.NewService
-	// falls back to a random in-process key (logged) when unset, so a
-	// missing env var never crashes startup. Set a real value before relying
-	// on tokens surviving a restart or being verified by another instance.
+	// opaque id). Was deliberately left non-fatal at LOT A Semaine 3
+	// (nothing depended on it yet; signup.NewService fell back to a random
+	// in-process key when unset). LOT B B1 makes it fatal like
+	// FiscalSigningKey/PINPepper: subscription/signup flows now depend on
+	// tokens surviving a restart and verifying across instances, so a
+	// silently-random key is no longer an acceptable default. Before
+	// deploying this change, confirm the env var is actually set in every
+	// target environment (staging and production) — otherwise this turns a
+	// missing var into a startup crash instead of a degraded fallback.
 	SignupContextSigningKey string
 }
 
@@ -89,6 +93,12 @@ func (c *AppConfig) validate() {
 	}
 	if c.App.FiscalSigningKey == "" {
 		log.Fatal("FISCAL_SIGNING_KEY is not set")
+	}
+	if c.App.SignupContextSigningKey == "" {
+		log.Fatal("SIGNUP_CONTEXT_SIGNING_KEY is not set")
+	}
+	if c.Google.ClientID == "" {
+		log.Fatal("GOOGLE_CLIENT_ID is not set")
 	}
 	if err := c.AI.Validate(); err != nil {
 		log.Fatal(err.Error())
