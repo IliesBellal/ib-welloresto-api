@@ -145,4 +145,31 @@ func TestEstimatedSeconds_Postgres(t *testing.T) {
 		t.Fatalf("unknown: got (sec=%d, found=%v), want (0, false)", sec, found)
 	}
 
+	// --- Plancher FIFO : une commande OPEN non planifiée déjà en file, dont
+	// l'estimated_ready est loin devant, doit tirer l'estimation vers le haut
+	// même si la formule de charge seule donnerait un résultat bien plus bas
+	// (capacity=5 élevée, aucun item en attente). adt=100 (sous 180), capacity=5,
+	// bornes [60, 3600] : formule brute = (0+2)*100/5 = 40 -> clampée à 60.
+	fifo := "itest-adt-fifofloor"
+	seedMerchant(fifo, 100, 5, 60, 3600)
+	o5 := insertOrder(fifo, "OPEN", false, "now() + interval '20 minutes'")
+	_ = o5 // pas d'item : isole l'effet du plancher de celui de la somme des pending
+
+	sec, found, err = EstimatedSeconds(ctx, db, fifo, 2)
+	if err != nil {
+		t.Fatalf("EstimatedSeconds(fifo): %v", err)
+	}
+	if !found {
+		t.Fatalf("fifo: got found=false, want true")
+	}
+	// Attendu ~ (20*60) + 2*100 = 1400s, avec quelques secondes de tolérance
+	// pour le temps d'exécution entre l'INSERT et le SELECT.
+	if sec < 1390 || sec > 1401 {
+		t.Fatalf("fifo: got sec=%d, want ~1400 (plancher = temps restant avant la commande en file + temps propre)", sec)
+	}
+	// Sans le plancher, la formule brute seule aurait donné 60 (bornée au
+	// minimum) : vérifie que le plancher a bien un effet réel, pas un no-op.
+	if sec <= 60 {
+		t.Fatalf("fifo: plancher inopérant, got sec=%d, want > 60 (formule brute seule)", sec)
+	}
 }

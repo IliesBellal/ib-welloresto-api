@@ -1,6 +1,10 @@
 package tasks
 
-import "testing"
+import (
+	"database/sql"
+	"math"
+	"testing"
+)
 
 // Comme en PHP, la simulation exige au moins avgDistMinItems LIGNES
 // d'orderitems (count($order_items) < 5) ET avgDistMinItems items
@@ -107,5 +111,80 @@ func TestSimulateAverageDistributionTime_CapacityDoesNotPanic(t *testing.T) {
 		if processed != 5 || avg != 100 {
 			t.Fatalf("capacité %d : attendu (100, 5), obtenu (%d, %d)", capacity, avg, processed)
 		}
+	}
+}
+
+// --- smoothDistributionTime (lissage par confiance + plafonnement) --------
+
+func TestSmoothDistributionTime_NoPrevious_ReturnsRawAsIs(t *testing.T) {
+	// Tout premier calcul du marchand : rien à lisser ni à plafonner.
+	got := smoothDistributionTime(sql.NullInt64{}, 500, 5)
+	if got != 500 {
+		t.Fatalf("attendu 500 (valeur brute) sans historique, obtenu %d", got)
+	}
+}
+
+func TestSmoothDistributionTime_LowSample_StaysCloseToPrevious(t *testing.T) {
+	// Cas réel du ticket : matin creux, 5 items, la moyenne brute chute de
+	// 20min (1200s, borne haute) à 8min (480s). Avec peu d'items, alpha est
+	// faible : la valeur lissée doit rester proche de l'ancienne (1200s),
+	// pas sauter directement à 480s.
+	previous := sql.NullInt64{Valid: true, Int64: 1200}
+	got := smoothDistributionTime(previous, 480, avgDistMinItems)
+
+	alpha := float64(avgDistMinItems) / (float64(avgDistMinItems) + avgDistConfidenceK)
+	wantUnclamped := int64(math.Round(1200*(1-alpha) + 480*alpha))
+	maxDelta := int64(math.Round(math.Max(avgDistMaxDeltaAbsoluteSec, 1200*avgDistMaxDeltaRelative)))
+	want := wantUnclamped
+	if want < 1200-maxDelta {
+		want = 1200 - maxDelta
+	}
+
+	if got != want {
+		t.Fatalf("attendu %d (alpha=%.3f), obtenu %d", want, alpha, got)
+	}
+	if got >= 1200 || got <= 480 {
+		t.Fatalf("attendu une valeur strictement entre l'ancienne (1200) et la brute (480), obtenu %d", got)
+	}
+}
+
+func TestSmoothDistributionTime_ClampCapsMaxDeltaOnLowSample(t *testing.T) {
+	// Avec le plafonnement (piste 3), même un échantillon minimal ne peut
+	// pas faire bouger la moyenne de plus que le garde-fou en un cycle.
+	previous := sql.NullInt64{Valid: true, Int64: 1200}
+	got := smoothDistributionTime(previous, 480, avgDistMinItems)
+
+	maxDelta := int64(math.Round(math.Max(avgDistMaxDeltaAbsoluteSec, 1200*avgDistMaxDeltaRelative)))
+	minAllowed := 1200 - maxDelta
+	if got < minAllowed {
+		t.Fatalf("plafonnement violé : obtenu %d, minimum autorisé %d", got, minAllowed)
+	}
+}
+
+func TestSmoothDistributionTime_HighSample_ConvergesFastTowardRaw(t *testing.T) {
+	// Gros échantillon (coup de feu) : alpha proche de 1, la moyenne doit
+	// suivre la réalité de près, sans être bridée artificiellement si le
+	// déplacement respecte tout de même le plafond de variation.
+	previous := sql.NullInt64{Valid: true, Int64: 100}
+	got := smoothDistributionTime(previous, 120, 500) // alpha = 500/525 ≈ 0.952
+
+	maxDelta := int64(math.Round(math.Max(avgDistMaxDeltaAbsoluteSec, 100*avgDistMaxDeltaRelative)))
+	if got > 100+maxDelta {
+		t.Fatalf("attendu une valeur plafonnée à %d au maximum, obtenu %d", 100+maxDelta, got)
+	}
+	// Avec un delta de 20s bien inférieur au plafond, la valeur lissée doit
+	// être très proche de la brute (120s), pas de l'ancienne (100s).
+	if got < 115 {
+		t.Fatalf("attendu une convergence rapide vers la valeur brute (120), obtenu %d", got)
+	}
+}
+
+func TestSmoothDistributionTime_StaysWithinGlobalBounds(t *testing.T) {
+	// old et raw sont tous deux dans [avgDistFloorSec, avgDistCeilSec] :
+	// aucune combinaison lissage+plafonnement ne doit en sortir.
+	previous := sql.NullInt64{Valid: true, Int64: avgDistCeilSec}
+	got := smoothDistributionTime(previous, avgDistFloorSec, 3)
+	if got < avgDistFloorSec || got > avgDistCeilSec {
+		t.Fatalf("valeur lissée hors bornes globales [%d, %d] : %d", avgDistFloorSec, avgDistCeilSec, got)
 	}
 }

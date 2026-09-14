@@ -660,7 +660,10 @@ func (s *StripeWebhookService) HandleInvoiceCreated(ctx context.Context, data js
 		return fmt.Errorf("unmarshal invoice: %w", err)
 	}
 
-	merchantID := invoice.Metadata["merchant_id"]
+	merchantID, err := s.resolveInvoiceMerchantID(ctx, &invoice)
+	if err != nil {
+		return err
+	}
 	if merchantID == "" {
 		return nil
 	}
@@ -674,7 +677,10 @@ func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.
 		return fmt.Errorf("unmarshal invoice: %w", err)
 	}
 
-	merchantID := invoice.Metadata["merchant_id"]
+	merchantID, err := s.resolveInvoiceMerchantID(ctx, &invoice)
+	if err != nil {
+		return err
+	}
 	if merchantID == "" {
 		return nil
 	}
@@ -699,12 +705,40 @@ func (s *StripeWebhookService) HandleInvoicePaymentFailed(ctx context.Context, d
 		return fmt.Errorf("unmarshal invoice: %w", err)
 	}
 
-	merchantID := invoice.Metadata["merchant_id"]
+	merchantID, err := s.resolveInvoiceMerchantID(ctx, &invoice)
+	if err != nil {
+		return err
+	}
 	if merchantID == "" {
 		return nil
 	}
 
 	return s.dunning.HandlePaymentFailed(ctx, merchantID)
+}
+
+// resolveInvoiceMerchantID — LOT B F3 (docs/decisions.md) : found by running
+// a real invoice.created/invoice.paid webhook cycle end-to-end for the first
+// time. invoice.Metadata is EMPTY on every real Invoice Stripe generates
+// from a Subscription — Stripe does not copy a Subscription's metadata onto
+// its invoices, contrary to what these three handlers assumed since B2a-0.
+// Confirmed by replaying the actual raw webhook payload: metadata:{},
+// subscription:"sub_...". Falls back to invoice.Subscription.ID (a bare id
+// reference, always present even unexpanded — same shape as the
+// PaymentMethod finding in B2b-0) resolved against
+// subscriptions.stripe_subscription_id, which is unambiguous even for a
+// merchant sharing a mutualized platform_billing_customers.stripe_customer_id
+// with another merchant (invoice.Customer.ID would NOT be unambiguous there
+// — each merchant still gets its own distinct Stripe Subscription
+// regardless of which Customer bills it). Metadata is checked first and
+// kept as a free fast path in case Stripe's behavior here ever changes.
+func (s *StripeWebhookService) resolveInvoiceMerchantID(ctx context.Context, invoice *stripe.Invoice) (string, error) {
+	if merchantID := invoice.Metadata["merchant_id"]; merchantID != "" {
+		return merchantID, nil
+	}
+	if invoice.Subscription == nil || invoice.Subscription.ID == "" {
+		return "", nil
+	}
+	return s.repo.GetMerchantIDByStripeSubscriptionID(ctx, invoice.Subscription.ID)
 }
 
 // HandleAccountUpdated caches the Connect account verification status in stripe_accounts.

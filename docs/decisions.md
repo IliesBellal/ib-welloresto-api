@@ -17,6 +17,26 @@ effet externe incompatible avec la suspension. Test unitaire
 (`require_not_suspended_test.go`) étendu avec les 4 groupes + les 3 cas
 négatifs ci-dessus.
 
+**F1 — bug pré-existant trouvé en marge (bien plus grave que ce que F1
+demandait) : toute la liste d'exemptions, depuis son écriture d'origine en
+B2b-2, portait un préfixe `/v1/` qui ne correspond à AUCUNE route réelle de
+ce dépôt.** Découvert en tapant directement le serveur staging déployé pour
+les besoins de F3 (`POST /admin/overrides` → 401, route existe ;
+`POST /v1/admin/overrides` → 404, n'existe pas). `cmd/api/routes.go` ne
+monte qu'un tout petit groupe (`/signup`, `/public`, `/auth/google`,
+`/merchants/{id}/onboarding`) sous `r.Route("/v1", ...)` — `/admin`,
+`/billing`, `/pos`, `/accounting`, `/analytics`, `/orders`, `/bookings`,
+`/cash_register` sont tous montés directement à la racine du routeur.
+Conséquence réelle : **cette liste d'exemptions n'a jamais correspondu à une
+seule requête depuis son écriture** — un marchand `suspended` se voyait
+bloqué même sur les exports fiscaux et la clôture de caisse, l'exact inverse
+de ce que B2b-2 devait garantir (§7.5/§7.6). Corrigé : tous les préfixes/
+chemins de `require_not_suspended.go` et de son test sont désormais sans
+`/v1/`. Reconfirmé par le test unitaire (toujours vert) — la vérification en
+conditions réelles contre un marchand `suspended` authentifié reste à faire
+au prochain déploiement (voir F3, cette correction n'a pas encore été
+redéployée au moment d'écrire ces lignes).
+
 **F1 — `expires_at`/`trial_ends_at`, décision confirmée : ne pas unifier
 maintenant.** Le chevauchement conceptuel entre les deux colonnes (déjà
 signalé en B2c-1, voir ci-dessous) reste de la dette technique **explicite**,
@@ -68,22 +88,122 @@ contre staging :
 Suite complète (`subscriptions`/`billing`/`dunning`/`webhook/stripe`/
 `cash_registers`/`middleware`) exécutée sans régression après F1/F2.
 
-**F3 — statut : en attente de déploiement.** Investigation avant tout test :
-deux webhook endpoints Stripe (mode test) sont déjà configurés et `enabled`,
-pointant vers `https://welloresto-api-staging.onrender.com/webhooks/stripe`
-(confirmé via l'API Stripe, `GET /v1/webhook_endpoints` — un endpoint compte
-sur son `application` un Connect app id, l'autre est au niveau du compte,
-238 événements activés dont `invoice.created`/`invoice.paid`). Le serveur
-staging est donc déjà publiquement joignable — **mais aucun code du lot B
-n'est commité** (`git log` : le dernier commit précède tout le lot B ; seules
-les migrations ont été appliquées directement à la base staging, jamais via
-un déploiement). Le serveur staging actuellement en ligne ne peut donc pas
-traiter ces webhooks correctement — la vérification réelle demandée par F3
-n'a de sens qu'une fois le code déployé. Décision prise avec l'utilisateur :
-il déploie le lot B sur staging lui-même, puis je relance le test de cycle de
-facturation réel (mandat SEPA réel + Test Clock, méthode B2c-0) contre le
-vrai serveur staging désormais public — sans tunnel, puisque le serveur
-public existe déjà. F4 reste ouvert tant que F3 n'est pas vert.
+**F3 — exécuté contre le vrai serveur staging déployé, DEUX bugs réels
+trouvés, un corrigé et reconfirmé, un fix en attente de redéploiement pour
+vérification finale.**
+
+Préalable confirmé avant tout test : deux webhook endpoints Stripe (mode
+test) sont déjà configurés et `enabled`, pointant vers
+`https://welloresto-api-staging.onrender.com/webhooks/stripe` (`GET
+/v1/webhook_endpoints` — un endpoint porte sur son `application` un Connect
+app id, l'autre est au niveau du compte, 238 événements activés dont
+`invoice.created`/`invoice.paid`). Aucun tunnel nécessaire : le serveur
+staging est déjà publiquement joignable. L'utilisateur a déployé le lot B ;
+vérifié que le serveur répond désormais correctement aux vraies routes
+(401 sur les routes protégées, plus de 404).
+
+**Méthode.** Outil jetable `cmd/f3_webhook_verify` (non committé, supprimé en
+fin de chantier) : crée un vrai marchand de staging, un vrai Customer/
+PaymentMethod/SetupIntent Stripe (mode test, IBAN de succès FR officiel),
+confirme le mandat, laisse Stripe lui-même déclencher et livrer les vrais
+webhooks HTTP vers le serveur staging déployé (jamais un appel simulé),
+sous une vraie Test Clock Stripe (méthode B2c-0). Vérifie la livraison via
+`GET /v1/events/{id}.pending_webhooks` (0 = livré avec succès à tous les
+endpoints) ET l'effet réel en base staging. Nettoyage systématique
+(suppression de la Test Clock — cascade sur Customer/Subscription/factures/
+moyen de paiement — puis des lignes DB) après chaque run, y compris les runs
+avortés.
+
+**Bug n°1 (artefact du script de test, pas du produit) : premier run en
+échec avec `invoice error: "The customer does not have a payment method ...
+must be attached to the customer"` sur `setup_intent.succeeded`.** Cause :
+le script créait le Customer/SetupIntent directement via l'API Stripe sans
+jamais passer par `POST /billing/sepa/setup`, donc sans ligne
+`platform_billing_customers` préexistante. `HandleSetupIntentSucceeded` →
+`CreateOrUpdateStripeSubscription` → `resolveOrCreateBillingCustomer` ne
+trouvait donc aucune ligne, créait un **second** Customer Stripe sans
+rapport, et tentait d'y attacher le moyen de paiement du premier — rejeté
+par Stripe à raison. Corrigé côté script (pré-création de la ligne
+`platform_billing_customers` avant confirmation du mandat, exactement ce que
+`CreateSepaSetup` aurait fait). **Effet de bord découvert en nettoyant** :
+Stripe a retenté le webhook 3 fois avant l'échec définitif, et
+`HandleSetupIntentSucceeded` a inséré **3 lignes `sepa_mandates`
+dupliquées** avant d'échouer à chaque tentative sur la création de
+subscription — `CreateMandate` n'a aucune protection d'idempotence sur un
+rejeu de webhook. Sans conséquence dans le flux réel normal (où ce chemin ne
+tente jamais de créer une seconde subscription à cause du même merchant),
+mais une fragilité réelle et non triviale à corriger : **signalé, pas
+corrigé dans ce chantier** — un webhook Stripe peut être rejoué pour
+n'importe quelle raison transitoire (5xx, timeout réseau...), et chaque
+rejeu après un `CreateMandate` réussi mais un échec plus loin dans le
+handler créerait une nouvelle ligne. À traiter au lot C.
+
+**Run propre (après correctif du script) : `setup_intent.succeeded` confirmé
+de bout en bout par le VRAI HTTP, pour la première fois.**
+`pending_webhooks` 1→0, `merchant.activation_state=LIVE`,
+`sepa_mandates_count=1`, `subscriptions.status=active`,
+`stripe_subscription_id` renseigné — tout produit par le vrai webhook livré
+par Stripe au serveur déployé, aucun appel de simulation.
+
+**Bug n°2 (réel, dans le produit, trouvé par ce même run) : `invoice.created`
+et `invoice.paid` sont livrés avec succès (`pending_webhooks=0`, 200 OK) mais
+ne mettaient à jour STRICTEMENT RIEN en base.** Confirmé en récupérant le
+payload brut de l'événement réel
+(`GET /v1/events/{id}` côté Stripe) : `metadata: {}`,
+`subscription: "sub_1UFhDQ..."` (référence nue). **Stripe ne recopie jamais
+les métadonnées d'une Subscription sur les Invoices qu'elle génère** —
+hypothèse implicite de `HandleInvoiceCreated`/`HandleInvoicePaid`/
+`HandleInvoicePaymentFailed` depuis B2a-0, jamais vérifiée contre un vrai
+webhook avant ce chantier (B2c-0 n'avait vérifié que la lecture directe de
+l'Invoice via l'API, jamais son passage par ces trois handlers). Résultat
+avant correctif : `subscriptions.current_period_end` n'était jamais mis à
+jour par un vrai cycle de facturation, et surtout — **cascade B2b-1 cassée
+en silence** : `invoice.paid` n'aurait jamais appelé `dunning.ClearDunning`,
+et `invoice.payment_failed` n'aurait jamais appelé
+`dunning.Service.HandlePaymentFailed` (même lecture `invoice.Metadata["merchant_id"]`,
+même retour silencieux `nil` si vide). C'est exactement le risque que F3
+existait pour couvrir, et B2b-1 le supposait déjà réglé.
+
+Corrigé : `internal/webhook/stripe/service.go` gagne
+`resolveInvoiceMerchantID` — lit `invoice.Metadata["merchant_id"]` en
+premier (chemin rapide gratuit, gardé si Stripe change un jour ce
+comportement), sinon résout via `invoice.Subscription.ID` (référence nue,
+toujours présente même non-expansée — même mécanisme que la découverte
+PaymentMethod de B2b-0) contre `subscriptions.stripe_subscription_id`,
+nouvelle méthode `Repository.GetMerchantIDByStripeSubscriptionID`.
+**`invoice.Customer.ID` a été délibérément écarté comme clé de corrélation**
+malgré sa présence : un Customer Stripe peut être mutualisé entre plusieurs
+`merchant_id` (B2a-1) alors que chaque marchand garde toujours sa PROPRE
+Subscription Stripe distincte — `Customer.ID` serait ambigu dans ce cas,
+`Subscription.ID` ne l'est jamais. `HandleInvoiceCreated`, `HandleInvoicePaid`
+et `HandleInvoicePaymentFailed` utilisent désormais tous les trois cette
+résolution commune.
+
+**Tests** : `TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres`
+rejoue exactement la forme du payload réel confirmé (`metadata:{}`,
+`subscription` en référence nue) contre `HandleInvoiceCreated` réel. **Confirmé
+en désactivant temporairement le correctif** que ce test échoue sans lui
+(`current_period_end` jamais écrit) avant de le restaurer.
+`GetMerchantIDByStripeSubscriptionID` couvert directement dans
+`TestStripeRepository_Postgres` (résolution, aucune correspondance, entrée
+vide). Suite complète (`webhook/stripe`/`billing`/`subscriptions`/`dunning`/
+`cash_registers`/`middleware`) verte après le correctif — seul
+`TestLogger_Flush_Postgres` (`internal/middleware/request_logger`, un écart
+de formatage JSON sans rapport) échoue, préexistant, aucun fichier de ce
+paquet touché ici.
+
+**Statut à la clôture de cette session : F3 vert pour `setup_intent.succeeded`
+(vérifié en conditions réelles, avec le code alors déployé). Le correctif du
+bug n°2 (`resolveInvoiceMerchantID`) n'a PAS encore été revérifié en
+conditions réelles contre un webhook `invoice.*` livré au serveur déployé —
+il vit dans cette session locale, pas encore redéployé au moment d'écrire
+ces lignes**, de même que le correctif du préfixe `/v1/` (F1) et le mandat
+non-actif (F2, déjà revérifié en local uniquement contre staging Postgres,
+pas via un webhook réel puisque F2 ne dépend d'aucun webhook). Prochaine
+étape avant de clore F4 : redéployer, puis rejouer une dernière fois le
+cycle de facturation réel bout en bout pour confirmer que
+`current_period_end`/`ClearDunning`/`HandlePaymentFailed` se déclenchent
+bien via le VRAI webhook cette fois.
 
 ---
 

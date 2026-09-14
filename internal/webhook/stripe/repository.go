@@ -48,6 +48,10 @@ type Repository interface {
 	// B1b/B1c, subscriptions.status/current_period_end)
 	SetSubscriptionStatus(cdb context.Context, merchantID, status string) error
 	UpdateSubscriptionBillingPeriod(cdb context.Context, merchantID string, periodEndUnix int64) error
+	// GetMerchantIDByStripeSubscriptionID — LOT B F3 : resolves merchantID
+	// from a Stripe Subscription id, empty string if none matches. See its
+	// doc comment on the concrete implementation for why this exists.
+	GetMerchantIDByStripeSubscriptionID(cdb context.Context, stripeSubscriptionID string) (string, error)
 
 	GetMerchantByStripeAccountID(cdb context.Context, accountID string) (*PayoutMerchant, error)
 
@@ -369,6 +373,34 @@ func (r *mysqlRepo) UpdateSubscriptionBillingPeriod(cdb context.Context, merchan
 	db := dbx.GetDB(cdb, r.database)
 	_, err := db.ExecContext(cdb, `UPDATE subscriptions SET current_period_end = to_timestamp(?) WHERE merchant_id = ?`, periodEndUnix, merchantID)
 	return err
+}
+
+// GetMerchantIDByStripeSubscriptionID — LOT B F3 (docs/decisions.md) : found
+// necessary by running a real invoice.created/invoice.paid webhook cycle
+// end-to-end for the first time (stripe listen was never available before —
+// only direct API reads had been done, in B2c-0). invoice.Metadata is
+// EMPTY on every real Invoice Stripe generates from a Subscription —
+// Stripe does not copy a Subscription's metadata onto its invoices, contrary
+// to what HandleInvoiceCreated/HandleInvoicePaid/HandleInvoicePaymentFailed
+// assumed. invoice.Subscription.ID (a bare id reference, always present even
+// unexpanded — same shape as the PaymentMethod finding in B2b-0) is the
+// correlation key that actually works: subscriptions.stripe_subscription_id
+// already stores it (B2c-0), unambiguously even for a merchant sharing a
+// mutualized platform_billing_customers.stripe_customer_id with another
+// merchant (invoice.Customer.ID would NOT be unambiguous in that case — each
+// merchant still gets its own distinct Stripe Subscription regardless of
+// which Customer bills it).
+func (r *mysqlRepo) GetMerchantIDByStripeSubscriptionID(cdb context.Context, stripeSubscriptionID string) (string, error) {
+	if stripeSubscriptionID == "" {
+		return "", nil
+	}
+	db := dbx.GetDB(cdb, r.database)
+	var merchantID string
+	err := db.QueryRowContext(cdb, `SELECT merchant_id FROM subscriptions WHERE stripe_subscription_id = ?`, stripeSubscriptionID).Scan(&merchantID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return merchantID, err
 }
 
 // UpdateStripeAccountVerificationStatus caches the Connect account status after an account.updated webhook.

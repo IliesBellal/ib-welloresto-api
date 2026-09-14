@@ -321,6 +321,29 @@ func TestStripeRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected status=active, got %q", gotStatus)
 	}
 
+	// --- GetMerchantIDByStripeSubscriptionID (LOT B F3): the fallback
+	// resolveInvoiceMerchantID actually needs, found necessary by running a
+	// real invoice.created webhook end-to-end and discovering
+	// invoice.Metadata comes back empty — see docs/decisions.md. ---
+	if _, err := db.ExecContext(ctx, `UPDATE subscriptions SET stripe_subscription_id = 'itest-sub-1' WHERE merchant_id = $1`, merchantID); err != nil {
+		t.Fatalf("set stripe_subscription_id: %v", err)
+	}
+	if got, err := repo.GetMerchantIDByStripeSubscriptionID(ctx, "itest-sub-1"); err != nil {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID failed against postgres: %v", err)
+	} else if got != merchantID {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID(%q) = %q, want %q", "itest-sub-1", got, merchantID)
+	}
+	if got, err := repo.GetMerchantIDByStripeSubscriptionID(ctx, "itest-sub-does-not-exist"); err != nil {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID (no match) failed against postgres: %v", err)
+	} else if got != "" {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID (no match) = %q, want empty", got)
+	}
+	if got, err := repo.GetMerchantIDByStripeSubscriptionID(ctx, ""); err != nil {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID (empty input) failed against postgres: %v", err)
+	} else if got != "" {
+		t.Fatalf("GetMerchantIDByStripeSubscriptionID (empty input) = %q, want empty", got)
+	}
+
 	// --- Connect account status ---
 	if err := repo.UpdateStripeAccountVerificationStatus(ctx, accountID, "verified"); err != nil {
 		t.Fatalf("UpdateStripeAccountVerificationStatus failed against postgres: %v", err)
@@ -342,5 +365,59 @@ func TestStripeRepository_Postgres(t *testing.T) {
 	}
 	if !activated {
 		t.Fatal("expected scannorder activated=true")
+	}
+}
+
+// TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres —
+// LOT B F3: reproduces, at the handler level, exactly the shape of a real
+// invoice.created webhook payload confirmed against the real Stripe API
+// (metadata:{}, subscription:"sub_..."). Before this chantier's fix,
+// HandleInvoiceCreated read only invoice.Metadata["merchant_id"], found it
+// empty, and silently no-op'd — current_period_end was never written despite
+// Stripe successfully delivering the webhook (200 OK). This test would have
+// failed against the pre-fix code.
+func TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, logo_url, email)
+		VALUES ('ITest F3 Invoice', 'addr', '1', 'street', '75001', 'Paris', 'siret-f3-invoice', 'https://example.com', '0600000000', 'tok-f3-invoice', 'Europe/Paris', 'https://example.com/logo.png', 'itest-f3-invoice@example.com')
+		RETURNING id`).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = db.ExecContext(bg, `DELETE FROM subscriptions WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(bg, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+	})
+
+	const stripeSubID = "sub_itest_f3_invoice"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO subscriptions (merchant_id, package_id, stripe_subscription_id, billing_cycle, status)
+		VALUES ($1, 1, $2, 'monthly', 'active')`, merchantID, stripeSubID); err != nil {
+		t.Fatalf("seed subscriptions: %v", err)
+	}
+
+	svc := &StripeWebhookService{repo: NewRepository(db)}
+
+	periodEnd := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
+	// Mirrors the REAL raw webhook payload confirmed against the Stripe API
+	// (LOT B F3): metadata is an empty object, subscription is a bare id
+	// string (not expanded).
+	payload := []byte(`{"id":"in_itest_f3","object":"invoice","customer":"cus_itest_f3","subscription":"` + stripeSubID + `","metadata":{},"period_end":` + strconv.FormatInt(periodEnd.Unix(), 10) + `}`)
+
+	if err := svc.HandleInvoiceCreated(ctx, payload); err != nil {
+		t.Fatalf("HandleInvoiceCreated: %v", err)
+	}
+
+	var gotPeriodEnd time.Time
+	if err := db.QueryRowContext(ctx, `SELECT current_period_end FROM subscriptions WHERE merchant_id = $1`, merchantID).Scan(&gotPeriodEnd); err != nil {
+		t.Fatalf("read back current_period_end: %v", err)
+	}
+	if diff := gotPeriodEnd.Sub(periodEnd); diff < -2*time.Second || diff > 2*time.Second {
+		t.Fatalf("current_period_end not updated via subscription-id fallback: want ~%v, got %v", periodEnd, gotPeriodEnd)
 	}
 }

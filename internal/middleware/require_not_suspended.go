@@ -14,18 +14,32 @@ import (
 // regardless of their own suspension (admin). A judgment call, not an
 // exhaustive audit of every route in this API — see docs/decisions.md for
 // the reasoning and an explicit invitation to review/extend this list.
+//
+// LOT B F1 (docs/decisions.md) — CORRECTIF IMPORTANT : ces préfixes portaient
+// tous un "/v1/" en tête depuis leur toute première écriture (B2b-2), qui ne
+// correspond à AUCUNE route réelle de ce dépôt — cmd/api/routes.go ne monte
+// qu'un tout petit groupe (/signup, /public, /auth/google,
+// /merchants/{id}/onboarding) sous r.Route("/v1", ...) ; /admin, /billing,
+// /pos, /accounting, /analytics, /orders, /bookings, /cash_register sont
+// tous montés directement à la racine du routeur. Conséquence réelle,
+// confirmée en tapant directement sur le serveur staging déployé (401 sur
+// "/admin/overrides" en POST sans /v1, 404 AVEC /v1) : cette liste
+// d'exemptions n'a jamais correspondu à une seule requête réelle depuis son
+// écriture — un marchand suspended se voyait bloqué même sur les exports
+// fiscaux et la clôture de caisse, l'exact inverse de ce que B2b-2 devait
+// garantir (§7.5/§7.6). Corrigé ici : tous les préfixes/chemins ci-dessous
+// sans "/v1".
 var suspendedReadOnlyExemptPrefixes = []string{
-	"/v1/admin",
-	"/v1/billing",
-	"/v1/pos/reports",
-	"/v1/pos/accounting",
-	"/v1/accounting",
-	// LOT B F1 (docs/decisions.md) : /v1/analytics et ses 4 sous-groupes
-	// enregistrés séparément (/v1/analytics/merchants, /cancellations,
-	// /clients, /upsell) partagent tous ce préfixe — un seul suffit. Ce sont
-	// des POST utilisés uniquement pour porter des critères de filtre, pas
-	// pour écrire.
-	"/v1/analytics",
+	"/admin",
+	"/billing",
+	"/pos/reports",
+	"/pos/accounting",
+	"/accounting",
+	// LOT B F1 : /analytics et ses 4 sous-groupes enregistrés séparément
+	// (/analytics/merchants, /cancellations, /clients, /upsell) partagent
+	// tous ce préfixe — un seul suffit. Ce sont des POST utilisés uniquement
+	// pour porter des critères de filtre, pas pour écrire.
+	"/analytics",
 }
 
 // suspendedReadOnlyExemptExactPaths — LOT B F1 (docs/decisions.md) : POST
@@ -34,18 +48,18 @@ var suspendedReadOnlyExemptPrefixes = []string{
 // EXACTE et non préfixe : les routes sœurs du même groupe (/orders/create,
 // /bookings/create, etc.) doivent rester bloquées.
 //
-// /v1/orders/{id}/invoice/email-sms est délibérément absent de cette liste :
+// /orders/{id}/invoice/email-sms est délibérément absent de cette liste :
 // ce n'est pas une consultation, ça déclenche une communication vers le
 // client final du restaurant — un effet externe incompatible avec la
 // suspension. Laissé bloqué, explicitement.
 var suspendedReadOnlyExemptExactPaths = []string{
-	"/v1/orders/pricing",
-	"/v1/orders/upsell",
-	"/v1/orders/list",
-	"/v1/orders/history",
-	"/v1/cash_register/history",
-	"/v1/bookings",
-	"/v1/bookings/",
+	"/orders/pricing",
+	"/orders/upsell",
+	"/orders/list",
+	"/orders/history",
+	"/cash_register/history",
+	"/bookings",
+	"/bookings/",
 }
 
 // suspendedReadOnlyExemptSuffixes — cash register closing specifically
@@ -64,7 +78,7 @@ func isSuspendedReadOnlyExempt(path string) bool {
 			return true
 		}
 	}
-	if strings.HasPrefix(path, "/v1/cash_register") {
+	if strings.HasPrefix(path, "/cash_register") {
 		for _, suf := range suspendedReadOnlyExemptSuffixes {
 			if strings.HasSuffix(path, suf) {
 				return true

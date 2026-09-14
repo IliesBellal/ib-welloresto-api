@@ -17,6 +17,26 @@ const (
 	avgDistMinItems            = 5    // items minimum pour produire une moyenne
 	avgDistFloorSec            = 10   // borne de sécurité basse du résultat (s)
 	avgDistCeilSec             = 1200 // borne de sécurité haute du résultat (s)
+
+	// avgDistConfidenceK pondère la moyenne brute du cycle par la taille de
+	// l'échantillon : alpha = items / (items + avgDistConfidenceK). Peu
+	// d'items (ouverture, matin creux) → alpha faible, la valeur précédente
+	// domine ; beaucoup d'items (coup de feu) → alpha → 1, la moyenne suit
+	// vite la réalité. Absent du calcul lors du tout premier historique d'un
+	// marchand (pas de valeur précédente à pondérer). Plus la constante est
+	// grande, plus il faut d'items pour faire bouger significativement la
+	// moyenne en un seul cycle.
+	avgDistConfidenceK = 25.0
+
+	// Garde-fou de variation maximale par cycle de CRON (ceinture et
+	// bretelles au-dessus du lissage par confiance) : la valeur lissée ne
+	// peut jamais s'écarter de la valeur précédente de plus de
+	// max(avgDistMaxDeltaAbsoluteSec, ancienne_valeur * avgDistMaxDeltaRelative)
+	// en un seul cycle. Le max des deux évite qu'un temps de préparation très
+	// court (ex: 20s) soit verrouillé par un pourcentage dérisoire en
+	// secondes absolues.
+	avgDistMaxDeltaRelative    = 0.25 // ±25 % de l'ancienne valeur
+	avgDistMaxDeltaAbsoluteSec = 60   // ±60s plancher
 )
 
 type distributionItem struct {
@@ -40,12 +60,17 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 	type merchantCapacity struct {
 		id       string
 		capacity int64
+		previous sql.NullInt64 // valeur actuelle en base, si déjà calculée
 	}
 
+	// LEFT JOIN average_distribution_time : récupère la valeur précédente en
+	// même temps que la liste des marchands, sans requête supplémentaire —
+	// nécessaire au lissage par confiance (avgDistConfidenceK).
 	merchantsQuery := `
-		SELECT mp.merchant_id, mp.concurrent_preparation_capacity
+		SELECT mp.merchant_id, mp.concurrent_preparation_capacity, adt.distribution_time
 		FROM merchant m
-		INNER JOIN merchant_parameters mp ON mp.merchant_id = ` + tskMerchantJoinCast()
+		INNER JOIN merchant_parameters mp ON mp.merchant_id = ` + tskMerchantJoinCast() + `
+		LEFT JOIN average_distribution_time adt ON adt.merchant_id = mp.merchant_id`
 
 	rows, err := db.QueryContext(ctx, merchantsQuery)
 	if err != nil {
@@ -56,12 +81,12 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 	var merchants []merchantCapacity
 	for rows.Next() {
 		var id string
-		var capacity sql.NullInt64
-		if err := rows.Scan(&id, &capacity); err != nil {
+		var capacity, previous sql.NullInt64
+		if err := rows.Scan(&id, &capacity, &previous); err != nil {
 			tm.logError("[CRON] UpdateAverageDistributionTime: scan marchand échoué", zap.Error(err))
 			continue
 		}
-		merchants = append(merchants, merchantCapacity{id: id, capacity: capacity.Int64})
+		merchants = append(merchants, merchantCapacity{id: id, capacity: capacity.Int64, previous: previous})
 	}
 	if err := rows.Err(); err != nil {
 		tm.logError("[CRON] UpdateAverageDistributionTime: itération marchands interrompue", zap.Error(err))
@@ -86,11 +111,13 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 			continue // pas assez de données, la valeur précédente reste en place
 		}
 
+		smoothedTime := smoothDistributionTime(m.previous, avgTime, items)
+
 		upsertQuery := `
 			INSERT INTO average_distribution_time (merchant_id, distribution_time)
 			VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE distribution_time = ?`
-		upsertArgs := []interface{}{m.id, avgTime, avgTime}
+		upsertArgs := []interface{}{m.id, smoothedTime, smoothedTime}
 		if dbx.ActiveDialect() == dbx.Postgres {
 			// Pas de syntaxe commune pour l'upsert (ON DUPLICATE KEY UPDATE vs
 			// ON CONFLICT) : average_distribution_time.merchant_id est la PK,
@@ -99,7 +126,7 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 			INSERT INTO average_distribution_time (merchant_id, distribution_time)
 			VALUES (?, ?)
 			ON CONFLICT (merchant_id) DO UPDATE SET distribution_time = EXCLUDED.distribution_time`
-			upsertArgs = []interface{}{m.id, avgTime}
+			upsertArgs = []interface{}{m.id, smoothedTime}
 		}
 		if _, err := db.ExecContext(ctx, upsertQuery, upsertArgs...); err != nil {
 			tm.logError("[CRON] UpdateAverageDistributionTime: upsert échoué",
@@ -110,7 +137,9 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 
 		tm.logInfo("[CRON] UpdateAverageDistributionTime: marchand mis à jour",
 			zap.String("merchant_id", m.id),
-			zap.Int64("distribution_time_s", avgTime),
+			zap.Int64("distribution_time_s", smoothedTime),
+			zap.Int64("distribution_time_brut_s", avgTime),
+			zap.Int64("distribution_time_precedent_s", m.previous.Int64),
 			zap.Int64("capacite", m.capacity),
 			zap.Int("items", items))
 	}
@@ -238,4 +267,36 @@ func simulateAverageDistributionTime(items []distributionItem, capacity int) (in
 	}
 
 	return avgTime, totalItemsProcessed
+}
+
+// smoothDistributionTime pondère la moyenne brute d'un cycle de CRON
+// (rawAvgTime, calculée sur `items` échantillons) par la valeur précédente
+// stockée en base (previous), puis plafonne la variation autorisée en un
+// seul cycle (avgDistMaxDeltaRelative / avgDistMaxDeltaAbsoluteSec).
+//
+// Si previous n'existe pas encore (tout premier calcul du marchand), la
+// valeur brute est retournée telle quelle : il n'y a rien à lisser ni à
+// plafonner sans historique.
+//
+// rawAvgTime est déjà borné à [avgDistFloorSec, avgDistCeilSec] par
+// simulateAverageDistributionTime, et previous l'était lors de son propre
+// calcul : une moyenne pondérée des deux, ensuite resserrée par le
+// plafonnement, reste donc toujours dans ces bornes sans reclamp explicite.
+func smoothDistributionTime(previous sql.NullInt64, rawAvgTime int64, items int) int64 {
+	if !previous.Valid {
+		return rawAvgTime
+	}
+	old := previous.Int64
+
+	alpha := float64(items) / (float64(items) + avgDistConfidenceK)
+	smoothed := int64(math.Round(float64(old)*(1-alpha) + float64(rawAvgTime)*alpha))
+
+	maxDelta := int64(math.Round(math.Max(avgDistMaxDeltaAbsoluteSec, float64(old)*avgDistMaxDeltaRelative)))
+	if smoothed > old+maxDelta {
+		smoothed = old + maxDelta
+	} else if smoothed < old-maxDelta {
+		smoothed = old - maxDelta
+	}
+
+	return smoothed
 }
