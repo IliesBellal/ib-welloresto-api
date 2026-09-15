@@ -1693,7 +1693,15 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = err.Error()
 	}
 
-	logger.FromContext(context.Background()).Warn("error " + strconv.Itoa(status) + " " + module + "." + fnName + ": " + errorMsg + " - " + errorStatus)
+	// The client only ever sees errorMsg/errorStatus (canned, safe to expose).
+	// The server log additionally carries err.Error() when it differs — e.g. a
+	// sentinel wrapped with fmt.Errorf("%w: which field", ErrInvalidInput) —
+	// so we can tell which validation failed without leaking that detail to callers.
+	logMsg := "error " + strconv.Itoa(status) + " " + module + "." + fnName + ": " + errorMsg + " - " + errorStatus
+	if detail := err.Error(); detail != errorStatus {
+		logMsg += " (" + detail + ")"
+	}
+	logger.FromContext(context.Background()).Warn(logMsg)
 
 	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "message": errorMsg, "error": errorMsg})
 }

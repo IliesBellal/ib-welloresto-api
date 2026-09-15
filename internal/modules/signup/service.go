@@ -99,7 +99,7 @@ func (s *Service) CreateContext(ctx context.Context, clientIP string, req Create
 
 	quote, err := s.pricingService.ResolveCheapestPlan(ctx, req.Cart)
 	if err != nil {
-		return CreateContextResponse{}, models.ErrInvalidInput
+		return CreateContextResponse{}, fmt.Errorf("%w: cart pricing failed: %v", models.ErrInvalidInput, err)
 	}
 
 	// recommended_channel: no business rule for self_serve vs assisted was
@@ -159,7 +159,7 @@ func (s *Service) Signup(ctx context.Context, req SignupRequest) (SignupResponse
 	case "google":
 		return s.signupGoogle(ctx, req)
 	default:
-		return SignupResponse{}, models.ErrInvalidInput
+		return SignupResponse{}, fmt.Errorf("%w: unsupported identity.provider %q", models.ErrInvalidInput, req.Identity.Provider)
 	}
 }
 
@@ -180,7 +180,7 @@ func (s *Service) signupPassword(ctx context.Context, req SignupRequest) (Signup
 	firstName := strings.TrimSpace(req.Identity.FirstName)
 	lastName := strings.TrimSpace(req.Identity.LastName)
 	if email == "" || firstName == "" || lastName == "" {
-		return SignupResponse{}, models.ErrInvalidInput
+		return SignupResponse{}, fmt.Errorf("%w: identity.email, identity.first_name and identity.last_name are required", models.ErrInvalidInput)
 	}
 	if err := helpers.ValidatePassword(req.Identity.Password); err != nil {
 		return SignupResponse{}, err
@@ -238,7 +238,7 @@ func (s *Service) signupGoogle(ctx context.Context, req SignupRequest) (SignupRe
 	firstName := strings.TrimSpace(req.Identity.FirstName)
 	lastName := strings.TrimSpace(req.Identity.LastName)
 	if email == "" || firstName == "" || lastName == "" {
-		return SignupResponse{}, models.ErrInvalidInput
+		return SignupResponse{}, fmt.Errorf("%w: email (from google claims), identity.first_name and identity.last_name are required", models.ErrInvalidInput)
 	}
 
 	preset, siret, err := s.validateSharedFields(ctx, req)
@@ -275,10 +275,10 @@ func (s *Service) validateSharedFields(ctx context.Context, req SignupRequest) (
 	}
 	presetCode := strings.TrimSpace(req.PresetCode)
 	if presetCode == "" {
-		return nil, "", models.ErrInvalidInput
+		return nil, "", fmt.Errorf("%w: preset_code is required", models.ErrInvalidInput)
 	}
 	if strings.TrimSpace(req.Merchant.FullName) == "" || strings.TrimSpace(req.Merchant.Tel) == "" {
-		return nil, "", models.ErrInvalidInput
+		return nil, "", fmt.Errorf("%w: merchant.full_name and merchant.tel are required", models.ErrInvalidInput)
 	}
 
 	// SIRET already attached to another merchant: refuse without revealing
