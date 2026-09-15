@@ -192,18 +192,137 @@ vide). Suite complète (`webhook/stripe`/`billing`/`subscriptions`/`dunning`/
 de formatage JSON sans rapport) échoue, préexistant, aucun fichier de ce
 paquet touché ici.
 
-**Statut à la clôture de cette session : F3 vert pour `setup_intent.succeeded`
-(vérifié en conditions réelles, avec le code alors déployé). Le correctif du
-bug n°2 (`resolveInvoiceMerchantID`) n'a PAS encore été revérifié en
-conditions réelles contre un webhook `invoice.*` livré au serveur déployé —
-il vit dans cette session locale, pas encore redéployé au moment d'écrire
-ces lignes**, de même que le correctif du préfixe `/v1/` (F1) et le mandat
-non-actif (F2, déjà revérifié en local uniquement contre staging Postgres,
-pas via un webhook réel puisque F2 ne dépend d'aucun webhook). Prochaine
-étape avant de clore F4 : redéployer, puis rejouer une dernière fois le
-cycle de facturation réel bout en bout pour confirmer que
-`current_period_end`/`ClearDunning`/`HandlePaymentFailed` se déclenchent
-bien via le VRAI webhook cette fois.
+**F3 — VERT, confirmé après redéploiement.** L'utilisateur a redéployé le lot
+B (correctifs F1/F2/F3 inclus) sur staging. Cycle de facturation réel rejoué
+intégralement contre le serveur staging désormais à jour (marchand 961,
+nettoyé) :
+- `setup_intent.succeeded` : livré (`pending_webhooks` 1→0),
+  `activation_state=LIVE`, `sepa_mandates_count=1`,
+  `subscriptions.status=active`, `stripe_subscription_id` renseigné.
+- `invoice.created` : livré (`pending_webhooks=0`), **et cette fois
+  `subscriptions.current_period_end` est bien mis à jour**
+  (`2026-09-14 23:31:26 +0200`, conforme au `period_end` réel de la facture)
+  — la preuve directe que le correctif `resolveInvoiceMerchantID` fonctionne
+  contre un vrai webhook HTTP livré par Stripe au serveur déployé, pas
+  seulement en test d'intégration local.
+- Facture réglée en temps réel (mandat SEPA test, règlement asynchrone
+  résolu en quelques minutes, pas de Test Clock avancée pour ce prélèvement) ;
+  `invoice.paid` livré (`pending_webhooks=0`).
+
+Nettoyage Stripe (Test Clock supprimée, cascade Customer/Subscription/
+factures/moyen de paiement) et base (merchant 961 et lignes associées)
+effectué. Outil jetable `cmd/f3_webhook_verify` supprimé du dépôt après ce
+run — son rôle s'arrête ici, il n'a jamais été destiné à être committé.
+
+**Restent ouverts pour un lot ultérieur (signalés, pas corrigés ici, hors
+périmètre strict de F3)** :
+1. Idempotence de `HandleSetupIntentSucceeded` sur un webhook rejoué
+   (`CreateMandate` peut dupliquer une ligne `sepa_mandates` si un rejeu
+   survient après elle mais avant la fin du handler — trouvé en marge,
+   détail plus haut).
+2. La vérification "en conditions réelles contre un marchand `suspended`
+   authentifié" du correctif de préfixe `/v1/` (F1) n'a pas été rejouée via
+   une vraie requête HTTP suspendue — seul le test unitaire pur
+   (`isSuspendedReadOnlyExempt`) et l'inspection directe des routes montées
+   ont confirmé la correspondance de chemin. Recommandé avant production :
+   un marchand de test réellement `suspended` frappant une route exemptée et
+   une route non-exemptée.
+
+---
+
+### LOT B F4 — Bilan de fermeture (2026-09-14)
+
+**Fonctionnellement complet au sens du document (§7) : oui**, pour le
+mécanisme décrit — dérogations (§7.1), aperçu de changement, mandat SEPA
+(§7.4/§11.5.4), abonnement Stripe récurrent, cascade d'impayé et effets de
+suspension (§7.5/§7.6), bandeau, prix de remplacement à échéance. Après
+F1-F3, ce n'est plus seulement vérifié en tests d'intégration : le mandat
+SEPA, l'abonnement récurrent et la facturation réelle ont chacun été
+confirmés au moins une fois de bout en bout contre la vraie API Stripe test
+ET le vrai webhook HTTP livré au serveur staging déployé.
+
+**Limite fonctionnelle réelle, pas une approximation : la facturation
+annuelle (`billing_cycle='annual'`) n'a AUCUN abonnement Stripe récurrent
+réel possible aujourd'hui** — `ResolveStripeLineItems` la refuse
+explicitement (`ErrAnnualStripeSubscriptionNotSupported`, B2c-0) faute de
+correspondance Stripe pour la règle "×10 mois" du B1c. Un marchand annuel
+n'a donc aucune des mécaniques B2 (mandat → abonnement → factures → cascade)
+qui fonctionne réellement pour lui tant que ce n'est pas traité séparément.
+
+**Approximations assumées, listées explicitement (pas des oublis)** :
+1. **P2 — "propriétaire"** reste approximé par `users_rights.admin=TRUE` le
+   plus ancien. Cas observé (`user_id=2`, 4 marchands) cohérent avec un
+   compte plateforme/support, jamais confirmé comme une vraie franchise —
+   jamais tranché autrement (B1d).
+2. **Prorata de changement de composition** (B1e) : mois nominal 30 jours
+   tant que `current_period_end` est `NULL` (marchand sans mandat réel).
+3. **Comparaison pack vs à la carte (§7.7)** : deux conventions annuelles
+   distinctes et non réconciliées (`pricing_catalog.annual_price_cents` vs
+   règle "×10" de ce module) — la comparaison tourne toujours en mensuel
+   pour éviter de les mélanger, jamais unifiée.
+4. **Révocation d'une dérogation** (B1d) ne défait jamais l'effet
+   (`*_enabled`/`override_price_cents`/`max_kiosks` non restaurés) — remise
+   en état manuelle par le staff, aucune valeur "avant" tracée.
+5. **`expires_at`/`trial_ends_at`** : chevauchement conceptuel non unifié,
+   décision explicite (F1) de reporter au lot C.
+6. **`marketplaces`** comme cible de dérogation `module` : rejeté
+   (`ErrOverrideTargetUnsupported`, aucune colonne `*_enabled` dédiée),
+   jamais résolu autrement.
+7. **Idempotence de `HandleSetupIntentSucceeded`** sur un webhook rejoué :
+   peut dupliquer une ligne `sepa_mandates` (trouvé en marge de F3, non
+   corrigé, signalé pour le lot C).
+8. **Mutualisation de Customer Stripe** (B2a-1) : le mécanisme existe et est
+   couvert par des tests service/repository (`fakeStripe`), mais n'a jamais
+   été exercé de bout en bout avec deux vrais marchands partageant un
+   customer réel et chacun sa propre Subscription Stripe.
+9. **Mélange live/test mode signalé sans être corrigé** :
+   `packages.stripe_price_id` (l'ancien mécanisme, `packages.id=1`) pointe
+   vers un objet Stripe en **mode LIVE** alors que ce dépôt tourne en test —
+   sans rapport direct avec `pricing_catalog.stripe_price_id` (le nouveau
+   mécanisme, B2c-0, sain), mais un signal de données de staging à nettoyer.
+10. **Correctif de préfixe `/v1/`** (F1/F3) : revérifié par test unitaire et
+    inspection directe des routes montées, jamais rejoué via une vraie
+    requête HTTP contre un marchand `suspended` authentifié — recommandé
+    avant production.
+
+**Templates Brevo manquants qui bloquent le CONTENU des emails (logique déjà
+vérifiée, seul le rendu Brevo manque)** :
+- `trial_expiry_reminder.html` (B2c-1, rappels J-7/J-1)
+- `dunning_first_notice.html`, `dunning_second_notice.html`,
+  `dunning_weekly_reminder.html`, `dunning_final_notice.html` (B2b-1, cascade
+  d'impayé)
+
+Aucun outil de ce dépôt ne peut les créer côté Brevo — provisionnement
+externe requis avant qu'un envoi réel produise un contenu non vide.
+
+**Migrations LOT B appliquées à staging, vérifiées en direct sur le schéma
+(pas seulement supposées depuis `migrations/todo/`, voir
+[[project_migrations_todo_done_unreliable]])** — les 8 confirmées présentes
+(`to_regclass`/`information_schema` interrogés directement, 2026-09-14) :
+
+| # | Fichier | Objet vérifié en direct |
+|---|---|---|
+| 137 | `subscription_items` | table présente |
+| 138 | `users_platform_staff` | `users.is_platform_staff` présente |
+| 139 | `subscription_overrides` | table présente |
+| 140 | `platform_billing_customers` | table présente |
+| 141 | `sepa_mandates` | table présente |
+| 142 | `subscription_dunning` | table présente |
+| 143 | `pricing_catalog_stripe_price_id` | `pricing_catalog.stripe_price_id` présente |
+| 144 | `subscription_overrides_trial` | `subscription_overrides.trial_ends_at` présente |
+
+Toutes additives (`CREATE TABLE`/`ADD COLUMN IF NOT EXISTS`), rien à
+retirer ; c'est la liste exacte à rejouer en production le moment venu, dans
+cet ordre (dépendances : 139 avant 144 ; 140 avant 141).
+
+**État réel des données à date (staging, 2026-09-14, hors données de test
+créées et nettoyées par cette session)** : `users.is_platform_staff=true`
+→ **0 compte** (les endpoints `/admin/overrides` restent inutilisables par
+quiconque tant qu'un `UPDATE` manuel n'a pas été fait, question ouverte
+depuis B1d jamais résolue) ; `subscription_overrides`, `sepa_mandates`,
+`platform_billing_customers`, `subscription_dunning` → **0 ligne réelle**.
+Tout le lot B a été vérifié par des marchands de test créés et nettoyés à
+chaque chantier — aucun marchand réel n'a encore traversé ce mécanisme.
 
 ---
 
