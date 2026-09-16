@@ -101,6 +101,23 @@ func (s *NotificationService) BroadcastToMerchant(merchantID string, payload map
 	return s.hub.BroadcastToMerchant(merchantID, payloadJSON)
 }
 
+// SendToKiosk envoie payload UNIQUEMENT à la borne kioskID (pas de broadcast
+// merchant-wide) — pour des events sensibles ciblés sur un device précis (ex.
+// terminal_payment_update, voir docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md), là
+// où BroadcastToMerchant enverrait aussi à toutes les autres bornes/POS/
+// back-office du merchant. Retourne false si aucun hub ou aucune connexion
+// active pour cette borne.
+func (s *NotificationService) SendToKiosk(merchantID, kioskID string, payload map[string]interface{}) bool {
+	if s.hub == nil {
+		return false
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	return s.hub.SendToKiosk(merchantID, kioskID, payloadJSON)
+}
+
 // CloseKioskConnection ferme immédiatement la connexion WebSocket active
 // d'une borne (si elle est connectée à /ws-kiosk) avec le code 1008 (policy
 // violation) — utilisé à la révocation pour ne pas attendre l'expiration

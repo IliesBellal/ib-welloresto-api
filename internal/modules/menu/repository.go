@@ -4477,6 +4477,200 @@ func (r *MenuRepository) SyncProductComponents(ctx context.Context, merchantID, 
 	return nil
 }
 
+// getOrCreateRecipeID renvoie la recette du produit, en la créant si le
+// produit n'en a pas encore (même logique que le début de
+// SyncProductComponents, factorisée pour être réutilisée par les actions de
+// groupe ci-dessous).
+func (r *MenuRepository) getOrCreateRecipeID(ctx context.Context, merchantID, productID string) (int64, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var recipeID int64
+	err := db.QueryRowContext(ctx,
+		`SELECT recipe_id FROM recipes WHERE product_id = ? LIMIT 1`,
+		productID,
+	).Scan(&recipeID)
+	if err == sql.ErrNoRows {
+		recipeID, err = db.InsertReturningID(ctx,
+			`INSERT INTO recipes (product_id, merchant_id) VALUES (?, ?)`,
+			"recipe_id",
+			productID, merchantID,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create recipe: %w", err)
+		}
+		return recipeID, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to query recipe: %w", err)
+	}
+	return recipeID, nil
+}
+
+// insertRequireRow ajoute une ligne de composition (même coercition d'IDs et
+// mêmes défauts de canaux que SyncProductComponents, factorisée pour être
+// réutilisée par les actions de groupe ci-dessous).
+func (r *MenuRepository) insertRequireRow(ctx context.Context, recipeID int64, comp ProductComponentUpdate) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	componentID := comp.ComponentID
+	if !menuNumericID(componentID) {
+		componentID = "0"
+	}
+	unitID := comp.UnitID
+	if !menuNumericID(unitID) {
+		unitID = "0"
+	}
+	inOrders := true
+	if comp.InOrders != nil {
+		inOrders = *comp.InOrders
+	}
+	takeAwayOrders := true
+	if comp.TakeAwayOrders != nil {
+		takeAwayOrders = *comp.TakeAwayOrders
+	}
+	deliveryOrders := true
+	if comp.DeliveryOrders != nil {
+		deliveryOrders = *comp.DeliveryOrders
+	}
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO requires
+		 (recipe_id, component_id, quantity, unit_of_measure, in_orders, take_away_orders, delivery_orders, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
+		recipeID, componentID, comp.Quantity, unitID, inOrders, takeAwayOrders, deliveryOrders,
+	)
+	return err
+}
+
+// bulkOwnedProductIDsCheck refuse l'opération entière dès qu'un des IDs fournis
+// n'appartient pas au marchand, plutôt que d'en traiter une partie — même
+// garde que bulkUpdateProductAttributesTx.
+func (r *MenuRepository) bulkOwnedProductIDsCheck(ctx context.Context, merchantID string, productIDs []string) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	inClause, idArgs := bulkProductPlaceholders(productIDs)
+	args := make([]interface{}, 0, len(idArgs)+1)
+	args = append(args, merchantID)
+	args = append(args, idArgs...)
+
+	var owned int
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(1) FROM products WHERE merchant_id = ? AND product_id IN (%s)`, inClause),
+		args...,
+	).Scan(&owned); err != nil {
+		return err
+	}
+	if owned != len(productIDs) {
+		return models.ErrForbidden
+	}
+	return nil
+}
+
+// BulkSetProductsComponents remplace la composition (ingrédients) de plusieurs
+// produits par la même liste, un produit à la fois (reset complet de la
+// recette puis insertion). Même sémantique que BulkUpdateProductAttributes :
+// une liste vide retire tous les ingrédients des produits ciblés.
+func (r *MenuRepository) BulkSetProductsComponents(ctx context.Context, merchantID string, productIDs []string, components []ProductComponentUpdate) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		if err := r.bulkOwnedProductIDsCheck(txCtx, merchantID, productIDs); err != nil {
+			return err
+		}
+
+		db := dbx.GetDB(txCtx, r.database)
+		for _, productID := range productIDs {
+			recipeID, err := r.getOrCreateRecipeID(txCtx, merchantID, productID)
+			if err != nil {
+				return err
+			}
+			if _, err := db.ExecContext(txCtx, `DELETE FROM requires WHERE recipe_id = ?`, recipeID); err != nil {
+				return fmt.Errorf("failed to delete old requires: %w", err)
+			}
+			for _, comp := range components {
+				if err := r.insertRequireRow(txCtx, recipeID, comp); err != nil {
+					return fmt.Errorf("failed to insert component requirement: %w", err)
+				}
+			}
+		}
+
+		_ = r.setMenuUpdated(txCtx, merchantID)
+		return nil
+	})
+}
+
+// BulkAddComponentToProducts ajoute un ingrédient (avec sa quantité et son
+// unité) à plusieurs produits sans toucher au reste de leur composition
+// (additif, miroir de BulkAssignAttribute). Si un produit a déjà cet
+// ingrédient dans sa recette, sa quantité/unité est mise à jour plutôt que
+// dupliquée — la table `requires` n'a pas de contrainte d'unicité sur
+// (recipe_id, component_id) qui permettrait un ON CONFLICT.
+func (r *MenuRepository) BulkAddComponentToProducts(ctx context.Context, merchantID string, productIDs []string, component ProductComponentUpdate) error {
+	if len(productIDs) == 0 {
+		return fmt.Errorf("product_ids list cannot be empty")
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	var compCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM components WHERE component_id = ? AND merchant_id = ? AND enabled = TRUE`,
+		component.ComponentID, merchantID,
+	).Scan(&compCount); err != nil {
+		return fmt.Errorf("failed to validate component_id: %w", err)
+	}
+	if compCount == 0 {
+		return fmt.Errorf("component '%s' does not exist or is disabled", component.ComponentID)
+	}
+
+	componentID := component.ComponentID
+	if !menuNumericID(componentID) {
+		componentID = "0"
+	}
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		if err := r.bulkOwnedProductIDsCheck(txCtx, merchantID, productIDs); err != nil {
+			return err
+		}
+
+		db := dbx.GetDB(txCtx, r.database)
+		for _, productID := range productIDs {
+			recipeID, err := r.getOrCreateRecipeID(txCtx, merchantID, productID)
+			if err != nil {
+				return err
+			}
+
+			var existingID int64
+			err = db.QueryRowContext(txCtx,
+				`SELECT id FROM requires WHERE recipe_id = ? AND component_id = ? AND enabled = TRUE LIMIT 1`,
+				recipeID, componentID,
+			).Scan(&existingID)
+			switch {
+			case err == sql.ErrNoRows:
+				if err := r.insertRequireRow(txCtx, recipeID, component); err != nil {
+					return fmt.Errorf("failed to insert component requirement: %w", err)
+				}
+			case err != nil:
+				return fmt.Errorf("failed to look up existing requirement: %w", err)
+			default:
+				unitID := component.UnitID
+				if !menuNumericID(unitID) {
+					unitID = "0"
+				}
+				if _, err := db.ExecContext(txCtx,
+					`UPDATE requires SET quantity = ?, unit_of_measure = ? WHERE id = ?`,
+					component.Quantity, unitID, existingID,
+				); err != nil {
+					return fmt.Errorf("failed to update component requirement: %w", err)
+				}
+			}
+		}
+
+		_ = r.setMenuUpdated(txCtx, merchantID)
+		return nil
+	})
+}
+
 func (r *MenuRepository) GetProductImageURL(ctx context.Context, merchantID, productID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 

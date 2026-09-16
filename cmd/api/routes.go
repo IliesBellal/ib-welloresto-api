@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
@@ -47,9 +48,9 @@ import (
 	customersModule "welloresto-api/internal/modules/customers"
 	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
-	dunningModule "welloresto-api/internal/modules/dunning"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	discountsModule "welloresto-api/internal/modules/discounts"
+	dunningModule "welloresto-api/internal/modules/dunning"
 	haccpModule "welloresto-api/internal/modules/haccp"
 	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
@@ -430,6 +431,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		selectedDB,
 		billingService,
 		dunningService,
+		terminalService,
 	)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
@@ -491,6 +493,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- Merchant presets (LOT A Semaine 2, Chantier 5) ----
 	presetsRepo := presetsModule.NewRepository(selectedDB)
 	presetsService := presetsModule.NewService(presetsRepo, menuRepoLegacy, locationsRepo)
+	// presetsH — LOT B chantier 2 : seul endpoint public de ce module, pour
+	// suggested_modules (chantier 4b). N'utilise que le repo, pas
+	// presetsService (ApplyPreset), qui reste interne à l'inscription.
+	presetsH := presetsModule.NewHandler(presetsRepo)
 
 	// ---- Onboarding tasks (LOT A Semaine 2, Chantier 6c ; auto-completion LOT A
 	// Semaine 3, Chantier 13) ----
@@ -574,6 +580,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		DeviceRefreshTokenTTLDays: cfg.Kiosk.DeviceRefreshTokenTTLDays,
 		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
 		Pepper:                    cfg.Kiosk.Pepper,
+		// Gate de l'endpoint dev POST /kiosk/terminal/test/present-payment-method
+		// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — jamais actif avec une
+		// clé Stripe live.
+		StripeTestMode: strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
 	kioskService.SetOnboardingService(onboardingService)
@@ -701,6 +711,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/signup-context", signupH.CreateSignupContext)
 			r.Get("/signup-context/{token}", signupH.GetSignupContext)
 			r.Post("/companies/resolve", companiesH.Resolve)
+			// LOT B chantier 2 : suggested_modules pour l'écran de sélection
+			// de modules du tunnel d'inscription (chantier 4b) — avant tout
+			// compte, comme le reste de ce groupe.
+			r.Get("/presets/{code}/suggested-modules", presetsH.GetSuggestedModules)
 		})
 
 		r.Route("/auth", func(r chi.Router) {
@@ -1159,6 +1173,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Patch("/products/bulk/components", menuH.BulkSetProductsComponents) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/products/bulk/delete", menuH.BulkDeleteProducts) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Patch("/products/bulk/tags", menuH.BulkSetProductsTags) // used by: back-office
@@ -1175,6 +1191,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 				Post("/tags/assign", menuH.BulkAssignTag)
 			r.With(middleware.RequirePermission(permission.CatalogManage)).
 				Post("/attributes/assign", menuH.BulkAssignAttribute)
+			r.With(middleware.RequirePermission(permission.CatalogManage)).
+				Post("/components/assign", menuH.BulkAddComponentToProducts)
 		})
 
 		// --- Plateformes externes ---
@@ -1591,6 +1609,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Use(notSuspendedMiddleware)
 		r.Use(middleware.RequirePermission(permission.SettingsManage))
 
+		r.Get("/current", subscriptionsH.GetCurrent)
 		r.Get("/preview", subscriptionsH.PreviewChange)
 		r.Post("/items", subscriptionsH.ApplyItems)
 	})
@@ -1604,6 +1623,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Post("/sepa/setup", billingHandler.CreateSepaSetup)
 		r.Post("/retry-now", dunningHandler.RetryNow)
+		r.Post("/portal", billingHandler.CreateBillingPortalSession)
 	})
 
 	// --- DELIVERY SESSIONS ---
@@ -1863,10 +1883,22 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/orders/{order_id}/switch-to-counter-payment", kioskHandler.SwitchToCounterPayment)
 			r.Post("/status/unavailable", kioskHandler.ReportUnavailable)
 
-			// Paiement carte (Stripe Terminal)
+			// Paiement carte (Stripe Terminal) — DEPRECATED, SDK-driven,
+			// conservé jusqu'à bascule de l'app kiosk vers le modèle
+			// server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 			r.Post("/terminal/connection-token", kioskHandler.TerminalConnectionToken)
 			r.Post("/terminal/payment-intent", kioskHandler.TerminalCreatePaymentIntent)
 			r.Post("/terminal/payment-intent/{payment_intent_id}/cancel", kioskHandler.TerminalCancelPaymentIntent)
+
+			// Paiement carte server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md)
+			r.Get("/terminal/readers", kioskHandler.TerminalListReaders)
+			r.Put("/terminal/reader", kioskHandler.TerminalPairReader)
+			r.Delete("/terminal/reader", kioskHandler.TerminalUnpairReader)
+			r.Get("/terminal/reader", kioskHandler.TerminalGetPairedReader)
+			r.Post("/terminal/payment", kioskHandler.TerminalProcessPayment)
+			r.Post("/terminal/payment/cancel", kioskHandler.TerminalCancelPayment)
+			r.Get("/terminal/payment/status", kioskHandler.TerminalGetPaymentStatus)
+			r.Post("/terminal/test/present-payment-method", kioskHandler.TerminalPresentTestPaymentMethod)
 		})
 	})
 

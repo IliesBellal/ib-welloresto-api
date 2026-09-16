@@ -48,6 +48,7 @@ type fakeStripe struct {
 	createSubCalls int
 	nextSubN       int
 	syncSubCalls   []string
+	portalSessionCalls []string
 }
 
 func newFakeStripe() *fakeStripe {
@@ -96,6 +97,12 @@ func (f *fakeStripe) CreateSubscription(customerID, paymentMethodID string, line
 func (f *fakeStripe) SyncSubscriptionItems(subscriptionID string, lines []stripeclient.RecurringLineItem) error {
 	f.syncSubCalls = append(f.syncSubCalls, subscriptionID)
 	return nil
+}
+
+// CreateBillingPortalSession — chantier 2's stripeBillingClient addition.
+func (f *fakeStripe) CreateBillingPortalSession(customerID, returnURL string) (*stripe.BillingPortalSession, error) {
+	f.portalSessionCalls = append(f.portalSessionCalls, customerID)
+	return &stripe.BillingPortalSession{ID: "bps_fake_1", URL: "https://billing.stripe.com/session/fake"}, nil
 }
 
 // seedBillingMerchant inserts a minimal merchant row (activation_state
@@ -150,6 +157,31 @@ func TestResolveOrCreateBillingCustomer_FirstSubscription_Postgres(t *testing.T)
 	}
 	if stored == nil || !stored.IsPrimaryForMerchant || stored.StripeCustomerID != "cus_fake_1" {
 		t.Fatalf("GetBillingCustomer = %+v, want a primary row for cus_fake_1", stored)
+	}
+}
+
+// TestCreateBillingPortalSession_Postgres — chantier 2's invoice/billing-
+// history gap: resolves (lazily creating, same as CreateSepaSetup) a
+// billing Customer, then returns the fake portal session's URL. Asserts the
+// Customer id passed to Stripe is the one just created, not a stray empty
+// string.
+func TestCreateBillingPortalSession_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	merchantID := seedBillingMerchant(t, db, "portal")
+
+	fake := newFakeStripe()
+	svc := NewService(NewRepository(db), fake, newTestSubscriptionsService(db))
+
+	url, err := svc.CreateBillingPortalSession(ctx, merchantID, "https://back-office.example.com/settings/billing")
+	if err != nil {
+		t.Fatalf("CreateBillingPortalSession: %v", err)
+	}
+	if url != "https://billing.stripe.com/session/fake" {
+		t.Fatalf("url = %q, want the fake session URL", url)
+	}
+	if len(fake.portalSessionCalls) != 1 || fake.portalSessionCalls[0] != "cus_fake_1" {
+		t.Fatalf("portalSessionCalls = %v, want exactly one call for cus_fake_1", fake.portalSessionCalls)
 	}
 }
 

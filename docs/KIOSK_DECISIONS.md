@@ -4097,3 +4097,397 @@ candidats), heartbeat récent (silencieux, PIN ignoré même absent), heartbeat
 complète avec assertions sur la séquence transactionnelle
 Begin/Exec×3/Commit). `go build ./...` et `go test
 ./internal/modules/kiosk/...` verts.
+
+## Sécurisation du webhook Terminal en vue du passage server-driven (2026-09-16)
+
+Session déclenchée par `wello-kiosk/docs/AUDIT_STRIPE_TERMINAL.md` §8, points
+4/8/9 (audit lecture seule du 2026-09-16, non re-cité en détail ici). Le
+paiement carte Kiosk va migrer vers le modèle server-driven Stripe Terminal
+(§10 de cet audit : le backend appellera directement
+`process_payment_intent`, le webhook `payment_intent.succeeded` devenant la
+**seule** source de vérité pour confirmer une commande — plus de fallback sur
+un statut local avancé côté app). Trois défauts devaient être corrigés avant
+d'aller plus loin sur ce chantier : idempotence par event Stripe (point 4 de
+l'audit, dans sa formulation initiale : « le webhook doit être sûr et
+idempotent »), guard par PaymentIntent (point 4 : « guard par commande, pas
+par PaymentIntent »), et règle « un seul PaymentIntent actif par commande »
+(prérequis pour que le guard précédent ait un sens).
+
+### 1. Idempotence par event Stripe (`stripe_webhook_events`)
+
+Nouvelle table (migration `145_stripe_webhook_events`) : `event_id` (clé
+Stripe `evt_...`, PK), `event_type`, `processed_at`. `StripeWebhookService.
+ProcessEvent` (point d'entrée unique du endpoint `/webhooks/stripe`, tous
+types d'event confondus — pas seulement Terminal) insère la ligne **avant**
+tout dispatch (`INSERT ... ON CONFLICT (event_id) DO NOTHING`, syntaxe
+Postgres uniquement — seul dialecte vivant, voir CLAUDE.md) :
+- 0 ligne insérée (déjà présente) → event rejoué, `ProcessEvent` retourne
+  `nil` (200) sans jamais appeler le handler du type d'event.
+- 1 ligne insérée → dispatch normal (`dispatchEvent`, l'ancien corps du
+  switch, renommé). Si le handler retourne une erreur, la ligne est
+  **retirée** (`DeleteProcessedEvent`) avant de faire remonter l'erreur :
+  Stripe répondra par un retry automatique (delivery différente, même
+  `event.ID`) sur la prochaine tentative, qui doit pouvoir reprocesser
+  réellement plutôt que de rester bloquée derrière une marque "déjà traité"
+  posée par un essai qui a en réalité échoué (DB down, etc.).
+- `event.ID == ""` (essentiellement les tests qui construisent un
+  `StripeEvent` à la main sans ID) : aucune déduplication possible, dispatch
+  direct — pas de régression sur les tests existants qui appelaient déjà les
+  `Handle*` publics directement.
+
+Portée volontairement généralisée à **tous** les types d'event (pas
+seulement Terminal) : il n'y a qu'un seul point d'entrée webhook Stripe dans
+ce projet, et l'idempotence par event.ID est une propriété générale d'un
+webhook fiable, pas spécifique au canal Kiosk.
+
+### 2. Guard par PaymentIntent dans `handleTerminalPaymentSucceeded`
+
+Le guard historique (`ConfirmKioskCardPayment`, `WHERE brand_status =
+'PENDING_CARD_PAYMENT'`) est par **commande**, pas par **PaymentIntent** — un
+second PaymentIntent Terminal pour la même commande (créé par un retry Kiosk
+après un timeout jamais annulé côté serveur, bug déjà documenté §7.2 de
+l'audit, incident réel commande 33348 ci-dessus dans ce document) qui
+recevrait lui aussi `payment_intent.succeeded` **après** que le premier ait
+déjà confirmé la commande ne matchait aucune ligne et disparaissait dans un
+simple `Warn` — aucune alerte, aucun flag, risque de double-encaissement
+silencieux.
+
+Nouveau comportement : toute la section (lookup + confirmation) est
+verrouillée par transaction avec `SELECT ... FOR UPDATE` sur la ligne
+`orders` (`Repository.LockOrderForUpdate`), pour sérialiser deux deliveries
+concurrentes pour la même commande. À l'intérieur :
+1. `GetCapturedPaymentIntentForOrder(merchantID, orderID)` résout le
+   PaymentIntent déjà marqué `CAPTURED` pour cette commande, s'il existe.
+2. Si un PI capturé existe et diffère du PI reçu → **pas** de
+   `ConfirmKioskCardPayment` (la commande n'est jamais retouchée une seconde
+   fois), `log.Error` explicite (grep-able : `possible double charge,
+   flagging pi=... for manual refund review`), et le PI reçu est marqué
+   `payment_intent_status = 'TO_REFUND'` (réutilisation de la colonne
+   existante, `varchar(30)` sans contrainte `CHECK` — pas de nouvelle
+   colonne/migration pour ce point). **Aucun remboursement automatique**,
+   conformément au brief — `TO_REFUND` est un statut exploitable
+   manuellement en back-office (aucun écran ne le lit encore côté produit ;
+   à faire dans un chantier séparé si le besoin se confirme).
+3. Sinon (même PI que le capturé, ou aucun PI capturé encore) → comportement
+   inchangé (`ConfirmKioskCardPayment`, guard `brand_status` existant, qui
+   reste la protection contre un replay du **même** PI).
+
+`GetActivePaymentIntentForOrder` (utilisée par la règle 3 ci-dessous) exclut
+désormais aussi `TO_REFUND` de l'ensemble "actif", au même titre que
+`CANCELED`/`FAILED`/`CAPTURED`.
+
+### 3. Un seul PaymentIntent actif par commande (`CreateTerminalPaymentIntent`)
+
+Avant de créer un PaymentIntent, `CreateTerminalPaymentIntent` interroge
+désormais `GetActivePaymentIntentForOrder` puis, si trouvé, **relit le statut
+réel côté Stripe** (`PaymentIntents.Get`) plutôt que de se fier au statut
+local — `stripe_payments.payment_intent_status` est une catégorie grossière
+(`REQUIRES_CONFIRMATION` par défaut jusqu'au premier webhook reçu, ne
+distingue pas `requires_payment_method` de `requires_confirmation` ni de
+`processing`). Nouvelle méthode `resolveExistingPaymentIntent` :
+
+| Statut Stripe réel | Comportement |
+|---|---|
+| `requires_payment_method` / `requires_confirmation` / `requires_action` | **Réutilisé** — renvoyé tel quel (même `client_secret`/`payment_intent_id`), aucun nouveau PI Stripe créé. |
+| `succeeded` | **Refusé**, `409` (`ErrTerminalPaymentIntentConflict` → `models.ErrKioskTerminalPaymentConflict` → `kiosk_terminal_payment_conflict`). Statut local resynchronisé en `CAPTURED` au passage. |
+| `processing` / `requires_capture` | **Refusé**, même 409 — extension délibérée au-delà du brief (qui ne mentionnait explicitement que `succeeded`) : une confirmation est déjà en vol côté Stripe (ou en attente de capture, cas normalement jamais atteint en `capture_method: automatic`), créer un second PI ici recréerait exactement le risque de double PI actif que cette règle doit éliminer. `requires_capture` n'est en pratique jamais observé avec la config actuelle — traité par prudence, pas par nécessité connue. |
+| `canceled` | Ni réutilisé ni refusé — statut local resynchronisé en `CANCELED`, un nouveau PaymentIntent est créé normalement (comportement historique). |
+
+Clé d'idempotence Stripe (nouvelle, absente avant cette session) :
+`kiosk_terminal_pi_{order_id}_attempt_{n}`, où `n` = `CountPaymentIntentAttemptsForOrder`
+(nombre de lignes `stripe_payments` déjà créées pour cette commande, toutes
+statuts confondus) + 1. Protège contre un retry réseau du même appel HTTP
+(borne qui rejoue la requête après un timeout côté client, avant d'avoir vu
+la réponse) : Stripe renverra alors le PaymentIntent déjà créé pour cette
+tentative au lieu d'en créer un second. Ne protège **pas** contre deux appels
+HTTP concurrents et distincts sur la même commande (pas de verrou côté
+`CreateTerminalPaymentIntent` équivalent au `FOR UPDATE` ajouté côté
+webhook) — risque résiduel accepté pour cette session : `TerminalService`
+est volontairement découplé de tout accès DB direct (paramétré par les
+interfaces `TerminalAccountStore`/`TerminalPaymentStore`, voir commentaire de
+package), et le double-tap client est déjà mitigé par un flag widget
+(`_isSubmitting`, déjà documenté ailleurs dans ce fichier comme protection
+non garantie côté serveur). À revisiter si un incident réel l'exige.
+
+### Tests
+
+`internal/webhook/stripe/postgres_integration_test.go` (tag
+`postgres_integration`) : `GetCapturedPaymentIntentForOrder`,
+`LockOrderForUpdate` (commande existante + no-op silencieux sur commande
+inconnue), `MarkEventProcessed`/`DeleteProcessedEvent` au niveau repository,
+`ProcessEvent` bout en bout (rejeu du même `event.ID` avec deux payloads
+`account.updated` différents — le second payload est vérifié comme **jamais
+appliqué**), et `TestHandleTerminalPaymentSucceeded_DuplicatePaymentIntent_Postgres`
+qui reproduit exactement le scénario double-PI (premier `CAPTURED`, second
+reçoit `payment_intent.succeeded`) et vérifie `TO_REFUND` + `brand_status`
+non retouché.
+
+`internal/infrastructure/stripe/postgres_integration_test.go` :
+`CountPaymentIntentAttemptsForOrder` (comptage, incrément après un second
+`CreateMapping`, isolation par merchant via la jointure `orders`).
+
+Pas de test unitaire pour `resolveExistingPaymentIntent`/la création
+Stripe elle-même : cohérent avec l'existant, ce package n'a jamais mocké
+l'API Stripe (`t.sm.client` est le client concret `stripe-go`, pas une
+interface) — seule la couche SQL (`TerminalPaymentStore`) est testée contre
+Postgres, comme avant cette session.
+
+Migration `145_stripe_webhook_events` appliquée sur staging et tests
+`-tags postgres_integration` exécutés contre staging (`POSTGRES_URL`
+pointé sur `RENDER_STAGING_DATABASE_URL`) : `TestStripeRepository_Postgres`,
+`TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres`,
+`TestHandleTerminalPaymentSucceeded_DuplicatePaymentIntent_Postgres` et
+`TestTerminalPaymentStore_Postgres` verts. `go build ./...` et `go vet ./...`
+verts (les seuls messages `go vet` restants — `auth.AuthService`/`mutex`
+copy, `ubereats/client` unreachable code — sont préexistants, sans lien avec
+cette session). `go test ./...` (hors intégration) vert à l'exception de
+`internal/modules/planning/...` et `internal/modules/ubereats` — échecs
+préexistants, fichiers non touchés par cette session (working tree déjà
+modifié sur d'autres chantiers avant cette session, voir `git status`).
+
+## Migration server-driven du paiement carte Kiosk (2026-09-16)
+
+Chantier déclenché par `wello-kiosk/docs/AUDIT_STRIPE_TERMINAL.md` §10, qui
+évaluait un passage du paiement carte Kiosk (lecteur S700) du modèle
+SDK-driven actuel (l'app pilote le SDK Terminal en local) vers un modèle où
+le backend pilote directement le lecteur via l'API Stripe. **Terminologie
+corrigée en cours de session** : ce modèle s'appelle **server-driven**, pas
+« Handoff » (Handoff — « Apps on Devices » — désigne le SDK Terminal tournant
+directement sur l'Android embarqué du S700 lui-même, un mécanisme distinct).
+Stripe recommande officiellement l'intégration server-driven (API Stripe,
+sans SDK Terminal) pour le Stripe Reader S700 précisément — l'inconnue
+matérielle relevée dans l'audit (« à valider que le S700 supporte ce mode »)
+est donc levée : c'est le mode recommandé par Stripe pour ce matériel exact,
+pas une option parmi d'autres.
+
+Le contrat d'API de référence est **`docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md`**
+(créé en amont de l'implémentation, mis à jour au fil de la session à chaque
+amendement — toujours la source de vérité en cas de divergence avec ce
+document). Décisions actées non rediscutées : appairage lié à l'enrollment de
+la borne (colonnes `kiosks.stripe_reader_id`/`stripe_reader_label`/
+`stripe_reader_serial`, migration `146_kiosks_terminal_reader`), pas au
+merchant — un nouvel enrollment/reclaim n'a jamais de TPE appairé, appairage
+manuel obligatoire ; un seul PaymentIntent actif par commande, réutilisé à
+chaque tentative (déjà en place, chantier précédent — voir plus haut,
+« Sécurisation du webhook Terminal… ») ; webhooks = source de vérité.
+
+**Hors scope explicite de cette session** : la vérification de signature
+webhook (`StripeWebhookService.VerifySignature`, toujours un stub vide,
+jamais appelée) est traitée par une autre session — ni `VerifySignature`, ni
+`http_handler.go`, ni la partie « secret de signature » de
+`NewStripeWebhookService` n'ont été touchés ici (son nouveau paramètre
+`terminal *stripeclient.TerminalService`, lui, est bien de ce chantier — voir
+plus bas).
+
+### 1. Fonction unique de normalisation (`internal/infrastructure/stripe/terminal_status.go`)
+
+`NormalizePaymentStatus` implémente, dans un ordre de priorité strict (la
+première règle qui matche gagne), la table de normalisation du contrat — un
+seul endroit dans tout le backend qui décide `waiting_for_card`/`processing`/
+`succeeded`/`failed`/`canceled`, réutilisé par le polling (`GetPaymentStatus`)
+**et** par le recalcul avant push webhook (§4). Principe directeur explicite,
+posé après plusieurs itérations avec l'utilisateur : **dans le doute,
+`"processing"`, jamais `"failed"`** — un faux `"failed"` inviterait le client
+à relancer un paiement peut-être déjà en cours (risque financier), un faux
+`"processing"` ne coûte qu'une itération de polling de plus. Concrètement :
+un état Stripe inattendu (`requires_confirmation`/`requires_action` sans
+action reader en cours) retombe sur `"processing"`, pas sur un `"failed"`
+générique comme un premier jet l'avait fait avant amendement.
+
+Premier vrai test unitaire (`terminal_status_test.go`, sans tag
+`postgres_integration`, sans appel Stripe ni DB) de ce package — jusqu'ici
+uniquement couvert par des tests `postgres_integration` contre la couche SQL.
+Couvre les 8 branches, y compris les priorités croisées explicitement
+demandées : `canceled` prime sur une action `in_progress` simultanée ; une
+action `succeeded` sur un PI pas encore `succeeded` (fenêtre transitoire)
+retombe sur `"processing"` ; un retry en cours (`last_payment_error` encore
+présent **et** action `in_progress` sur ce PI) retombe sur
+`"waiting_for_card"`, l'action fraîche l'emportant sur l'erreur périmée.
+
+### 2. Verrou consultatif Postgres + règle de commit (`internal/infrastructure/stripe/terminal.go`)
+
+`TerminalPaymentStore.WithOrderLock` (`pg_advisory_xact_lock(hashtext(order_id))`,
+scopé à la transaction, auto-libéré au commit/rollback) ferme le gap de
+concurrence déjà consigné dans ce document (« concurrent
+`CreateTerminalPaymentIntent` calls for the same order aren't locked ») :
+`resolveOrCreatePaymentIntentLocked` (résolution/réutilisation du PI) et,
+pour le flux server-driven, tout `ProcessPaymentIntentOnReader` (résolution +
+dispatch reader) tournent désormais sous ce verrou. Tout appel Stripe fait
+sous ce verrou est borné à 10 s (`stripeCallTimeout`) — un Stripe lent ne doit
+jamais laisser une transaction Postgres ouverte indéfiniment.
+
+**Règle de commit, critique** : une erreur survenue pendant le dispatch
+(vérification pré-dispatch ou l'appel `ProcessPaymentIntent` Stripe
+lui-même) ne fait **jamais** rollback de la résolution du PaymentIntent ni de
+l'écriture `kiosk_id` — seules les erreurs de résolution du PI (avant tout
+contact avec le reader) déclenchent un vrai rollback. Implémentation : une
+variable `dispatchErr` est capturée par la closure verrouillée, qui retourne
+toujours `nil` (donc commit) même quand `dispatchErr != nil` ; l'erreur n'est
+renvoyée par `ProcessPaymentIntentOnReader` qu'après le commit. Sans cette
+règle, un PaymentIntent tout juste créé/résolu côté Stripe (donc bien réel)
+perdrait son mapping DB si le dispatch échouait juste après, devenant
+orphelin.
+
+**Correctif retry découvert en concevant le dispatch** : `GetActivePaymentIntentForOrder`
+excluait jusqu'ici `'FAILED'` de l'ensemble « actif ». Or le contrat exige
+« Retry après failed : `POST /payment` sur le même `order_id` → même PI
+réutilisé » — un PI local `FAILED` (webhook `payment_intent.payment_failed`
+déjà reçu, ex. carte refusée) reste généralement `requires_payment_method`
+côté Stripe, donc réutilisable. Seuls `CANCELED`/`CAPTURED`/`TO_REFUND`
+excluent désormais. `resolveExistingPaymentIntent` revérifie de toute façon
+le statut réel côté Stripe avant réutilisation, donc ce correctif n'affaiblit
+aucune garantie déjà en place — et il corrige au passage
+`CancelActivePaymentIntentForOrder`, qui annulera désormais aussi ce genre de
+PI au lieu de le laisser orphelin.
+
+### 3. Dispatch server-driven (`ProcessPaymentIntentOnReader`)
+
+Avant tout dispatch, dans le même verrou : `SetKioskIDForPaymentIntent`
+(bloquant — le webhook ne peut résoudre le kiosk à notifier que via cette
+colonne, donc elle doit être posée de façon fiable **avant** que Stripe ne
+commence à travailler le PI) puis `MarkPaymentIntentStatus(..., "REQUIRES_CONFIRMATION")`
+(best-effort — corrige un statut local `FAILED` d'une tentative précédente
+sur ce PI réutilisé). Puis vérification pré-dispatch de l'état live du
+reader : une action déjà `in_progress` sur **ce** PI → no-op idempotent
+(protège contre un tap dupliqué ou un retry client sans la même
+`Idempotency-Key`, ex. après redémarrage d'app) ; une action `in_progress`
+sur un **autre** PI (commande abandonnée puis relancée) → annulation
+d'abord, `kiosk_terminal_reader_busy` si cette annulation échoue plutôt que
+de risquer deux actions concurrentes sur le même reader physique.
+
+Idempotency key Stripe = `kiosk_terminal_process_{payment_intent_id}_{clientIdempotencyKey}`,
+`clientIdempotencyKey` venant du header HTTP `Idempotency-Key` (contrat :
+« UUID par tap », même convention que `CreateKioskOrder`). Volontairement
+**pas** basée sur le compteur de tentatives de création (`CountPaymentIntentAttemptsForOrder`,
+utilisé pour la clé de *création* du PI) : un PI réutilisé ne l'incrémente
+jamais, donc plusieurs dispatches réels et distincts vers le reader
+calculeraient sinon la même clé et Stripe rejouerait la réponse en cache du
+premier au lieu de redispatcher réellement.
+
+### 4. Webhooks — recalcul avant push, jamais le statut brut de l'event
+
+`StripeWebhookService` gagne un champ `terminal *stripeclient.TerminalService`
+(nouveau paramètre de `NewStripeWebhookService`, `terminalService` déjà
+construit avant dans `cmd/api/routes.go`) — utilisé pour le recalcul
+ci-dessous, un besoin distinct du chantier de signature webhook (hors
+scope).
+
+Un seul event WebSocket, `terminal_payment_update`, poussé **ciblé** sur la
+borne concernée via `Hub.SendToKiosk`/`NotificationService.SendToKiosk`
+(nouveau, miroir de `CloseKioskConnections` — écrit sur `client.send` au lieu
+de fermer la connexion) plutôt qu'un `BroadcastToMerchant` qui atteindrait
+aussi les autres bornes/POS/back-office du merchant. `kioskID` est résolu via
+`stripe_payments.kiosk_id` (posé au dispatch, §3) — **aucun lookup
+reader→kiosk n'est nécessaire pour cette direction**.
+
+**Règle de recalcul (amendement explicite, cœur du chantier §4)** : pour tout
+event autre que `payment_intent.succeeded` (`terminal.reader.action_failed`,
+`payment_intent.payment_failed`, `payment_intent.canceled`), le serveur ne
+pousse **jamais** le statut construit directement depuis l'event — il
+**recalcule** via `TerminalService.GetPaymentStatus` (même chemin que le
+polling `GET /payment/status`, résolvant le reader appairé via
+`GetReaderIDForKiosk`, nouvelle méthode repository, lookup dans l'autre sens)
+et pousse ce résultat recalculé. Si le recalcul échoue, rien n'est poussé
+(log `Warn`, le polling client prend le relais). Raison : un event d'échec
+peut arriver **après** qu'un retry sur le même PaymentIntent réutilisé ait
+déjà relancé une action reader — la règle 4 de normalisation (action
+`in_progress` → `waiting_for_card`) doit alors l'emporter sur l'échec,
+désormais périmé, que cet event à lui seul semblerait signaler. Seul
+`payment_intent.succeeded` pousse directement (`pushTerminalPaymentUpdateDirect`) :
+à cet instant précis, le statut local qui vient d'être posé par la
+transaction qui vient de commit est déjà la source de vérité, pas besoin de
+recalculer.
+
+`handleTerminalPaymentSucceeded` restructuré, ordre strict imposé
+explicitement : (1) relecture du PI avec `Expand: latest_charge` **avant** la
+transaction, best-effort (échec → log `Warn`, `cardDetails = nil`, la
+confirmation continue normalement, jamais bloquant) ; (2) `SetTerminalCardDetails`
+**dans** la transaction si les données sont disponibles ; (3) push **après**
+le commit, jamais pendant. Les 5 colonnes carte (`stripe_payments.card_brand/
+card_last4/card_application_preferred_name/card_dedicated_file_name/
+card_authorization_code`, migration 146) sont extraites de
+`pi.LatestCharge.PaymentMethodDetails.CardPresent`. Duplication délibérée de
+la petite fonction d'extraction entre `internal/infrastructure/stripe`
+(v84) et `internal/webhook/stripe` (v78) — ces deux packages sont sur des
+versions différentes du SDK Stripe (contrainte déjà connue du dépôt, pas
+nouvelle), donc pas de type partagé possible sans faire traverser un type
+stripe-go d'une version à l'autre entre eux.
+
+### 5. Annulation — jamais toucher un PI dont l'état réel est incertain
+
+`CancelTerminalPayment` (kiosk.Service) : `CancelReaderAction` d'abord (Get
+live du reader — si aucune action `in_progress`, aucun appel Stripe, retourne
+`nil`, rien à annuler). **Si cette annulation échoue pour une autre raison**
+(amendement explicite), le PaymentIntent n'est **jamais** touché ensuite —
+on ne sait plus avec certitude s'il a abouti entre-temps. Seulement si
+l'annulation a réussi (ou n'avait rien à annuler) : `CancelPaymentIntentIfCancelable`,
+qui n'annule que si le statut réel n'est ni `succeeded`, ni `processing`, ni
+`requires_capture` (les trois exclus explicitement). Retour systématique de
+l'état **réel** via `GetPaymentStatus`, jamais un état présumé.
+
+### 6. Reclaim / révocation — nettoyage obligatoire de l'appairage
+
+Vérifié en lisant le flux existant : `ReclaimDevice` et `RevokeKiosk`
+réutilisent tous deux la ligne `kiosks` existante (jamais de nouvelle ligne
+créée). Les deux transactions gagnent un appel `ClearKioskReader`. **Pas
+cosmétique** : sans ça, l'index unique partiel `uq_kiosks_stripe_reader_id`
+(migration 146, un reader ne peut être appairé qu'à un seul kiosk à la fois)
+bloquerait définitivement le ré-appairage d'un reader physique après une
+révocation — la ligne révoquée garderait `stripe_reader_id` non `NULL`
+indéfiniment. Testé (`revoke_test.go`, nouveau ; `reclaim_test.go` étendu) via
+`sqlmock`, assertion sur l'`ExpectExec` du `UPDATE kiosks SET stripe_reader_id
+= NULL...` à la bonne position dans la séquence transactionnelle.
+
+### 7. Endpoint dev — `POST /kiosk/terminal/test/present-payment-method`
+
+Gate `StripeTestMode` (`kiosk.Config`, calculé une fois dans
+`cmd/api/routes.go` : `strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_")`
+— amendement explicite pour couvrir aussi les clés restreintes de test) →
+404 `kiosk_terminal_test_helper_unavailable` sinon, avant tout appel Stripe.
+Cartes de test confirmées dans la doc API Stripe (endpoint
+`present_payment_method`, champ `card_present.number`) :
+`4242424242424242` (succès), `4000000000000002` (refus générique) — voir
+[docs.stripe.com/testing](https://docs.stripe.com/testing) et
+[docs.stripe.com/api/terminal/readers/present_payment_method](https://docs.stripe.com/api/terminal/readers/present_payment_method).
+Scénario timeout non couvert par cet endpoint (pas de troisième `outcome`
+dans le contrat) : s'exerce nativement via `/payment/cancel` sans présenter
+de carte.
+
+### 8. Point opérationnel Dashboard Stripe (hors code)
+
+`terminal.reader.action_succeeded`/`action_failed` doivent être sélectionnés
+sur l'endpoint déjà scopé « Connected accounts » (même endpoint que
+`payment_intent.*`, config déjà notée comme non vérifiable depuis ce dépôt
+dans un audit précédent — voir plus haut dans ce document, section « Diagnostic
+complémentaire — events Stripe Connect »).
+
+### Tests
+
+- `internal/infrastructure/stripe/terminal_status_test.go` — unitaire pur
+  (§1).
+- `internal/infrastructure/stripe/postgres_integration_test.go` — étendu :
+  `GetLatestPaymentIntentRecordForOrder`, `SetKioskIDForPaymentIntent`,
+  `GetTerminalLocationID`, extension de `GetActivePaymentIntentForOrder`
+  (FAILED reste actif), `TestWithOrderLock_SerializesConcurrentCalls_Postgres`
+  (sérialisation réelle vérifiée par deux goroutines concurrentes),
+  `TestWithOrderLock_CommitsWritesEvenWhenFnBodyWouldFailAfter_Postgres`
+  (valide le mécanisme générique dont dépend la règle de commit §2 — pas
+  `ProcessPaymentIntentOnReader` de bout en bout, qui appellerait un vrai
+  reader Stripe, hors de la philosophie de test déjà en place dans ce
+  package).
+- `internal/webhook/stripe/postgres_integration_test.go` — étendu :
+  `TestServerDrivenRepositoryMethods_Postgres` (`GetOrderMerchantKioskForPaymentIntent`,
+  `GetReaderIDForKiosk`, `SetTerminalCardDetails`),
+  `TestHandleTerminalReaderActionFailed_Postgres` (résolution repository,
+  pas le push WS lui-même — pas de hub réel en test).
+- `internal/modules/kiosk/reclaim_test.go` (étendu) + `revoke_test.go`
+  (nouveau) — `ClearKioskReader` dans la transaction, `sqlmock`.
+- Tous les tests `postgres_integration` ci-dessus exécutés contre staging
+  (`RENDER_STAGING_DATABASE_URL`) après application de la migration 146.
+
+**Non exécuté dans cette session** : le protocole de test manuel avec reader
+simulé Stripe réel (§7, scénarios succès/carte refusée via un merchant de
+staging effectivement configuré — compte connecté + `terminal_location_id` +
+reader appairé) nécessite un merchant de staging déjà préparé avec ces
+prérequis, non disponible dans cette session. À exécuter avant bascule
+définitive de l'app kiosk vers ce flux.

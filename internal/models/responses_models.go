@@ -450,6 +450,25 @@ var (
 	ErrKioskOrderNotCardPending   = errors.New("kiosk_order_not_card_pending")
 	ErrKioskAmountMismatch        = errors.New("kiosk_amount_mismatch")
 	ErrKioskTerminalNotConfigured = errors.New("kiosk_terminal_not_configured")
+	// ErrKioskTerminalPaymentConflict : un PaymentIntent existant de cette
+	// commande a déjà réussi, ou est en cours de confirmation côté Stripe —
+	// règle "un seul PaymentIntent actif par commande" (audit
+	// wello-kiosk/docs/AUDIT_STRIPE_TERMINAL.md §8 point 4, voir
+	// docs/KIOSK_DECISIONS.md). La borne doit relire le statut de la commande
+	// plutôt que retenter une création.
+	ErrKioskTerminalPaymentConflict = errors.New("kiosk_terminal_payment_conflict")
+
+	// Erreurs du module Kiosk — paiement carte server-driven
+	// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md), toutes préfixées kiosk_terminal_.
+	ErrKioskTerminalLocationNotConfigured  = errors.New("kiosk_terminal_location_not_configured")
+	ErrKioskTerminalReaderNotFound         = errors.New("kiosk_terminal_reader_not_found")
+	ErrKioskTerminalReaderLocationMismatch = errors.New("kiosk_terminal_reader_location_mismatch")
+	ErrKioskTerminalReaderNotPaired        = errors.New("kiosk_terminal_reader_not_paired")
+	ErrKioskTerminalReaderOffline          = errors.New("kiosk_terminal_reader_offline")
+	ErrKioskTerminalReaderBusy             = errors.New("kiosk_terminal_reader_busy")
+	ErrKioskTerminalReaderAlreadyPaired    = errors.New("kiosk_terminal_reader_already_paired")
+	ErrKioskTerminalPaymentNotFound        = errors.New("kiosk_terminal_payment_not_found")
+	ErrKioskTerminalTestHelperUnavailable  = errors.New("kiosk_terminal_test_helper_unavailable")
 
 	// Erreurs de l'envoi de facture par email
 	ErrInvoiceInvalidEmail       = errors.New("invoice_invalid_email")
@@ -1439,6 +1458,56 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusFailedDependency
 		errorStatus = "kiosk_terminal_not_configured"
 		errorMsg = "No Stripe connected account is configured for this merchant."
+
+	case errors.Is(err, ErrKioskTerminalPaymentConflict):
+		status = http.StatusConflict
+		errorStatus = "kiosk_terminal_payment_conflict"
+		errorMsg = "A payment intent for this order has already succeeded or is being confirmed. Re-check the order status instead of retrying."
+
+	case errors.Is(err, ErrKioskTerminalLocationNotConfigured):
+		status = http.StatusFailedDependency
+		errorStatus = "kiosk_terminal_location_not_configured"
+		errorMsg = "No Stripe Terminal location is configured for this merchant."
+
+	case errors.Is(err, ErrKioskTerminalReaderNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_terminal_reader_not_found"
+		errorMsg = "This reader does not exist on the merchant's connected Stripe account."
+
+	case errors.Is(err, ErrKioskTerminalReaderLocationMismatch):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_terminal_reader_location_mismatch"
+		errorMsg = "This reader belongs to a different Stripe Terminal location."
+
+	case errors.Is(err, ErrKioskTerminalReaderNotPaired):
+		status = http.StatusFailedDependency
+		errorStatus = "kiosk_terminal_reader_not_paired"
+		errorMsg = "No card reader is paired with this kiosk. Pair one via PUT /kiosk/terminal/reader."
+
+	case errors.Is(err, ErrKioskTerminalReaderOffline):
+		status = http.StatusFailedDependency
+		errorStatus = "kiosk_terminal_reader_offline"
+		errorMsg = "The paired card reader is offline or unreachable."
+
+	case errors.Is(err, ErrKioskTerminalReaderBusy):
+		status = http.StatusConflict
+		errorStatus = "kiosk_terminal_reader_busy"
+		errorMsg = "The card reader is busy with another action."
+
+	case errors.Is(err, ErrKioskTerminalReaderAlreadyPaired):
+		status = http.StatusConflict
+		errorStatus = "kiosk_terminal_reader_already_paired"
+		errorMsg = "This reader is already paired with another kiosk."
+
+	case errors.Is(err, ErrKioskTerminalPaymentNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_terminal_payment_not_found"
+		errorMsg = "No payment intent exists yet for this order. Call POST /kiosk/terminal/payment first."
+
+	case errors.Is(err, ErrKioskTerminalTestHelperUnavailable):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_terminal_test_helper_unavailable"
+		errorMsg = "This endpoint is only available when Stripe is configured with a test-mode API key."
 
 	case errors.Is(err, ErrInvoiceInvalidEmail):
 		status = http.StatusBadRequest

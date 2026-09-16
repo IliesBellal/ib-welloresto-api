@@ -508,6 +508,9 @@ func (h *Handler) ConfirmCounterPayment(w http.ResponseWriter, r *http.Request) 
 // /pos/terminal/* réutilisera le même service sans duplication).
 
 // TerminalConnectionToken handles POST /kiosk/terminal/connection-token.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 func (h *Handler) TerminalConnectionToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -529,6 +532,9 @@ func (h *Handler) TerminalConnectionToken(w http.ResponseWriter, r *http.Request
 }
 
 // TerminalCreatePaymentIntent handles POST /kiosk/terminal/payment-intent.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 func (h *Handler) TerminalCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -560,6 +566,9 @@ func (h *Handler) TerminalCreatePaymentIntent(w http.ResponseWriter, r *http.Req
 }
 
 // TerminalCancelPaymentIntent handles POST /kiosk/terminal/payment-intent/{payment_intent_id}/cancel.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 func (h *Handler) TerminalCancelPaymentIntent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -583,6 +592,219 @@ func (h *Handler) TerminalCancelPaymentIntent(w http.ResponseWriter, r *http.Req
 	}
 
 	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_cancel_payment_intent", map[string]string{"status": "cancelled"})
+}
+
+// ---- Paiement carte server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) ----
+
+// TerminalListReaders handles GET /kiosk/terminal/readers.
+func (h *Handler) TerminalListReaders(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_list_readers", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	resp, err := h.service.ListTerminalReaders(ctx, *authenticatedKiosk)
+	if err != nil {
+		log.Warn("kiosk terminal list readers failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_list_readers", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_list_readers", resp)
+}
+
+// TerminalPairReader handles PUT /kiosk/terminal/reader.
+func (h *Handler) TerminalPairReader(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_pair_reader", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req PairTerminalReaderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_pair_reader", models.ErrInvalidRequestBody)
+		return
+	}
+	if req.ReaderID == "" {
+		models.SendErrorJSON(w, "kiosk", "terminal_pair_reader", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.PairTerminalReader(ctx, *authenticatedKiosk, req.ReaderID)
+	if err != nil {
+		log.Warn("kiosk terminal pair reader failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_pair_reader", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_pair_reader", resp)
+}
+
+// TerminalUnpairReader handles DELETE /kiosk/terminal/reader.
+func (h *Handler) TerminalUnpairReader(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_unpair_reader", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	if err := h.service.UnpairTerminalReader(ctx, *authenticatedKiosk); err != nil {
+		log.Warn("kiosk terminal unpair reader failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_unpair_reader", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TerminalGetPairedReader handles GET /kiosk/terminal/reader.
+func (h *Handler) TerminalGetPairedReader(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_get_paired_reader", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	resp, err := h.service.GetPairedTerminalReader(ctx, *authenticatedKiosk)
+	if err != nil {
+		log.Warn("kiosk terminal get paired reader failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_get_paired_reader", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_get_paired_reader", resp)
+}
+
+// TerminalProcessPayment handles POST /kiosk/terminal/payment. La clé
+// d'idempotence (contrat : « UUID par tap ») est lue depuis le header HTTP
+// Idempotency-Key, pas depuis le body — même convention que CreateKioskOrder.
+func (h *Handler) TerminalProcessPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_process_payment", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req ProcessTerminalPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_process_payment", models.ErrInvalidRequestBody)
+		return
+	}
+	if req.OrderID == "" {
+		models.SendErrorJSON(w, "kiosk", "terminal_process_payment", models.ErrMissingResourceID)
+		return
+	}
+
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+
+	resp, err := h.service.ProcessTerminalPayment(ctx, *authenticatedKiosk, req.OrderID, idempotencyKey)
+	if err != nil {
+		log.Warn("kiosk terminal process payment failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_process_payment", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_process_payment", resp)
+}
+
+// TerminalCancelPayment handles POST /kiosk/terminal/payment/cancel.
+func (h *Handler) TerminalCancelPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_cancel_payment", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req CancelTerminalPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_cancel_payment", models.ErrInvalidRequestBody)
+		return
+	}
+	if req.OrderID == "" {
+		models.SendErrorJSON(w, "kiosk", "terminal_cancel_payment", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.CancelTerminalPayment(ctx, *authenticatedKiosk, req.OrderID)
+	if err != nil {
+		log.Warn("kiosk terminal cancel payment failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_cancel_payment", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_cancel_payment", resp)
+}
+
+// TerminalGetPaymentStatus handles GET /kiosk/terminal/payment/status?order_id=.
+func (h *Handler) TerminalGetPaymentStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_get_payment_status", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	orderID := r.URL.Query().Get("order_id")
+	if orderID == "" {
+		models.SendErrorJSON(w, "kiosk", "terminal_get_payment_status", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.GetTerminalPaymentStatus(ctx, *authenticatedKiosk, orderID)
+	if err != nil {
+		log.Warn("kiosk terminal get payment status failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_get_payment_status", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_get_payment_status", resp)
+}
+
+// TerminalPresentTestPaymentMethod handles
+// POST /kiosk/terminal/test/present-payment-method — dev uniquement, voir
+// Service.PresentTestPaymentMethod.
+func (h *Handler) TerminalPresentTestPaymentMethod(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_test_present_payment_method", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req PresentTestPaymentMethodRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "terminal_test_present_payment_method", models.ErrInvalidRequestBody)
+		return
+	}
+	if req.OrderID == "" {
+		models.SendErrorJSON(w, "kiosk", "terminal_test_present_payment_method", models.ErrMissingResourceID)
+		return
+	}
+
+	resp, err := h.service.PresentTestPaymentMethod(ctx, *authenticatedKiosk, req.OrderID, req.Outcome)
+	if err != nil {
+		log.Warn("kiosk terminal test present payment method failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "terminal_test_present_payment_method", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "kiosk", "terminal_test_present_payment_method", resp)
 }
 
 // SwitchToCounterPayment handles POST /kiosk/orders/{order_id}/switch-to-counter-payment.

@@ -16,4 +16,10 @@ type Config struct {
 	// security.HashPIN). Retombe sur PIN_PEPPER si KIOSK_TOKEN_PEPPER n'est
 	// pas défini (voir internal/config/kiosk.go).
 	Pepper string
+	// StripeTestMode gate l'endpoint dev POST /kiosk/terminal/test/present-payment-method
+	// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — calculé une fois dans
+	// cmd/api/routes.go depuis cfg.Stripe.APIKey (préfixe sk_test_/rk_test_),
+	// jamais lu directement ici pour ne pas importer internal/config (voir
+	// commentaire de ce fichier).
+	StripeTestMode bool
 }

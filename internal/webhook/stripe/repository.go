@@ -3,6 +3,7 @@ package stripe
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"welloresto-api/internal/database/dbx"
@@ -26,6 +27,34 @@ type Repository interface {
 	// 'PENDING_CARD_PAYMENT' : idempotent si le webhook est rejoué après une
 	// transition déjà effectuée. Retourne true si une ligne a été modifiée.
 	ConfirmKioskCardPayment(cdb context.Context, merchantID, orderID string) (bool, error)
+	// LockOrderForUpdate verrouille (FOR UPDATE) la ligne orders le temps de
+	// la transaction englobante — sérialise deux payment_intent.succeeded
+	// concurrents pour la même commande (guard par PaymentIntent, voir
+	// StripeWebhookService.handleTerminalPaymentSucceeded et
+	// docs/KIOSK_DECISIONS.md).
+	LockOrderForUpdate(cdb context.Context, merchantID, orderID string) error
+	// GetCapturedPaymentIntentForOrder retourne le payment_intent_id le plus
+	// récent marqué CAPTURED pour cette commande, s'il existe. Utilisé par le
+	// guard par PaymentIntent : distingue un replay légitime (même PI) d'un
+	// second PaymentIntent qui aurait déjà capturé la commande (scénario de
+	// double-encaissement documenté, voir docs/KIOSK_DECISIONS.md).
+	GetCapturedPaymentIntentForOrder(cdb context.Context, merchantID, orderID string) (paymentIntentID string, found bool, err error)
+	// GetOrderMerchantKioskForPaymentIntent résout order_id/merchant_id/kiosk_id
+	// (nullable) à partir d'un payment_intent_id — jointure stripe_payments/orders.
+	// kiosk_id est posé au moment du dispatch reader (voir
+	// stripeclient.TerminalPaymentStore.SetKioskIDForPaymentIntent) : c'est ce
+	// qui permet au webhook de résoudre quelle borne notifier sans passer par
+	// un lookup reader->kiosk (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
+	GetOrderMerchantKioskForPaymentIntent(cdb context.Context, paymentIntentID string) (orderID, merchantID string, kioskID *string, found bool, err error)
+	// GetReaderIDForKiosk résout le reader appairé d'un kiosk
+	// (kiosks.stripe_reader_id) — nécessaire pour recalculer le statut via
+	// stripeclient.TerminalService.GetPaymentStatus avant tout push d'échec
+	// (voir StripeWebhookService.pushTerminalPaymentUpdateRecomputed).
+	GetReaderIDForKiosk(cdb context.Context, kioskID string) (readerID string, found bool, err error)
+	// SetTerminalCardDetails écrit les 5 colonnes carte (brand/last4/receipt)
+	// sur la ligne stripe_payments du PaymentIntent, relues depuis
+	// pi.LatestCharge (expand) à payment_intent.succeeded.
+	SetTerminalCardDetails(cdb context.Context, paymentIntentID, brand, last4, applicationPreferredName, dedicatedFileName, authorizationCode string) error
 	GetOrder(cdb context.Context, orderID string) (*Order, error)
 	GetMerchant(cdb context.Context, merchantID string) (*Merchant, error)
 	GetAutoAcceptSettings(cdb context.Context, orderID, merchantID string) (string, *Merchant, error) // Returns orderType and settings
@@ -59,6 +88,21 @@ type Repository interface {
 	UpdateStripeAccountVerificationStatus(cdb context.Context, accountID, status string) error
 	GetMerchantIDByStripeAccountID(cdb context.Context, accountID string) (string, error)
 	SetScanNOrderActivated(cdb context.Context, merchantID string, activated bool) error
+
+	// Idempotence webhook (stripe_webhook_events, voir
+	// docs/KIOSK_DECISIONS.md) — StripeWebhookService.ProcessEvent est le
+	// point d'entrée unique du endpoint /webhooks/stripe, gardé par ces deux
+	// méthodes avant tout dispatch par type d'event.
+	//
+	// MarkEventProcessed insère event.id. alreadyProcessed=true si la ligne
+	// existait déjà (event rejoué par Stripe) : ProcessEvent doit retourner
+	// nil (200) sans retraiter.
+	MarkEventProcessed(cdb context.Context, eventID, eventType string) (alreadyProcessed bool, err error)
+	// DeleteProcessedEvent retire la marque posée par MarkEventProcessed —
+	// appelée quand le traitement de l'event échoue ensuite, pour qu'un retry
+	// Stripe légitime (delivery différente du même event) puisse reprocesser
+	// plutôt que de rester bloqué derrière un faux "déjà traité".
+	DeleteProcessedEvent(cdb context.Context, eventID string) error
 }
 
 type mysqlRepo struct {
@@ -196,6 +240,89 @@ func (r *mysqlRepo) ConfirmKioskCardPayment(cdb context.Context, merchantID, ord
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+func (r *mysqlRepo) LockOrderForUpdate(cdb context.Context, merchantID, orderID string) error {
+	db := dbx.GetDB(cdb, r.database)
+
+	var discard string
+	err := db.QueryRowContext(cdb, `SELECT order_id FROM orders WHERE order_id = ? AND merchant_id = ? FOR UPDATE`, orderID, merchantID).Scan(&discard)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Commande introuvable pour ce merchant : rien à verrouiller — les
+		// étapes suivantes de la transaction (ConfirmKioskCardPayment, etc.)
+		// échoueront proprement d'elles-mêmes (0 ligne affectée).
+		return nil
+	}
+	return err
+}
+
+func (r *mysqlRepo) GetCapturedPaymentIntentForOrder(cdb context.Context, merchantID, orderID string) (string, bool, error) {
+	db := dbx.GetDB(cdb, r.database)
+	const q = `
+		SELECT sp.payment_intent_id
+		FROM stripe_payments sp
+		INNER JOIN orders o ON o.order_id = sp.order_id
+		WHERE sp.order_id = ? AND o.merchant_id = ?
+		  AND sp.payment_intent_status = 'CAPTURED'
+		ORDER BY sp.id DESC
+		LIMIT 1`
+	var piID string
+	err := db.QueryRowContext(cdb, q, orderID, merchantID).Scan(&piID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return piID, true, nil
+}
+
+func (r *mysqlRepo) GetOrderMerchantKioskForPaymentIntent(cdb context.Context, paymentIntentID string) (string, string, *string, bool, error) {
+	db := dbx.GetDB(cdb, r.database)
+	const q = `
+		SELECT sp.order_id, o.merchant_id, sp.kiosk_id
+		FROM stripe_payments sp
+		INNER JOIN orders o ON o.order_id = sp.order_id
+		WHERE sp.payment_intent_id = ?
+		ORDER BY sp.id DESC
+		LIMIT 1`
+	var orderID, merchantID string
+	var kioskID sql.NullString
+	err := db.QueryRowContext(cdb, q, paymentIntentID).Scan(&orderID, &merchantID, &kioskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil, false, nil
+	}
+	if err != nil {
+		return "", "", nil, false, err
+	}
+	if kioskID.Valid {
+		return orderID, merchantID, &kioskID.String, true, nil
+	}
+	return orderID, merchantID, nil, true, nil
+}
+
+func (r *mysqlRepo) GetReaderIDForKiosk(cdb context.Context, kioskID string) (string, bool, error) {
+	db := dbx.GetDB(cdb, r.database)
+	var readerID sql.NullString
+	err := db.QueryRowContext(cdb, `SELECT stripe_reader_id FROM kiosks WHERE id = ?`, kioskID).Scan(&readerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !readerID.Valid || readerID.String == "" {
+		return "", false, nil
+	}
+	return readerID.String, true, nil
+}
+
+func (r *mysqlRepo) SetTerminalCardDetails(cdb context.Context, paymentIntentID, brand, last4, applicationPreferredName, dedicatedFileName, authorizationCode string) error {
+	db := dbx.GetDB(cdb, r.database)
+	_, err := db.ExecContext(cdb,
+		`UPDATE stripe_payments SET card_brand = ?, card_last4 = ?, card_application_preferred_name = ?, card_dedicated_file_name = ?, card_authorization_code = ? WHERE payment_intent_id = ?`,
+		brand, last4, applicationPreferredName, dedicatedFileName, authorizationCode, paymentIntentID)
+	return err
 }
 
 func (r *mysqlRepo) GetOrder(cdb context.Context, orderID string) (*Order, error) {
@@ -436,5 +563,34 @@ func (r *mysqlRepo) SetScanNOrderActivated(cdb context.Context, merchantID strin
 		`UPDATE scannorder_settings SET activated = ? WHERE merchant_id = ?`,
 		activated, merchantID,
 	)
+	return err
+}
+
+// --- Idempotence webhook (stripe_webhook_events) ---
+
+// MarkEventProcessed — ON CONFLICT DO NOTHING : syntaxe Postgres, seul
+// dialecte vivant (voir CLAUDE.md). alreadyProcessed=true (0 ligne insérée)
+// signifie que ce event.id a déjà une marque, posée par une delivery Stripe
+// antérieure du même event (replay).
+func (r *mysqlRepo) MarkEventProcessed(cdb context.Context, eventID, eventType string) (bool, error) {
+	db := dbx.GetDB(cdb, r.database)
+
+	res, err := db.ExecContext(cdb,
+		`INSERT INTO stripe_webhook_events(event_id, event_type) VALUES (?, ?) ON CONFLICT (event_id) DO NOTHING`,
+		eventID, eventType)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
+func (r *mysqlRepo) DeleteProcessedEvent(cdb context.Context, eventID string) error {
+	db := dbx.GetDB(cdb, r.database)
+
+	_, err := db.ExecContext(cdb, `DELETE FROM stripe_webhook_events WHERE event_id = ?`, eventID)
 	return err
 }

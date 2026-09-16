@@ -2230,6 +2230,93 @@ func (h *MenuHandler) BulkSetProductsAttributes(w http.ResponseWriter, r *http.R
 	})
 }
 
+// BulkSetProductsComponents — PATCH /menu/products/bulk/components
+// Remplace la composition (ingrédients) de plusieurs produits par la liste
+// fournie. Une liste vide retire tous les ingrédients des produits ciblés.
+func (h *MenuHandler) BulkSetProductsComponents(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_set_products_components", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload struct {
+		ProductIDs []string                 `json:"product_ids"`
+		Components []ProductComponentUpdate `json:"components"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_components", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_components", map[string]string{"error": "product_ids_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkSetProductsComponents(ctx, token, payload.ProductIDs, payload.Components); err != nil {
+		log.Error("[ERROR] BulkSetProductsComponents error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_set_products_components", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_set_products_components", map[string]interface{}{
+		"status":  "success",
+		"message": "products_components_updated",
+		"updated": len(payload.ProductIDs),
+	})
+}
+
+// BulkAddComponentToProducts — POST /menu/bulk/components/assign
+// Ajoute un ingrédient (avec sa quantité et son unité) à plusieurs produits
+// sans toucher au reste de leur composition (additif, miroir de
+// BulkAssignAttribute).
+func (h *MenuHandler) BulkAddComponentToProducts(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "menu", "bulk_add_component_to_products", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload struct {
+		ProductIDs []string               `json:"product_ids"`
+		Component  ProductComponentUpdate `json:"component"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_add_component_to_products", map[string]string{"error": "invalid_body"})
+		return
+	}
+	if len(payload.ProductIDs) == 0 {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_add_component_to_products", map[string]string{"error": "product_ids_required"})
+		return
+	}
+	if strings.TrimSpace(payload.Component.ComponentID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_add_component_to_products", map[string]string{"error": "component_id_required"})
+		return
+	}
+	if strings.TrimSpace(payload.Component.UnitID) == "" {
+		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_add_component_to_products", map[string]string{"error": "unit_of_measure_id_required"})
+		return
+	}
+
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	if err := h.service.BulkAddComponentToProducts(ctx, token, payload.ProductIDs, payload.Component); err != nil {
+		log.Error("[ERROR] BulkAddComponentToProducts error: " + err.Error())
+		models.SendErrorJSON(w, "menu", "bulk_add_component_to_products", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "menu", "bulk_add_component_to_products", map[string]interface{}{
+		"status":  "success",
+		"message": "component assigned",
+		"updated": len(payload.ProductIDs),
+	})
+}
+
 // BulkAssignAttribute — POST /menu/bulk/attributes/assign
 // Ajoute un groupe d'options/suppléments à plusieurs produits sans toucher à
 // leurs autres groupes (additif, miroir de BulkAssignAllergen/BulkAssignTag).

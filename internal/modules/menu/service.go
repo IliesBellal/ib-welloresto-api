@@ -542,6 +542,36 @@ func (s *MenuService) BulkSetProductsAttributes(ctx context.Context, token strin
 	return nil
 }
 
+// BulkSetProductsComponents remplace la composition (ingrédients) de plusieurs
+// produits par la même liste.
+func (s *MenuService) BulkSetProductsComponents(ctx context.Context, token string, productIDs []string, components []ProductComponentUpdate) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkSetProductsComponents(ctx, user.MerchantID, productIDs, components); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
+}
+
+// BulkAddComponentToProducts ajoute un ingrédient à plusieurs produits sans
+// toucher au reste de leur composition.
+func (s *MenuService) BulkAddComponentToProducts(ctx context.Context, token string, productIDs []string, component ProductComponentUpdate) error {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.BulkAddComponentToProducts(ctx, user.MerchantID, productIDs, component); err != nil {
+		return err
+	}
+	s.onMenuChanged(ctx, user.MerchantID)
+	return nil
+}
+
 // BulkAssignAttribute ajoute un groupe d'options/suppléments à plusieurs
 // produits sans retirer leurs autres groupes déjà attachés.
 func (s *MenuService) BulkAssignAttribute(ctx context.Context, token, attributeID string, productIDs []string) error {

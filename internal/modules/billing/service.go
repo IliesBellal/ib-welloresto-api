@@ -32,6 +32,9 @@ type stripeBillingClient interface {
 	// recurring Stripe Subscription (see internal/infrastructure/stripe/billing.go).
 	CreateSubscription(customerID, paymentMethodID string, lines []stripeclient.RecurringLineItem, merchantID string) (*stripe.Subscription, error)
 	SyncSubscriptionItems(subscriptionID string, lines []stripeclient.RecurringLineItem) error
+	// CreateBillingPortalSession — chantier 2's invoice/billing-history gap
+	// (see internal/infrastructure/stripe/billing.go).
+	CreateBillingPortalSession(customerID, returnURL string) (*stripe.BillingPortalSession, error)
 }
 
 type Service struct {
@@ -105,6 +108,22 @@ func (s *Service) GetActivationStatus(ctx context.Context, merchantID string) (A
 		st.TrialEndsAt = trial.TrialEndsAt
 	}
 	return st, nil
+}
+
+// CreateBillingPortalSession implements chantier 2's invoice/billing-history
+// gap: resolve or create the billing Customer (B2a-2, same lazy-creation as
+// CreateSepaSetup), then a Stripe-hosted billing portal session URL —
+// invoice history and IBAN change are Stripe's own UI, never rebuilt here.
+func (s *Service) CreateBillingPortalSession(ctx context.Context, merchantID, returnURL string) (url string, err error) {
+	customerID, err := s.resolveOrCreateBillingCustomer(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+	session, err := s.stripe.CreateBillingPortalSession(customerID, returnURL)
+	if err != nil {
+		return "", err
+	}
+	return session.URL, nil
 }
 
 // AttachBillingCustomer implements B2a-1's

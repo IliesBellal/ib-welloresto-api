@@ -1,3 +1,71 @@
+### LOT B — Chantier 2 : trois endpoints manquants comblés après l'audit du bandeau/SEPA/abonnement front-office (2026-09-15)
+
+**Contexte.** Un audit en deux volets (wello-back-office, ib-welloresto-api)
+a précédé tout code, sur demande explicite du brief. Côté back-office :
+zéro des 7 chemins LOT B (`activation-status`, `sepa/setup`,
+`subscriptions/preview`, `subscriptions/items`, `billing/portal`,
+`billing/retry-now`, `admin/overrides`) n'est référencé nulle part — le
+chantier front-office (chantier 3) est entièrement à construire, pas
+seulement "démonté". Côté API : sur trois points de suspicion du brief,
+un seul se confirme réel — `/billing/retry-now` est en fait complet
+(route, handler, service, test réel) et le bug de préfixe `/v1/` déjà
+documenté ci-dessous (F1) avait déjà été corrigé, sans lien avec ce
+chantier. Les deux autres gaps sont réels, plus un troisième non nommé
+explicitement par le brief mais nécessaire au chantier 4b :
+
+1. Aucun endpoint de consultation de factures/portail Stripe n'existait
+   (seul `billing.HasAnyInvoice`, un booléen interne à l'attach-to).
+2. Aucun endpoint ne lit la composition actuelle de l'abonnement sans
+   passer par la mécanique diff de `/v1/subscriptions/preview`.
+3. `suggested_modules` (JSONB de `merchant_presets.config`, déjà en base
+   depuis le chantier 5) n'était exposé par aucune route — le module
+   `presets` n'avait ni `handler.go` ni entrée dans `routes.go`.
+
+**Ce qui a été construit**, en suivant les conventions déjà en place
+(`permission.SettingsManage` pour le client-facing, patterns identiques à
+`sepa/setup`/`subscriptions/items`) :
+
+- `POST /v1/billing/portal` (`{"return_url": "..."}` → `{"url": "..."}`) —
+  `stripeclient.StripeManager.CreateBillingPortalSession` (nouveau,
+  `internal/infrastructure/stripe/billing.go`) + `billing.Service.CreateBillingPortalSession`,
+  qui réutilise `resolveOrCreateBillingCustomer` (même création paresseuse
+  que `CreateSepaSetup`) puis crée une session Stripe Billing Portal
+  hébergée — historique de factures et changement d'IBAN restent l'UI
+  Stripe elle-même, jamais reconstruits ici.
+- `GET /v1/subscriptions/current` — `subscriptions.Handler.GetCurrent`
+  appelle simplement `ComputeSubscriptionAmount` (aucune nouvelle logique
+  métier : réutilise exactement le même calcul que l'état réel post-
+  application, avec le détail par ligne dans `breakdown`), sans aucun
+  add/remove hypothétique — distinct de `preview` par construction.
+- `GET /v1/public/presets/{code}/suggested-modules` — nouveau
+  `presets.Handler` (le module n'en avait aucun), public/sans auth comme
+  `/v1/public/signup-context` puisqu'il tourne avant la création du compte
+  (chantier 4b). N'expose QUE `suggested_modules`, jamais le reste de
+  `PresetConfig` (merchant_parameters/entités internes, pas destiné à un
+  visiteur pas-encore-marchand). Code inconnu → `models.ErrInvalidPresetCode`
+  (même traduction que `signup.Service.rejectIfEmailTaken` utilise déjà pour
+  `presets.ErrPresetNotFound`), pas une 500.
+
+Les codes d'archétype du tunnel (`traditional`/`brasserie`/`pizzeria`/
+`fast_food`/`snack`/`bakery`, `wello-back-office/src/types/signupTunnel.ts`)
+correspondent exactement aux codes `merchant_presets.code` (migration 131)
+— confirmé avant d'écrire l'endpoint, pas supposé.
+
+**Tests** : trois tests Postgres réels (staging), tous verts : composition
+correcte (7900 essentiel + 3500 haccp = 11400, prix venant du vrai
+`pricing_catalog`, pas des valeurs passées à `AddItem`), session portail
+avec le bon `stripe_customer_id`, `suggested_modules` non-vide pour
+`traditional` + rejet propre d'un code inconnu. Deux suites préexistantes
+(`TestResolveStripeLineItems_*`, `TestCreateOrUpdateStripeSubscription_NeverDuplicates`)
+échouent sur staging avec `stripe_catalog_price_missing` — confirmé
+**pré-existant** (même échec sur `staging` sans aucune des trois nouvelles
+pièces, `git stash -u`) : `pricing_catalog.stripe_price_id` n'est pas
+peuplé sur cet environnement, sans rapport avec ce chantier.
+
+Chantier 3 (front-office wello-back-office) et chantier 4 (deux ajustements
+du tunnel) restent à faire — séquencés phase par phase, sur demande de
+l'utilisateur.
+
 ### LOT B F1/F2 — Clôture : liste blanche de suspension, non-unification expires_at/trial_ends_at, correctif mandat actif (2026-09-14)
 
 **F1 — liste blanche de suspension.** Ajouté à `internal/middleware/require_not_suspended.go`

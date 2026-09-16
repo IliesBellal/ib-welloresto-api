@@ -162,6 +162,18 @@ func (s *StripeManager) SyncSubscriptionItems(subscriptionID string, lines []Rec
 	return err
 }
 
+// CreateBillingPortalSession creates a Stripe-hosted customer billing portal
+// session for customerID — LOT B chantier 2's invoice/billing-history gap:
+// rather than rebuilding invoice history and IBAN-change UI, this hands back
+// a URL to Stripe's own Customer Portal, which already does both.
+func (s *StripeManager) CreateBillingPortalSession(customerID, returnURL string) (*stripe.BillingPortalSession, error) {
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(returnURL),
+	}
+	return s.client.BillingPortalSessions.New(params)
+}
+
 // HasAnyInvoice reports whether customerID has at least one Stripe invoice —
 // used by B2a-1's attach-to endpoint to refuse retroactive merging onto a
 // merchant that has already been billed on its own Customer.

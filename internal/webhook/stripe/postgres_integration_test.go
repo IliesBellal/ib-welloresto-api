@@ -4,12 +4,17 @@ package stripe
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/utils/dbutils"
+
+	"github.com/stripe/stripe-go/v78"
 )
 
 func containsFold(s, substr string) bool {
@@ -366,6 +371,119 @@ func TestStripeRepository_Postgres(t *testing.T) {
 	if !activated {
 		t.Fatal("expected scannorder activated=true")
 	}
+
+	// --- Idempotence webhook (guard par PaymentIntent, point 2 de la revue
+	// AUDIT_STRIPE_TERMINAL.md §8) : GetCapturedPaymentIntentForOrder /
+	// LockOrderForUpdate ---
+	const capturedPI = "itest-pi-captured-1"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO stripe_payments (order_id, payment_intent_id, success_key, payment_intent_status)
+		VALUES ($1, $2, 'itest-success-key-2', 'CAPTURED')`, orderIntID, capturedPI); err != nil {
+		t.Fatalf("seed captured stripe_payments row: %v", err)
+	}
+
+	gotCapturedPI, foundCaptured, err := repo.GetCapturedPaymentIntentForOrder(ctx, merchantID, orderID)
+	if err != nil || !foundCaptured || gotCapturedPI != capturedPI {
+		t.Fatalf("GetCapturedPaymentIntentForOrder = (%q, %v, %v), want (%q, true, nil)", gotCapturedPI, foundCaptured, err, capturedPI)
+	}
+
+	// Commande sans PaymentIntent capturé : found=false.
+	var otherOrderIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, order_num, brand_status, price, tva, ht, created_by, state, order_type)
+		VALUES ($1, 2, 'PENDING_CARD_PAYMENT', 1500, 0, 1500, 'itest', 'OPEN', 'IN')
+		RETURNING order_id`, merchantID).Scan(&otherOrderIntID); err != nil {
+		t.Fatalf("seed second order: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM orders WHERE order_id = $1`, otherOrderIntID)
+	})
+	otherOrderID := strconv.FormatInt(otherOrderIntID, 10)
+	if _, found, err := repo.GetCapturedPaymentIntentForOrder(ctx, merchantID, otherOrderID); err != nil || found {
+		t.Fatalf("GetCapturedPaymentIntentForOrder(no captured PI) = (found=%v, err=%v), want (false, nil)", found, err)
+	}
+
+	// LockOrderForUpdate : doit réussir dans une transaction pour une commande
+	// existante, et être un no-op silencieux (pas d'erreur) pour une commande
+	// introuvable.
+	if err := dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
+		return repo.LockOrderForUpdate(txCtx, merchantID, orderID)
+	}); err != nil {
+		t.Fatalf("LockOrderForUpdate(existing order) failed: %v", err)
+	}
+	if err := dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
+		return repo.LockOrderForUpdate(txCtx, merchantID, "999999999")
+	}); err != nil {
+		t.Fatalf("LockOrderForUpdate(unknown order) should be a silent no-op, got: %v", err)
+	}
+
+	// --- Idempotence webhook (event.id) : MarkEventProcessed / DeleteProcessedEvent ---
+	const eventID = "evt_itest_dedup_1"
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM stripe_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	alreadyProcessed, err := repo.MarkEventProcessed(ctx, eventID, "account.updated")
+	if err != nil || alreadyProcessed {
+		t.Fatalf("MarkEventProcessed (first call) = (alreadyProcessed=%v, err=%v), want (false, nil)", alreadyProcessed, err)
+	}
+	alreadyProcessed, err = repo.MarkEventProcessed(ctx, eventID, "account.updated")
+	if err != nil || !alreadyProcessed {
+		t.Fatalf("MarkEventProcessed (replay) = (alreadyProcessed=%v, err=%v), want (true, nil)", alreadyProcessed, err)
+	}
+	if err := repo.DeleteProcessedEvent(ctx, eventID); err != nil {
+		t.Fatalf("DeleteProcessedEvent: %v", err)
+	}
+	alreadyProcessed, err = repo.MarkEventProcessed(ctx, eventID, "account.updated")
+	if err != nil || alreadyProcessed {
+		t.Fatalf("MarkEventProcessed (after DeleteProcessedEvent) = (alreadyProcessed=%v, err=%v), want (false, nil) -- a failed handler must let a real Stripe retry reprocess", alreadyProcessed, err)
+	}
+
+	// --- ProcessEvent end-to-end : un event rejoué (même event.ID) ne doit PAS
+	// réappliquer le handler. Discriminant : deux payloads account.updated
+	// différents sous le même event.ID -- si la dédup ne fonctionnait pas, le
+	// second payload écraserait verification_status. ---
+	svc := &StripeWebhookService{repo: repo, db: db}
+	const dedupEventID = "evt_itest_dedup_process_event"
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM stripe_webhook_events WHERE event_id = $1`, dedupEventID)
+	})
+
+	accountPayload := func(chargesEnabled bool) StripeEvent {
+		raw := []byte(fmt.Sprintf(`{"id":%q,"charges_enabled":%v,"payouts_enabled":%v,"details_submitted":%v}`,
+			accountID, chargesEnabled, chargesEnabled, chargesEnabled))
+		return StripeEvent{
+			ID:   dedupEventID,
+			Type: "account.updated",
+			Data: struct {
+				Object json.RawMessage `json:"object"`
+			}{Object: raw},
+		}
+	}
+
+	if err := svc.ProcessEvent(ctx, accountPayload(true)); err != nil {
+		t.Fatalf("ProcessEvent (first delivery) failed: %v", err)
+	}
+	var gotStatusAfterFirst string
+	if err := db.QueryRowContext(ctx, `SELECT verification_status FROM stripe_accounts WHERE account_id = $1`, accountID).Scan(&gotStatusAfterFirst); err != nil {
+		t.Fatalf("read back verification_status after first delivery: %v", err)
+	}
+	if gotStatusAfterFirst != "verified" {
+		t.Fatalf("expected verification_status=verified after first delivery, got %q", gotStatusAfterFirst)
+	}
+
+	// Rejeu du MÊME event.ID avec un payload qui reviendrait sur
+	// verification_status si le handler était réappliqué.
+	if err := svc.ProcessEvent(ctx, accountPayload(false)); err != nil {
+		t.Fatalf("ProcessEvent (replayed delivery) failed: %v", err)
+	}
+	var gotStatusAfterReplay string
+	if err := db.QueryRowContext(ctx, `SELECT verification_status FROM stripe_accounts WHERE account_id = $1`, accountID).Scan(&gotStatusAfterReplay); err != nil {
+		t.Fatalf("read back verification_status after replayed delivery: %v", err)
+	}
+	if gotStatusAfterReplay != "verified" {
+		t.Fatalf("expected verification_status to remain 'verified' after a replayed event.ID (no reprocessing), got %q", gotStatusAfterReplay)
+	}
 }
 
 // TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres —
@@ -419,5 +537,263 @@ func TestHandleInvoiceCreated_EmptyMetadata_ResolvesViaSubscriptionID_Postgres(t
 	}
 	if diff := gotPeriodEnd.Sub(periodEnd); diff < -2*time.Second || diff > 2*time.Second {
 		t.Fatalf("current_period_end not updated via subscription-id fallback: want ~%v, got %v", periodEnd, gotPeriodEnd)
+	}
+}
+
+// TestHandleTerminalPaymentSucceeded_DuplicatePaymentIntent_Postgres —
+// reproduit le scénario documenté dans AUDIT_STRIPE_TERMINAL.md §8 point 4 /
+// docs/KIOSK_DECISIONS.md : un second PaymentIntent Terminal (créé par un
+// retry Kiosk après un timeout jamais annulé côté serveur) finit lui aussi
+// par recevoir payment_intent.succeeded, alors que la commande a déjà été
+// capturée par un premier PaymentIntent. Le guard par PaymentIntent doit
+// refuser de reconfirmer la commande et flaguer le second PI pour
+// remboursement manuel (TO_REFUND), sans jamais toucher brand_status une
+// seconde fois.
+func TestHandleTerminalPaymentSucceeded_DuplicatePaymentIntent_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest Duplicate PI', 'a', '1', 's', '75001', 'Paris', 'siret-itest-dup-pi', 'https://x', '06', 'mtok-itest-dup-pi', 'UTC')
+		RETURNING id`).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+
+	var orderIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, order_num, brand_status, price, tva, ht, created_by, state, order_type, merchant_approval)
+		VALUES ($1, 1, 'PENDING', 2000, 0, 2000, 'itest', 'OPEN', 'IN', 'ACCEPTED')
+		RETURNING order_id`, merchantID).Scan(&orderIntID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	orderID := strconv.FormatInt(orderIntID, 10)
+
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = db.ExecContext(bg, `DELETE FROM stripe_payments WHERE order_id = $1`, orderIntID)
+		_, _ = db.ExecContext(bg, `DELETE FROM orders WHERE order_id = $1`, orderIntID)
+		_, _ = db.ExecContext(bg, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+	})
+
+	const firstPI = "itest-pi-dup-first"
+	const secondPI = "itest-pi-dup-second"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO stripe_payments (order_id, payment_intent_id, success_key, payment_intent_status)
+		VALUES ($1, $2, 'itest-success-key-dup-1', 'CAPTURED')`, orderIntID, firstPI); err != nil {
+		t.Fatalf("seed first (captured) stripe_payments row: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO stripe_payments (order_id, payment_intent_id, success_key, payment_intent_status)
+		VALUES ($1, $2, 'itest-success-key-dup-2', 'REQUIRES_CONFIRMATION')`, orderIntID, secondPI); err != nil {
+		t.Fatalf("seed second (in-flight) stripe_payments row: %v", err)
+	}
+
+	svc := &StripeWebhookService{repo: NewRepository(db), db: db}
+
+	pi := &stripe.PaymentIntent{
+		ID: secondPI,
+		Metadata: map[string]string{
+			"channel":     "kiosk",
+			"order_id":    orderID,
+			"merchant_id": merchantID,
+		},
+	}
+
+	// accountID bidon : la relecture best-effort latest_charge (avant la
+	// transaction) échouera contre la vraie API Stripe, ce qui est le
+	// comportement attendu et sans incidence ici (log Warn, cardDetails=nil,
+	// aucune des assertions de ce test ne porte sur les détails carte).
+	handled, err := svc.handleTerminalPaymentSucceeded(ctx, pi, "acct_itest_fake")
+	if err != nil {
+		t.Fatalf("handleTerminalPaymentSucceeded returned an error, want nil (handled-but-flagged, not a webhook failure): %v", err)
+	}
+	if !handled {
+		t.Fatal("expected handled=true for a channel=kiosk payment intent")
+	}
+
+	var secondStatus string
+	if err := db.QueryRowContext(ctx, `SELECT payment_intent_status FROM stripe_payments WHERE payment_intent_id = $1`, secondPI).Scan(&secondStatus); err != nil {
+		t.Fatalf("read back second PI status: %v", err)
+	}
+	if secondStatus != "TO_REFUND" {
+		t.Fatalf("expected the duplicate payment_intent to be flagged TO_REFUND, got %q", secondStatus)
+	}
+
+	var brandStatus string
+	if err := db.QueryRowContext(ctx, `SELECT brand_status FROM orders WHERE order_id = $1`, orderIntID).Scan(&brandStatus); err != nil {
+		t.Fatalf("read back order brand_status: %v", err)
+	}
+	if brandStatus != "PENDING" {
+		t.Fatalf("expected brand_status to stay untouched (PENDING, set by the first payment_intent), got %q -- ConfirmKioskCardPayment must not run for a duplicate PaymentIntent", brandStatus)
+	}
+}
+
+// TestServerDrivenRepositoryMethods_Postgres couvre les nouvelles méthodes
+// repository server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) :
+// GetOrderMerchantKioskForPaymentIntent (résolution kiosk depuis un PI, sans
+// lookup reader->kiosk), GetReaderIDForKiosk (l'inverse, nécessaire au
+// recalcul avant push), SetTerminalCardDetails.
+func TestServerDrivenRepositoryMethods_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest Server-Driven Repo', 'a', '1', 's', '75001', 'Paris', 'siret-itest-sd-repo', 'https://x', '06', 'mtok-itest-sd-repo', 'UTC')
+		RETURNING id`).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+	const kioskID = "kiosk_itest_sd_repo_1"
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = db.ExecContext(bg, `DELETE FROM stripe_payments WHERE order_id IN (SELECT order_id FROM orders WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(bg, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(bg, `DELETE FROM kiosks WHERE id = $1`, kioskID)
+		_, _ = db.ExecContext(bg, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+	})
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO kiosks (id, merchant_id, name, status, stripe_reader_id, stripe_reader_label, stripe_reader_serial)
+		VALUES ($1, $2, 'ITest Kiosk', 'active', 'tmr_itest_1', 'ITest Reader', 'SN-ITEST-1')`,
+		kioskID, merchantID); err != nil {
+		t.Fatalf("seed kiosks: %v", err)
+	}
+
+	var orderIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, order_num, brand_status, price, TVA, HT, created_by)
+		VALUES ($1, 1, 'PENDING_CARD_PAYMENT', 1500, 0, 1500, 'itest')
+		RETURNING order_id`, merchantID).Scan(&orderIntID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	orderID := strconv.FormatInt(orderIntID, 10)
+
+	repo := NewRepository(db)
+	const piID = "pi_itest_sd_repo_1"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO stripe_payments (order_id, payment_intent_id, success_key, payment_intent_status, kiosk_id)
+		VALUES ($1, $2, 'itest-sd-repo-key', 'REQUIRES_CONFIRMATION', $3)`,
+		orderIntID, piID, kioskID); err != nil {
+		t.Fatalf("seed stripe_payments: %v", err)
+	}
+
+	// --- GetOrderMerchantKioskForPaymentIntent ---
+	gotOrderID, gotMerchantID, gotKioskID, found, err := repo.GetOrderMerchantKioskForPaymentIntent(ctx, piID)
+	if err != nil || !found || gotOrderID != orderID || gotMerchantID != merchantID || gotKioskID == nil || *gotKioskID != kioskID {
+		t.Fatalf("GetOrderMerchantKioskForPaymentIntent = (%q, %q, %v, %v, %v), want (%q, %q, %q, true, nil)",
+			gotOrderID, gotMerchantID, gotKioskID, found, err, orderID, merchantID, kioskID)
+	}
+	if _, _, _, found, err := repo.GetOrderMerchantKioskForPaymentIntent(ctx, "pi_itest_sd_repo_unknown"); err != nil || found {
+		t.Fatalf("GetOrderMerchantKioskForPaymentIntent(unknown) = (found=%v, err=%v), want (false, nil)", found, err)
+	}
+
+	// --- GetReaderIDForKiosk ---
+	gotReaderID, readerFound, err := repo.GetReaderIDForKiosk(ctx, kioskID)
+	if err != nil || !readerFound || gotReaderID != "tmr_itest_1" {
+		t.Fatalf("GetReaderIDForKiosk = (%q, %v, %v), want (tmr_itest_1, true, nil)", gotReaderID, readerFound, err)
+	}
+	if _, found, err := repo.GetReaderIDForKiosk(ctx, "kiosk_itest_unknown"); err != nil || found {
+		t.Fatalf("GetReaderIDForKiosk(unknown kiosk) = (found=%v, err=%v), want (false, nil)", found, err)
+	}
+
+	// --- SetTerminalCardDetails ---
+	if err := repo.SetTerminalCardDetails(ctx, piID, "visa", "4242", "CB", "A000000042", "123456"); err != nil {
+		t.Fatalf("SetTerminalCardDetails: %v", err)
+	}
+	var brand, last4, appName, fileName, authCode string
+	if err := db.QueryRowContext(ctx, `SELECT card_brand, card_last4, card_application_preferred_name, card_dedicated_file_name, card_authorization_code FROM stripe_payments WHERE payment_intent_id = $1`, piID).
+		Scan(&brand, &last4, &appName, &fileName, &authCode); err != nil {
+		t.Fatalf("read back card details: %v", err)
+	}
+	if brand != "visa" || last4 != "4242" || appName != "CB" || fileName != "A000000042" || authCode != "123456" {
+		t.Fatalf("card details = (%q, %q, %q, %q, %q), want (visa, 4242, CB, A000000042, 123456)", brand, last4, appName, fileName, authCode)
+	}
+}
+
+// TestHandleTerminalReaderActionFailed_Postgres vérifie que le handler
+// résout correctement order/merchant/kiosk depuis le payment_intent_id
+// imbriqué dans l'event (reader.Action.ProcessPaymentIntent.PaymentIntent.ID)
+// via GetOrderMerchantKioskForPaymentIntent + GetReaderIDForKiosk — pas le
+// push WS lui-même (pas de hub réel en test), pas GetPaymentStatus
+// (appellerait Stripe live, s.terminal est nil ici : pushTerminalPaymentUpdateRecomputed
+// logue un Warn et retourne sans paniquer, ce que ce test vérifie
+// indirectement en s'assurant que HandleTerminalReaderActionFailed ne
+// retourne jamais d'erreur).
+func TestHandleTerminalReaderActionFailed_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest Action Failed', 'a', '1', 's', '75001', 'Paris', 'siret-itest-actf', 'https://x', '06', 'mtok-itest-actf', 'UTC')
+		RETURNING id`).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := strconv.FormatInt(merchantIntID, 10)
+	const kioskID = "kiosk_itest_action_failed_1"
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = db.ExecContext(bg, `DELETE FROM stripe_payments WHERE order_id IN (SELECT order_id FROM orders WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(bg, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(bg, `DELETE FROM kiosks WHERE id = $1`, kioskID)
+		_, _ = db.ExecContext(bg, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+	})
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO kiosks (id, merchant_id, name, status, stripe_reader_id)
+		VALUES ($1, $2, 'ITest Kiosk', 'active', 'tmr_itest_action_failed')`,
+		kioskID, merchantID); err != nil {
+		t.Fatalf("seed kiosks: %v", err)
+	}
+
+	var orderIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, order_num, brand_status, price, TVA, HT, created_by)
+		VALUES ($1, 1, 'PENDING_CARD_PAYMENT', 1200, 0, 1200, 'itest')
+		RETURNING order_id`, merchantID).Scan(&orderIntID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	const piID = "pi_itest_action_failed_1"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO stripe_payments (order_id, payment_intent_id, success_key, payment_intent_status, kiosk_id)
+		VALUES ($1, $2, 'itest-action-failed-key', 'REQUIRES_CONFIRMATION', $3)`,
+		orderIntID, piID, kioskID); err != nil {
+		t.Fatalf("seed stripe_payments: %v", err)
+	}
+
+	svc := &StripeWebhookService{repo: NewRepository(db)}
+
+	payload := []byte(fmt.Sprintf(`{
+		"id": "tmr_itest_action_failed",
+		"object": "terminal.reader",
+		"status": "online",
+		"action": {
+			"type": "process_payment_intent",
+			"status": "failed",
+			"failure_code": "terminal_reader_offline",
+			"failure_message": "Reader offline",
+			"process_payment_intent": {"payment_intent": %q}
+		}
+	}`, piID))
+
+	if err := svc.HandleTerminalReaderActionFailed(ctx, payload); err != nil {
+		t.Fatalf("HandleTerminalReaderActionFailed: %v", err)
+	}
+
+	// Ne doit jamais toucher orders/stripe_payments (pur déclencheur) --
+	// vérifie que le statut local n'a pas bougé.
+	var status string
+	if err := db.QueryRowContext(ctx, `SELECT payment_intent_status FROM stripe_payments WHERE payment_intent_id = $1`, piID).Scan(&status); err != nil {
+		t.Fatalf("read back payment_intent_status: %v", err)
+	}
+	if status != "REQUIRES_CONFIRMATION" {
+		t.Fatalf("expected payment_intent_status to stay untouched, got %q", status)
 	}
 }

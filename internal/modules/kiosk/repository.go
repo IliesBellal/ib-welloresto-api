@@ -609,6 +609,54 @@ func (r *Repository) GetTerminalLocationID(ctx context.Context, merchantID strin
 	return &loc.String, nil
 }
 
+// SetKioskReader appaire une borne à un reader Stripe Terminal
+// (kiosks.stripe_reader_id/label/serial) — voir
+// docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md. Une violation de l'index unique
+// partiel uq_kiosks_stripe_reader_id (migration 146 : ce reader est déjà
+// appairé à un autre kiosk) doit être détectée par l'appelant via
+// dbx.IsDuplicateEntry(err).
+func (r *Repository) SetKioskReader(ctx context.Context, kioskID, readerID, label, serial string) error {
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kiosks SET stripe_reader_id = ?, stripe_reader_label = ?, stripe_reader_serial = ? WHERE id = ?`,
+		readerID, label, serial, kioskID)
+	return err
+}
+
+// ClearKioskReader efface l'appairage reader d'une borne — appelé à
+// l'unpairage explicite (DELETE /kiosk/terminal/reader), quand un reader
+// appairé n'existe plus côté Stripe (GET /kiosk/terminal/reader), et
+// obligatoirement au reclaim/à la révocation d'une borne (sinon l'index
+// unique partiel bloquerait définitivement le ré-appairage de ce reader
+// physique à un autre kiosk — voir docs/KIOSK_DECISIONS.md).
+func (r *Repository) ClearKioskReader(ctx context.Context, kioskID string) error {
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kiosks SET stripe_reader_id = NULL, stripe_reader_label = NULL, stripe_reader_serial = NULL WHERE id = ?`,
+		kioskID)
+	return err
+}
+
+// GetKioskReader lit l'appairage reader courant d'une borne. found=false si
+// aucun reader n'est appairé (stripe_reader_id NULL).
+func (r *Repository) GetKioskReader(ctx context.Context, kioskID string) (readerID, label, serial string, found bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+	var rID, lbl, ser sql.NullString
+	err = db.QueryRowContext(ctx,
+		`SELECT stripe_reader_id, stripe_reader_label, stripe_reader_serial FROM kiosks WHERE id = ?`,
+		kioskID).Scan(&rID, &lbl, &ser)
+	if err == sql.ErrNoRows {
+		return "", "", "", false, nil
+	}
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if !rID.Valid || rID.String == "" {
+		return "", "", "", false, nil
+	}
+	return rID.String, lbl.String, ser.String, true, nil
+}
+
 // defaultKioskVariableFees / defaultKioskFixedFees sont les valeurs
 // appliquées tant qu'un merchant n'a pas encore sa propre ligne
 // kiosk_settings — mêmes valeurs que les DEFAULT de la migration 061

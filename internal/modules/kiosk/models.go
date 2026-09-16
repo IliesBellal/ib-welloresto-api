@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/middleware"
 )
 
@@ -427,6 +428,9 @@ type KioskDiscountsResponse struct {
 // logique Terminal elle-même vit côté infra, paramétrée par merchantID, jamais
 // couplée à KioskAuth (voir docs/KIOSK_DECISIONS.md, règle de découplage).
 type TerminalGateway interface {
+	// CreateConnectionToken / CreateTerminalPaymentIntent / CancelTerminalPaymentIntent —
+	// DEPRECATED, flux SDK-driven conservé jusqu'à bascule de l'app kiosk vers
+	// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 	CreateConnectionToken(ctx context.Context, merchantID string) (string, error)
 	// CreateTerminalPaymentIntent reçoit variableFees/fixedFees déjà résolus par
 	// l'appelant (kiosk.Repository.GetKioskFees, kiosk_settings) — l'infra Stripe
@@ -434,9 +438,23 @@ type TerminalGateway interface {
 	CreateTerminalPaymentIntent(ctx context.Context, merchantID, orderID string, amountCents int64, variableFees float64, fixedFees int64) (clientSecret, paymentIntentID string, err error)
 	CancelTerminalPaymentIntent(ctx context.Context, merchantID, paymentIntentID string) error
 	CancelActivePaymentIntentForOrder(ctx context.Context, merchantID, orderID string) error
+
+	// ---- Server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) ----
+	ListReaders(ctx context.Context, merchantID string) ([]stripeclient.ReaderInfo, error)
+	GetReaderForPairing(ctx context.Context, merchantID, readerID string) (*stripeclient.ReaderInfo, error)
+	GetReaderStatus(ctx context.Context, merchantID, readerID string) (*stripeclient.ReaderStatus, error)
+	ProcessPaymentIntentOnReader(ctx context.Context, merchantID, orderID, readerID, kioskID, clientIdempotencyKey string, amountCents int64, variableFees float64, fixedFees int64) (paymentIntentID, readerActionStatus string, err error)
+	CancelReaderAction(ctx context.Context, merchantID, readerID string) error
+	CancelPaymentIntentIfCancelable(ctx context.Context, merchantID, orderID string) (status string, err error)
+	GetPaymentStatus(ctx context.Context, merchantID, orderID string, readerID *string) (*stripeclient.PaymentStatus, error)
+	// PresentTestPaymentMethod — dev uniquement, voir kiosk.Service.PresentTestPaymentMethod.
+	PresentTestPaymentMethod(ctx context.Context, merchantID, readerID, outcome string) error
 }
 
 // TerminalConnectionTokenResponse — POST /kiosk/terminal/connection-token.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 type TerminalConnectionTokenResponse struct {
 	Secret string `json:"secret"`
 }
@@ -444,6 +462,9 @@ type TerminalConnectionTokenResponse struct {
 // CreateTerminalPaymentIntentRequest — body de POST /kiosk/terminal/payment-intent.
 // amount_cents est re-validé côté serveur contre orders.TTC (jamais utilisé tel
 // quel comme montant à charger), voir Service.CreateTerminalPaymentIntent.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 type CreateTerminalPaymentIntentRequest struct {
 	OrderID     string `json:"order_id"`
 	AmountCents int64  `json:"amount_cents"`
@@ -451,7 +472,77 @@ type CreateTerminalPaymentIntentRequest struct {
 
 // TerminalPaymentIntentResponse — client_secret consommé par le SDK Stripe
 // Terminal côté borne pour présenter le paiement sur le lecteur.
+//
+// DEPRECATED — flux SDK-driven, conservé jusqu'à bascule de l'app kiosk vers
+// le modèle server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md).
 type TerminalPaymentIntentResponse struct {
 	ClientSecret    string `json:"client_secret"`
 	PaymentIntentID string `json:"payment_intent_id"`
+}
+
+// ---- Server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — DTOs alignées littéralement sur le contrat ----
+
+// ReaderDTO = Reader du contrat : {"id","label","serial_number","status"}.
+type ReaderDTO struct {
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	SerialNumber string `json:"serial_number"`
+	Status       string `json:"status"`
+}
+
+// ReadersResponse — GET /kiosk/terminal/readers.
+type ReadersResponse struct {
+	Readers []ReaderDTO `json:"readers"`
+}
+
+// ReaderResponse — GET/PUT /kiosk/terminal/reader. Reader est nil si non
+// appairé, ou si le reader appairé n'existe plus côté Stripe (l'appairage
+// est alors effacé silencieusement, voir Service.GetPairedTerminalReader) —
+// jamais un 404, contrat explicite.
+type ReaderResponse struct {
+	Reader *ReaderDTO `json:"reader"`
+}
+
+// PairTerminalReaderRequest — body de PUT /kiosk/terminal/reader.
+type PairTerminalReaderRequest struct {
+	ReaderID string `json:"reader_id"`
+}
+
+// CardPresentDTO = card_present du contrat.
+type CardPresentDTO struct {
+	Brand                    string `json:"brand"`
+	Last4                    string `json:"last4"`
+	ApplicationPreferredName string `json:"application_preferred_name"`
+	DedicatedFileName        string `json:"dedicated_file_name"`
+	AuthorizationCode        string `json:"authorization_code"`
+}
+
+// TerminalPaymentStatusResponse = PaymentStatus du contrat — réponse UNIQUE
+// (pas de DTO ad hoc par endpoint) partagée par POST /kiosk/terminal/payment,
+// POST /kiosk/terminal/payment/cancel, GET /kiosk/terminal/payment/status et
+// POST /kiosk/terminal/test/present-payment-method.
+type TerminalPaymentStatusResponse struct {
+	OrderID         string          `json:"order_id"`
+	PaymentIntentID string          `json:"payment_intent_id"`
+	Status          string          `json:"status"`
+	FailureCode     *string         `json:"failure_code"`
+	FailureMessage  *string         `json:"failure_message"`
+	CardPresent     *CardPresentDTO `json:"card_present"`
+}
+
+// ProcessTerminalPaymentRequest — body de POST /kiosk/terminal/payment.
+type ProcessTerminalPaymentRequest struct {
+	OrderID string `json:"order_id"`
+}
+
+// CancelTerminalPaymentRequest — body de POST /kiosk/terminal/payment/cancel.
+type CancelTerminalPaymentRequest struct {
+	OrderID string `json:"order_id"`
+}
+
+// PresentTestPaymentMethodRequest — body de
+// POST /kiosk/terminal/test/present-payment-method (dev uniquement).
+type PresentTestPaymentMethodRequest struct {
+	OrderID string `json:"order_id"`
+	Outcome string `json:"outcome"` // "success"|"declined"
 }

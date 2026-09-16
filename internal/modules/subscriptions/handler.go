@@ -114,6 +114,27 @@ func splitCodes(raw string) []string {
 	return codes
 }
 
+// GetCurrent handles GET /v1/subscriptions/current — chantier 2's gap:
+// distinct from PreviewChange (always a hypothetical add/remove diff), this
+// reads the merchant's actually-active subscription_items with no
+// what-if computation, so a screen can render "what you have" before any
+// change is proposed.
+func (h *Handler) GetCurrent(w http.ResponseWriter, r *http.Request) {
+	const fnName = "get_current"
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "subscriptions", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	amount, err := h.svc.ComputeSubscriptionAmount(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "subscriptions", fnName, err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "subscriptions", fnName, map[string]interface{}{"status": "success", "current": amount})
+}
+
 // PreviewChange handles GET /v1/subscriptions/preview?add=haccp&remove=reservation.
 func (h *Handler) PreviewChange(w http.ResponseWriter, r *http.Request) {
 	const fnName = "preview_change"

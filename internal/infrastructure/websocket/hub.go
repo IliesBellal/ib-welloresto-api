@@ -189,3 +189,42 @@ func (h *Hub) CloseKioskConnections(merchantID, kioskID string, code int, reason
 
 	return true
 }
+
+// SendToKiosk envoie un message à la seule connexion WebSocket active d'une
+// borne donnée (identifiée par kioskID) dans le canal d'un merchant — miroir
+// de CloseKioskConnections, mais écrit sur client.send au lieu de fermer la
+// connexion. Utilisé pour des events sensibles (ex. terminal_payment_update)
+// qui ne doivent pas être diffusés aux autres bornes/POS/back-office du
+// merchant (contrairement à BroadcastToMerchant). Retourne true si au moins
+// un envoi a réussi.
+func (h *Hub) SendToKiosk(merchantID, kioskID string, message []byte) bool {
+	h.mu.RLock()
+	merchant, exists := h.clients[merchantID]
+	if !exists {
+		h.mu.RUnlock()
+		return false
+	}
+	targets := make([]*Client, 0, 1)
+	for _, client := range merchant {
+		if client.kioskID != "" && client.kioskID == kioskID {
+			targets = append(targets, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	sent := false
+	failedClients := []*Client{}
+	for _, client := range targets {
+		select {
+		case client.send <- message:
+			sent = true
+		default:
+			failedClients = append(failedClients, client)
+		}
+	}
+	for _, client := range failedClients {
+		h.Unregister(client)
+	}
+
+	return sent
+}

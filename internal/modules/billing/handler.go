@@ -1,7 +1,9 @@
 package billing
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -54,6 +56,36 @@ func (h *Handler) CreateSepaSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models.SendJSON(w, http.StatusOK, "billing", fnName, map[string]interface{}{"status": "success", "client_secret": clientSecret})
+}
+
+type createBillingPortalRequest struct {
+	ReturnURL string `json:"return_url"`
+}
+
+// CreateBillingPortalSession handles POST /v1/billing/portal (client-facing,
+// settings.manage — see routes.go). Chantier 2's invoice/billing-history
+// gap: returns a Stripe-hosted portal URL rather than a rebuilt invoice
+// list.
+func (h *Handler) CreateBillingPortalSession(w http.ResponseWriter, r *http.Request) {
+	const fnName = "create_billing_portal_session"
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "billing", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	var req createBillingPortalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ReturnURL) == "" {
+		models.SendErrorJSON(w, "billing", fnName, models.ErrInvalidInput)
+		return
+	}
+
+	url, err := h.svc.CreateBillingPortalSession(r.Context(), user.MerchantID, req.ReturnURL)
+	if err != nil {
+		models.SendErrorJSON(w, "billing", fnName, err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "billing", fnName, map[string]interface{}{"status": "success", "url": url})
 }
 
 // AttachBillingCustomer handles

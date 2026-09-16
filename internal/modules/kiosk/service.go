@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	redisclient "welloresto-api/internal/infrastructure/redis"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
@@ -485,6 +486,13 @@ func (s *Service) ReclaimDevice(ctx context.Context, req ReclaimDeviceRequest, i
 		if err := s.repo.CreateDeviceToken(txCtx, newTokenID, kiosk.ID, newRefreshTokenHash, newRefreshExpiresAt); err != nil {
 			return err
 		}
+		// Un reclaim repart sans TPE appairé — appairage manuel obligatoire
+		// (décision actée, docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md). Cette ligne
+		// kiosks est réutilisée telle quelle (jamais recréée), donc son
+		// appairage précédent doit être explicitement effacé ici.
+		if err := s.repo.ClearKioskReader(txCtx, kiosk.ID); err != nil {
+			return err
+		}
 		return s.repo.UpdateKioskLastSeenOnReclaim(txCtx, kiosk.ID, ip)
 	})
 	if err != nil {
@@ -572,6 +580,14 @@ func (s *Service) RevokeKiosk(ctx context.Context, merchantID, kioskID string) e
 
 	if err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 		if err := s.repo.RevokeAllDeviceTokens(txCtx, kiosk.ID); err != nil {
+			return err
+		}
+		// Obligatoire, pas cosmétique : l'index unique partiel
+		// uq_kiosks_stripe_reader_id (migration 146) bloquerait sinon
+		// définitivement le ré-appairage de ce reader physique à un autre
+		// kiosk — la ligne révoquée garderait stripe_reader_id non NULL
+		// indéfiniment (voir docs/KIOSK_DECISIONS.md).
+		if err := s.repo.ClearKioskReader(txCtx, kiosk.ID); err != nil {
 			return err
 		}
 		return s.repo.UpdateKioskStatus(txCtx, kiosk.ID, "revoked")
@@ -1841,10 +1857,26 @@ func (s *Service) GetKioskOrder(ctx context.Context, orderID string, kiosk Authe
 // mapTerminalError traduit les sentinelles de l'infra Stripe Terminal vers les
 // erreurs Kiosk exposées au client (mapping HTTP via SendErrorJSON).
 func mapTerminalError(err error) error {
-	if errors.Is(err, stripeclient.ErrNoStripeAccount) {
+	switch {
+	case errors.Is(err, stripeclient.ErrNoStripeAccount):
 		return models.ErrKioskTerminalNotConfigured
+	case errors.Is(err, stripeclient.ErrTerminalPaymentIntentConflict):
+		return models.ErrKioskTerminalPaymentConflict
+	case errors.Is(err, stripeclient.ErrTerminalLocationNotConfigured):
+		return models.ErrKioskTerminalLocationNotConfigured
+	case errors.Is(err, stripeclient.ErrTerminalReaderNotFound):
+		return models.ErrKioskTerminalReaderNotFound
+	case errors.Is(err, stripeclient.ErrTerminalReaderLocationMismatch):
+		return models.ErrKioskTerminalReaderLocationMismatch
+	case errors.Is(err, stripeclient.ErrTerminalReaderOffline):
+		return models.ErrKioskTerminalReaderOffline
+	case errors.Is(err, stripeclient.ErrTerminalReaderBusy):
+		return models.ErrKioskTerminalReaderBusy
+	case errors.Is(err, stripeclient.ErrTerminalPaymentIntentNotFoundForOrder):
+		return models.ErrKioskTerminalPaymentNotFound
+	default:
+		return err
 	}
-	return err
 }
 
 // GetTerminalConnectionToken retourne un secret de connexion Stripe Terminal
@@ -1917,6 +1949,259 @@ func (s *Service) CancelTerminalPaymentIntent(ctx context.Context, kiosk Authent
 		return mapTerminalError(err)
 	}
 	return nil
+}
+
+// ---- Paiement carte server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) ----
+
+// toReaderDTO/toReaderDTOs convertissent stripeclient.ReaderInfo vers la DTO
+// exposée par le contrat.
+func toReaderDTO(r stripeclient.ReaderInfo) ReaderDTO {
+	return ReaderDTO{ID: r.ID, Label: r.Label, SerialNumber: r.SerialNumber, Status: r.Status}
+}
+
+func toCardPresentDTO(c *stripeclient.CardPresentDetails) *CardPresentDTO {
+	if c == nil {
+		return nil
+	}
+	return &CardPresentDTO{
+		Brand:                    c.Brand,
+		Last4:                    c.Last4,
+		ApplicationPreferredName: c.ApplicationPreferredName,
+		DedicatedFileName:        c.DedicatedFileName,
+		AuthorizationCode:        c.AuthorizationCode,
+	}
+}
+
+func toPaymentStatusResponse(p *stripeclient.PaymentStatus) *TerminalPaymentStatusResponse {
+	return &TerminalPaymentStatusResponse{
+		OrderID:         p.OrderID,
+		PaymentIntentID: p.PaymentIntentID,
+		Status:          p.Status,
+		FailureCode:     p.FailureCode,
+		FailureMessage:  p.FailureMessage,
+		CardPresent:     toCardPresentDTO(p.CardPresent),
+	}
+}
+
+// ListTerminalReaders liste les readers de la location Stripe du merchant.
+func (s *Service) ListTerminalReaders(ctx context.Context, kiosk AuthenticatedKiosk) (*ReadersResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	readers, err := s.terminal.ListReaders(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	dtos := make([]ReaderDTO, 0, len(readers))
+	for _, r := range readers {
+		dtos = append(dtos, toReaderDTO(r))
+	}
+	return &ReadersResponse{Readers: dtos}, nil
+}
+
+// PairTerminalReader valide (compte connecté + terminal_location_id, voir
+// stripeclient.GetReaderForPairing) puis persiste l'appairage sur la borne
+// courante (par enrollment, pas par merchant — décision actée). Une
+// violation de l'index unique partiel (ce reader déjà appairé à un autre
+// kiosk du merchant, migration 146) est mappée vers
+// models.ErrKioskTerminalReaderAlreadyPaired plutôt que de laisser remonter
+// l'erreur SQL brute.
+func (s *Service) PairTerminalReader(ctx context.Context, kiosk AuthenticatedKiosk, readerID string) (*ReaderResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	reader, err := s.terminal.GetReaderForPairing(ctx, kiosk.MerchantID, readerID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	if err := s.repo.SetKioskReader(ctx, kiosk.KioskID, reader.ID, reader.Label, reader.SerialNumber); err != nil {
+		if dbx.IsDuplicateEntry(err) {
+			return nil, models.ErrKioskTerminalReaderAlreadyPaired
+		}
+		return nil, err
+	}
+	dto := toReaderDTO(*reader)
+	return &ReaderResponse{Reader: &dto}, nil
+}
+
+// UnpairTerminalReader efface l'appairage de la borne courante.
+func (s *Service) UnpairTerminalReader(ctx context.Context, kiosk AuthenticatedKiosk) error {
+	return s.repo.ClearKioskReader(ctx, kiosk.KioskID)
+}
+
+// GetPairedTerminalReader retourne le reader appairé de la borne courante et
+// son statut live, ou {"reader": null} si non appairé — jamais un 404
+// (contrat explicite). Si le reader appairé n'existe plus côté Stripe
+// (resource_missing, signalé par GetReaderStatus via (nil, nil)),
+// l'appairage stale est effacé silencieusement avant de répondre.
+func (s *Service) GetPairedTerminalReader(ctx context.Context, kiosk AuthenticatedKiosk) (*ReaderResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	readerID, label, serial, found, err := s.repo.GetKioskReader(ctx, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return &ReaderResponse{Reader: nil}, nil
+	}
+
+	status, err := s.terminal.GetReaderStatus(ctx, kiosk.MerchantID, readerID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	if status == nil {
+		// resource_missing côté Stripe : appairage stale, effacé silencieusement.
+		if err := s.repo.ClearKioskReader(ctx, kiosk.KioskID); err != nil {
+			logger.FromContext(ctx).Warn("[kiosk terminal] ClearKioskReader failed after stale reader=" + readerID + ": " + err.Error())
+		}
+		return &ReaderResponse{Reader: nil}, nil
+	}
+
+	dto := ReaderDTO{ID: status.ID, Label: status.Label, SerialNumber: status.SerialNumber, Status: status.Status}
+	if dto.Label == "" {
+		dto.Label = label
+	}
+	if dto.SerialNumber == "" {
+		dto.SerialNumber = serial
+	}
+	return &ReaderResponse{Reader: &dto}, nil
+}
+
+// ProcessTerminalPayment résout/réutilise le PaymentIntent de la commande et
+// le dispatche sur le reader appairé de la borne courante
+// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md, section Dispatch).
+// idempotencyKey vient du header HTTP Idempotency-Key (contrat : UUID par
+// tap).
+func (s *Service) ProcessTerminalPayment(ctx context.Context, kiosk AuthenticatedKiosk, orderID, idempotencyKey string) (*TerminalPaymentStatusResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	order, err := s.getKioskOrder(ctx, kiosk.MerchantID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if !isKioskCardPending(order) {
+		return nil, models.ErrKioskOrderNotCardPending
+	}
+
+	readerID, _, _, found, err := s.repo.GetKioskReader(ctx, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, models.ErrKioskTerminalReaderNotPaired
+	}
+
+	variableFees, fixedFees, err := s.repo.GetKioskFees(ctx, kiosk.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, _, err := s.terminal.ProcessPaymentIntentOnReader(ctx, kiosk.MerchantID, orderID, readerID, kiosk.KioskID, idempotencyKey, int64(order.TTC), variableFees, fixedFees); err != nil {
+		return nil, mapTerminalError(err)
+	}
+
+	status, err := s.terminal.GetPaymentStatus(ctx, kiosk.MerchantID, orderID, &readerID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return toPaymentStatusResponse(status), nil
+}
+
+// CancelTerminalPayment annule l'action reader en cours puis, seulement si
+// cette annulation a réussi (ou s'il n'y avait aucune action), tente
+// d'annuler le PaymentIntent lui-même (jamais si succeeded/processing/
+// requires_capture). Retourne systématiquement l'état RÉEL après tentative —
+// docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md.
+func (s *Service) CancelTerminalPayment(ctx context.Context, kiosk AuthenticatedKiosk, orderID string) (*TerminalPaymentStatusResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+
+	readerID, _, _, readerFound, err := s.repo.GetKioskReader(ctx, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+
+	cancelActionSucceeded := true
+	if readerFound {
+		if err := s.terminal.CancelReaderAction(ctx, kiosk.MerchantID, readerID); err != nil {
+			// Amendement explicite : si cancel_action échoue pour une autre
+			// raison que "rien à annuler" (déjà géré en interne, retourne nil
+			// dans ce cas), on NE touche PAS au PaymentIntent — on ne sait
+			// plus avec certitude s'il a abouti entre-temps.
+			cancelActionSucceeded = false
+			logger.FromContext(ctx).Warn("[kiosk terminal] CancelReaderAction failed for order=" + orderID + " reader=" + readerID + ": " + err.Error())
+		}
+	}
+
+	if cancelActionSucceeded {
+		if _, err := s.terminal.CancelPaymentIntentIfCancelable(ctx, kiosk.MerchantID, orderID); err != nil {
+			return nil, mapTerminalError(err)
+		}
+	}
+
+	var readerIDPtr *string
+	if readerFound {
+		readerIDPtr = &readerID
+	}
+	status, err := s.terminal.GetPaymentStatus(ctx, kiosk.MerchantID, orderID, readerIDPtr)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return toPaymentStatusResponse(status), nil
+}
+
+// GetTerminalPaymentStatus — fallback de polling
+// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md), même chemin d'assemblage que
+// ProcessTerminalPayment/CancelTerminalPayment.
+func (s *Service) GetTerminalPaymentStatus(ctx context.Context, kiosk AuthenticatedKiosk, orderID string) (*TerminalPaymentStatusResponse, error) {
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	var readerIDPtr *string
+	if readerID, _, _, found, err := s.repo.GetKioskReader(ctx, kiosk.KioskID); err != nil {
+		return nil, err
+	} else if found {
+		readerIDPtr = &readerID
+	}
+
+	status, err := s.terminal.GetPaymentStatus(ctx, kiosk.MerchantID, orderID, readerIDPtr)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return toPaymentStatusResponse(status), nil
+}
+
+// PresentTestPaymentMethod (dev uniquement, docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) —
+// simule la présentation d'une carte sur le reader appairé, pour tester le
+// flux server-driven sans matériel réel. Gate sur StripeTestMode : 404 si la
+// clé Stripe active n'est pas une clé de test.
+func (s *Service) PresentTestPaymentMethod(ctx context.Context, kiosk AuthenticatedKiosk, orderID, outcome string) (*TerminalPaymentStatusResponse, error) {
+	if !s.cfg.StripeTestMode {
+		return nil, models.ErrKioskTerminalTestHelperUnavailable
+	}
+	if s.terminal == nil {
+		return nil, models.ErrKioskTerminalNotConfigured
+	}
+	readerID, _, _, found, err := s.repo.GetKioskReader(ctx, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, models.ErrKioskTerminalReaderNotPaired
+	}
+
+	if err := s.terminal.PresentTestPaymentMethod(ctx, kiosk.MerchantID, readerID, outcome); err != nil {
+		return nil, mapTerminalError(err)
+	}
+
+	status, err := s.terminal.GetPaymentStatus(ctx, kiosk.MerchantID, orderID, &readerID)
+	if err != nil {
+		return nil, mapTerminalError(err)
+	}
+	return toPaymentStatusResponse(status), nil
 }
 
 // SwitchToCounterPayment bascule une commande du paiement carte vers le paiement

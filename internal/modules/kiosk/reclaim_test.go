@@ -146,6 +146,13 @@ func TestReclaimDevice_RecentHeartbeat_SilentReissueIgnoresPin(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO kiosk_device_tokens`)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	// Un reclaim doit toujours repartir sans TPE appairé (appairage manuel
+	// obligatoire, docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — la ligne kiosks
+	// étant réutilisée telle quelle, son appairage précédent doit être
+	// explicitement effacé.
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE kiosks SET stripe_reader_id = NULL, stripe_reader_label = NULL, stripe_reader_serial = NULL WHERE id =`)).
+		WithArgs("kiosk-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE kiosks SET last_heartbeat_at =`)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -236,6 +243,9 @@ func TestReclaimDevice_StaleHeartbeat_CorrectPin_ReissuesTokens(t *testing.T) {
 		WithArgs("kiosk-5").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO kiosk_device_tokens`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE kiosks SET stripe_reader_id = NULL, stripe_reader_label = NULL, stripe_reader_serial = NULL WHERE id =`)).
+		WithArgs("kiosk-5").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE kiosks SET last_heartbeat_at =`)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
