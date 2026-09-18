@@ -5740,3 +5740,79 @@ permanent.
   prochain tap, à la commande finalisée avec succès, ou au panier vidé.
 - **Même limitation connue que POS/SNO** : "dernière acceptée gagne", un seul
   `upsell_suggestion_id` par commande.
+
+### Rapport comptable Croq'Ô'Pizzas juillet/août 2026 — diagnostic et recalcul serveur du prix POS (2026-09-19)
+
+**Contexte.** Les rapports comptables 07/2026 et 08/2026 du merchant 212 (Croq'Ô'Pizzas)
+affichaient un total TVA (TTC) supérieur aux encaissements : +16,70 € en juillet,
++84,50 € en août. Diagnostic : `docs/diagnostic-rapport-comptable-croq-o-pizzas.sql`
+(+ `-suite.sql`), exécuté en production.
+
+**Causes trouvées.**
+- Juillet : une commande `state=CLOSED` avec `brand_status=DELIVERY_CANCELED`
+  (jamais encaissée) était comptée dans le tableau TVA. **Corrigé et actif** :
+  `DELIVERY_CANCELED` et `DELIVERY_FAILED` ajoutés aux exclusions `brand_status`
+  de `pos/accounting/repository.go` (6 requêtes) et `cash_registers/repository.go`
+  (3 requêtes). Le rapport de juillet est confirmé correct après régénération.
+- Août : 6 commandes POS (`created_by=226`, toutes TAKE_AWAY, en soirée) dont
+  `orders.price` diverge de la somme des lignes (`orderitems` + `extra`) :
+  #35473, #34236, #35588 (price = 0), #34604, #35819, #34681 (petits écarts),
+  soit 84,50 € au total. Cause côté code : `updateOrderBase`/`insertOrderBase`
+  écrivent `orders.price` tel que reçu du client POS, sans aucun recalcul serveur.
+
+**Ce qui n'est PAS un bug du rapport.** Le tableau TVA lit `orderitems`/`extra`
+directement (jamais `orders.price`) : la TVA est due sur ce qui est vendu, pas sur ce
+qui est encaissé. L'écart d'août est donc un vrai manque à gagner de caisse (tickets
+mal facturés), visible à juste titre. Ni la correction de `orders.price` ni
+`docs/fix-desynced-order-prices-croq-o-pizzas.sql` (jamais exécuté à ce jour) ne
+changent ce PDF. Décision : **ne pas ajouter de paiements fictifs** ni modifier les
+`cash_registers_custom_items` des registres clôturés (chaînage fiscal, loi de 2018) ;
+l'écart reste affiché tel quel. Le PDF d'août n'a pas été « corrigé » et ne le sera pas.
+
+### Recalcul serveur du prix POS — désactivé (2026-09-19)
+
+**Ce qui avait été construit.** `computeOrderTotals`
+(`order_life_cycle/repository.go`) recalcule TTC/HT/TVA à partir des lignes du panier
+(formule identique à `GetTVAData` : `(prix + extras) × quantité`, HT arrondi par
+ligne, frais de livraison via `tva_id=-1`). Placé d'abord dans
+`OrdersLifeCycleRepository.CreateOrder/UpdateOrder`, il touchait aussi Kiosk,
+ScanNOrder, Uber Eats et Deliveroo — à tort : ces canaux portent un total déjà facturé
+au client final par un système tiers, que notre mapping `tva_categories` (257 produits
+en « TVA Undefined », `tva_id` orphelins) ne garantit pas de reproduire. Il a donc été
+déplacé dans `PrepareCreateOrder`/`PrepareUpdateOrder` (`service.go`), seuls appelants
+de la route POS (`POST /orders/create`, `/orders/{id}/update`). Test :
+`compute_order_totals_scope_postgres_integration_test.go` (POS recalculé ; Uber
+Eats/Deliveroo intacts), suite d'intégration verte contre staging.
+
+**Décision : désactivé.** Les appels à `computeOrderTotals` sont **mis en commentaire**
+dans `PrepareCreateOrder` et `PrepareUpdateOrder`. La fonction est conservée. Le
+comportement en production est donc **inchangé** : `orders.price` reste celui du client
+POS.
+
+**Pourquoi.** Un seul poste (user 226) et 6 occurrences sur un mois ne prouvent pas
+un défaut systémique ; on préfère observer si le bug se reproduit et, si oui, le
+corriger à la source côté application POS (le client calcule un total qui ne
+correspond pas à son panier) plutôt que de masquer l'écart côté serveur. Le recalcul
+serveur écrase silencieusement ce que la caisse a affiché et facturé au client, ce qui
+mérite une décision explicite avant d'aller en production.
+
+**Revue prévue : fin d'année 2026.** À ce moment, relancer la section 6 de
+`docs/diagnostic-rapport-comptable-suite.sql` (commandes `CLOSED` dont
+`price <> lignes + frais`, tous marchands, 12 mois). Si l'écart réapparaît : corriger
+le POS en priorité ; sinon réactiver le recalcul serveur.
+
+**Pour réactiver.** Décommenter le bloc dans `PrepareCreateOrder` et
+`PrepareUpdateOrder`, passer `posRecomputeEnabled` à `true` dans
+`TestComputeOrderTotals_POSOnly_Postgres`, relancer la suite avec
+`-tags postgres_integration`. Ajustements de tests existants nécessaires à ce moment
+(non faits, cf. repo-level `TestOrderLifeCycleRepository_Postgres` qui n'est pas concerné
+tant que le recalcul reste hors du repository).
+
+**Points de vigilance connus si réactivé.**
+- `computeOrderTotals` ajoute `delivery_fees` dès qu'ils sont ≠ 0, quel que soit
+  `order_type` (cohérent avec `GetTVAData`, qui a le même comportement).
+- Le `fix-desynced-order-prices-croq-o-pizzas.sql` ne recalcule pas le hash fiscal
+  (`orders.hash/signature`) : accepté explicitement, à traiter séparément.
+- Bugs distincts identifiés, non corrigés : formule HT des frais de port du PDF registre
+  (`cash_registers/repository.go`, `TTC × (100−taux)/100` au lieu de `TTC/(1+taux)`) ;
+  ligne « TVA Delivery fees 20% » affichée alors que `tva_id=-1` a `show_in_report=false`.

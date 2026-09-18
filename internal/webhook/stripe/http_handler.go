@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+
+	"welloresto-api/internal/logger"
 )
 
 type Handler struct {
@@ -29,6 +31,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.ProcessEvent(r.Context(), event); err != nil {
+		logger.FromContext(r.Context()).Error("[stripe webhook] processing failed: id=" + event.ID + " type=" + event.Type + " connect_account=" + event.Account + ": " + err.Error())
 		http.Error(w, err.Error(), 500)
 		return
 	}

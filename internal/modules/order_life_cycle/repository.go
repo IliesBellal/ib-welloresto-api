@@ -1205,6 +1205,19 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 // de données distinct, même diagnostic) est compté au taux 0 avec un WARN —
 // jamais en échec de la commande : mieux vaut un ticket qui sous-déclare une
 // TVA que la caisse qui plante en plein service.
+//
+// DÉSACTIVÉE depuis le 2026-09-19 : les appels dans PrepareCreateOrder/
+// PrepareUpdateOrder sont en commentaire (fonction conservée pour une
+// réactivation éventuelle — voir docs/decisions.md).
+//
+// Quand elle est active, n'est appelée QUE depuis PrepareCreateOrder/PrepareUpdateOrder
+// (service.go) — le seul point d'entrée exclusif au flux POS
+// (POST /orders/create et /orders/{id}/update, derrière authMiddleware).
+// CreateOrder/UpdateOrder ci-dessous sont aussi appelées directement par
+// Kiosk, ScanNOrder et les webhooks Uber Eats/Deliveroo, qui restent hors
+// périmètre : ces canaux ont leur propre total déjà facturé au client final
+// (plateforme tierce ou app cliente), que notre mapping tva_categories interne
+// n'a aucune garantie de reproduire fidèlement.
 func (r *OrdersLifeCycleRepository) computeOrderTotals(ctx context.Context, merchantID, orderType string, products []models.OrderProductPayload, deliveryFees int) (ttcCents, htCents, tvaCents int, err error) {
 	log := logger.FromContext(ctx)
 	db := dbx.GetDB(ctx, r.database)
@@ -1412,15 +1425,11 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		return nil, models.ErrDeviceIDMissing
 	}
 
-	ttc, ht, tva, err := r.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
-	if err != nil {
-		log.Error("computeOrderTotals failure: " + err.Error())
-		return nil, err
-	}
-	req.Order.TTC = ttc
-	req.Order.HT = ht
-	req.Order.TVA = tva
-
+	// TTC/HT/TVA ne sont PAS recalculés ici : computeOrderTotals est appelé en
+	// amont, dans PrepareCreateOrder (service.go) — seul point d'entrée du
+	// flux POS. CreateOrder est aussi appelée directement par Kiosk,
+	// ScanNOrder et les webhooks Uber Eats/Deliveroo, qui doivent conserver
+	// leur propre TTC/HT/TVA.
 	r.setOrderDefaults(ctx, req)
 
 	orderID, err := r.insertOrderBase(ctx, req)
@@ -1901,17 +1910,11 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 
 	// 7. Mise à jour de la commande principale (prix, type, etc.)
 	//
-	// TTC/HT/TVA recalculés serveur à partir du panier (mêmes lignes que celles
-	// juste écrites ci-dessus) plutôt que repris du payload client — voir
-	// computeOrderTotals.
-	ttc, ht, tva, err := r.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
-	if err != nil {
-		return fmt.Errorf("computeOrderTotals failed: %w", err)
-	}
-	req.Order.TTC = ttc
-	req.Order.HT = ht
-	req.Order.TVA = tva
-
+	// TTC/HT/TVA ne sont PAS recalculés ici : computeOrderTotals est appelé en
+	// amont, dans PrepareUpdateOrder (service.go) — seul point d'entrée du
+	// flux POS. Cette fonction est aussi appelée directement par Kiosk,
+	// ScanNOrder et les webhooks Uber Eats/Deliveroo, qui doivent conserver
+	// leur propre TTC/HT/TVA (cf. docs/decisions.md, restriction au POS).
 	if err := r.updateOrderBase(ctx, req); err != nil {
 		return fmt.Errorf("update order base failed: %w", err)
 	}

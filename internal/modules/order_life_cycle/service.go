@@ -1080,6 +1080,19 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 }
 
 // This function will add Merchant ID and User ID to the payload
+//
+// Seul point d'entrée du flux POS (route POST /orders/create, derrière
+// authMiddleware) — Kiosk, ScanNOrder et les webhooks Uber Eats/Deliveroo
+// appellent CreateOrder directement sans passer par ici.
+//
+// FEATURE DÉSACTIVÉE (2026-09-19) : le recalcul serveur de TTC/HT/TVA
+// (computeOrderTotals, repository.go) est volontairement mis en commentaire
+// ci-dessous. Décision : attendre la fin 2026 pour voir si le bug se
+// reproduit et si le POS peut être corrigé à la source. Voir
+// docs/decisions.md, « Recalcul serveur du prix POS — désactivé ». Pour
+// réactiver : décommenter ce bloc ET celui de PrepareUpdateOrder, puis
+// passer posRecomputeEnabled à true dans
+// TestComputeOrderTotals_POSOnly_Postgres.
 func (s *OrdersLifeCycleService) PrepareCreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -1089,10 +1102,22 @@ func (s *OrdersLifeCycleService) PrepareCreateOrder(ctx context.Context, req *mo
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
+	// ttc, ht, tva, err := s.ordersLifeCycleRepo.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
+	// if err != nil {
+	// 	s.log.Error("computeOrderTotals failure", zap.Error(err))
+	// 	return nil, err
+	// }
+	// req.Order.TTC = ttc
+	// req.Order.HT = ht
+	// req.Order.TVA = tva
+
 	return s.CreateOrder(ctx, req)
 }
 
 // This function will add Merchant_Id to the payload
+//
+// Même restriction au flux POS que PrepareCreateOrder ci-dessus, et même
+// désactivation du recalcul (voir le commentaire de PrepareCreateOrder).
 func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *models.RequestObject) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -1110,6 +1135,15 @@ func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *mo
 
 	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
+
+	// ttc, ht, tva, err := s.ordersLifeCycleRepo.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
+	// if err != nil {
+	// 	s.log.Error("computeOrderTotals failure", zap.Error(err))
+	// 	return err
+	// }
+	// req.Order.TTC = ttc
+	// req.Order.HT = ht
+	// req.Order.TVA = tva
 
 	return s.UpdateOrder(ctx, req)
 }
