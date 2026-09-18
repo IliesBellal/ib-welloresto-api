@@ -130,6 +130,11 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 // Le paramètre (répété dans chaque branche de l'UNION) est l'id numérique du
 // registre, comparé à orders.cash_register_id (varchar dans les deux
 // dialectes) — passer la forme string.
+//
+// L'exclusion brand_status couvre aussi DELIVERY_CANCELED/DELIVERY_FAILED en
+// plus de CANCELED/DELETED, même raison que pos/accounting.GetTVAData : une
+// commande peut rester state='CLOSED' avec ce brand_status sans jamais avoir
+// été payée (cf. docs/diagnostic-rapport-comptable-croq-o-pizzas.sql).
 const cashRegisterReportSQL = `
 SELECT all_tva.delivery_type,
        l.label,
@@ -154,7 +159,7 @@ LEFT JOIN (
         END)
     WHERE o.cash_register_id = ?
       AND o.state IN ('CLOSED')
-      AND o.brand_status NOT IN ('CANCELED','DELETED')
+      AND o.brand_status NOT IN ('CANCELED','DELETED','DELIVERY_CANCELED','DELIVERY_FAILED')
     GROUP BY tva.tva_id
 ) cash_report ON cash_report.tva_id = all_tva.tva_id
 LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
@@ -181,7 +186,7 @@ LEFT JOIN (
     INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
     WHERE o_fees.cash_register_id = ?
       AND o_fees.state IN ('CLOSED')
-      AND o_fees.brand_status NOT IN ('CANCELED','DELETED')
+      AND o_fees.brand_status NOT IN ('CANCELED','DELETED','DELIVERY_CANCELED','DELIVERY_FAILED')
 ) cash_fees ON cash_fees.tva_id = all_tva.tva_id
 LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
     AND l.lang = 'FR'
@@ -202,7 +207,7 @@ SELECT p.mop, CAST(SUM(ROUND(p.amount, 2)) AS DECIMAL(20,0)) AS amount
 FROM orders o
 INNER JOIN payments p ON p.order_id = o.order_id
 WHERE p.cash_register_id = ?
-  AND o.brand_status NOT IN ('DELETED','CANCELED')
+  AND o.brand_status NOT IN ('DELETED','CANCELED','DELIVERY_CANCELED','DELIVERY_FAILED')
   AND p.enabled IS TRUE
 GROUP BY p.mop`
 

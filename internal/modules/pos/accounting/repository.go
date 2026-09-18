@@ -180,6 +180,14 @@ func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID str
 // Les deux bornes sont des instants absolus (déjà résolus dans le fuseau de
 // l'établissement par l'appelant) ; la borne haute est exclusive afin d'inclure
 // la dernière seconde du dernier jour et ses fractions.
+//
+// L'exclusion brand_status couvre aussi DELIVERY_CANCELED/DELIVERY_FAILED en
+// plus de DELETED/CANCELED : terminalizeDeliveryStop (delivery_sessions)
+// laisse normalement orders.state='OPEN' après ces transitions (commande
+// re-dispatchable), mais une commande peut être close par un autre chemin
+// sans jamais avoir été payée en gardant ce brand_status — cas réel trouvé
+// en prod (Croq'Ô'Pizzas, commande #33026, TVA comptée sans encaissement
+// correspondant ; cf. docs/diagnostic-rapport-comptable-croq-o-pizzas.sql).
 func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]TVARow, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -213,7 +221,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string
 		  AND o.merchant_id = ?
 		  AND o.state = 'CLOSED'
 		  AND o.brand = 'WELLO_RESTO'
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND tva.show_in_report
 		UNION ALL
@@ -228,7 +236,7 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string
 		  AND o_fees.merchant_id = ?
 		  AND o_fees.brand = 'WELLO_RESTO'
 		  AND o_fees.created_by NOT IN ('-1', 'SCANNORDER')
-		  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 		  AND o_fees.state = 'CLOSED'
 	`
 
@@ -317,7 +325,7 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID s
 		  AND o.creation_date < ?
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND o.state = 'CLOSED'
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 		  AND o.brand = 'WELLO_RESTO'
 		GROUP BY l.label
 		ORDER BY l.label
@@ -458,7 +466,7 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 		FROM orders o
 		INNER JOIN payments p ON p.order_id = o.order_id
 		WHERE p.cash_register_id IN (`+idInClause+`)
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 		  AND p.enabled IS TRUE
 		GROUP BY `+acctCastChar("p.cash_register_id")+`, p.mop
 	`, liveArgs...)
@@ -708,7 +716,7 @@ func (r *AccountingRepository) GetVATAggregationRows(
 			  AND o.creation_date <= %s
 			  AND o.merchant_id = ?
 			  AND o.state = 'CLOSED'
-			  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+			  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 			  AND tva.show_in_report
 			  %s
 			  %s
@@ -734,7 +742,7 @@ func (r *AccountingRepository) GetVATAggregationRows(
 			  AND o_fees.creation_date <= %s
 			  AND o_fees.merchant_id = ?
 			  AND o_fees.state = 'CLOSED'
-			  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED')
+			  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 			  AND o_fees.delivery_fees > 0
 			  %s
 			  %s

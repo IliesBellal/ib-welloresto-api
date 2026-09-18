@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -1190,6 +1191,163 @@ func (r *OrdersLifeCycleRepository) UpdateProductionStatus(ctx context.Context, 
 	return affectedOrderIDs, nil
 }
 
+// computeOrderTotals recalcule TTC/HT/TVA côté serveur à partir des lignes du
+// panier (produits + extras + frais de livraison) au lieu de faire confiance
+// au total envoyé par le client (POS/kiosk) : bug trouvé en prod où
+// orders.price divergeait silencieusement de la somme des lignes, sans aucun
+// contrôle pour le détecter (cf.
+// docs/diagnostic-rapport-comptable-croq-o-pizzas.sql, commandes closes avec
+// price=0 mais des lignes facturées). Même formule que les rapports
+// comptables (pos/accounting.GetTVAData) : extra ajouté au prix de la ligne
+// avant multiplication par la quantité, HT arrondi à l'entier le plus proche.
+//
+// Un produit dont la catégorie de TVA n'existe pas dans tva_categories (bug
+// de données distinct, même diagnostic) est compté au taux 0 avec un WARN —
+// jamais en échec de la commande : mieux vaut un ticket qui sous-déclare une
+// TVA que la caisse qui plante en plein service.
+func (r *OrdersLifeCycleRepository) computeOrderTotals(ctx context.Context, merchantID, orderType string, products []models.OrderProductPayload, deliveryFees int) (ttcCents, htCents, tvaCents int, err error) {
+	log := logger.FromContext(ctx)
+	db := dbx.GetDB(ctx, r.database)
+
+	if len(products) == 0 {
+		return deliveryFees, deliveryFees, 0, nil
+	}
+
+	productIDs := make([]string, 0, len(products))
+	seenProducts := make(map[string]struct{}, len(products))
+	for _, p := range products {
+		if _, ok := seenProducts[p.ProductID]; ok {
+			continue
+		}
+		seenProducts[p.ProductID] = struct{}{}
+		productIDs = append(productIDs, p.ProductID)
+	}
+
+	productPlaceholders := make([]string, len(productIDs))
+	productArgs := make([]interface{}, len(productIDs))
+	for i, id := range productIDs {
+		productPlaceholders[i] = "?"
+		productArgs[i] = id
+	}
+
+	type tvaTriple struct{ in, takeAway, delivery int64 }
+	byProduct := make(map[string]tvaTriple, len(productIDs))
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT product_id, tva_in_id, tva_take_away_id, tva_delivery_id
+		FROM products WHERE product_id IN (`+strings.Join(productPlaceholders, ",")+`)
+	`, productArgs...)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("computeOrderTotals: load products tva ids: %w", err)
+	}
+	for rows.Next() {
+		var pid string
+		var t tvaTriple
+		if err := rows.Scan(&pid, &t.in, &t.takeAway, &t.delivery); err != nil {
+			rows.Close()
+			return 0, 0, 0, fmt.Errorf("computeOrderTotals: scan products tva ids: %w", err)
+		}
+		byProduct[pid] = t
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, 0, fmt.Errorf("computeOrderTotals: iterate products tva ids: %w", err)
+	}
+	rows.Close()
+
+	tvaIDSet := make(map[int64]struct{}, len(byProduct)*3+1)
+	for _, t := range byProduct {
+		tvaIDSet[t.in] = struct{}{}
+		tvaIDSet[t.takeAway] = struct{}{}
+		tvaIDSet[t.delivery] = struct{}{}
+	}
+	if deliveryFees != 0 {
+		tvaIDSet[-1] = struct{}{}
+	}
+
+	tvaIDs := make([]int64, 0, len(tvaIDSet))
+	for id := range tvaIDSet {
+		tvaIDs = append(tvaIDs, id)
+	}
+	rates := make(map[int64]float64, len(tvaIDs))
+	if len(tvaIDs) > 0 {
+		ratePlaceholders := make([]string, len(tvaIDs))
+		rateArgs := make([]interface{}, len(tvaIDs))
+		for i, id := range tvaIDs {
+			ratePlaceholders[i] = "?"
+			rateArgs[i] = id
+		}
+		rateRows, err := db.QueryContext(ctx, `
+			SELECT tva_id, tva_rate FROM tva_categories WHERE tva_id IN (`+strings.Join(ratePlaceholders, ",")+`)
+		`, rateArgs...)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("computeOrderTotals: load tva rates: %w", err)
+		}
+		for rateRows.Next() {
+			var id int64
+			var rate float64
+			if err := rateRows.Scan(&id, &rate); err != nil {
+				rateRows.Close()
+				return 0, 0, 0, fmt.Errorf("computeOrderTotals: scan tva rates: %w", err)
+			}
+			rates[id] = rate
+		}
+		if err := rateRows.Err(); err != nil {
+			rateRows.Close()
+			return 0, 0, 0, fmt.Errorf("computeOrderTotals: iterate tva rates: %w", err)
+		}
+		rateRows.Close()
+	}
+
+	roundHT := func(ttc int, rate float64) int {
+		if rate == 0 {
+			return ttc
+		}
+		return int(math.Round(float64(ttc) * 100.0 / (100.0 + rate)))
+	}
+
+	for _, p := range products {
+		finalPrice := p.Price
+		if p.DiscountedPrice != nil {
+			finalPrice = *p.DiscountedPrice
+		}
+		extraSum := 0
+		for _, e := range p.Extra {
+			if e != nil {
+				extraSum += e.Price
+			}
+		}
+		lineTTC := (finalPrice + extraSum) * p.Quantity
+		ttcCents += lineTTC
+
+		t, ok := byProduct[p.ProductID]
+		var tvaID int64
+		if ok {
+			switch orderType {
+			case "DELIVERY":
+				tvaID = t.delivery
+			case "TAKE_AWAY":
+				tvaID = t.takeAway
+			default:
+				tvaID = t.in
+			}
+		}
+		rate, rateFound := rates[tvaID]
+		if !ok || !rateFound {
+			log.Warn(fmt.Sprintf("computeOrderTotals: aucun taux de TVA pour product_id=%s order_type=%s (merchant %s) — compté à 0%%", p.ProductID, orderType, merchantID))
+		}
+		htCents += roundHT(lineTTC, rate)
+	}
+
+	if deliveryFees != 0 {
+		ttcCents += deliveryFees
+		htCents += roundHT(deliveryFees, rates[-1])
+	}
+
+	tvaCents = ttcCents - htCents
+	return ttcCents, htCents, tvaCents, nil
+}
+
 func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	log := logger.FromContext(ctx)
 
@@ -1253,6 +1411,15 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	} else {
 		return nil, models.ErrDeviceIDMissing
 	}
+
+	ttc, ht, tva, err := r.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
+	if err != nil {
+		log.Error("computeOrderTotals failure: " + err.Error())
+		return nil, err
+	}
+	req.Order.TTC = ttc
+	req.Order.HT = ht
+	req.Order.TVA = tva
 
 	r.setOrderDefaults(ctx, req)
 
@@ -1733,6 +1900,18 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	}
 
 	// 7. Mise à jour de la commande principale (prix, type, etc.)
+	//
+	// TTC/HT/TVA recalculés serveur à partir du panier (mêmes lignes que celles
+	// juste écrites ci-dessus) plutôt que repris du payload client — voir
+	// computeOrderTotals.
+	ttc, ht, tva, err := r.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)
+	if err != nil {
+		return fmt.Errorf("computeOrderTotals failed: %w", err)
+	}
+	req.Order.TTC = ttc
+	req.Order.HT = ht
+	req.Order.TVA = tva
+
 	if err := r.updateOrderBase(ctx, req); err != nil {
 		return fmt.Errorf("update order base failed: %w", err)
 	}

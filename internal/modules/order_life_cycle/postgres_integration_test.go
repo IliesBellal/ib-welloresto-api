@@ -130,6 +130,10 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	// --- CreateOrder complet (client, items, extras/withouts/configs, table, paiement partiel) ---
+	// TTC/TVA/HT ci-dessous sont volontairement faux (2000 au lieu de 2200) :
+	// depuis computeOrderTotals, le serveur ignore ces champs et recalcule à
+	// partir des lignes — (1000 + extra 100) * quantity 2 = 2200. C'est
+	// exactement le bug corrigé (cf. docs/diagnostic-rapport-comptable-croq-o-pizzas.sql).
 	comment := "sans oignon svp"
 	itemComment := "bien cuit"
 	req := &models.RequestObject{
@@ -191,9 +195,11 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	intentID := "pi_itest_olc"
+	// 1200, pas 1000 : solde exact du TTC recalculé serveur (2200 = 500 + 500
+	// + 1200), voir le commentaire sur TTC/TVA/HT à la création.
 	stripePayID, err := repo.AddPaymentAndReturnID(ctx, models.Payment{
 		MerchantID: merchantID, CashRegisterID: crStr, OrderID: orderID,
-		Amount: 1000, MOP: "CB", UserID: createdBy,
+		Amount: 1200, MOP: "CB", UserID: createdBy,
 		OperationType: models.OperationTypeSale, PaymentIntentID: &intentID,
 	})
 	if err != nil {
@@ -207,7 +213,7 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	var isPaid bool
 	_ = db.QueryRowContext(ctx, `SELECT isPaid FROM orders WHERE order_id = $1`, orderID).Scan(&isPaid)
 	if !isPaid {
-		t.Fatalf("isPaid devrait être TRUE après paiement complet (2000/2000)")
+		t.Fatalf("isPaid devrait être TRUE après paiement complet (2200/2200)")
 	}
 	// sur-paiement -> erreur métier
 	if _, err := repo.AddPaymentAndReturnID(ctx, models.Payment{
@@ -239,7 +245,7 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	_ = db.QueryRowContext(ctx, `SELECT order_item_id FROM orderitems WHERE order_id = $1 LIMIT 1`, orderID).Scan(&existingItemID)
 	oid := orderID
 	req.Order.OrderID = &oid
-	req.Order.TTC = 3000
+	req.Order.TTC = 3000 // ignoré par computeOrderTotals ; vrai TTC recalculé = 4000 (4 x 1000)
 	req.Order.Products = []models.OrderProductPayload{
 		{ProductID: prodAStr, Quantity: 3, Price: 1000, OrderItemID: &existingItemID},
 		{ProductID: prodAStr, Quantity: 1, Price: 1000},
@@ -303,9 +309,13 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	// --- clôture avec chaînage fiscal : re-payer intégralement puis livrer ---
+	// 3000, pas 2000 : le UpdateOrder ci-dessus a fait passer le panier à 4
+	// unités à 1000 (3+1, sans extra) -> TTC recalculé serveur = 4000. Solde
+	// dû = 4000 - 1000 déjà encaissé (500 ES + 500 TR, le CB de 1200 a été
+	// désactivé) = 3000.
 	if _, err := repo.AddPaymentAndReturnID(ctx, models.Payment{
 		MerchantID: merchantID, CashRegisterID: crStr, OrderID: orderID,
-		Amount: 2000, MOP: "ES", UserID: createdBy, OperationType: models.OperationTypeSale,
+		Amount: 3000, MOP: "ES", UserID: createdBy, OperationType: models.OperationTypeSale,
 	}); err != nil {
 		t.Fatalf("re-paiement: %v", err)
 	}
