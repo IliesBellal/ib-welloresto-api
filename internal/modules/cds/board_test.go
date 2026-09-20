@@ -3,7 +3,9 @@ package cds
 import (
 	"database/sql"
 	"strconv"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func nullStr(s string) sql.NullString {
@@ -179,5 +181,33 @@ func TestGenerateEnrollmentCode(t *testing.T) {
 	// malchance.
 	if len(seen) < 150 {
 		t.Errorf("generateEnrollmentCode() produced only %d distinct values over 200 draws", len(seen))
+	}
+}
+
+// TestTruncateRunes verrouille la régression du premier enrôlement réel :
+// `ERROR: value too long for type character varying(50) (SQLSTATE 22001)`.
+//
+// L'application Flutter envoyait Platform.operatingSystemVersion, qui sur
+// Android est toute la chaîne noyau (« Linux 5.15.x-android13-… #1 SMP
+// PREEMPT … »), bien au-delà des 50 caractères de cds_displays.os_version.
+func TestTruncateRunes(t *testing.T) {
+	kernel := "Linux 5.15.104-android13-8-27890426-abogki #1 SMP PREEMPT Mon Jan 1 00:00:00 UTC 2024"
+	if got := truncateRunes(kernel, maxOSVersionLen); len([]rune(got)) != maxOSVersionLen {
+		t.Errorf("truncateRunes(kernel, %d) = %d runes, want exactly %d", maxOSVersionLen, len([]rune(got)), maxOSVersionLen)
+	}
+
+	if got := truncateRunes("Android 13", maxOSVersionLen); got != "Android 13" {
+		t.Errorf("une chaine courte ne doit pas etre modifiee, got %q", got)
+	}
+
+	// Le comptage se fait en caracteres : 60 « é » tiennent sur 120 octets
+	// mais 60 caracteres, et doivent etre coupes a 50 sans corrompre l'UTF-8.
+	accents := strings.Repeat("é", 60)
+	got := truncateRunes(accents, 50)
+	if len([]rune(got)) != 50 {
+		t.Errorf("truncateRunes sur accents = %d runes, want 50", len([]rune(got)))
+	}
+	if !utf8.ValidString(got) {
+		t.Error("truncateRunes ne doit jamais produire de l'UTF-8 invalide")
 	}
 }

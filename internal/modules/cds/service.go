@@ -199,13 +199,22 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 	// doivent jamais coïncider sur un device_id "vide" lors d'un reclaim
 	// (NULL ne matche jamais rien).
 	var deviceID *string
-	if trimmed := strings.TrimSpace(req.DeviceID); trimmed != "" {
+	if trimmed := truncateRunes(strings.TrimSpace(req.DeviceID), maxDeviceIDLen); trimmed != "" {
 		deviceID = &trimmed
 	}
 
+	// Ces champs sont déclarés par l'appareil et n'ont aucune raison d'être
+	// dignes de confiance : ils sont tronqués à la largeur de leur colonne
+	// plutôt que rejetés. Une chaîne trop longue est un problème d'affichage
+	// dans le back-office, jamais un motif de refuser l'enrôlement — et
+	// surtout pas de renvoyer un 500 « value too long for type character
+	// varying » à l'installateur, qui n'a aucun moyen d'y remédier.
+	hardwareModel := truncateRunes(strings.TrimSpace(req.HardwareModel), maxHardwareModelLen)
+	osVersion := truncateRunes(strings.TrimSpace(req.OSVersion), maxOSVersionLen)
+
 	var display *DisplayRow
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		display, err = s.repo.CreateDisplay(txCtx, displayID, code.MerchantID, req.Name, req.HardwareModel, req.OSVersion, adminPinEncrypted, deviceID)
+		display, err = s.repo.CreateDisplay(txCtx, displayID, code.MerchantID, req.Name, hardwareModel, osVersion, adminPinEncrypted, deviceID)
 		if err != nil {
 			return err
 		}
@@ -233,6 +242,29 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		ExpiresAt:    expiresAt.Format(time.RFC3339),
 		AdminPin:     adminPin,
 	}, nil
+}
+
+// Largeurs des colonnes de cds_displays alimentées par l'appareil (migration
+// 147). À garder synchronisées avec le schéma : un écart ne se voit qu'au
+// premier appareil dont la chaîne dépasse — c'est exactement ainsi que
+// os_version a produit un 500 sur le premier enrôlement réel, l'Android
+// `Platform.operatingSystemVersion` renvoyant toute la chaîne noyau.
+const (
+	maxHardwareModelLen = 100
+	maxOSVersionLen     = 50
+	maxAppVersionLen    = 20
+	maxDeviceIDLen      = 128
+	maxIPLen            = 45
+)
+
+// truncateRunes coupe s à max caractères. Comptage en runes et non en octets :
+// la colonne Postgres varchar(n) compte des caractères, et couper au milieu
+// d'un caractère accentué produirait une chaîne UTF-8 invalide.
+func truncateRunes(s string, max int) string {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max])
 }
 
 // validateDisplayName impose un nom non vide et <= 100 caractères (colonne
@@ -383,7 +415,11 @@ func (s *Service) RecordHeartbeat(ctx context.Context, cds *AuthenticatedCDS, re
 		return nil, models.ErrCDSRevoked
 	}
 
-	if err := s.repo.UpdateDisplayHeartbeat(ctx, display.ID, req.AppVersion, ip); err != nil {
+	// Même précaution qu'à l'enrôlement : cds_displays.app_version est un
+	// varchar(20), et un heartbeat qui échoue en 500 toutes les 5 minutes
+	// finirait par faire passer un écran sain pour un écran en panne.
+	appVersion := truncateRunes(strings.TrimSpace(req.AppVersion), maxAppVersionLen)
+	if err := s.repo.UpdateDisplayHeartbeat(ctx, display.ID, appVersion, truncateRunes(ip, maxIPLen)); err != nil {
 		return nil, err
 	}
 
