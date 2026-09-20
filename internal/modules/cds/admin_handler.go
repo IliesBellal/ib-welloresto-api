@@ -192,24 +192,6 @@ func (h *AdminHandler) RevokeDisplay(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "cds", "revoke_display", map[string]string{"status": "revoked"})
 }
 
-func (h *AdminHandler) GetAdminPin(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	user := middleware.GetUser(r)
-	if user == nil {
-		models.SendErrorJSON(w, "cds", "get_admin_pin", models.ErrUnauthorized)
-		return
-	}
-
-	resp, err := h.service.GetAdminPin(ctx, user.MerchantID, chi.URLParam(r, "display_id"))
-	if err != nil {
-		models.SendErrorJSON(w, "cds", "get_admin_pin", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "cds", "get_admin_pin", resp)
-}
-
 // ---- Paramètres ----
 
 func (h *AdminHandler) GetSettings(w http.ResponseWriter, r *http.Request) {

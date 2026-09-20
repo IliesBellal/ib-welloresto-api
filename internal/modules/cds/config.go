@@ -44,3 +44,35 @@ const maxActiveDisplays = 4
 // Ici la question est « à partir de quand un client a-t-il une raison de
 // regarder l'écran », d'où une valeur propre.
 const scheduledLookaheadMinutes = 60
+
+// Dispositions de l'écran (cds_settings.layout_mode, migration 151).
+//
+// Un seul champ dit tout : il remplace l'ancien couple layout_mode
+// (two_zones/three_zones) + marketing_enabled, qui pouvait être incohérent
+// (trois zones sans marketing, marketing activé sur deux zones — où il
+// n'affichait rien).
+const (
+	// LayoutMarketingRight — bandeau marketing vertical, à droite.
+	LayoutMarketingRight = "marketing_right"
+	// LayoutMarketingBottom — bandeau marketing horizontal, en bas.
+	LayoutMarketingBottom = "marketing_bottom"
+	// LayoutNoMarketing — sans bandeau marketing : les deux zones de commandes
+	// occupent tout l'écran.
+	LayoutNoMarketing = "no_marketing"
+)
+
+// validLayoutModes est la liste fermée acceptée à l'écriture. Validée côté
+// serveur en plus de la contrainte CHECK : la base refuserait une valeur
+// inconnue par un 500, l'API la refuse par une erreur lisible.
+var validLayoutModes = map[string]bool{
+	LayoutMarketingRight:  true,
+	LayoutMarketingBottom: true,
+	LayoutNoMarketing:     true,
+}
+
+// layoutHasMarketing indique si la disposition comporte un bandeau marketing.
+// C'est ce qui décide si l'écran a besoin de la liste des médias : inutile de
+// lui faire télécharger des visuels qu'il n'affichera pas.
+func layoutHasMarketing(layoutMode string) bool {
+	return layoutMode == LayoutMarketingRight || layoutMode == LayoutMarketingBottom
+}

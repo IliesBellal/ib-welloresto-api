@@ -170,19 +170,6 @@ func generateEnrollmentCode() (string, error) {
 	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
-// generateAdminPin produit le PIN administrateur à 6 chiffres, même tirage
-// uniforme que le code d'enrôlement.
-//
-// ⚠ À ce jour ce PIN ne protège RIEN : il est généré, stocké chiffré, affiché
-// une fois sur l'écran à l'enrôlement et consultable au back-office, mais ni
-// l'application ni l'API n'ont d'écran d'administration ni de route de
-// vérification (contrairement au kiosk, qui a POST /kiosk/auth/verify-admin-pin).
-// Il a été porté du module kiosk en prévision de cet écran, qui reste à
-// concevoir.
-func generateAdminPin() (string, error) {
-	return generateEnrollmentCode()
-}
-
 // EnrollDevice consomme un code d'enrôlement et crée l'écran.
 func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string) (*EnrollResponse, error) {
 	codeHash := security.HashPIN(strings.TrimSpace(req.EnrollmentCode), s.cfg.Pepper)
@@ -230,18 +217,9 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 	refreshTokenHash := security.HashPIN(refreshToken, s.cfg.Pepper)
 	refreshExpiresAt := time.Now().UTC().AddDate(0, 0, s.cfg.DeviceRefreshTokenTTLDays)
 
-	adminPin, err := generateAdminPin()
-	if err != nil {
-		return nil, fmt.Errorf("cds enroll: generate admin pin: %w", err)
-	}
-	adminPinEncrypted, err := helpers.Encrypt(adminPin)
-	if err != nil {
-		return nil, fmt.Errorf("cds enroll: encrypt admin pin: %w", err)
-	}
-
 	// Chaîne vide -> NULL plutôt qu'une valeur vide stockée : deux écrans ne
-	// doivent jamais coïncider sur un device_id "vide" lors d'un reclaim
-	// (NULL ne matche jamais rien).
+	// doivent jamais coïncider sur un device_id "vide" (NULL ne matche jamais
+	// rien).
 	var deviceID *string
 	if trimmed := truncateRunes(strings.TrimSpace(req.DeviceID), maxDeviceIDLen); trimmed != "" {
 		deviceID = &trimmed
@@ -258,7 +236,7 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 
 	var display *DisplayRow
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		display, err = s.repo.CreateDisplay(txCtx, displayID, code.MerchantID, req.Name, hardwareModel, osVersion, adminPinEncrypted, deviceID)
+		display, err = s.repo.CreateDisplay(txCtx, displayID, code.MerchantID, req.Name, hardwareModel, osVersion, deviceID)
 		if err != nil {
 			return err
 		}
@@ -284,7 +262,6 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt.Format(time.RFC3339),
-		AdminPin:     adminPin,
 	}, nil
 }
 
@@ -628,11 +605,13 @@ func (s *Service) GetDeviceSettings(ctx context.Context, cds *AuthenticatedCDS) 
 		LayoutMode:         settings.LayoutMode,
 		PreparingZoneRatio: settings.PreparingZoneRatio,
 		ShowWaitTime:       settings.ShowWaitTime,
-		MarketingEnabled:   settings.MarketingEnabled,
 		Media:              []MediaItemResponse{},
 	}
 
-	if settings.MarketingEnabled {
+	// Les médias ne sont renvoyés que si la disposition comporte un bandeau.
+	// Ils ne sont PAS supprimés pour autant : repasser à une disposition avec
+	// bandeau les retrouve tels quels.
+	if layoutHasMarketing(settings.LayoutMode) {
 		items, err := s.repo.ListMediaItems(ctx, cds.DisplayID, true)
 		if err != nil {
 			return nil, err

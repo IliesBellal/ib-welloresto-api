@@ -7,7 +7,6 @@ package cds
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -174,25 +173,6 @@ func (s *Service) DeleteEnrollmentCode(ctx context.Context, merchantID, codeID s
 	return nil
 }
 
-// GetAdminPin déchiffre le PIN d'administration pour consultation
-// back-office. C'est l'intérêt du chiffrement réversible par rapport à un
-// hash : le restaurateur qui a perdu le PIN doit pouvoir le relire.
-func (s *Service) GetAdminPin(ctx context.Context, merchantID, displayID string) (*AdminPinResponse, error) {
-	display, err := s.requireDisplay(ctx, merchantID, displayID)
-	if err != nil {
-		return nil, err
-	}
-	if len(display.AdminPinEncrypted) == 0 {
-		return nil, models.ErrCDSNotFound
-	}
-
-	pin, err := helpers.Decrypt(display.AdminPinEncrypted)
-	if err != nil {
-		return nil, fmt.Errorf("cds: decrypt admin pin: %w", err)
-	}
-	return &AdminPinResponse{AdminPin: pin}, nil
-}
-
 // ---- Paramètres ----
 
 func (s *Service) GetSettings(ctx context.Context, merchantID, displayID string) (*SettingsResponse, error) {
@@ -214,7 +194,6 @@ func (s *Service) GetSettings(ctx context.Context, merchantID, displayID string)
 		OrderTypes:         settings.OrderTypes,
 		Channels:           settings.Channels,
 		ShowWaitTime:       settings.ShowWaitTime,
-		MarketingEnabled:   settings.MarketingEnabled,
 	}, nil
 }
 
@@ -232,7 +211,7 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID, displayID stri
 		return err
 	}
 
-	if req.LayoutMode != nil && *req.LayoutMode != "two_zones" && *req.LayoutMode != "three_zones" {
+	if req.LayoutMode != nil && !validLayoutModes[*req.LayoutMode] {
 		return models.ErrCDSSettingsInvalid
 	}
 	if req.PreparingZoneRatio != nil && (*req.PreparingZoneRatio < 20 || *req.PreparingZoneRatio > 60) {

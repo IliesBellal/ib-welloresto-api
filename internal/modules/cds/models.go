@@ -26,7 +26,6 @@ type DisplayRow struct {
 	HardwareModel     *string
 	OSVersion         *string
 	DeviceID          *string
-	AdminPinEncrypted []byte
 	LastHeartbeatAt   *time.Time
 	LastIP            *string
 	LastError         *string
@@ -73,7 +72,6 @@ type SettingsRow struct {
 	OrderTypes         []string
 	Channels           []string
 	ShowWaitTime       bool
-	MarketingEnabled   bool
 	CreatedAt          time.Time
 	UpdatedAt          *time.Time
 }
@@ -106,14 +104,11 @@ type EnrollRequest struct {
 	DeviceID string `json:"device_id"`
 }
 
-// EnrollResponse — admin_pin n'est retourné en clair qu'à l'enrôlement.
-// Entre-temps, seule sa forme chiffrée est stockée.
 type EnrollResponse struct {
 	DisplayID    string `json:"display_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresAt    string `json:"expires_at"`
-	AdminPin     string `json:"admin_pin"`
 }
 
 type RefreshTokenRequest struct {
@@ -129,18 +124,17 @@ type RefreshTokenResponse struct {
 // NOTE — POST /cds/auth/reclaim n'est volontairement pas implémenté à ce
 // stade, et ses DTO ne sont donc pas déclarés ici (pas de contrat mort).
 //
-// Le besoin est réel : un écran qui perd son stockage local après une coupure
-// de courant doit pouvoir se ré-identifier par device_id sans qu'un humain se
-// déplace — c'est tout l'objet de kiosk.Service.ReclaimDevice, que
-// cds_displays.device_id prépare déjà côté schéma.
+// Le besoin existe : un écran qui perd son stockage local (coupure de courant,
+// réinitialisation) doit retrouver son identité. Le kiosk le fait par
+// device_id, avec son PIN admin comme second facteur
+// (kiosk.Service.ReclaimDevice).
 //
-// Mais le garde-fou du reclaim kiosk est un PIN admin, et celui du CDS fait
-// 6 chiffres. Ouvrir cette route ajouterait une deuxième surface publique
-// brute-forçable, en plus de l'enrôlement, alors que le middleware de rate
-// limiting n'existe toujours pas dans cette API — voir
-// docs/audits/2026-09-19-enrollment-rate-limiting.md. À implémenter une fois
-// ce middleware en place, en reprenant le lockout Redis de kiosk
-// (AdminPinLockoutError).
+// Le CDS n'a plus de PIN admin (la configuration se fait au back-office).
+// device_id — l'ANDROID_ID — n'est PAS un secret : une route publique de reprise
+// fondée sur lui seul permettrait à quiconque le connaît de reprendre un écran
+// enrôlé et de lire ses commandes. Un écran qui perd son stockage se
+// ré-enrôle donc avec un nouveau code généré au back-office ; cds_displays.
+// device_id ne sert plus qu'à l'identification dans le back-office.
 
 type HeartbeatRequest struct {
 	AppVersion string `json:"app_version"`
@@ -204,12 +198,15 @@ type BoardResponse struct {
 // propre configuration. Les filtres (order_types/channels) n'y figurent pas :
 // ils sont appliqués côté serveur dans la projection, l'écran n'a pas à les
 // connaître ni à pouvoir les contourner.
+//
+// Media n'est renseigné que si la disposition comporte un bandeau marketing
+// (voir layoutHasMarketing) : inutile de faire télécharger à un écran des
+// médias qu'il n'affichera pas.
 type DeviceSettingsResponse struct {
 	DisplayName        string              `json:"display_name"`
 	LayoutMode         string              `json:"layout_mode"`
 	PreparingZoneRatio int                 `json:"preparing_zone_ratio"`
 	ShowWaitTime       bool                `json:"show_wait_time"`
-	MarketingEnabled   bool                `json:"marketing_enabled"`
 	Media              []MediaItemResponse `json:"media"`
 }
 
@@ -286,7 +283,6 @@ type SettingsResponse struct {
 	OrderTypes         []string `json:"order_types"`
 	Channels           []string `json:"channels"`
 	ShowWaitTime       bool     `json:"show_wait_time"`
-	MarketingEnabled   bool     `json:"marketing_enabled"`
 }
 
 // UpdateSettingsRequest — mise à jour partielle : seuls les champs non nil
@@ -297,9 +293,4 @@ type UpdateSettingsRequest struct {
 	OrderTypes         *[]string `json:"order_types"`
 	Channels           *[]string `json:"channels"`
 	ShowWaitTime       *bool     `json:"show_wait_time"`
-	MarketingEnabled   *bool     `json:"marketing_enabled"`
-}
-
-type AdminPinResponse struct {
-	AdminPin string `json:"admin_pin"`
 }

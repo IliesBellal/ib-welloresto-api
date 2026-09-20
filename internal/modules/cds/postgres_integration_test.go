@@ -97,7 +97,7 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	}
 
 	deviceID := "itest-android-id"
-	display, err := repo.CreateDisplay(ctx, displayID, merchantID, "Ecran comptoir", "BoxModel", "Android 11", []byte("enc"), &deviceID)
+	display, err := repo.CreateDisplay(ctx, displayID, merchantID, "Ecran comptoir", "BoxModel", "Android 11", &deviceID)
 	if err != nil {
 		t.Fatalf("CreateDisplay: %v", err)
 	}
@@ -132,10 +132,16 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	if settings.ShowWaitTime {
 		t.Error("show_wait_time doit etre desactive par defaut (D11)")
 	}
+	// Migration 151 : un nouvel ecran demarre sans bandeau marketing.
+	if settings.LayoutMode != LayoutNoMarketing {
+		t.Errorf("layout_mode par defaut = %q, want %q", settings.LayoutMode, LayoutNoMarketing)
+	}
 
 	takeAwayOnly := []string{"TAKE_AWAY"}
 	welloOnly := []string{"WELLO_RESTO"}
+	bottom := LayoutMarketingBottom
 	if err := repo.UpdateSettings(ctx, displayID, UpdateSettingsRequest{
+		LayoutMode: &bottom,
 		OrderTypes: &takeAwayOnly,
 		Channels:   &welloOnly,
 	}); err != nil {
@@ -147,6 +153,9 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	}
 	if len(settings.OrderTypes) != 1 || settings.OrderTypes[0] != "TAKE_AWAY" {
 		t.Errorf("OrderTypes round-trip = %v, want [TAKE_AWAY]", settings.OrderTypes)
+	}
+	if settings.LayoutMode != LayoutMarketingBottom {
+		t.Errorf("LayoutMode round-trip = %q, want %q", settings.LayoutMode, LayoutMarketingBottom)
 	}
 
 	// ---- Tokens ----
@@ -177,7 +186,7 @@ func TestCDSRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetActiveDisplayCount = %d (err=%v), want 1", count, err)
 	}
 
-	if _, err := repo.CreateDisplay(ctx, displayID2, merchantID, "Ecran livreurs", "BoxModel", "Android 11", nil, nil); err != nil {
+	if _, err := repo.CreateDisplay(ctx, displayID2, merchantID, "Ecran livreurs", "BoxModel", "Android 11", nil); err != nil {
 		t.Fatalf("CreateDisplay 2: %v", err)
 	}
 	count, _ = repo.GetActiveDisplayCount(ctx, merchantID)

@@ -1996,7 +1996,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// Révocation : seule action de cycle de vie, il n'existe ni enable
 		// ni disable (CDS_DECISIONS.md D15).
 		r.Post("/displays/{display_id}/revoke", cdsAdminHandler.RevokeDisplay)
-		r.Get("/displays/{display_id}/admin-pin", cdsAdminHandler.GetAdminPin)
 
 		r.Get("/displays/{display_id}/settings", cdsAdminHandler.GetSettings)
 		r.Put("/displays/{display_id}/settings", cdsAdminHandler.UpdateSettings)

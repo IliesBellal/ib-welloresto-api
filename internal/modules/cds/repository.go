@@ -137,34 +137,32 @@ func (r *Repository) GetActiveDisplayCount(ctx context.Context, merchantID strin
 	return count, nil
 }
 
-// CreateDisplay insère un écran en statut 'active'. displayID et
-// adminPinEncrypted sont produits par l'appelant — le PIN en clair n'existe
-// jamais côté repository.
-func (r *Repository) CreateDisplay(ctx context.Context, displayID, merchantID, name, hardwareModel, osVersion string, adminPinEncrypted []byte, deviceID *string) (*DisplayRow, error) {
+// CreateDisplay insère un écran en statut 'active'. displayID est produit par
+// l'appelant.
+func (r *Repository) CreateDisplay(ctx context.Context, displayID, merchantID, name, hardwareModel, osVersion string, deviceID *string) (*DisplayRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-	INSERT INTO cds_displays (id, merchant_id, name, hardware_model, os_version, admin_pin_encrypted, device_id, status)
-	VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`
+	INSERT INTO cds_displays (id, merchant_id, name, hardware_model, os_version, device_id, status)
+	VALUES (?, ?, ?, ?, ?, ?, 'active')`
 
-	if _, err := db.ExecContext(ctx, query, displayID, merchantID, name, hardwareModel, osVersion, adminPinEncrypted, deviceID); err != nil {
+	if _, err := db.ExecContext(ctx, query, displayID, merchantID, name, hardwareModel, osVersion, deviceID); err != nil {
 		return nil, err
 	}
 
 	return &DisplayRow{
-		ID:                displayID,
-		MerchantID:        merchantID,
-		Name:              name,
-		Status:            "active",
-		HardwareModel:     &hardwareModel,
-		OSVersion:         &osVersion,
-		AdminPinEncrypted: adminPinEncrypted,
-		DeviceID:          deviceID,
+		ID:            displayID,
+		MerchantID:    merchantID,
+		Name:          name,
+		Status:        "active",
+		HardwareModel: &hardwareModel,
+		OSVersion:     &osVersion,
+		DeviceID:      deviceID,
 	}, nil
 }
 
 const displaySelectColumns = `id, merchant_id, name, location_id, status, app_version, hardware_model,
-	       os_version, device_id, admin_pin_encrypted, last_heartbeat_at, last_ip,
+	       os_version, device_id, last_heartbeat_at, last_ip,
 	       last_error, last_error_at, created_at, updated_at`
 
 func scanDisplay(scanner interface{ Scan(...any) error }) (*DisplayRow, error) {
@@ -172,7 +170,7 @@ func scanDisplay(scanner interface{ Scan(...any) error }) (*DisplayRow, error) {
 	err := scanner.Scan(
 		&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status,
 		&row.AppVersion, &row.HardwareModel, &row.OSVersion, &row.DeviceID,
-		&row.AdminPinEncrypted, &row.LastHeartbeatAt, &row.LastIP,
+		&row.LastHeartbeatAt, &row.LastIP,
 		&row.LastError, &row.LastErrorAt, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -196,38 +194,6 @@ func (r *Repository) GetDisplayForMerchant(ctx context.Context, merchantID, disp
 	return scanDisplay(db.QueryRowContext(ctx, query, displayID, merchantID))
 }
 
-// FindDisplaysByDeviceID sert au reclaim : un device_id peut théoriquement
-// correspondre à plusieurs lignes (réinstallation répétée). L'appelant traite
-// toute réponse différente d'un candidat unique comme un échec.
-func (r *Repository) FindDisplaysByDeviceID(ctx context.Context, deviceID string) ([]DisplayRow, error) {
-	db := dbx.GetDB(ctx, r.database)
-
-	query := `SELECT ` + displaySelectColumns + `
-	FROM cds_displays
-	WHERE device_id = ? AND status <> 'revoked'`
-
-	rows, err := db.QueryContext(ctx, query, deviceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	displays := []DisplayRow{}
-	for rows.Next() {
-		row := DisplayRow{}
-		if err := rows.Scan(
-			&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status,
-			&row.AppVersion, &row.HardwareModel, &row.OSVersion, &row.DeviceID,
-			&row.AdminPinEncrypted, &row.LastHeartbeatAt, &row.LastIP,
-			&row.LastError, &row.LastErrorAt, &row.CreatedAt, &row.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		displays = append(displays, row)
-	}
-	return displays, rows.Err()
-}
-
 func (r *Repository) ListDisplaysByMerchant(ctx context.Context, merchantID string) ([]DisplayRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -248,7 +214,7 @@ func (r *Repository) ListDisplaysByMerchant(ctx context.Context, merchantID stri
 		if err := rows.Scan(
 			&row.ID, &row.MerchantID, &row.Name, &row.LocationID, &row.Status,
 			&row.AppVersion, &row.HardwareModel, &row.OSVersion, &row.DeviceID,
-			&row.AdminPinEncrypted, &row.LastHeartbeatAt, &row.LastIP,
+			&row.LastHeartbeatAt, &row.LastIP,
 			&row.LastError, &row.LastErrorAt, &row.CreatedAt, &row.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -382,7 +348,7 @@ func (r *Repository) GetSettings(ctx context.Context, displayID string) (*Settin
 
 	query := `
 	SELECT display_id, layout_mode, preparing_zone_ratio, order_types, channels,
-	       show_wait_time, marketing_enabled, created_at, updated_at
+	       show_wait_time, created_at, updated_at
 	FROM cds_settings
 	WHERE display_id = ?`
 
@@ -391,7 +357,7 @@ func (r *Repository) GetSettings(ctx context.Context, displayID string) (*Settin
 	err := db.QueryRowContext(ctx, query, displayID).Scan(
 		&row.DisplayID, &row.LayoutMode, &row.PreparingZoneRatio,
 		&orderTypesRaw, &channelsRaw,
-		&row.ShowWaitTime, &row.MarketingEnabled, &row.CreatedAt, &row.UpdatedAt,
+		&row.ShowWaitTime, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -444,10 +410,6 @@ func (r *Repository) UpdateSettings(ctx context.Context, displayID string, req U
 	if req.ShowWaitTime != nil {
 		setClauses = append(setClauses, "show_wait_time = ?")
 		args = append(args, *req.ShowWaitTime)
-	}
-	if req.MarketingEnabled != nil {
-		setClauses = append(setClauses, "marketing_enabled = ?")
-		args = append(args, *req.MarketingEnabled)
 	}
 
 	if len(setClauses) == 0 {

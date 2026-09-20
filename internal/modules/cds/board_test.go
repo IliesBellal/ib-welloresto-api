@@ -248,3 +248,34 @@ func TestResolveEnrollmentName(t *testing.T) {
 		})
 	}
 }
+
+// TestLayoutModes verrouille les trois dispositions et ce qu'elles impliquent.
+func TestLayoutModes(t *testing.T) {
+	tests := []struct {
+		mode         string
+		valid        bool
+		hasMarketing bool
+	}{
+		{LayoutMarketingRight, true, true},
+		{LayoutMarketingBottom, true, true},
+		{LayoutNoMarketing, true, false},
+		// Les anciennes valeurs (migration 151) et toute valeur inconnue sont
+		// refusees a l'ecriture : la contrainte CHECK les rejetterait aussi,
+		// mais par un 500 illisible.
+		{"two_zones", false, false},
+		{"three_zones", false, false},
+		{"", false, false},
+		{"marketing_left", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			if got := validLayoutModes[tt.mode]; got != tt.valid {
+				t.Errorf("validLayoutModes[%q] = %v, want %v", tt.mode, got, tt.valid)
+			}
+			if got := layoutHasMarketing(tt.mode); got != tt.hasMarketing {
+				t.Errorf("layoutHasMarketing(%q) = %v, want %v", tt.mode, got, tt.hasMarketing)
+			}
+		})
+	}
+}
