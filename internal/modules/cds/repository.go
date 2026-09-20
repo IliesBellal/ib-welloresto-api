@@ -27,13 +27,13 @@ func (r *Repository) GetEnrollmentCodeByHash(ctx context.Context, codeHash strin
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-	SELECT id, merchant_id, code_hash, display_id, expires_at, used_at, created_by_user_id, created_at
+	SELECT id, merchant_id, code_hash, display_name, display_id, expires_at, used_at, created_by_user_id, created_at
 	FROM cds_enrollment_codes
 	WHERE code_hash = ?`
 
 	row := EnrollmentCodeRow{}
 	err := db.QueryRowContext(ctx, query, codeHash).Scan(
-		&row.ID, &row.MerchantID, &row.CodeHash, &row.DisplayID,
+		&row.ID, &row.MerchantID, &row.CodeHash, &row.DisplayName, &row.DisplayID,
 		&row.ExpiresAt, &row.UsedAt, &row.CreatedByUserID, &row.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -45,13 +45,17 @@ func (r *Repository) GetEnrollmentCodeByHash(ctx context.Context, codeHash strin
 	return &row, nil
 }
 
-func (r *Repository) CreateEnrollmentCode(ctx context.Context, codeID, merchantID, codeHash string, expiresAt time.Time, createdByUserID string) error {
+// CreateEnrollmentCode insère un code. displayName est nil quand le
+// restaurateur n'a pas nommé l'écran : la colonne reste alors NULL (et non une
+// chaîne vide), ce qui est ce que EnrollDevice teste pour retomber sur le nom
+// envoyé par l'appareil.
+func (r *Repository) CreateEnrollmentCode(ctx context.Context, codeID, merchantID, codeHash string, displayName *string, expiresAt time.Time, createdByUserID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-	INSERT INTO cds_enrollment_codes (id, merchant_id, code_hash, expires_at, created_by_user_id)
-	VALUES (?, ?, ?, ?, ?)`
-	_, err := db.ExecContext(ctx, query, codeID, merchantID, codeHash, expiresAt, createdByUserID)
+	INSERT INTO cds_enrollment_codes (id, merchant_id, code_hash, display_name, expires_at, created_by_user_id)
+	VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := db.ExecContext(ctx, query, codeID, merchantID, codeHash, displayName, expiresAt, createdByUserID)
 	return err
 }
 
@@ -69,7 +73,7 @@ func (r *Repository) ListPendingEnrollmentCodes(ctx context.Context, merchantID 
 	db := dbx.GetDB(ctx, r.database)
 
 	query := fmt.Sprintf(`
-	SELECT id, merchant_id, code_hash, display_id, expires_at, used_at, created_by_user_id, created_at
+	SELECT id, merchant_id, code_hash, display_name, display_id, expires_at, used_at, created_by_user_id, created_at
 	FROM cds_enrollment_codes
 	WHERE merchant_id = ? AND used_at IS NULL AND expires_at > %s
 	ORDER BY created_at DESC`, dbx.UTCNow())
@@ -84,7 +88,7 @@ func (r *Repository) ListPendingEnrollmentCodes(ctx context.Context, merchantID 
 	for rows.Next() {
 		row := EnrollmentCodeRow{}
 		if err := rows.Scan(
-			&row.ID, &row.MerchantID, &row.CodeHash, &row.DisplayID,
+			&row.ID, &row.MerchantID, &row.CodeHash, &row.DisplayName, &row.DisplayID,
 			&row.ExpiresAt, &row.UsedAt, &row.CreatedByUserID, &row.CreatedAt,
 		); err != nil {
 			return nil, err

@@ -211,3 +211,40 @@ func TestTruncateRunes(t *testing.T) {
 		t.Error("truncateRunes ne doit jamais produire de l'UTF-8 invalide")
 	}
 }
+
+// TestResolveEnrollmentName verrouille la règle de nommage : le nom choisi au
+// back-office prime sur celui que l'appareil s'est donné.
+func TestResolveEnrollmentName(t *testing.T) {
+	str := func(s string) *string { return &s }
+
+	tests := []struct {
+		name       string
+		codeName   *string
+		deviceName string
+		want       string
+		wantErr    bool
+	}{
+		{"le nom du code prime sur celui de l'appareil", str("Comptoir"), "Ecran Android Box", "Comptoir", false},
+		{"espaces du nom du code ignores", str("  Comptoir  "), "Ecran Android Box", "Comptoir", false},
+		{"un code sans nom retombe sur l'appareil", nil, "Ecran Android Box", "Ecran Android Box", false},
+		{"un nom de code vide retombe sur l'appareil", str("   "), "Ecran Android Box", "Ecran Android Box", false},
+		// Le nom de l'appareil n'a pas a etre valide quand le code porte le
+		// sien : un ancien client qui enverrait un nom vide doit pouvoir
+		// s'enroler.
+		{"nom d'appareil invalide sans consequence si le code a un nom", str("Comptoir"), "", "Comptoir", false},
+		{"ni nom de code ni nom d'appareil", nil, "", "", true},
+		{"nom d'appareil trop long sans nom de code", nil, strings.Repeat("a", 101), "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveEnrollmentName(tt.codeName, tt.deviceName)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveEnrollmentName() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("resolveEnrollmentName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

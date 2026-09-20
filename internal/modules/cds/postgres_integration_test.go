@@ -78,7 +78,8 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	// ---- Enrôlement ----
 
 	expiresAt := time.Now().UTC().Add(10 * time.Minute)
-	if err := repo.CreateEnrollmentCode(ctx, codeID, merchantID, codeHash, expiresAt, "itest-user"); err != nil {
+	codeName := "Ecran comptoir"
+	if err := repo.CreateEnrollmentCode(ctx, codeID, merchantID, codeHash, &codeName, expiresAt, "itest-user"); err != nil {
 		t.Fatalf("CreateEnrollmentCode: %v", err)
 	}
 

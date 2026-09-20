@@ -84,7 +84,21 @@ func boardCacheKey(merchantID string, orderTypes, channels []string) string {
 // maxActiveDisplays s'applique, et il se vérifie ici — refuser au moment de
 // la génération plutôt qu'à l'enrôlement évite au restaurateur de saisir un
 // code sur l'écran pour découvrir ensuite qu'il est refusé.
-func (s *Service) GenerateEnrollmentCode(ctx context.Context, merchantID, createdByUserID string) (*GenerateEnrollmentCodeResponse, error) {
+//
+// name est le nom que le restaurateur donne à l'écran. Il est facultatif :
+// vide, le code se comporte comme avant et l'écran garde le nom qu'il envoie.
+// Validé ici, au moment de la saisie, plutôt qu'à l'enrôlement : un nom
+// refusé devant un écran non tactile ne serait plus corrigeable sur place.
+func (s *Service) GenerateEnrollmentCode(ctx context.Context, merchantID, createdByUserID, name string) (*GenerateEnrollmentCodeResponse, error) {
+	name = strings.TrimSpace(name)
+	var displayName *string
+	if name != "" {
+		if err := validateDisplayName(name); err != nil {
+			return nil, err
+		}
+		displayName = &name
+	}
+
 	activeCount, err := s.repo.GetActiveDisplayCount(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -102,14 +116,33 @@ func (s *Service) GenerateEnrollmentCode(ctx context.Context, merchantID, create
 	expiresAt := time.Now().UTC().Add(time.Duration(s.cfg.EnrollmentCodeTTLMinutes) * time.Minute)
 	codeID := helpers.GeneratePrefixedID(helpers.CDSEnrollmentCodeIDPrefix)
 
-	if err := s.repo.CreateEnrollmentCode(ctx, codeID, merchantID, codeHash, expiresAt, createdByUserID); err != nil {
+	if err := s.repo.CreateEnrollmentCode(ctx, codeID, merchantID, codeHash, displayName, expiresAt, createdByUserID); err != nil {
 		return nil, err
 	}
 
 	return &GenerateEnrollmentCodeResponse{
 		Code:      code,
+		Name:      name,
 		ExpiresAt: expiresAt.Format(time.RFC3339),
 	}, nil
+}
+
+// resolveEnrollmentName détermine le nom que portera l'écran créé.
+//
+// Le nom du code, choisi par le restaurateur, prime sur celui de l'appareil :
+// ce dernier est auto-généré (« Écran Android Box ») et n'a aucune valeur
+// pour repérer un écran dans le parc. L'appareil ne sert que de repli, pour
+// un code généré sans nom.
+func resolveEnrollmentName(codeName *string, deviceName string) (string, error) {
+	if codeName != nil {
+		if trimmed := strings.TrimSpace(*codeName); trimmed != "" {
+			return trimmed, nil
+		}
+	}
+	if err := validateDisplayName(deviceName); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(deviceName), nil
 }
 
 // generateEnrollmentCode produit un code numérique à 6 chiffres.
@@ -137,19 +170,21 @@ func generateEnrollmentCode() (string, error) {
 	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
-// generateAdminPin produit le PIN à 6 chiffres qui déverrouille l'écran
-// d'administration local. Même tirage uniforme que le code d'enrôlement.
+// generateAdminPin produit le PIN administrateur à 6 chiffres, même tirage
+// uniforme que le code d'enrôlement.
+//
+// ⚠ À ce jour ce PIN ne protège RIEN : il est généré, stocké chiffré, affiché
+// une fois sur l'écran à l'enrôlement et consultable au back-office, mais ni
+// l'application ni l'API n'ont d'écran d'administration ni de route de
+// vérification (contrairement au kiosk, qui a POST /kiosk/auth/verify-admin-pin).
+// Il a été porté du module kiosk en prévision de cet écran, qui reste à
+// concevoir.
 func generateAdminPin() (string, error) {
 	return generateEnrollmentCode()
 }
 
 // EnrollDevice consomme un code d'enrôlement et crée l'écran.
 func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string) (*EnrollResponse, error) {
-	if err := validateDisplayName(req.Name); err != nil {
-		return nil, err
-	}
-	req.Name = strings.TrimSpace(req.Name)
-
 	codeHash := security.HashPIN(strings.TrimSpace(req.EnrollmentCode), s.cfg.Pepper)
 
 	code, err := s.repo.GetEnrollmentCodeByHash(ctx, codeHash)
@@ -164,6 +199,15 @@ func (s *Service) EnrollDevice(ctx context.Context, req EnrollRequest, ip string
 	}
 	if time.Now().UTC().After(code.ExpiresAt) {
 		return nil, models.ErrCDSEnrollmentCodeExpired
+	}
+
+	// Le nom se résout APRÈS la lecture du code : il peut venir du code lui-même
+	// (choisi au back-office), auquel cas le nom envoyé par l'appareil n'a pas à
+	// être valide. Valider le nom de l'appareil avant tout refuserait un
+	// enrôlement légitime sur une erreur qui ne le concerne plus.
+	req.Name, err = resolveEnrollmentName(code.DisplayName, req.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Re-vérifié ici et pas seulement à la génération : deux codes peuvent

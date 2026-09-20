@@ -37,9 +37,13 @@ type DisplayRow struct {
 
 // EnrollmentCodeRow mappe la table cds_enrollment_codes.
 type EnrollmentCodeRow struct {
-	ID              string
-	MerchantID      string
-	CodeHash        string
+	ID         string
+	MerchantID string
+	CodeHash   string
+	// DisplayName est le nom choisi au back-office pour l'écran à enrôler.
+	// Nil pour un code généré sans nom : l'écran garde alors celui qu'il
+	// envoie lui-même.
+	DisplayName     *string
 	DisplayID       *string
 	ExpiresAt       time.Time
 	UsedAt          *time.Time
@@ -220,8 +224,18 @@ type MediaItemResponse struct {
 
 // ---- Admin (back-office) ----
 
+// GenerateEnrollmentCodeRequest — body optionnel de
+// POST /pos/settings/cds/enrollment-codes.
+//
+// Name est facultatif : un corps vide ou absent reste valide, ce qui garde
+// compatible tout client qui ne l'envoie pas encore.
+type GenerateEnrollmentCodeRequest struct {
+	Name string `json:"name"`
+}
+
 type GenerateEnrollmentCodeResponse struct {
 	Code      string `json:"code"`
+	Name      string `json:"name,omitempty"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -251,7 +265,10 @@ type UpdateDisplayRequest struct {
 }
 
 type EnrollmentCodeListItem struct {
-	ID        string  `json:"id"`
+	ID string `json:"id"`
+	// Name permet de distinguer plusieurs codes en attente : sans lui, la
+	// liste ne montre que des dates identiques d'un code à l'autre.
+	Name      *string `json:"name"`
 	CreatedAt string  `json:"created_at"`
 	ExpiresAt string  `json:"expires_at"`
 	UsedAt    *string `json:"used_at"`

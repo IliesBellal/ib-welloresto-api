@@ -149,6 +149,7 @@ func (s *Service) ListEnrollmentCodes(ctx context.Context, merchantID string) (*
 	for _, row := range rows {
 		item := EnrollmentCodeListItem{
 			ID:        row.ID,
+			Name:      row.DisplayName,
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
 			ExpiresAt: row.ExpiresAt.UTC().Format(time.RFC3339),
 		}

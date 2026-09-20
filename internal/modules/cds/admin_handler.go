@@ -5,6 +5,8 @@ package cds
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -49,7 +51,16 @@ func (h *AdminHandler) GenerateEnrollmentCode(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	resp, err := h.service.GenerateEnrollmentCode(ctx, user.MerchantID, user.UserID)
+	// Corps optionnel : une requête sans corps (io.EOF) reste valide et génère
+	// un code sans nom, comme avant l'ajout de ce champ. Tout autre échec de
+	// décodage est en revanche une vraie erreur de requête.
+	var req GenerateEnrollmentCodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		models.SendErrorJSON(w, "cds", "generate_enrollment_code", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.GenerateEnrollmentCode(ctx, user.MerchantID, user.UserID, req.Name)
 	if err != nil {
 		log.Warn("cds generate enrollment code failed", zap.Error(err))
 		models.SendErrorJSON(w, "cds", "generate_enrollment_code", err)
