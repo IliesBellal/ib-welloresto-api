@@ -20,6 +20,7 @@ type AppConfig struct {
 	R2          R2Config
 	AI          ai.AIConfig
 	Kiosk       KioskConfig
+	CDS         CDSConfig
 	Planning    PlanningConfig
 	Reservation ReservationConfig
 	Auth        AuthConfig
@@ -62,6 +63,7 @@ func Load() *AppConfig {
 		R2:          loadR2Config(),
 		AI:          loadAIConfig(),
 		Kiosk:       loadKioskConfig(),
+		CDS:         loadCDSConfig(),
 		Planning:    loadPlanningConfig(),
 		Reservation: loadReservationConfig(),
 		Auth:        loadAuthConfig(),

@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/middleware/rbacobserve"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
+	cdsModule "welloresto-api/internal/modules/cds"
 	googleauthModule "welloresto-api/internal/modules/googleauth"
 	"welloresto-api/internal/modules/googlemaps"
 	kioskModule "welloresto-api/internal/modules/kiosk"
@@ -589,6 +590,22 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	kioskService.SetOnboardingService(onboardingService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
+
+	// ---- CDS (écran d'affichage client) ----
+	// Module distinct de kiosk (voir CDS_DECISIONS.md D10) : tables, quota,
+	// permission et routes séparés. Il ne consomme ni menuService ni
+	// ordersService — un écran passif ne fait aucune écriture métier, il lit
+	// une projection légère des commandes (GET /cds/orders).
+	cdsRepo := cdsModule.NewRepository(selectedDB)
+	cdsCfg := cdsModule.Config{
+		EnrollmentCodeTTLMinutes:  cfg.CDS.EnrollmentCodeTTLMinutes,
+		DeviceRefreshTokenTTLDays: cfg.CDS.DeviceRefreshTokenTTLDays,
+		AccessTokenTTLMinutes:     cfg.CDS.AccessTokenTTLMinutes,
+		Pepper:                    cfg.CDS.Pepper,
+	}
+	cdsService := cdsModule.NewService(cdsCfg, cdsRepo, selectedDB, redisClient, notificationService)
+	cdsHandler := cdsModule.NewHandler(cdsService)
+	cdsAdminHandler := cdsModule.NewAdminHandler(cdsService, r2Client)
 
 	// =============================
 	//  HANDLERS
@@ -1943,6 +1960,53 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		})
 	})
 
+	// --- CDS (device, public + CDSAuth) ---
+	//
+	// Surface volontairement minimale : aucune route d'écriture métier. Un
+	// écran d'affichage lit des commandes, il n'en crée ni n'en modifie
+	// jamais (CDS_DECISIONS.md D10).
+	r.Route("/cds", func(r chi.Router) {
+		// ⚠ Routes publiques consommant un code à 6 chiffres, sans rate
+		// limiting dans cette API à ce jour — risque tracé, voir
+		// docs/audits/2026-09-19-enrollment-rate-limiting.md.
+		r.Post("/auth/enroll", cdsHandler.EnrollDevice)
+		r.Post("/auth/token/refresh", cdsHandler.RefreshDeviceToken)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.CDSAuth(cdsService))
+			r.Post("/auth/heartbeat", cdsHandler.DeviceHeartbeat)
+			r.Get("/orders", cdsHandler.GetBoard)
+			r.Get("/settings", cdsHandler.GetDeviceSettings)
+		})
+	})
+
+	// --- CDS (back-office, auth humaine + cds.manage) ---
+	r.Route("/pos/settings/cds", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+		r.Use(middleware.RequirePermission(permission.CDSManage))
+
+		r.Post("/enrollment-codes", cdsAdminHandler.GenerateEnrollmentCode)
+		r.Get("/enrollment-codes", cdsAdminHandler.ListEnrollmentCodes)
+		r.Delete("/enrollment-codes/{code_id}", cdsAdminHandler.DeleteEnrollmentCode)
+
+		r.Get("/displays", cdsAdminHandler.ListDisplays)
+		r.Get("/displays/{display_id}", cdsAdminHandler.GetDisplay)
+		r.Put("/displays/{display_id}", cdsAdminHandler.UpdateDisplay)
+		// Révocation : seule action de cycle de vie, il n'existe ni enable
+		// ni disable (CDS_DECISIONS.md D15).
+		r.Post("/displays/{display_id}/revoke", cdsAdminHandler.RevokeDisplay)
+		r.Get("/displays/{display_id}/admin-pin", cdsAdminHandler.GetAdminPin)
+
+		r.Get("/displays/{display_id}/settings", cdsAdminHandler.GetSettings)
+		r.Put("/displays/{display_id}/settings", cdsAdminHandler.UpdateSettings)
+
+		r.Get("/displays/{display_id}/media", cdsAdminHandler.ListMedia)
+		r.Post("/displays/{display_id}/media", cdsAdminHandler.CreateMediaItem)
+		r.Put("/displays/{display_id}/media/reorder", cdsAdminHandler.ReorderMedia)
+		r.Delete("/displays/{display_id}/media/{media_id}", cdsAdminHandler.DeleteMediaItem)
+	})
+
 	// --- WEBSOCKET ---
 	r.Route("/ws", func(r chi.Router) {
 		r.Use(authMiddleware)
@@ -1959,6 +2023,20 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			websocket.ServeKioskWS(wsHub, w, r)
+		})
+	})
+
+	// --- WEBSOCKET (CDS device) ---
+	// Même Hub que /ws et /ws-kiosk, indexé par merchantID : l'écran reçoit
+	// donc les mêmes événements que le POS et les bornes du merchant,
+	// UPDATE_ORDER compris, sans aucune émission nouvelle côté API. Endpoint
+	// distinct uniquement parce que /ws exige une auth humaine et rejette
+	// tout token device (voir CDS_DECISIONS.md D9).
+	r.Route("/ws-cds", func(r chi.Router) {
+		r.Use(middleware.CDSAuth(cdsService))
+
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			websocket.ServeCDSWS(wsHub, w, r)
 		})
 	})
 

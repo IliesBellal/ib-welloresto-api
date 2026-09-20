@@ -273,6 +273,22 @@ func GenerateHACCPTraceabilityKey(merchantID, recordID string, index int, ext st
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/haccp/tracabilite/%s/%d%s", merchantID, recordID, index, ext)
 }
 
+// GenerateCDSMediaKey génère la clé R2 d'un média de la zone marketing d'un
+// écran d'affichage client (table cds_media_items).
+//
+// La clé est scopée par écran ET par média : contrairement à
+// GenerateKioskKey (un seul visuel de veille par merchant, clé déterministe
+// qu'on écrase), la zone CDS est une rotation de plusieurs médias qui
+// coexistent. Chacun a donc son propre objet, supprimé individuellement
+// quand le média est retiré de la rotation — et aucun cache-buster n'est
+// nécessaire, puisqu'une clé n'est jamais réécrite.
+func GenerateCDSMediaKey(merchantID, displayID, mediaID, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/cds/%s/media/%s%s", merchantID, displayID, mediaID, ext)
+}
+
 // PublicURL reconstruit l'URL publique d'un objet à partir de sa clé R2.
 // Utile quand seule la clé (pas l'URL) est persistée en base, ex.
 // haccp_traceability_photos.photo_key.

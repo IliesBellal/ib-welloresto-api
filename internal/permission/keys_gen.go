@@ -43,6 +43,7 @@ const (
 	BookingsManage              Key = "bookings.manage"
 	PlatformsManage             Key = "platforms.manage"
 	KioskManage                 Key = "kiosk.manage"
+	CDSManage                   Key = "cds.manage"
 	SeatingPlanManage           Key = "seating_plan.manage"
 )
 
@@ -66,5 +67,6 @@ var All = []Key{
 	BookingsManage,
 	PlatformsManage,
 	KioskManage,
+	CDSManage,
 	SeatingPlanManage,
 }

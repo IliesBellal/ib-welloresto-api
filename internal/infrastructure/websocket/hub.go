@@ -8,16 +8,33 @@ import (
 	"go.uber.org/zap"
 )
 
-// Client représente une connexion WebSocket active pour un merchant
+// Client représente une connexion WebSocket active pour un merchant.
+//
+// deviceKind/deviceID identifient l'appareil quand la connexion vient d'un
+// device et non d'un humain. Le couple a remplacé le champ kioskID seul
+// lorsqu'un deuxième type d'appareil est apparu (les écrans CDS) : sans lui,
+// une révocation d'écran fermerait la connexion d'une borne portant le même
+// identifiant, et inversement.
+//
+//	deviceKind == ""           -> client humain (POS, back-office), deviceID vide
+//	deviceKind == DeviceKiosk  -> borne de commande, deviceID = kiosk_id
+//	deviceKind == DeviceCDS    -> écran d'affichage client, deviceID = display_id
 type Client struct {
 	conn       *websocket.Conn
 	merchantID string
 	connID     string
-	kioskID    string // vide pour un client humain (POS/back-office)
+	deviceKind string
+	deviceID   string
 	send       chan []byte
 	startedAt  time.Time
 	log        *zap.Logger
 }
+
+// Types d'appareils pouvant ouvrir une connexion device.
+const (
+	DeviceKiosk = "kiosk"
+	DeviceCDS   = "cds"
+)
 
 // Hub gère toutes les connexions WebSocket des merchants
 // Structure : merchantID -> connID -> *Client
@@ -171,7 +188,7 @@ func (h *Hub) CloseKioskConnections(merchantID, kioskID string, code int, reason
 	}
 	targets := make([]*Client, 0, 1)
 	for _, client := range merchant {
-		if client.kioskID != "" && client.kioskID == kioskID {
+		if client.deviceKind == DeviceKiosk && client.deviceID == kioskID {
 			targets = append(targets, client)
 		}
 	}
@@ -206,7 +223,7 @@ func (h *Hub) SendToKiosk(merchantID, kioskID string, message []byte) bool {
 	}
 	targets := make([]*Client, 0, 1)
 	for _, client := range merchant {
-		if client.kioskID != "" && client.kioskID == kioskID {
+		if client.deviceKind == DeviceKiosk && client.deviceID == kioskID {
 			targets = append(targets, client)
 		}
 	}
@@ -227,4 +244,37 @@ func (h *Hub) SendToKiosk(merchantID, kioskID string, message []byte) bool {
 	}
 
 	return sent
+}
+
+// CloseCDSConnections ferme immédiatement toute connexion WebSocket active
+// d'un écran d'affichage client (CDS) — pendant exact de
+// CloseKioskConnections, sur l'autre type d'appareil. Utilisé à la
+// révocation : sans lui, l'écran continuerait d'afficher les commandes
+// jusqu'à l'expiration naturelle de son access token.
+func (h *Hub) CloseCDSConnections(merchantID, displayID string, code int, reason string) bool {
+	h.mu.RLock()
+	merchant, exists := h.clients[merchantID]
+	if !exists {
+		h.mu.RUnlock()
+		return false
+	}
+	targets := make([]*Client, 0, 1)
+	for _, client := range merchant {
+		if client.deviceKind == DeviceCDS && client.deviceID == displayID {
+			targets = append(targets, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return false
+	}
+
+	closeMsg := websocket.FormatCloseMessage(code, reason)
+	for _, client := range targets {
+		_ = client.conn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(5*time.Second))
+		_ = client.conn.Close()
+	}
+
+	return true
 }

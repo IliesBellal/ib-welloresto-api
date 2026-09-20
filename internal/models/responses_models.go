@@ -425,6 +425,27 @@ var (
 	// ci-dessus (même réponse HTTP dans les deux cas).
 	ErrKioskReclaimPinRequired = errors.New("kiosk_reclaim_pin_required")
 
+	// Erreurs du module CDS (internal/modules/cds) — volontairement
+	// distinctes de leurs équivalents Kiosk : les deux parcs, les deux
+	// quotas et les deux parcours de support sont séparés (voir
+	// CDS_DECISIONS.md D10). Un message d'erreur qui parlerait de "borne"
+	// sur un écran d'affichage enverrait le support sur une fausse piste.
+	ErrCDSEnrollmentCodeInvalid = errors.New("cds_enrollment_code_invalid")
+	ErrCDSEnrollmentCodeExpired = errors.New("cds_enrollment_code_expired")
+	ErrCDSEnrollmentCodeUsed    = errors.New("cds_enrollment_code_used")
+	// ErrCDSMaxDisplaysReached : plafond technique de 4 écrans actifs, non
+	// commercial (l'écran est gratuit) — voir CDS_DECISIONS.md D4. Compté
+	// sur status <> 'revoked' : désactiver n'existe pas, seule la
+	// révocation libère une place.
+	ErrCDSMaxDisplaysReached = errors.New("cds_max_displays_reached")
+	ErrCDSDeviceTokenInvalid = errors.New("cds_device_token_invalid")
+	ErrCDSRevoked            = errors.New("cds_revoked")
+	ErrCDSNotFound           = errors.New("cds_not_found")
+	ErrCDSNameInvalid        = errors.New("cds_name_invalid")
+	ErrCDSSettingsInvalid    = errors.New("cds_settings_invalid")
+	ErrCDSMediaNotFound      = errors.New("cds_media_not_found")
+	ErrCDSMediaInvalid       = errors.New("cds_media_invalid")
+
 	// Erreurs du module Kiosk — incrément 2 (menu, commandes)
 	ErrKioskProductNotFound         = errors.New("kiosk_product_not_found")
 	ErrKioskProductUnavailable      = errors.New("kiosk_product_unavailable")
@@ -1368,6 +1389,63 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnauthorized
 		errorStatus = "kiosk_reclaim_pin_required"
 		errorMsg = "Admin PIN required to reclaim this kiosk."
+
+	// ---- Module CDS (écran d'affichage client) ----
+
+	case errors.Is(err, ErrCDSEnrollmentCodeInvalid):
+		status = http.StatusUnauthorized
+		errorStatus = "cds_enrollment_code_invalid"
+		errorMsg = "The enrollment code is invalid."
+
+	case errors.Is(err, ErrCDSEnrollmentCodeExpired):
+		status = http.StatusUnauthorized
+		errorStatus = "cds_enrollment_code_expired"
+		errorMsg = "The enrollment code has expired."
+
+	case errors.Is(err, ErrCDSEnrollmentCodeUsed):
+		status = http.StatusUnauthorized
+		errorStatus = "cds_enrollment_code_used"
+		errorMsg = "The enrollment code has already been used."
+
+	case errors.Is(err, ErrCDSMaxDisplaysReached):
+		status = http.StatusForbidden
+		errorStatus = "cds_max_displays_reached"
+		errorMsg = "The maximum number of customer displays has been reached. Revoke an existing display to add a new one."
+
+	case errors.Is(err, ErrCDSDeviceTokenInvalid):
+		status = http.StatusUnauthorized
+		errorStatus = "cds_device_token_invalid"
+		errorMsg = "The display device token is invalid or expired."
+
+	case errors.Is(err, ErrCDSRevoked):
+		status = http.StatusForbidden
+		errorStatus = "cds_revoked"
+		errorMsg = "This customer display has been revoked."
+
+	case errors.Is(err, ErrCDSNotFound):
+		status = http.StatusNotFound
+		errorStatus = "cds_not_found"
+		errorMsg = "Customer display not found."
+
+	case errors.Is(err, ErrCDSNameInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "cds_name_invalid"
+		errorMsg = "The display name must be between 1 and 100 characters."
+
+	case errors.Is(err, ErrCDSSettingsInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "cds_settings_invalid"
+		errorMsg = "The display settings payload is invalid."
+
+	case errors.Is(err, ErrCDSMediaNotFound):
+		status = http.StatusNotFound
+		errorStatus = "cds_media_not_found"
+		errorMsg = "Media item not found."
+
+	case errors.Is(err, ErrCDSMediaInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "cds_media_invalid"
+		errorMsg = "The media item payload is invalid."
 
 	case errors.Is(err, ErrKioskProductNotFound):
 		status = http.StatusNotFound

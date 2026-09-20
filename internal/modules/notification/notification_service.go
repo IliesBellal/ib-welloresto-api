@@ -130,6 +130,18 @@ func (s *NotificationService) CloseKioskConnection(merchantID, kioskID string) b
 	return s.hub.CloseKioskConnections(merchantID, kioskID, 1008, "kiosk_revoked") // 1008 = Policy Violation
 }
 
+// CloseCDSConnection ferme immédiatement la connexion WebSocket active d'un
+// écran d'affichage client — pendant de CloseKioskConnection sur l'autre type
+// d'appareil, utilisé à la révocation d'un écran (voir
+// cds.Service.RevokeDisplay). Retourne false si aucun hub ou aucune connexion
+// active pour cet écran.
+func (s *NotificationService) CloseCDSConnection(merchantID, displayID string) bool {
+	if s.hub == nil {
+		return false
+	}
+	return s.hub.CloseCDSConnections(merchantID, displayID, 1008, "cds_revoked") // 1008 = Policy Violation
+}
+
 func (s *NotificationService) SendNotificationAsyncWithPayload(
 	merchantID string,
 	nType string,

@@ -72,6 +72,15 @@ const (
 	SubscriptionOverrideIDPrefix         = "sbov"
 	PlatformBillingCustomerIDPrefix      = "pbc"
 	SepaMandateIDPrefix                  = "sepa"
+
+	// Module CDS (Customer Display System) — écran d'affichage client.
+	// Préfixes distincts de ceux du kiosk : les deux parcs sont séparés
+	// (voir CDS_DECISIONS.md D10), un identifiant ne doit jamais pouvoir
+	// être confondu d'un module à l'autre dans les logs ou le support.
+	CDSDisplayIDPrefix        = "cds"
+	CDSEnrollmentCodeIDPrefix = "cds-enrl-cd"
+	CDSDeviceTokenIDPrefix    = "cds-dev-tkn"
+	CDSMediaItemIDPrefix      = "cds-media"
 )
 
 // GeneratePrefixedID generates a unique ID with the given prefix (e.g., "order-xxxx-xxxx").

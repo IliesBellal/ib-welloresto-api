@@ -65,7 +65,8 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	serveWS(hub, w, r, user.MerchantID, "")
+	// deviceKind et deviceID vides : connexion humaine, pas un appareil.
+	serveWS(hub, w, r, user.MerchantID, "", "")
 }
 
 // ServeKioskWS gère la connexion WebSocket d'une borne Kiosk — auth via
@@ -80,10 +81,31 @@ func ServeKioskWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	serveWS(hub, w, r, kiosk.MerchantID, kiosk.KioskID)
+	serveWS(hub, w, r, kiosk.MerchantID, DeviceKiosk, kiosk.KioskID)
 }
 
-func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID, kioskID string) {
+// ServeCDSWS gère la connexion WebSocket d'un écran d'affichage client — auth
+// via middleware.CDSAuth (middleware.GetCDS).
+//
+// Pourquoi un troisième endpoint plutôt que /ws : celui-ci exige un
+// utilisateur humain (middleware.Auth / GetUser) et rejette tout token
+// device, exactement comme il rejette déjà les bornes. Ce n'est donc pas un
+// choix d'architecture, c'est une conséquence de l'authentification par
+// appareil.
+//
+// Le Hub reste le même, indexé par merchantID : l'écran reçoit donc les mêmes
+// événements que le POS et les bornes du même merchant — UPDATE_ORDER
+// compris, sans aucune émission nouvelle à écrire côté API.
+func ServeCDSWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	cds := middleware.GetCDS(r)
+	if cds == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	serveWS(hub, w, r, cds.MerchantID, DeviceCDS, cds.DisplayID)
+}
+
+func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID, deviceKind, deviceID string) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
@@ -114,7 +136,8 @@ func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request, merchantID, kiosk
 		conn:       conn,
 		merchantID: merchantID,
 		connID:     connID,
-		kioskID:    kioskID,
+		deviceKind: deviceKind,
+		deviceID:   deviceID,
 		send:       make(chan []byte, 256),
 		startedAt:  time.Now(),
 		log:        clientLog,
@@ -195,11 +218,14 @@ func (c *Client) readPump(hub *Hub) {
 		}
 
 		// Relais des messages envoyés par une borne (kiosk_unavailable) vers
-		// le reste du canal merchant (POS/back-office) — seules les
-		// connexions device (kioskID non vide) sont autorisées à émettre ce
-		// message, kiosk_id est toujours forcé à l'identité authentifiée
-		// pour empêcher l'usurpation d'une autre borne.
-		if c.kioskID != "" {
+		// le reste du canal merchant (POS/back-office) — seules les bornes
+		// sont autorisées à émettre ce message, kiosk_id est toujours forcé
+		// à l'identité authentifiée pour empêcher l'usurpation d'une autre
+		// borne.
+		//
+		// Les écrans CDS sont volontairement exclus : ils n'émettent aucun
+		// message montant, leur readPump ne traite que le PING.
+		if c.deviceKind == DeviceKiosk {
 			c.handleIncomingMessage(hub, message)
 		}
 	}
@@ -213,7 +239,7 @@ func (c *Client) handleIncomingMessage(hub *Hub, raw []byte) {
 	if msgType, _ := msg["type"].(string); msgType != "kiosk_unavailable" {
 		return
 	}
-	msg["kiosk_id"] = c.kioskID
+	msg["kiosk_id"] = c.deviceID
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return
