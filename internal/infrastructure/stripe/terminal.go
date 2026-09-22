@@ -589,7 +589,7 @@ func (t *TerminalService) ProcessPaymentIntentOnReader(ctx context.Context, merc
 
 	var dispatchErr error
 	lockErr := t.payments.WithOrderLock(ctx, orderID, func(txCtx context.Context) error {
-		piID, _, resolveErr := t.resolveOrCreatePaymentIntentLocked(txCtx, accountID, merchantID, orderID, amountCents, variableFees, fixedFees)
+		_, piID, resolveErr := t.resolveOrCreatePaymentIntentLocked(txCtx, accountID, merchantID, orderID, amountCents, variableFees, fixedFees)
 		if resolveErr != nil {
 			return resolveErr // rollback : le PaymentIntent lui-même n'a pas pu être résolu
 		}
