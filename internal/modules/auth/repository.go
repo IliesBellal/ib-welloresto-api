@@ -673,6 +673,31 @@ func (r *AuthRepository) RotateRightsTokensForUser(ctx context.Context, userID s
 	return oldTokens, nil
 }
 
+// ListRightsTokensForUser returns the session token of every merchant link of a
+// user. mfa_status lives on the user row while the Redis user cache is keyed by
+// token, so a status change must purge the cache entry of each of these tokens.
+func (r *AuthRepository) ListRightsTokensForUser(ctx context.Context, userID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `SELECT token FROM users_rights WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(token) != "" {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens, rows.Err()
+}
+
 // GetUserByPIN looks up the employee whose PIN matches within a merchant.
 // Requires ur.enabled = true AND ur.login_enabled = true so a deactivated link
 // cannot authenticate even if its pin_hash was not cleared.

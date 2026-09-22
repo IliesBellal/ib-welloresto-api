@@ -132,6 +132,10 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	if settings.ShowWaitTime {
 		t.Error("show_wait_time doit etre desactive par defaut (D11)")
 	}
+	// Migration 152 : duree par defaut de la rotation, 10 s.
+	if settings.DefaultMediaDurationSeconds != 10 {
+		t.Errorf("default_media_duration_seconds par defaut = %d, want 10", settings.DefaultMediaDurationSeconds)
+	}
 	// Migration 151 : un nouvel ecran demarre sans bandeau marketing.
 	if settings.LayoutMode != LayoutNoMarketing {
 		t.Errorf("layout_mode par defaut = %q, want %q", settings.LayoutMode, LayoutNoMarketing)
@@ -307,7 +311,7 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	mediaID := "itest-cds-media-1"
 	if err := repo.CreateMediaItem(ctx, MediaItemRow{
 		ID: mediaID, DisplayID: displayID, Kind: "video", URL: &url,
-		DurationSeconds: 10, SortOrder: 0, Enabled: true,
+		DurationSeconds: nil, SortOrder: 0, Enabled: true,
 	}); err != nil {
 		t.Fatalf("CreateMediaItem: %v", err)
 	}
@@ -315,7 +319,7 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	qr := "https://example.test/menu"
 	if err := repo.CreateMediaItem(ctx, MediaItemRow{
 		ID: "itest-cds-media-2", DisplayID: displayID, Kind: "qr", QRPayload: &qr,
-		DurationSeconds: 15, SortOrder: 1, Enabled: true,
+		DurationSeconds: intPtr(15), SortOrder: 1, Enabled: true,
 	}); err != nil {
 		t.Fatalf("CreateMediaItem qr: %v", err)
 	}
@@ -336,6 +340,54 @@ func TestCDSRepository_Postgres(t *testing.T) {
 	items, _ = repo.ListMediaItems(ctx, displayID, false)
 	if items[0].ID != "itest-cds-media-2" {
 		t.Errorf("apres reorder, premier media = %q, want itest-cds-media-2", items[0].ID)
+	}
+
+	// ---- Durees : surcharge individuelle et reinitialisation (migration 152) ----
+
+	// Un media cree sans duree suit le defaut : sa colonne est NULL, pas 10.
+	fetched, err := repo.GetMediaItem(ctx, displayID, mediaID)
+	if err != nil || fetched == nil {
+		t.Fatalf("GetMediaItem: got (%v, %v)", fetched, err)
+	}
+	if fetched.DurationSeconds != nil {
+		t.Errorf("un media cree sans duree doit avoir duration_seconds NULL, got %d", *fetched.DurationSeconds)
+	}
+
+	ok, err := repo.UpdateMediaDuration(ctx, displayID, mediaID, intPtr(25))
+	if err != nil || !ok {
+		t.Fatalf("UpdateMediaDuration: ok=%v err=%v", ok, err)
+	}
+	fetched, _ = repo.GetMediaItem(ctx, displayID, mediaID)
+	if fetched.DurationSeconds == nil || *fetched.DurationSeconds != 25 {
+		t.Errorf("apres UpdateMediaDuration(25), duration_seconds = %v", fetched.DurationSeconds)
+	}
+
+	// La CHECK constraint borne les valeurs renseignees (3..120).
+	if _, err := repo.UpdateMediaDuration(ctx, displayID, mediaID, intPtr(2)); err == nil {
+		t.Error("une duree de 2 s doit etre refusee par la contrainte CHECK")
+	}
+
+	// Reinitialisation globale : les deux medias (25 s et 15 s) repassent a NULL.
+	if _, err := repo.UpdateMediaDuration(ctx, displayID, "itest-cds-media-2", intPtr(15)); err != nil {
+		t.Fatalf("UpdateMediaDuration media 2: %v", err)
+	}
+	cleared, err := repo.ClearMediaDurations(ctx, displayID)
+	if err != nil || cleared != 2 {
+		t.Fatalf("ClearMediaDurations = %d (err=%v), want 2", cleared, err)
+	}
+	fetched, _ = repo.GetMediaItem(ctx, displayID, mediaID)
+	if fetched.DurationSeconds != nil {
+		t.Errorf("apres ClearMediaDurations, duration_seconds doit etre NULL, got %d", *fetched.DurationSeconds)
+	}
+
+	// Le reglage global se met a jour et se relit.
+	newDefault := 20
+	if err := repo.UpdateSettings(ctx, displayID, UpdateSettingsRequest{DefaultMediaDurationSeconds: &newDefault}); err != nil {
+		t.Fatalf("UpdateSettings duree par defaut: %v", err)
+	}
+	settings, _ = repo.GetSettings(ctx, displayID)
+	if settings.DefaultMediaDurationSeconds != 20 {
+		t.Errorf("default_media_duration_seconds = %d, want 20", settings.DefaultMediaDurationSeconds)
 	}
 
 	deleted, err := repo.DeleteMediaItem(ctx, displayID, mediaID)

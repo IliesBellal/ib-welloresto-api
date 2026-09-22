@@ -1,3 +1,43 @@
+### Upsell — Kill-switch LLM (AI_TASK_UPSELL_ENABLED) (2026-09-22)
+
+**Contexte.** Suite à un incident de facturation Anthropic (crédit épuisé,
+erreur `400 credit balance too low`), le moteur upsell tombait
+systématiquement en LLM → échec → `featured_fallback`, pour les trois
+canaux (POS/SNO/KIOSK, le cache et les patterns Apriori étaient déjà
+partagés entre eux — voir diagnostic
+[docs/audits/2026-09-05-upsell-diagnostic-prompt20.md](audits/2026-09-05-upsell-diagnostic-prompt20.md)).
+Demande explicite : pouvoir couper l'appel LLM à la demande (incident,
+coût...) sans redéploiement de code, en routant directement sur les
+produits populaires déjà existants (`ListFeaturedProducts`,
+`is_popular = TRUE`), avec un warning de log dédié pour distinguer ce cas
+d'une vraie panne de provider.
+
+**Choix de portée** : interrupteur global par variable d'environnement,
+pas de colonne par marchand — solution volontairement légère pour
+l'instant (pas de migration, effective au redémarrage). Un réglage fin par
+marchand reste possible plus tard si besoin (colonne `merchant_parameters`,
+à l'image de `enable_upsell`).
+
+**Implémentation.**
+- `ai.TaskConfig.Enabled` (nouveau champ, [internal/ai/config.go](../internal/ai/config.go)) —
+  générique à tout task IA, pas seulement upsell.
+- `Registry.GetProviderForTask` retourne `ai.ErrTaskDisabled` (sentinel
+  dédié) quand `Enabled = false`, avant même de vérifier l'enregistrement
+  du provider ([internal/ai/registry.go](../internal/ai/registry.go)).
+- `AI_TASK_UPSELL_ENABLED` (défaut `true`), lu via le nouveau helper
+  `parseBool` ([internal/config/ai.go](../internal/config/ai.go)). `menu_translation`
+  reçoit `Enabled: true` en dur (pas de toggle demandé pour cette tâche).
+- `upsell.Service.generateUpsellSafe` distingue désormais
+  `errors.Is(provErr, ai.ErrTaskDisabled)` pour logger un warning explicite
+  ("LLM fallback disabled via config (AI_TASK_UPSELL_ENABLED=false)")
+  plutôt que le message générique de panne provider
+  ([internal/modules/upsell/service.go](../internal/modules/upsell/service.go)).
+  Le chemin de repli est inchangé : c'est le même `featuredFallback`
+  (produits `is_popular`) que celui déjà utilisé pour une vraie panne LLM —
+  aucune nouvelle logique de sélection de produits.
+- Patterns Apriori (Redis) non concernés : le toggle ne coupe que l'étape
+  LLM, pas le moteur de patterns qui reste tenté en premier comme avant.
+
 ### LOT B — Chantier 2 : trois endpoints manquants comblés après l'audit du bandeau/SEPA/abonnement front-office (2026-09-15)
 
 **Contexte.** Un audit en deux volets (wello-back-office, ib-welloresto-api)

@@ -317,7 +317,7 @@ func TestSendPasswordResetLink_Postgres(t *testing.T) {
 		mail := &fakeResetMailer{}
 		svc := NewAuthService(NewAuthRepository(db), nil, mail, nil, "itest-pepper", baseURL)
 		svc.redis = newMemRedis()
-		return &svc, mail
+		return svc, mail
 	}
 
 	t.Run("sends a usable link", func(t *testing.T) {

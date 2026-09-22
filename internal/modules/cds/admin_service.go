@@ -194,6 +194,8 @@ func (s *Service) GetSettings(ctx context.Context, merchantID, displayID string)
 		OrderTypes:         settings.OrderTypes,
 		Channels:           settings.Channels,
 		ShowWaitTime:       settings.ShowWaitTime,
+
+		DefaultMediaDurationSeconds: settings.DefaultMediaDurationSeconds,
 	}, nil
 }
 
@@ -215,6 +217,9 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID, displayID stri
 		return models.ErrCDSSettingsInvalid
 	}
 	if req.PreparingZoneRatio != nil && (*req.PreparingZoneRatio < 20 || *req.PreparingZoneRatio > 60) {
+		return models.ErrCDSSettingsInvalid
+	}
+	if req.DefaultMediaDurationSeconds != nil && !validMediaDuration(*req.DefaultMediaDurationSeconds) {
 		return models.ErrCDSSettingsInvalid
 	}
 	if req.OrderTypes != nil {
@@ -242,6 +247,11 @@ func (s *Service) ListMedia(ctx context.Context, merchantID, displayID string) (
 		return nil, err
 	}
 
+	defaultDuration, err := s.defaultMediaDuration(ctx, displayID)
+	if err != nil {
+		return nil, err
+	}
+
 	items, err := s.repo.ListMediaItems(ctx, displayID, false)
 	if err != nil {
 		return nil, err
@@ -249,16 +259,23 @@ func (s *Service) ListMedia(ctx context.Context, merchantID, displayID string) (
 
 	resp := make([]MediaItemResponse, 0, len(items))
 	for _, item := range items {
-		resp = append(resp, MediaItemResponse{
-			ID:              item.ID,
-			Kind:            item.Kind,
-			URL:             item.URL,
-			QRPayload:       item.QRPayload,
-			DurationSeconds: item.DurationSeconds,
-			SortOrder:       item.SortOrder,
-		})
+		resp = append(resp, toMediaItemResponse(item, defaultDuration))
 	}
 	return resp, nil
+}
+
+// defaultMediaDuration lit la durée par défaut de l'écran, avec un repli sur la
+// constante si sa ligne de paramètres est absente (ne devrait pas arriver :
+// elle est créée à l'enrôlement).
+func (s *Service) defaultMediaDuration(ctx context.Context, displayID string) (int, error) {
+	settings, err := s.repo.GetSettings(ctx, displayID)
+	if err != nil {
+		return 0, err
+	}
+	if settings == nil || settings.DefaultMediaDurationSeconds <= 0 {
+		return defaultMediaDurationSeconds, nil
+	}
+	return settings.DefaultMediaDurationSeconds, nil
 }
 
 // NewMediaItemID produit l'identifiant d'un média avant son upload.
@@ -277,7 +294,7 @@ func NewMediaItemID() string {
 // fichier a déjà été uploadé sous cet identifiant. url est renseigné par
 // l'AdminHandler après upload R2 pour une image ou une vidéo ; un média 'qr'
 // ne porte pas de fichier, seulement qrPayload.
-func (s *Service) CreateMediaItem(ctx context.Context, merchantID, displayID, mediaID, kind string, url, qrPayload *string, durationSeconds int) (*MediaItemResponse, error) {
+func (s *Service) CreateMediaItem(ctx context.Context, merchantID, displayID, mediaID, kind string, url, qrPayload *string, durationSeconds *int) (*MediaItemResponse, error) {
 	if _, err := s.requireDisplay(ctx, merchantID, displayID); err != nil {
 		return nil, err
 	}
@@ -295,11 +312,12 @@ func (s *Service) CreateMediaItem(ctx context.Context, merchantID, displayID, me
 		return nil, models.ErrCDSMediaInvalid
 	}
 
-	if durationSeconds == 0 {
-		durationSeconds = defaultMediaDurationSeconds
-	}
-	if durationSeconds < 3 || durationSeconds > 120 {
-		return nil, models.ErrCDSMediaInvalid
+	// Une durée absente n'est PAS remplacée par une valeur : le média reste sans
+	// durée propre et suit celle de l'écran. Figer 10 s ici, comme avant, le
+	// déconnecterait du réglage global dès sa création.
+	customDuration, err := normalizeMediaDuration(kind, durationSeconds)
+	if err != nil {
+		return nil, err
 	}
 
 	sortOrder, err := s.repo.GetNextMediaSortOrder(ctx, displayID)
@@ -317,7 +335,7 @@ func (s *Service) CreateMediaItem(ctx context.Context, merchantID, displayID, me
 		Kind:            kind,
 		URL:             url,
 		QRPayload:       qrPayload,
-		DurationSeconds: durationSeconds,
+		DurationSeconds: customDuration,
 		SortOrder:       sortOrder,
 		Enabled:         true,
 	}
@@ -325,19 +343,129 @@ func (s *Service) CreateMediaItem(ctx context.Context, merchantID, displayID, me
 		return nil, err
 	}
 
-	return &MediaItemResponse{
+	defaultDuration, err := s.defaultMediaDuration(ctx, displayID)
+	if err != nil {
+		return nil, err
+	}
+	resp := toMediaItemResponse(item, defaultDuration)
+	return &resp, nil
+}
+
+// Bornes des durées d'affichage, alignées sur les contraintes CHECK de
+// cds_media_items (147) et cds_settings (152). Validées ici pour renvoyer une
+// erreur lisible plutôt qu'un 500 sur violation de contrainte.
+const (
+	minMediaDurationSeconds = 3
+	maxMediaDurationSeconds = 120
+
+	// defaultMediaDurationSeconds est le DEFAULT de
+	// cds_settings.default_media_duration_seconds (152). Sert aussi de repli si
+	// la ligne de paramètres d'un écran est absente.
+	defaultMediaDurationSeconds = 10
+)
+
+// validMediaDuration dit si une durée renseignée est dans les bornes.
+func validMediaDuration(seconds int) bool {
+	return seconds >= minMediaDurationSeconds && seconds <= maxMediaDurationSeconds
+}
+
+// normalizeMediaDuration décide de la durée PROPRE à stocker pour un nouveau
+// média : nil pour « suit la durée par défaut », une valeur pour une durée
+// personnalisée.
+//
+//   - absente ou 0  -> nil. 0 est traité comme « non renseigné » : c'est ce
+//     qu'envoyait un client qui n'avait rien à dire, et le refuser casserait
+//     un ancien back-office ;
+//   - vidéo         -> nil, quoi qu'on envoie : elle est jouée en entier, une
+//     durée n'aurait aucun effet et ferait croire le contraire ;
+//   - hors bornes   -> erreur.
+func normalizeMediaDuration(kind string, seconds *int) (*int, error) {
+	if kind == "video" || seconds == nil || *seconds == 0 {
+		return nil, nil
+	}
+	if !validMediaDuration(*seconds) {
+		return nil, models.ErrCDSMediaInvalid
+	}
+	value := *seconds
+	return &value, nil
+}
+
+// resolveMediaDuration calcule la durée effective d'un média : sa durée propre
+// si elle existe, sinon celle de l'écran. Le booléen dit si elle est propre.
+func resolveMediaDuration(custom *int, defaultDuration int) (int, bool) {
+	if custom != nil {
+		return *custom, true
+	}
+	return defaultDuration, false
+}
+
+// toMediaItemResponse projette une ligne de média en réponse, durée résolue.
+func toMediaItemResponse(item MediaItemRow, defaultDuration int) MediaItemResponse {
+	seconds, custom := resolveMediaDuration(item.DurationSeconds, defaultDuration)
+	return MediaItemResponse{
 		ID:              item.ID,
 		Kind:            item.Kind,
 		URL:             item.URL,
 		QRPayload:       item.QRPayload,
-		DurationSeconds: item.DurationSeconds,
+		DurationSeconds: seconds,
+		CustomDuration:  custom,
 		SortOrder:       item.SortOrder,
-	}, nil
+	}
 }
 
-// defaultMediaDurationSeconds aligné sur le DEFAULT de la colonne
-// cds_media_items.duration_seconds (migration 147).
-const defaultMediaDurationSeconds = 10
+// UpdateMediaItem règle la durée propre d'un média, ou la retire pour qu'il
+// suive à nouveau la durée par défaut de l'écran.
+func (s *Service) UpdateMediaItem(ctx context.Context, merchantID, displayID, mediaID string, req UpdateMediaItemRequest) (*MediaItemResponse, error) {
+	if _, err := s.requireDisplay(ctx, merchantID, displayID); err != nil {
+		return nil, err
+	}
+
+	item, err := s.repo.GetMediaItem(ctx, displayID, mediaID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, models.ErrCDSMediaNotFound
+	}
+
+	// Ici le refus est explicite, contrairement à la création : régler la durée
+	// d'une vidéo est une action délibérée sur un contrôle que l'interface ne
+	// propose pas. L'ignorer en silence masquerait un bug côté appelant.
+	if item.Kind == "video" && req.DurationSeconds != nil && *req.DurationSeconds != 0 {
+		return nil, models.ErrCDSMediaInvalid
+	}
+
+	customDuration, err := normalizeMediaDuration(item.Kind, req.DurationSeconds)
+	if err != nil {
+		return nil, err
+	}
+
+	updated, err := s.repo.UpdateMediaDuration(ctx, displayID, mediaID, customDuration)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, models.ErrCDSMediaNotFound
+	}
+
+	item.DurationSeconds = customDuration
+	defaultDuration, err := s.defaultMediaDuration(ctx, displayID)
+	if err != nil {
+		return nil, err
+	}
+	resp := toMediaItemResponse(*item, defaultDuration)
+	return &resp, nil
+}
+
+// ResetMediaDurations retire toutes les durées propres de l'écran : chaque
+// média suit la durée par défaut. C'est l'action « appliquer à tous » des
+// logiciels d'affichage dynamique. Retourne le nombre de médias réinitialisés.
+func (s *Service) ResetMediaDurations(ctx context.Context, merchantID, displayID string) (int64, error) {
+	if _, err := s.requireDisplay(ctx, merchantID, displayID); err != nil {
+		return 0, err
+	}
+	return s.repo.ClearMediaDurations(ctx, displayID)
+}
 
 // ReorderMedia réécrit l'ordre de la rotation. Transaction obligatoire : un
 // réordonnancement partiel laisserait deux médias sur le même rang.

@@ -348,7 +348,7 @@ func (r *Repository) GetSettings(ctx context.Context, displayID string) (*Settin
 
 	query := `
 	SELECT display_id, layout_mode, preparing_zone_ratio, order_types, channels,
-	       show_wait_time, created_at, updated_at
+	       show_wait_time, default_media_duration_seconds, created_at, updated_at
 	FROM cds_settings
 	WHERE display_id = ?`
 
@@ -357,7 +357,7 @@ func (r *Repository) GetSettings(ctx context.Context, displayID string) (*Settin
 	err := db.QueryRowContext(ctx, query, displayID).Scan(
 		&row.DisplayID, &row.LayoutMode, &row.PreparingZoneRatio,
 		&orderTypesRaw, &channelsRaw,
-		&row.ShowWaitTime, &row.CreatedAt, &row.UpdatedAt,
+		&row.ShowWaitTime, &row.DefaultMediaDurationSeconds, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -410,6 +410,10 @@ func (r *Repository) UpdateSettings(ctx context.Context, displayID string, req U
 	if req.ShowWaitTime != nil {
 		setClauses = append(setClauses, "show_wait_time = ?")
 		args = append(args, *req.ShowWaitTime)
+	}
+	if req.DefaultMediaDurationSeconds != nil {
+		setClauses = append(setClauses, "default_media_duration_seconds = ?")
+		args = append(args, *req.DefaultMediaDurationSeconds)
 	}
 
 	if len(setClauses) == 0 {
@@ -508,6 +512,37 @@ func (r *Repository) ReorderMediaItems(ctx context.Context, displayID string, or
 		}
 	}
 	return nil
+}
+
+// UpdateMediaDuration fixe la durée PROPRE d'un média, ou la retire (nil) pour
+// qu'il suive à nouveau la durée par défaut de l'écran.
+func (r *Repository) UpdateMediaDuration(ctx context.Context, displayID, mediaID string, seconds *int) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`UPDATE cds_media_items SET duration_seconds = ?, updated_at = %s WHERE id = ? AND display_id = ?`, dbx.UTCNow())
+	res, err := db.ExecContext(ctx, query, seconds, mediaID, displayID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+// ClearMediaDurations retire toutes les durées propres d'un écran : chaque
+// média suit alors la durée par défaut. Retourne le nombre de médias touchés,
+// pour que le back-office puisse dire « 3 médias réinitialisés ».
+func (r *Repository) ClearMediaDurations(ctx context.Context, displayID string) (int64, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`UPDATE cds_media_items SET duration_seconds = NULL, updated_at = %s WHERE display_id = ? AND duration_seconds IS NOT NULL`, dbx.UTCNow())
+	res, err := db.ExecContext(ctx, query, displayID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *Repository) DeleteMediaItem(ctx context.Context, displayID, mediaID string) (bool, error) {

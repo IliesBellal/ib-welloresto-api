@@ -38,6 +38,13 @@ type TaskConfig struct {
 
 	Temperature float64
 	MaxTokens   int
+
+	// Enabled gates whether GetProviderForTask will hand out a provider for
+	// this task at all. False makes the registry return ErrTaskDisabled
+	// immediately, without checking provider registration — a runtime
+	// kill-switch (e.g. AI_TASK_UPSELL_ENABLED=false) distinct from a
+	// misconfiguration, so callers can log/react differently.
+	Enabled bool
 }
 
 // Validate checks that every task references a provider declared in Providers.

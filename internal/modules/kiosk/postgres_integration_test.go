@@ -146,6 +146,14 @@ func TestKioskRepository_Postgres(t *testing.T) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("expected recently-revoked kiosk still listed, got (%d, %v)", len(list), err)
 	}
+	// borne désactivée (inactive) : doit rester listée pour pouvoir être réactivée
+	if err := repo.SetKioskStatusEnabled(ctx, kioskID, "inactive", false); err != nil {
+		t.Fatalf("SetKioskStatusEnabled(inactive) failed against postgres: %v", err)
+	}
+	list, err = repo.ListKiosksByMerchant(ctx, merchantID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected inactive kiosk still listed, got (%d, %v)", len(list), err)
+	}
 	if err := repo.SetKioskStatusEnabled(ctx, kioskID, "active", true); err != nil {
 		t.Fatalf("SetKioskStatusEnabled failed against postgres: %v", err)
 	}

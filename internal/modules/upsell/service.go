@@ -252,10 +252,16 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	// ── 4.5 LLM fallback ─────────────────────────────────────────────────────
 	provider, provErr := s.aiRegistry.GetProviderForTask(upsellTask)
 	if provErr != nil {
-		s.logger.Warn("upsell: LLM provider unavailable, going to featured fallback",
-			zap.String("merchant_id", merchantID),
-			zap.Error(provErr),
-		)
+		if errors.Is(provErr, ai.ErrTaskDisabled) {
+			s.logger.Warn("upsell: LLM fallback disabled via config (AI_TASK_UPSELL_ENABLED=false), going to featured fallback",
+				zap.String("merchant_id", merchantID),
+			)
+		} else {
+			s.logger.Warn("upsell: LLM provider unavailable, going to featured fallback",
+				zap.String("merchant_id", merchantID),
+				zap.Error(provErr),
+			)
+		}
 		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
 	}
 

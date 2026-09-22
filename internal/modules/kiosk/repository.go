@@ -292,7 +292,7 @@ func (r *Repository) ListKiosksByMerchant(ctx context.Context, merchantID string
 	FROM kiosks
 	WHERE merchant_id = ?
 	AND (
-		status = 'active'
+		status IN ('active', 'inactive')
 		OR (
 		status = 'revoked'
 		AND last_heartbeat_at >= %s - INTERVAL '24' HOUR

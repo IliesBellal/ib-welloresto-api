@@ -262,10 +262,12 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 // multipart/form-data (voir CreateMediaItem) : le handler distingue les deux
 // sur le Content-Type de la requete.
 type CreateMediaItemRequest struct {
-	Kind            string  `json:"kind"`
-	URL             *string `json:"url"`
-	QRPayload       *string `json:"qr_payload"`
-	DurationSeconds int     `json:"duration_seconds"`
+	Kind      string  `json:"kind"`
+	URL       *string `json:"url"`
+	QRPayload *string `json:"qr_payload"`
+	// DurationSeconds est facultatif : absent, le média suit la durée par défaut
+	// de l'écran (voir normalizeMediaDuration).
+	DurationSeconds *int `json:"duration_seconds"`
 }
 
 // CreateMediaItem — POST /pos/settings/cds/displays/{display_id}/media.
@@ -363,10 +365,12 @@ func (h *AdminHandler) createMediaItemFromUpload(w http.ResponseWriter, r *http.
 		return
 	}
 
-	durationSeconds := 0
+	// Facultative : un champ absent ou illisible laisse le média suivre la durée
+	// par défaut de l'écran.
+	var durationSeconds *int
 	if raw := r.FormValue("duration_seconds"); raw != "" {
 		if parsed, convErr := strconv.Atoi(raw); convErr == nil {
-			durationSeconds = parsed
+			durationSeconds = &parsed
 		}
 	}
 
@@ -443,6 +447,55 @@ func (h *AdminHandler) ReorderMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "cds", "reorder_media", map[string]string{"status": "reordered"})
+}
+
+// UpdateMediaItem — PUT /pos/settings/cds/displays/{display_id}/media/{media_id}.
+// Règle la durée propre d'un média ; `{"duration_seconds": null}` la retire.
+func (h *AdminHandler) UpdateMediaItem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	const fnName = "update_media"
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "cds", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	var req UpdateMediaItemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "cds", fnName, models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.UpdateMediaItem(ctx, user.MerchantID,
+		chi.URLParam(r, "display_id"), chi.URLParam(r, "media_id"), req)
+	if err != nil {
+		models.SendErrorJSON(w, "cds", fnName, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cds", fnName, resp)
+}
+
+// ResetMediaDurations — POST /pos/settings/cds/displays/{display_id}/media/reset-durations.
+// Fait suivre la durée par défaut à tous les médias de l'écran.
+func (h *AdminHandler) ResetMediaDurations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	const fnName = "reset_media_durations"
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "cds", fnName, models.ErrUnauthorized)
+		return
+	}
+
+	reset, err := h.service.ResetMediaDurations(ctx, user.MerchantID, chi.URLParam(r, "display_id"))
+	if err != nil {
+		models.SendErrorJSON(w, "cds", fnName, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cds", fnName, map[string]int64{"reset": reset})
 }
 
 func (h *AdminHandler) DeleteMediaItem(w http.ResponseWriter, r *http.Request) {

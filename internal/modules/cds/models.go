@@ -17,21 +17,21 @@ type AuthenticatedCDS = middleware.AuthenticatedCDS
 // 'pending', 'active' ou 'revoked', il n'existe pas d'état désactivé
 // (CDS_DECISIONS.md D15).
 type DisplayRow struct {
-	ID                string
-	MerchantID        string
-	Name              string
-	LocationID        *string
-	Status            string
-	AppVersion        *string
-	HardwareModel     *string
-	OSVersion         *string
-	DeviceID          *string
-	LastHeartbeatAt   *time.Time
-	LastIP            *string
-	LastError         *string
-	LastErrorAt       *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         *time.Time
+	ID              string
+	MerchantID      string
+	Name            string
+	LocationID      *string
+	Status          string
+	AppVersion      *string
+	HardwareModel   *string
+	OSVersion       *string
+	DeviceID        *string
+	LastHeartbeatAt *time.Time
+	LastIP          *string
+	LastError       *string
+	LastErrorAt     *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       *time.Time
 }
 
 // EnrollmentCodeRow mappe la table cds_enrollment_codes.
@@ -72,18 +72,23 @@ type SettingsRow struct {
 	OrderTypes         []string
 	Channels           []string
 	ShowWaitTime       bool
-	CreatedAt          time.Time
-	UpdatedAt          *time.Time
+	// DefaultMediaDurationSeconds est la durée par défaut des images et QR codes.
+	DefaultMediaDurationSeconds int
+	CreatedAt                   time.Time
+	UpdatedAt                   *time.Time
 }
 
 // MediaItemRow mappe la table cds_media_items (rotation marketing, D6).
 type MediaItemRow struct {
-	ID              string
-	DisplayID       string
-	Kind            string
-	URL             *string
-	QRPayload       *string
-	DurationSeconds int
+	ID        string
+	DisplayID string
+	Kind      string
+	URL       *string
+	QRPayload *string
+	// DurationSeconds est la durée PROPRE à ce média. Nil = il suit la durée par
+	// défaut de l'écran (cds_settings.default_media_duration_seconds). Toujours nil
+	// pour une vidéo, jouée en entier.
+	DurationSeconds *int
 	SortOrder       int
 	Enabled         bool
 	CreatedAt       time.Time
@@ -210,12 +215,22 @@ type DeviceSettingsResponse struct {
 	Media              []MediaItemResponse `json:"media"`
 }
 
+// MediaItemResponse — un média de la rotation.
+//
+// DurationSeconds est TOUJOURS la durée effective, déjà résolue côté serveur :
+// COALESCE(durée propre, durée par défaut de l'écran). L'écran reçoit donc un
+// entier et n'a rien à savoir de la distinction entre les deux.
+//
+// CustomDuration dit si cette durée est propre au média (true) ou héritée du
+// réglage global (false) — c'est ce qui permet au back-office d'afficher
+// « par défaut » ou « personnalisée » et de proposer de réinitialiser.
 type MediaItemResponse struct {
 	ID              string  `json:"id"`
 	Kind            string  `json:"kind"`
 	URL             *string `json:"url"`
 	QRPayload       *string `json:"qr_payload"`
 	DurationSeconds int     `json:"duration_seconds"`
+	CustomDuration  bool    `json:"custom_duration"`
 	SortOrder       int     `json:"sort_order"`
 }
 
@@ -278,19 +293,30 @@ type ListEnrollmentCodesResponse struct {
 // SettingsResponse — vue back-office, filtres compris (contrairement à
 // DeviceSettingsResponse).
 type SettingsResponse struct {
-	LayoutMode         string   `json:"layout_mode"`
-	PreparingZoneRatio int      `json:"preparing_zone_ratio"`
-	OrderTypes         []string `json:"order_types"`
-	Channels           []string `json:"channels"`
-	ShowWaitTime       bool     `json:"show_wait_time"`
+	LayoutMode                  string   `json:"layout_mode"`
+	PreparingZoneRatio          int      `json:"preparing_zone_ratio"`
+	OrderTypes                  []string `json:"order_types"`
+	Channels                    []string `json:"channels"`
+	ShowWaitTime                bool     `json:"show_wait_time"`
+	DefaultMediaDurationSeconds int      `json:"default_media_duration_seconds"`
 }
 
 // UpdateSettingsRequest — mise à jour partielle : seuls les champs non nil
 // sont écrits.
 type UpdateSettingsRequest struct {
-	LayoutMode         *string   `json:"layout_mode"`
-	PreparingZoneRatio *int      `json:"preparing_zone_ratio"`
-	OrderTypes         *[]string `json:"order_types"`
-	Channels           *[]string `json:"channels"`
-	ShowWaitTime       *bool     `json:"show_wait_time"`
+	LayoutMode                  *string   `json:"layout_mode"`
+	PreparingZoneRatio          *int      `json:"preparing_zone_ratio"`
+	OrderTypes                  *[]string `json:"order_types"`
+	Channels                    *[]string `json:"channels"`
+	ShowWaitTime                *bool     `json:"show_wait_time"`
+	DefaultMediaDurationSeconds *int      `json:"default_media_duration_seconds"`
+}
+
+// UpdateMediaItemRequest — body de PUT .../media/{media_id}.
+//
+// DurationSeconds renseigné : durée propre à ce média. Absent, null ou 0 : le
+// média redevient suiveur de la durée par défaut de l'écran. Le corps ne sert
+// qu'à cela, il n'y a donc pas lieu de distinguer « absent » de « null ».
+type UpdateMediaItemRequest struct {
+	DurationSeconds *int `json:"duration_seconds"`
 }

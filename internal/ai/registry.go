@@ -1,6 +1,14 @@
 package ai
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrTaskDisabled is returned by GetProviderForTask when the task's
+// TaskConfig.Enabled is false — a deliberate kill-switch, distinct from a
+// missing/misconfigured task so callers can log a clearer message.
+var ErrTaskDisabled = errors.New("ai registry: task disabled by configuration")
 
 // Registry resolves the correct LLMProvider for a given task name.
 // It is built once at startup in SetupRoutes and injected into services that need it.
@@ -30,6 +38,9 @@ func (r *Registry) GetProviderForTask(task string) (LLMProvider, error) {
 	taskCfg, ok := r.tasks[task]
 	if !ok {
 		return nil, fmt.Errorf("ai registry: no configuration found for task %q", task)
+	}
+	if !taskCfg.Enabled {
+		return nil, ErrTaskDisabled
 	}
 	provider, ok := r.providers[taskCfg.Provider]
 	if !ok {

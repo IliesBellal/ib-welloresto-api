@@ -617,14 +617,7 @@ func (s *Service) GetDeviceSettings(ctx context.Context, cds *AuthenticatedCDS) 
 			return nil, err
 		}
 		for _, item := range items {
-			resp.Media = append(resp.Media, MediaItemResponse{
-				ID:              item.ID,
-				Kind:            item.Kind,
-				URL:             item.URL,
-				QRPayload:       item.QRPayload,
-				DurationSeconds: item.DurationSeconds,
-				SortOrder:       item.SortOrder,
-			})
+			resp.Media = append(resp.Media, toMediaItemResponse(item, settings.DefaultMediaDurationSeconds))
 		}
 	}
 

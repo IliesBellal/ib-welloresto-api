@@ -208,7 +208,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- Auth ----
 	authRepo := authModule.NewAuthRepository(selectedDB)
 	authService := authModule.NewAuthService(authRepo, redisClient, mailService, smsService, cfg.App.PINPepper, cfg.Auth.PasswordResetBaseURL)
-	authMiddleware := middleware.Auth(&authService)
+	authMiddleware := middleware.Auth(authService)
 	// LOT B B2b-2 : lecture seule pour un marchand suspended — voir
 	// internal/middleware/require_not_suspended.go pour la liste d'exemptions
 	// et le raisonnement. Appliqué juste après authMiddleware partout où
@@ -2003,6 +2003,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/displays/{display_id}/media", cdsAdminHandler.ListMedia)
 		r.Post("/displays/{display_id}/media", cdsAdminHandler.CreateMediaItem)
 		r.Put("/displays/{display_id}/media/reorder", cdsAdminHandler.ReorderMedia)
+		// Routes statiques déclarées avant {media_id} par lisibilité ; chi les
+		// départage de toute façon (le statique l'emporte sur le paramètre).
+		r.Post("/displays/{display_id}/media/reset-durations", cdsAdminHandler.ResetMediaDurations)
+		r.Put("/displays/{display_id}/media/{media_id}", cdsAdminHandler.UpdateMediaItem)
 		r.Delete("/displays/{display_id}/media/{media_id}", cdsAdminHandler.DeleteMediaItem)
 	})
 

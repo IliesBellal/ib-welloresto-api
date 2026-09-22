@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,12 +44,12 @@ type AuthService struct {
 	resetBaseURL string
 }
 
-func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sms sms.Service, pepper string, resetBaseURL string) AuthService {
+func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sms sms.Service, pepper string, resetBaseURL string) *AuthService {
 	var cache authCache
 	if rc != nil {
 		cache = rc
 	}
-	return AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper, resetBaseURL: resetBaseURL}
+	return &AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper, resetBaseURL: resetBaseURL}
 }
 
 // lockoutState is serialised as JSON in Redis under PINLockoutPrefix+anchorToken.
@@ -723,11 +724,10 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, fallb
 	// On utilise ton wrapper Redis existant (adapter la signature si besoin)
 	saved := s.redis.Set(ctx, cacheKey, otp, models.OTPCacheTTL)
 	if !saved {
-		log.Error("Erreur Redis lors de la sauvegarde de l'OTP: " + err.Error())
+		log.Error("Erreur Redis lors de la sauvegarde de l'OTP pour le user " + user.UserID)
 		return errors.New("erreur interne du serveur")
 	}
-	log.Warn("🔑 OTP généré et stocké dans Redis pour le user " + user.UserID + " the code is: " + otp + " 🔑")
-	log.Info(cacheKey)
+	log.Info("OTP généré et stocké dans Redis pour le user " + user.UserID)
 
 	// 3. Envoyer le code
 	if fallbackToSMS {
@@ -770,38 +770,48 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	}
 
 	cacheKey := helpers.GetMFACacheKey(token)
-	log.Info(cacheKey)
 
 	// 1. Récupérer le code dans Redis
 	storedCode, found := s.redis.Get(ctx, cacheKey)
 	if !found {
-		log.Error("Codes not matching, stored: " + storedCode + " - checked: " + codeSaisi)
+		log.Warn("MFA OTP absent ou expiré pour le user " + user.UserID)
 		return models.ErrMFAExpired
 	}
 
-	// 2. Comparaison en clair
-	if storedCode != codeSaisi {
-		log.Error("Codes not matching, stored: " + storedCode + " - checked: " + codeSaisi)
+	// 2. Comparaison en temps constant
+	if subtle.ConstantTimeCompare([]byte(storedCode), []byte(codeSaisi)) != 1 {
+		log.Warn("MFA OTP incorrect pour le user " + user.UserID)
 		return models.ErrOTPMismatch
 	}
 
-	// 3. Valider la session en base de données
-	err = s.repo.MarkAsMFAVerified(ctx, user.UserID)
-	if err != nil {
+	// 3. Consommer l'OTP dès que le code est bon : il ne doit plus être rejouable,
+	// même si l'écriture en base échoue juste après.
+	_ = s.redis.Delete(ctx, cacheKey)
+
+	// 4. Valider la session en base de données
+	if err := s.repo.MarkAsMFAVerified(ctx, user.UserID); err != nil {
 		log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
 		return errors.New("erreur interne lors de la validation")
 	}
+	// Le MFA est déjà validé en base : un échec ici ne doit pas faire échouer la vérification.
 	if err := s.repo.MarkLastLoginAt(ctx, user.UserID); err != nil {
-		log.Error("Erreur lors de la mise à jour de la dernière connexion: " + err.Error())
-		return errors.New("erreur interne lors de la validation")
+		log.Error("Erreur lors de la mise à jour de la dernière connexion (MFA déjà validé): " + err.Error())
 	}
 
-	// 4. Nettoyage de Redis
-	// On supprime l'OTP pour qu'il ne soit plus utilisable
-	_ = s.redis.Delete(ctx, cacheKey)
-	// IMPORTANT : On supprime le cache utilisateur pour forcer ton middleware
-	// à recharger les droits (et donc le nouveau mfa_status) à la prochaine requête
-	_ = s.redis.Delete(ctx, models.UserCachePrefix+token)
+	// 5. Invalider le cache utilisateur pour forcer le middleware à recharger le
+	// nouveau mfa_status. Le statut MFA est porté par le user alors que le cache est
+	// indexé par token : on purge donc le token courant ET ceux de tous ses
+	// rattachements marchands, après l'écriture en base pour ne pas re-cacher un état périmé.
+	s.redis.Delete(ctx, models.UserCachePrefix+token)
+	tokens, err := s.repo.ListRightsTokensForUser(ctx, user.UserID)
+	if err != nil {
+		log.Warn("Impossible de lister les tokens du user " + user.UserID + " pour purger le cache: " + err.Error())
+	}
+	for _, other := range tokens {
+		if other != token {
+			s.redis.Delete(ctx, models.UserCachePrefix+other)
+		}
+	}
 
 	log.Info("✅ MFA vérifié avec succès pour le token")
 	return nil

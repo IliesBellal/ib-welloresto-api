@@ -279,3 +279,88 @@ func TestLayoutModes(t *testing.T) {
 		})
 	}
 }
+
+func intPtr(v int) *int { return &v }
+
+// TestNormalizeMediaDuration verrouille ce qui est stocke comme duree PROPRE
+// d'un nouveau media : nil veut dire « suit la duree par defaut de l'ecran ».
+func TestNormalizeMediaDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		kind    string
+		in      *int
+		want    *int
+		wantErr bool
+	}{
+		{"image sans duree suit le defaut", "image", nil, nil, false},
+		// 0 = « non renseigne » : un ancien client qui n'avait rien a dire.
+		{"zero est traite comme non renseigne", "qr", intPtr(0), nil, false},
+		{"duree personnalisee conservee", "image", intPtr(15), intPtr(15), false},
+		{"borne basse acceptee", "qr", intPtr(3), intPtr(3), false},
+		{"borne haute acceptee", "image", intPtr(120), intPtr(120), false},
+		{"trop courte refusee", "image", intPtr(2), nil, true},
+		{"trop longue refusee", "image", intPtr(121), nil, true},
+		{"negative refusee", "image", intPtr(-5), nil, true},
+		// Une video est jouee en entier : une duree n'aurait aucun effet et ferait
+		// croire le contraire. Ignoree a la creation, meme hors bornes.
+		{"video ignore toute duree", "video", intPtr(15), nil, false},
+		{"video ignore meme une duree invalide", "video", intPtr(999), nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeMediaDuration(tt.kind, tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalizeMediaDuration() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			switch {
+			case got == nil && tt.want == nil:
+			case got == nil || tt.want == nil:
+				t.Errorf("normalizeMediaDuration() = %v, want %v", got, tt.want)
+			case *got != *tt.want:
+				t.Errorf("normalizeMediaDuration() = %d, want %d", *got, *tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveMediaDuration verrouille la duree EFFECTIVE envoyee a l'ecran :
+// la duree propre du media si elle existe, sinon celle de l'ecran.
+func TestResolveMediaDuration(t *testing.T) {
+	seconds, custom := resolveMediaDuration(nil, 10)
+	if seconds != 10 || custom {
+		t.Errorf("sans duree propre : got (%d, %v), want (10, false)", seconds, custom)
+	}
+
+	seconds, custom = resolveMediaDuration(intPtr(25), 10)
+	if seconds != 25 || !custom {
+		t.Errorf("avec duree propre : got (%d, %v), want (25, true)", seconds, custom)
+	}
+
+	// Changer le defaut ne touche pas un media qui a sa propre duree, et
+	// deplace tous les autres : c'est tout l'interet du reglage global.
+	for _, def := range []int{5, 30} {
+		if s, _ := resolveMediaDuration(intPtr(25), def); s != 25 {
+			t.Errorf("duree propre alteree par le defaut %d : got %d", def, s)
+		}
+		if s, _ := resolveMediaDuration(nil, def); s != def {
+			t.Errorf("media suiveur ne suit pas le defaut %d : got %d", def, s)
+		}
+	}
+}
+
+func TestToMediaItemResponse(t *testing.T) {
+	url := "https://example.test/a.png"
+	item := MediaItemRow{ID: "m1", Kind: "image", URL: &url, SortOrder: 2}
+
+	got := toMediaItemResponse(item, 12)
+	if got.DurationSeconds != 12 || got.CustomDuration {
+		t.Errorf("media suiveur : got (%d, custom=%v), want (12, false)", got.DurationSeconds, got.CustomDuration)
+	}
+
+	item.DurationSeconds = intPtr(20)
+	got = toMediaItemResponse(item, 12)
+	if got.DurationSeconds != 20 || !got.CustomDuration {
+		t.Errorf("media personnalise : got (%d, custom=%v), want (20, true)", got.DurationSeconds, got.CustomDuration)
+	}
+}
