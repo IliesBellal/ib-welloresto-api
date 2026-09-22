@@ -164,7 +164,7 @@ type HeartbeatResponse struct {
 // sur un écran qui se resynchronise à chaque reconnexion réseau.
 type BoardOrder struct {
 	OrderID string `json:"order_id"`
-	// Label est résolu côté serveur selon la cascade prénom -> pager ->
+	// Label est résolu côté serveur selon la cascade prénom -> nom -> pager ->
 	// order_num -> brand_order_num -> repli (CDS_DECISIONS.md D3). Le client
 	// Flutter n'implémente aucune règle métier.
 	Label string `json:"label"`

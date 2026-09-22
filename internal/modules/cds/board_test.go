@@ -83,7 +83,7 @@ func TestResolveStatus(t *testing.T) {
 }
 
 // TestResolveLabel verrouille la cascade de CDS_DECISIONS.md D3 :
-// prénom client -> pager -> order_num, puis les replis.
+// prénom client -> nom client -> pager -> order_num, puis les replis.
 func TestResolveLabel(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -95,6 +95,7 @@ func TestResolveLabel(t *testing.T) {
 			name: "prenom client prioritaire sur tout le reste",
 			row: boardOrderRow{
 				CustomerFirstName: nullStr("Paul"),
+				CustomerLastName:  nullStr("Martin"),
 				PagerNumber:       nullStr("12"),
 				OrderNum:          nullStr("123"),
 			},
@@ -102,7 +103,17 @@ func TestResolveLabel(t *testing.T) {
 			wantKind:  "first_name",
 		},
 		{
-			name: "pager quand pas de prenom",
+			name: "nom client quand pas de prenom",
+			row: boardOrderRow{
+				CustomerLastName: nullStr("Martin"),
+				PagerNumber:      nullStr("12"),
+				OrderNum:         nullStr("123"),
+			},
+			wantLabel: "Martin",
+			wantKind:  "last_name",
+		},
+		{
+			name: "pager quand pas de prenom ni de nom",
 			row: boardOrderRow{
 				PagerNumber: nullStr("12"),
 				OrderNum:    nullStr("123"),

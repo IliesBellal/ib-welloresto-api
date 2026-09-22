@@ -593,6 +593,7 @@ type boardOrderRow struct {
 	EstimatedReady    sql.NullTime
 	LastUpdate        sql.NullTime
 	CustomerFirstName sql.NullString
+	CustomerLastName  sql.NullString
 }
 
 // GetBoardOrders lit les commandes à afficher sur un écran donné.
@@ -642,7 +643,7 @@ func (r *Repository) GetBoardOrders(ctx context.Context, merchantID string, orde
 	query := fmt.Sprintf(`
 	SELECT o.order_id, o.order_num, o.pager_number, o.brand, o.brand_order_num,
 	       o.brand_status, o.order_type, o.isDistributed, o.scheduled,
-	       o.estimated_ready, o.last_update, c.customer_first_name
+	       o.estimated_ready, o.last_update, c.customer_first_name, c.customer_last_name
 	FROM orders o
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
 	WHERE o.merchant_id = ?
@@ -681,7 +682,7 @@ func (r *Repository) GetBoardOrders(ctx context.Context, merchantID string, orde
 		if err := rows.Scan(
 			&row.OrderID, &row.OrderNum, &row.PagerNumber, &row.Brand, &row.BrandOrderNum,
 			&row.BrandStatus, &row.OrderType, &row.IsDistributed, &row.Scheduled,
-			&row.EstimatedReady, &row.LastUpdate, &row.CustomerFirstName,
+			&row.EstimatedReady, &row.LastUpdate, &row.CustomerFirstName, &row.CustomerLastName,
 		); err != nil {
 			return nil, err
 		}

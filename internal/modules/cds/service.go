@@ -551,12 +551,15 @@ func resolveStatus(row boardOrderRow) string {
 }
 
 // resolveLabel applique la cascade de CDS_DECISIONS.md D3 : prénom client,
-// puis numéro de pager, puis numéro de commande. Le repli final existe parce
-// qu'un bloc sans libellé n'a aucune valeur pour le client — il faut toujours
-// afficher quelque chose.
+// puis nom client, puis numéro de pager, puis numéro de commande. Le repli
+// final existe parce qu'un bloc sans libellé n'a aucune valeur pour le
+// client — il faut toujours afficher quelque chose.
 func resolveLabel(row boardOrderRow) (label, kind string) {
 	if v := strings.TrimSpace(row.CustomerFirstName.String); v != "" {
 		return v, "first_name"
+	}
+	if v := strings.TrimSpace(row.CustomerLastName.String); v != "" {
+		return v, "last_name"
 	}
 	if v := strings.TrimSpace(row.PagerNumber.String); v != "" {
 		return v, "pager"
