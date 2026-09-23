@@ -4491,3 +4491,99 @@ staging effectivement configuré — compte connecté + `terminal_location_id` +
 reader appairé) nécessite un merchant de staging déjà préparé avec ces
 prérequis, non disponible dans cette session. À exécuter avant bascule
 définitive de l'app kiosk vers ce flux.
+
+## Distinction MOP borne (KIOSK) vs carte bancaire (CB) (2026-09-22)
+
+### Demande
+
+Pour la gestion, les encaissements Stripe Terminal (borne de commande)
+doivent être distinguables des vrais paiements carte du POS en
+`payments.mop` — jusqu'ici `recordTerminalPayment`
+([internal/webhook/stripe/service.go](../internal/webhook/stripe/service.go))
+insérait `MOP: models.CardMOP` ('CB'), volontairement choisi ainsi par
+[20-kiosk-cash-register-fix.md](migration-postgres/20-kiosk-cash-register-fix.md)
+pour rester cohérent avec les autres paiements carte — décision aujourd'hui
+inversée : l'utilisateur a changé cette ligne en `models.KioskMOP` ('KIOSK',
+constante déjà présente mais jusque-là inutilisée dans
+`internal/models/users_models.go`).
+
+### Le changement d'une ligne était sûr mais insuffisant
+
+Vérification du bug historique visé par 20-kiosk-cash-register-fix.md (la
+ligne `stripe_payments`, nécessaire à `charge.captured`/refund, n'était
+insérée que si `MOP == 'STRIPE'`) : la condition actuelle dans
+[order_life_cycle/repository.go](../internal/modules/order_life_cycle/repository.go)
+(`payment.MOP == models.StripeMOP || (payment.PaymentIntentID != nil && *payment.PaymentIntentID != "")`)
+est gardée par la présence de `PaymentIntentID`, pas par la valeur du MOP —
+`recordTerminalPayment` renseigne toujours ce champ, donc ce bug n'est pas
+réintroduit par le changement de MOP.
+
+En revanche, deux endroits qui matérialisent le MOP dans des listes fermées
+ignoraient 'KIOSK' et auraient neutralisé l'objectif :
+
+1. **Analytics** ([internal/modules/analytics/payment_methods.go](../internal/modules/analytics/payment_methods.go)) :
+   `PaymentMethods`/`paymentMethodCaseExpr` codaient en dur 7 valeurs
+   canoniques (`CB, ES, STRIPE, TR, CURRENCY, UBER_EATS, DELIVEROO`) ; tout le
+   reste, y compris 'KIOSK', tombait dans le bucket `other` — mélangé avec les
+   valeurs parasites (`PERCENTAGE`, `1`...). Corrigé : ajout de
+   `PaymentMethodKiosk = "KIOSK"` à la const, à `PaymentMethods` et au `CASE`
+   SQL (8 valeurs canoniques désormais). Vérifié par une requête directe
+   contre staging avec le `CASE` exact : `'KIOSK' -> 'KIOSK'`, `'GARBAGE' ->
+   'other'` (comportement inchangé pour l'inconnu).
+2. **POS Flutter** (`wello_resto_flutter/lib/models/orders/method_of_payment_enum.dart`) :
+   `fromServerMop` retombe sur `MethodOfPaymentEnum.es` (icône euro, libellé
+   "Espèce") pour tout MOP non reconnu — 'KIOSK' aurait donc été affiché
+   comme un encaissement **espèces** partout où l'appli résout un MOP serveur
+   (historique de clôture de caisse, historique de commande, impression de
+   ticket — `receipt_bytes_builder.dart`) : plus trompeur qu'un simple "CB"
+   incorrect. Corrigé : nouvelle entrée `kiosk` (icône
+   `Icons.point_of_sale`, libellé "Borne de commande", couleur
+   `AppColors.paymentKiosk` = `0xFF7C3AED`, distincte de `paymentCb`/`paymentEs`/`paymentTr`).
+   Volontairement absente de la liste de sélection manuelle
+   `add_new_payment_entry_dialog.dart` (es/cb/tr/carteTicketRestaurant/other) :
+   'KIOSK' est une valeur système posée par le webhook, pas un mode de
+   règlement qu'un employé doit pouvoir choisir à la main.
+
+Pas de changement nécessaire côté rapports de caisse
+([cash_registers/repository.go](../internal/modules/cash_registers/repository.go),
+`cashRegisterReportMOPSQL`) : le groupement se fait sur `p.mop` brut sans
+liste fermée, 'KIOSK' y apparaît déjà comme sa propre ligne.
+
+### Libellé FR — table `labels`
+
+`payments.mop` est résolu en libellé lisible via la table `labels`
+(`label_type='mop'`, `COALESCE(l.label, p.mop)` — utilisé par
+`internal/modules/pos/accounting`, `internal/modules/pos/reports`,
+`internal/modules/cash_registers`, `internal/modules/orders`). Sans ligne
+dédiée, ces rapports affichaient déjà (fallback `COALESCE`, rien ne casse)
+le code brut `KIOSK` au lieu d'un libellé. Ajouté via
+`migrations/todo/153_labels_kiosk_mop.up.sql` :
+`('KIOSK', 'mop', 'FR', 'Borne de commande')`, en `INSERT ... WHERE NOT
+EXISTS` (la table `labels` n'a pas de contrainte d'unicité — un doublon
+romprait l'agrégat par `JOIN`, cf. commentaire de test dans
+`orders/postgres_integration_test.go`).
+
+### Tests
+
+- `go build ./...` : clean.
+- `go test ./internal/modules/analytics/... ./internal/webhook/stripe/... ./internal/modules/order_life_cycle/...` (sans tag) : vert.
+- `-tags postgres_integration` contre staging (`RENDER_STAGING_DATABASE_URL`) :
+  `TestOrdersPaymentsVAT_Postgres` (exécute le vrai `paymentMethodCaseExpr`
+  en base) passe. Deux échecs préexistants et confirmés **indépendants de ce
+  changement** par comparaison `git stash` sur le code non modifié :
+  `TestGetRevenueTotalsThreePeriods_Postgres` (dérive de données partagées en
+  staging, hors sujet MOP) et `TestSendInvoiceByEmail_NewEmail_CreatesCustomer`
+  (mock `sqlmock`, désynchronisé côté colonnes `customer`, sans lien avec ce
+  changement).
+- `dart analyze` sur `method_of_payment_enum.dart` et `app_colors.dart` :
+  aucune erreur.
+- Migration 153 appliquée à staging et vérifiée idempotente (deuxième
+  exécution : 0 ligne insérée) ; ligne `labels` confirmée en base
+  (`id=104, KIOSK, mop, FR, "Borne de commande"`).
+
+### Hors périmètre de cette session
+
+`wello-back-office` (React) et `wello-kiosk` (l'app borne elle-même, pas le
+POS) peuvent avoir leurs propres affichages/filtres de moyen de paiement —
+non audités ici ; à vérifier s'ils exposent une répartition par MOP avant de
+considérer la distinction KIOSK/CB comme propagée partout.

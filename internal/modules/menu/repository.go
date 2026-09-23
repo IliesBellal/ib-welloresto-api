@@ -1036,7 +1036,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
-                   p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
+                   p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_available_on_kiosk, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
                    p.sync_uber_eats, p.sync_deliveroo, p.display_order
             FROM products p
@@ -1065,7 +1065,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 			if err := rows.Scan(
 				&p.ProductID, &p.ByProductOf, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway, &p.PriceDelivery,
-				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
+				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &isPopular, &imageURL,
 				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.DisplayOrder,
 			); err != nil {
 				return nil, err
@@ -1122,7 +1122,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
-                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.status,
+                   tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status,
 				   p.display_order
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
@@ -1145,7 +1145,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var availIn, availTake, availDel sql.NullBool
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway,
 				&p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup,
-				&p.IsAvailableOnSNO, &p.Status, &p.DisplayOrder); err != nil {
+				&p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder); err != nil {
 				return nil, err
 			}
 			if by.Valid {
@@ -1598,7 +1598,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		q := `
             SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.price_uber_eats, p.price_deliveroo, p.product_desc,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
-                   p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
+                   p.bg_color, p.is_product_group, p.status, p.is_available_on_sno, p.is_available_on_kiosk, p.is_popular, p.image_url, p.available_in, p.available_take_away, p.available_delivery,
                    CASE WHEN p.img IS NULL OR p.img = '' THEN false ELSE true END as has_image,
                    p.sync_uber_eats, p.sync_deliveroo, p.available, p.display_order
             FROM products p
@@ -1627,7 +1627,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 
 			if err := rows.Scan(
 				&p.ProductID, &p.ByProductOf, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &p.PriceUberEats, &p.PriceDeliveroo,
-				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &isPopular, &imageURL,
+				&desc, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.Status, &p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &isPopular, &imageURL,
 				&availIn, &availTake, &availDel, &hasImage, &syncUberEats, &syncDeliveroo, &p.Available, &p.DisplayOrder,
 			); err != nil {
 				return nil, err
@@ -1684,7 +1684,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.image_url, p.price_uber_eats, p.price_deliveroo, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
-				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.status, p.display_order
+				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status, p.display_order
             FROM products p
 			INNER JOIN productcateg pc on pc.merchant_categ_id = p.category and pc.merchant_id = p.merchant_id
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
@@ -1707,7 +1707,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var availIn, availTake, availDel sql.NullBool
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &imageURL, &p.PriceUberEats, &p.PriceDeliveroo,
 				&desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO,
-				&p.Status, &p.DisplayOrder); err != nil {
+				&p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder); err != nil {
 				return nil, err
 			}
 			if by.Valid {
@@ -2597,6 +2597,9 @@ func (r *MenuRepository) insertProductTx(ctx context.Context, p *CreateProductPa
 	if p.IsAvailableOnSno != nil {
 		addOptional("is_available_on_sno", *p.IsAvailableOnSno)
 	}
+	if p.IsAvailableOnKiosk != nil {
+		addOptional("is_available_on_kiosk", *p.IsAvailableOnKiosk)
+	}
 	if p.AvailableIn != nil {
 		addOptional("available_in", *p.AvailableIn)
 	}
@@ -2726,6 +2729,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			sync_uber_eats,
 			sync_deliveroo,
 			is_available_on_sno,
+			is_available_on_kiosk,
 			available,
 			image_url
 		FROM products p
@@ -2770,6 +2774,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&syncUberEats,
 		&syncDeliveroo,
 		&p.IsAvailableOnSNO,
+		&p.IsAvailableOnKiosk,
 		&p.Available,
 		&p.ImageURL,
 	)
@@ -3359,12 +3364,13 @@ func (r *MenuRepository) BulkSetProductsTva(ctx context.Context, merchantID stri
 // canal inchangé (COALESCE), true/false l'active ou le désactive — cette
 // tri-state correspond aux options « Ne pas modifier / Activer / Désactiver ».
 type BulkAvailabilityFields struct {
-	AvailableIn       *bool
-	AvailableTakeAway *bool
-	AvailableDelivery *bool
-	IsAvailableOnSno  *bool
-	SyncUberEats      *bool
-	SyncDeliveroo     *bool
+	AvailableIn        *bool
+	AvailableTakeAway  *bool
+	AvailableDelivery  *bool
+	IsAvailableOnSno   *bool
+	IsAvailableOnKiosk *bool
+	SyncUberEats       *bool
+	SyncDeliveroo      *bool
 }
 
 // BulkSetProductsAvailability applique en une requête un sous-ensemble des six
@@ -3379,12 +3385,13 @@ func (r *MenuRepository) BulkSetProductsAvailability(ctx context.Context, mercha
 	db := dbx.GetDB(ctx, r.database)
 
 	inClause, idArgs := bulkProductPlaceholders(productIDs)
-	args := make([]interface{}, 0, len(idArgs)+7)
+	args := make([]interface{}, 0, len(idArgs)+8)
 	args = append(args,
 		fields.AvailableIn,
 		fields.AvailableTakeAway,
 		fields.AvailableDelivery,
 		fields.IsAvailableOnSno,
+		fields.IsAvailableOnKiosk,
 		fields.SyncUberEats,
 		fields.SyncDeliveroo,
 		merchantID,
@@ -3398,6 +3405,7 @@ func (r *MenuRepository) BulkSetProductsAvailability(ctx context.Context, mercha
 			available_take_away = COALESCE(?, available_take_away),
 			available_delivery = COALESCE(?, available_delivery),
 			is_available_on_sno = COALESCE(?, is_available_on_sno),
+			is_available_on_kiosk = COALESCE(?, is_available_on_kiosk),
 			sync_uber_eats = COALESCE(?, sync_uber_eats),
 			sync_deliveroo = COALESCE(?, sync_deliveroo)
 		WHERE merchant_id = ? AND product_id IN (%s) AND enabled = TRUE`, inClause), args...)
@@ -4163,6 +4171,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 			price_take_away = COALESCE(?, price_take_away),
 			price_delivery = COALESCE(?, price_delivery),
 			is_available_on_sno = COALESCE(?, is_available_on_sno),
+			is_available_on_kiosk = COALESCE(?, is_available_on_kiosk),
 			enabled = COALESCE(?, enabled),
 			status = COALESCE(?, status),
 			available_in = COALESCE(?, available_in),
@@ -4200,6 +4209,7 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		p.PriceTakeAway,
 		p.PriceDelivery,
 		p.IsAvailableOnSno,
+		p.IsAvailableOnKiosk,
 		p.Enabled,
 		p.Status,
 		p.AvailableIn,

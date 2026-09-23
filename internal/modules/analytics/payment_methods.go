@@ -15,7 +15,13 @@ const (
 	PaymentMethodCurrency  = "CURRENCY"
 	PaymentMethodUberEats  = "UBER_EATS"
 	PaymentMethodDeliveroo = "DELIVEROO"
-	// PaymentMethodOther covers every raw mop value outside the 7 canonical
+	// PaymentMethodKiosk is Stripe Terminal card-present payments taken at a
+	// kiosk (models.KioskMOP, payments.mop = 'KIOSK'). Kept out of
+	// PaymentMethodCB on purpose: gestion needs to tell borne encashments
+	// apart from POS/checkout card payments — see recordTerminalPayment in
+	// internal/webhook/stripe/service.go.
+	PaymentMethodKiosk = "KIOSK"
+	// PaymentMethodOther covers every raw mop value outside the 8 canonical
 	// ones — never dropped silently, same pattern as ChannelUnknown.
 	PaymentMethodOther = "other"
 )
@@ -29,18 +35,19 @@ var PaymentMethods = []string{
 	PaymentMethodCurrency,
 	PaymentMethodUberEats,
 	PaymentMethodDeliveroo,
+	PaymentMethodKiosk,
 	PaymentMethodOther,
 }
 
 // paymentMethodCaseExpr is the single SQL derivation of a canonical payment
-// method from payments.mop, aliased `p`. Matched as-is (no upper()): the 7
+// method from payments.mop, aliased `p`. Matched as-is (no upper()): the 8
 // canonical raw values are already uppercase on PROD; if a lowercase variant
 // ever shows up it falls into "other" rather than silently miscounting under
 // a canonical bucket — verify against staging (docs/analytics/ Phase 2)
 // before assuming case never varies here the way brand_status does.
 const paymentMethodCaseExpr = `
 	CASE
-		WHEN p.mop IN ('CB', 'ES', 'STRIPE', 'TR', 'CURRENCY', 'UBER_EATS', 'DELIVEROO') THEN p.mop
+		WHEN p.mop IN ('CB', 'ES', 'STRIPE', 'TR', 'CURRENCY', 'UBER_EATS', 'DELIVEROO', 'KIOSK') THEN p.mop
 		ELSE 'other'
 	END
 `

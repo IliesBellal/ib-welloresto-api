@@ -223,9 +223,13 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 		}
 	} else if payment.MOP == models.StripeMOP || (payment.PaymentIntentID != nil && *payment.PaymentIntentID != "") {
 		// La ligne stripe_payments est aussi requise pour les encaissements
-		// Stripe Terminal (borne Kiosk), enregistrés en MOP 'CB' : sans elle, le
-		// webhook charge.captured ne peut pas retrouver le paiement pour écrire
-		// fee/net_amount, ni le refund le désactiver.
+		// Stripe Terminal (borne Kiosk), enregistrés en MOP 'KIOSK' (distinct de
+		// 'CB' depuis docs/KIOSK_DECISIONS.md, "Distinction MOP borne (KIOSK) vs
+		// carte bancaire (CB)") : sans elle, le webhook charge.captured ne peut
+		// pas retrouver le paiement pour écrire fee/net_amount, ni le refund le
+		// désactiver. Ce branchement est volontairement gardé par
+		// PaymentIntentID != "" plutôt que par MOP == 'STRIPE', donc insensible
+		// à la valeur exacte du MOP borne.
 		//
 		// Un paiement Terminal a déjà pré-créé cette ligne (order_id,
 		// payment_intent_id, payment_id=NULL) à la création du PaymentIntent —

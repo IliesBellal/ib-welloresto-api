@@ -1254,45 +1254,16 @@ func cleanProductPricesForKiosk(p *models.ProductEntry, orderType string) {
 	}
 }
 
-// cleanProductForKiosk nettoie un ProductEntry brut avant de l'exposer tel
-// quel au client Kiosk (utilisé par GetUpsellSuggestions pour le champ
-// SuggestedItem.Product — le produit y est sérialisé directement, contrairement
-// à GetProduct/GetMenu qui le convertissent en KioskProduct). Collapse le prix
-// selon fulfillmentType et retire les champs internes/sensibles (coûts, marges,
-// indicateurs de sync, prix des autres canaux) — mêmes principes que
-// scannorder.Service.cleanProductForSNO, adaptés à la convention Kiosk
-// (IN/TAKE_AWAY, pas de DELIVERY).
-func cleanProductForKiosk(product *models.ProductEntry, fulfillmentType string) {
-	if fulfillmentType == models.OrderTypeTakeAway && product.PriceTakeAway != nil {
-		product.Price = *product.PriceTakeAway
-	}
-	product.PriceTakeAway = nil
-	product.PriceDelivery = nil
-	product.PriceUberEats = nil
-	product.PriceDeliveroo = nil
-
-	product.MerchantID = nil
-	product.CostPrice = nil
-	product.FoodCostPercent = nil
-	product.MarginPercent = nil
-	product.BgColor = nil
-	product.Category = nil
-	product.TVAIn = nil
-	product.TVADelivery = nil
-	product.TVATakeAway = nil
-	product.IsAvailableOnSNO = nil
-	product.IsProductGroup = nil
-	product.SubProducts = nil
-	product.SyncDeliveroo = nil
-	product.SyncUberEats = nil
-	product.Available = nil
-	product.AvailableIn = nil
-	product.AvailableDelivery = nil
-	product.AvailableTakeAway = nil
-	product.IsDistributed = nil
-	product.ProductionColor = nil
-}
-
+// Note historique (bug corrigé) : GetUpsellSuggestions exposait auparavant
+// SuggestedItem.Product — un models.ProductEntry brut, seulement débarrassé
+// de quelques champs internes/sensibles (ex-cleanProductForKiosk), jamais
+// converti en KioskProduct — directement au client Kiosk. Product.fromJson
+// côté Flutter attend le contrat KioskProduct (id/price_cents/
+// available_on_kiosk), pas la forme ProductEntry (product_id/price, pas
+// d'available_on_kiosk) : la conversion levait systématiquement une
+// exception dès le premier champ, avalée silencieusement côté app — l'upsell
+// ne s'affichait jamais. Toujours passer par mapProductEntryToKioskProduct
+// ci-dessous, jamais exposer models.ProductEntry tel quel à un client.
 func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) KioskProduct {
 	cleanProductPricesForKiosk(p, orderType)
 
@@ -1408,9 +1379,9 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderTy
 // fulfillmentType (IN/TAKE_AWAY) n'est pas encore transmis par
 // KioskUpsellRequest côté HTTP (dette documentée) : "" tombe sur le prix de
 // base (IN), sans erreur.
-func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, cartProductIDs []string, fulfillmentType string) (*upsell.UpsellResult, error) {
+func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, cartProductIDs []string, fulfillmentType string) (*KioskUpsellResult, error) {
 	if len(cartProductIDs) == 0 {
-		return &upsell.UpsellResult{Suggestions: []upsell.SuggestedItem{}, Source: upsell.SourceDisabled}, nil
+		return &KioskUpsellResult{Suggestions: []KioskUpsellSuggestion{}, Source: upsell.SourceDisabled}, nil
 	}
 
 	cartProducts := make([]models.ProductEntry, 0, len(cartProductIDs))
@@ -1423,7 +1394,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 
 	result, err := s.upsellService.GenerateUpsell(ctx, merchantID, cartProducts, fulfillmentType, upsell.ChannelKiosk)
 	if err != nil {
-		return &upsell.UpsellResult{Suggestions: []upsell.SuggestedItem{}, Source: "error_fallback"}, nil
+		return &KioskUpsellResult{Suggestions: []KioskUpsellSuggestion{}, Source: "error_fallback"}, nil
 	}
 
 	candidateIDs := make([]string, 0, len(result.Suggestions))
@@ -1438,7 +1409,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		return nil, err
 	}
 
-	suggestions := make([]upsell.SuggestedItem, 0, 3)
+	suggestions := make([]KioskUpsellSuggestion, 0, 3)
 	for _, sugg := range result.Suggestions {
 		if len(suggestions) >= 3 {
 			break
@@ -1447,13 +1418,24 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 			continue
 		}
 
-		product := *sugg.Product
-		cleanProductForKiosk(&product, fulfillmentType)
-		sugg.Product = &product
-		suggestions = append(suggestions, sugg)
+		// mapProductEntryToKioskProduct applique aussi le collapse de prix
+		// selon fulfillmentType : Price ci-dessous reprend le même prix
+		// converti (plutôt que sugg.Price, celui posé par le moteur upsell à
+		// la génération, non conscient du fulfillmentType) — une seule
+		// source de vérité pour le prix affiché entre le champ racine et
+		// product.price_cents, cohérent même une fois fulfillmentType
+		// effectivement transmis par le client (dette documentée plus haut).
+		kioskProduct := mapProductEntryToKioskProduct(sugg.Product, fulfillmentType)
+		suggestions = append(suggestions, KioskUpsellSuggestion{
+			ProductID: sugg.ProductID,
+			Name:      sugg.Name,
+			Price:     kioskProduct.PriceCents,
+			ImageURL:  sugg.ImageURL,
+			Product:   &kioskProduct,
+		})
 	}
 
-	return &upsell.UpsellResult{SuggestionID: result.SuggestionID, Suggestions: suggestions, Source: result.Source}, nil
+	return &KioskUpsellResult{SuggestionID: result.SuggestionID, Suggestions: suggestions, Source: result.Source}, nil
 }
 
 // kioskFulfillmentToOrderType traduit le fulfillment_type Kiosk
@@ -1576,8 +1558,10 @@ func mapMerchantApprovalToKioskStatus(order *models.Order) string {
 
 // isKioskCardPending indique si une commande Kiosk attend encore une
 // confirmation de paiement carte. Source de vérité : brand_status =
-// "PENDING_CARD_PAYMENT" (posé par CreateOrder, confirmé par
-// stripe.StripeWebhookService.handleTerminalPaymentSucceeded). Le fallback
+// "PENDING_CARD_PAYMENT" (posé par CreateOrder, confirmé dès l'autorisation
+// par stripe.StripeWebhookService.confirmTerminalPayment, déclenché par
+// payment_intent.amount_capturable_updated — pas par la capture réelle,
+// différée, voir docs/KIOSK_DECISIONS.md). Le fallback
 // sur merchant_approval couvre les commandes créées par l'ancien code avant
 // ce déploiement (merchant_approval="PENDING_CARD_PAYMENT",
 // brand_status="PENDING") — même rationale que mapMerchantApprovalToKioskStatus.

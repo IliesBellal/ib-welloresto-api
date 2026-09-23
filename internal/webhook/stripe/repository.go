@@ -28,9 +28,9 @@ type Repository interface {
 	// transition déjà effectuée. Retourne true si une ligne a été modifiée.
 	ConfirmKioskCardPayment(cdb context.Context, merchantID, orderID string) (bool, error)
 	// LockOrderForUpdate verrouille (FOR UPDATE) la ligne orders le temps de
-	// la transaction englobante — sérialise deux payment_intent.succeeded
-	// concurrents pour la même commande (guard par PaymentIntent, voir
-	// StripeWebhookService.handleTerminalPaymentSucceeded et
+	// la transaction englobante — sérialise deux events (amount_capturable_updated
+	// ou succeeded) concurrents pour la même commande (guard par PaymentIntent,
+	// voir StripeWebhookService.confirmTerminalPayment et
 	// docs/KIOSK_DECISIONS.md).
 	LockOrderForUpdate(cdb context.Context, merchantID, orderID string) error
 	// GetCapturedPaymentIntentForOrder retourne le payment_intent_id le plus

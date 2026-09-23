@@ -261,10 +261,15 @@ func (t *TerminalService) resolveOrCreatePaymentIntentLocked(txCtx context.Conte
 	// + 0.5 pour arrondir correctement à l'entier le plus proche (math.Floor tronque vers le bas).
 	fees := int64(math.Floor(float64(amountCents)*variableFees + float64(fixedFees) + 0.5))
 
+	// Manual : même mécanisme "annulation sans frais avant capture" que
+	// ScanNOrder (checkout.go, CreateCheckoutSession) — le PI reste en
+	// requires_capture après un tap réussi jusqu'à ce que le cron
+	// CapturePayments (tasks/payments.go) le capture, 12h plus tard. Voir
+	// docs/KIOSK_DECISIONS.md, "Capture différée Terminal (parité ScanNOrder)".
 	params := &stripe.PaymentIntentParams{
 		Amount:               stripe.Int64(amountCents),
 		Currency:             stripe.String(string(stripe.CurrencyEUR)),
-		CaptureMethod:        stripe.String(string(stripe.PaymentIntentCaptureMethodAutomatic)),
+		CaptureMethod:        stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		PaymentMethodTypes:   []*string{stripe.String("card_present")},
 		ApplicationFeeAmount: stripe.Int64(fees),
 		Metadata: map[string]string{
@@ -346,22 +351,28 @@ func (t *TerminalService) resolveExistingPaymentIntent(ctx context.Context, acco
 		return true, false, pi.ClientSecret, nil
 
 	case stripe.PaymentIntentStatusSucceeded:
-		// Déjà payé — refus explicite (409). Pas de remboursement automatique
-		// ici ; le webhook payment_intent.succeeded (handleTerminalPaymentSucceeded)
-		// est la seule source de vérité pour confirmer la commande et, le cas
-		// échéant, flaguer un doublon pour remboursement manuel.
+		// Déjà payé (capturé) — refus explicite (409). Pas de remboursement
+		// automatique ici ; le webhook payment_intent.succeeded
+		// (StripeWebhookService.confirmTerminalPayment) est la seule source de
+		// vérité pour, le cas échéant, flaguer un doublon pour remboursement
+		// manuel — la confirmation de commande elle-même a déjà eu lieu plus tôt,
+		// à l'autorisation (payment_intent.amount_capturable_updated), voir
+		// docs/KIOSK_DECISIONS.md, "Capture différée Terminal".
 		if err := t.payments.MarkPaymentIntentStatus(ctx, paymentIntentID, "CAPTURED"); err != nil {
 			logger.FromContext(ctx).Warn("[stripe terminal] sync local status(CAPTURED) failed for pi=" + paymentIntentID + ": " + err.Error())
 		}
 		return false, true, "", nil
 
 	case stripe.PaymentIntentStatusProcessing, stripe.PaymentIntentStatusRequiresCapture:
-		// Une confirmation est déjà en vol côté Stripe (ou en attente de
-		// capture, non atteint normalement en capture_method automatic) :
-		// créer un second PaymentIntent maintenant recrée exactement le risque
-		// de double PaymentIntent actif que cette règle doit éliminer — même
-		// traitement que succeeded, refus explicite plutôt qu'une réutilisation
-		// hasardeuse (le client carte a déjà quitté ce PaymentIntent).
+		// Une confirmation est déjà en vol côté Stripe, ou le paiement a déjà
+		// été autorisé et attend sa capture différée (capture_method manual,
+		// voir resolveOrCreatePaymentIntentLocked — requires_capture est
+		// désormais l'état nominal après un tap réussi, jusqu'à la capture par
+		// le cron CapturePayments) : créer un second PaymentIntent maintenant
+		// recrée exactement le risque de double PaymentIntent actif que cette
+		// règle doit éliminer — même traitement que succeeded, refus explicite
+		// plutôt qu'une réutilisation hasardeuse (le client carte a déjà quitté
+		// ce PaymentIntent).
 		return false, true, "", nil
 
 	default: // stripe.PaymentIntentStatusCanceled

@@ -52,8 +52,13 @@ type PaymentStatus struct {
 // faux "failed" invite le client à relancer un paiement peut-être déjà en
 // cours ; un faux "processing" ne coûte qu'une itération de polling de plus.
 //
-//  1. LocalStatus ∈ {CAPTURED, TO_REFUND} OU PIStatus == succeeded       → "succeeded"
-//  2. PIStatus ∈ {processing, requires_capture}                          → "processing"
+//  1. LocalStatus ∈ {CAPTURED, TO_REFUND} OU PIStatus ∈ {succeeded,
+//     requires_capture}                                                  → "succeeded"
+//     (requires_capture = paiement autorisé, capture différée par le cron
+//     CapturePayments — voir docs/KIOSK_DECISIONS.md, "Capture différée
+//     Terminal" — c'est déjà un succès du point de vue borne/cuisine,
+//     seule la capture bancaire réelle est reportée)
+//  2. PIStatus == processing                                             → "processing"
 //  3. PIStatus == canceled                                               → "canceled"
 //  4. ReaderActionStatus == in_progress                                  → "waiting_for_card"
 //  5. ReaderActionStatus == succeeded sur ce PI, PIStatus pas encore
@@ -64,10 +69,11 @@ type PaymentStatus struct {
 //  8. fallback (état Stripe inattendu, ex. requires_confirmation/
 //     requires_action sans action en cours)                              → "processing", pas de code
 func NormalizePaymentStatus(in PaymentStatusInput) (status string, failureCode *string) {
-	if in.LocalStatus == "CAPTURED" || in.LocalStatus == "TO_REFUND" || in.PIStatus == stripe.PaymentIntentStatusSucceeded {
+	if in.LocalStatus == "CAPTURED" || in.LocalStatus == "TO_REFUND" ||
+		in.PIStatus == stripe.PaymentIntentStatusSucceeded || in.PIStatus == stripe.PaymentIntentStatusRequiresCapture {
 		return "succeeded", nil
 	}
-	if in.PIStatus == stripe.PaymentIntentStatusProcessing || in.PIStatus == stripe.PaymentIntentStatusRequiresCapture {
+	if in.PIStatus == stripe.PaymentIntentStatusProcessing {
 		return "processing", nil
 	}
 	if in.PIStatus == stripe.PaymentIntentStatusCanceled {

@@ -2464,13 +2464,14 @@ func (h *MenuHandler) BulkSetProductsAvailability(w http.ResponseWriter, r *http
 	}
 
 	var payload struct {
-		ProductIDs        []string `json:"product_ids"`
-		AvailableIn       *bool    `json:"available_in"`
-		AvailableTakeAway *bool    `json:"available_take_away"`
-		AvailableDelivery *bool    `json:"available_delivery"`
-		IsAvailableOnSno  *bool    `json:"is_available_on_sno"`
-		SyncUberEats      *bool    `json:"sync_uber_eats"`
-		SyncDeliveroo     *bool    `json:"sync_deliveroo"`
+		ProductIDs         []string `json:"product_ids"`
+		AvailableIn        *bool    `json:"available_in"`
+		AvailableTakeAway  *bool    `json:"available_take_away"`
+		AvailableDelivery  *bool    `json:"available_delivery"`
+		IsAvailableOnSno   *bool    `json:"is_available_on_sno"`
+		IsAvailableOnKiosk *bool    `json:"is_available_on_kiosk"`
+		SyncUberEats       *bool    `json:"sync_uber_eats"`
+		SyncDeliveroo      *bool    `json:"sync_deliveroo"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_availability", map[string]string{"error": "invalid_body"})
@@ -2482,15 +2483,16 @@ func (h *MenuHandler) BulkSetProductsAvailability(w http.ResponseWriter, r *http
 	}
 
 	fields := BulkAvailabilityFields{
-		AvailableIn:       payload.AvailableIn,
-		AvailableTakeAway: payload.AvailableTakeAway,
-		AvailableDelivery: payload.AvailableDelivery,
-		IsAvailableOnSno:  payload.IsAvailableOnSno,
-		SyncUberEats:      payload.SyncUberEats,
-		SyncDeliveroo:     payload.SyncDeliveroo,
+		AvailableIn:        payload.AvailableIn,
+		AvailableTakeAway:  payload.AvailableTakeAway,
+		AvailableDelivery:  payload.AvailableDelivery,
+		IsAvailableOnSno:   payload.IsAvailableOnSno,
+		IsAvailableOnKiosk: payload.IsAvailableOnKiosk,
+		SyncUberEats:       payload.SyncUberEats,
+		SyncDeliveroo:      payload.SyncDeliveroo,
 	}
 	if fields.AvailableIn == nil && fields.AvailableTakeAway == nil && fields.AvailableDelivery == nil &&
-		fields.IsAvailableOnSno == nil && fields.SyncUberEats == nil && fields.SyncDeliveroo == nil {
+		fields.IsAvailableOnSno == nil && fields.IsAvailableOnKiosk == nil && fields.SyncUberEats == nil && fields.SyncDeliveroo == nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "bulk_set_products_availability", map[string]string{"error": "no_channel_provided"})
 		return
 	}

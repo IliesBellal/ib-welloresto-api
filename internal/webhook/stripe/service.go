@@ -131,6 +131,9 @@ func (s *StripeWebhookService) dispatchEvent(ctx context.Context, event StripeEv
 	case "payment_intent.succeeded":
 		return s.HandlePaymentIntentSucceeded(ctx, event.Data.Object, event.Account)
 
+	case "payment_intent.amount_capturable_updated":
+		return s.HandlePaymentIntentAmountCapturableUpdated(ctx, event.Data.Object, event.Account)
+
 	case "payment_intent.payment_failed":
 		return s.HandlePaymentIntentFailed(ctx, event.Data.Object, event.Account)
 
@@ -461,11 +464,47 @@ func (s *StripeWebhookService) HandlePaymentIntentSucceeded(ctx context.Context,
 
 	logger.FromContext(ctx).Info("[stripe webhook] payment_intent.succeeded pi=" + pi.ID + " connect_account=" + accountID)
 
-	if handled, err := s.handleTerminalPaymentSucceeded(ctx, &pi, accountID); handled || err != nil {
+	// finalLocalStatus="CAPTURED" : ce webhook, pour un PaymentIntent Terminal
+	// Kiosk, ne signale plus "commande confirmable" (c'est déjà fait par
+	// HandlePaymentIntentAmountCapturableUpdated dès l'autorisation, voir
+	// docs/KIOSK_DECISIONS.md, "Capture différée Terminal") mais "capture
+	// réelle effectuée" — potentiellement jusqu'à 12h plus tard, via le cron
+	// CapturePayments. confirmTerminalPayment gère l'idempotence : si la
+	// commande est déjà confirmée, ce passage ne fait plus que marquer CAPTURED.
+	if handled, err := s.confirmTerminalPayment(ctx, &pi, accountID, "CAPTURED"); handled || err != nil {
 		return err
 	}
 
 	return s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED")
+}
+
+// HandlePaymentIntentAmountCapturableUpdated traite
+// payment_intent.amount_capturable_updated, émis dès qu'un PaymentIntent en
+// capture_method=manual passe en requires_capture — pour la borne (channel
+// kiosk), c'est le moment où un tap carte vient de réussir
+// (resolveOrCreatePaymentIntentLocked, internal/infrastructure/stripe/terminal.go).
+// C'est ce signal, et non la capture réelle différée par le cron
+// CapturePayments (tasks/payments.go, jusqu'à 12h plus tard), qui doit
+// confirmer la commande en cuisine et enregistrer le paiement — voir
+// docs/KIOSK_DECISIONS.md, "Capture différée Terminal (parité ScanNOrder)".
+// ScanNOrder (Checkout web) utilise aussi capture_method=manual mais se
+// confirme via checkout.session.completed : cet event ne le concerne pas,
+// filtré par kioskTerminalMetadata (channel=kiosk uniquement) à l'intérieur
+// de confirmTerminalPayment.
+func (s *StripeWebhookService) HandlePaymentIntentAmountCapturableUpdated(ctx context.Context, data json.RawMessage, accountID string) error {
+	var pi stripe.PaymentIntent
+	if err := json.Unmarshal(data, &pi); err != nil {
+		return fmt.Errorf("unmarshal payment intent: %w", err)
+	}
+
+	logger.FromContext(ctx).Info("[stripe webhook] payment_intent.amount_capturable_updated pi=" + pi.ID + " connect_account=" + accountID)
+
+	// finalLocalStatus="" : ne touche PAS payment_intent_status, qui doit
+	// rester REQUIRES_CONFIRMATION (valeur déjà posée par défaut/
+	// ProcessPaymentIntentOnReader) pour que le cron CapturePayments/
+	// CancelPayments trouve cette ligne exactement comme un paiement ScanNOrder.
+	_, err := s.confirmTerminalPayment(ctx, &pi, accountID, "")
+	return err
 }
 
 // HandlePaymentIntentFailed traite payment_intent.payment_failed. Seuls les
@@ -522,9 +561,21 @@ func kioskTerminalMetadata(pi *stripe.PaymentIntent) (orderID, merchantID string
 	return orderID, merchantID, orderID != "" && merchantID != ""
 }
 
-// handleTerminalPaymentSucceeded confirme la commande liée à un PaymentIntent
-// Terminal. Retourne (true, err) quand le PaymentIntent est bien un paiement
-// Terminal Kiosk (metadata channel=kiosk), (false, nil) sinon.
+// confirmTerminalPayment confirme la commande liée à un PaymentIntent
+// Terminal et enregistre le paiement. Retourne (true, err) quand le
+// PaymentIntent est bien un paiement Terminal Kiosk (metadata channel=kiosk),
+// (false, nil) sinon. Appelée par deux webhooks (voir
+// docs/KIOSK_DECISIONS.md, "Capture différée Terminal (parité ScanNOrder)") :
+//   - payment_intent.amount_capturable_updated (finalLocalStatus="") : le
+//     tap carte vient de réussir, le PI est en requires_capture. C'est ICI
+//     que la commande est confirmée en cuisine et le paiement enregistré —
+//     payment_intent_status reste REQUIRES_CONFIRMATION pour que le cron
+//     CapturePayments/CancelPayments (tasks/payments.go) le trouve, comme un
+//     paiement ScanNOrder.
+//   - payment_intent.succeeded (finalLocalStatus="CAPTURED") : la capture
+//     réelle a eu lieu, potentiellement jusqu'à 12h plus tard via le cron. La
+//     commande est déjà confirmée (confirmed=false ci-dessous, cas attendu,
+//     pas une anomalie) : seul payment_intent_status passe à CAPTURED.
 //
 // Guard par PaymentIntent (audit wello-kiosk/docs/AUDIT_STRIPE_TERMINAL.md §8
 // point 4, voir docs/KIOSK_DECISIONS.md) : le guard historique
@@ -545,7 +596,7 @@ func kioskTerminalMetadata(pi *stripe.PaymentIntent) (orderID, merchantID string
 // métier critique. Écrits (SetTerminalCardDetails) DANS la transaction si
 // disponibles. Le push WebSocket, lui, part TOUJOURS après le commit, jamais
 // pendant.
-func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Context, pi *stripe.PaymentIntent, accountID string) (bool, error) {
+func (s *StripeWebhookService) confirmTerminalPayment(ctx context.Context, pi *stripe.PaymentIntent, accountID, finalLocalStatus string) (bool, error) {
 	log := logger.FromContext(ctx)
 
 	orderID, merchantID, ok := kioskTerminalMetadata(pi)
@@ -553,7 +604,7 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 		return false, nil
 	}
 	if orderID == "" || merchantID == "" {
-		log.Warn("[stripe terminal] payment_intent.succeeded pi=" + pi.ID + " has channel=kiosk metadata but missing order_id/merchant_id")
+		log.Warn("[stripe terminal] pi=" + pi.ID + " has channel=kiosk metadata but missing order_id/merchant_id")
 		return true, fmt.Errorf("stripe terminal: missing order_id/merchant_id metadata for pi=%s", pi.ID)
 	}
 
@@ -578,7 +629,7 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 		}
 		if hasCaptured && capturedPI != pi.ID {
 			duplicatePI = true
-			log.Error("[stripe terminal] payment_intent.succeeded pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID +
+			log.Error("[stripe terminal] pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID +
 				" but this order was already captured by a different payment_intent=" + capturedPI +
 				" -- possible double charge, flagging pi=" + pi.ID + " for manual refund review (no auto-refund)")
 			if err := s.repo.UpdatePaymentIntentStatus(txCtx, pi.ID, "TO_REFUND"); err != nil {
@@ -600,10 +651,21 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 		}
 		if !confirmed {
 			// Guard WHERE brand_status = 'PENDING_CARD_PAYMENT' n'a matché aucune
-			// ligne : soit un replay (déjà transitionné), soit la commande n'était
-			// plus dans cet état pour une autre raison (annulée, basculée caisse).
-			// Sans ce log, ce cas est indiscernable d'un succès silencieux.
-			log.Warn("[stripe terminal] ConfirmKioskCardPayment: no row matched (order not in PENDING_CARD_PAYMENT) for pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID)
+			// ligne. Deux cas très différents selon l'appelant :
+			//  - finalLocalStatus != "" (payment_intent.succeeded, capture
+			//    réelle différée) : c'est le cas NOMINAL désormais — la commande a
+			//    déjà été confirmée plus tôt par amount_capturable_updated. Info,
+			//    pas une anomalie.
+			//  - finalLocalStatus == "" (amount_capturable_updated) : la commande
+			//    n'était pas dans l'état attendu au moment même de l'autorisation
+			//    (annulée, basculée caisse, replay) — Warn, cas à surveiller. Sans
+			//    ce log, indiscernable d'un succès silencieux.
+			msg := "[stripe terminal] ConfirmKioskCardPayment: no row matched (order not in PENDING_CARD_PAYMENT) for pi=" + pi.ID + " order=" + orderID + " merchant=" + merchantID
+			if finalLocalStatus != "" {
+				log.Info(msg)
+			} else {
+				log.Warn(msg)
+			}
 		}
 
 		if cardDetails != nil {
@@ -624,33 +686,47 @@ func (s *StripeWebhookService) handleTerminalPaymentSucceeded(ctx context.Contex
 		s.redis.Delete(ctx, helpers.GetRedisOrderKey(merchantID, orderID))
 	}
 
-	// Enregistrement du paiement Terminal via l'UNIQUE point d'insertion du
-	// projet (order_life_cycle : AddPaymentAndReturnID), le même que le Checkout
-	// en ligne — cohérence multi-canal du reporting payments.mop. En best-effort :
-	// la commande est déjà confirmée (action métier critique déjà faite) ; un échec
-	// d'insertion ici est un trou de reporting, pas un échec fonctionnel, et ne
-	// doit pas provoquer un retour d'erreur qui ferait rejouer le webhook Stripe
-	// (transition brand_status déjà passée + re-insertion = doublon rejeté par le
-	// garde fiscal de montant).
-	s.recordTerminalPayment(ctx, orderID, merchantID, pi)
+	// confirmed==false ET finalLocalStatus!="" : replay attendu du webhook
+	// payment_intent.succeeded après une confirmation déjà faite par
+	// amount_capturable_updated — la commande a déjà été enregistrée/notifiée/
+	// poussée, inutile de le refaire. Ne reste plus qu'à marquer CAPTURED
+	// ci-dessous.
+	if confirmed || finalLocalStatus == "" {
+		// Enregistrement du paiement Terminal via l'UNIQUE point d'insertion du
+		// projet (order_life_cycle : AddPaymentAndReturnID), le même que le Checkout
+		// en ligne — cohérence multi-canal du reporting payments.mop. En best-effort :
+		// la commande est déjà confirmée (action métier critique déjà faite) ; un échec
+		// d'insertion ici est un trou de reporting, pas un échec fonctionnel, et ne
+		// doit pas provoquer un retour d'erreur qui ferait rejouer le webhook Stripe
+		// (transition brand_status déjà passée + re-insertion = doublon rejeté par le
+		// garde fiscal de montant).
+		s.recordTerminalPayment(ctx, orderID, merchantID, pi)
 
-	if confirmed {
-		go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
+		if confirmed {
+			go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
+		}
+
+		// Push server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — après le
+		// commit, jamais pendant. "succeeded" est le seul statut poussé
+		// directement (pas de recalcul) : le statut local qui vient d'être posé
+		// est déjà la source de vérité à cet instant précis (requires_capture ET
+		// succeeded se normalisent tous deux vers "succeeded", voir
+		// terminal_status.go).
+		s.pushTerminalPaymentUpdateDirect(ctx, pi.ID, "succeeded", nil, cardDetails)
 	}
 
-	// Marque la ligne stripe_payments comme capturée : sans ça,
-	// CancelActivePaymentIntentForOrder pourrait encore la considérer comme
-	// "active" après coup (best-effort, un échec ici n'affecte pas la
-	// confirmation déjà faite ci-dessus).
-	if err := s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, "CAPTURED"); err != nil {
-		log.Warn("[stripe terminal] UpdatePaymentIntentStatus(CAPTURED) failed for pi=" + pi.ID + ": " + err.Error())
+	// finalLocalStatus=="" (amount_capturable_updated) : ne touche pas
+	// payment_intent_status, qui doit rester REQUIRES_CONFIRMATION pour que le
+	// cron CapturePayments/CancelPayments trouve cette ligne.
+	if finalLocalStatus != "" {
+		// Marque la ligne stripe_payments comme capturée : sans ça,
+		// CancelActivePaymentIntentForOrder pourrait encore la considérer comme
+		// "active" après coup (best-effort, un échec ici n'affecte pas la
+		// confirmation déjà faite ci-dessus).
+		if err := s.repo.UpdatePaymentIntentStatus(ctx, pi.ID, finalLocalStatus); err != nil {
+			log.Warn("[stripe terminal] UpdatePaymentIntentStatus(" + finalLocalStatus + ") failed for pi=" + pi.ID + ": " + err.Error())
+		}
 	}
-
-	// Push server-driven (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — après le
-	// commit, jamais pendant. "succeeded" est le seul statut poussé
-	// directement (pas de recalcul) : le statut local qui vient d'être posé
-	// est déjà la source de vérité à cet instant précis.
-	s.pushTerminalPaymentUpdateDirect(ctx, pi.ID, "succeeded", nil, cardDetails)
 
 	return true, nil
 }
@@ -680,7 +756,7 @@ func extractCardPresentDetails(charge *stripe.Charge) *stripeclient.CardPresentD
 
 // pushTerminalPaymentUpdateDirect construit le PaymentStatus directement
 // depuis les valeurs déjà en main (status/failureCode/cardPresent) et le
-// pousse. Utilisé UNIQUEMENT pour "succeeded" — voir handleTerminalPaymentSucceeded.
+// pousse. Utilisé UNIQUEMENT pour "succeeded" — voir confirmTerminalPayment.
 func (s *StripeWebhookService) pushTerminalPaymentUpdateDirect(ctx context.Context, paymentIntentID, status string, failureCode *string, cardPresent *stripeclient.CardPresentDetails) {
 	var failureMessage *string
 	if failureCode != nil {
@@ -777,8 +853,11 @@ func (s *StripeWebhookService) pushTerminalPaymentUpdate(ctx context.Context, pa
 }
 
 // HandleTerminalReaderActionSucceeded : traitement minimal (log seulement).
-// payment_intent.succeeded reste seul responsable de la clôture métier et du
-// push de succès — voir handleTerminalPaymentSucceeded.
+// payment_intent.amount_capturable_updated reste seul responsable de la
+// clôture métier et du push de succès (payment_intent.succeeded ne fait plus
+// que confirmer la capture réelle, différée — voir
+// docs/KIOSK_DECISIONS.md, "Capture différée Terminal") — voir
+// confirmTerminalPayment.
 func (s *StripeWebhookService) HandleTerminalReaderActionSucceeded(ctx context.Context, data json.RawMessage) error {
 	var reader stripe.TerminalReader
 	if err := json.Unmarshal(data, &reader); err != nil {
@@ -821,8 +900,10 @@ func (s *StripeWebhookService) HandleTerminalReaderActionFailed(ctx context.Cont
 // (CreatePaymentNoNotification -> AddPaymentAndReturnID), la même que le
 // Checkout en ligne. Champs :
 //   - amount   : montant du PaymentIntent en centimes ;
-//   - mop      : models.CardMOP ('CB', identique aux paiements carte POS —
-//     rattachable à la clôture de caisse comme n'importe quel paiement carte) ;
+//   - mop      : models.KioskMOP ('KIOSK', distinct de 'CB' pour que la
+//     gestion distingue les encaissements borne des vrais paiements carte —
+//     rattachable à la clôture de caisse comme n'importe quel paiement, voir
+//     analytics.PaymentMethodKiosk pour son traitement en reporting) ;
 //   - fee      : 0 initialement, net_amount initialisé à amount par l'INSERT —
 //     tous deux mis à jour par le webhook charge.captured (UpdateFees) ;
 //   - user_id  : "KIOSK" (created_by des commandes borne) ;
@@ -838,7 +919,7 @@ func (s *StripeWebhookService) recordTerminalPayment(ctx context.Context, orderI
 	if err := s.orderlifecycle.CreatePaymentNoNotification(ctx, models.Payment{
 		OrderID:         orderID,
 		MerchantID:      merchantID,
-		MOP:             models.CardMOP,
+		MOP:             models.KioskMOP,
 		Amount:          int(pi.Amount),
 		UserID:          "KIOSK",
 		OperationType:   models.OperationTypeSale,

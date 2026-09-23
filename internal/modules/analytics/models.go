@@ -221,8 +221,8 @@ type PaymentsMerchantTotal struct {
 	PaymentCount     int64  `json:"payment_count"`
 }
 
-// PaymentMethodTotal.Method is one of the 7 canonical mop values (CB, ES,
-// STRIPE, TR, CURRENCY, UBER_EATS, DELIVEROO) or PaymentMethodOther
+// PaymentMethodTotal.Method is one of the 8 canonical mop values (CB, ES,
+// STRIPE, TR, CURRENCY, UBER_EATS, DELIVEROO, KIOSK) or PaymentMethodOther
 // (payment_methods.go) — never the maquette's "mobile", which no real mop
 // value maps to (DROITS.md/AUDIT.md P14).
 type PaymentMethodTotal struct {

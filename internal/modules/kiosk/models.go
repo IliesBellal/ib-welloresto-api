@@ -335,6 +335,33 @@ type KioskProduct struct {
 	Components         []KioskProductComponent `json:"components,omitempty"`
 }
 
+// KioskUpsellSuggestion expose une suggestion upsell au client Kiosk avec
+// Product dans la forme KioskProduct (identique à /kiosk/menu et
+// /kiosk/products/{id}) — jamais la forme interne models.ProductEntry que
+// porte upsell.SuggestedItem.Product. Bug corrigé : le client Kiosk
+// (UpsellSuggestion.product, type Product côté Dart, documenté comme "même
+// forme que /kiosk/menu") recevait en réalité le ProductEntry brut
+// (product_id au lieu de id, price au lieu de price_cents, pas de champ
+// available_on_kiosk) — Product.fromJson levait systématiquement sur le
+// champ id manquant, avalé silencieusement côté Flutter
+// (UpsellController.loadSuggestions) : l'upsell ne s'affichait jamais.
+type KioskUpsellSuggestion struct {
+	ProductID string        `json:"product_id"`
+	Name      string        `json:"name"`
+	Price     int64         `json:"price"`
+	ImageURL  *string       `json:"image_url,omitempty"`
+	Product   *KioskProduct `json:"product,omitempty"`
+}
+
+// KioskUpsellResult est la réponse de POST /kiosk/upsell — même enveloppe
+// que upsell.UpsellResult (suggestion_id/source), Suggestions dans la forme
+// KioskUpsellSuggestion ci-dessus plutôt que upsell.SuggestedItem.
+type KioskUpsellResult struct {
+	SuggestionID string                   `json:"suggestion_id,omitempty"`
+	Suggestions  []KioskUpsellSuggestion  `json:"suggestions"`
+	Source       string                   `json:"source"`
+}
+
 // KioskProductComponent — composants retirables d'un produit (ex. "sans
 // oignons"). Seuls id/name sont exposés côté kiosk : le payload `without`
 // envoyé par la borne à la commande n'utilise que component_id, les autres

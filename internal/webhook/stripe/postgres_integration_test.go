@@ -606,9 +606,9 @@ func TestHandleTerminalPaymentSucceeded_DuplicatePaymentIntent_Postgres(t *testi
 	// transaction) échouera contre la vraie API Stripe, ce qui est le
 	// comportement attendu et sans incidence ici (log Warn, cardDetails=nil,
 	// aucune des assertions de ce test ne porte sur les détails carte).
-	handled, err := svc.handleTerminalPaymentSucceeded(ctx, pi, "acct_itest_fake")
+	handled, err := svc.confirmTerminalPayment(ctx, pi, "acct_itest_fake", "CAPTURED")
 	if err != nil {
-		t.Fatalf("handleTerminalPaymentSucceeded returned an error, want nil (handled-but-flagged, not a webhook failure): %v", err)
+		t.Fatalf("confirmTerminalPayment returned an error, want nil (handled-but-flagged, not a webhook failure): %v", err)
 	}
 	if !handled {
 		t.Fatal("expected handled=true for a channel=kiosk payment intent")

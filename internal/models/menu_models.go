@@ -36,6 +36,7 @@ type ProductEntry struct {
 	ImageURL                     *string                `json:"image_url,omitempty"`
 	IsPopular                    bool                   `json:"is_popular,omitempty"`
 	IsAvailableOnSNO             *bool                  `json:"is_available_on_sno,omitempty"`
+	IsAvailableOnKiosk           *bool                  `json:"is_available_on_kiosk,omitempty"`
 	Available                    *bool                  `json:"available,omitempty"`
 	Components                   []ComponentUsage       `json:"components,omitempty"`
 	Description                  *string                `json:"description,omitempty"`

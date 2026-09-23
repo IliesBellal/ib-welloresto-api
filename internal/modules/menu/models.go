@@ -40,6 +40,7 @@ type ProductEntry struct {
 	IsPopular                    bool                       `json:"is_popular,omitempty"`
 	EligibleForUpsales           bool                       `json:"eligible_for_upsales,omitempty"`
 	IsAvailableOnSNO             bool                       `json:"is_available_on_sno,omitempty"`
+	IsAvailableOnKiosk           bool                       `json:"is_available_on_kiosk,omitempty"`
 	Components                   []ComponentUsage           `json:"components,omitempty"`
 	Allergens                    []models.AllergenEntry     `json:"allergens,omitempty"`
 	Tags                         []models.TagEntry          `json:"tags,omitempty"`
@@ -229,17 +230,18 @@ type CreateProductPayload struct {
 	// pour les scalaires, association vide pour les listes. L'ensemble est
 	// persisté dans la même transaction que l'INSERT products : un échec sur
 	// une association ne laisse aucun produit partiel en base.
-	BgColor           *string                  `json:"bg_color,omitempty"`
-	ProductionColor   *string                  `json:"production_color,omitempty"`
-	Status            *string                  `json:"status,omitempty"`
-	IsAvailableOnSno  *bool                    `json:"is_available_on_sno,omitempty"`
-	AvailableIn       *bool                    `json:"available_in,omitempty"`
-	AvailableTakeAway *bool                    `json:"available_take_away,omitempty"`
-	AvailableDelivery *bool                    `json:"available_delivery,omitempty"`
-	Configuration     []string                 `json:"configuration,omitempty"` // IDs d'attributs configurables
-	Components        []ProductComponentUpdate `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
-	Tags              []string                 `json:"tags,omitempty"`          // IDs de tags
-	Allergens         []string                 `json:"allergens,omitempty"`     // IDs d'allergènes
+	BgColor            *string                  `json:"bg_color,omitempty"`
+	ProductionColor    *string                  `json:"production_color,omitempty"`
+	Status             *string                  `json:"status,omitempty"`
+	IsAvailableOnSno   *bool                    `json:"is_available_on_sno,omitempty"`
+	IsAvailableOnKiosk *bool                    `json:"is_available_on_kiosk,omitempty"`
+	AvailableIn        *bool                    `json:"available_in,omitempty"`
+	AvailableTakeAway  *bool                    `json:"available_take_away,omitempty"`
+	AvailableDelivery  *bool                    `json:"available_delivery,omitempty"`
+	Configuration      []string                 `json:"configuration,omitempty"` // IDs d'attributs configurables
+	Components         []ProductComponentUpdate `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
+	Tags               []string                 `json:"tags,omitempty"`          // IDs de tags
+	Allergens          []string                 `json:"allergens,omitempty"`     // IDs d'allergènes
 
 	// Pointeur volontairement : sync_uber_eats et sync_deliveroo valent TRUE par
 	// défaut en base. Avec une valeur non-pointeur, « désactivé » et « champ
@@ -267,26 +269,27 @@ type ProductComponentUpdate struct {
 
 // ProductUpdatePayload correspond aux champs de la table 'products' + associations
 type ProductUpdatePayload struct {
-	Name              *string                    `json:"name"` // Pointeurs pour gérer le NULL/Omission
-	Description       *string                    `json:"description"`
-	IsAvailableOnSno  *bool                      `json:"is_available_on_sno"`
-	CategoryID        *string                    `json:"category_id"`
-	Price             *int                       `json:"price"`
-	PriceTakeAway     *int                       `json:"price_take_away"`
-	PriceDelivery     *int                       `json:"price_delivery"`
-	AvailableIn       *bool                      `json:"available_in"`
-	AvailableTakeAway *bool                      `json:"available_take_away"`
-	AvailableDelivery *bool                      `json:"available_delivery"`
-	ByProductOf       *string                    `json:"by_product_of"` // Peut être null
-	BgColor           *string                    `json:"bg_color"`
-	ProductionColor   *string                    `json:"production_color"`
-	Enabled           *bool                      `json:"enabled"`
-	Status            *string                    `json:"status"`
-	Configuration     []string                   `json:"configuration"` // Liste des IDs d'attributs configurables
-	Components        []ProductComponentUpdate   `json:"components"`    // Liste des composants avec quantity et unit_id
-	Tags              []string                   `json:"tags"`          // Liste des IDs de tags
-	Allergens         []string                   `json:"allergens"`     // Liste des IDs d'allergènes
-	Integrations      models.ProductIntegrations `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
+	Name               *string                    `json:"name"` // Pointeurs pour gérer le NULL/Omission
+	Description        *string                    `json:"description"`
+	IsAvailableOnSno   *bool                      `json:"is_available_on_sno"`
+	IsAvailableOnKiosk *bool                      `json:"is_available_on_kiosk"`
+	CategoryID         *string                    `json:"category_id"`
+	Price              *int                       `json:"price"`
+	PriceTakeAway      *int                       `json:"price_take_away"`
+	PriceDelivery      *int                       `json:"price_delivery"`
+	AvailableIn        *bool                      `json:"available_in"`
+	AvailableTakeAway  *bool                      `json:"available_take_away"`
+	AvailableDelivery  *bool                      `json:"available_delivery"`
+	ByProductOf        *string                    `json:"by_product_of"` // Peut être null
+	BgColor            *string                    `json:"bg_color"`
+	ProductionColor    *string                    `json:"production_color"`
+	Enabled            *bool                      `json:"enabled"`
+	Status             *string                    `json:"status"`
+	Configuration      []string                   `json:"configuration"` // Liste des IDs d'attributs configurables
+	Components         []ProductComponentUpdate   `json:"components"`    // Liste des composants avec quantity et unit_id
+	Tags               []string                   `json:"tags"`          // Liste des IDs de tags
+	Allergens          []string                   `json:"allergens"`     // Liste des IDs d'allergènes
+	Integrations       models.ProductIntegrations `json:"integrations"`  // Liste des intégrations à synchroniser (ex: "uber_eats", "deliveroo")
 
 	// TVA modifiable après création : sans ces champs une erreur de saisie à la
 	// création restait définitive, la fiche produit n'ayant aucun autre moyen

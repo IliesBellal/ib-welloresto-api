@@ -39,9 +39,9 @@ func TestNormalizePaymentStatus(t *testing.T) {
 			wantStatus: "processing", wantFailureNil: true,
 		},
 		{
-			name:       "rule2: requires_capture",
+			name:       "rule1: requires_capture (autorisé, capture différée) -> succeeded",
 			in:         PaymentStatusInput{PIStatus: stripe.PaymentIntentStatusRequiresCapture},
-			wantStatus: "processing", wantFailureNil: true,
+			wantStatus: "succeeded", wantFailureNil: true,
 		},
 		{
 			name:       "rule3: canceled",
