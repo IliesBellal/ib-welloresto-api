@@ -14,6 +14,45 @@ func mustParisTime(t *testing.T, value string) time.Time {
 	return parsed
 }
 
+func TestGenerateGridSlots_IncludesUnbookableSlots(t *testing.T) {
+	// La grille (2026-09-25) doit conserver les créneaux structurellement
+	// non réservables (trop proches, ou marqués isSimulatedBusy) — c'est
+	// generateCandidateSlots qui filtre, pas generateGridSlots : le tableau
+	// du site vitrine a besoin de les voir pour les griser.
+	now := mustParisTime(t, "2026-09-21 09:30")
+	grid := generateGridSlots(now)
+	candidates := generateCandidateSlots(now)
+	if len(grid) <= len(candidates) {
+		t.Fatalf("expected generateGridSlots (%d) to include more slots than generateCandidateSlots (%d)", len(grid), len(candidates))
+	}
+
+	earliest := now.Add(slotLeadTime)
+	foundTooSoon := false
+	for _, slot := range grid {
+		if slot.Before(earliest) {
+			foundTooSoon = true
+			break
+		}
+	}
+	if !foundTooSoon {
+		t.Fatal("expected generateGridSlots to include at least one slot within the lead-time cutoff")
+	}
+}
+
+func TestIsSlotBookable_MatchesGenerateCandidateSlots(t *testing.T) {
+	now := mustParisTime(t, "2026-09-21 08:00")
+	candidateSet := make(map[int64]bool)
+	for _, slot := range generateCandidateSlots(now) {
+		candidateSet[slot.Unix()] = true
+	}
+
+	for _, slot := range generateGridSlots(now) {
+		if isSlotBookable(slot, now) != candidateSet[slot.Unix()] {
+			t.Fatalf("isSlotBookable(%v) disagrees with generateCandidateSlots membership", slot)
+		}
+	}
+}
+
 func TestGenerateCandidateSlots_IncludesSunday(t *testing.T) {
 	// 2026-09-24 (fondateur) : tous les jours sont ouverts, dimanche compris
 	// — régression à surveiller si quelqu'un réintroduit l'exclusion.

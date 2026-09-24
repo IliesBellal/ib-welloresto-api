@@ -6,10 +6,10 @@ import (
 )
 
 const (
-	// slotDurationMinutes est la durée d'un appel de démo — reprend le
-	// "30 minutes chrono" déjà annoncé ailleurs sur le site vitrine
-	// (/contact, mockups).
-	slotDurationMinutes = 30
+	// slotDurationMinutes : créneaux d'une heure pile (8h, 9h, 10h…) depuis
+	// le 2026-09-25, demande du fondateur pour un tableau plus lisible que
+	// des créneaux de 30 minutes.
+	slotDurationMinutes = 60
 
 	// slotLeadTime est le délai de prévenance minimal avant qu'un créneau ne
 	// devienne réservable — évite qu'un visiteur réserve un appel dans les
@@ -17,8 +17,9 @@ const (
 	slotLeadTime = 3 * time.Hour
 
 	// slotLookaheadDays borne l'horizon de réservation (jours calendaires) —
-	// au-delà, rien n'est proposé.
-	slotLookaheadDays = 14
+	// 10 jours, pour correspondre exactement au tableau scrollable
+	// horizontalement du site vitrine (une colonne par jour).
+	slotLookaheadDays = 10
 )
 
 type slotWindow struct {
@@ -77,18 +78,17 @@ func parisLocation() *time.Location {
 	return loc
 }
 
-// generateCandidateSlots énumère tous les créneaux ouverts à la réservation
-// entre now et les slotLookaheadDays prochains jours calendaires : hors
-// créneaux commençant avant now+slotLeadTime, et hors créneaux marqués
-// isSimulatedBusy (affluence simulée, voir plus haut). Ne sait rien des
-// créneaux RÉELLEMENT réservés — Service.AvailableSlots retranche ensuite
-// ceux remontés par Repository.BookedSlotsFrom, et Service.Create rappelle
-// cette même fonction pour revalider un slot_start soumis par le client
-// plutôt que de lui faire confiance.
-func generateCandidateSlots(now time.Time) []time.Time {
+// generateGridSlots énumère TOUS les créneaux de la grille (un par heure,
+// chaque jour des slotLookaheadDays prochains jours), sans aucun filtrage —
+// y compris ceux trop proches (slotLeadTime) ou déjà pris. C'est la grille
+// affichée telle quelle par le tableau du site vitrine (colonnes = jours,
+// lignes = heures) : les créneaux indisponibles doivent y rester visibles,
+// grisés, pas disparaître (2026-09-25, demande du fondateur). Le statut de
+// chaque créneau se calcule séparément — voir isSlotBookable et
+// Service.SlotGrid.
+func generateGridSlots(now time.Time) []time.Time {
 	loc := parisLocation()
 	now = now.In(loc)
-	earliest := now.Add(slotLeadTime)
 
 	var slots []time.Time
 	for dayOffset := 0; dayOffset < slotLookaheadDays; dayOffset++ {
@@ -98,17 +98,43 @@ func generateCandidateSlots(now time.Time) []time.Time {
 			end := time.Date(day.Year(), day.Month(), day.Day(), w.EndHour, w.EndMinute, 0, 0, loc)
 			step := time.Duration(slotDurationMinutes) * time.Minute
 			for t := start; !t.Add(step).After(end); t = t.Add(step) {
-				if t.Before(earliest) {
-					continue
-				}
-				if isSimulatedBusy(t) {
-					continue
-				}
 				slots = append(slots, t)
 			}
 		}
 	}
 	return slots
+}
+
+// isSlotBookable dit si un créneau de la grille peut structurellement être
+// réservé à l'instant `now` — délai de prévenance respecté et non marqué
+// isSimulatedBusy. Ne sait toujours rien des créneaux RÉELLEMENT réservés
+// (Repository.BookedSlotsFrom, vérifié séparément par Service.SlotGrid et
+// par l'index unique Postgres au moment de l'insertion, voir
+// Repository.CreateBooking) : cette fonction ne couvre que ce qui est décidé
+// sans toucher la base.
+func isSlotBookable(slot, now time.Time) bool {
+	if slot.Before(now.Add(slotLeadTime)) {
+		return false
+	}
+	return !isSimulatedBusy(slot)
+}
+
+// generateCandidateSlots énumère les créneaux structurellement réservables
+// (grille filtrée par isSlotBookable) — utilisé uniquement par
+// isCandidateSlot pour revalider côté serveur un slot_start soumis par le
+// client (Service.Create). Ne retranche pas les créneaux réellement déjà
+// réservés : c'est l'index unique Postgres (migration 154) qui tranche ce
+// cas au moment de l'insertion, pas cette fonction.
+func generateCandidateSlots(now time.Time) []time.Time {
+	now = now.In(parisLocation())
+
+	var candidates []time.Time
+	for _, slot := range generateGridSlots(now) {
+		if isSlotBookable(slot, now) {
+			candidates = append(candidates, slot)
+		}
+	}
+	return candidates
 }
 
 // isCandidateSlot vérifie qu'un horaire précis fait bien partie des créneaux

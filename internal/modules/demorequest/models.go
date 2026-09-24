@@ -18,9 +18,18 @@ type CreateDemoRequestRequest struct {
 	Website              string `json:"website,omitempty"`
 }
 
+// SlotView est une cellule de la grille de créneaux — TOUS les créneaux de
+// la fenêtre configurée sont renvoyés (disponibles ou non), pour que le
+// tableau du site vitrine affiche les créneaux pris visiblement grisés
+// plutôt que silencieusement absents (2026-09-25, demande du fondateur).
+type SlotView struct {
+	Start     string `json:"start"` // RFC3339
+	Available bool   `json:"available"`
+}
+
 // AvailableSlotsResponse est la réponse de GET /v1/public/demo-request/slots
-// — une liste plate d'horaires RFC3339 ; le regroupement par jour est fait
-// côté client (DemoForm.astro), pas ici.
+// — une liste plate de SlotView ; le regroupement en tableau jours × heures
+// est fait côté client (DemoForm.astro), pas ici.
 type AvailableSlotsResponse struct {
-	Slots []string `json:"slots"`
+	Slots []SlotView `json:"slots"`
 }

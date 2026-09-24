@@ -3,7 +3,6 @@ package demorequest
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -18,20 +17,18 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Slots handles GET /v1/public/demo-request/slots — public, appelé par
-// DemoForm.astro pour peupler le sélecteur de créneaux avant toute
-// soumission. Pas de rate limiting dédié : lecture seule, aucun honeypot à
-// contourner, coût largement inférieur à Create.
+// DemoForm.astro pour peupler le tableau de créneaux avant toute soumission.
+// Renvoie TOUTE la grille (voir Service.SlotGrid), pas seulement les
+// créneaux libres — le site vitrine affiche les indisponibles grisés. Pas de
+// rate limiting dédié : lecture seule, aucun honeypot à contourner, coût
+// largement inférieur à Create.
 func (h *Handler) Slots(w http.ResponseWriter, r *http.Request) {
-	slots, err := h.svc.AvailableSlots(r.Context())
+	slots, err := h.svc.SlotGrid(r.Context())
 	if err != nil {
 		models.SendErrorJSON(w, "demorequest", "slots", err)
 		return
 	}
-	labels := make([]string, len(slots))
-	for i, slot := range slots {
-		labels[i] = slot.Format(time.RFC3339)
-	}
-	models.SendJSON(w, http.StatusOK, "demorequest", "slots", AvailableSlotsResponse{Slots: labels})
+	models.SendJSON(w, http.StatusOK, "demorequest", "slots", AvailableSlotsResponse{Slots: slots})
 }
 
 // Create handles POST /v1/public/demo-request — public, IP-rate-limited

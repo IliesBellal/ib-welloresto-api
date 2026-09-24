@@ -36,25 +36,27 @@ func NewService(repo *Repository, mailer mailer.Service, redis *redisclient.Clie
 	return &Service{repo: repo, mailer: mailer, redis: redis, notificationEmail: notificationEmail}
 }
 
-// AvailableSlots handles GET /v1/public/demo-request/slots — les créneaux
-// candidats (generateCandidateSlots) minorés de ceux déjà réservés
-// (Repository.BookedSlotsFrom).
-func (s *Service) AvailableSlots(ctx context.Context) ([]time.Time, error) {
+// SlotGrid handles GET /v1/public/demo-request/slots — TOUTE la grille
+// (generateGridSlots), chaque créneau annoté disponible ou non (délai de
+// prévenance, affluence simulée — isSlotBookable — ou réellement réservé,
+// Repository.BookedSlotsFrom). Contrairement à l'ancienne AvailableSlots, ne
+// retranche plus les créneaux indisponibles de la liste : le tableau du site
+// vitrine doit pouvoir les afficher grisés (2026-09-25).
+func (s *Service) SlotGrid(ctx context.Context) ([]SlotView, error) {
 	now := time.Now()
-	candidates := generateCandidateSlots(now)
+	grid := generateGridSlots(now)
 
 	booked, err := s.repo.BookedSlotsFrom(ctx, now)
 	if err != nil {
 		return nil, err
 	}
 
-	available := make([]time.Time, 0, len(candidates))
-	for _, slot := range candidates {
-		if !booked[slot.Unix()] {
-			available = append(available, slot)
-		}
+	views := make([]SlotView, len(grid))
+	for i, slot := range grid {
+		available := isSlotBookable(slot, now) && !booked[slot.Unix()]
+		views[i] = SlotView{Start: slot.Format(time.RFC3339), Available: available}
 	}
-	return available, nil
+	return views, nil
 }
 
 // Create handles POST /v1/public/demo-request — replaces the Web3Forms relay
