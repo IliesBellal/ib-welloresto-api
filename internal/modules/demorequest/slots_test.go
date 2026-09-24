@@ -14,14 +14,19 @@ func mustParisTime(t *testing.T, value string) time.Time {
 	return parsed
 }
 
-func TestGenerateCandidateSlots_ExcludesSunday(t *testing.T) {
-	// 2026-09-21 is a Monday — the window covers the following Sunday
-	// (2026-09-27) within slotLookaheadDays.
-	now := mustParisTime(t, "2026-09-21 08:00")
+func TestGenerateCandidateSlots_IncludesSunday(t *testing.T) {
+	// 2026-09-24 (fondateur) : tous les jours sont ouverts, dimanche compris
+	// — régression à surveiller si quelqu'un réintroduit l'exclusion.
+	now := mustParisTime(t, "2026-09-21 08:00") // Monday
+	found := false
 	for _, slot := range generateCandidateSlots(now) {
 		if slot.Weekday() == time.Sunday {
-			t.Fatalf("generateCandidateSlots returned a Sunday slot: %v", slot)
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Fatal("expected generateCandidateSlots to include at least one Sunday slot")
 	}
 }
 
@@ -69,5 +74,44 @@ func TestIsCandidateSlot(t *testing.T) {
 	arbitrary := mustParisTime(t, "2026-09-21 03:00") // outside any window
 	if isCandidateSlot(arbitrary, now) {
 		t.Fatalf("expected %v (outside any window) to be rejected", arbitrary)
+	}
+}
+
+func TestIsSimulatedBusy_Deterministic(t *testing.T) {
+	slot := mustParisTime(t, "2026-09-21 09:00")
+	first := isSimulatedBusy(slot)
+	for i := 0; i < 5; i++ {
+		if got := isSimulatedBusy(slot); got != first {
+			t.Fatalf("isSimulatedBusy(%v) is not deterministic: got %v then %v", slot, first, got)
+		}
+	}
+}
+
+func TestIsSimulatedBusy_RoughlyMatchesConfiguredRatio(t *testing.T) {
+	// Pas un test de qualité statistique du hash — juste un garde-fou pour
+	// détecter une régression grossière (ex: ratio toujours 0% ou 100%) si
+	// quelqu'un modifie isSimulatedBusy sans y penser.
+	loc := parisLocation()
+	start := time.Date(2026, time.September, 21, 8, 0, 0, 0, loc)
+	total, busy := 0, 0
+	for i := 0; i < 2000; i++ {
+		slot := start.Add(time.Duration(i) * time.Duration(slotDurationMinutes) * time.Minute)
+		total++
+		if isSimulatedBusy(slot) {
+			busy++
+		}
+	}
+	ratio := float64(busy) / float64(total)
+	if ratio < simulatedBusyRatio-0.1 || ratio > simulatedBusyRatio+0.1 {
+		t.Fatalf("observed busy ratio %.2f is too far from configured simulatedBusyRatio %.2f", ratio, simulatedBusyRatio)
+	}
+}
+
+func TestGenerateCandidateSlots_NeverIncludesSimulatedBusySlots(t *testing.T) {
+	now := mustParisTime(t, "2026-09-21 08:00")
+	for _, slot := range generateCandidateSlots(now) {
+		if isSimulatedBusy(slot) {
+			t.Fatalf("generateCandidateSlots returned %v, which isSimulatedBusy marks as busy", slot)
+		}
 	}
 }
