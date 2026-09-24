@@ -50,6 +50,7 @@ import (
 	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
+	demorequestModule "welloresto-api/internal/modules/demorequest"
 	discountsModule "welloresto-api/internal/modules/discounts"
 	dunningModule "welloresto-api/internal/modules/dunning"
 	haccpModule "welloresto-api/internal/modules/haccp"
@@ -538,6 +539,17 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	signupService := signupModule.NewService(selectedDB, signupSessionsRepo, usersRepo, posService, presetsRepo, presetsService, onboardingRepo, googleAuthVerifier, pricingService, redisClient, cfg.App.SignupContextSigningKey)
 	signupH := signupModule.NewHandler(signupService, signupSessionsRepo)
 
+	// ---- Demo request : POST /v1/public/demo-request reçoit "DemoForm.astro"
+	// (site vitrine, formulaire "demande de démo") et relaie par email Brevo
+	// interne — remplace Web3Forms (stockage hors UE, écarté sur avis
+	// juridique du fondateur, voir wello-resto-vitrine/docs/decisions-log.md).
+	// Depuis le chantier créneaux engageants (2026-09-24), un vrai créneau
+	// d'appel est réservé en base (migration 154, demo_bookings) — GET
+	// /v1/public/demo-request/slots expose les créneaux encore libres.
+	demorequestRepo := demorequestModule.NewRepository(selectedDB)
+	demorequestService := demorequestModule.NewService(demorequestRepo, mailService, redisClient, cfg.App.DemoRequestNotificationEmail)
+	demorequestH := demorequestModule.NewHandler(demorequestService)
+
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(selectedDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
@@ -732,6 +744,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			// de modules du tunnel d'inscription (chantier 4b) — avant tout
 			// compte, comme le reste de ce groupe.
 			r.Get("/presets/{code}/suggested-modules", presetsH.GetSuggestedModules)
+
+			// Site vitrine, formulaire "demande de démo" (DemoForm.astro) —
+			// aucun compte n'existe à ce stade, comme le reste de ce groupe.
+			r.Get("/demo-request/slots", demorequestH.Slots)
+			r.Post("/demo-request", demorequestH.Create)
 		})
 
 		r.Route("/auth", func(r chi.Router) {

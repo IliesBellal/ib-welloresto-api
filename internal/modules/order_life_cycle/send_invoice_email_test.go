@@ -72,6 +72,8 @@ type fakeMailerService struct {
 
 func (f *fakeMailerService) SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{}) {
 }
+func (f *fakeMailerService) SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string) {
+}
 func (f *fakeMailerService) SendOrderConfirmationToCustomer(to string, data mailer.ScanNOrderConfirmationData) {
 }
 func (f *fakeMailerService) SendRefundNotification(s string, data mailer.RefundData) {}

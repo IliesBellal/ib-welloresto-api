@@ -58,6 +58,25 @@ func (b *BrevoMailer) SendAsync(fromName, fromEmail, to, subject, templateName s
 	}()
 }
 
+// SendAsyncWithAttachment is SendAsync + a single attachment (e.g. an .ics
+// "add to calendar" file), sent in a separate goroutine (non-blocking).
+func (b *BrevoMailer) SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string) {
+	go func() {
+		html, err := b.renderTemplate(templateName, data)
+		if err != nil {
+			log.Printf("ERROR rendering template %s: %v", templateName, err)
+			return
+		}
+
+		err = b.sendEmailViaBrevoWithAttachment(fromName, fromEmail, to, subject, html, attachmentBytes, attachmentName)
+		if err != nil {
+			log.Printf("ERROR sending email with attachment via Brevo to %s: %v", to, err)
+		} else {
+			log.Printf("Email with attachment sent successfully via Brevo to %s", to)
+		}
+	}()
+}
+
 // SendAsyncWithMessageID sends a transactional email asynchronously and returns
 // the Brevo messageId through the callback when available.
 func (b *BrevoMailer) SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string)) {

@@ -137,3 +137,33 @@ type BookingPostVisitData struct {
 	MerchantName string
 	CustomerName string
 }
+
+// DemoRequestData est le récapitulatif envoyé en interne (jamais au
+// visiteur) à chaque soumission de DemoForm.astro sur le site vitrine —
+// remplace Web3Forms (stockage hors UE, écarté sur avis juridique). Depuis le
+// chantier créneaux engageants (2026-09-24), Slot est un horaire réellement
+// réservé (voir demorequest.Slot), plus une simple préférence texte.
+type DemoRequestData struct {
+	EmailBaseData
+	Establishment        string
+	EstablishmentAddress string // vide si l'autocomplétion Google Places n'a pas abouti
+	RestaurantType       string
+	Phone                string
+	Situation            string
+	Slot                 string // ex: "vendredi 12 juillet 2026 à 9h00"
+}
+
+// DemoConfirmationData est envoyé au VISITEUR (contrairement à
+// DemoRequestData, interne) une fois son créneau de démo confirmé — avec un
+// fichier .ics en pièce jointe (voir demorequest.buildICS) et un lien Google
+// Agenda en complément (aucune intégration Google Calendar API nécessaire,
+// juste une URL "quick add" — voir docs/decisions-log.md du site vitrine
+// pour pourquoi l'intégration complète a été écartée).
+type DemoConfirmationData struct {
+	EmailBaseData
+	Establishment      string
+	DateLabel          string // ex: "vendredi 12 juillet 2026"
+	TimeLabel          string // ex: "9h00"
+	Phone              string // numéro qui sera appelé, rappelé pour confirmation
+	GoogleCalendarLink string
+}

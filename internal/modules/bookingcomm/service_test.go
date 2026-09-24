@@ -25,6 +25,9 @@ func (m *mockMailer) SendAsync(fromName, fromEmail, to, subject, templateName st
 	m.lastTemplate = templateName
 	m.lastTo = to
 }
+func (m *mockMailer) SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string) {
+	m.SendAsync(fromName, fromEmail, to, subject, templateName, data)
+}
 func (m *mockMailer) SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string)) {
 	m.SendAsync(fromName, fromEmail, to, subject, templateName, data)
 	if onSent != nil {
@@ -36,8 +39,8 @@ func (m *mockMailer) SendOrderConfirmationToCustomer(to string, data mailer.Scan
 func (m *mockMailer) SendRefundNotification(s string, data mailer.RefundData) {}
 func (m *mockMailer) SendPayoutPaidNotification(email string, name string, payout mailer.PayoutData) {
 }
-func (m *mockMailer) SendOTP(data mailer.MfaOTPData)                     {}
-func (m *mockMailer) SendPasswordReset(data mailer.PasswordResetData)    {}
+func (m *mockMailer) SendOTP(data mailer.MfaOTPData)                  {}
+func (m *mockMailer) SendPasswordReset(data mailer.PasswordResetData) {}
 func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
 	return nil
 }

@@ -27,6 +27,13 @@ type Config struct {
 // This allows you to mock the mailer in your unit tests.
 type Service interface {
 	SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{})
+
+	// SendAsyncWithAttachment est SendAsync + une pièce jointe (ex: un fichier
+	// .ics "ajouter au calendrier") — asynchrone comme SendAsync, l'appelant
+	// ne peut pas réagir à un échec d'envoi (contrairement à
+	// SendInvoiceEmailToCustomer, volontairement synchrone).
+	SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string)
+
 	SendOrderConfirmationToCustomer(to string, data ScanNOrderConfirmationData)
 	SendRefundNotification(s string, data RefundData)
 	SendPayoutPaidNotification(email string, name string, payout PayoutData)

@@ -43,15 +43,25 @@ type App struct {
 	// target environment (staging and production) — otherwise this turns a
 	// missing var into a startup crash instead of a degraded fallback.
 	SignupContextSigningKey string
+	// DemoRequestNotificationEmail reçoit la notification Brevo envoyée à
+	// chaque soumission de POST /v1/public/demo-request (formulaire "demande
+	// de démo" du site vitrine, DemoForm.astro) — remplace Web3Forms, écarté
+	// sur avis juridique du fondateur (stockage hors UE, voir
+	// wello-resto-vitrine/docs/decisions-log.md). Fatal si absent : ce
+	// endpoint est l'unique chemin de génération de leads du site vitrine, un
+	// destinataire vide enverrait silencieusement les demandes de démo dans
+	// le vide.
+	DemoRequestNotificationEmail string
 }
 
 func Load() *AppConfig {
 	cfg := &AppConfig{
 		App: App{
-			Port:                    getEnv("PORT", "8081"),
-			PINPepper:               os.Getenv("PIN_PEPPER"),
-			FiscalSigningKey:        os.Getenv("FISCAL_SIGNING_KEY"),
-			SignupContextSigningKey: os.Getenv("SIGNUP_CONTEXT_SIGNING_KEY"),
+			Port:                         getEnv("PORT", "8081"),
+			PINPepper:                    os.Getenv("PIN_PEPPER"),
+			FiscalSigningKey:             os.Getenv("FISCAL_SIGNING_KEY"),
+			SignupContextSigningKey:      os.Getenv("SIGNUP_CONTEXT_SIGNING_KEY"),
+			DemoRequestNotificationEmail: os.Getenv("DEMO_REQUEST_NOTIFICATION_EMAIL"),
 		},
 		Database:    loadDatabase(),
 		Google:      loadGoogle(),
@@ -98,6 +108,9 @@ func (c *AppConfig) validate() {
 	}
 	if c.App.SignupContextSigningKey == "" {
 		log.Fatal("SIGNUP_CONTEXT_SIGNING_KEY is not set")
+	}
+	if c.App.DemoRequestNotificationEmail == "" {
+		log.Fatal("DEMO_REQUEST_NOTIFICATION_EMAIL is not set")
 	}
 	if c.Google.ClientID == "" {
 		log.Fatal("GOOGLE_CLIENT_ID is not set")

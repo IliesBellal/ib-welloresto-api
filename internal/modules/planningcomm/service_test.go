@@ -19,6 +19,9 @@ type mockMailer struct {
 func (m *mockMailer) SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{}) {
 	m.sendAsyncCalls++
 }
+func (m *mockMailer) SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string) {
+	m.SendAsync(fromName, fromEmail, to, subject, templateName, data)
+}
 func (m *mockMailer) SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string)) {
 	m.SendAsync(fromName, fromEmail, to, subject, templateName, data)
 	if onSent != nil {
