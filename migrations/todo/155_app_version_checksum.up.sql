@@ -1,0 +1,11 @@
+-- Ajoute un hash d'intégrité optionnel à `app_version`, consommé par la
+-- borne kiosk (POST /kiosk/app/version-check, internal/modules/kiosk) avant
+-- de déposer l'APK téléchargé dans le dossier surveillé par l'agent
+-- d'installation silencieuse déjà présent sur la tablette : sans
+-- vérification, un téléchargement corrompu ou intercepté serait installé
+-- sans aucun contrôle humain. Nullable et non exploité par le POS
+-- (auth.AuthRepository.CheckAppVersion, POST /app/version/check) : sa
+-- mise à jour reste un install manuel via le Play Store/store interne,
+-- donc pas concerné par ce risque. Voir docs/KIOSK_DECISIONS.md,
+-- "Mise à jour automatique".
+ALTER TABLE app_version ADD COLUMN IF NOT EXISTS checksum_sha256 varchar(64);

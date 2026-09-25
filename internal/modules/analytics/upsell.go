@@ -89,10 +89,13 @@ func (r *Repository) GetUpsellTotals(ctx context.Context, merchantIDs, channels 
 			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS revenue_ht
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
 		strings.TrimSpace(upsellLinesWhereClause) + ` AND (` + channelCaseExpr + `) = ANY(?)`
+	filterPred, filterArgs := r.orderFilter.predicate()
+	query += filterPred
+	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
 
 	var totals UpsellTotals
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		return tx.QueryRowContext(ctx, query, merchantIDs, startUTC, endUTC, channels).
+		return tx.QueryRowContext(ctx, query, args...).
 			Scan(&totals.UpsellLines, &totals.UpsellRevenueHTCents)
 	})
 	if err != nil {
@@ -109,10 +112,13 @@ func (r *Repository) GetOrdersWithUpsellCount(ctx context.Context, merchantIDs, 
 		SELECT COUNT(DISTINCT o.order_id)
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
 		strings.TrimSpace(upsellLinesWhereClause) + ` AND (` + channelCaseExpr + `) = ANY(?)`
+	filterPred, filterArgs := r.orderFilter.predicate()
+	query += filterPred
+	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
 
 	var count int64
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		return tx.QueryRowContext(ctx, query, merchantIDs, startUTC, endUTC, channels).Scan(&count)
+		return tx.QueryRowContext(ctx, query, args...).Scan(&count)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("get orders with upsell count: %w", err)
@@ -175,6 +181,7 @@ func upsellTotalsWithOrdersSelectFragment(w PeriodWindow) (string, []interface{}
 func (r *Repository) GetUpsellTotalsWithOrdersTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentTotals, previousTotals UpsellTotalsWithOrders, err error) {
 	windows := []PeriodWindow{current, previous}
 	scopeWhere, scopeArgs := upsellLinesWhereClauseMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	currentFragment, currentArgs := upsellTotalsWithOrdersSelectFragment(current)
 	previousFragment, previousArgs := upsellTotalsWithOrdersSelectFragment(previous)
@@ -212,6 +219,7 @@ func (r *Repository) GetUpsellTotalsWithOrdersTwoPeriods(ctx context.Context, me
 // UpsellResponse.InstrumentationActive.
 func (r *Repository) GetUpsellOrdersTotal(ctx context.Context, merchantIDs, channels []string, startUTC, endUTC time.Time) (int64, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COUNT(*) FROM orders o
 	`) + "\nWHERE " + where + ` AND (` + channelCaseExpr + `) = ANY(?)`
@@ -232,6 +240,7 @@ func (r *Repository) GetUpsellOrdersTotal(ctx context.Context, merchantIDs, chan
 func (r *Repository) GetUpsellOrdersTotalTwoPeriods(ctx context.Context, merchantIDs, channels []string, current, previous PeriodWindow) (currentCount, previousCount int64, err error) {
 	windows := []PeriodWindow{current, previous}
 	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	currentExpr, currentArgs := periodFilterPredicate(current, "o")
 	previousExpr, previousArgs := periodFilterPredicate(previous, "o")
@@ -268,6 +277,7 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 	// ambiguous to Postgres inside GROUP BY — same clash class as
 	// cancellations.go's GetCancellationsByStaff doc comment describes for
 	// users.name, just against a different table this time.
+	filterPred, filterArgs := r.orderFilter.predicate()
 	query := strings.TrimSpace(`
 		SELECT o.created_by AS user_id,
 			COALESCE(NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''), o.created_by) AS display_name,
@@ -276,15 +286,16 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + `
 		LEFT JOIN users u ON u.user_id = o.created_by
 	` + strings.TrimSpace(upsellLinesWhereClause) + `
-		AND (` + channelCaseExpr + `) = ANY(?)
+		AND (` + channelCaseExpr + `) = ANY(?)` + filterPred + `
 		AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		GROUP BY o.created_by, display_name
 		ORDER BY upsell_revenue_ht DESC
 	`
+	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
 
 	var result []UpsellStaffRow
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		rows, err := tx.QueryContext(ctx, query, merchantIDs, startUTC, endUTC, channels)
+		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -339,16 +350,27 @@ func (r *Repository) GetUpsellInstrumentationActive(ctx context.Context, merchan
 // POS/SNO/KIOSK, a different taxonomy from channelCaseExpr's dine_in/
 // takeaway/... keys, and a proposed-but-never-accepted suggestion carries no
 // order_id to derive a channelCaseExpr channel from in the first place.
+//
+// The OrderFilter's source dimension does apply, though: suggestion.channel
+// maps one-to-one onto order_source for the three channels that show upsell
+// UI (see OrderFilter.upsellSuggestionChannels). Its order-type dimension
+// cannot — same reason as above, an unaccepted suggestion has no order.
 func (r *Repository) GetUpsellSuggestionsTotals(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (proposed, accepted int64, err error) {
-	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
-		return tx.QueryRowContext(ctx, `
+	query := `
 			SELECT COUNT(*),
 				COUNT(*) FILTER (WHERE accepted_items IS NOT NULL)
 			FROM upsell_suggestions
 			WHERE merchant_id = ANY(?)
 			AND created_at >= ?
 			AND created_at < ?
-		`, merchantIDs, startUTC, endUTC).Scan(&proposed, &accepted)
+		`
+	args := []interface{}{merchantIDs, startUTC, endUTC}
+	if suggestionChannels := r.orderFilter.upsellSuggestionChannels(); suggestionChannels != nil {
+		query += " AND channel::text = ANY(?)"
+		args = append(args, suggestionChannels)
+	}
+	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(&proposed, &accepted)
 	})
 	if err != nil {
 		return 0, 0, fmt.Errorf("get upsell suggestions totals: %w", err)

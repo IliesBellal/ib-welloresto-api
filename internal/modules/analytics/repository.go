@@ -17,6 +17,9 @@ import (
 // pool (database.NewAnalyticsPostgres) — never selectedDB, the POS pool.
 type Repository struct {
 	db *sql.DB
+	// orderFilter is zero on the Repository the Service holds; only a
+	// per-request copy built by WithOrderFilter (order_filter.go) carries one.
+	orderFilter OrderFilter
 }
 
 func NewRepository(analyticsDB *sql.DB) *Repository {
@@ -287,6 +290,7 @@ type RevenueTotals struct {
 // GetRevenueTotalsHT for why HT needs a separate, more expensive query.
 func (r *Repository) GetRevenueTotalsTTC(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (RevenueTotals, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COALESCE(SUM(o.price), 0), COUNT(*)
 		FROM orders o
@@ -339,6 +343,7 @@ func (r *Repository) GetRevenueTotalsTTC(ctx context.Context, merchantIDs []stri
 func (r *Repository) GetRevenueTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow, includeHT bool) (currentTotals, previousTotals, previousYearTotals RevenueTotals, err error) {
 	windows := []PeriodWindow{current, previous, previousYear}
 	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	var query string
 	var args []interface{}
@@ -537,6 +542,7 @@ const deliveryFeeFilter = " AND o.delivery_fees > 0"
 // it turns out too expensive for this instance's fusible.
 func (r *Repository) GetRevenueTotalsHT(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (int64, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT `+roundToIntExpr("COALESCE(SUM("+htLineExpr+"), 0)")+`
 	`) + "\n" + htLineJoins + "\nWHERE " + where
@@ -576,6 +582,7 @@ func (r *Repository) GetRevenueTotalsHT(ctx context.Context, merchantIDs []strin
 // answer.
 func (r *Repository) GetRevenueTimeline(ctx context.Context, merchantIDs []string, tzName string, startUTC, endUTC time.Time) ([]RevenueDayPoint, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT to_char(o.creation_date AT TIME ZONE ?, 'YYYY-MM-DD') AS local_day,
 			`+channelCaseExpr+` AS channel,
@@ -632,6 +639,7 @@ func (r *Repository) GetRevenueTimeline(ctx context.Context, merchantIDs []strin
 // instead of grouping).
 func (r *Repository) GetRevenueByChannel(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]RevenueChannelTotal, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT `+channelCaseExpr+` AS channel,
 			COALESCE(SUM(o.price), 0) AS ttc_cents,
@@ -671,6 +679,7 @@ func (r *Repository) GetRevenueByChannel(ctx context.Context, merchantIDs []stri
 // already correct for a wider scope once one exists.
 func (r *Repository) GetRevenueByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]RevenueMerchantTotal, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT o.merchant_id,
 			COALESCE(SUM(o.price), 0) AS ttc_cents,
@@ -726,6 +735,7 @@ type OrdersTotals struct {
 // basket whenever coverage is partial.
 func (r *Repository) GetOrdersTotals(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (OrdersTotals, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COUNT(*),
 			COALESCE(SUM(o.price), 0),
@@ -778,6 +788,7 @@ func ordersTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
 func (r *Repository) GetOrdersTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals OrdersTotals, err error) {
 	windows := []PeriodWindow{current, previous, previousYear}
 	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	currentFragment, currentArgs := ordersTotalsSelectFragment(current)
 	previousFragment, previousArgs := ordersTotalsSelectFragment(previous)
@@ -815,6 +826,7 @@ func (r *Repository) GetOrdersTotalsThreePeriods(ctx context.Context, merchantID
 // but counts orders instead of summing TTC.
 func (r *Repository) GetOrdersTimeline(ctx context.Context, merchantIDs []string, tzName string, startUTC, endUTC time.Time) ([]OrdersDayPoint, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT to_char(o.creation_date AT TIME ZONE ?, 'YYYY-MM-DD') AS local_day,
 			`+channelCaseExpr+` AS channel,
@@ -869,6 +881,7 @@ func (r *Repository) GetOrdersTimeline(ctx context.Context, merchantIDs []string
 // channel with at least one order.
 func (r *Repository) GetOrdersByChannel(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]OrdersChannelTotal, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT `+channelCaseExpr+` AS channel,
 			COUNT(*) AS order_count
@@ -913,6 +926,7 @@ func (r *Repository) GetOrdersByChannel(ctx context.Context, merchantIDs []strin
 // apportionment needed.
 func (r *Repository) GetOrdersByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]OrdersMerchantTotal, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT o.merchant_id,
 			COUNT(*) AS order_count,

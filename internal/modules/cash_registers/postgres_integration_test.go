@@ -403,7 +403,8 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	addPayment("ES", 500, regID)             // déjà rattaché
 	addPayment("STRIPE", 600, "SCANNORDER")  // étape 2
 	addPayment("UBER_EATS", 400, nil)        // étape 3
-	addPayment("CB", 800, "KIOSK")           // étape 3bis (Kiosk)
+	addPayment("KIOSK", 700, nil)            // étape 3bis (borne, MOP KIOSK)
+	addPayment("CB", 800, "KIOSK")           // étape 3bis (borne, ancien MOP CB)
 	addPayment("CB", 200, nil)               // étape 3bis (NULL)
 
 	// --- CloseCashRegister ---
@@ -419,8 +420,8 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM payments WHERE merchant_id = $1 AND cash_register_id = $2`, merchantID, regID).Scan(&requalified); err != nil {
 		t.Fatalf("count requalified payments: %v", err)
 	}
-	if requalified != 5 {
-		t.Fatalf("expected all 5 payments attached to the register after close, got %d", requalified)
+	if requalified != 6 {
+		t.Fatalf("expected all 6 payments attached to the register after close, got %d", requalified)
 	}
 
 	var closed bool
@@ -469,8 +470,8 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	if cr.CashRegisterID != regID || !cr.Closed || !cr.Enclosed || cr.Currency != "EUR" {
 		t.Fatalf("unexpected summary: %+v", cr)
 	}
-	if len(cr.Payments) != 5 || len(cr.Orders) != 1 {
-		t.Fatalf("expected 5 payments / 1 order in summary, got %d / %d", len(cr.Payments), len(cr.Orders))
+	if len(cr.Payments) != 6 || len(cr.Orders) != 1 {
+		t.Fatalf("expected 6 payments / 1 order in summary, got %d / %d", len(cr.Payments), len(cr.Orders))
 	}
 	if len(cr.Items) == 0 || len(cr.CustomItems) != 1 {
 		t.Fatalf("expected MOP items + 1 custom item, got %d / %d", len(cr.Items), len(cr.CustomItems))
@@ -506,8 +507,8 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	if item.CashRegisterID != regID || !item.Closed || !item.Enclosed {
 		t.Fatalf("unexpected history item: %+v", item)
 	}
-	if item.TransactionCount != 5 || item.TotalRevenu != 2500 {
-		t.Fatalf("expected 5 transactions / 2500 revenu, got %d / %d", item.TransactionCount, item.TotalRevenu)
+	if item.TransactionCount != 6 || item.TotalRevenu != 3200 {
+		t.Fatalf("expected 6 transactions / 3200 revenu, got %d / %d", item.TransactionCount, item.TotalRevenu)
 	}
 	if len(item.PaymentMethods) == 0 {
 		t.Fatal("expected payment methods breakdown in history")

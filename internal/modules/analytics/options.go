@@ -180,6 +180,7 @@ type OptionsScopeTotals struct {
 // and ProductsCostCoverage-style aggregate margin.
 func (r *Repository) GetOptionsScopeTotals(ctx context.Context, merchantIDs []string, optionTypes []string, startUTC, endUTC time.Time) (OptionsScopeTotals, error) {
 	where, scopeArgs := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, scopeArgs = r.applyOrderFilter(where, scopeArgs)
 
 	query := "WITH " + fmt.Sprintf(optionsCombinedCTE, where) + `
 		SELECT
@@ -248,6 +249,7 @@ func optionsSortColumn(sortBy string) string {
 // comment on optionsCombinedCTE for why the whole thing is one pass.
 func (r *Repository) GetOptionsPage(ctx context.Context, merchantIDs []string, optionTypes []string, sortBy, sortDir string, page, pageSize int, startUTC, endUTC time.Time) ([]OptionAggRow, int64, error) {
 	where, scopeArgs := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, scopeArgs = r.applyOrderFilter(where, scopeArgs)
 
 	sortColumn := optionsSortColumn(sortBy)
 	dir := "DESC"
@@ -332,6 +334,7 @@ func (r *Repository) GetOptionsProductTotals(ctx context.Context, merchantIDs []
 	}
 
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT p.product_id::text, SUM(oi.quantity)
 		FROM orderitems oi
@@ -389,6 +392,7 @@ func (r *Repository) GetOptionsBasketShares(ctx context.Context, merchantIDs []s
 		return result, nil
 	}
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT entity_id, COUNT(*), COALESCE(SUM(order_price), 0)
 		FROM (
@@ -414,6 +418,7 @@ func (r *Repository) GetOptionsBasketSharesRemoved(ctx context.Context, merchant
 		return result, nil
 	}
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT entity_id, COUNT(*), COALESCE(SUM(order_price), 0)
 		FROM (

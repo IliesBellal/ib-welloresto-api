@@ -465,12 +465,15 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 		return false, err
 	}
 
-	// 3bis. Associer paiements carte sans caisse (borne Kiosk via Stripe
-	// Terminal, ou paiement CB différé) : tout paiement 'CB' d'une commande
+	// 3bis. Associer paiements sans caisse (borne Kiosk via Stripe Terminal,
+	// ou paiement CB différé) : tout paiement 'KIOSK' ou 'CB' d'une commande
 	// clôturée sans registre associé est rattaché à la première caisse du
 	// merchant qui se ferme ensuite, pour qu'il apparaisse dans son rapport Z.
+	// 'KIOSK' : MOP des encaissements borne depuis la distinction KIOSK/CB
+	// (recordTerminalPayment, docs/KIOSK_DECISIONS.md) ; 'CB' conservé pour
+	// les paiements borne enregistrés avant ce changement.
 	_, err = db.ExecContext(ctx, paymentsRequalifySQL(
-		`p.mop = 'CB' AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK')`,
+		`p.mop IN ('KIOSK','CB') AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK')`,
 	), cashRegisterID, merchantID)
 	if err != nil {
 		return false, err

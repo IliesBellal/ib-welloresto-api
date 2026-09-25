@@ -26,6 +26,8 @@ type RevenueRequest struct {
 	// backend deploy if its measured cost (docs/analytics/MESURES.md) turns
 	// out too high for regular use.
 	IncludeHT *bool `json:"include_ht,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 const (
@@ -121,6 +123,8 @@ type OrdersRequest struct {
 	DateTo      string   `json:"date_to"`
 	MerchantIDs []string `json:"merchant_ids,omitempty"`
 	GroupBy     string   `json:"group_by,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 type OrdersResponse struct {
@@ -382,6 +386,8 @@ type CancellationsRequest struct {
 	DateTo      string   `json:"date_to"`
 	MerchantIDs []string `json:"merchant_ids,omitempty"`
 	GroupBy     string   `json:"group_by,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 // CancellationsResponse is the aggregate view: volume, rate, amount, reasons,
@@ -512,6 +518,8 @@ type CancellationsByStaffRequest struct {
 	DateFrom    string   `json:"date_from"`
 	DateTo      string   `json:"date_to"`
 	MerchantIDs []string `json:"merchant_ids,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 // CancellationsByStaffResponse carries no period comparison (previous
@@ -605,6 +613,8 @@ type ProductsRequest struct {
 	Page int `json:"page,omitempty"`
 	// PageSize defaults to ProductsDefaultPageSize, capped at ProductsMaxPageSize.
 	PageSize int `json:"page_size,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 const (
@@ -736,6 +746,8 @@ type OptionsRequest struct {
 	Page int `json:"page,omitempty"`
 	// PageSize defaults to OptionsDefaultPageSize, capped at OptionsMaxPageSize.
 	PageSize int `json:"page_size,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 const (
@@ -1061,6 +1073,8 @@ type UpsellRequest struct {
 	// validates against, see channels.go) and carries no per-channel
 	// breakdown in this contract. Empty means every channel.
 	Channels []string `json:"channels,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 // UpsellResponse is the aggregate view (permission.ReportsSalesRead). Never
@@ -1142,6 +1156,8 @@ type UpsellByStaffRequest struct {
 	DateTo      string   `json:"date_to"`
 	MerchantIDs []string `json:"merchant_ids,omitempty"`
 	Channels    []string `json:"channels,omitempty"`
+	// Sources/OrderTypes — see OrderFilterRequest (order_filter.go).
+	OrderFilterRequest
 }
 
 // UpsellByStaffResponse carries no rate — CA upsell par serveur is a

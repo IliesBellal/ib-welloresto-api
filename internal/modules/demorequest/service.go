@@ -119,13 +119,22 @@ func (s *Service) Create(ctx context.Context, clientIP string, req CreateDemoReq
 		return err
 	}
 
-	s.sendInternalNotification(establishment, address, restaurantType, phone, situation, slotStart)
-	s.sendConfirmation(email, establishment, phone, slotStart, slotEnd)
+	// Lien Google Agenda + .ics générés UNE fois et réutilisés pour les deux
+	// e-mails (2026-09-25, demande du fondateur : l'ajout au calendrier doit
+	// être possible aussi bien pour le client que pour le contact interne
+	// Wello Resto) — même évènement, deux destinataires.
+	summary := fmt.Sprintf("Démo WelloResto — %s", establishment)
+	description := fmt.Sprintf("Appel de démonstration WelloResto avec %s. Nous appellerons le %s.", establishment, phone)
+	googleCalendarLink := buildGoogleCalendarLink(slotStart, slotEnd, summary, description)
+	ics := buildICS(slotStart, slotEnd, summary, description)
+
+	s.sendInternalNotification(establishment, address, restaurantType, phone, situation, slotStart, googleCalendarLink, ics)
+	s.sendConfirmation(email, establishment, phone, slotStart, googleCalendarLink, ics)
 
 	return nil
 }
 
-func (s *Service) sendInternalNotification(establishment, address, restaurantType, phone, situation string, slotStart time.Time) {
+func (s *Service) sendInternalNotification(establishment, address, restaurantType, phone, situation string, slotStart time.Time, googleCalendarLink string, ics []byte) {
 	data := mailer.DemoRequestData{
 		EmailBaseData:        emailBaseData(),
 		Establishment:        establishment,
@@ -134,23 +143,20 @@ func (s *Service) sendInternalNotification(establishment, address, restaurantTyp
 		Phone:                phone,
 		Situation:            situation,
 		Slot:                 fmt.Sprintf("%s à %s", bookingcore.FormatDateLabelFR(slotStart), slotStart.Format("15:04")),
+		GoogleCalendarLink:   googleCalendarLink,
 	}
-	s.mailer.SendAsync("WelloResto — Site vitrine", mailer.SupportEmail, s.notificationEmail, "Nouvelle demande de démo — site WelloResto", "demo_request.html", data)
+	s.mailer.SendAsyncWithAttachment("WelloResto — Site vitrine", mailer.SupportEmail, s.notificationEmail, "Nouvelle demande de démo — site WelloResto", "demo_request.html", data, ics, "rendez-vous-welloresto.ics")
 }
 
-func (s *Service) sendConfirmation(email, establishment, phone string, slotStart, slotEnd time.Time) {
-	summary := fmt.Sprintf("Démo WelloResto — %s", establishment)
-	description := fmt.Sprintf("Appel de démonstration WelloResto avec %s. Nous appellerons le %s.", establishment, phone)
-
+func (s *Service) sendConfirmation(email, establishment, phone string, slotStart time.Time, googleCalendarLink string, ics []byte) {
 	data := mailer.DemoConfirmationData{
 		EmailBaseData:      emailBaseData(),
 		Establishment:      establishment,
 		DateLabel:          bookingcore.FormatDateLabelFR(slotStart),
 		TimeLabel:          slotStart.Format("15:04"),
 		Phone:              phone,
-		GoogleCalendarLink: buildGoogleCalendarLink(slotStart, slotEnd, summary, description),
+		GoogleCalendarLink: googleCalendarLink,
 	}
-	ics := buildICS(slotStart, slotEnd, summary, description)
 	s.mailer.SendAsyncWithAttachment("Wello Resto", mailer.SupportEmail, email, "Votre rendez-vous WelloResto est confirmé", "demo_confirmation.html", data, ics, "rendez-vous-welloresto.ics")
 }
 

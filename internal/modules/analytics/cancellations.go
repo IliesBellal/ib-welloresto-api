@@ -56,6 +56,7 @@ type CancellationsTotals struct {
 // (scope.go) for why this, not AnalyticsOrdersScope, is the right count.
 func (r *Repository) GetOrdersCreatedCount(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (int64, error) {
 	where, args := AnalyticsAllOrdersCreatedScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COUNT(*)
 		FROM orders o
@@ -76,6 +77,7 @@ func (r *Repository) GetOrdersCreatedCount(ctx context.Context, merchantIDs []st
 func (r *Repository) GetOrdersCreatedCountThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentCount, previousCount, previousYearCount int64, err error) {
 	windows := []PeriodWindow{current, previous, previousYear}
 	scopeWhere, scopeArgs := AnalyticsAllOrdersCreatedScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	currentExpr, currentArgs := periodFilterPredicate(current, "o")
 	previousExpr, previousArgs := periodFilterPredicate(previous, "o")
@@ -127,6 +129,7 @@ func (r *Repository) GetOrdersCreatedCountThreePeriods(ctx context.Context, merc
 // instead of carried forward unverified.
 func (r *Repository) GetCancellationsTotals(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) (CancellationsTotals, error) {
 	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COUNT(*) AS cancelled_count,
 			COALESCE(SUM(o.price), 0) AS amount_cents,
@@ -175,6 +178,7 @@ func cancellationsTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
 func (r *Repository) GetCancellationsTotalsThreePeriods(ctx context.Context, merchantIDs []string, current, previous, previousYear PeriodWindow) (currentTotals, previousTotals, previousYearTotals CancellationsTotals, err error) {
 	windows := []PeriodWindow{current, previous, previousYear}
 	scopeWhere, scopeArgs := AnalyticsCancellationsScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 
 	currentFragment, currentArgs := cancellationsTotalsSelectFragment(current)
 	previousFragment, previousArgs := cancellationsTotalsSelectFragment(previous)
@@ -224,6 +228,7 @@ type OrdersCreatedMerchantCount struct {
 
 func (r *Repository) GetOrdersCreatedCountByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]OrdersCreatedMerchantCount, error) {
 	where, args := AnalyticsAllOrdersCreatedScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT o.merchant_id, COUNT(*)
 		FROM orders o
@@ -264,6 +269,7 @@ type CancellationsMerchantTotals struct {
 
 func (r *Repository) GetCancellationsTotalsByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationsMerchantTotals, error) {
 	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT o.merchant_id,
 			COUNT(*) AS cancelled_count,
@@ -349,6 +355,7 @@ const reasonSubquerySelect = `
 // raw_reason_id values that both fall through to "none").
 func (r *Repository) GetCancellationsByReason(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationReasonTotal, error) {
 	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT
 			CASE
@@ -399,6 +406,7 @@ func (r *Repository) GetCancellationsByReason(ctx context.Context, merchantIDs [
 // this is never silently excluded.
 func (r *Repository) GetCancellationsByAuthorType(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationAuthorTypeTotal, error) {
 	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT COALESCE(o.cancelled_by_type, '`+CancellationAuthorUnknown+`') AS author_type,
 			COUNT(*) AS cnt,
@@ -436,6 +444,7 @@ func (r *Repository) GetCancellationsByAuthorType(ctx context.Context, merchantI
 // derivation every other tab in this package uses.
 func (r *Repository) GetCancellationsByChannel(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationChannelTotal, error) {
 	where, args := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT `+channelCaseExpr+` AS channel,
 			COUNT(*) AS cnt,
@@ -498,6 +507,7 @@ func (r *Repository) GetCancellationsByChannel(ctx context.Context, merchantIDs 
 // identifiable person to compute an "effectif" for).
 func (r *Repository) GetCancellationsByStaff(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]StaffCancellationRow, error) {
 	allWhere, allArgs := AnalyticsAllOrdersCreatedScope(merchantIDs, startUTC, endUTC)
+	allWhere, allArgs = r.applyOrderFilter(allWhere, allArgs)
 	// The display-name alias is "display_name", not "name": users.name is a
 	// real column on the joined table, and GROUP BY resolves a bare "name"
 	// to that column instead of this SELECT list's alias — Postgres prefers
@@ -521,6 +531,7 @@ func (r *Repository) GetCancellationsByStaff(ctx context.Context, merchantIDs []
 	`
 
 	cancelWhere, cancelArgs := AnalyticsCancellationsScope(merchantIDs, startUTC, endUTC)
+	cancelWhere, cancelArgs = r.applyOrderFilter(cancelWhere, cancelArgs)
 	unattributedQuery := strings.TrimSpace(`
 		SELECT COUNT(*)
 		FROM orders o

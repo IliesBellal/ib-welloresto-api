@@ -154,6 +154,85 @@ func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID string, a
 	return err
 }
 
+// CheckAppVersion recherche, pour ce merchant, la plus récente version
+// applicative disponible au-delà de [currentVersionCode] — mêmes tables et
+// même logique que `auth.AuthRepository.CheckAppVersion` (utilisé par le
+// POS via `POST /app/version/check`), volontairement dupliquée plutôt que
+// partagée entre modules (voir le commentaire d'AppVersionCheckResponse).
+// `app_id` est fixé à "kiosk". `release_date` non atteinte = version pas
+// encore publiée, jamais renvoyée. Une restriction dans
+// `app_version_merchant` limite la version la plus haute à une liste de
+// merchants (déploiement progressif) ; absence de restriction = version
+// ouverte à tous.
+func (r *Repository) CheckAppVersion(ctx context.Context, currentVersionCode int, merchantID string) (*AppVersionCheckResponse, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	q1 := fmt.Sprintf(`
+SELECT version_code, download_url, checksum_sha256
+FROM app_version
+WHERE app_id = 'kiosk'
+  AND version_code > ?
+  AND release_date < %s
+ORDER BY version_code DESC
+LIMIT 1;
+`, dbx.UTCNow())
+
+	var versionCode int
+	var downloadURL string
+	var checksum *string
+	err := db.QueryRowContext(ctx, q1, currentVersionCode).Scan(&versionCode, &downloadURL, &checksum)
+	if err == sql.ErrNoRows {
+		return &AppVersionCheckResponse{Status: "no_update"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// app_id = 'kiosk' filtré explicitement : version_code est un compteur
+	// propre à chaque app (POS, kiosk...), donc deux apps peuvent partager le
+	// même entier — sans ce filtre, une restriction de rollout POS
+	// s'appliquerait par erreur au kiosk (ou l'inverse). Voir migration
+	// 156_app_version_merchant_app_id.
+	var restricted int
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT 1 FROM app_version_merchant WHERE version_code = ? AND app_id = 'kiosk' LIMIT 1;`,
+		versionCode,
+	).Scan(&restricted)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == sql.ErrNoRows {
+		// Pas de restriction : version ouverte à tous les merchants.
+		return &AppVersionCheckResponse{
+			Status:         "update_available",
+			DownloadURL:    &downloadURL,
+			VersionCode:    &versionCode,
+			ChecksumSHA256: checksum,
+		}, nil
+	}
+
+	var allowed int
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT 1 FROM app_version_merchant WHERE version_code = ? AND app_id = 'kiosk' AND merchant_id = ? LIMIT 1;`,
+		versionCode, merchantID,
+	).Scan(&allowed)
+	if err == sql.ErrNoRows {
+		return &AppVersionCheckResponse{Status: "no_update"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &AppVersionCheckResponse{
+		Status:         "update_available",
+		DownloadURL:    &downloadURL,
+		VersionCode:    &versionCode,
+		ChecksumSHA256: checksum,
+	}, nil
+}
+
 // UpdateKioskLastError enregistre la dernière erreur signalée par la borne
 // elle-même (kiosk_unavailable) — visibilité support distant, voir
 // docs/KIOSK_DECISIONS.md table kiosks.

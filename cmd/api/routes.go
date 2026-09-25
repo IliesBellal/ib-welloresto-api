@@ -1903,6 +1903,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Use(middleware.KioskAuth(kioskService))
 			r.Post("/auth/heartbeat", kioskHandler.DeviceHeartbeat)
 			r.Post("/auth/verify-admin-pin", kioskHandler.VerifyAdminPin)
+			r.Post("/app/version-check", kioskHandler.CheckAppVersion)
 
 			r.Get("/menu", kioskHandler.GetKioskMenu)
 			r.Get("/products/{product_id}", kioskHandler.GetKioskProduct)

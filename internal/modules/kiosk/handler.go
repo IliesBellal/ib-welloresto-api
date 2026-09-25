@@ -121,6 +121,37 @@ func (h *Handler) DeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "kiosk", "device_heartbeat", resp)
 }
 
+// CheckAppVersion handles POST /kiosk/app/version-check — voir
+// docs/KIOSK_DECISIONS.md, "Mise à jour automatique". Distinct de
+// `POST /app/version/check` (module `auth`, utilisé par le POS) : celui-ci
+// résout l'appelant via un token utilisateur, incompatible avec le device
+// token de la borne.
+func (h *Handler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	authenticatedKiosk := middleware.GetKiosk(r)
+	if authenticatedKiosk == nil {
+		models.SendErrorJSON(w, "kiosk", "check_app_version", models.ErrKioskDeviceTokenInvalid)
+		return
+	}
+
+	var req AppVersionCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "kiosk", "check_app_version", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.CheckAppVersion(ctx, authenticatedKiosk, req)
+	if err != nil {
+		log.Warn("kiosk check_app_version failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "check_app_version", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "check_app_version", resp)
+}
+
 // VerifyAdminPin handles POST /kiosk/auth/verify-admin-pin — la borne est
 // déjà authentifiée (KioskAuth) ; ce PIN ne fait que déverrouiller l'écran
 // admin local. Rate-limité côté service (5 tentatives, 30s de lockout).

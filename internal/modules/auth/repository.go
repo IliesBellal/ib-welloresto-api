@@ -923,14 +923,19 @@ LIMIT 1;
 		return nil, err
 	}
 
-	// Step 2: check if version is restricted
+	// Step 2: check if version is restricted. app_id filtré explicitement :
+	// version_code est un compteur propre à chaque app (POS, kiosk...), donc
+	// deux apps peuvent partager le même entier — sans ce filtre, une
+	// restriction de rollout posée pour l'une s'appliquerait par erreur à
+	// l'autre. Voir migration 156_app_version_merchant_app_id.
 	q2 := `
 SELECT 1 FROM app_version_merchant
 WHERE version_code = ?
+  AND app_id = ?
 LIMIT 1;
 `
 	var restricted int
-	err = db.QueryRowContext(ctx, q2, versionCode).Scan(&restricted)
+	err = db.QueryRowContext(ctx, q2, versionCode, app).Scan(&restricted)
 	if err == sql.ErrNoRows {
 		// Not restricted → update available
 		return map[string]interface{}{
@@ -946,12 +951,13 @@ LIMIT 1;
 	q3 := `
 SELECT 1 FROM app_version_merchant
 WHERE version_code = ?
+  AND app_id = ?
   AND merchant_id = ?
 LIMIT 1;
 `
 
 	var allowed int
-	err = db.QueryRowContext(ctx, q3, versionCode, merchantID).Scan(&allowed)
+	err = db.QueryRowContext(ctx, q3, versionCode, app, merchantID).Scan(&allowed)
 	if err == sql.ErrNoRows {
 		return map[string]interface{}{"status": "no_update"}, nil
 	}

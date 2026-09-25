@@ -307,6 +307,25 @@ func (s *Service) RecordHeartbeat(ctx context.Context, kiosk *AuthenticatedKiosk
 	return &HeartbeatResponse{Status: "ok", KioskStatus: row.Status, Enabled: row.Enabled}, nil
 }
 
+// CheckAppVersion vérifie l'existence d'une mise à jour applicative pour le
+// build courant de la borne. Même garde-fou que RecordHeartbeat (borne
+// inconnue/révoquée) pour qu'une borne révoquée dont le token n'a pas encore
+// expiré ne reçoive plus d'information de mise à jour.
+func (s *Service) CheckAppVersion(ctx context.Context, kiosk *AuthenticatedKiosk, req AppVersionCheckRequest) (*AppVersionCheckResponse, error) {
+	row, err := s.repo.GetKioskByIDForMerchant(ctx, kiosk.MerchantID, kiosk.KioskID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, models.ErrKioskNotFound
+	}
+	if row.Status == "revoked" {
+		return nil, models.ErrKioskRevoked
+	}
+
+	return s.repo.CheckAppVersion(ctx, req.VersionCode, kiosk.MerchantID)
+}
+
 // ---- PIN admin (déverrouillage de l'écran admin local de la borne) ----
 
 const (

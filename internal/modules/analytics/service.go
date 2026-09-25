@@ -293,6 +293,11 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	groupBy := req.GroupBy
 	if groupBy == "" {
@@ -321,7 +326,7 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 
 	// Cache write happens once the response is built, at the bottom of this method.
 	if s.redis != nil {
-		cacheKey := buildCacheKey("revenue", merchantIDs, req.DateFrom, req.DateTo, groupBy, includeHT)
+		cacheKey := buildCacheKey("revenue", merchantIDs, req.DateFrom, req.DateTo, groupBy, includeHT) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp RevenueResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -360,7 +365,7 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 	// TTC+HT together, in one query instead of six — see
 	// GetRevenueTotalsThreePeriods' doc comment for why TTC/count still come
 	// from `orders` alone even when the HT join runs in the same query.
-	currentTotals, prevTotals, lyTotals, err := s.repo.GetRevenueTotalsThreePeriods(ctx, merchantIDs,
+	currentTotals, prevTotals, lyTotals, err := repo.GetRevenueTotalsThreePeriods(ctx, merchantIDs,
 		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
 		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
 		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
@@ -390,19 +395,19 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 		previousYear.TotalHTCents = &lyHT
 	}
 
-	timeline, err := s.repo.GetRevenueTimeline(ctx, merchantIDs, tzString, currentStartUTC, currentEndUTC)
+	timeline, err := repo.GetRevenueTimeline(ctx, merchantIDs, tzString, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
-	byChannel, err := s.repo.GetRevenueByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	byChannel, err := repo.GetRevenueByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
 	var byMerchant []RevenueMerchantTotal
 	if groupBy == GroupByMerchant {
-		byMerchant, err = s.repo.GetRevenueByMerchant(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+		byMerchant, err = repo.GetRevenueByMerchant(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 		if err != nil {
 			return nil, err
 		}
@@ -423,7 +428,7 @@ func (s *Service) GetRevenue(ctx context.Context, req RevenueRequest) (*RevenueR
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildCacheKey("revenue", merchantIDs, req.DateFrom, req.DateTo, groupBy, includeHT)
+			cacheKey := buildCacheKey("revenue", merchantIDs, req.DateFrom, req.DateTo, groupBy, includeHT) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -447,6 +452,11 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	groupBy := req.GroupBy
 	if groupBy == "" {
@@ -469,7 +479,7 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 	}
 
 	if s.redis != nil {
-		cacheKey := buildCacheKey("orders", merchantIDs, req.DateFrom, req.DateTo, groupBy, false)
+		cacheKey := buildCacheKey("orders", merchantIDs, req.DateFrom, req.DateTo, groupBy, false) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp OrdersResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -503,7 +513,7 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 	// PROMPT 25 Phase 3: current/previous/previous-year in one query instead
 	// of three — same table, no join, direct application of FILTER per
 	// window over AnalyticsOrdersScopeMultiPeriod.
-	currentTotals, prevTotals, lyTotals, err := s.repo.GetOrdersTotalsThreePeriods(ctx, merchantIDs,
+	currentTotals, prevTotals, lyTotals, err := repo.GetOrdersTotalsThreePeriods(ctx, merchantIDs,
 		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
 		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
 		PeriodWindow{Start: lyStartUTC, End: lyEndUTC},
@@ -516,19 +526,19 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 	previousPeriod := ordersPeriodTotals(prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"), prevTotals)
 	previousYear := ordersPeriodTotals(lyFrom.Format("2006-01-02"), lyTo.Format("2006-01-02"), lyTotals)
 
-	timeline, err := s.repo.GetOrdersTimeline(ctx, merchantIDs, tzString, currentStartUTC, currentEndUTC)
+	timeline, err := repo.GetOrdersTimeline(ctx, merchantIDs, tzString, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
-	byChannel, err := s.repo.GetOrdersByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	byChannel, err := repo.GetOrdersByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
 	var byMerchant []OrdersMerchantTotal
 	if groupBy == GroupByMerchant {
-		byMerchant, err = s.repo.GetOrdersByMerchant(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+		byMerchant, err = repo.GetOrdersByMerchant(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +558,7 @@ func (s *Service) GetOrders(ctx context.Context, req OrdersRequest) (*OrdersResp
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildCacheKey("orders", merchantIDs, req.DateFrom, req.DateTo, groupBy, false)
+			cacheKey := buildCacheKey("orders", merchantIDs, req.DateFrom, req.DateTo, groupBy, false) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -962,6 +972,11 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	groupBy := req.GroupBy
 	if groupBy == "" {
@@ -984,7 +999,7 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 	}
 
 	if s.redis != nil {
-		cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, groupBy, false)
+		cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, groupBy, false) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp CancellationsResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -1015,7 +1030,7 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 
 	started := time.Now()
 
-	currentPeriod, previousPeriod, previousYear, err := s.cancellationsPeriodTotalsThreePeriods(ctx, merchantIDs,
+	currentPeriod, previousPeriod, previousYear, err := s.cancellationsPeriodTotalsThreePeriods(ctx, repo, merchantIDs,
 		req.DateFrom, req.DateTo,
 		prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"),
 		lyFrom.Format("2006-01-02"), lyTo.Format("2006-01-02"),
@@ -1027,22 +1042,22 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 		return nil, err
 	}
 
-	byReason, err := s.repo.GetCancellationsByReason(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	byReason, err := repo.GetCancellationsByReason(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
-	byAuthorType, err := s.repo.GetCancellationsByAuthorType(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	byAuthorType, err := repo.GetCancellationsByAuthorType(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
-	byChannel, err := s.repo.GetCancellationsByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	byChannel, err := repo.GetCancellationsByChannel(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
 	var byMerchant []CancellationsMerchantTotal
 	if groupBy == GroupByMerchant {
-		byMerchant, err = s.cancellationsByMerchant(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+		byMerchant, err = s.cancellationsByMerchant(ctx, repo, merchantIDs, currentStartUTC, currentEndUTC)
 		if err != nil {
 			return nil, err
 		}
@@ -1063,7 +1078,7 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, groupBy, false)
+			cacheKey := buildCacheKey("cancellations", merchantIDs, req.DateFrom, req.DateTo, groupBy, false) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -1077,12 +1092,12 @@ func (s *Service) GetCancellations(ctx context.Context, req CancellationsRequest
 // vs. only cancelled ones), so a merchant with orders but zero cancellations
 // in the period appears with CancelledCount 0 rather than being silently
 // dropped by an inner join.
-func (s *Service) cancellationsByMerchant(ctx context.Context, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationsMerchantTotal, error) {
-	ordersCreated, err := s.repo.GetOrdersCreatedCountByMerchant(ctx, merchantIDs, startUTC, endUTC)
+func (s *Service) cancellationsByMerchant(ctx context.Context, repo *Repository, merchantIDs []string, startUTC, endUTC time.Time) ([]CancellationsMerchantTotal, error) {
+	ordersCreated, err := repo.GetOrdersCreatedCountByMerchant(ctx, merchantIDs, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}
-	cancellations, err := s.repo.GetCancellationsTotalsByMerchant(ctx, merchantIDs, startUTC, endUTC)
+	cancellations, err := repo.GetCancellationsTotalsByMerchant(ctx, merchantIDs, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1113,12 +1128,12 @@ func (s *Service) cancellationsByMerchant(ctx context.Context, merchantIDs []str
 // + GetCancellationsTotalsThreePeriods) instead of six (two per period,
 // three periods) — PROMPT 25 Phase 3, replacing the old
 // cancellationsPeriodTotals helper that ran once per period.
-func (s *Service) cancellationsPeriodTotalsThreePeriods(ctx context.Context, merchantIDs []string, currentFrom, currentTo, previousFrom, previousTo, previousYearFrom, previousYearTo string, current, previous, previousYear PeriodWindow) (currentPeriod, previousPeriod, previousYearPeriod CancellationsPeriodTotals, err error) {
-	currentOrdersCreated, previousOrdersCreated, previousYearOrdersCreated, err := s.repo.GetOrdersCreatedCountThreePeriods(ctx, merchantIDs, current, previous, previousYear)
+func (s *Service) cancellationsPeriodTotalsThreePeriods(ctx context.Context, repo *Repository, merchantIDs []string, currentFrom, currentTo, previousFrom, previousTo, previousYearFrom, previousYearTo string, current, previous, previousYear PeriodWindow) (currentPeriod, previousPeriod, previousYearPeriod CancellationsPeriodTotals, err error) {
+	currentOrdersCreated, previousOrdersCreated, previousYearOrdersCreated, err := repo.GetOrdersCreatedCountThreePeriods(ctx, merchantIDs, current, previous, previousYear)
 	if err != nil {
 		return CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, err
 	}
-	currentTotals, previousTotals, previousYearTotals, err := s.repo.GetCancellationsTotalsThreePeriods(ctx, merchantIDs, current, previous, previousYear)
+	currentTotals, previousTotals, previousYearTotals, err := repo.GetCancellationsTotalsThreePeriods(ctx, merchantIDs, current, previous, previousYear)
 	if err != nil {
 		return CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, CancellationsPeriodTotals{}, err
 	}
@@ -1165,6 +1180,11 @@ func (s *Service) GetCancellationsByStaff(ctx context.Context, req Cancellations
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 	if err := s.requireKeyOnAllMerchants(ctx, user.UserID, merchantIDs, permission.ReportsStaffPerformanceRead); err != nil {
 		return nil, err
 	}
@@ -1195,7 +1215,7 @@ func (s *Service) GetCancellationsByStaff(ctx context.Context, req Cancellations
 
 	started := time.Now()
 
-	staff, err := s.repo.GetCancellationsByStaff(ctx, merchantIDs, startUTC, endUTC)
+	staff, err := repo.GetCancellationsByStaff(ctx, merchantIDs, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1233,6 +1253,11 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
 	if err != nil {
@@ -1274,7 +1299,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	}
 
 	if s.redis != nil {
-		cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize)
+		cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp ProductsResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -1299,7 +1324,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	prevFrom := prevTo.AddDate(0, 0, -int(periodDays)+1)
 	prevStartUTC, prevEndUTC := timeutil.LocalDayRangeBounds(prevFrom, prevTo, tz)
 
-	categories, err := s.repo.GetProductCategories(ctx, merchantIDs)
+	categories, err := repo.GetProductCategories(ctx, merchantIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1319,7 +1344,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	started := time.Now()
 
 	// PROMPT 25 Phase 3: current/previous in one query instead of two.
-	currentTotals, prevTotals, err := s.repo.GetProductsScopeTotalsTwoPeriods(ctx, merchantIDs, req.CategoryID,
+	currentTotals, prevTotals, err := repo.GetProductsScopeTotalsTwoPeriods(ctx, merchantIDs, req.CategoryID,
 		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
 		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
 	)
@@ -1327,7 +1352,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		return nil, err
 	}
 
-	aggRows, totalProducts, err := s.repo.GetProductsPage(ctx, merchantIDs, req.CategoryID, sortBy, sortDir, page, pageSize, currentStartUTC, currentEndUTC)
+	aggRows, totalProducts, err := repo.GetProductsPage(ctx, merchantIDs, req.CategoryID, sortBy, sortDir, page, pageSize, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1336,7 +1361,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	for i, row := range aggRows {
 		productIDs[i] = row.ProductID
 	}
-	prevRevenueByProduct, err := s.repo.GetProductsPreviousRevenue(ctx, merchantIDs, productIDs, prevStartUTC, prevEndUTC)
+	prevRevenueByProduct, err := repo.GetProductsPreviousRevenue(ctx, merchantIDs, productIDs, prevStartUTC, prevEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1416,7 +1441,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize)
+			cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -1443,6 +1468,11 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
 	if err != nil {
@@ -1489,7 +1519,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 	}
 
 	if s.redis != nil {
-		cacheKey := buildOptionsCacheKey(merchantIDs, req.DateFrom, req.DateTo, optionTypes, sortBy, sortDir, page, pageSize)
+		cacheKey := buildOptionsCacheKey(merchantIDs, req.DateFrom, req.DateTo, optionTypes, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp OptionsResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -1516,16 +1546,16 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 
 	started := time.Now()
 
-	currentTotals, err := s.repo.GetOptionsScopeTotals(ctx, merchantIDs, optionTypes, currentStartUTC, currentEndUTC)
+	currentTotals, err := repo.GetOptionsScopeTotals(ctx, merchantIDs, optionTypes, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
-	prevTotals, err := s.repo.GetOptionsScopeTotals(ctx, merchantIDs, optionTypes, prevStartUTC, prevEndUTC)
+	prevTotals, err := repo.GetOptionsScopeTotals(ctx, merchantIDs, optionTypes, prevStartUTC, prevEndUTC)
 	if err != nil {
 		return nil, err
 	}
 
-	aggRows, totalRows, err := s.repo.GetOptionsPage(ctx, merchantIDs, optionTypes, sortBy, sortDir, page, pageSize, currentStartUTC, currentEndUTC)
+	aggRows, totalRows, err := repo.GetOptionsPage(ctx, merchantIDs, optionTypes, sortBy, sortDir, page, pageSize, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1547,7 +1577,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 	for id := range productIDSet {
 		productIDs = append(productIDs, id)
 	}
-	productTotals, err := s.repo.GetOptionsProductTotals(ctx, merchantIDs, productIDs, currentStartUTC, currentEndUTC)
+	productTotals, err := repo.GetOptionsProductTotals(ctx, merchantIDs, productIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1556,11 +1586,11 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 	// table (options.go's GetOptionsBasketShares/GetOptionsBasketSharesRemoved
 	// doc comments explain why removed-ingredient entities need a different
 	// join).
-	optionShares, err := s.repo.GetOptionsBasketShares(ctx, merchantIDs, optionIDs, currentStartUTC, currentEndUTC)
+	optionShares, err := repo.GetOptionsBasketShares(ctx, merchantIDs, optionIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
-	removedShares, err := s.repo.GetOptionsBasketSharesRemoved(ctx, merchantIDs, removedIDs, currentStartUTC, currentEndUTC)
+	removedShares, err := repo.GetOptionsBasketSharesRemoved(ctx, merchantIDs, removedIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1568,7 +1598,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 	// "every other scope order" for a given entity is derived by subtracting
 	// that entity's own share from this whole-scope total, rather than a
 	// second per-entity query for the complement (see basketImpactCents).
-	scopeOrders, err := s.repo.GetRevenueTotalsTTC(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	scopeOrders, err := repo.GetRevenueTotalsTTC(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,7 +1689,7 @@ func (s *Service) GetOptions(ctx context.Context, req OptionsRequest) (*OptionsR
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildOptionsCacheKey(merchantIDs, req.DateFrom, req.DateTo, optionTypes, sortBy, sortDir, page, pageSize)
+			cacheKey := buildOptionsCacheKey(merchantIDs, req.DateFrom, req.DateTo, optionTypes, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -2175,6 +2205,11 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 
 	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
 	if err != nil {
@@ -2194,7 +2229,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 	}
 
 	if s.redis != nil {
-		cacheKey := buildClientsCacheKey("upsell", merchantIDs, req.DateFrom, req.DateTo, channels)
+		cacheKey := buildClientsCacheKey("upsell", merchantIDs, req.DateFrom, req.DateTo, channels) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp UpsellResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -2226,7 +2261,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		return nil, err
 	}
 
-	currentPeriod, previousPeriod, err := s.upsellPeriodTotalsTwoPeriods(ctx, merchantIDs, channels,
+	currentPeriod, previousPeriod, err := s.upsellPeriodTotalsTwoPeriods(ctx, repo, merchantIDs, channels,
 		req.DateFrom, req.DateTo, prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02"),
 		PeriodWindow{Start: currentStartUTC, End: currentEndUTC},
 		PeriodWindow{Start: prevStartUTC, End: prevEndUTC},
@@ -2235,7 +2270,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		return nil, err
 	}
 
-	proposed, accepted, err := s.repo.GetUpsellSuggestionsTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
+	proposed, accepted, err := repo.GetUpsellSuggestionsTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
 	}
@@ -2259,7 +2294,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildClientsCacheKey("upsell", merchantIDs, req.DateFrom, req.DateTo, channels)
+			cacheKey := buildClientsCacheKey("upsell", merchantIDs, req.DateFrom, req.DateTo, channels) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -2271,12 +2306,12 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 // queries (GetUpsellTotalsWithOrdersTwoPeriods + GetUpsellOrdersTotalTwoPeriods)
 // instead of six (three per period, two periods) — PROMPT 25 Phase 3,
 // replacing the old upsellPeriodTotals helper that ran once per period.
-func (s *Service) upsellPeriodTotalsTwoPeriods(ctx context.Context, merchantIDs, channels []string, currentFrom, currentTo, previousFrom, previousTo string, current, previous PeriodWindow) (currentPeriod, previousPeriod UpsellPeriodTotals, err error) {
-	currentTotals, previousTotals, err := s.repo.GetUpsellTotalsWithOrdersTwoPeriods(ctx, merchantIDs, channels, current, previous)
+func (s *Service) upsellPeriodTotalsTwoPeriods(ctx context.Context, repo *Repository, merchantIDs, channels []string, currentFrom, currentTo, previousFrom, previousTo string, current, previous PeriodWindow) (currentPeriod, previousPeriod UpsellPeriodTotals, err error) {
+	currentTotals, previousTotals, err := repo.GetUpsellTotalsWithOrdersTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
 		return UpsellPeriodTotals{}, UpsellPeriodTotals{}, err
 	}
-	currentOrdersTotal, previousOrdersTotal, err := s.repo.GetUpsellOrdersTotalTwoPeriods(ctx, merchantIDs, channels, current, previous)
+	currentOrdersTotal, previousOrdersTotal, err := repo.GetUpsellOrdersTotalTwoPeriods(ctx, merchantIDs, channels, current, previous)
 	if err != nil {
 		return UpsellPeriodTotals{}, UpsellPeriodTotals{}, err
 	}
@@ -2313,6 +2348,11 @@ func (s *Service) GetUpsellByStaff(ctx context.Context, req UpsellByStaffRequest
 	if err != nil {
 		return nil, err
 	}
+	orderFilter, ok := NewOrderFilter(req.Sources, req.OrderTypes)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	repo := s.repo.WithOrderFilter(orderFilter)
 	if err := s.requireKeyOnAllMerchants(ctx, user.UserID, merchantIDs, permission.ReportsStaffPerformanceRead); err != nil {
 		return nil, err
 	}
@@ -2353,7 +2393,7 @@ func (s *Service) GetUpsellByStaff(ctx context.Context, req UpsellByStaffRequest
 		return nil, err
 	}
 
-	staff, err := s.repo.GetUpsellByStaff(ctx, merchantIDs, channels, startUTC, endUTC)
+	staff, err := repo.GetUpsellByStaff(ctx, merchantIDs, channels, startUTC, endUTC)
 	if err != nil {
 		return nil, err
 	}

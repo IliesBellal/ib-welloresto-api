@@ -166,6 +166,28 @@ type HeartbeatResponse struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+// AppVersionCheckRequest — body de POST /kiosk/app/version-check. Le
+// merchant et l'app_id ("kiosk") sont connus via le device token (KioskAuth,
+// voir AuthenticatedKiosk) : seul le build courant (versionCode Android,
+// suffixe `+N` de pubspec.yaml côté Flutter) est à transmettre.
+type AppVersionCheckRequest struct {
+	VersionCode int `json:"version_code"`
+}
+
+// AppVersionCheckResponse — reprend la forme utilisée par le POS
+// (auth.AuthRepository.CheckAppVersion sur `POST /app/version/check`), mais
+// dupliquée ici plutôt que partagée entre modules : la borne s'authentifie
+// par device token, jamais par token utilisateur (auth.GetUserByToken),
+// donc ce chemin ne doit jamais dépendre du module `auth` — voir
+// docs/KIOSK_DECISIONS.md, "Mise à jour automatique".
+type AppVersionCheckResponse struct {
+	// "update_available" | "no_update".
+	Status         string  `json:"status"`
+	DownloadURL    *string `json:"download_url,omitempty"`
+	VersionCode    *int    `json:"version_code,omitempty"`
+	ChecksumSHA256 *string `json:"checksum_sha256,omitempty"`
+}
+
 // SetKioskStatusRequest — body de POST /pos/kiosk/{kiosk_id}/status (staff,
 // depuis l'app POS).
 type SetKioskStatusRequest struct {

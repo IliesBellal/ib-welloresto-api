@@ -94,6 +94,7 @@ type ProductsScopeTotals struct {
 // doc comment on ProductsCostCoverage).
 func (r *Repository) GetProductsScopeTotals(ctx context.Context, merchantIDs []string, categoryID string, startUTC, endUTC time.Time) (ProductsScopeTotals, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	categoryFilter, args := productsCategoryFilter(categoryID, args)
 
 	query := strings.TrimSpace(`
@@ -148,6 +149,7 @@ func productsScopeTotalsSelectFragment(w PeriodWindow) (string, []interface{}) {
 func (r *Repository) GetProductsScopeTotalsTwoPeriods(ctx context.Context, merchantIDs []string, categoryID string, current, previous PeriodWindow) (currentTotals, previousTotals ProductsScopeTotals, err error) {
 	windows := []PeriodWindow{current, previous}
 	scopeWhere, scopeArgs := AnalyticsOrdersScopeMultiPeriod(merchantIDs, windows)
+	scopeWhere, scopeArgs = r.applyOrderFilter(scopeWhere, scopeArgs)
 	categoryFilter, scopeArgs := productsCategoryFilter(categoryID, scopeArgs)
 
 	currentFragment, currentArgs := productsScopeTotalsSelectFragment(current)
@@ -238,6 +240,7 @@ func productsSortColumn(sortBy string) string {
 // doc comment, models.go).
 func (r *Repository) GetProductsPage(ctx context.Context, merchantIDs []string, categoryID, sortBy, sortDir string, page, pageSize int, startUTC, endUTC time.Time) ([]ProductAggRow, int64, error) {
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	categoryFilter, args := productsCategoryFilter(categoryID, args)
 
 	sortColumn := productsSortColumn(sortBy)
@@ -332,6 +335,7 @@ func (r *Repository) GetProductsPreviousRevenue(ctx context.Context, merchantIDs
 	}
 
 	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
 	query := strings.TrimSpace(`
 		SELECT p.product_id::text,
 			SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)

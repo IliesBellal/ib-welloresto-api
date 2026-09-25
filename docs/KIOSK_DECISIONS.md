@@ -4587,3 +4587,37 @@ romprait l'agrégat par `JOIN`, cf. commentaire de test dans
 POS) peuvent avoir leurs propres affichages/filtres de moyen de paiement —
 non audités ici ; à vérifier s'ils exposent une répartition par MOP avant de
 considérer la distinction KIOSK/CB comme propagée partout.
+
+## Clôture de caisse : rattachement des paiements MOP KIOSK (2026-09-25)
+
+### Bug
+
+La section précédente concluait « pas de changement nécessaire côté rapports
+de caisse » — vrai pour le **groupement** du rapport Z (`p.mop` brut), faux
+pour le **rattachement** qui le précède. `CloseCashRegister`
+([cash_registers/repository.go](../internal/modules/cash_registers/repository.go))
+requalifie vers la caisse qui se ferme les paiements sans caisse réelle
+(étape 2 : `STRIPE`/`SCANNORDER`, étape 3 : `UBER_EATS`/`DELIVEROO`,
+étape 3bis : borne). L'étape 3bis filtrait `p.mop = 'CB'` en dur :
+depuis que `recordTerminalPayment` insère `mop = 'KIOSK'` avec
+`cash_register_id = NULL`, les encaissements borne n'étaient plus jamais
+rattachés à une caisse — absents du rapport Z, de `cash_registers_items`,
+du résumé et de l'historique de caisse.
+
+### Correction
+
+Filtre de l'étape 3bis élargi à `p.mop IN ('KIOSK','CB')` (même condition
+`cash_register_id IS NULL OR = 'KIOSK'`). `'CB'` est conservé pour les
+paiements borne enregistrés avant la distinction KIOSK/CB, et pour les
+paiements carte différés sans caisse que l'étape couvrait déjà.
+
+Pas de rattrapage de données : l'étape 3bis ne dépend pas de la date du
+paiement, les paiements `KIOSK` restés à `NULL` depuis le déploiement
+précédent seront rattachés à la prochaine clôture de caisse du merchant.
+Staging (vérifié le 2026-09-25) ne contient encore aucun paiement `KIOSK`.
+
+### Tests
+
+`TestCashRegisterLifecycle_Postgres` (`cash_registers/postgres_integration_test.go`) :
+ajout d'un paiement `KIOSK` à `cash_register_id = NULL`, attendus portés à
+6 paiements / 3200 de revenu.

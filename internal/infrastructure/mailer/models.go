@@ -143,6 +143,11 @@ type BookingPostVisitData struct {
 // remplace Web3Forms (stockage hors UE, écarté sur avis juridique). Depuis le
 // chantier créneaux engageants (2026-09-24), Slot est un horaire réellement
 // réservé (voir demorequest.Slot), plus une simple préférence texte.
+// GoogleCalendarLink ajouté le 2026-09-25 : l'équipe Wello Resto doit pouvoir
+// ajouter le rendez-vous à son propre agenda aussi facilement que le client
+// (même lien "quick add" + même .ics en pièce jointe que DemoConfirmationData
+// ci-dessous, générés une seule fois par demorequest.Service.Create pour les
+// deux e-mails).
 type DemoRequestData struct {
 	EmailBaseData
 	Establishment        string
@@ -151,6 +156,7 @@ type DemoRequestData struct {
 	Phone                string
 	Situation            string
 	Slot                 string // ex: "vendredi 12 juillet 2026 à 9h00"
+	GoogleCalendarLink   string
 }
 
 // DemoConfirmationData est envoyé au VISITEUR (contrairement à
