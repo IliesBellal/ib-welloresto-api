@@ -41,6 +41,12 @@
                                     <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #6b7280;">Situation actuelle</td>
                                     <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb;">{{.Situation}}</td>
                                 </tr>
+                                {{if .Origin}}
+                                <tr>
+                                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #6b7280;">Origine</td>
+                                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb;">{{.Origin}}</td>
+                                </tr>
+                                {{end}}
                                 <tr>
                                     <td style="padding: 10px 0; color: #6b7280;">Créneau réservé</td>
                                     <td style="padding: 10px 0; font-weight: bold;">{{.Slot}}</td>

@@ -29,6 +29,9 @@ type Booking struct {
 	Phone                string
 	Email                string
 	Situation            string
+	UTMSource            string // "" = NULL en base (migration 157)
+	UTMMedium            string
+	UTMCampaign          string
 }
 
 // BookedSlotsFrom retourne l'ensemble des créneaux actifs (non annulés) à
@@ -63,9 +66,10 @@ func (r *Repository) BookedSlotsFrom(ctx context.Context, from time.Time) (map[i
 // sur un instant fixe, pas d'une détection de chevauchement de plages.
 func (r *Repository) CreateBooking(ctx context.Context, b Booking) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO demo_bookings (slot_start, slot_end, establishment, establishment_address, restaurant_type, phone, email, situation)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, b.SlotStart, b.SlotEnd, b.Establishment, nullIfEmpty(b.EstablishmentAddress), b.RestaurantType, b.Phone, b.Email, b.Situation)
+		INSERT INTO demo_bookings (slot_start, slot_end, establishment, establishment_address, restaurant_type, phone, email, situation, utm_source, utm_medium, utm_campaign)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, b.SlotStart, b.SlotEnd, b.Establishment, nullIfEmpty(b.EstablishmentAddress), b.RestaurantType, b.Phone, b.Email, b.Situation,
+		nullIfEmpty(b.UTMSource), nullIfEmpty(b.UTMMedium), nullIfEmpty(b.UTMCampaign))
 	if err != nil {
 		if isSlotUniqueViolation(err) {
 			return models.ErrSlotUnavailable

@@ -16,6 +16,14 @@ type CreateDemoRequestRequest struct {
 	Situation            string `json:"situation"`
 	SlotStart            string `json:"slot_start"` // RFC3339, ex: "2026-09-29T09:00:00+02:00"
 	Website              string `json:"website,omitempty"`
+
+	// Origine de la visite : paramètres utm_* de l'URL de la page du
+	// formulaire, lus côté site (DemoForm.astro) — ex. le QR code du dépliant
+	// papier vers /rdv (utm_campaign=dpl_sno_brn_2610). Facultatifs, nettoyés
+	// par cleanUTM avant enregistrement (migration 157).
+	UTMSource   string `json:"utm_source,omitempty"`
+	UTMMedium   string `json:"utm_medium,omitempty"`
+	UTMCampaign string `json:"utm_campaign,omitempty"`
 }
 
 // SlotView est une cellule de la grille de créneaux — TOUS les créneaux de

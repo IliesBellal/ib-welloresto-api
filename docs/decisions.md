@@ -5856,3 +5856,14 @@ tant que le recalcul reste hors du repository).
 - Bugs distincts identifiés, non corrigés : formule HT des frais de port du PDF registre
   (`cash_registers/repository.go`, `TTC × (100−taux)/100` au lieu de `TTC/(1+taux)`) ;
   ligne « TVA Delivery fees 20% » affichée alors que `tva_id=-1` a `show_in_report=false`.
+
+### Demande de démo — origine utm_* enregistrée (2026-09-26)
+
+Le formulaire de démo du site vitrine (`DemoForm.astro`) envoie désormais `utm_source`, `utm_medium` et `utm_campaign`, lus dans l'URL de la page. Première campagne : le QR code du dépliant papier, vers `/rdv?utm_source=depliant&utm_medium=print&utm_campaign=dpl_sno_brn_2610`. Contexte produit : `wello-resto-vitrine/docs/decisions-log.md` (2026-09-26).
+
+- **`POST /v1/public/demo-request`** accepte les trois champs, facultatifs, dans `CreateDemoRequestRequest`. Ils sont nettoyés par `cleanUTM` (espaces de bord et caractères de contrôle retirés, 100 runes au plus : ils viennent d'une URL que n'importe qui peut forger), puis enregistrés dans `demo_bookings`. Une valeur vide est stockée à NULL.
+- **E-mail interne `demo_request.html`** : ligne « Origine » (ex. « depliant · print · dpl_sno_brn_2610 »), absente pour une visite directe.
+- **Migration `157_demo_bookings_utm`** : trois colonnes `text` nullables. **À appliquer AVANT de déployer le code** : `Repository.CreateBooking` écrit ces colonnes, et dans l'ordre inverse chaque demande de démo échouerait en erreur SQL.
+- **Pas encore fait (délibérément)** : aucune exploitation des utm_* (tableau de bord, export), et pas de demande sans créneau (`slot_start` reste obligatoire). Le site gère ce cas en proposant au visiteur un e-mail prérempli.
+
+Tests : `TestCleanUTM`, `TestCleanUTMTruncatesOnRuneBoundary`, `TestFormatOrigin` (demorequest) et `TestRenderDemoRequestTemplateWith(out)Origin` (mailer).

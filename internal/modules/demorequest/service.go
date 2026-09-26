@@ -105,6 +105,7 @@ func (s *Service) Create(ctx context.Context, clientIP string, req CreateDemoReq
 	situation := strings.TrimSpace(req.Situation)
 	address := strings.TrimSpace(req.EstablishmentAddress)
 	slotEnd := slotStart.Add(time.Duration(slotDurationMinutes) * time.Minute)
+	utmSource, utmMedium, utmCampaign := cleanUTM(req.UTMSource), cleanUTM(req.UTMMedium), cleanUTM(req.UTMCampaign)
 
 	if err := s.repo.CreateBooking(ctx, Booking{
 		SlotStart:            slotStart,
@@ -115,6 +116,9 @@ func (s *Service) Create(ctx context.Context, clientIP string, req CreateDemoReq
 		Phone:                phone,
 		Email:                email,
 		Situation:            situation,
+		UTMSource:            utmSource,
+		UTMMedium:            utmMedium,
+		UTMCampaign:          utmCampaign,
 	}); err != nil {
 		return err
 	}
@@ -128,13 +132,13 @@ func (s *Service) Create(ctx context.Context, clientIP string, req CreateDemoReq
 	googleCalendarLink := buildGoogleCalendarLink(slotStart, slotEnd, summary, description)
 	ics := buildICS(slotStart, slotEnd, summary, description)
 
-	s.sendInternalNotification(establishment, address, restaurantType, phone, situation, slotStart, googleCalendarLink, ics)
+	s.sendInternalNotification(establishment, address, restaurantType, phone, situation, formatOrigin(utmSource, utmMedium, utmCampaign), slotStart, googleCalendarLink, ics)
 	s.sendConfirmation(email, establishment, phone, slotStart, googleCalendarLink, ics)
 
 	return nil
 }
 
-func (s *Service) sendInternalNotification(establishment, address, restaurantType, phone, situation string, slotStart time.Time, googleCalendarLink string, ics []byte) {
+func (s *Service) sendInternalNotification(establishment, address, restaurantType, phone, situation, origin string, slotStart time.Time, googleCalendarLink string, ics []byte) {
 	data := mailer.DemoRequestData{
 		EmailBaseData:        emailBaseData(),
 		Establishment:        establishment,
@@ -142,6 +146,7 @@ func (s *Service) sendInternalNotification(establishment, address, restaurantTyp
 		RestaurantType:       restaurantType,
 		Phone:                phone,
 		Situation:            situation,
+		Origin:               origin,
 		Slot:                 fmt.Sprintf("%s à %s", bookingcore.FormatDateLabelFR(slotStart), slotStart.Format("15:04")),
 		GoogleCalendarLink:   googleCalendarLink,
 	}
@@ -158,6 +163,41 @@ func (s *Service) sendConfirmation(email, establishment, phone string, slotStart
 		GoogleCalendarLink: googleCalendarLink,
 	}
 	s.mailer.SendAsyncWithAttachment("Wello Resto", mailer.SupportEmail, email, "Votre rendez-vous WelloResto est confirmé", "demo_confirmation.html", data, ics, "rendez-vous-welloresto.ics")
+}
+
+// maxUTMLength borne chaque paramètre utm_* enregistré : ils viennent d'une
+// URL que n'importe qui peut forger, et n'ont aucune raison légitime de
+// dépasser quelques dizaines de caractères (ex. dpl_sno_brn_2610).
+const maxUTMLength = 100
+
+// cleanUTM normalise un paramètre utm_* reçu du site vitrine : espaces de
+// bord retirés, caractères de contrôle supprimés (ils finiraient tels quels
+// dans l'e-mail interne), longueur bornée à maxUTMLength runes — jamais au
+// milieu d'un caractère UTF-8. "" signifie « absent » (NULL en base).
+func cleanUTM(v string) string {
+	v = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(v))
+	if runes := []rune(v); len(runes) > maxUTMLength {
+		v = string(runes[:maxUTMLength])
+	}
+	return v
+}
+
+// formatOrigin compose la ligne « Origine » de l'e-mail interne, ex.
+// "depliant · print · dpl_sno_brn_2610" — seulement les paramètres présents,
+// "" si aucun (la ligne n'est alors pas affichée, voir demo_request.html).
+func formatOrigin(source, medium, campaign string) string {
+	parts := make([]string, 0, 3)
+	for _, p := range []string{source, medium, campaign} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func emailBaseData() mailer.EmailBaseData {

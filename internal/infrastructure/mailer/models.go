@@ -155,6 +155,7 @@ type DemoRequestData struct {
 	RestaurantType       string
 	Phone                string
 	Situation            string
+	Origin               string // paramètres utm_* de la visite, ex. "depliant · print · dpl_sno_brn_2610" ; vide = visite directe
 	Slot                 string // ex: "vendredi 12 juillet 2026 à 9h00"
 	GoogleCalendarLink   string
 }
