@@ -12,12 +12,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// Association rules (docs/UPSELL_COMPLETION.md, §8, D12). B is kept as a
+// suggestion for A when the pair was ordered together at least
+// upsellMinCoOccur times, is more frequent than chance by upsellMinLift, and
+// the smoothed share of A's orders that also hold B reaches
+// upsellMinConfidence. Suggestions are ranked by that smoothed share.
 const (
 	upsellPatternWindow  = 90 // days of order history to analyse
-	upsellMinCoOccur     = 5  // minimum co-occurrences to include a pair
-	upsellMinLift        = 1.0
-	upsellMinConfidence  = 0.1
-	upsellMaxPairsStored = 10 // top N patterns stored per product
+	upsellMinCoOccur     = 8  // minimum co-occurrences to include a pair
+	upsellMinLift        = 1.2
+	upsellMinConfidence  = 0.10 // on the smoothed P(B | A)
+	upsellConfidenceBeta = 10.0 // smoothing weight, in orders (see upsellSmoothedConfidence)
+	upsellMaxPairsStored = 10   // top N patterns stored per product
 	upsellPatternTTL     = 36 * time.Hour
 	upsellCleanupMonths  = 8
 	// Low-price best sellers: products priced at most a third of the median
@@ -162,8 +168,7 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 
 	// ── Step 4: Compute metrics and accumulate per-product patterns ───────────
 	// Keyed by source product → list of pattern entries to suggest.
-	type entry = upsellModule.PatternEntry
-	perProduct := make(map[string][]entry)
+	perProduct := make(map[string][]upsellModule.PatternEntry)
 
 	for pairRows.Next() {
 		var pidA, pidB string
@@ -172,61 +177,20 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 			continue
 		}
 
-		countA := productCount[pidA]
-		countB := productCount[pidB]
-		if countA == 0 || countB == 0 {
-			continue
+		ab, ba := upsellPairPatterns(pidA, pidB, countAB, productCount[pidA], productCount[pidB], totalOrders)
+		if ab != nil {
+			perProduct[pidA] = append(perProduct[pidA], *ab)
 		}
-
-		support := float64(countAB) / float64(totalOrders)
-		confAB := float64(countAB) / float64(countA)
-		confBA := float64(countAB) / float64(countB)
-		lift := float64(countAB*totalOrders) / float64(countA*countB)
-
-		if lift < upsellMinLift {
-			continue
-		}
-		if confAB < upsellMinConfidence && confBA < upsellMinConfidence {
-			continue
-		}
-
-		// A → B
-		if confAB >= upsellMinConfidence {
-			perProduct[pidA] = append(perProduct[pidA], entry{
-				ProductID:  pidB,
-				Lift:       lift,
-				Confidence: confAB,
-				Support:    support,
-			})
-		}
-		// B → A
-		if confBA >= upsellMinConfidence {
-			perProduct[pidB] = append(perProduct[pidB], entry{
-				ProductID:  pidA,
-				Lift:       lift,
-				Confidence: confBA,
-				Support:    support,
-			})
+		if ba != nil {
+			perProduct[pidB] = append(perProduct[pidB], *ba)
 		}
 	}
 
 	// ── Step 5: Sort and store in Redis ──────────────────────────────────────
 	totalWritten := 0
 	for sourcePID, entries := range perProduct {
-		// Sort by lift DESC, keep top N.
-		sortedEntries := entries
-		if len(sortedEntries) > upsellMaxPairsStored {
-			for i := 0; i < upsellMaxPairsStored; i++ {
-				maxIdx := i
-				for j := i + 1; j < len(sortedEntries); j++ {
-					if sortedEntries[j].Lift > sortedEntries[maxIdx].Lift {
-						maxIdx = j
-					}
-				}
-				sortedEntries[i], sortedEntries[maxIdx] = sortedEntries[maxIdx], sortedEntries[i]
-			}
-			sortedEntries = sortedEntries[:upsellMaxPairsStored]
-		}
+		// Best smoothed confidence first, keep top N.
+		sortedEntries := sortUpsellPatterns(entries, upsellMaxPairsStored)
 
 		raw, marshalErr := json.Marshal(sortedEntries)
 		if marshalErr != nil {
@@ -255,6 +219,52 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 	}
 
 	return totalWritten, nil
+}
+
+// upsellSmoothedConfidence is P(target | source) pulled towards the overall
+// share of orders holding the target: (countBoth + beta × countTarget/total) /
+// (countSource + beta). On a large sample it matches the raw share; on a small
+// one (6 orders out of 6) it no longer passes for a certainty.
+func upsellSmoothedConfidence(countBoth, countSource, countTarget, totalOrders int) float64 {
+	prior := float64(countTarget) / float64(totalOrders)
+	return (float64(countBoth) + upsellConfidenceBeta*prior) / (float64(countSource) + upsellConfidenceBeta)
+}
+
+// upsellPairPatterns applies the association rules to a pair of products
+// ordered together countAB times, and returns the A→B and B→A patterns that
+// pass (nil otherwise). Confidence holds the smoothed P(B | A) (resp. P(A | B)).
+func upsellPairPatterns(pidA, pidB string, countAB, countA, countB, totalOrders int) (ab, ba *upsellModule.PatternEntry) {
+	if countA == 0 || countB == 0 || totalOrders == 0 || countAB < upsellMinCoOccur {
+		return nil, nil
+	}
+	lift := float64(countAB) * float64(totalOrders) / (float64(countA) * float64(countB))
+	if lift < upsellMinLift {
+		return nil, nil
+	}
+	support := float64(countAB) / float64(totalOrders)
+
+	if conf := upsellSmoothedConfidence(countAB, countA, countB, totalOrders); conf >= upsellMinConfidence {
+		ab = &upsellModule.PatternEntry{ProductID: pidB, Lift: lift, Confidence: conf, Support: support}
+	}
+	if conf := upsellSmoothedConfidence(countAB, countB, countA, totalOrders); conf >= upsellMinConfidence {
+		ba = &upsellModule.PatternEntry{ProductID: pidA, Lift: lift, Confidence: conf, Support: support}
+	}
+	return ab, ba
+}
+
+// sortUpsellPatterns orders entries by confidence descending (product id on
+// ties, for a stable result) and keeps at most limit of them.
+func sortUpsellPatterns(entries []upsellModule.PatternEntry, limit int) []upsellModule.PatternEntry {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Confidence != entries[j].Confidence {
+			return entries[i].Confidence > entries[j].Confidence
+		}
+		return entries[i].ProductID < entries[j].ProductID
+	})
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries
 }
 
 // upsellCatalogProduct is an orderable root product with its effective price:

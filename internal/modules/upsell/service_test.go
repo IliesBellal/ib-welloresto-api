@@ -315,3 +315,42 @@ func TestUnavailableNow_LookupFailureFiltersNothing(t *testing.T) {
 		t.Fatalf("got %v, want nil without a schedule service", got)
 	}
 }
+
+func TestCartCategories_VariantTakesItsGroupCategory(t *testing.T) {
+	available := []menu.AvailableProduct{
+		{ProductID: "pizza", CategoryID: "pizzas"},
+		{ProductID: "coca", CategoryID: "boissons"},
+		{ProductID: "sans-categorie", CategoryID: ""},
+	}
+	// "coca-33" is a variant of "coca"; "sans-categorie" has no category.
+	cart := cartOf("pizza", "coca-33", "sans-categorie")
+
+	got := cartCategories(cart, map[string]string{"coca-33": "coca"}, available)
+
+	want := map[string]struct{}{"pizzas": {}, "boissons": {}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cartCategories = %v, want %v", got, want)
+	}
+}
+
+func TestAggregatePatterns_BestConfidenceAndOtherCategoriesOnly(t *testing.T) {
+	candidates := map[string]menu.AvailableProduct{
+		"orangina": {ProductID: "orangina", CategoryID: "boissons"},
+		"tiramisu": {ProductID: "tiramisu", CategoryID: "desserts"},
+		"reine":    {ProductID: "reine", CategoryID: "pizzas"},
+		"sauce":    {ProductID: "sauce", CategoryID: ""},
+	}
+	// Two cart products point to their suggestions; "gone" is no longer a
+	// candidate.
+	lists := [][]PatternEntry{
+		{{ProductID: "orangina", Confidence: 0.20}, {ProductID: "reine", Confidence: 0.30}, {ProductID: "gone", Confidence: 0.9}},
+		{{ProductID: "orangina", Confidence: 0.12}, {ProductID: "tiramisu", Confidence: 0.15}, {ProductID: "sauce", Confidence: 0.11}},
+	}
+
+	got := aggregatePatterns(lists, candidates, map[string]struct{}{"pizzas": {}})
+
+	want := map[string]float64{"orangina": 0.20, "tiramisu": 0.15, "sauce": 0.11}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("aggregatePatterns = %v, want %v (max not sum, no second pizza)", got, want)
+	}
+}

@@ -346,44 +346,63 @@ func TestUpdateMerchantPopularProducts_Postgres(t *testing.T) {
 
 // --- RecomputeUpsellPatterns (par marchand) ------------------------------
 
+// seedUpsellBaskets crée une commande CLOSED récente par panier, avec une
+// ligne par produit du panier.
+func seedUpsellBaskets(t *testing.T, db *sql.DB, ctx context.Context, merchantID string, firstOrderNum int, baskets [][]int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	for i, basket := range baskets {
+		var orderID int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand_status, state, price, tva, ht, created_by, creation_date)
+			VALUES ($1, $2, 'ACCEPTED', 'CLOSED', 800, 0, 800, 'itest', $3)
+			RETURNING order_id`, merchantID, firstOrderNum+i, now.Add(-time.Duration(i)*time.Hour)).Scan(&orderID); err != nil {
+			t.Fatalf("seed order %d: %v", i, err)
+		}
+		for _, pid := range basket {
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
+				VALUES ($1, $2, $3, 1, 300)`, orderID, pid, merchantID); err != nil {
+				t.Fatalf("seed orderitem order=%d product=%d: %v", orderID, pid, err)
+			}
+		}
+	}
+}
+
+// repeatBasket renvoie n fois le même panier.
+func repeatBasket(n int, basket ...int64) [][]int64 {
+	baskets := make([][]int64, n)
+	for i := range baskets {
+		baskets[i] = basket
+	}
+	return baskets
+}
+
+// 8 commandes A+B (upsellMinCoOccur = 8) et 4 commandes C seul, sur 12 :
+// lift A-B = 8×12 / (8×8) = 1,5 (≥ upsellMinLift = 1,2), P(B | A) lissée ≈ 0,81.
+// Les deux sens passent. Sans les commandes C, le lift vaudrait 1,0 : A et B
+// seraient simplement dans toutes les commandes, sans lien spécifique.
 func TestProcessUpsellPatternsForMerchant_Postgres(t *testing.T) {
 	rawDB := pgtest.Open(t)
 	ctx := context.Background()
 	merchantID := seedTaskMerchant(t, rawDB, ctx, 1)
 
-	var productA, productB int64
-	if err := rawDB.QueryRowContext(ctx, `
-		INSERT INTO products (merchant_id, name, price, category)
-		VALUES ($1, 'itest product A', 500, 'itest')
-		RETURNING product_id`, merchantID).Scan(&productA); err != nil {
-		t.Fatalf("seed product A: %v", err)
-	}
-	if err := rawDB.QueryRowContext(ctx, `
-		INSERT INTO products (merchant_id, name, price, category)
-		VALUES ($1, 'itest product B', 300, 'itest')
-		RETURNING product_id`, merchantID).Scan(&productB); err != nil {
-		t.Fatalf("seed product B: %v", err)
-	}
-
-	// 6 commandes CLOSED co-occurrant A+B (>= upsellMinCoOccur=5), dans la
-	// fenêtre upsellPatternWindow=90 jours.
-	now := time.Now().UTC()
-	for i := 0; i < 6; i++ {
-		var orderID int64
+	seedProduct := func(name string) int64 {
+		var id int64
 		if err := rawDB.QueryRowContext(ctx, `
-			INSERT INTO orders (merchant_id, order_num, brand_status, state, price, tva, ht, created_by, creation_date)
-			VALUES ($1, $2, 'ACCEPTED', 'CLOSED', 800, 0, 800, 'itest', $3)
-			RETURNING order_id`, merchantID, 200+i, now.Add(-time.Duration(i)*time.Hour)).Scan(&orderID); err != nil {
-			t.Fatalf("seed order %d: %v", i, err)
+			INSERT INTO products (merchant_id, name, price, category)
+			VALUES ($1, $2, 300, 'itest')
+			RETURNING product_id`, merchantID, name).Scan(&id); err != nil {
+			t.Fatalf("seed product %s: %v", name, err)
 		}
-		for _, pid := range []int64{productA, productB} {
-			if _, err := rawDB.ExecContext(ctx, `
-				INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
-				VALUES ($1, $2, $3, 1, 500)`, orderID, pid, merchantID); err != nil {
-				t.Fatalf("seed orderitem order=%d product=%d: %v", orderID, pid, err)
-			}
-		}
+		return id
 	}
+	productA := seedProduct("itest product A")
+	productB := seedProduct("itest product B")
+	productC := seedProduct("itest product C")
+
+	baskets := append(repeatBasket(8, productA, productB), repeatBasket(4, productC)...)
+	seedUpsellBaskets(t, rawDB, ctx, merchantID, 200, baskets)
 
 	// AICache nil : Cache.Set/Get sont nil-safe (internal/ai/cache/redis.go),
 	// donc processUpsellPatternsForMerchant reste testable sans Redis réel.
@@ -392,16 +411,17 @@ func TestProcessUpsellPatternsForMerchant_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processUpsellPatternsForMerchant failed against postgres: %v", err)
 	}
-	if pairs == 0 {
-		t.Fatalf("expected at least one co-occurrence pattern (A<->B), got 0")
+	if pairs != 2 {
+		t.Fatalf("expected 2 directed patterns (A<->B), got %d", pairs)
 	}
 }
 
 // Les variantes (by_product_of) sont comptées sous leur produit groupe
-// (docs/UPSELL_COMPLETION.md, D1). A est commandé 3 fois avec la variante V1
-// et 3 fois avec la variante V2 du groupe G : aucune paire A+Vn n'atteint
-// upsellMinCoOccur=5, mais la paire A+G (6 commandes) l'atteint une fois les
+// (docs/UPSELL_COMPLETION.md, D1). A est commandé 4 fois avec la variante V1
+// et 4 fois avec la variante V2 du groupe G : aucune paire A+Vn n'atteint
+// upsellMinCoOccur = 8, mais la paire A+G (8 commandes) l'atteint une fois les
 // variantes rattachées. Sans ce rattachement, aucun pattern n'est produit.
+// 4 commandes C seul portent le lift à 1,5.
 func TestProcessUpsellPatternsForMerchant_VariantsRolledUp_Postgres(t *testing.T) {
 	rawDB := pgtest.Open(t)
 	ctx := context.Background()
@@ -418,27 +438,14 @@ func TestProcessUpsellPatternsForMerchant_VariantsRolledUp_Postgres(t *testing.T
 		return id
 	}
 	productA := seedProduct("itest product A", nil)
+	productC := seedProduct("itest product C", nil)
 	group := seedProduct("itest group G", nil)
 	variant1 := seedProduct("itest variant G1", group)
 	variant2 := seedProduct("itest variant G2", group)
 
-	now := time.Now().UTC()
-	for i, variant := range []int64{variant1, variant1, variant1, variant2, variant2, variant2} {
-		var orderID int64
-		if err := rawDB.QueryRowContext(ctx, `
-			INSERT INTO orders (merchant_id, order_num, brand_status, state, price, tva, ht, created_by, creation_date)
-			VALUES ($1, $2, 'ACCEPTED', 'CLOSED', 800, 0, 800, 'itest', $3)
-			RETURNING order_id`, merchantID, 300+i, now.Add(-time.Duration(i)*time.Hour)).Scan(&orderID); err != nil {
-			t.Fatalf("seed order %d: %v", i, err)
-		}
-		for _, pid := range []int64{productA, variant} {
-			if _, err := rawDB.ExecContext(ctx, `
-				INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
-				VALUES ($1, $2, $3, 1, 300)`, orderID, pid, merchantID); err != nil {
-				t.Fatalf("seed orderitem order=%d product=%d: %v", orderID, pid, err)
-			}
-		}
-	}
+	baskets := append(repeatBasket(4, productA, variant1), repeatBasket(4, productA, variant2)...)
+	baskets = append(baskets, repeatBasket(4, productC)...)
+	seedUpsellBaskets(t, rawDB, ctx, merchantID, 300, baskets)
 
 	tm := &TasksManager{DB: rawDB}
 	pairs, err := tm.processUpsellPatternsForMerchant(ctx, merchantID)

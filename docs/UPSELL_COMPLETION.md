@@ -4,7 +4,7 @@ Démarré le 2026-09-27. Document tenu au fil du chantier : les décisions sont
 consignées au moment où elles sont prises, y compris celles reportées ou
 écartées. Résumé dans [decisions.md](decisions.md) (entrée du 2026-09-27).
 
-**Statut (2026-09-27) : D1, D2 et D5 à D11 implémentés et testés, non
+**Statut (2026-09-28) : D1, D2 et D5 à D12 implémentés et testés, non
 commités, non déployés.**
 
 ## En bref : comment l'upsell choisit ses produits après ce chantier
@@ -14,8 +14,12 @@ Pour un panier donné, sur un canal donné (POS, SNO, borne) :
 1. **Candidats** : produits disponibles, hors panier. Les variantes du panier
    excluent aussi leur groupe. Sur SNO et la borne, on retire aussi les
    produits non vendus sur le canal et ceux hors horaires (D1, D9).
-2. **Associations** (« ce qui va bien ensemble », calculé chaque nuit) :
-   on garde tout ce qui est trouvé, même moins que le maximum (D2).
+2. **Associations** (« achetés ensemble », calculées chaque nuit) : au
+   moins 8 commandes ensemble, un lien plus fréquent que le hasard (lift
+   ≥ 1,2) et au moins 10 % des acheteurs du produit du panier qui ajoutent la
+   suggestion (part lissée). Classement par cette part. Une suggestion d'une
+   catégorie déjà présente dans le panier est écartée : pas de deuxième pizza
+   (D12). On garde tout ce qui est trouvé, même moins que le maximum (D2).
 3. **Petits prix à succès** : les produits vendus sur 90 jours et dont le
    prix vaut au plus le tiers du prix médian de la carte, meilleures ventes
    d'abord. Produits à 0 € exclus. Liste calculée chaque nuit (D10).
@@ -694,6 +698,136 @@ Conséquence attendue : moins d'associations, mais plus fiables. Les places
 libérées sont reprises par les petits prix (D10). La requête A2 mesure cette
 perte de couverture.
 
+### Résultats de prod (2026-09-28) et analyse
+
+Ilies a répondu **oui** à l'exclusion des associations dans une même
+catégorie.
+
+Couverture (produits vendus ayant au moins 1 / au moins 3 associations) :
+
+| Établissement | ≥ 1 actuel | ≥ 1 proposé | ≥ 3 actuel | ≥ 3 proposé |
+|---|---|---|---|---|
+| 212 | 66 | 33 | 22 | 4 |
+| 236 | 44 | 37 | 38 | 25 |
+| 235 | 41 | 27 | 29 | 8 |
+| 226 | 24 | 9 | 5 | 0 |
+| 234 | 21 | 6 | 10 | 0 |
+
+Constats :
+
+- **Classer par P(B | A) lissée est nettement meilleur.** En classant par
+  lift, les petits échantillons passent en tête : Tenders → Bouchée
+  Camembert (lift 8,6 sur 5 commandes), Escalope → Salade (6,4 sur 6),
+  Soda → Brochette mixte à 18 €. En classant par P(B | A), on obtient des
+  liens concrets : Escalope → Soda (59 %), Bricks → Assiette Keftaji (37 %),
+  Tenders → Frites (38 %).
+- **Le seuil de 15 % est trop strict** : il écarte des associations
+  spécifiques et pertinentes, par exemple chez 212 Montagnarde → Coca
+  (12 %, lift 2,1), Pizza au Bœuf → Coca (11 %, lift 2,0) et Pizza Poulet →
+  Coca (10 %, lift 1,8).
+- **Le lift minimum de 1,2 écarte surtout la boisson « universelle »**
+  (Pizza fromage → Orangina, lift 1,16). Ce n'est pas un problème :
+  l'Orangina est de toute façon en tête de la liste petits prix de 212. Les
+  rôles se séparent bien : les associations portent les liens spécifiques,
+  les petits prix portent les ajouts génériques.
+- **Frais de livraison.** Chez 235, les produits « Zone 1/2/3 » (0 €,
+  présents dans 31 % des commandes) passent **en tête** avec le classement
+  par P(B | A) : ils sont 1er pour 5 des 10 produits les plus vendus. Sur le
+  POS, aucun drapeau de canal ne les retire.
+- **Même catégorie**, confirmé par les données : pizza → pizza (212, 235),
+  Menu Tacos 1 → Menu Tacos 2 (226). Pertes collatérales : Frites ↔ Tenders
+  (226, « Tex Mex »), mini-brochettes entre elles (234), Bricks → Salade
+  Méchouia (236). En partie reprises par les petits prix.
+- **Boisson → plat** : Orangina → pizza (212), Soda → escalope à 16 €
+  (234). Si un plat de cette catégorie est déjà dans le panier, proposer un
+  deuxième plat est peu pertinent.
+
+Proposition révisée (à valider) :
+
+- lift ≥ 1,2, au moins 8 commandes ensemble, **P(B | A) lissée ≥ 10 %**, et
+  classement par P(B | A) lissée ;
+- exclure une suggestion dont la catégorie est **déjà présente dans le
+  panier**, pas seulement celle du produit source : cela couvre pizza →
+  pizza et aussi Orangina → pizza quand une pizza est déjà prise. Cette
+  règle ne s'applique qu'aux associations : les petits prix peuvent toujours
+  proposer une deuxième boisson ;
+- exclure des associations les produits à 0 € (frais de livraison). Cela
+  revient sur l'arbitrage P6 : une sauce offerte ne serait plus proposée non
+  plus. À trancher par Ilies.
+
+### D12 — Associations durcies (validé le 2026-09-28)
+
+Arbitrages d'Ilies sur la proposition révisée :
+
+1. Seuils et classement : **validés**. Au moins 8 commandes ensemble,
+   lift ≥ 1,2, P(B | A) lissée ≥ 10 %, classement par P(B | A) lissée.
+2. Produits à 0 € : **pas d'exclusion**. Ilies demandera aux commerçants
+   concernés de retirer les frais de livraison de la borne et de SNO ; le
+   filtre par canal (D9) les écartera alors. Sur le **POS**, qui n'a pas de
+   drapeau de canal, ils peuvent encore être suggérés (235 : « Zone 1/2 »).
+   Risque connu et accepté. Les produits groupe (à 0 € en base) ne sont
+   jamais traités comme gratuits : leur prix est celui de leurs variantes
+   (déjà le cas pour les petits prix, D10) et les variantes restent
+   rattachées au groupe (D1). *Interprétation de la consigne « hors groupes
+   de produit qu'il faut exclure mais garder les sous-produits », à faire
+   confirmer par Ilies.*
+3. Catégories déjà dans le panier : **validé**.
+
+### Implémentation (D12)
+
+- **Cron** ([internal/tasks/upsell.go](../internal/tasks/upsell.go)) :
+  - nouveaux seuils `upsellMinCoOccur` = 8, `upsellMinLift` = 1,2 et
+    `upsellMinConfidence` = 0,10, ce dernier portant désormais sur la valeur
+    lissée ;
+  - `upsellConfidenceBeta` = 10 : poids du lissage, en commandes ;
+  - `upsellSmoothedConfidence` calcule P(B | A) lissée =
+    (A+B + 10 × part de B) / (A + 10) ;
+  - `upsellPairPatterns` applique les règles à une paire, dans les deux sens ;
+  - `sortUpsellPatterns` classe par P(B | A) lissée et garde 10 suggestions
+    par produit. Correction au passage : l'ancien code ne triait rien quand
+    un produit avait 10 associations ou moins, l'ordre était donc celui de la
+    requête ;
+  - `PatternEntry.Confidence` contient désormais la valeur **lissée** ;
+    `Lift` et `Support` restent stockés pour le diagnostic.
+- **Service** ([internal/modules/upsell/service.go](../internal/modules/upsell/service.go)) :
+  - `cartCategories` donne les catégories du panier, une variante prenant
+    celle de son groupe. Les produits sans catégorie sont ignorés : n'avoir
+    aucune catégorie n'est pas un point commun ;
+  - `aggregatePatterns` garde pour chaque candidat la **meilleure** P(B | A)
+    parmi les produits du panier (un maximum, plus une somme de lifts), et
+    écarte les candidats d'une catégorie déjà présente dans le panier ;
+  - le score renvoyé est cette valeur, déjà comprise entre 0 et 1 ;
+  - suppression de `minLift` (seuil sur la somme) et de `normalizeScore` ;
+  - le prompt LLM reçoit `confidence` au lieu de `lift` dans
+    `frequent_pairs`.
+- **Hors associations, rien ne change** : les petits prix peuvent toujours
+  proposer un produit d'une catégorie déjà présente dans le panier (par
+  exemple une deuxième boisson).
+
+### Tests (D12)
+
+| Test | Ce qu'il vérifie | Exécuté |
+|---|---|---|
+| `TestUpsellSmoothedConfidence_…` | un 6 sur 6 tombe à 38 % ; sur un gros échantillon le lissage change peu | ✅ |
+| `TestUpsellPairPatterns_Rules` | deux sens, moins de 8 commandes ensemble, lift < 1,2 (boisson présente partout), un seul sens | ✅ |
+| `TestSortUpsellPatterns_ByConfidenceThenID` | le plus gros lift ne passe plus devant ; égalités départagées par id ; plafond | ✅ |
+| `TestCartCategories_…`, `TestAggregatePatterns_…` | catégorie d'une variante, produits sans catégorie ; maximum et non somme, pas de deuxième pizza | ✅ |
+| `TestProcessUpsellPatternsForMerchant_Postgres` (réécrit) | 8 × A+B et 4 × C → 2 associations (lift 1,5) | ✅ sur staging |
+| `TestProcessUpsellPatternsForMerchant_VariantsRolledUp_Postgres` (réécrit) | 4 × A+V1, 4 × A+V2, 4 × C → A↔G ; aucune paire A+Vn n'atteint 8 | ✅ sur staging |
+| Vérification ponctuelle, test temporaire supprimé | calcul complet sur les données de staging (212 et 2), en lecture seule, sans Redis : pas d'erreur (22 et 2 associations orientées, chiffres non exploités, D4) | ✅ |
+
+Les mêmes 4 paquets en échec qu'avant (`planning/employees`,
+`planning/leave`, `planning/swaps`, `ubereats`), sans lien avec ce
+chantier. La requête de comparaison utilise maintenant les seuils retenus
+(10 %).
+
+### Déploiement (D12)
+
+Rien de plus que pour D1 à D11 : lancer `POST /admin/upsell/recompute-patterns`
+après le déploiement. Tant que ce n'est pas fait, les associations de la
+nuit précédente (anciennes règles, `Confidence` brute) restent en place. Le
+service les lit sans erreur, avec le maximum et le filtre de catégorie.
+
 ---
 
 ## 9. Journal
@@ -719,4 +853,10 @@ perte de couverture.
   tests d'intégration upsell et tasks au vert sur staging ; vérification
   ponctuelle en lecture seule des drapeaux de canal. Rien n'est commité ni
   déployé. Le chantier « options populaires » reste à lancer séparément.
+- **2026-09-27** : proposition de durcir les associations ; requête de
+  comparaison écrite (§8), syntaxe validée sur staging.
+- **2026-09-28** : résultats de prod reçus et analysés (§8). Proposition
+  révisée : 10 % au lieu de 15 %, catégories du panier, produits à 0 €.
+  Arbitrages d'Ilies → D12 (0 € non exclus). Implémentation, tests unitaires
+  et d'intégration au vert sur staging. Rien n'est commité ni déployé.
 

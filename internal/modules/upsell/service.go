@@ -28,7 +28,6 @@ const (
 	llmTimeout          = 1500 * time.Millisecond
 	maxAvailableForLLM  = 50
 	maxFreqPairsForLLM  = 20
-	minLift             = 1.5
 )
 
 // UpsellResult is returned by GenerateUpsell to the HTTP handler.
@@ -38,8 +37,10 @@ type UpsellResult struct {
 	Source       string          `json:"source"`
 }
 
-// patternEntry is the structure stored in Redis for market-basket patterns.
-// Exported so tasks/upsell.go can write it with the same shape.
+// PatternEntry is the structure stored in Redis for market-basket patterns.
+// Exported so tasks/upsell.go can write it with the same shape. Confidence is
+// the smoothed P(suggested product | source product), used for ranking; Lift
+// and Support are kept for diagnostics (docs/UPSELL_COMPLETION.md, D12).
 type PatternEntry struct {
 	ProductID  string  `json:"product_id"`
 	Name       string  `json:"name"`
@@ -207,9 +208,12 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		candidateMap[ap.ProductID] = ap
 	}
 
-	// ── 4.4 Pattern (Apriori from Redis) ─────────────────────────────────────
-	// Aggregate scores across all cart products.
-	aggregated := make(map[string]float64)
+	// ── 4.4 Patterns (market basket, computed nightly into Redis) ────────────
+	// The quality rules are applied by the nightly computation; here each
+	// candidate keeps the best confidence among the cart products pointing to
+	// it, and categories already in the cart are left out
+	// (docs/UPSELL_COMPLETION.md, D12).
+	patternLists := make([][]PatternEntry, 0, len(cart.patternKeys))
 	for _, key := range cart.patternKeys {
 		patKey := fmt.Sprintf(cacheKeyPatternFmt, merchantID, key)
 		raw, hit, _ := s.aiCache.Get(ctx, patKey)
@@ -220,28 +224,14 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		if jsonErr := json.Unmarshal([]byte(raw), &entries); jsonErr != nil {
 			continue
 		}
-		for _, e := range entries {
-			if _, isCandidate := candidateMap[e.ProductID]; isCandidate {
-				aggregated[e.ProductID] += e.Lift
-			}
-		}
+		patternLists = append(patternLists, entries)
 	}
-
-	// Find best lift to decide whether patterns are trustworthy.
-	bestLift := 0.0
-	for _, score := range aggregated {
-		if score > bestLift {
-			bestLift = score
-		}
-	}
+	aggregated := aggregatePatterns(patternLists, candidateMap, cartCategories(cartProducts, cart.groupOf, available))
 
 	// Patterns are kept even when there are fewer than maxItems of them; the
 	// remaining slots are completed by low-price best sellers, then by the LLM
 	// (docs/UPSELL_COMPLETION.md, D2 and D10).
-	var suggestions []SuggestedItem
-	if bestLift >= minLift {
-		suggestions = rankPatternSuggestions(aggregated, candidateMap, maxItems)
-	}
+	suggestions := rankPatternSuggestions(aggregated, candidateMap, maxItems)
 
 	// ── 4.5 Low-price best sellers ───────────────────────────────────────────
 	if remaining := maxItems - len(suggestions); remaining > 0 {
@@ -696,16 +686,49 @@ func hashIndex(s string, n int) int {
 	return h % n
 }
 
-// normalizeScore maps an aggregated lift score to the 0.0–1.0 range using a
-// simple sigmoid-like clamp (lift 1.5 → ~0.6, lift 5.0 → ~1.0).
-func normalizeScore(lift float64) float64 {
-	if lift <= 0 {
-		return 0
+// cartCategories returns the categories of the cart products, a variant
+// taking its group's. Products without a category are left out: having no
+// category is not a shared trait.
+func cartCategories(cartProducts []models.ProductEntry, groupOf map[string]string, available []menu.AvailableProduct) map[string]struct{} {
+	categoryOf := make(map[string]string, len(available))
+	for _, ap := range available {
+		categoryOf[ap.ProductID] = ap.CategoryID
 	}
-	if lift > 5 {
-		return 1.0
+	categories := make(map[string]struct{})
+	for _, p := range cartProducts {
+		category, ok := categoryOf[p.ProductID]
+		if !ok {
+			category = categoryOf[groupOf[p.ProductID]]
+		}
+		if category != "" {
+			categories[category] = struct{}{}
+		}
 	}
-	return lift / 5.0
+	return categories
+}
+
+// aggregatePatterns scores each candidate suggested by the cart's patterns
+// with the best confidence among the cart products that point to it (a
+// maximum, not a sum: two weak links do not make a strong one). Candidates
+// whose category is already in the cart are left out: patterns are meant to
+// add something of another kind, not a second pizza (D12).
+func aggregatePatterns(patternLists [][]PatternEntry, candidates map[string]menu.AvailableProduct, cartCategories map[string]struct{}) map[string]float64 {
+	aggregated := make(map[string]float64)
+	for _, entries := range patternLists {
+		for _, e := range entries {
+			ap, isCandidate := candidates[e.ProductID]
+			if !isCandidate {
+				continue
+			}
+			if _, sameKind := cartCategories[ap.CategoryID]; sameKind {
+				continue
+			}
+			if e.Confidence > aggregated[e.ProductID] {
+				aggregated[e.ProductID] = e.Confidence
+			}
+		}
+	}
+	return aggregated
 }
 
 // rankPatternSuggestions turns aggregated pattern scores into at most maxItems
@@ -738,7 +761,7 @@ func rankPatternSuggestions(aggregated map[string]float64, candidateMap map[stri
 		suggestions = append(suggestions, SuggestedItem{
 			ProductID: r.pid,
 			Title:     fmt.Sprintf(titleTemplates[hashIndex(r.pid, len(titleTemplates))], ap.Name),
-			Score:     normalizeScore(r.score),
+			Score:     r.score,
 			Name:      ap.Name,
 			Price:     ap.Price,
 			ImageURL:  ap.ImageURL,
@@ -853,19 +876,19 @@ func selectLLMCandidates(candidateMap map[string]menu.AvailableProduct, limit in
 }
 
 // buildFrequentPairsForPrompt extracts the top N frequent pairs from the aggregated
-// lift map for inclusion in the LLM user prompt.
+// confidence map for inclusion in the LLM user prompt.
 func buildFrequentPairsForPrompt(aggregated map[string]float64, candidateMap map[string]menu.AvailableProduct, limit int) []map[string]interface{} {
 	type pair struct {
-		pid  string
-		lift float64
+		pid        string
+		confidence float64
 	}
 	pairs := make([]pair, 0, len(aggregated))
-	for pid, lift := range aggregated {
+	for pid, confidence := range aggregated {
 		if ap, ok := candidateMap[pid]; ok {
-			pairs = append(pairs, pair{pid: ap.Name, lift: lift})
+			pairs = append(pairs, pair{pid: ap.Name, confidence: confidence})
 		}
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].lift > pairs[j].lift })
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].confidence > pairs[j].confidence })
 	if len(pairs) > limit {
 		pairs = pairs[:limit]
 	}
@@ -873,8 +896,8 @@ func buildFrequentPairsForPrompt(aggregated map[string]float64, candidateMap map
 	result := make([]map[string]interface{}, 0, len(pairs))
 	for _, p := range pairs {
 		result = append(result, map[string]interface{}{
-			"suggest": p.pid,
-			"lift":    p.lift,
+			"suggest":    p.pid,
+			"confidence": p.confidence,
 		})
 	}
 	return result

@@ -1,4 +1,4 @@
--- Upsell : associations « achetés ensemble », règles actuelles vs règles durcies
+-- Upsell : associations « achetés ensemble », anciennes règles vs règles durcies (D12)
 -- Voir docs/UPSELL_COMPLETION.md, §8.
 --
 -- À exécuter sur la PROD, en lecture seule. Requêtes agrégées : aucune donnée
@@ -9,10 +9,15 @@
 -- Les seuils sont dans le bloc « params » de chaque requête : on peut les
 -- modifier pour essayer d'autres valeurs (les deux requêtes doivent garder
 -- les mêmes).
---   Règles actuelles : au moins 5 commandes ensemble, lift ≥ 1,0,
+--   Anciennes règles (avant D12) : au moins 5 commandes ensemble, lift ≥ 1,0,
 --                      P(B | A) ≥ 10 %, classement par lift.
---   Règles proposées : au moins 8 commandes ensemble, lift ≥ 1,2,
---                      P(B | A) lissée ≥ 15 %, classement par P(B | A) lissée.
+--   Règles retenues (D12) : au moins
+--                      8 commandes ensemble, lift ≥ 1,2, P(B | A) lissée ≥ 10 %,
+--                      classement par P(B | A) lissée. (Première proposition
+--                      à 15 %, jugée trop stricte sur les résultats de prod.)
+--   Non reproduit ici : le moteur écarte en plus, au moment de proposer, les
+--   suggestions d'une catégorie déjà présente dans le panier (voir la colonne
+--   meme_categorie pour s'en faire une idée).
 -- P(B | A) lissée = (commandes A+B + alpha × part de B) / (commandes A + alpha) :
 -- sur peu de commandes, elle est ramenée vers la fréquence moyenne de B, ce
 -- qui évite qu'un 6 sur 6 passe pour une certitude.
@@ -22,11 +27,11 @@
 BEGIN TRANSACTION READ ONLY;
 
 -- A1 — Pour les 10 produits les plus vendus de chaque établissement : les
--- 6 premières suggestions selon les règles actuelles puis selon les règles
+-- 6 premières suggestions selon les anciennes règles (« actuel ») puis selon les règles
 -- proposées.
 WITH params AS (
   SELECT 5 AS cur_min_cab, 1.0 AS cur_min_lift, 0.10 AS cur_min_conf,
-         8 AS new_min_cab, 1.2 AS new_min_lift, 0.15 AS new_min_conf,
+         8 AS new_min_cab, 1.2 AS new_min_lift, 0.10 AS new_min_conf,
          10.0 AS alpha
 ),
 scope AS (
@@ -113,7 +118,7 @@ ORDER BY r.merchant_id, src.rk, r.regle, r.rang;
 -- d'associations ; les places libérées sont complétées par les petits prix.
 WITH params AS (
   SELECT 5 AS cur_min_cab, 1.0 AS cur_min_lift, 0.10 AS cur_min_conf,
-         8 AS new_min_cab, 1.2 AS new_min_lift, 0.15 AS new_min_conf,
+         8 AS new_min_cab, 1.2 AS new_min_lift, 0.10 AS new_min_conf,
          10.0 AS alpha
 ),
 scope AS (

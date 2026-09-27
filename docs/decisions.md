@@ -5899,3 +5899,14 @@ Suite de l'entrée précédente, après analyse des données de prod ([upsell-an
 - **Reporté, à analyser à l'usage** : varier les catégories (sinon plusieurs boissons d'affilée), ne pas élargir aux produits plus chers quand les petits prix manquent (la liste peut rester courte), associations entre catégories, options populaires (`is_popular` sur `configurable_attribute_options`, badge borne/SNO, sans jamais pré-cocher une option payante). Suppléments vendus comme produits : laissés en l'état.
 
 Aucune migration. **Juste après le déploiement, lancer `POST /admin/upsell/recompute-patterns`**, sinon il n'y a ni petits prix ni associations avec variantes avant 3h. Statut : non commité, non déployé.
+
+### Upsell — Associations « achetés ensemble » durcies (2026-09-28)
+
+Objectif : des associations de meilleure qualité. Les règles ont été comparées sur la prod avec [upsell-associations-comparaison-prod.sql](upsell-associations-comparaison-prod.sql). Détail : [UPSELL_COMPLETION.md](UPSELL_COMPLETION.md), §8 (D12).
+
+- **Nouvelles règles (cron de 3h)** : au moins 8 commandes ensemble (5 avant), lift ≥ 1,2 (1,0 avant) et au moins 10 % des acheteurs du produit qui ajoutent la suggestion, en part **lissée** : sur peu de commandes, elle est ramenée vers la moyenne, donc un 6 sur 6 ne vaut plus 100 %. Classement par cette part, et non plus par le lift, qui faisait passer en tête des coïncidences sur 5 ou 6 commandes (Tenders → Bouchée Camembert, Soda → Brochette à 18 €). Un premier seuil à 15 % a été écarté : il perdait des liens pertinents comme Montagnarde → Coca (12 %).
+- **Au moment de proposer** : pour chaque candidat, on garde le meilleur lien parmi les produits du panier (et non plus la somme des lifts, qui laissait passer deux liens faibles). On écarte toute suggestion d'une **catégorie déjà présente dans le panier** (pas de deuxième pizza, ni de pizza proposée à côté d'une Orangina quand une pizza est déjà prise). Les petits prix ne sont pas concernés.
+- **Produits à 0 € : non exclus.** Les frais de livraison (« Zone 1/2/3 » chez 235) seront retirés de la borne et de SNO par les commerçants ; sur le POS, ils peuvent encore être suggérés (risque accepté).
+- Correction au passage : les associations d'un produit n'étaient pas triées quand il en avait 10 ou moins.
+
+Aucune migration. Après déploiement, lancer `POST /admin/upsell/recompute-patterns`. Statut : non commité, non déployé.
