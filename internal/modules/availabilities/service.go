@@ -58,13 +58,9 @@ func (s *AvailabilitiesService) CreateAvailability(ctx context.Context, req Crea
 		return nil, fmt.Errorf("availability name is required")
 	}
 
-	if len(req.ProductIDs) == 0 {
-		return nil, fmt.Errorf("at least one product is required")
-	}
-
-	if len(req.Schedules) == 0 {
-		return nil, fmt.Errorf("at least one schedule is required")
-	}
+	// Produits et créneaux peuvent être vides (décision 2026-09-27, le
+	// back-office avertit) : sans produit, la disponibilité ne restreint
+	// rien ; active sans créneau, elle masque ses produits en permanence.
 
 	// Valider les créneaux
 	if err := validateSchedules(req.Schedules); err != nil {
@@ -82,7 +78,7 @@ func (s *AvailabilitiesService) UpdateAvailability(ctx context.Context, availabi
 	}
 
 	// Validation : au moins un champ doit être fourni
-	if req.Name == nil && req.UnavailableMessage == nil && len(req.ProductIDs) == 0 && len(req.Schedules) == 0 && req.Available == nil {
+	if req.Name == nil && req.UnavailableMessage == nil && req.ProductIDs == nil && req.Schedules == nil && req.Available == nil {
 		return nil, fmt.Errorf("at least one field must be provided for update")
 	}
 
@@ -91,22 +87,10 @@ func (s *AvailabilitiesService) UpdateAvailability(ctx context.Context, availabi
 		return nil, fmt.Errorf("availability name cannot be empty")
 	}
 
-	// Validation conditionnelle : si ProductIDs sont fournis, au moins un est requis
-	if len(req.ProductIDs) > 0 {
-		if len(req.ProductIDs) == 0 {
-			return nil, fmt.Errorf("product_ids cannot be empty if provided")
-		}
-	}
-
-	// Validation conditionnelle : si Schedules sont fournis, au moins un est requis
-	if len(req.Schedules) > 0 {
-		if len(req.Schedules) == 0 {
-			return nil, fmt.Errorf("schedules cannot be empty if provided")
-		}
-		// Valider les créneaux
-		if err := validateSchedules(req.Schedules); err != nil {
-			return nil, err
-		}
+	// ProductIDs / Schedules non nil mais vides = tous retirés (autorisé, voir
+	// CreateAvailability). Les créneaux fournis restent validés.
+	if err := validateSchedules(req.Schedules); err != nil {
+		return nil, err
 	}
 
 	return s.availabilitiesRepo.Update(ctx, user.MerchantID, availabilityID, req)

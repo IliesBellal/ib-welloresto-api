@@ -1,6 +1,9 @@
 package availabilities
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Availability agrège les métadonnées, la liste des produits et les créneaux horaires
 type Availability struct {
@@ -42,13 +45,40 @@ type CreateAvailabilityScheduleReq struct {
 	EndTime    string `json:"end_time"`    // Format: "HH:MM:SS" ou "HH:MM"
 }
 
-// UpdateAvailabilityRequest pour la mise à jour (tous les champs sont optionnels)
+// UpdateAvailabilityRequest pour la mise à jour (tous les champs sont optionnels).
+// ProductIDs / Schedules : nil = inchangé ; non nil, même vide = remplacé
+// (liste vide = tous retirés). Voir UnmarshalJSON pour la lecture de null.
 type UpdateAvailabilityRequest struct {
 	Name               *string                         `json:"name,omitempty"`
 	UnavailableMessage *string                         `json:"unavailable_message,omitempty"`
 	ProductIDs         []string                        `json:"product_ids,omitempty"`
 	Schedules          []CreateAvailabilityScheduleReq `json:"schedules,omitempty"`
 	Available          *bool                           `json:"available,omitempty"`
+}
+
+// UnmarshalJSON distingue une clé absente (inchangé) d'une clé à null ou []
+// (liste vidée) pour product_ids et schedules : encoding/json décode null et
+// une clé absente tous deux en nil. Le back-office envoyait product_ids: null
+// pour retirer le dernier produit — ignoré, la disponibilité gardait ses
+// produits (docs/AVAILABILITIES_EMPTY_LISTS.md).
+func (r *UpdateAvailabilityRequest) UnmarshalJSON(data []byte) error {
+	type alias UpdateAvailabilityRequest
+	var aux alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, present := raw["product_ids"]; present && aux.ProductIDs == nil {
+		aux.ProductIDs = []string{}
+	}
+	if _, present := raw["schedules"]; present && aux.Schedules == nil {
+		aux.Schedules = []CreateAvailabilityScheduleReq{}
+	}
+	*r = UpdateAvailabilityRequest(aux)
+	return nil
 }
 
 // AvailabilityResponse pour les réponses API

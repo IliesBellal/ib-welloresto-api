@@ -29,6 +29,12 @@ Règle « liste blanche », une seule requête (`GetActiveProductSchedules`) :
 
 `IsProductAvailable` / `IsProductAvailableAt` appliquent la même règle.
 
+### Listes vides (depuis 2026-09-27)
+Une disponibilité peut n'avoir **aucun produit** (elle ne restreint rien) ou
+**aucun créneau** (active, elle masque ses produits en permanence). Au PATCH,
+pour `product_ids` et `schedules` : clé absente = inchangé, `null` ou `[]` =
+liste vidée. Voir `docs/AVAILABILITIES_EMPTY_LISTS.md`.
+
 ### Stockage en heure locale
 Les créneaux sont des heures de mur du merchant (« 6h–11h le lundi », été comme
 hiver) : stockés tels que saisis dans le back-office, renvoyés tels quels, sans

@@ -123,6 +123,35 @@ func TestAvailabilitiesRepository_Postgres(t *testing.T) {
 		t.Fatalf("unexpected updated availability: %+v", updated)
 	}
 
+	// Update avec listes vides : tous les produits et créneaux retirés
+	// (docs/AVAILABILITIES_EMPTY_LISTS.md) — auparavant ignoré.
+	cleared, err := repo.Update(ctx, merchantID, created.AvailabilityID, UpdateAvailabilityRequest{
+		ProductIDs: []string{},
+		Schedules:  []CreateAvailabilityScheduleReq{},
+	})
+	if err != nil {
+		t.Fatalf("Update (clear) failed against postgres: %v", err)
+	}
+	if len(cleared.ProductIDs) != 0 || len(cleared.Schedules) != 0 {
+		t.Fatalf("expected cleared lists in response, got %+v", cleared)
+	}
+	refetched, err := repo.GetAvailabilityByID(ctx, merchantID, created.AvailabilityID)
+	if err != nil || refetched == nil {
+		t.Fatalf("GetAvailabilityByID (after clear): %v", err)
+	}
+	if len(refetched.ProductIDs) != 0 || len(refetched.Schedules) != 0 {
+		t.Fatalf("expected no products/schedules in DB after clear, got %+v", refetched)
+	}
+
+	// Création sans produit ni créneau : autorisée.
+	emptyCreated, err := repo.Create(ctx, merchantID, CreateAvailabilityRequest{Name: "ITest Empty", UnavailableMessage: &msg})
+	if err != nil {
+		t.Fatalf("Create (empty) failed against postgres: %v", err)
+	}
+	if len(emptyCreated.ProductIDs) != 0 || len(emptyCreated.Schedules) != 0 {
+		t.Fatalf("unexpected empty availability: %+v", emptyCreated)
+	}
+
 	// Delete: soft delete (enabled = false), then not found.
 	if err := repo.Delete(ctx, merchantID, created2.AvailabilityID); err != nil {
 		t.Fatalf("Delete failed against postgres: %v", err)

@@ -289,12 +289,12 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 	}
 
 	productIDs := current.ProductIDs
-	if len(req.ProductIDs) > 0 {
+	if req.ProductIDs != nil {
 		productIDs = req.ProductIDs
 	}
 
 	schedules := current.Schedules
-	if len(req.Schedules) > 0 {
+	if req.Schedules != nil {
 		schedules = convertSchedules(availabilityID, req.Schedules, now)
 	}
 
@@ -325,8 +325,8 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		return nil, fmt.Errorf("availability not found")
 	}
 
-	// Mettre à jour les produits seulement s'ils sont fournis
-	if len(req.ProductIDs) > 0 {
+	// Mettre à jour les produits s'ils sont fournis (liste vide = tous retirés)
+	if req.ProductIDs != nil {
 		// Supprimer les produits existants
 		deleteProductsQuery := `DELETE FROM availabilities_products WHERE availability_id = ?`
 		_, err = db.ExecContext(ctx, deleteProductsQuery, availabilityID)
@@ -357,8 +357,8 @@ func (r *AvailabilitiesRepository) Update(ctx context.Context, merchantID, avail
 		}
 	}
 
-	// Mettre à jour les créneaux seulement s'ils sont fournis
-	if len(req.Schedules) > 0 {
+	// Mettre à jour les créneaux s'ils sont fournis (liste vide = tous retirés)
+	if req.Schedules != nil {
 		// Supprimer les créneaux existants
 		deleteSchedulesQuery := `DELETE FROM availabilities_schedules WHERE availability_id = ?`
 		_, err = db.ExecContext(ctx, deleteSchedulesQuery, availabilityID)
